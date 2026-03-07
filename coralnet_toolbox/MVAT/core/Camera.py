@@ -585,19 +585,25 @@ class OrthographicCamera(Camera):
         y_world = world_hom[:, 1].reshape(xx.shape)
         
         # 3. Extract Z (Elevation) values directly from the DEM array
-        z_world = self.z_channel[rows[:, None], cols]
+        z_world = self.z_channel[rows[:, None], cols].copy()
         
-        # Clean up invalid data from Metashape borders
-        baseline_z = np.nanmin(z_world) if not np.isnan(np.nanmin(z_world)) else 0.0
-        z_world[np.isnan(z_world)] = baseline_z
-        
+        # 🔥 FIX: Create a strict mask of valid data (ignoring NaNs and NoData)
+        valid_mask = ~np.isnan(z_world)
         if self._raster.z_nodata is not None:
-            z_world[z_world == self._raster.z_nodata] = baseline_z
+            valid_mask &= (z_world != self._raster.z_nodata)
             
+        # Catch standard Metashape/GIS huge negative nodata values just to be safe
+        valid_mask &= (z_world > -10000.0) 
+
+        # Find the lowest actual elevation point on the reef
+        valid_z = z_world[valid_mask]
+        baseline_z = float(np.min(valid_z)) if valid_z.size > 0 else 0.0
+
+        # Flatten the invalid borders to the baseline so they don't stretch the bounding box
+        z_world[~valid_mask] = baseline_z
+        
         # 4. Create the PyVista Structured Grid
         grid = pv.StructuredGrid(x_world, y_world, z_world)
-        
-        # Add elevation scalars so PyVista can color it nicely like a topographic map
         grid.point_data['Elevation'] = z_world.flatten()
         
         print(f"🌍 Generated 3D elevation mesh for {self.label} ({grid.n_points} vertices)")

@@ -381,12 +381,14 @@ class MVATManager(QObject):
                     print(f"❌ Failed to generate 3D elevation mesh for {camera.label}: {e}")
                 
         if elevation_added:
-            # Force the viewer to process the SceneContext, 
-            # hide the placeholder text, and draw the PyVista meshes!
             if hasattr(self.viewer, 'render_scene'):
                 self.viewer.render_scene()
             elif hasattr(self.viewer, 'load_scene'):
                 self.viewer.load_scene()
+                
+            # Force the 3D camera to zoom to the newly added elevation bounds
+            if hasattr(self.viewer, 'fit_to_view'):
+                self.viewer.fit_to_view()
 
     # --- Signal Handlers ---
 
