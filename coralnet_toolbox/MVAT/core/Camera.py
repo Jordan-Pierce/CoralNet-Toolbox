@@ -556,6 +556,7 @@ class OrthographicCamera(Camera):
     def get_elevation_mesh(self, max_resolution=1000):
         """
         Generates a smooth, triangulated PyVista 3D surface mesh using the camera's DEM.
+        Includes UV texture coordinates for future orthomosaic draping.
         """
         import pyvista as pv
         import cv2
@@ -565,32 +566,28 @@ class OrthographicCamera(Camera):
             print(f"Cannot generate elevation: {self.label} has no DEM (z_channel).")
             return None
             
-        step = max(1, max(self.width, self.height) // max_resolution)
-        target_w = max(1, self.width // step)
-        target_h = max(1, self.height // step)
+        # Calculate smooth scaling factor
+        scale = min(1.0, max_resolution / max(self.width, self.height))
+        target_w = max(1, int(self.width * scale))
+        target_h = max(1, int(self.height * scale))
         
-        # 1. Create strict valid mask to avoid NoData bleeding
+        # 1. Mask NoData properly to prevent cliff bleeding
         temp_z = self.z_channel.copy()
         valid_mask = ~np.isnan(temp_z)
         if self._raster.z_nodata is not None:
             valid_mask &= (temp_z != self._raster.z_nodata)
         valid_mask &= (temp_z > -10000.0)
         
-        valid_z = temp_z[valid_mask]
-        baseline_z = float(np.min(valid_z)) if valid_z.size > 0 else 0.0
+        baseline_z = float(np.min(temp_z[valid_mask])) if np.any(valid_mask) else 0.0
         temp_z[~valid_mask] = baseline_z
         
-        # 2. Smoothly downsample the 2D array (NO MORE STRIATIONS)
-        z_smooth = cv2.resize(
-            temp_z, 
-            (target_w, target_h), 
-            interpolation=cv2.INTER_LINEAR
-        )
+        # 2. Smoothly downsample the 2D array (NO STRIATIONS)
+        z_smooth = cv2.resize(temp_z, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
         
-        # 3. Generate perfectly spaced coordinate grids to match the new smooth array
-        cols = np.linspace(0, self.width - 1, target_w)
-        rows = np.linspace(0, self.height - 1, target_h)
-        xx, yy = np.meshgrid(cols, rows)
+        # 3. Generate spatial grids
+        x = np.linspace(0, self.width - 1, target_w)
+        y = np.linspace(0, self.height - 1, target_h)
+        xx, yy = np.meshgrid(x, y)
         
         pixels_hom = np.column_stack((xx.flatten(), yy.flatten(), np.ones_like(xx.flatten())))
         world_hom = (self.transform_matrix @ pixels_hom.T).T
@@ -598,14 +595,18 @@ class OrthographicCamera(Camera):
         x_world = world_hom[:, 0].reshape(target_h, target_w)
         y_world = world_hom[:, 1].reshape(target_h, target_w)
         
-        # 4. Create StructuredGrid and instantly convert to a solid PolyData mesh!
         grid = pv.StructuredGrid(x_world, y_world, z_smooth)
         grid.point_data['Elevation'] = z_smooth.flatten()
         
-        # 🔥 This makes it a true, solid, continuous surface mesh!
+        # 🔥 FUTURE-PROOFING: Add UV Texture Coordinates for the Orthomosaic drape!
+        u = xx.flatten() / (self.width - 1)
+        v = yy.flatten() / (self.height - 1)
+        grid.active_t_coords = np.column_stack((u, 1.0 - v)) # Invert V for 3D textures
+        
+        # 4. Convert to a true, triangulated PolyData Mesh
         mesh = grid.extract_surface().triangulate()
         
-        print(f"🌍 Generated smooth 3D elevation mesh for {self.label} ({mesh.n_faces} faces)")
+        print(f"🌍 Generated true 3D elevation mesh for {self.label} ({mesh.n_faces} faces)")
         return mesh
     
     # --------------------------------------------------------------------------

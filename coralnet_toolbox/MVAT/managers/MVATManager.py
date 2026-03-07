@@ -894,37 +894,28 @@ class MVATManager(QObject):
                 return points, None, 'point'
             return None, None, 'point'
         
-        # Strategy B: Mesh - use face centers
-        if isinstance(primary_target, MeshProduct):
+        # Strategy B & C UNIFIED: Mesh and DEM - treat both as solid triangulated surfaces!
+        if isinstance(primary_target, (MeshProduct, DEMProduct)):
             try:
-                face_centers = primary_target.get_face_centers()
-                face_ids = np.arange(len(face_centers), dtype=np.int32)
-                print(f"📐 MeshProduct: Extracted {len(face_centers):,} face centers for visibility")
-                return face_centers, face_ids, 'face'
-            except Exception as e:
-                print(f"⚠️ Failed to extract mesh face centers: {e}")
-                return None, None, 'face'
-        
-        # Strategy C: DEM - Treat as a solid triangulated mesh!
-        if isinstance(primary_target, DEMProduct):
-            try:
-                # 1. Ask the DEM product for the solid PolyData mesh we just built
+                # Ensure GPU tensors are built for the Bounding Volume Hierarchy
+                if hasattr(primary_target, 'prepare_geometry'):
+                    primary_target.prepare_geometry()
+                
+                # Ask the product for its true PyVista PolyData mesh
                 mesh = primary_target.get_render_mesh()
-                
                 if mesh is None:
-                    return None, None, 'cell'
+                    return None, None, 'face'
                 
-                # 2. Extract the face centers to feed into the solid mesh raycaster
+                # Extract the physical centers of the triangles
                 face_centers = mesh.cell_centers().points
                 face_ids = np.arange(len(face_centers), dtype=np.int32)
                 
-                print(f"🗺️ DEMProduct: Extracted {len(face_centers):,} solid faces for visibility")
-                
-                # 🔥 Return 'face' so the engine raycasts it exactly like a solid 3D mesh
+                print(f"📐 Extracted {len(face_centers):,} solid faces for {primary_target.label} visibility")
                 return face_centers, face_ids, 'face'
+                
             except Exception as e:
-                print(f"⚠️ Failed to extract DEM faces: {e}")
-                return None, None, 'cell'
+                print(f"⚠️ Failed to extract face centers for {primary_target.label}: {e}")
+                return None, None, 'face'
 
     def _calculate_camera_proximity_score(self, reference_camera, candidate_camera):
         """

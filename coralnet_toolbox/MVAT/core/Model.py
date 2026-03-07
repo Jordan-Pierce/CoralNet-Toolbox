@@ -332,20 +332,14 @@ class DEMProduct(AbstractSceneProduct):
     """
     Scene product for Digital Elevation Model (DEM) data.
     
-    Now acts as a 3D wrapper around the OrthographicCamera, ensuring the 
-    elevation mesh is perfectly scaled and aligned with the orthomosaic photograph.
-    
-    DEMs ARE solid (is_solid=True) and support cell-based index mapping.
+    Acts as a 3D wrapper around the OrthographicCamera. It has been upgraded 
+    to behave exactly like a MeshProduct, outputting explicit triangles and faces 
+    for dense, watertight visibility raycasting, and natively supports orthomosaic draping.
     """
     
     def __init__(self, ortho_camera, opacity: float = 0.8, product_id: Optional[str] = None):
         """
         Initialize DEMProduct from an OrthographicCamera.
-        
-        Args:
-            ortho_camera: The OrthographicCamera instance containing the Z-channel.
-            opacity: Default rendering opacity.
-            product_id: Optional unique ID.
         """
         self.camera = ortho_camera
         
@@ -358,33 +352,73 @@ class DEMProduct(AbstractSceneProduct):
         super().__init__(product_id=product_id, file_path=file_path)
         
         self.opacity = opacity
-        self._structured_grid: Optional[pv.StructuredGrid] = None
+        self._mesh: Optional[pv.PolyData] = None
         
-        print(f"🎬 Initialized unified DEMProduct from camera: {self.camera.label}")
-        
-    @property
-    def elevation(self):
-        """Backward compatibility for legacy code looking for the raw DEM array"""
-        return self.camera.z_channel
-        
-    @property
-    def transform(self):
-        """Backward compatibility for legacy code looking for the matrix"""
-        return self.camera.transform_matrix
+        print(f"🎬 Initialized dynamic DEMProduct from camera: {self.camera.label}")
+
+    @classmethod
+    def from_file(cls, file_path: str, opacity: float = 0.8):
+        """
+        Overrides the legacy file loader. DEMs must now be loaded via an OrthographicCamera
+        to ensure perfect coordinate alignment. 
+        """
+        raise NotImplementedError(
+            "Standalone DEM loading is deprecated. Please attach the DEM to an "
+            "orthomosaic raster to ensure perfect 3D alignment."
+        )
 
     # --------------------------------------------------------------------------
     # AbstractSceneProduct Implementation
     # --------------------------------------------------------------------------
     
-    def get_render_mesh(self) -> pv.StructuredGrid:
+    def get_render_mesh(self) -> pv.PolyData:
         """
-        Get PyVista StructuredGrid for rendering.
-        Lazily asks the camera to generate the mesh on first access.
+        Get PyVista PolyData for rendering.
+        Lazily asks the camera to generate the smooth elevation mesh on first access.
         """
-        if self._structured_grid is None:
-            self._structured_grid = self.camera.get_elevation_mesh()
-        return self._structured_grid
+        if self._mesh is None:
+            self._mesh = self.camera.get_elevation_mesh()
+        return self._mesh
     
+    def prepare_geometry(self):
+        """
+        Extracts raw geometry into PyTorch tensors for the GPU visibility engine.
+        This makes the DEM physically identical to a loaded MeshProduct!
+        """
+        if hasattr(self, '_cached_triangles_pt'):
+            return
+
+        print(f"📐 Extracting DEM faces into GPU tensors for {self.label}...")
+        import time
+        import numpy as np
+        import torch
+        
+        start_time = time.time()
+        
+        mesh = self.get_render_mesh()
+        if mesh is None:
+            return
+
+        # Keep vertices in numpy for Open3D
+        self._cached_vertices = np.asarray(mesh.points, dtype=np.float32)
+        
+        # Extract faces (PyVista pads faces with the number of points, so we slice [:, 1:])
+        triangles_np = np.asarray(mesh.faces.reshape(-1, 4)[:, 1:], dtype=np.uint32)
+        centers_np = np.asarray(mesh.cell_centers().points, dtype=np.float32)
+        centers_sq_norm_np = np.sum(centers_np**2, axis=1)
+        
+        # Cache geometry arrays in PyTorch tensors for fast GPU processing
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'        
+        self._cached_face_centers_pt = torch.tensor(centers_np, device=self.device)
+        self._cached_centers_sq_norm_pt = torch.tensor(centers_sq_norm_np, device=self.device)
+        self._cached_triangles_pt = torch.tensor(triangles_np.astype(np.int64), device=self.device)
+        
+        # Fulfills the PyTorch GPU raycaster contract
+        self._original_cell_ids = None 
+        self._original_cell_ids_pt = None 
+        
+        print(f"✅ DEM Geometry cached in {time.time() - start_time:.3f}s")
+
     def get_render_style(self) -> RenderStyle:
         """Get preferred rendering style."""
         return {
@@ -404,23 +438,55 @@ class DEMProduct(AbstractSceneProduct):
         return mesh.bounds
     
     def is_solid(self) -> bool:
-        """DEMs are solid surfaces."""
+        """DEMs are solid triangulated surfaces."""
         return True
     
     def supports_index_mapping(self) -> bool:
-        """DEMs support cell-based index mapping."""
+        """DEMs support face-based index mapping."""
         return True
     
     def get_element_type(self) -> ElementType:
-        """Element type is 'cell' (grid cells)."""
-        return 'cell'
+        """Element type is 'face' (tells the engine to treat this as a solid mesh!)."""
+        return 'face'
     
     def get_element_count(self) -> int:
-        """Number of grid cells."""
+        """Number of faces."""
         mesh = self.get_render_mesh()
         if mesh is None:
             return 0
         return mesh.n_cells
+
+    # --------------------------------------------------------------------------
+    # Backward Compatibility & Legacy Interfaces
+    # --------------------------------------------------------------------------
+    
+    def get_points_array(self) -> Optional[np.ndarray]:
+        """Return raw vertices to satisfy legacy point-based interfaces."""
+        mesh = self.get_render_mesh()
+        return np.asarray(mesh.points) if mesh else None
+        
+    def get_face_centers(self) -> Optional[np.ndarray]:
+        """Return physical triangle centers."""
+        mesh = self.get_render_mesh()
+        return np.asarray(mesh.cell_centers().points) if mesh else None
+        
+    def get_face_normals(self) -> Optional[np.ndarray]:
+        """Calculate and return surface normals for the terrain."""
+        mesh = self.get_render_mesh()
+        if mesh is None: 
+            return None
+        mesh.compute_normals(cell_normals=True, point_normals=False, inplace=True)
+        return mesh.cell_data['Normals']
+
+    @property
+    def elevation(self):
+        """Backward compatibility for legacy code looking for the raw DEM array."""
+        return self.camera.z_channel
+        
+    @property
+    def transform(self):
+        """Backward compatibility for legacy code looking for the matrix."""
+        return self.camera.transform_matrix
 
 
 # ----------------------------------------------------------------------------------------------------------------------

@@ -144,24 +144,31 @@ class VisibilityWorker(QObject):
             self.signals.error.emit(f"{e}\n{traceback.format_exc()}")
 
     def _extract_points(self, target):
-        """Helper to extract point arrays for non-mesh targets."""
+        """Helper to extract point arrays for targets."""
         if isinstance(target, PointCloudProduct):
             return target.get_points_array(), None
             
-        if isinstance(target, DEMProduct):
+        # UNIFIED: Treat both standard Meshes and DEMs identically
+        if isinstance(target, (MeshProduct, DEMProduct)):
             try:
-                # 1. Grab the beautifully smoothed and triangulated PolyData mesh
                 mesh = target.get_render_mesh()
                 
                 if mesh is None:
-                    print(f"⚠️ Warning: DEM geometry not loaded for {target.product_id}")
+                    print(f"⚠️ Warning: Geometry not loaded for {target.product_id}")
                     return None, None
                 
-                # 2. Extract the true face centers for the solid mesh raycaster
+                # Extract the true face centers for the solid mesh raycaster
                 face_centers = mesh.cell_centers().points
                 face_ids = np.arange(len(face_centers), dtype=np.int32)
                 
                 return face_centers, face_ids
+                
             except Exception as e:
-                print(f"⚠️ Failed to extract DEM faces in worker: {e}")
+                print(f"⚠️ Failed to extract faces in worker for {target.product_id}: {e}")
                 return None, None
+            
+        # Fallback
+        if hasattr(target, 'get_points_array'):
+            return target.get_points_array(), None
+            
+        return None, None
