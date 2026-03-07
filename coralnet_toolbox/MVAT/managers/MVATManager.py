@@ -454,6 +454,7 @@ class MVATManager(QObject):
         Process visibility computation results and store in cameras.
         
         Shared by both sync (VTK mesh) and async (worker) code paths.
+        If the async worker already saved the cache to disk, it skips IO on the main thread.
         
         Args:
             results: Dict mapping image_path -> visibility result dict
@@ -467,11 +468,17 @@ class MVATManager(QObject):
             # Store index map with element type metadata
             element_type = result.get('element_type', 'point')
             
-            cache_path = None
-            if self.cache_manager is not None and target_file_path:
+            # 1. Check if the background worker already handled the disk I/O
+            cache_path = result.get('cache_path')
+            
+            # 2. Fallback for sync paths (like VTK) that run on the main thread
+            if cache_path is None and self.cache_manager is not None and target_file_path:
                 try:
+                    # Use transform_matrix for orthomosaic, extrinsics for perspective
+                    cache_key = camera.transform_matrix if camera.is_orthographic else camera._raster.extrinsics
+                    
                     cache_path = self.cache_manager.save_visibility(
-                        camera._raster.extrinsics,
+                        cache_key,
                         target_file_path,
                         result.get('index_map'),
                         result.get('visible_indices'),
@@ -480,6 +487,8 @@ class MVATManager(QObject):
                     )
                 except Exception:
                     cache_path = None
+                    
+            # 3. Apply the results to the camera
             try:
                 camera._raster.add_index_map(
                     result.get('index_map'), 
@@ -798,34 +807,37 @@ class MVATManager(QObject):
 
     def _compute_visibility_async(self, primary_target, cameras):
         """
-        Compute visibility using worker thread.
-        Now supports Point Clouds, DEMs, AND Meshes seamlessly!
+        Asynchronously compute visibility for a set of cameras using a worker thread.
+        Supports both orthographic and perspective cameras, and leverages caching
+        to avoid redundant computations.
         """
-        # Build camera params dict keyed by image path
+        # Prepare camera parameters and cache keys for asynchronous visibility computation.
         camera_params_dict = {}
+        cache_keys_dict = {} 
+        
         for cam in cameras:
             if cam.is_orthographic:
                 camera_params_dict[cam.image_path] = ('ortho', cam.transform_matrix_inv, cam.width, cam.height)
+                cache_keys_dict[cam.image_path] = cam.transform_matrix
             else:
                 camera_params_dict[cam.image_path] = (cam.K, cam.R, cam.t, cam.width, cam.height)
+                cache_keys_dict[cam.image_path] = cam._raster.extrinsics
 
-        # Start worker thread
         try:
             self._is_computing_visibility = True
-            try:
-                extra = " (including depth maps)" if self.compute_depth_maps_enabled else ""
-                self.main_window.status_bar.showMessage(f"Computing occlusion maps for {len(camera_params_dict)} cameras{extra}...")
-                QApplication.setOverrideCursor(Qt.WaitCursor)
-            except Exception:
-                pass
+            self.main_window.status_bar.showMessage(
+                f"Computing occlusion maps for {len(camera_params_dict)} cameras..."
+            )
+            QApplication.setOverrideCursor(Qt.WaitCursor)
 
-            print(f"MVATManager: starting visibility worker for {len(camera_params_dict)} cameras")
-
-            # 🔥 Pass the actual primary_target to the worker!
+            # Pass the cache data to the worker
             worker = VisibilityWorker(
                 primary_target=primary_target, 
                 camera_params_dict=camera_params_dict, 
-                compute_depth_maps=self.compute_depth_maps_enabled
+                compute_depth_maps=self.compute_depth_maps_enabled,
+                cache_manager=self.cache_manager,
+                cache_keys_dict=cache_keys_dict,
+                target_file_path=primary_target.file_path if primary_target else ""
             )
             
             thread = QThread()

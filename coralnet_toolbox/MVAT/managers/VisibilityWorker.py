@@ -1,5 +1,4 @@
 import traceback
-from typing import Optional
 
 import numpy as np
 from PyQt5.QtCore import QObject, pyqtSignal
@@ -23,12 +22,17 @@ class VisibilityWorker(QObject):
     Background worker for computing camera visibility maps.
     Now safely handles Meshes (via Open3D), PointClouds, and DEMs.
     """
-
-    def __init__(self, primary_target, camera_params_dict, compute_depth_maps=True):
+    def __init__(self, primary_target, camera_params_dict, compute_depth_maps=True, 
+                 cache_manager=None, cache_keys_dict=None, target_file_path=""):
         super().__init__()
         self.primary_target = primary_target
         self.camera_params_dict = camera_params_dict
         self.compute_depth_maps = compute_depth_maps
+        
+        # Store cache dependencies
+        self.cache_manager = cache_manager
+        self.cache_keys_dict = cache_keys_dict
+        self.target_file_path = target_file_path
         self.signals = WorkerSignals()
 
     def run(self):
@@ -117,12 +121,27 @@ class VisibilityWorker(QObject):
                             result['element_type'] = element_type
                             results[path] = result
 
+            # Save to disk on the background thread before emitting!
+            if self.cache_manager is not None and self.target_file_path and self.cache_keys_dict:
+                for path, result_dict in results.items():
+                    cache_key = self.cache_keys_dict.get(path)
+                    if cache_key is not None:
+                        cache_path = self.cache_manager.save_visibility(
+                            cache_key,
+                            self.target_file_path,
+                            result_dict.get('index_map'),
+                            result_dict.get('visible_indices'),
+                            result_dict.get('depth_map') if self.compute_depth_maps else None,
+                            element_type=result_dict.get('element_type', 'point')
+                        )
+                        # Store the file path in the result so the main thread knows where it went
+                        result_dict['cache_path'] = cache_path
+
             # Emit final results back to the main thread
             self.signals.finished.emit(results)
 
         except Exception as e:
-            tb = traceback.format_exc()
-            self.signals.error.emit(f"{e}\n{tb}")
+            self.signals.error.emit(f"{e}\n{traceback.format_exc()}")
 
     def _extract_points(self, target):
         """Helper to extract point arrays for non-mesh targets."""
