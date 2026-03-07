@@ -78,7 +78,7 @@ class MVATViewer(QFrame):
         self.scene_context = SceneContext()
         # Product actors keyed by product_id
         self._product_actors = {}
-        self._filtered_actor = None  # Legacy: primary product actor
+        # Legacy filtered actor removed — picking now operates on visible scene actors
         self.point_size = point_size
         self._show_rays_enabled = show_rays
         self._ray_visible = True
@@ -507,31 +507,14 @@ class MVATViewer(QFrame):
         Perform a pick explicitly against the Scene Geometry to set Focal Point.
         This is the ONLY way to change the focal point via mouse.
         """
-        if self._filtered_actor is None:
-            return
-
-        # 1. Temporarily disable pickability for everything EXCEPT the filtered actor.
-        restore_list = []
-        for actor in self.plotter.actors.values():
-            if actor != self._filtered_actor and actor.GetPickable():
-                actor.SetPickable(False)
-                restore_list.append(actor)
-        
+        # Perform a normal pick against the scene; let the renderer choose the
+        # visible actor under the mouse and return the picked world coordinate.
         try:
-            # 2. Perform pick
             picked_point = self.plotter.pick_mouse_position()
-            
-            # 3. Update focal point if hit
             if picked_point is not None:
                 self.set_focal_point(picked_point)
-                
-        finally:
-            # 4. Restore pickability
-            for actor in restore_list:
-                try:
-                    actor.SetPickable(True)
-                except Exception:
-                    pass
+        except Exception:
+            pass
         
     # ------------------------------------------------------------------
     # Camera movement helpers
@@ -1095,11 +1078,6 @@ class MVATViewer(QFrame):
                         **style
                     )
                     self._product_actors[product_id] = actor
-
-                    # Legacy compatibility: if no filtered actor yet, use the first actor added
-                    # (was previously limited to PointCloudProduct only)
-                    if self._filtered_actor is None:
-                        self._filtered_actor = actor
                 else:
                     # Update existing actor's mesh
                     try:
@@ -1262,10 +1240,22 @@ class MVATViewer(QFrame):
     def set_point_size(self, size):
         """Update the point size for point clouds."""
         self.point_size = size
-        # Update filtered actor if it exists
-        if self._filtered_actor is not None:
-            self._filtered_actor.GetProperty().SetPointSize(size)
-            self.plotter.render()
+        # Update all point-cloud actors' point size
+        try:
+            for p in self.scene_context.get_products_by_class(PointCloudProduct):
+                actor = self._product_actors.get(p.product_id)
+                if actor is not None:
+                    try:
+                        actor.GetProperty().SetPointSize(size)
+                    except Exception:
+                        pass
+            try:
+                self.plotter.render()
+            except Exception:
+                pass
+        except Exception:
+            # Keep original behavior tolerant to failures
+            pass
 
     def _on_point_size_spin_changed(self, value):
         """Handle spinbox changes: set internal point size and emit signal."""

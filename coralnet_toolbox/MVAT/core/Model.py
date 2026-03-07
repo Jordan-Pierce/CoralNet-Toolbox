@@ -232,13 +232,16 @@ class MeshProduct(AbstractSceneProduct):
 
         import open3d as o3d
         import time
+        import numpy as np
         
         start_time = time.time()
         
-        # 1. Triangulate (The slow 1-second step!)
+        # 1. Triangulate
         if not self.mesh.is_all_triangles:
             tri_mesh = self.mesh.triangulate()
-            self._original_cell_ids = tri_mesh.cell_data.get('vtkOriginalCellIds', None)
+            # 🔥 FIX: Wrap in np.asarray to prevent slow VTK indexing loops later!
+            raw_ids = tri_mesh.cell_data.get('vtkOriginalCellIds', None)
+            self._original_cell_ids = np.asarray(raw_ids) if raw_ids is not None else None
         else:
             tri_mesh = self.mesh
             self._original_cell_ids = None
@@ -247,13 +250,19 @@ class MeshProduct(AbstractSceneProduct):
         vertices = np.asarray(tri_mesh.points, dtype=np.float32)
         triangles = np.asarray(tri_mesh.faces.reshape(-1, 4)[:, 1:], dtype=np.uint32)
 
-        # 3. Build BVH
+        # 3. Add to Open3D
         self._o3d_scene = o3d.t.geometry.RaycastingScene()
         v_tensor = o3d.core.Tensor(vertices)
         t_tensor = o3d.core.Tensor(triangles)
         self._o3d_scene.add_triangles(v_tensor, t_tensor)
         
-        print(f"🎯 Built and cached Open3D BVH in {time.time() - start_time:.3f}s")
+        # 🔥 THE FIX: Open3D is "lazy". It doesn't actually build the BVH until the first ray is cast.
+        # We cast a single dummy ray right now to force it to build the spatial index immediately.
+        # Format: [px, py, pz, dx, dy, dz]
+        dummy_ray = o3d.core.Tensor([[0.0, 0.0, 0.0, 0.0, 0.0, 1.0]], dtype=o3d.core.Dtype.Float32)
+        self._o3d_scene.cast_rays(dummy_ray)
+        
+        print(f"🎯 Built and cached Open3D BVH for {tri_mesh.n_cells:,} faces in {time.time() - start_time:.3f}s")
         return self._o3d_scene, self._original_cell_ids
     
     def get_render_mesh(self) -> pv.PolyData:
