@@ -380,9 +380,13 @@ class MVATManager(QObject):
                 except Exception as e:
                     print(f"❌ Failed to generate 3D elevation mesh for {camera.label}: {e}")
                 
-        # If we added elevation, ensure the viewer refreshes to show the new geometry
         if elevation_added:
-            self.viewer.render_scene()
+            # Force the viewer to process the SceneContext, 
+            # hide the placeholder text, and draw the PyVista meshes!
+            if hasattr(self.viewer, 'render_scene'):
+                self.viewer.render_scene()
+            elif hasattr(self.viewer, 'load_scene'):
+                self.viewer.load_scene()
 
     # --- Signal Handlers ---
 

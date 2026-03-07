@@ -477,10 +477,11 @@ class OrthographicCamera(Camera):
             raise ValueError(f"Transform matrix for {raster.basename} is singular (non-invertible)")
 
         # 2. DEM PROPERTIES
-        self.z_channel = raster.z_channel
+        # Use the lazy loader so it pulls from disk if restoring from a project!
+        self.z_channel = raster.z_channel_lazy
 
         if self.z_channel is None:
-            print(f"WARNING: {raster.basename} has no DEM. Assuming flat elevation at Z=0")
+            print(f"WARNING: {raster.basename} has no DEM. Assuming flat terrain at Z=0")
         else:
             self.z_channel = self.z_channel.copy()
 
