@@ -280,27 +280,6 @@ class MVATViewer(QFrame):
         # The View menu has been moved to the application's menubar / dock menu.
         # Keep the toolbar present for other controls (bottom toolbar mounts widgets).
         return toolbar
-    
-    def create_view_toolbar(self) -> QToolBar:
-        """
-        Create a toolbar containing a button with the View menu.
-        This can be added directly to the dock's toolbar area.
-        """
-        toolbar = QToolBar("View Menu")
-        toolbar.setMovable(False)
-        
-        # Create the menu (you can reuse the existing create_view_menu logic)
-        view_menu = self.create_view_menu()
-        
-        # Create a tool button that shows the menu
-        view_button = QToolButton()
-        view_button.setText("View")
-        view_button.setMenu(view_menu)
-        view_button.setPopupMode(QToolButton.InstantPopup)
-        view_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        
-        toolbar.addWidget(view_button)
-        return toolbar
 
     def create_view_menu(self) -> QMenu:
         """Create a standalone QMenu for the viewer that can be attached to a menubar or dock."""

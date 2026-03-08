@@ -15,7 +15,6 @@ from coralnet_toolbox.MVAT.core.SceneContext import SceneContext
 
 # Concrete Scene Products
 from coralnet_toolbox.MVAT.core.Model import (
-    PointCloud,           # Backward-compatible alias
     PointCloudProduct,
     MeshProduct,
     DEMProduct,
@@ -48,7 +47,6 @@ __all__ = [
     'RenderStyle',
     'SceneContext',
     # Concrete Products
-    'PointCloud',           # Backward-compatible alias
     'PointCloudProduct',
     'MeshProduct',
     'DEMProduct',
