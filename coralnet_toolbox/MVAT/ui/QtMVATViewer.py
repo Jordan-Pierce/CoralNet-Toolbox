@@ -1049,6 +1049,13 @@ class MVATViewer(QFrame):
         Creates or updates PyVista actors for each product based on
         their render style preferences. Respects current visibility settings.
         """
+        # Hide placeholder if we have any products
+        if self.scene_context.has_any_product():
+            try:
+                self._hide_placeholder()
+            except Exception:
+                pass
+        
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             for product in self.scene_context:

@@ -379,8 +379,8 @@ class MVATManager(QObject):
                     # Create the wrapper using the camera
                     elevation = DEMProduct(camera)
                     
-                    # Push it directly into the 3D Scene Context
-                    self.viewer.scene_context.add_product(elevation)
+                    # Add via viewer method to ensure placeholder is hidden
+                    self.viewer.add_product(elevation)
                     elevation_added = True
                     
                     # Usually only one master orthomosaic per project, but we'll 
