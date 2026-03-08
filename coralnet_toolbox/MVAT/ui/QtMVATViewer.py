@@ -136,8 +136,10 @@ class MVATViewer(QFrame):
         self.opacity_slider.setValue(25)
         self.opacity_slider.setFixedWidth(120)
         self.opacity_slider.setToolTip("Adjust thumbnail opacity")
+        # Emit percentage change for external listeners
         self.opacity_slider.valueChanged.connect(lambda v: self.opacityChanged.emit(v))
-        self.opacity_slider.valueChanged.connect(lambda v: self.set_thumbnail_opacity(v / 100.0))
+        # Connect slider to surface/thumbnail opacity handler (percent int)
+        self.opacity_slider.valueChanged.connect(self.set_surface_opacity)
 
         # Point size control
         point_size_label = QLabel("Point Size:")
@@ -1096,11 +1098,21 @@ class MVATViewer(QFrame):
                         render=False,
                         **style
                     )
+                    # Ensure actor opacity matches style (some PyVista versions ignore opacity in add_mesh)
+                    try:
+                        actor.GetProperty().SetOpacity(style.get('opacity', 1.0))
+                    except Exception:
+                        pass
                     self._product_actors[product_id] = actor
                 else:
                     # Update existing actor's mesh
                     try:
                         actor.GetMapper().SetInputData(mesh)
+                        # Update actor opacity from style in case persisted value changed
+                        try:
+                            actor.GetProperty().SetOpacity(style.get('opacity', 1.0))
+                        except Exception:
+                            pass
                     except Exception:
                         # Fallback: recreate actor
                         try:
@@ -1108,6 +1120,10 @@ class MVATViewer(QFrame):
                         except Exception:
                             pass
                         actor = self.plotter.add_mesh(mesh, render=False, **style)
+                        try:
+                            actor.GetProperty().SetOpacity(style.get('opacity', 1.0))
+                        except Exception:
+                            pass
                         self._product_actors[product_id] = actor
                 
                 # Apply visibility setting
@@ -1523,6 +1539,57 @@ class MVATViewer(QFrame):
                 self.plotter.render()
             except Exception:
                 pass
+        except Exception:
+            pass
+
+    def set_surface_opacity(self, percent: int):
+        """
+        Set surface opacity for Mesh and DEM products (persist to product objects)
+
+        Args:
+            percent: integer 0-100 from the opacity slider
+        """
+        try:
+            opacity = float(percent) / 100.0
+        except Exception:
+            opacity = 1.0
+
+        # Persist to product objects (so reloads keep the value)
+        try:
+            for product in list(self.scene_context.get_products_by_class(MeshProduct)):
+                try:
+                    product.opacity = opacity
+                except Exception:
+                    pass
+            for product in list(self.scene_context.get_products_by_class(DEMProduct)):
+                try:
+                    product.opacity = opacity
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # Apply to existing actors
+        try:
+            for product in self.scene_context:
+                if isinstance(product, (MeshProduct, DEMProduct)):
+                    actor = self._product_actors.get(product.product_id)
+                    if actor is not None:
+                        try:
+                            actor.GetProperty().SetOpacity(opacity)
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+        # Update thumbnails as well (they use 0.0-1.0 range)
+        try:
+            self.set_thumbnail_opacity(opacity)
+        except Exception:
+            pass
+
+        try:
+            self.plotter.render()
         except Exception:
             pass
 
