@@ -440,6 +440,13 @@ class DEMProduct(AbstractSceneProduct):
                 
                 if pixmap is not None and not pixmap.isNull():
                     img_data = pixmap_to_numpy(pixmap)
+                    
+                    # CRITICAL: Flip the texture vertically to match UV coordinate convention
+                    # OpenGL textures have origin at bottom-left, but images have origin at top-left
+                    # Our UV coordinates are computed with v = 1.0 - (pixel_y / height)
+                    # so the texture must be flipped to align properly
+                    img_data = np.flipud(img_data).copy()
+                    
                     self._texture = pv.Texture(img_data)
                     
             except Exception as e:

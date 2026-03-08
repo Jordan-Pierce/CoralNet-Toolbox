@@ -554,6 +554,28 @@ class OrthographicCamera(Camera):
     # --------------------------------------------------------------------------
     
     def get_elevation_mesh(self, max_resolution=1000):
+        """
+        Generate a 3D elevation mesh from the DEM z_channel with proper texture coordinates.
+        
+        This method creates a triangulated surface mesh from the DEM that can be textured
+        with the orthomosaic imagery. Key considerations:
+        
+        1. UV coordinates must be flipped vertically (V = 1 - v) because OpenGL/VTK
+           texture coordinates have origin at bottom-left, while image pixels have
+           origin at top-left.
+           
+        2. The threshold() filter destroys texture coordinates, so we must recompute
+           UVs after mesh extraction using the world-to-pixel inverse transform.
+           
+        3. NoData regions are handled by setting them to a baseline elevation and
+           marking cells for removal after triangulation.
+        
+        Args:
+            max_resolution: Maximum dimension for the downsampled mesh grid.
+            
+        Returns:
+            pv.PolyData: Triangulated mesh with texture coordinates, or None if no DEM.
+        """
         import pyvista as pv
         import cv2
         import numpy as np
@@ -577,39 +599,83 @@ class OrthographicCamera(Camera):
         baseline_z = float(np.min(temp_z[valid_mask])) if np.any(valid_mask) else 0.0
         temp_z[~valid_mask] = baseline_z
         
-        # 2. Smoothly downsample
+        # 2. Smoothly downsample elevation and mask
         z_smooth = cv2.resize(temp_z, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
         mask_smooth = cv2.resize(valid_mask.astype(np.uint8), (target_w, target_h), interpolation=cv2.INTER_NEAREST)
         
-        # 3. Generate spatial grids
+        # 3. Generate spatial grids in pixel space
         x = np.linspace(0, self.width - 1, target_w)
         y = np.linspace(0, self.height - 1, target_h)
         xx, yy = np.meshgrid(x, y)
         
+        # Transform pixel coordinates to world coordinates
         pixels_hom = np.column_stack((xx.flatten(), yy.flatten(), np.ones_like(xx.flatten())))
         world_hom = (self.transform_matrix @ pixels_hom.T).T
         
         x_world = world_hom[:, 0].reshape(target_h, target_w)
         y_world = world_hom[:, 1].reshape(target_h, target_w)
         
+        # 4. Create the StructuredGrid
         grid = pv.StructuredGrid(x_world, y_world, z_smooth)
         
-        # CRITICAL FIX 1: Do NOT add 'Elevation' to point_data. It will override the texture!
-        # Just add the mask so we can threshold the cliffs away.
-        grid.point_data['Valid'] = mask_smooth.flatten()
+        # Store validity mask as cell data for filtering
+        # We need to identify cells (quads) where ANY vertex is invalid
+        # A cell is valid only if ALL 4 corners are valid
+        # Use vectorized operations for speed
+        corner_tl = mask_smooth[:-1, :-1]  # Top-left corners
+        corner_tr = mask_smooth[:-1, 1:]   # Top-right corners
+        corner_bl = mask_smooth[1:, :-1]   # Bottom-left corners
+        corner_br = mask_smooth[1:, 1:]    # Bottom-right corners
         
-        u = xx.flatten() / (self.width - 1)
-        v = yy.flatten() / (self.height - 1)
+        # Cell is valid only if ALL 4 corners are valid
+        cell_valid_2d = (corner_tl & corner_tr & corner_bl & corner_br).astype(np.uint8)
+        cell_valid = cell_valid_2d.flatten()
         
-        # CRITICAL FIX 2: Use the strict 't_coords' property for UVs
-        grid.active_texture_coordinates = np.column_stack((u, v))
+        grid.cell_data['Valid'] = cell_valid
         
-        # 4. Filter out the invalid geometry and convert to a true mesh
-        mesh = grid.threshold(value=0.5, scalars='Valid').extract_surface().triangulate()
+        # 5. Extract surface and triangulate (this preserves cell data)
+        # Use extract_cells to remove invalid cells BEFORE triangulation
+        valid_cell_ids = np.where(cell_valid == 1)[0]
         
-        # Clean up the temporary mask
-        if 'Valid' in mesh.point_data:
-            del mesh.point_data['Valid']
+        if len(valid_cell_ids) == 0:
+            print(f"⚠️ Warning: No valid cells in DEM for {self.label}")
+            # Fall back to full grid without filtering
+            mesh = grid.extract_surface().triangulate()
+        else:
+            # Extract only valid cells, then get surface and triangulate
+            filtered_grid = grid.extract_cells(valid_cell_ids)
+            mesh = filtered_grid.extract_surface().triangulate()
+        
+        # 6. CRITICAL: Recompute texture coordinates from world positions
+        # The threshold/extract operations destroy the original UV mapping,
+        # so we must recompute UVs by projecting mesh vertices back to pixel space
+        world_points = np.asarray(mesh.points)
+        
+        # Project world XY back to pixel coordinates using inverse transform
+        # [u, v, 1] = T_inv @ [X, Y, 1]
+        n_points = len(world_points)
+        world_xy_hom = np.column_stack([world_points[:, 0], world_points[:, 1], np.ones(n_points)])
+        pixel_coords = (self.transform_matrix_inv @ world_xy_hom.T).T
+        
+        # Normalize to [0, 1] UV range
+        u = pixel_coords[:, 0] / (self.width - 1)
+        # CRITICAL: Flip V coordinate for OpenGL texture convention
+        # Image origin is top-left (y=0), texture origin is bottom-left (v=0)
+        v = 1.0 - (pixel_coords[:, 1] / (self.height - 1))
+        
+        # Clamp UV coordinates to valid range
+        u = np.clip(u, 0.0, 1.0)
+        v = np.clip(v, 0.0, 1.0)
+        
+        # Set texture coordinates on the final mesh
+        mesh.active_texture_coordinates = np.column_stack((u, v))
+        
+        # Clean up any leftover data arrays that could interfere with texturing
+        for key in list(mesh.point_data.keys()):
+            if key not in ['TCoords']:  # Keep only texture coords
+                del mesh.point_data[key]
+        for key in list(mesh.cell_data.keys()):
+            del mesh.cell_data[key]
         
         print(f"🌍 Generated smooth 3D elevation mesh for {self.label} ({mesh.n_cells} faces)")
         return mesh
