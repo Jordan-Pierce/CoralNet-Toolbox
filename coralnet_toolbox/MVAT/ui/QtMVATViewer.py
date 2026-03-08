@@ -19,7 +19,7 @@ from pyvistaqt import QtInteractor
 from PyQt5.QtCore import Qt, QEvent, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication, QFrame, QVBoxLayout,
-    QWidget, QHBoxLayout, QLabel, QSlider, QSpinBox,
+    QWidget, QHBoxLayout, QLabel, QSpinBox,
     QToolBar, QToolButton, QMenu, QAction, QActionGroup, QStackedLayout
 )
 
@@ -38,7 +38,6 @@ from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED
 
 class MVATViewer(QFrame):
     focalPointChanged = pyqtSignal(np.ndarray)  # Emits 3D point when focal point is set
-    opacityChanged = pyqtSignal(int)            # percentage 0-100
     pointSizeChanged = pyqtSignal(int)
     computeIndexMapsToggled = pyqtSignal(bool)
     computeDepthMapsToggled = pyqtSignal(bool)
@@ -86,7 +85,7 @@ class MVATViewer(QFrame):
         # Frustum and thumbnail management
         self._frustum_manager = BatchedFrustumManager()
         self.thumbnail_actors = []
-        self.thumbnail_opacity = 0.0
+        self.thumbnail_opacity = 0.25
         self.frustum_scale = 0.1
         self._show_wireframes_enabled = True
         self._show_thumbnails_enabled = True
@@ -129,18 +128,6 @@ class MVATViewer(QFrame):
         self._stack.setCurrentWidget(self._placeholder_label)
         self.layout.addWidget(self._stack_container)
 
-        # Opacity control (for thumbnail/frustum opacity)
-        opacity_label = QLabel("Opacity:")
-        self.opacity_slider = QSlider(Qt.Horizontal)
-        self.opacity_slider.setRange(0, 100)
-        self.opacity_slider.setValue(25)
-        self.opacity_slider.setFixedWidth(120)
-        self.opacity_slider.setToolTip("Adjust thumbnail opacity")
-        # Emit percentage change for external listeners
-        self.opacity_slider.valueChanged.connect(lambda v: self.opacityChanged.emit(v))
-        # Connect slider to surface/thumbnail opacity handler (percent int)
-        self.opacity_slider.valueChanged.connect(self.set_surface_opacity)
-
         # Point size control
         point_size_label = QLabel("Point Size:")
         self.point_size_spinbox = QSpinBox()
@@ -150,15 +137,7 @@ class MVATViewer(QFrame):
         self.point_size_spinbox.setToolTip("Adjust point cloud point size")
         self.point_size_spinbox.valueChanged.connect(self._on_point_size_spin_changed)
 
-        # Initialize thumbnail opacity from slider value
-        try:
-            self.set_thumbnail_opacity(self.opacity_slider.value() / 100.0)
-        except Exception:
-            pass
-        
-        # Add widgets to bottom layout (left aligned: opacity, stretch, point size)
-        bottom_layout.addWidget(opacity_label)
-        bottom_layout.addWidget(self.opacity_slider)
+        # Add widgets to bottom layout (stretch, point size)
         bottom_layout.addStretch(1)
         bottom_layout.addWidget(point_size_label)
         bottom_layout.addWidget(self.point_size_spinbox)
@@ -1478,12 +1457,31 @@ class MVATViewer(QFrame):
             import traceback
             traceback.print_exc()
 
-        # Thumbnails (lazy): only for selected camera to limit actors
+        # Thumbnails (lazy): add for selected and highlighted cameras
         # Clear previous thumbnails first
         self.remove_thumbnails()
-        if show_thumbnails and selected_camera is not None:
-            print(f"   - Adding thumbnail for selected camera")
-            self._add_thumbnail_for_camera(selected_camera, scale=frustum_scale)
+        if show_thumbnails:
+            # Add thumbnail for selected camera first
+            if selected_camera is not None:
+                try:
+                    print(f"   - Adding thumbnail for selected camera")
+                    self._add_thumbnail_for_camera(selected_camera, scale=frustum_scale)
+                except Exception:
+                    pass
+
+            # Also add thumbnails for highlighted cameras (if any)
+            try:
+                for hp in (highlighted_paths or []):
+                    try:
+                        # cameras is the dict passed in mapping path->Camera
+                        cam = cameras.get(hp) if isinstance(cameras, dict) else None
+                        # Avoid duplicating the selected thumbnail
+                        if cam is not None and (selected_camera is None or cam.image_path != selected_camera.image_path):
+                            self._add_thumbnail_for_camera(cam, scale=frustum_scale)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
         
         # Render update
         try:
@@ -1539,57 +1537,6 @@ class MVATViewer(QFrame):
                 self.plotter.render()
             except Exception:
                 pass
-        except Exception:
-            pass
-
-    def set_surface_opacity(self, percent: int):
-        """
-        Set surface opacity for Mesh and DEM products (persist to product objects)
-
-        Args:
-            percent: integer 0-100 from the opacity slider
-        """
-        try:
-            opacity = float(percent) / 100.0
-        except Exception:
-            opacity = 1.0
-
-        # Persist to product objects (so reloads keep the value)
-        try:
-            for product in list(self.scene_context.get_products_by_class(MeshProduct)):
-                try:
-                    product.opacity = opacity
-                except Exception:
-                    pass
-            for product in list(self.scene_context.get_products_by_class(DEMProduct)):
-                try:
-                    product.opacity = opacity
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
-        # Apply to existing actors
-        try:
-            for product in self.scene_context:
-                if isinstance(product, (MeshProduct, DEMProduct)):
-                    actor = self._product_actors.get(product.product_id)
-                    if actor is not None:
-                        try:
-                            actor.GetProperty().SetOpacity(opacity)
-                        except Exception:
-                            pass
-        except Exception:
-            pass
-
-        # Update thumbnails as well (they use 0.0-1.0 range)
-        try:
-            self.set_thumbnail_opacity(opacity)
-        except Exception:
-            pass
-
-        try:
-            self.plotter.render()
         except Exception:
             pass
 
