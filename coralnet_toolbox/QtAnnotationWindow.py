@@ -212,6 +212,8 @@ class AnnotationWindow(QGraphicsView):
         self.annotation_size_spinbox.setValue(self.annotation_size)
         self.annotation_size_spinbox.valueChanged.connect(self.set_annotation_size)
         self.annotationSizeChanged.connect(self.annotation_size_spinbox.setValue)
+        # Only enable the patch size control when the Patch tool is active
+        self.annotation_size_spinbox.setEnabled(False)
 
         # --- Positional/Dimensional Labels ---
         self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
