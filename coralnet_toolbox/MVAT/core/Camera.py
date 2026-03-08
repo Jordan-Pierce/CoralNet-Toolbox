@@ -553,7 +553,7 @@ class OrthographicCamera(Camera):
     # DEM Association
     # --------------------------------------------------------------------------
     
-    def get_elevation_mesh(self, max_resolution=1000):
+    def get_elevation_mesh(self, max_resolution=10000):
         """
         Generate a 3D elevation mesh from the DEM z_channel with proper texture coordinates.
         
