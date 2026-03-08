@@ -602,7 +602,7 @@ class OrthographicCamera(Camera):
         v = yy.flatten() / (self.height - 1)
         
         # CRITICAL FIX 2: Use the strict 't_coords' property for UVs
-        grid.t_coords = np.column_stack((u, v)) 
+        grid.active_texture_coordinates = np.column_stack((u, v))
         
         # 4. Filter out the invalid geometry and convert to a true mesh
         mesh = grid.threshold(value=0.5, scalars='Valid').extract_surface().triangulate()
