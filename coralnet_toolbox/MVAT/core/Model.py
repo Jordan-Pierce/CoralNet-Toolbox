@@ -176,7 +176,7 @@ class MeshProduct(AbstractSceneProduct):
         opacity (float): Default rendering opacity.
     """
     
-    def __init__(self, file_path: str, opacity: float = 0.8, product_id: Optional[str] = None):
+    def __init__(self, file_path: str, opacity: float = 1.0, product_id: Optional[str] = None):
         """
         Initialize MeshProduct from file.
         
@@ -209,7 +209,7 @@ class MeshProduct(AbstractSceneProduct):
         print(f"⏱️ Loaded MeshProduct: {self.label} with {self.mesh.n_cells:,} faces in {load_time:.3f}s")
     
     @classmethod
-    def from_file(cls, file_path: str, opacity: float = 0.8) -> 'MeshProduct':
+    def from_file(cls, file_path: str, opacity: float = 1.0) -> 'MeshProduct':
         """Load a mesh from file."""
         return cls(file_path=file_path, opacity=opacity)
     

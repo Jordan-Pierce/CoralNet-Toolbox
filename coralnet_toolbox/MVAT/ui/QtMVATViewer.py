@@ -278,6 +278,15 @@ class MVATViewer(QFrame):
         else:
             self.plotter.disable_parallel_projection()
         self.plotter.render()
+        # Keep menu action in sync if present
+        try:
+            if hasattr(self, '_action_ortho') and self._action_ortho is not None:
+                # Avoid re-triggering signals
+                self._action_ortho.blockSignals(True)
+                self._action_ortho.setChecked(bool(state))
+                self._action_ortho.blockSignals(False)
+        except Exception:
+            pass
         
     # --------------------------------------------------------------------------
     # DockWrapper Hooks
@@ -339,9 +348,10 @@ class MVATViewer(QFrame):
         view_menu.addSeparator()
 
         # Orthographic projection
-        action_ortho = QAction("Orthographic Projection", self)
+        action_ortho = QAction("Orthographic (O)", self)
         action_ortho.setCheckable(True)
         action_ortho.toggled.connect(self.toggle_orthographic)
+        self._action_ortho = action_ortho
         view_menu.addAction(action_ortho)
 
         view_menu.addSeparator()
@@ -820,6 +830,14 @@ class MVATViewer(QFrame):
             # Isometric view
             self.view_isometric()
             event.accept()
+        elif key == Qt.Key_O:
+            # Toggle orthographic projection via hotkey 'O'
+            try:
+                current = bool(getattr(self.plotter.camera, 'parallel_projection', False))
+                self.toggle_orthographic(not current)
+                event.accept()
+            except Exception:
+                pass
         else:
             # Let the parent widget handle other keys
             event.ignore()
