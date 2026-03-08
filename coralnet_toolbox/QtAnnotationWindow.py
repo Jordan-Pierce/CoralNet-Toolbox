@@ -10,7 +10,7 @@ import pyqtgraph as pg
 from PyQt5.QtGui import QMouseEvent, QPixmap, QImage, QBrush
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QSize
 from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QGraphicsPixmapItem, 
-                             QSlider, QSpinBox, QLabel, QHBoxLayout, QWidget, QComboBox, QToolButton, QToolBar)
+                             QSlider, QSpinBox, QLabel, QHBoxLayout, QWidget, QComboBox, QToolButton, QToolBar, QSizePolicy)
 
 from coralnet_toolbox.MVAT.core.Marker import Marker
 from coralnet_toolbox.MVAT.core.Ray import CameraRay
@@ -201,7 +201,8 @@ class AnnotationWindow(QGraphicsView):
         self.transparency_slider = QSlider(Qt.Horizontal)
         self.transparency_slider.setRange(0, 255)
         self.transparency_slider.setValue(128)
-        self.transparency_slider.setMinimumWidth(100)
+        # Let the annotation transparency slider naturally expand
+        self.transparency_slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.transparency_slider.valueChanged.connect(self.update_label_transparency)
 
         # --- Annotation Size ---
@@ -257,7 +258,8 @@ class AnnotationWindow(QGraphicsView):
         self.z_transparency_widget = QSlider(Qt.Horizontal)
         self.z_transparency_widget.setRange(0, 255)
         self.z_transparency_widget.setValue(128)
-        self.z_transparency_widget.setMaximumWidth(150)
+        # Allow the Z transparency slider to naturally expand like the main transparency slider
+        self.z_transparency_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.z_transparency_widget.setEnabled(False)
         self.z_transparency_widget.valueChanged.connect(self.update_z_transparency)
 
@@ -595,8 +597,17 @@ class AnnotationWindow(QGraphicsView):
         """
         toolbar = QToolBar("Annotation Tools")
         toolbar.setMovable(False)
+        # Patch Size widget (far left)
+        size_widget = QWidget()
+        size_layout = QHBoxLayout(size_widget)
+        size_layout.setContentsMargins(4, 0, 4, 0)
+        size_layout.addWidget(QLabel("Patch Size"))
+        size_layout.addWidget(self.annotation_size_spinbox)
+        toolbar.addWidget(size_widget)
         
-        # Transparency widget
+        toolbar.addSeparator()
+
+        # Transparency widget (annotation transparency)
         trans_widget = QWidget()
         trans_layout = QHBoxLayout(trans_widget)
         trans_layout.setContentsMargins(4, 0, 4, 0)
@@ -610,15 +621,19 @@ class AnnotationWindow(QGraphicsView):
         toolbar.addWidget(trans_widget)
         
         toolbar.addSeparator()
-        
-        # Patch Size widget
-        size_widget = QWidget()
-        size_layout = QHBoxLayout(size_widget)
-        size_layout.setContentsMargins(4, 0, 4, 0)
-        size_layout.addWidget(QLabel("Patch Size"))
-        size_layout.addWidget(self.annotation_size_spinbox)
-        toolbar.addWidget(size_widget)
-        
+
+        # Z-channel controls moved to top toolbar (to the right of annotation transparency)
+        z_widget = QWidget()
+        z_layout = QHBoxLayout(z_widget)
+        z_layout.setContentsMargins(4, 0, 4, 0)
+        # Order: dynamic range button, z transparency slider, then colormap combo (swapped)
+        z_layout.addWidget(self.z_dynamic_button)
+        z_layout.addWidget(self.z_transparency_widget)
+        z_layout.addWidget(self.z_colormap_dropdown)
+        toolbar.addWidget(z_widget)
+
+        toolbar.addSeparator()
+
         return toolbar
 
     def create_bottom_toolbar(self) -> QToolBar:
@@ -645,11 +660,8 @@ class AnnotationWindow(QGraphicsView):
         group_image = make_group(self.image_dimensions_label)
         group_view = make_group(self.view_dimensions_label)
         group_scale = make_group(self.scale_unit_dropdown, self.scaled_dimensions_label)
-        group_z = make_group(self.z_unit_dropdown, 
-                             self.z_label, 
-                             self.z_transparency_widget, 
-                             self.z_dynamic_button, 
-                             self.z_colormap_dropdown)
+        # Keep only the unit dropdown and the z value label in the bottom status bar.
+        group_z = make_group(self.z_unit_dropdown, self.z_label)
         
         layout.addWidget(group_mouse)
         layout.addStretch(1)
