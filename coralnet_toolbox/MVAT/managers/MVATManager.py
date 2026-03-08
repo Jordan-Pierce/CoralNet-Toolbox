@@ -365,6 +365,14 @@ class MVATManager(QObject):
         for path, camera in self.cameras.items():
             # Check if it is an OrthographicCamera and actually has DEM data
             if camera.is_orthographic and camera.z_channel is not None:
+                # Generate the expected product ID to check for duplicates
+                expected_id = f"Elevation_{camera.label}"
+                
+                # Skip if this elevation product already exists in the scene
+                if expected_id in self.viewer.scene_context:
+                    print(f"⏭️ Skipping {camera.label}: elevation already in scene")
+                    continue
+                    
                 print(f"🏔️ Found DEM for {camera.label}, generating 3D elevation mesh...")
                 
                 try:

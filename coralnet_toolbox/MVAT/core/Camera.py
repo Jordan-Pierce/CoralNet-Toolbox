@@ -668,11 +668,19 @@ class OrthographicCamera(Camera):
         v = np.clip(v, 0.0, 1.0)
         
         # Set texture coordinates on the final mesh
-        mesh.active_texture_coordinates = np.column_stack((u, v))
+        texture_coords = np.column_stack((u, v)).astype(np.float32)
+        mesh.point_data['TCoords'] = texture_coords
+        mesh.active_texture_coordinates = texture_coords
+        
+        # Verify texture coordinates were set
+        if mesh.active_texture_coordinates is None:
+            print(f"⚠️ Warning: Failed to set texture coordinates for {self.label}")
+        else:
+            print(f"✅ Texture coordinates set: {mesh.active_texture_coordinates.shape}")
         
         # Clean up any leftover data arrays that could interfere with texturing
         for key in list(mesh.point_data.keys()):
-            if key not in ['TCoords']:  # Keep only texture coords
+            if key not in ['TCoords', 'Texture Coordinates']:  # Keep texture coords
                 del mesh.point_data[key]
         for key in list(mesh.cell_data.keys()):
             del mesh.cell_data[key]

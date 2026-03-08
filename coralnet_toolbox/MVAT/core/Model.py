@@ -430,6 +430,25 @@ class DEMProduct(AbstractSceneProduct):
             'scalars': None, # CRITICAL: Force PyVista to ignore any lingering data arrays
         }
         
+        # Check if the mesh has texture coordinates before attempting to apply texture
+        mesh = self.get_render_mesh()
+        
+        # Robustly check for texture coordinates
+        has_tcoords = False
+        if mesh is not None:
+            try:
+                tcoords = mesh.active_texture_coordinates
+                has_tcoords = (tcoords is not None and len(tcoords) > 0)
+            except Exception as e:
+                print(f"⚠️ Error checking texture coordinates for {self.label}: {e}")
+                has_tcoords = False
+        
+        if not has_tcoords:
+            # No texture coordinates - use fallback color
+            print(f"⚠️ DEM {self.label} has no texture coordinates, using fallback color")
+            style['color'] = '#8d8cc4'
+            return style
+        
         if self._texture is None:
             try:
                 import pyvista as pv
