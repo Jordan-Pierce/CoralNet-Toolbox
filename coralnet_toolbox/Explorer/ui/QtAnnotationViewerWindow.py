@@ -371,21 +371,21 @@ class AnnotationViewerWindow(QWidget):
         
         # Create scroll area for content
         self.content_widget = QWidget()
-        self.content_widget.setStyleSheet("background-color: black;")
+        self.content_widget.setStyleSheet("background-color: #1e1e1e;")
         
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.scroll_area.setWidget(self.content_widget)
-        self.scroll_area.viewport().setStyleSheet("background-color: black;")
+        self.scroll_area.viewport().setStyleSheet("background-color: #1e1e1e;")
         layout.addWidget(self.scroll_area)
 
         # Placeholder label shown when no annotations are available
         self.placeholder_label = QLabel(
             "No annotations available\nLoad annotations or adjust the gallery filters to display results."
         )
-        self.placeholder_label.setStyleSheet("color: white; background-color: black; font-size: 14px; padding: 16px;")
+        self.placeholder_label.setStyleSheet("color: white; background-color: #1e1e1e; font-size: 14px; padding: 16px;")
         self.placeholder_label.setAlignment(Qt.AlignCenter)
         self.placeholder_label.setAutoFillBackground(True)
         self._show_placeholder()

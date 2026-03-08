@@ -103,10 +103,11 @@ class AnnotationWindow(QGraphicsView):
         self.setScene(self.scene)
         # Default to a dark background for the annotation workspace
         try:
-            self.scene.setBackgroundBrush(QBrush(Qt.black))
-            self.setBackgroundBrush(QBrush(Qt.black))
+            from PyQt5.QtGui import QColor
+            self.scene.setBackgroundBrush(QBrush(QColor('#1e1e1e')))
+            self.setBackgroundBrush(QBrush(QColor('#1e1e1e')))
             # also ensure the viewport widget background matches
-            self.viewport().setStyleSheet("background-color: black;")
+            self.viewport().setStyleSheet("background-color: #1e1e1e;")
         except Exception:
             # Fall back silently if the view isn't fully initialized yet
             pass
@@ -155,7 +156,7 @@ class AnnotationWindow(QGraphicsView):
             "No image loaded\nImport or drag and drop an image or Project file.", 
             self.viewport()
         )
-        self._placeholder_label.setStyleSheet("color: white; background-color: black; font-size: 14px; padding: 16px;")
+        self._placeholder_label.setStyleSheet("color: white; background-color: #1e1e1e; font-size: 14px; padding: 16px;")
         self._placeholder_label.setAlignment(Qt.AlignCenter)
         self._placeholder_label.setAutoFillBackground(True)
         self._placeholder_label.setWordWrap(True)

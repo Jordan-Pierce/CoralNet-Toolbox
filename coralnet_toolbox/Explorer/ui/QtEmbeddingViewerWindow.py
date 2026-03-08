@@ -340,8 +340,8 @@ class EmbeddingViewerWindow(QWidget):
         self.graphics_view.mouseReleaseEvent = self._mouse_release_event
         self.graphics_view.mouseMoveEvent = self._mouse_move_event
         self.graphics_view.wheelEvent = self._wheel_event
-        self.graphics_view.setStyleSheet("background-color: black;")
-        self.graphics_scene.setBackgroundBrush(QColor('black'))
+        self.graphics_view.setStyleSheet("background-color: #1e1e1e;")
+        self.graphics_scene.setBackgroundBrush(QColor('#1e1e1e'))
         
         layout.addWidget(self.graphics_view)
         
@@ -349,7 +349,7 @@ class EmbeddingViewerWindow(QWidget):
         self.placeholder_label = QLabel(
             "No embedding data available\nRun embedding to see visualizations."
         )
-        self.placeholder_label.setStyleSheet("color: white; background-color: black; font-size: 14px; padding: 16px;")
+        self.placeholder_label.setStyleSheet("color: white; background-color: #1e1e1e; font-size: 14px; padding: 16px;")
         self.placeholder_label.setAlignment(Qt.AlignCenter)
         self.placeholder_label.setAutoFillBackground(True)
         self._show_placeholder()

@@ -62,7 +62,7 @@ class MVATViewer(QFrame):
         self.plotter = QtInteractor(self, point_smoothing=False)
 
         # Optimizations TODO make configurable?
-        self.plotter.set_background('black')
+        self.plotter.set_background('#1e1e1e')
         self.plotter.disable_anti_aliasing()
         self.plotter.disable_eye_dome_lighting()
         self.plotter.disable_shadows()
@@ -119,7 +119,7 @@ class MVATViewer(QFrame):
         self._placeholder_label = QLabel(
             "No 3D data loaded\nDrag a file here to load:\n• Point clouds (.ply, .pcd)\n• Meshes (.obj, .stl)"
         )
-        self._placeholder_label.setStyleSheet("color: white; background-color: black; font-size: 14px; padding: 16px;")
+        self._placeholder_label.setStyleSheet("color: white; background-color: #1e1e1e; font-size: 14px; padding: 16px;")
         self._placeholder_label.setAlignment(Qt.AlignCenter)
         self._placeholder_label.setAutoFillBackground(True)
         self._placeholder_label.setWordWrap(True)
