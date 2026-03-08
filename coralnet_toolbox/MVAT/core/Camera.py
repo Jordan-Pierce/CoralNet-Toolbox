@@ -553,11 +553,7 @@ class OrthographicCamera(Camera):
     # DEM Association
     # --------------------------------------------------------------------------
     
-    def get_elevation_mesh(self, max_resolution=10000):
-        """
-        Generates a smooth, triangulated PyVista 3D surface mesh using the camera's DEM.
-        Filters out NoData regions to prevent artificial cliffs and texture stretching.
-        """
+    def get_elevation_mesh(self, max_resolution=1000):
         import pyvista as pv
         import cv2
         import numpy as np
@@ -578,14 +574,11 @@ class OrthographicCamera(Camera):
             valid_mask &= (temp_z != self._raster.z_nodata)
         valid_mask &= (temp_z > -10000.0)
         
-        # We still fill the background with a baseline temporarily so cv2.resize 
-        # doesn't poison valid edge pixels with NaN math
         baseline_z = float(np.min(temp_z[valid_mask])) if np.any(valid_mask) else 0.0
         temp_z[~valid_mask] = baseline_z
         
-        # 2. Smoothly downsample the elevation AND the mask
+        # 2. Smoothly downsample
         z_smooth = cv2.resize(temp_z, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
-        # Use NEAREST for the mask so we don't get fractional validity values
         mask_smooth = cv2.resize(valid_mask.astype(np.uint8), (target_w, target_h), interpolation=cv2.INTER_NEAREST)
         
         # 3. Generate spatial grids
@@ -600,20 +593,21 @@ class OrthographicCamera(Camera):
         y_world = world_hom[:, 1].reshape(target_h, target_w)
         
         grid = pv.StructuredGrid(x_world, y_world, z_smooth)
-        grid.point_data['Elevation'] = z_smooth.flatten()
         
-        # Inject the validity mask into the grid data
+        # CRITICAL FIX 1: Do NOT add 'Elevation' to point_data. It will override the texture!
+        # Just add the mask so we can threshold the cliffs away.
         grid.point_data['Valid'] = mask_smooth.flatten()
         
         u = xx.flatten() / (self.width - 1)
         v = yy.flatten() / (self.height - 1)
-        grid.active_texture_coordinates = np.column_stack((u, 1.0 - v)) 
         
-        # 4. Filter out the invalid geometry and convert to a true mesh!
-        # The threshold filter deletes any cell where 'Valid' < 0.5.
+        # CRITICAL FIX 2: Use the strict 't_coords' property for UVs
+        grid.t_coords = np.column_stack((u, v)) 
+        
+        # 4. Filter out the invalid geometry and convert to a true mesh
         mesh = grid.threshold(value=0.5, scalars='Valid').extract_surface().triangulate()
         
-        # Clean up the temporary mask array so it doesn't clutter the final mesh
+        # Clean up the temporary mask
         if 'Valid' in mesh.point_data:
             del mesh.point_data['Valid']
         

@@ -427,6 +427,7 @@ class DEMProduct(AbstractSceneProduct):
             'opacity': self.opacity,
             'show_edges': False,
             'lighting': True,
+            'scalars': None, # CRITICAL: Force PyVista to ignore any lingering data arrays
         }
         
         if self._texture is None:
@@ -434,15 +435,11 @@ class DEMProduct(AbstractSceneProduct):
                 import pyvista as pv
                 from coralnet_toolbox.utilities import pixmap_to_numpy
                 
-                # 1. Cap the texture size to N to prevent GPU crashes!
-                # This fetches a high-quality downsampled QPixmap instead of the raw GeoTIFF
-                pixmap = self.camera._raster.get_pixmap(longest_edge=8192)
+                # Cap the texture size to 4096 to prevent GPU crashes
+                pixmap = self.camera._raster.get_pixmap(longest_edge=4096)
                 
                 if pixmap is not None and not pixmap.isNull():
-                    # 2. Convert to numpy array (ensures standard RGB/RGBA format)
                     img_data = pixmap_to_numpy(pixmap)
-                    
-                    # 3. Create the PyVista texture
                     self._texture = pv.Texture(img_data)
                     
             except Exception as e:
@@ -450,8 +447,9 @@ class DEMProduct(AbstractSceneProduct):
         
         if self._texture is not None:
             style['texture'] = self._texture
+            style['color'] = 'white' # Prevents the texture from being tinted by a default color
         else:
-            style['color'] = '#8d8cc4'  # Fallback solid color
+            style['color'] = '#8d8cc4'  # Fallback to standard mesh purple
             
         return style
     
