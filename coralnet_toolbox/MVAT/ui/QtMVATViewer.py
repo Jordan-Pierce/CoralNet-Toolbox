@@ -25,7 +25,7 @@ from PyQt5.QtWidgets import (
 
 from coralnet_toolbox.MVAT.core.Ray import CameraRay, BatchedRayManager
 from coralnet_toolbox.MVAT.core.Frustum import BatchedFrustumManager
-from coralnet_toolbox.MVAT.core.Model import PointCloud, PointCloudProduct, MeshProduct, DEMProduct
+from coralnet_toolbox.MVAT.core.Model import PointCloudProduct, MeshProduct, DEMProduct
 from coralnet_toolbox.MVAT.core.SceneContext import SceneContext
 from coralnet_toolbox.MVAT.core.SceneProduct import AbstractSceneProduct
 from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED

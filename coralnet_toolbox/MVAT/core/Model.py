@@ -536,12 +536,4 @@ class DEMProduct(AbstractSceneProduct):
     def transform(self):
         """Backward compatibility for legacy code looking for the matrix."""
         return self.camera.transform_matrix
-
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Backward Compatibility Aliases
-# ----------------------------------------------------------------------------------------------------------------------
-
-# PointCloud is now an alias for PointCloudProduct
-PointCloud = PointCloudProduct
     
