@@ -3,6 +3,8 @@ import warnings
 import os
 
 import rasterio
+import numpy as np
+from affine import Affine
 from rasterio.transform import from_bounds
 
 from PyQt5.QtCore import pyqtSignal
@@ -51,8 +53,9 @@ class ZExportDialog(QDialog):
         self.output_folder_name = "z_channels"
         self.naming_protocol = "{output_folder}/{file_name}.tif"
         
-        # Filter rasters to only those with z_channel data
-        self.exportable_rasters = [r for r in rasters if r.z_channel is not None]
+        # Filter rasters to those with either loaded z_channel or a z_channel_path
+        # so path-only (lazy) z-channels are included for export.
+        self.exportable_rasters = [r for r in rasters if (r.z_channel is not None or r.z_channel_path)]
         
         if not self.exportable_rasters:
             QMessageBox.warning(
@@ -336,12 +339,25 @@ class ZExportDialog(QDialog):
             bool: True if export successful, False otherwise
         """
         try:
-            # Get z-channel data (raw, no transform)
-            z_data = raster.z_channel
-            
+            # Get z-channel data with lazy loading support.
+            # Prefer already-loaded data, otherwise attempt lazy load from path.
+            z_data = raster.z_channel_lazy
+            if z_data is None and raster.z_channel_path:
+                try:
+                    raster.load_z_channel_from_file(raster.z_channel_path)
+                    z_data = raster.z_channel
+                except Exception:
+                    z_data = None
+
             if z_data is None:
                 print(f"No z-channel data available for {raster.basename}")
                 return False
+
+            # Ensure the exported TIFF is a single-band float32 file
+            try:
+                z_data = z_data.astype(np.float32)
+            except Exception:
+                z_data = np.array(z_data, dtype=np.float32)
             
             # Prepare metadata for TIFF tags
             metadata = {}
@@ -355,34 +371,40 @@ class ZExportDialog(QDialog):
             if raster.z_nodata is not None:
                 metadata['z_nodata'] = str(raster.z_nodata)
             
-            # Get or create transform for georeferencing
-            if hasattr(raster, 'rasterio_src') and raster.rasterio_src is not None:
+            # Determine transform and CRS.
+            transform = None
+            crs = None
+
+            # Prefer transform computed/stored from DEM imports/orthomosaics
+            if hasattr(raster, 'transform_matrix') and raster.transform_matrix is not None:
                 try:
-                    # Use existing transform if available
+                    tm = raster.transform_matrix
+                    transform = Affine(tm[0, 0], tm[0, 1], tm[0, 2], tm[1, 0], tm[1, 1], tm[1, 2])
+                except Exception:
+                    transform = None
+
+            # Fallback to rasterio_src transform if available
+            if transform is None and hasattr(raster, 'rasterio_src') and raster.rasterio_src is not None:
+                try:
                     transform = raster.rasterio_src.transform
                     crs = raster.rasterio_src.crs
-                except:
+                except Exception:
                     transform = None
                     crs = None
-            else:
-                transform = None
-                crs = None
-            
-            # If no transform available, create a simple one
+
+            # If still None, create a synthetic pixel-space transform
             if transform is None:
-                transform = from_bounds(0, 0, 
-                                        z_data.shape[1], z_data.shape[0], 
-                                        z_data.shape[1], z_data.shape[0])
+                transform = from_bounds(0, 0, z_data.shape[1], z_data.shape[0], z_data.shape[1], z_data.shape[0])
             
             # Prepare rasterio profile for TIFF export
             profile = {
                 'driver': 'GTiff',
-                'dtype': z_data.dtype,  # Preserve original dtype (float32 or uint8)
+                'dtype': 'float32',
                 'width': z_data.shape[1],
                 'height': z_data.shape[0],
                 'count': 1,  # Single band
                 'compress': 'deflate',  # DEFLATE compression
-                'tiled': True,  # Use tiled format for better compression
+                'tiled': True,  # Use tiled format for better compression when possible
                 'blockxsize': 256,
                 'blockysize': 256,
                 'transform': transform
@@ -392,9 +414,19 @@ class ZExportDialog(QDialog):
             if crs is not None:
                 profile['crs'] = crs
             
-            # Add nodata value if available
-            if raster.z_nodata is not None:
-                profile['nodata'] = raster.z_nodata
+            # Add nodata value if available and valid (avoid NaN nodata)
+            z_nodata = raster.z_nodata
+            if z_nodata is not None and not (isinstance(z_nodata, float) and np.isnan(z_nodata)):
+                try:
+                    profile['nodata'] = float(z_nodata)
+                except Exception:
+                    pass
+
+            # Disable tiling for tiny rasters where block size would be invalid
+            if z_data.shape[0] < 256 or z_data.shape[1] < 256:
+                profile.pop('tiled', None)
+                profile.pop('blockxsize', None)
+                profile.pop('blockysize', None)
             
             # Create output directory if it doesn't exist
             output_dir = os.path.dirname(output_path)
