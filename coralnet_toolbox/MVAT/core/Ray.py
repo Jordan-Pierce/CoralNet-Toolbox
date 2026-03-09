@@ -487,6 +487,9 @@ class BatchedRayManager:
                 smooth_shading=False,
                 reset_camera=False
             )
+            # Set actor to not pickable to avoid selection issues
+            if self.ray_actor is not None:
+                self.ray_actor.SetPickable(False)
         
         return self.ray_actor
     

@@ -128,19 +128,11 @@ class MVATViewer(QFrame):
         self._stack.setCurrentWidget(self._placeholder_label)
         self.layout.addWidget(self._stack_container)
 
-        # Point size control
-        point_size_label = QLabel("Point Size:")
-        self.point_size_spinbox = QSpinBox()
-        self.point_size_spinbox.setRange(1, 20)
-        self.point_size_spinbox.setSingleStep(1)
-        self.point_size_spinbox.setValue(self.point_size)
-        self.point_size_spinbox.setToolTip("Adjust point cloud point size")
-        self.point_size_spinbox.valueChanged.connect(self._on_point_size_spin_changed)
-
-        # Add widgets to bottom layout (stretch, point size)
+        # Point size hint (spinbox removed; use Ctrl + mouse wheel)
+        hint_label = QLabel("Point Size: Ctrl + Mouse Wheel")
+        hint_label.setStyleSheet("color: white;")
         bottom_layout.addStretch(1)
-        bottom_layout.addWidget(point_size_label)
-        bottom_layout.addWidget(self.point_size_spinbox)
+        bottom_layout.addWidget(hint_label)
 
         # Navigation constants
         self.move_speed = 0.01          # world units per key press
@@ -448,6 +440,22 @@ class MVATViewer(QFrame):
         # default Qt context menu does not appear on single right-click.
         if event.type() == QEvent.ContextMenu:
             return True
+
+        if event.type() == QEvent.Wheel:
+            # Ctrl + wheel adjusts point size; consume event to prevent zoom
+            if event.modifiers() & Qt.ControlModifier:
+                # angleDelta().y() is positive for wheel up, negative for wheel down
+                delta = event.angleDelta().y()
+                if delta != 0:
+                    step = 1 if delta > 0 else -1
+                    new_size = max(1, min(20, self.point_size + step))
+                    if new_size != self.point_size:
+                        self.set_point_size(new_size)
+                        try:
+                            self.pointSizeChanged.emit(new_size)
+                        except Exception:
+                            pass
+                return True  # consume event (prevent default zoom)
 
         # Forward key presses to keyPressEvent once; if handled, consume the event
         if event.type() == QEvent.KeyPress:

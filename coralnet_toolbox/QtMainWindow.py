@@ -720,12 +720,6 @@ class MainWindow(QMainWindow):
         self.coralnet_download_action.triggered.connect(self.open_coralnet_download_dialog)
         self.coralnet_menu.addAction(self.coralnet_download_action)
 
-        # # ========== MVAT ACTION ==========
-        # # MVAT (Multi-View Annotation Tool) action
-        # self.open_mvat_action = QAction("MVAT", self)
-        # self.open_mvat_action.triggered.connect(self.open_mvat_window)
-        # self.menu_bar.addAction(self.open_mvat_action)
-
         # ========== HELP MENU ==========
         # Help menu
         self.help_menu = self.menu_bar.addMenu("Help")
@@ -1207,8 +1201,8 @@ class MainWindow(QMainWindow):
             main_widget=self.mvat_viewer,
             parent=self
         )
-        if hasattr(self.mvat_viewer, 'create_bottom_toolbar'):
-            self.mvat_viewer_dock.add_toolbar(self.mvat_viewer.create_bottom_toolbar(), Qt.BottomToolBarArea)
+        # if hasattr(self.mvat_viewer, 'create_bottom_toolbar'):
+        #     self.mvat_viewer_dock.add_toolbar(self.mvat_viewer.create_bottom_toolbar(), Qt.BottomToolBarArea)
 
         # Setup Camera Grid Dock (Bottom-right) using DockWrapper
         self.camera_grid_dock = DockWrapper(
