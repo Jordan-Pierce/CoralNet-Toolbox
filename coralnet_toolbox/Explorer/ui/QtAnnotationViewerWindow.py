@@ -14,7 +14,7 @@ import os
 from PyQt5.QtCore import Qt, QTimer, QRect, pyqtSignal, pyqtSlot, QEvent
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QToolBar, QComboBox,
-    QLabel, QSlider, QPushButton, QScrollArea, QRubberBand,
+    QLabel, QPushButton, QScrollArea, QRubberBand,
     QSizePolicy
 )
 
@@ -93,6 +93,10 @@ class AnnotationViewerWindow(QWidget):
         
         # Display options
         self.current_widget_size = 96
+        # Widget size limits and step for Ctrl+Scroll resizing
+        self._widget_size_min = 32
+        self._widget_size_max = 256
+        self._widget_size_step = 8
         
         # Selection blocking (for external wizards)
         self.selection_blocked = False
@@ -160,26 +164,6 @@ class AnnotationViewerWindow(QWidget):
         self.sort_combo.currentTextChanged.connect(self._on_sort_changed)
         self.sort_combo.setMinimumWidth(100)
         toolbar.addWidget(self.sort_combo)
-        
-        toolbar.addSeparator()
-        
-        # Size slider
-        size_label = QLabel(" Size: ")
-        toolbar.addWidget(size_label)
-        
-        self.size_slider = QSlider(Qt.Horizontal)
-        self.size_slider.setMinimum(32)
-        self.size_slider.setMaximum(256)
-        self.size_slider.setValue(96)
-        self.size_slider.setTickPosition(QSlider.TicksBelow)
-        self.size_slider.setTickInterval(32)
-        self.size_slider.setFixedWidth(120)
-        self.size_slider.valueChanged.connect(self._on_size_changed)
-        toolbar.addWidget(self.size_slider)
-        
-        self.size_value_label = QLabel("96")
-        self.size_value_label.setMinimumWidth(30)
-        toolbar.addWidget(self.size_value_label)
         
         toolbar.addSeparator()
         
@@ -1300,14 +1284,7 @@ class AnnotationViewerWindow(QWidget):
         """Handle sort type change."""
         self.active_ordered_ids = []
         self._recalculate_layout()
-    
-    def _on_size_changed(self, value):
-        """Handle size slider change."""
-        if value % 2 != 0:
-            value -= 1
-        self.current_widget_size = value
-        self.size_value_label.setText(str(value))
-        self._recalculate_layout()
+
     
     def _isolate_selection(self):
         """Hide non-selected annotations."""
@@ -1548,6 +1525,7 @@ class AnnotationViewerWindow(QWidget):
     def eventFilter(self, source, event):
         """Filter events for rubber band selection."""
         if source is self.scroll_area.viewport():
+            # Rubber-band mouse handling
             if event.type() == QEvent.MouseButtonPress:
                 return self._viewport_mouse_press(event)
             elif event.type() == QEvent.MouseMove:
@@ -1556,6 +1534,27 @@ class AnnotationViewerWindow(QWidget):
                 return self._viewport_mouse_release(event)
             elif event.type() == QEvent.MouseButtonDblClick:
                 return self._viewport_mouse_double_click(event)
+
+            # Ctrl + Mouse Wheel: resize gallery thumbnails
+            elif event.type() == QEvent.Wheel:
+                try:
+                    if event.modifiers() & Qt.ControlModifier:
+                        delta = event.angleDelta().y()
+                        if delta == 0:
+                            return True
+                        step = self._widget_size_step if delta > 0 else -self._widget_size_step
+                        new_size = self.current_widget_size + step
+                        new_size = max(self._widget_size_min, min(self._widget_size_max, new_size))
+                        # Prefer even sizes
+                        if new_size % 2 != 0:
+                            new_size = new_size + 1 if step > 0 else new_size - 1
+                            new_size = max(self._widget_size_min, min(self._widget_size_max, new_size))
+                        if new_size != self.current_widget_size:
+                            self.current_widget_size = new_size
+                            self._recalculate_layout()
+                        return True
+                except Exception:
+                    return True
         return super().eventFilter(source, event)
     
     def _viewport_mouse_press(self, event):

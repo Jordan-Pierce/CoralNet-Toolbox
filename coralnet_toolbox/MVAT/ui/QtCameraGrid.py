@@ -8,7 +8,7 @@ A virtualized, scrollable grid of camera thumbnails with highlight/select distin
 
 import warnings
 
-from PyQt5.QtCore import Qt, pyqtSignal, QRect, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal, QRect, QTimer, QEvent
 from PyQt5.QtGui import QPainter, QColor, QPen, QPixmap
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QSlider, 
@@ -514,6 +514,10 @@ class CameraGrid(QWidget):
         
         # Display settings
         self.thumbnail_size = DEFAULT_THUMBNAIL_SIZE
+        # Thumbnail size limits and step for Ctrl+Wheel resizing
+        self._thumb_min = MIN_THUMBNAIL_SIZE
+        self._thumb_max = MAX_THUMBNAIL_SIZE
+        self._thumb_step = 8
         
         # Debounce timer for layout updates
         self._layout_timer = QTimer()
@@ -539,16 +543,6 @@ class CameraGrid(QWidget):
         self.stats_label = QLabel("Cameras: 0")
         self.stats_label.setStyleSheet("color: #333;")
 
-        self.size_label = QLabel("Size:")
-        self.size_slider = QSlider(Qt.Horizontal)
-        self.size_slider.setRange(MIN_THUMBNAIL_SIZE, MAX_THUMBNAIL_SIZE)
-        self.size_slider.setValue(self.thumbnail_size)
-        self.size_slider.setFixedWidth(100)
-        self.size_slider.setToolTip("Adjust thumbnail size")
-        self.size_slider.valueChanged.connect(self._on_size_changed)
-        
-        self.size_value_label = QLabel(f"{self.thumbnail_size}px")
-        self.size_value_label.setMinimumWidth(50)
         
         self.selected_label = QLabel("None selected")
         self.selected_label.setStyleSheet("color: #666;")
@@ -579,6 +573,8 @@ class CameraGrid(QWidget):
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.scroll_area.verticalScrollBar().valueChanged.connect(self._on_scroll)
         self.scroll_area.setWidget(self.content_widget)
+        # Install event filter to capture Ctrl+Wheel for resizing
+        self.scroll_area.viewport().installEventFilter(self)
 
         # Placeholder label for empty state
         self._placeholder_label = QLabel(
@@ -613,9 +609,6 @@ class CameraGrid(QWidget):
         
         layout.addWidget(self.stats_label)
         
-        layout.addWidget(self.size_label)
-        layout.addWidget(self.size_slider)
-        layout.addWidget(self.size_value_label)
         
         sep1 = QFrame()
         sep1.setFrameShape(QFrame.VLine)
@@ -971,16 +964,41 @@ class CameraGrid(QWidget):
     def _on_scroll(self, value):
         """Handle scroll events."""
         self._update_visible_widgets()
+
+    def eventFilter(self, source, event):
+        """Capture Ctrl+Wheel on the viewport to resize thumbnails."""
+        if source is self.scroll_area.viewport():
+            if event.type() == QEvent.Wheel:
+                try:
+                    if event.modifiers() & Qt.ControlModifier:
+                        delta = event.angleDelta().y()
+                        if delta == 0:
+                            return True
+                        step = self._thumb_step if delta > 0 else -self._thumb_step
+                        new_size = self.thumbnail_size + step
+                        new_size = max(self._thumb_min, min(self._thumb_max, new_size))
+                        if new_size != self.thumbnail_size:
+                            self.thumbnail_size = new_size
+                            # Clear caches to force regeneration at new size
+                            for data_item in self.data_items:
+                                data_item.clear_thumbnail_cache()
+                            self.recalculate_layout()
+                        return True
+                except Exception:
+                    return True
+        return super().eventFilter(source, event)
         
     def _on_size_changed(self, value):
-        """Handle thumbnail size slider change."""
-        self.thumbnail_size = value
-        self.size_value_label.setText(f"{value}px")
-        
+        """Handle thumbnail size change (kept for API compatibility)."""
+        try:
+            self.thumbnail_size = int(value)
+        except Exception:
+            return
+
         # Clear all thumbnail caches to force regeneration at new size
         for data_item in self.data_items:
             data_item.clear_thumbnail_cache()
-        
+
         self.recalculate_layout()
     
     # TODO if a widget is clicked but it corresponds to a camera already selected / highlighted, make sure
