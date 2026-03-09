@@ -318,7 +318,7 @@ class MVATManager(QObject):
         
         # Generate and load 3D elevation for any orthomosaics with DEMs
         self._populate_ortho_elevation()
-        
+        self._render_frustums()  
         self.viewer.fit_to_view()
         
         # Initial Synchronization
@@ -680,16 +680,47 @@ class MVATManager(QObject):
         Refresh viewer frustum appearances based on selected, highlighted,
         and hovered camera state.
 
-        Delegates to the viewer's `update_frustum_states` if available; errors
-        are caught and ignored to avoid destabilizing the UI for non-critical
-        failures.
+        Updates:
+        1. Wireframe state scalars via update_frustum_states()
+        2. Thumbnail visibility to show selected and highlighted cameras
+
+        Errors are caught and ignored to avoid destabilizing the UI for
+        non-critical failures.
         """
         selected_path = self.selected_camera.image_path if self.selected_camera else None
         highlighted_paths = [cam.image_path for cam in self.highlighted_cameras]
+        
+        # Update wireframe state scalars (colors based on selection/highlight)
         try:
             if hasattr(self.viewer, 'update_frustum_states'):
                 self.viewer.update_frustum_states(selected_path, highlighted_paths, self.hovered_camera)
         except Exception: 
+            pass
+        
+        # Update thumbnails (show/hide based on selection/highlight state)
+        try:
+            if hasattr(self.viewer, '_show_thumbnails_enabled') and self.viewer._show_thumbnails_enabled:
+                # Clear all existing thumbnails
+                if hasattr(self.viewer, 'remove_thumbnails'):
+                    self.viewer.remove_thumbnails()
+                
+                # Add thumbnail for selected camera
+                if self.selected_camera is not None:
+                    try:
+                        if hasattr(self.viewer, '_add_thumbnail_for_camera'):
+                            self.viewer._add_thumbnail_for_camera(self.selected_camera)
+                    except Exception:
+                        pass
+                
+                # Add thumbnails for highlighted cameras (excluding the selected camera to avoid duplication)
+                for cam in self.highlighted_cameras:
+                    if self.selected_camera is None or cam.image_path != self.selected_camera.image_path:
+                        try:
+                            if hasattr(self.viewer, '_add_thumbnail_for_camera'):
+                                self.viewer._add_thumbnail_for_camera(cam)
+                        except Exception:
+                            pass
+        except Exception:
             pass
 
     def _update_visibility_filter(self, highlighted_paths):
