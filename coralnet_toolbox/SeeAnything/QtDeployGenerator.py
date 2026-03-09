@@ -166,13 +166,9 @@ class DeployGeneratorDialog(QDialog):
         iw.label_search_button.setEnabled(False)
         iw.search_bar_images.setEnabled(False)
         iw.search_bar_labels.setEnabled(False)
-        iw.top_k_combo.setEnabled(False)
         
         # Hide the "Current" label as it is not applicable in this dialog
         iw.current_image_index_label.hide()
-
-        # Set Top-K to Top1
-        iw.top_k_combo.setCurrentText("Top1")
 
         # Disconnect the double-click signal to prevent it from loading an image
         # in the main window, as this dialog is for selection only.

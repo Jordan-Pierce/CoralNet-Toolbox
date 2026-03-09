@@ -131,7 +131,6 @@ class RasterManager(QObject):
     def get_filtered_paths(self, 
                            search_text: str = "",
                            search_label: str = "",
-                           top_k: int = 1,
                            require_annotations: bool = False,
                            require_no_annotations: bool = False,
                            require_predictions: bool = False,
@@ -142,7 +141,6 @@ class RasterManager(QObject):
         Args:
             search_text (str): Text to search for in filename
             search_label (str): Label code to search for
-            top_k (int): Number of top predictions to consider for label search
             require_annotations (bool): If True, must have annotations
             require_no_annotations (bool): If True, must have no annotations
             require_predictions (bool): If True, must have predictions
@@ -164,7 +162,6 @@ class RasterManager(QObject):
             if raster.matches_filter(
                 search_text=search_text,
                 search_label=search_label,
-                top_k=top_k,
                 require_annotations=require_annotations,
                 require_no_annotations=require_no_annotations,
                 require_predictions=require_predictions
