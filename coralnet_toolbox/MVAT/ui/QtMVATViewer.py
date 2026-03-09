@@ -85,7 +85,7 @@ class MVATViewer(QFrame):
         # Frustum and thumbnail management
         self._frustum_manager = BatchedFrustumManager()
         self.thumbnail_actors = []
-        self.thumbnail_opacity = 0.25
+        self.thumbnail_opacity = 0.50
         self.frustum_scale = 0.1
         self._show_wireframes_enabled = True
         self._show_thumbnails_enabled = True
