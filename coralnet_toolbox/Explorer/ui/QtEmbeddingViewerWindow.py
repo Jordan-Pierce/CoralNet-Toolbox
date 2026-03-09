@@ -32,7 +32,7 @@ from PyQt5.QtWidgets import (
     QGraphicsRectItem, QSizePolicy, QMessageBox, QApplication
 )
 
-from coralnet_toolbox.Explorer.core.QtDataItem import EmbeddingPointItem
+from coralnet_toolbox.Explorer.core.QtDataItem import EmbeddingPointItem, POINT_SIZE, SPRITE_SIZE
 from coralnet_toolbox.Explorer.core.QtDataItem import AnnotationDataItem
 from coralnet_toolbox.Explorer.managers.QtCacheManager import CacheManager
 from coralnet_toolbox.Explorer.models.yolo_models import YOLO_MODELS, is_yolo_model
@@ -146,6 +146,15 @@ class EmbeddingViewerWindow(QWidget):
         
         # Display mode
         self.display_mode = 'dots'  # 'dots' or 'sprites'
+        # Dynamic sizing for points and sprites (Ctrl+Wheel will modify these)
+        self.point_size = getattr(self, 'point_size', POINT_SIZE)
+        self.sprite_size = getattr(self, 'sprite_size', SPRITE_SIZE)
+        self._point_min = 4
+        self._point_max = 128
+        self._sprite_min = 16
+        self._sprite_max = 512
+        self._resize_step_point = 2
+        self._resize_step_sprite = 8
         
         # Location indicator
         self.locate_lines = []
@@ -1774,23 +1783,54 @@ class EmbeddingViewerWindow(QWidget):
             self.graphics_view.setDragMode(QGraphicsView.NoDrag)
     
     def _wheel_event(self, event):
-        """Handle mouse wheel for zooming."""
+        """Handle mouse wheel for zooming or point/sprite resizing when Ctrl is held."""
+        # If Ctrl is pressed, adjust point/sprite sizes instead of zooming
+        try:
+            if event.modifiers() & Qt.ControlModifier:
+                delta = event.angleDelta().y()
+                if delta == 0:
+                    return
+                # Decide whether to resize sprites (when in sprites mode) or points
+                if self.display_mode == 'sprites':
+                    step = self._resize_step_sprite if delta > 0 else -self._resize_step_sprite
+                    new_size = self.sprite_size + step
+                    new_size = max(self._sprite_min, min(self._sprite_max, new_size))
+                    if new_size != self.sprite_size:
+                        self.sprite_size = new_size
+                        # Update all point items to use new sprite size
+                        for pt in self.points_by_id.values():
+                            pt.update()
+                        self.graphics_scene.update()
+                else:
+                    step = self._resize_step_point if delta > 0 else -self._resize_step_point
+                    new_size = self.point_size + step
+                    new_size = max(self._point_min, min(self._point_max, new_size))
+                    if new_size != self.point_size:
+                        self.point_size = new_size
+                        for pt in self.points_by_id.values():
+                            pt.update()
+                        self.graphics_scene.update()
+                return
+        except Exception:
+            return
+
+        # Default behavior: zoom
         zoom_in_factor = 1.25
         zoom_out_factor = 1 / zoom_in_factor
-        
         self.graphics_view.setTransformationAnchor(QGraphicsView.NoAnchor)
         self.graphics_view.setResizeAnchor(QGraphicsView.NoAnchor)
-        
+
         old_pos = self.graphics_view.mapToScene(event.pos())
         zoom_factor = zoom_in_factor if event.angleDelta().y() > 0 else zoom_out_factor
         self.graphics_view.scale(zoom_factor, zoom_factor)
         new_pos = self.graphics_view.mapToScene(event.pos())
         delta = new_pos - old_pos
         self.graphics_view.translate(delta.x(), delta.y())
-        
+
         if self.locate_graphics_item:
-            self._update_location_lines()
-        
+            # refresh location indicator positions
+            QTimer.singleShot(0, self._update_location_lines)
+
         self._schedule_view_update()
     
     # -------------------------------------------------------------------------

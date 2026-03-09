@@ -97,18 +97,21 @@ class EmbeddingPointItem(QGraphicsObject):
             # Map normalized z to a scale factor (e.g., from 0.5x to 1.5x)
             scale_factor = 0.5 + z_normalized
     
+        # Allow viewer to override base sizes (dynamic resizing via Ctrl+Wheel)
+        base_sprite = getattr(self.viewer, 'sprite_size', SPRITE_SIZE) if self.viewer else SPRITE_SIZE
+        base_point = getattr(self.viewer, 'point_size', POINT_SIZE) if self.viewer else POINT_SIZE
+
         if self.viewer and self.viewer.display_mode == 'sprites':
             ar = self.data_item.aspect_ratio
             if ar >= 1.0:
-                width = SPRITE_SIZE * scale_factor
-                height = (SPRITE_SIZE / ar) * scale_factor
+                width = base_sprite * scale_factor
+                height = (base_sprite / ar) * scale_factor
             else:
-                height = SPRITE_SIZE * scale_factor
-                width = (SPRITE_SIZE * ar) * scale_factor
+                height = base_sprite * scale_factor
+                width = (base_sprite * ar) * scale_factor
             return QRectF(0, 0, width, height)
         else:
-            
-            size = POINT_SIZE * scale_factor
+            size = base_point * scale_factor
             return QRectF(0, 0, size, size)
 
     def update_tooltip(self):
