@@ -554,29 +554,24 @@ class Semantic(Base):
         names = self.selected_labels
         num_classes = len(self.selected_labels)
 
-        # Create dictionary of class names with numeric keys (0 is background, so classes start at 1)
-        names_dict = {i + 1: name for i, name in enumerate(names)}
-        # Add background class
-        names_dict[0] = 'background'
+        # Create dictionary of class names with numeric keys (0 is first class)
+        names_dict = {i: name for i, name in enumerate(names)}
 
         # Create colors dictionary mapping class indices to RGB values (no alpha)
         labels_dict = {label.short_label_code: label for label in self.main_window.label_window.labels}
         colors = {}
         for index, name in names_dict.items():
-            if name == 'background':
-                colors[index] = [0, 0, 0]  # Default black for background
-            else:
-                label = labels_dict.get(name)
-                if label:
-                    colors[index] = [label.color.red(), label.color.green(), label.color.blue()]
+            label = labels_dict.get(name)
+            if label:
+                colors[index] = [label.color.red(), label.color.green(), label.color.blue()]
 
         # Define the data as a dictionary with absolute paths
         data = {
             'path': output_dir_path,
-            'train': train_dir,
-            'val': val_dir,
-            'test': test_dir,
-            'nc': num_classes + 1,  # +1 for background class
+            'train': f"{train_dir}\images",
+            'val': f"{val_dir}\images",
+            'test': f"{test_dir}\images",
+            'nc': num_classes,  # number of classes (0..nc-1)
             'names': names_dict,  # Dictionary mapping from indices to class names
             # 'colors': colors  # Dictionary mapping from indices to RGB color lists
         }
@@ -585,13 +580,13 @@ class Semantic(Base):
         with open(yaml_path, 'w') as f:
             yaml.dump(data, f, default_flow_style=False)
 
-        # Create the train, val, and test directories with images and labels subdirectories
+        # Create the train, val, and test directories with images and masks subdirectories
         os.makedirs(f"{train_dir}/images", exist_ok=True)
-        os.makedirs(f"{train_dir}/labels", exist_ok=True)
+        os.makedirs(f"{train_dir}/masks", exist_ok=True)
         os.makedirs(f"{val_dir}/images", exist_ok=True)
-        os.makedirs(f"{val_dir}/labels", exist_ok=True)
+        os.makedirs(f"{val_dir}/masks", exist_ok=True)
         os.makedirs(f"{test_dir}/images", exist_ok=True)
-        os.makedirs(f"{test_dir}/labels", exist_ok=True)
+        os.makedirs(f"{test_dir}/masks", exist_ok=True)
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -668,7 +663,7 @@ class Semantic(Base):
     def create_semantic_mask(self, mask_annotation, output_path):
         """
         Create a semantic segmentation mask from a MaskAnnotation in YOLO format.
-        Single channel PNG with uint8 values where 0 is background.
+        Single channel PNG with uint8 values where 0 is the first class and 255 is ignore/unlabeled.
         
         Args:
             mask_annotation (MaskAnnotation): The mask annotation to process
@@ -677,17 +672,17 @@ class Semantic(Base):
         # Get the mask data
         mask_data = mask_annotation.mask_data.copy()
         
-        # Create a mapping from class IDs to label indices
+        # Create a mapping from class IDs to label indices (0-based)
         label_to_index = {}
         for i, label in enumerate(self.selected_labels):
             # Find the class ID for this label in the mask annotation
             for class_id, label_obj in mask_annotation.class_id_to_label_map.items():
                 if label_obj.short_label_code == label:
-                    label_to_index[class_id] = i + 1  # +1 because 0 is background
+                    label_to_index[class_id] = i
                     break
-        
-        # Create output mask with background as 0
-        output_mask = np.zeros_like(mask_data, dtype=np.uint8)
+
+        # Create output mask defaulting to 255 (ignore/unlabeled)
+        output_mask = np.full_like(mask_data, 255, dtype=np.uint8)
         
         # Map class IDs to label indices
         for class_id, label_index in label_to_index.items():
@@ -715,21 +710,20 @@ class Semantic(Base):
             with rasterio_open(image_path) as src:
                 height, width = src.shape
             
-            # Start with empty mask (all background)
-            combined_mask = np.zeros((height, width), dtype=np.uint8)
+            # Start with default ignore mask (255) for unlabeled pixels
+            combined_mask = np.full((height, width), 255, dtype=np.uint8)
             
             # If we have a mask annotation, use it as the base
             if mask_annotation is not None:
                 # Get the mask data and convert to semantic format
                 mask_data = mask_annotation.mask_data.copy()
                 
-                # Create mapping from class IDs to label indices
+                # Create mapping from class IDs to label indices (0-based)
                 label_to_index = {}
                 for i, label in enumerate(self.selected_labels):
-                    # Find the class ID for this label in the mask annotation
                     for class_id, label_obj in mask_annotation.class_id_to_label_map.items():
                         if label_obj.short_label_code == label:
-                            label_to_index[class_id] = i + 1  # +1 because 0 is background
+                            label_to_index[class_id] = i
                             break
                 
                 # Map class IDs to label indices
@@ -743,7 +737,8 @@ class Semantic(Base):
             if vector_annotations:
                 vector_mask = self.rasterize_vector_annotations(vector_annotations, image_path)
                 # Overlay vector mask onto combined mask (vector annotations take priority)
-                combined_mask = np.where(vector_mask > 0, vector_mask, combined_mask)
+                # vector_mask uses 255 for background/ignore, so copy non-255 values
+                combined_mask = np.where(vector_mask != 255, vector_mask, combined_mask)
             
             # Save as single channel PNG
             mask_image = Image.fromarray(combined_mask, mode='L')
@@ -768,8 +763,8 @@ class Semantic(Base):
             with rasterio_open(image_path) as src:
                 height, width = src.shape
             
-            # Create empty mask (all zeros = background)
-            empty_mask = np.zeros((height, width), dtype=np.uint8)
+            # Create empty mask filled with 255 (ignore/unlabeled)
+            empty_mask = np.full((height, width), 255, dtype=np.uint8)
             
             # Save as single channel PNG
             mask_image = Image.fromarray(empty_mask, mode='L')
@@ -795,8 +790,8 @@ class Semantic(Base):
             with rasterio_open(image_path) as src:
                 height, width = src.shape
             
-            # Create empty mask (all zeros = background)
-            output_mask = np.zeros((height, width), dtype=np.uint8)
+            # Create empty mask filled with 255 (ignore/unlabeled)
+            output_mask = np.full((height, width), 255, dtype=np.uint8)
             
             # Group annotations by label
             annotations_by_label = {}
@@ -808,9 +803,9 @@ class Semantic(Base):
             
             # Rasterize each label group
             for label_code, label_annotations in annotations_by_label.items():
-                # Find the class index for this label (1-based, 0 is background)
+                # Find the class index for this label (0-based)
                 if label_code in self.selected_labels:
-                    class_index = self.selected_labels.index(label_code) + 1
+                    class_index = self.selected_labels.index(label_code)
                     
                     # Convert annotations to geometries
                     geometries = []
@@ -820,23 +815,23 @@ class Semantic(Base):
                             geometries.append(geom)
                     
                     if geometries:
-                        # Rasterize geometries for this class
+                        # Rasterize geometries for this class using 255 as fill (ignore)
                         class_mask = rasterize(
                             [(geom, class_index) for geom in geometries],
                             out_shape=(height, width),
-                            fill=0,
+                            fill=255,
                             dtype=np.uint8
                         )
-                        
-                        # Overlay this class mask onto output mask
-                        output_mask = np.where(class_mask > 0, class_mask, output_mask)
+
+                        # Overlay this class mask onto output mask (non-255 values win)
+                        output_mask = np.where(class_mask != 255, class_mask, output_mask)
             
             return output_mask
             
         except Exception as e:
             print(f"Error rasterizing vector annotations for {image_path}: {e}")
-            # Return empty mask on error
-            return np.zeros((height, width), dtype=np.uint8)
+            # Return empty (ignore-filled) mask on error
+            return np.full((height, width), 255, dtype=np.uint8)
 
     def _annotation_to_geometry(self, annotation):
         """
@@ -888,7 +883,7 @@ class Semantic(Base):
         try:
             # Create images and labels directories
             images_dir = os.path.join(split_dir, 'images')
-            labels_dir = os.path.join(split_dir, 'labels')
+            labels_dir = os.path.join(split_dir, 'masks')
             
             # Process all images in this split
             self.process_mask_annotations(annotations, images_dir, labels_dir, progress_bar, image_paths)
