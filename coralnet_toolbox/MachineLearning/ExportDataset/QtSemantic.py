@@ -14,7 +14,7 @@ from shapely.geometry import Polygon
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel, QApplication, QCheckBox, 
-                             QTableWidgetItem, QWidget, QHBoxLayout)
+                             QWidget, QHBoxLayout, QRadioButton)
 
 from coralnet_toolbox.MachineLearning.ExportDataset.QtBase import Base
 
@@ -45,9 +45,16 @@ class Semantic(Base):
         self.setWindowTitle("Export Semantic Segmentation Dataset")
         self.setWindowIcon(get_icon("mask.svg"))
         
-        # This will store {annotation_id: stats_dict}
         self._stats_cache = {} 
-        self._project_labels = []  # Cache for project labels
+        self._project_labels = []
+
+        # Assuming self.layout is accessible from the Base class:
+        # Add the unlabeled handling group box to the UI
+        self.unlabeled_group_box = self.create_unlabeled_handling_layout()
+        
+        # You may need to insert it at a specific index depending on the Base layout, 
+        # but adding it like this usually appends it to the bottom of the tool pane.
+        self.layout.addWidget(self.unlabeled_group_box)
 
     def setup_info_layout(self):
         """Setup the info layout"""
@@ -118,6 +125,40 @@ class Semantic(Base):
         # Enable negative sample options for semantic segmentation
         self.include_negatives_radio.setEnabled(True)
         self.exclude_negatives_radio.setEnabled(True)
+
+    def create_unlabeled_handling_layout(self):
+        """
+        Creates the layout for determining how unlabeled pixels are treated, 
+        including explanatory text for the user.
+        """
+        group_box = QGroupBox("Unlabeled Pixel Handling")
+        layout = QVBoxLayout()
+
+        # Explanatory text to guide the user
+        info_text = (
+            "<b>How should unlabeled pixels be handled during training?</b><br><br>"
+            "• <b>Ignore (Standard):</b> The model is not penalized for its predictions in unlabeled areas. "
+            "Use this if your images are <i>sparsely labeled</i> (i.e., you didn't label every single object).<br>"
+            "• <b>Background:</b> Unlabeled areas are explicitly taught to the model as 'negative space'. "
+            "Use this if what is <i>not labeled</i> should be learned as 'Background'."
+        )
+        info_label = QLabel(info_text)
+        info_label.setWordWrap(True)
+        # Optional: Add a little margin at the bottom of the label
+        info_label.setStyleSheet("margin-bottom: 10px;")
+        layout.addWidget(info_label)
+
+        # Radio buttons
+        self.ignore_radio = QRadioButton("Treat as Ignore (Index 255)")
+        self.ignore_radio.setChecked(True) # Safe default for most users
+        
+        self.background_radio = QRadioButton("Treat as Background (Index 0)")
+
+        layout.addWidget(self.ignore_radio)
+        layout.addWidget(self.background_radio)
+        
+        group_box.setLayout(layout)
+        return group_box
 
     def get_mask_annotations(self):
         """
@@ -546,37 +587,34 @@ class Semantic(Base):
         """
         # Create the yaml file
         yaml_path = os.path.join(output_dir_path, 'data.yaml')
-
-        # Create the train, val, and test directories (using 'valid' to match YOLO convention)
         train_dir = os.path.join(output_dir_path, 'train')
         val_dir = os.path.join(output_dir_path, 'valid')
         test_dir = os.path.join(output_dir_path, 'test')
+        
         names = self.selected_labels
-        num_classes = len(self.selected_labels)
+        treat_as_background = self.background_radio.isChecked()
 
-        # Create dictionary of class names with numeric keys (0 is first class)
-        names_dict = {i: name for i, name in enumerate(names)}
+        # SHIFT LOGIC: Inject Background at 0 if selected
+        names_dict = {}
+        if treat_as_background:
+            names_dict[0] = "Background"
+            for i, name in enumerate(names):
+                names_dict[i + 1] = name
+            num_classes = len(names) + 1
+        else:
+            for i, name in enumerate(names):
+                names_dict[i] = name
+            num_classes = len(names)
 
-        # Create colors dictionary mapping class indices to RGB values (no alpha)
-        labels_dict = {label.short_label_code: label for label in self.main_window.label_window.labels}
-        colors = {}
-        for index, name in names_dict.items():
-            label = labels_dict.get(name)
-            if label:
-                colors[index] = [label.color.red(), label.color.green(), label.color.blue()]
-
-        # Define the data as a dictionary with absolute paths
         data = {
             'path': output_dir_path,
             'train': f"{train_dir}\images",
             'val': f"{val_dir}\images",
             'test': f"{test_dir}\images",
-            'nc': num_classes,  # number of classes (0..nc-1)
-            'names': names_dict,  # Dictionary mapping from indices to class names
-            # 'colors': colors  # Dictionary mapping from indices to RGB color lists
+            'nc': num_classes, 
+            'names': names_dict, 
         }
 
-        # Write the data to the YAML file
         with open(yaml_path, 'w') as f:
             yaml.dump(data, f, default_flow_style=False)
 
@@ -672,25 +710,26 @@ class Semantic(Base):
         # Get the mask data
         mask_data = mask_annotation.mask_data.copy()
         
-        # Create a mapping from class IDs to label indices (0-based)
+        # Determine fill value and index offset
+        treat_as_background = getattr(self, 'background_radio', None) and self.background_radio.isChecked()
+        fill_value = 0 if treat_as_background else 255
+        index_offset = 1 if treat_as_background else 0
+        
         label_to_index = {}
         for i, label in enumerate(self.selected_labels):
-            # Find the class ID for this label in the mask annotation
             for class_id, label_obj in mask_annotation.class_id_to_label_map.items():
                 if label_obj.short_label_code == label:
-                    label_to_index[class_id] = i
+                    # Apply offset here
+                    label_to_index[class_id] = i + index_offset
                     break
 
-        # Create output mask defaulting to 255 (ignore/unlabeled)
-        output_mask = np.full_like(mask_data, 255, dtype=np.uint8)
+        # Create output mask defaulting to our chosen fill_value
+        output_mask = np.full_like(mask_data, fill_value, dtype=np.uint8)
         
-        # Map class IDs to label indices
         for class_id, label_index in label_to_index.items():
-            # Handle both locked and unlocked pixels
             class_mask = (mask_data == class_id) | (mask_data == class_id + mask_annotation.LOCK_BIT)
             output_mask[class_mask] = label_index
         
-        # Save as single channel PNG (uint8)
         mask_image = Image.fromarray(output_mask, mode='L')
         mask_image.save(output_path)
 
@@ -705,48 +744,42 @@ class Semantic(Base):
             output_path (str): Path to save the combined mask
         """
         try:
-            # Get image dimensions
             from coralnet_toolbox.utilities import rasterio_open
             with rasterio_open(image_path) as src:
                 height, width = src.shape
             
-            # Start with default ignore mask (255) for unlabeled pixels
-            combined_mask = np.full((height, width), 255, dtype=np.uint8)
+            # Determine fill value and index offset
+            treat_as_background = getattr(self, 'background_radio', None) and self.background_radio.isChecked()
+            fill_value = 0 if treat_as_background else 255
+            index_offset = 1 if treat_as_background else 0
+
+            # Start with chosen fill value
+            combined_mask = np.full((height, width), fill_value, dtype=np.uint8)
             
-            # If we have a mask annotation, use it as the base
             if mask_annotation is not None:
-                # Get the mask data and convert to semantic format
                 mask_data = mask_annotation.mask_data.copy()
-                
-                # Create mapping from class IDs to label indices (0-based)
                 label_to_index = {}
                 for i, label in enumerate(self.selected_labels):
                     for class_id, label_obj in mask_annotation.class_id_to_label_map.items():
                         if label_obj.short_label_code == label:
-                            label_to_index[class_id] = i
+                            label_to_index[class_id] = i + index_offset
                             break
                 
-                # Map class IDs to label indices
                 for class_id, label_index in label_to_index.items():
-                    # Handle both locked and unlocked pixels
                     class_mask = ((mask_data == class_id) |
                                   (mask_data == class_id + mask_annotation.LOCK_BIT))
                     combined_mask[class_mask] = label_index
             
-            # If we have vector annotations, rasterize and overlay them
             if vector_annotations:
                 vector_mask = self.rasterize_vector_annotations(vector_annotations, image_path)
-                # Overlay vector mask onto combined mask (vector annotations take priority)
-                # vector_mask uses 255 for background/ignore, so copy non-255 values
-                combined_mask = np.where(vector_mask != 255, vector_mask, combined_mask)
+                # Overlay non-fill values
+                combined_mask = np.where(vector_mask != fill_value, vector_mask, combined_mask)
             
-            # Save as single channel PNG
             mask_image = Image.fromarray(combined_mask, mode='L')
             mask_image.save(output_path)
             
         except Exception as e:
             print(f"Error creating combined semantic mask for {image_path}: {e}")
-            # Create empty mask as fallback
             self.create_empty_mask(image_path, output_path)
     
     def create_empty_mask(self, image_path, output_path):
@@ -758,15 +791,16 @@ class Semantic(Base):
             output_path (str): Path to save the empty mask
         """
         try:
-            # Get image dimensions
             from coralnet_toolbox.utilities import rasterio_open
             with rasterio_open(image_path) as src:
                 height, width = src.shape
             
-            # Create empty mask filled with 255 (ignore/unlabeled)
-            empty_mask = np.full((height, width), 255, dtype=np.uint8)
+            # Check toggle for background vs ignore
+            treat_as_background = getattr(self, 'background_radio', None) and self.background_radio.isChecked()
+            fill_value = 0 if treat_as_background else 255
             
-            # Save as single channel PNG
+            empty_mask = np.full((height, width), fill_value, dtype=np.uint8)
+            
             mask_image = Image.fromarray(empty_mask, mode='L')
             mask_image.save(output_path)
             
@@ -785,15 +819,17 @@ class Semantic(Base):
             np.ndarray: Semantic mask with rasterized annotations
         """
         try:
-            # Get image dimensions
             from coralnet_toolbox.utilities import rasterio_open
             with rasterio_open(image_path) as src:
                 height, width = src.shape
             
-            # Create empty mask filled with 255 (ignore/unlabeled)
-            output_mask = np.full((height, width), 255, dtype=np.uint8)
+            # Determine fill value and index offset
+            treat_as_background = getattr(self, 'background_radio', None) and self.background_radio.isChecked()
+            fill_value = 0 if treat_as_background else 255
+            index_offset = 1 if treat_as_background else 0
+
+            output_mask = np.full((height, width), fill_value, dtype=np.uint8)
             
-            # Group annotations by label
             annotations_by_label = {}
             for annotation in vector_annotations:
                 label_code = annotation.label.short_label_code
@@ -801,13 +837,11 @@ class Semantic(Base):
                     annotations_by_label[label_code] = []
                 annotations_by_label[label_code].append(annotation)
             
-            # Rasterize each label group
             for label_code, label_annotations in annotations_by_label.items():
-                # Find the class index for this label (0-based)
                 if label_code in self.selected_labels:
-                    class_index = self.selected_labels.index(label_code)
+                    # Apply offset to the class index
+                    class_index = self.selected_labels.index(label_code) + index_offset
                     
-                    # Convert annotations to geometries
                     geometries = []
                     for annotation in label_annotations:
                         geom = self._annotation_to_geometry(annotation)
@@ -815,23 +849,21 @@ class Semantic(Base):
                             geometries.append(geom)
                     
                     if geometries:
-                        # Rasterize geometries for this class using 255 as fill (ignore)
                         class_mask = rasterize(
                             [(geom, class_index) for geom in geometries],
                             out_shape=(height, width),
-                            fill=255,
+                            fill=fill_value,
                             dtype=np.uint8
                         )
 
-                        # Overlay this class mask onto output mask (non-255 values win)
-                        output_mask = np.where(class_mask != 255, class_mask, output_mask)
+                        output_mask = np.where(class_mask != fill_value, class_mask, output_mask)
             
             return output_mask
             
         except Exception as e:
             print(f"Error rasterizing vector annotations for {image_path}: {e}")
-            # Return empty (ignore-filled) mask on error
-            return np.full((height, width), 255, dtype=np.uint8)
+            fill_val = 0 if (getattr(self, 'background_radio', None) and self.background_radio.isChecked()) else 255
+            return np.full((height, width), fill_val, dtype=np.uint8)
 
     def _annotation_to_geometry(self, annotation):
         """
