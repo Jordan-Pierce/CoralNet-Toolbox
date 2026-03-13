@@ -48,14 +48,6 @@ class Semantic(Base):
         self._stats_cache = {} 
         self._project_labels = []
 
-        # Assuming self.layout is accessible from the Base class:
-        # Add the unlabeled handling group box to the UI
-        self.unlabeled_group_box = self.create_unlabeled_handling_layout()
-        
-        # You may need to insert it at a specific index depending on the Base layout, 
-        # but adding it like this usually appends it to the bottom of the tool pane.
-        self.layout.addWidget(self.unlabeled_group_box)
-
     def setup_info_layout(self):
         """Setup the info layout"""
         group_box = QGroupBox("Information")
@@ -126,9 +118,9 @@ class Semantic(Base):
         self.include_negatives_radio.setEnabled(True)
         self.exclude_negatives_radio.setEnabled(True)
 
-    def create_unlabeled_handling_layout(self):
+    def setup_unlabeled_handling_layout(self):
         """
-        Creates the layout for determining how unlabeled pixels are treated, 
+        Setup the layout for determining how unlabeled pixels are treated, 
         including explanatory text for the user.
         """
         group_box = QGroupBox("Unlabeled Pixel Handling")
@@ -158,7 +150,7 @@ class Semantic(Base):
         layout.addWidget(self.background_radio)
         
         group_box.setLayout(layout)
-        return group_box
+        self.layout.addWidget(group_box)
 
     def get_mask_annotations(self):
         """

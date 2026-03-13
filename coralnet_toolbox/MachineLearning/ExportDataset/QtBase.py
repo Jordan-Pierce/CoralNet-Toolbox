@@ -228,9 +228,9 @@ class Base(QDialog):
         group_box.setLayout(layout)
         return group_box
     
-    def create_unlabeled_handling_layout(self):
-        """Creates the unlabeled handling options layout group box (for semantic segmentation)."""
-        pass
+    def setup_unlabeled_handling_layout(self):
+        """Setup the unlabeled handling options layout group box (for semantic segmentation)."""
+        raise NotImplementedError("Method must be implemented in the subclass.")
 
     def setup_table_layout(self):
         """Setup the label counts table layout."""
