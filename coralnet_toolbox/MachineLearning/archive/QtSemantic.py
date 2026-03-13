@@ -2,31 +2,28 @@ import warnings
 
 import os
 import gc
+import json
 import yaml
-import uuid
 import datetime
 import traceback
-import ujson as json
 from pathlib import Path
 
-from ultralytics import YOLO
-import ultralytics.data.build as detection_build
-from ultralytics.data.dataset import YOLODataset
-import ultralytics.models.yolo.classify.train as train_build
-from ultralytics.data.dataset import ClassificationDataset
-
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
-from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QWidget, QVBoxLayout,
-                             QLabel, QLineEdit, QDialog, QHBoxLayout, QPushButton, QComboBox,
-                             QFormLayout, QTabWidget, QDoubleSpinBox, QGroupBox, QFrame, QSpinBox)
-
 from torch.cuda import empty_cache
-import torch
 
-from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
-from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedInstanceDataset
-from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedClassificationDataset
-from coralnet_toolbox.MachineLearning.EvaluateModel.QtBase import EvaluateModelWorker
+from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QThread, pyqtSignal
+from PyQt5.QtWidgets import (QLineEdit, QHBoxLayout, QPushButton, QFormLayout, QGroupBox, QComboBox,
+                             QVBoxLayout, QWidget, QTabWidget, QSpinBox, QDoubleSpinBox,
+                             QLabel, QMessageBox, QScrollArea, QFrame, QDialog, QFileDialog)
+
+from coralnet_toolbox.MachineLearning.SMP import SemanticModel
+
+from coralnet_toolbox.MachineLearning.EvaluateModel.QtSemantic import EvaluateModelWorker
+
+from coralnet_toolbox.MachineLearning.SMP import get_segmentation_losses
+from coralnet_toolbox.MachineLearning.SMP import get_segmentation_encoders
+from coralnet_toolbox.MachineLearning.SMP import get_segmentation_decoders
+from coralnet_toolbox.MachineLearning.SMP import get_segmentation_optimizers
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -41,12 +38,8 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 class TrainModelWorker(QThread):
     """
-    Worker thread for training a model.
-
-    Signals:
-        training_started: Emitted when the training starts.
-        training_completed: Emitted when the training completes.
-        training_error: Emitted when an error occurs during training.
+    Worker thread for training a SemanticModel.
+    This is separate from the base TrainModelWorker to keep logic clean.
     """
     training_started = pyqtSignal()
     training_completed = pyqtSignal()
@@ -54,7 +47,7 @@ class TrainModelWorker(QThread):
 
     def __init__(self, params, device):
         """
-        Initialize the TrainModelWorker.
+        Initialize the SemanticTrainModelWorker.
 
         Args:
             params: A dictionary of parameters for training.
@@ -64,65 +57,14 @@ class TrainModelWorker(QThread):
         self.params = params
         self.device = device
         self.model = None
-        self.model_path = None
-        self.weighted = False
-
+        
     def pre_run(self):
         """
-        Set up the model and prepare parameters for training.
+        Pre-run setup before starting the training process.
         """
-        try:
-            # Extract model path
-            self.model_path = self.params.pop('model', None)
-            # Get the weighted flag
-            self.weighted = self.set_weighted_dataset()
-            # Load the model (8.3.141) YOLO handles RTDETR
-            self.model = YOLO(self.model_path)
-            # Set the task in the model itself
-            self.model.task = self.params['task']
-            # Freeze layers, freeze encoder
-            freeze_layers = self.params.pop('freeze_layers', None)
-
-            if freeze_layers:
-                # Calculate the number of layers to freeze
-                num_layers = len(self.model.model.model[0:-1])
-                num_layers = int(num_layers * freeze_layers)
-                freeze_layers = [_ for _ in range(0, num_layers)]
-                print(f"Encoder layers frozen ({len(freeze_layers)})")
-            else:
-                freeze_layers = []
-
-            # Set the freeze parameter for ultralytics
-            self.params['freeze'] = freeze_layers
-
-        except Exception as e:
-            print(f"Error during setup: {e}\n\nTraceback:\n{traceback.format_exc()}")
-            self.training_error.emit(f"Error during setup: {e} (see console log)")
-            raise
-
-    def set_weighted_dataset(self):
-        """
-        Determine whether to use a weighted dataset based on the UI parameters.
-
-        Returns:
-            bool: True if weighted sampling should be used, False otherwise.
-        """
-        weighted = self.params.pop('weighted', False)
-
-        if not weighted:
-            return False
-
-        # Determine if ultralytics or community
-        if self.model_path in get_available_configs(task=self.params['task']):
-            self.model_path = get_available_configs(task=self.params['task'])[self.model_path]
-            # Cannot use weighted sampling with community models
-            self.weighted = False
-
-        # Use the custom dataset class for weighted sampling
-        if self.params['task'] == 'classify':
-            train_build.ClassificationDataset = WeightedClassificationDataset
-        elif self.params['task'] in ['detect', 'segment']:
-            detection_build.YOLODataset = WeightedInstanceDataset
+        # Check if the imgsz is divisible by 32
+        if self.params['imgsz'] % 32 != 0:
+            raise ValueError("Image size must be divisible by 32.")
 
     def run(self):
         """
@@ -132,16 +74,22 @@ class TrainModelWorker(QThread):
             # Emit signal to indicate training has started
             self.training_started.emit()
 
-            # Set up the model and parameters
+            # Pre-run checks
             self.pre_run()
 
-            # Train the model
-            self.model.train(**self.params, device=self.device)
-
-            # Post-run cleanup
-            self.post_run()
-
-            # Evaluate the model after training
+            # Initialize SemanticModel
+            self.model = SemanticModel()
+            
+            # Pop 'task' as .train() doesn't accept it
+            self.params.pop('task', None)
+            
+            # Pass device separately
+            self.params['device'] = self.device
+            
+            # Run training, validate on validation set if applicable
+            self.model.train(**self.params)
+            
+            # Evaluate model on test set, if applicable
             self.evaluate_model()
 
             # Emit signal to indicate training has completed
@@ -150,32 +98,14 @@ class TrainModelWorker(QThread):
         except Exception as e:
             print(f"Error during training: {e}\n\nTraceback:\n{traceback.format_exc()}")
             self.training_error.emit(f"Error during training: {e} (see console log)")
-        finally:
-            self._cleanup()
-
-    def post_run(self):
-        """
-        Clean up resources after training.
-        """
-        # Revert to the original dataset class without weighted sampling
-        if self.weighted and self.params['task'] == 'classify':
-            train_build.ClassificationDataset = ClassificationDataset
-        elif self.weighted and self.params['task'] in ['detect', 'segment']:
-            detection_build.YOLODataset = YOLODataset
-
+        
     def evaluate_model(self):
         """
         Evaluate the model after training.
         """
-        try:           
+        try:
             # Check that there is a test folder
-            if self.params['task'] == 'classify':
-                test_folder = f"{self.params['data']}/test"
-            else:  # detect, segment
-                # params['data'] is the path to the dataset YAML file
-                # so we need to get the parent folder and then look for the test folder
-                test_folder = os.path.join(os.path.dirname(self.params['data']), "test")
-                
+            test_folder = f"{os.path.dirname(self.params['data_yaml'])}/test"
             print(f"Note: Looking for test folder: {test_folder}")
             if not os.path.exists(test_folder):
                 print("Warning: No test folder found in that location. Skipping evaluation.")
@@ -183,10 +113,14 @@ class TrainModelWorker(QThread):
             
             # Create an instance of EvaluateModelWorker and start it
             eval_params = {
-                'data': self.params['data'],
+                'data_yaml': self.params['data_yaml'],
                 'imgsz': self.params['imgsz'],
-                'split': 'test',  # Evaluate on the test set only
-                'save_dir': Path(self.params['project']) / self.params['name'] / 'test'
+                'split': 'test',
+                'save_dir': Path(self.params['project']) / self.params['name'] / 'test',
+                'num_vis_samples': 5,  # Default number of visualization samples
+                'device': self.device,  # Use the training device
+                'batch': 1,  # Default batch size
+                'conf': 0.5  # Default confidence threshold
             }
 
             # Create and start the worker thread
@@ -230,20 +164,17 @@ class TrainModelWorker(QThread):
         empty_cache()
 
 
-class Base(QDialog):
-    """
-    Dialog for training machine learning models for image classification, object detection,
-    and instance segmentation.
+# ----------------------------------------------------------------------------------------------------------------------
+# Main UI Class
+# ----------------------------------------------------------------------------------------------------------------------
 
-    :param main_window: MainWindow object
-    :param parent: Parent widget
-    """
+class Semantic(QDialog):  # Does not inherit from Base due to major differences
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.main_window = main_window
 
         self.setWindowIcon(get_icon("coralnet.svg"))
-        self.setWindowTitle("Train Model")
+        self.setWindowTitle("Train Semantic Segmentation Model")
         self.resize(600, 750)  
 
         # Set window settings
@@ -253,104 +184,69 @@ class Base(QDialog):
                             Qt.WindowMaximizeButtonHint |
                             Qt.WindowTitleHint)
 
-        # Task
-        self.task = None
-        # For holding parameters
+        # --- Variables (from Base) ---
+        self.task = "semantic"  # Hardcoded for this class
         self.params = {}
         self.custom_params = []
-        # Best model weights
         self.model_path = None
-        # Class mapping
         self.class_mapping = {}
-
-        self.is_optimizing = False
-        self.exported_model_path = None
-
-        # Task specific parameters
-        self.imgsz = 640
-        self.batch = 4
+        self.class_mapping_path = ""
+        self.imgsz = 640  # Task-specific default
+        self.batch = 4    # Task-specific default
 
         # Create the layout
         self.layout = QVBoxLayout(self)
 
-        # Create the info layout
+        # --- Setup UI components (from Base) ---
         self.setup_info_layout()
-        # Create the dataset layout
-        self.setup_dataset_layout()
-        # Create the output layout
+        self.setup_dataset_layout() 
         self.setup_output_layout()
-        # Create the model layout (new)
         self.setup_model_layout()
-        # Create and set up the parameters layout
         self.setup_parameters_layout()
-        # Create the buttons layout
         self.setup_buttons_layout()
-
+        
     def setup_info_layout(self):
-        """
-        Set up the layout and widgets for the info layout.
-        """
         group_box = QGroupBox("Information")
         layout = QVBoxLayout()
-
-        # Create a QLabel with explanatory text and hyperlink
-        info_label = QLabel("Details on different hyperparameters can be found "
-                            "<a href='https://docs.ultralytics.com/modes/train/#train-settings'>here</a>.")
-
+        info_label = QLabel(
+            "Details on different hyperparameters can be found "
+            "<a href='https://segmentation-models-pytorch.readthedocs.io/en/latest/'>here</a>."
+        )
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
-
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
     def setup_dataset_layout(self):
-        raise NotImplementedError("Subclasses must implement this method.")
+        """Setup the dataset layout for Semantic Segmentation."""
+        group_box = QGroupBox("Dataset")
+        layout = QFormLayout()
 
-    def setup_model_layout(self):
-        """
-        Set up the layout and widgets for the model selection with a tabbed interface.
-        """
-        group_box = QGroupBox("Model Selection")
-        layout = QVBoxLayout()
+        # Dataset YAML
+        self.dataset_edit = QLineEdit()
+        self.dataset_button = QPushButton("Browse...")
+        self.dataset_button.clicked.connect(self.browse_dataset_yaml)
 
-        # Create tabbed widget
-        tab_widget = QTabWidget()
+        dataset_yaml_layout = QHBoxLayout()
+        dataset_yaml_layout.addWidget(self.dataset_edit)
+        dataset_yaml_layout.addWidget(self.dataset_button)
+        layout.addRow("Dataset YAML:", dataset_yaml_layout)
 
-        # Tab 1: Select model from dropdown
-        model_select_tab = QWidget()
-        model_select_layout = QFormLayout(model_select_tab)
+        # Class Mapping 
+        self.mapping_edit = QLineEdit()
+        self.mapping_button = QPushButton("Browse...")
+        self.mapping_button.clicked.connect(self.browse_class_mapping_file)
 
-        # Model combo box
-        self.model_combo = QComboBox()
-        self.load_model_combobox()
-        model_select_layout.addRow("Model:", self.model_combo)
-
-        tab_widget.addTab(model_select_tab, "Select Model")
-
-        # Tab 2: Use existing model
-        model_existing_tab = QWidget()
-        model_existing_layout = QFormLayout(model_existing_tab)
-
-        # Existing Model
-        self.model_edit = QLineEdit()
-        self.model_button = QPushButton("Browse...")
-        self.model_button.clicked.connect(self.browse_model_file)
-        model_layout = QHBoxLayout()
-        model_layout.addWidget(self.model_edit)
-        model_layout.addWidget(self.model_button)
-        model_existing_layout.addRow("Existing Model:", model_layout)
-
-        tab_widget.addTab(model_existing_tab, "Use Existing Model")
-
-        layout.addWidget(tab_widget)
+        class_mapping_layout = QHBoxLayout()
+        class_mapping_layout.addWidget(self.mapping_edit)
+        class_mapping_layout.addWidget(self.mapping_button)
+        layout.addRow("Class Mapping:", class_mapping_layout)
+        
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
         
     def setup_output_layout(self):
-        """
-        Set up the layout and widgets for the output directory.
-        """
         group_box = QGroupBox("Output Parameters")
         form_layout = QFormLayout()
 
@@ -370,48 +266,105 @@ class Base(QDialog):
         group_box.setLayout(form_layout)
         self.layout.addWidget(group_box)
 
+    def setup_model_layout(self):
+        group_box = QGroupBox("Model Selection")
+        layout = QVBoxLayout()
+        tab_widget = QTabWidget()
+
+        # Tab 1: Select encoder and decoder from dropdowns
+        model_select_tab = QWidget()
+        model_select_layout = QFormLayout(model_select_tab)
+        
+        # Encoder selection
+        self.encoder_combo = QComboBox()
+        encoders = get_segmentation_encoders()
+        self.encoder_combo.addItems(encoders)
+        if 'mit_b0' in encoders:
+            self.encoder_combo.setCurrentText('mit_b0')
+        elif encoders:
+            self.encoder_combo.setCurrentIndex(0)
+        model_select_layout.addRow("Encoder:", self.encoder_combo)
+        
+        # Decoder selection
+        self.decoder_combo = QComboBox()
+        decoders = get_segmentation_decoders()
+        self.decoder_combo.addItems(decoders)
+        if 'Segformer' in decoders:
+            self.decoder_combo.setCurrentText('Segformer')
+        elif decoders:
+            self.decoder_combo.setCurrentIndex(0)
+        model_select_layout.addRow("Decoder:", self.decoder_combo)
+        
+        tab_widget.addTab(model_select_tab, "Select Encoder and Decoder")
+
+        # Tab 2: Use existing model (pre_trained_path)
+        model_existing_tab = QWidget()
+        model_existing_layout = QFormLayout(model_existing_tab)
+        self.model_edit = QLineEdit()
+        self.model_button = QPushButton("Browse...")
+        self.model_button.clicked.connect(self.browse_model_file)
+        model_layout = QHBoxLayout()
+        model_layout.addWidget(self.model_edit)
+        model_layout.addWidget(self.model_button)
+        model_existing_layout.addRow("Existing Model:", model_layout)
+        tab_widget.addTab(model_existing_tab, "Use Existing Model")
+
+        # Disable the pre-trained model tab
+        tab_widget.setTabEnabled(1, False)
+
+        layout.addWidget(tab_widget)
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
+
+        # Connect signals to provide user feedback
+        self.model_edit.textChanged.connect(self.on_model_path_changed)
+        self.encoder_combo.currentTextChanged.connect(self.on_encoder_decoder_changed)
+        self.decoder_combo.currentTextChanged.connect(self.on_encoder_decoder_changed)
+        
+    def on_model_path_changed(self, text):
+        """Provide feedback when model path changes."""
+        if text.strip():
+            # Disable encoder/decoder selection when model path is set
+            self.encoder_combo.setEnabled(False)
+            self.decoder_combo.setEnabled(False)
+        else:
+            # Re-enable encoder/decoder selection
+            self.encoder_combo.setEnabled(True)
+            self.decoder_combo.setEnabled(True)
+
+    def on_encoder_decoder_changed(self):
+        """Provide feedback when encoder/decoder selection changes."""
+        if self.encoder_combo.currentText() and self.decoder_combo.currentText():
+            # Could optionally disable model path input here
+            pass
+
     def setup_parameters_layout(self):
-        """
-        Set up the layout and widgets for the generic layout.
-        """
-        # Create helper function for boolean dropdowns
+        """Set up the layout and widgets for the generic layout."""
         def create_bool_combo():
             combo = QComboBox()
             combo.addItems(["True", "False"])
             return combo
 
-        # Create parameters group box
         group_box = QGroupBox("Training Parameters")
         group_layout = QVBoxLayout(group_box)
 
-        # Add import/export buttons at the top
         import_export_layout = QHBoxLayout()
-        
         self.import_button = QPushButton("Import YAML")
         self.import_button.clicked.connect(self.import_parameters)
         import_export_layout.addWidget(self.import_button)
-
         self.export_button = QPushButton("Export YAML")
         self.export_button.clicked.connect(self.export_parameters)
         import_export_layout.addWidget(self.export_button)
-        
-        # Add stretch to push buttons to the left
         import_export_layout.addStretch()
-        
         group_layout.addLayout(import_export_layout)
 
-        # Create a widget to hold the form layout
         form_widget = QWidget()
         form_layout = QFormLayout(form_widget)
-
-        # Create the scroll area
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setWidget(form_widget)
-        
         group_layout.addWidget(scroll_area)
 
-        # Create parameters
         # Epochs
         self.epochs_spinbox = QSpinBox()
         self.epochs_spinbox.setMinimum(1)
@@ -431,6 +384,7 @@ class Base(QDialog):
         self.imgsz_spinbox.setMinimum(16)
         self.imgsz_spinbox.setMaximum(4096)
         self.imgsz_spinbox.setValue(self.imgsz)
+        self.imgsz_spinbox.setSingleStep(32)  # SMP models need 32-divisible
         form_layout.addRow("Image Size:", self.imgsz_spinbox)
 
         # Batch
@@ -439,86 +393,84 @@ class Base(QDialog):
         self.batch_spinbox.setMaximum(1024)
         self.batch_spinbox.setValue(self.batch)
         form_layout.addRow("Batch Size:", self.batch_spinbox)
-        
-        # Single Class (cls)
-        self.single_class_combo = create_bool_combo()
-        self.single_class_combo.setCurrentText("False")  # Default to False
-        form_layout.addRow("Single Class:", self.single_class_combo)
 
-        # Weighted Dataset
-        self.weighted_combo = create_bool_combo()
-        form_layout.addRow("Weighted Sampling:", self.weighted_combo)
-
-        # Freeze Layers
+        # Freeze Layers (Mapped to 'freeze' in get_parameters)
         self.freeze_layers_spinbox = QDoubleSpinBox()
         self.freeze_layers_spinbox.setMinimum(0.0)
         self.freeze_layers_spinbox.setMaximum(1.0)
         self.freeze_layers_spinbox.setSingleStep(0.01)
-        self.freeze_layers_spinbox.setValue(0.0)
-        form_layout.addRow("Freeze Layers:", self.freeze_layers_spinbox)
+        self.freeze_layers_spinbox.setValue(0.50)  # Default for SMP
+        form_layout.addRow("Freeze (Encoder %):", self.freeze_layers_spinbox)
+        
+        # Augmentation
+        self.augmentation_combo = create_bool_combo()
+        self.augmentation_combo.setCurrentText("True")
+        form_layout.addRow("Augmentation:", self.augmentation_combo)
 
         # Dropout
         self.dropout_spinbox = QDoubleSpinBox()
         self.dropout_spinbox.setMinimum(0.0)
         self.dropout_spinbox.setMaximum(1.0)
-        self.dropout_spinbox.setValue(0.0)
+        self.dropout_spinbox.setValue(0.50)
         form_layout.addRow("Dropout:", self.dropout_spinbox)
 
         # Optimizer
         self.optimizer_combo = QComboBox()
-        self.optimizer_combo.addItems(["auto", "SGD", "Adam", "AdamW", "NAdam", "RAdam", "RMSProp"])
-        self.optimizer_combo.setCurrentText("auto")
+        self.optimizer_combo.addItems(get_segmentation_optimizers())
+        self.optimizer_combo.setCurrentText("Adam")  # Default for SMP
         form_layout.addRow("Optimizer:", self.optimizer_combo)
+        
+        # Learning rate
+        self.lr_spinbox = QDoubleSpinBox()
+        self.lr_spinbox.setMinimum(1e-6)
+        self.lr_spinbox.setMaximum(1.0)
+        self.lr_spinbox.setDecimals(6)
+        self.lr_spinbox.setValue(0.0001)  # Default for SMP
+        form_layout.addRow("Learning Rate:", self.lr_spinbox)
+        
+        # Loss function
+        self.loss_combo = QComboBox()
+        self.loss_combo.addItems(get_segmentation_losses())
+        self.loss_combo.setCurrentText("DiceLoss")  # Default for SMP
+        form_layout.addRow("Loss Function:", self.loss_combo)
+
+        # Ignore background
+        self.ignore_index_combo = QComboBox()
+        self.ignore_index_combo.addItems(["False", "True"])
+        self.ignore_index_combo.setCurrentText("False")  # Default False
+        form_layout.addRow("Ignore background:", self.ignore_index_combo)
         
         # Workers
         self.workers_spinbox = QSpinBox()
-        self.workers_spinbox.setMinimum(0)
+        self.workers_spinbox.setMinimum(1)
         self.workers_spinbox.setMaximum(64)
-        self.workers_spinbox.setValue(0)
+        self.workers_spinbox.setValue(8)
         form_layout.addRow("Workers:", self.workers_spinbox)
-
-        # Save
-        self.save_combo = create_bool_combo()
-        form_layout.addRow("Save:", self.save_combo)
-
-        # Save Period
-        self.save_period_spinbox = QSpinBox()
-        self.save_period_spinbox.setMinimum(-1)
-        self.save_period_spinbox.setMaximum(1000)
-        self.save_period_spinbox.setValue(-1)
-        form_layout.addRow("Save Period:", self.save_period_spinbox)
         
-        # Val
+        # Validation during training
         self.val_combo = create_bool_combo()
         form_layout.addRow("Validation:", self.val_combo)
         
-        # Verbose
-        self.verbose_combo = create_bool_combo()
-        form_layout.addRow("Verbose:", self.verbose_combo)
-
-        # Add horizontal separator line
+        # --- Custom Parameters Section ---
         separator = QFrame()
         separator.setFrameShape(QFrame.HLine)
         separator.setFrameShadow(QFrame.Sunken)
         form_layout.addRow("", separator)
         
-        # Add parameter button at the top of custom parameters section
         self.add_param_button = QPushButton("Add Parameter")
         self.add_param_button.clicked.connect(self.add_parameter_pair)
         form_layout.addRow("", self.add_param_button)
 
-        # Add custom parameters section
         self.custom_params_layout = QVBoxLayout()
         form_layout.addRow("", self.custom_params_layout)
 
-        # Remove parameter button at the bottom
         self.remove_param_button = QPushButton("Remove Parameter")
         self.remove_param_button.clicked.connect(self.remove_parameter_pair)
-        self.remove_param_button.setEnabled(False)  # Disabled until at least one parameter is added
+        self.remove_param_button.setEnabled(False)
         form_layout.addRow("", self.remove_param_button)
 
         self.layout.addWidget(group_box)
-
+        
     def add_parameter_pair(self):
         """
         Add a new parameter input group with name, value, and type selector.
@@ -577,7 +529,9 @@ class Base(QDialog):
             self.remove_param_button.setEnabled(False)
 
     def setup_buttons_layout(self):
-        """Set up the layout and widgets for the OK and Cancel buttons."""
+        """
+
+        """
         # Add OK and Cancel buttons
         self.buttons = QPushButton("OK")
         self.buttons.clicked.connect(self.accept)
@@ -586,29 +540,7 @@ class Base(QDialog):
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.reject)
         self.layout.addWidget(self.cancel_button)
-
-    def load_model_combobox(self):
-        raise NotImplementedError("Subclasses must implement this method.")
-
-    def browse_dataset_dir(self):
-        """
-        Browse and select a dataset directory.
-        """
-        dir_path = QFileDialog.getExistingDirectory(self, "Select Dataset Directory")
-        if dir_path:
-            # Load the class mapping if it exists
-            class_mapping_path = f"{dir_path}/class_mapping.json"
-            if os.path.exists(class_mapping_path):
-                try:
-                    self.class_mapping = json.load(open(class_mapping_path, 'r'))
-                    self.mapping_edit.setText(class_mapping_path)
-                except Exception as e:
-                    print(f"Warning: Failed to load class mapping from {class_mapping_path}: {e}")
-                    self.class_mapping = {}
-
-            # Set the dataset path
-            self.dataset_edit.setText(dir_path)
-
+        
     def browse_dataset_yaml(self):
         """
         Browse and select a dataset YAML file.
@@ -624,10 +556,12 @@ class Base(QDialog):
             if os.path.exists(class_mapping_path):
                 try:
                     self.class_mapping = json.load(open(class_mapping_path, 'r'))
-                    self.mapping_edit.setText(class_mapping_path)
+                    self.class_mapping_path = class_mapping_path
+                    self.mapping_edit.setText(self.class_mapping_path)
                 except Exception as e:
                     print(f"Warning: Failed to load class mapping from {class_mapping_path}: {e}")
                     self.class_mapping = {}
+                    self.class_mapping_path = ""
 
             # Set the dataset and class mapping paths
             self.dataset_edit.setText(file_path)
@@ -642,6 +576,7 @@ class Base(QDialog):
                                                    "JSON Files (*.json)")
         if file_path:
             # Load the class mapping
+            self.class_mapping_path = file_path
             self.class_mapping = json.load(open(file_path, 'r'))
 
             # Set the class mapping path
@@ -722,15 +657,14 @@ class Base(QDialog):
                 'imgsz': self.imgsz_spinbox,
                 'batch': self.batch_spinbox,
                 'workers': self.workers_spinbox,
-                'save_period': self.save_period_spinbox,
-                'freeze_layers': self.freeze_layers_spinbox,
+                'freeze': self.freeze_layers_spinbox,
                 'dropout': self.dropout_spinbox,
-                'save': self.save_combo,
-                'weighted': self.weighted_combo,
-                'single_cls': self.single_class_combo,
+                'lr': self.lr_spinbox,
+                'augment_data': self.augmentation_combo,
                 'val': self.val_combo,
-                'verbose': self.verbose_combo,
-                'optimizer': self.optimizer_combo
+                'optimizer': self.optimizer_combo,
+                'loss_function': self.loss_combo,
+                'ignore_index': self.ignore_index_combo
             }
 
             # Update UI controls with imported values
@@ -747,22 +681,29 @@ class Base(QDialog):
                         if isinstance(converted_value, (int, float)):
                             widget.setValue(float(converted_value))
                     elif isinstance(widget, QComboBox):
-                        if param_name in ['save', 'weighted', 'val', 'verbose']:
+                        if param_name in ['augment_data', 'val']:
                             widget.setCurrentText("True" if converted_value else "False")
+                        elif param_name == 'ignore_index':
+                            if converted_value == 0:
+                                widget.setCurrentText("True")
+                            else:
+                                widget.setCurrentText("False")
                         elif str(converted_value) in [widget.itemText(i) for i in range(widget.count())]:
                             widget.setCurrentText(str(converted_value))
+                    elif isinstance(widget, QLineEdit):
+                        widget.setText(str(converted_value))
+            else:
+                # Add as a custom parameter
+                self.add_parameter_pair()
+                param_name_widget, param_value_widget, param_type_widget = self.custom_params[-1]
+                
+                param_name_widget.setText(param_name)
+                param_type_widget.setCurrentText(param_type)
+                
+                if param_type == "bool":
+                    param_value_widget.setText("True" if converted_value else "False")
                 else:
-                    # Add as a custom parameter
-                    self.add_parameter_pair()
-                    param_name_widget, param_value_widget, param_type_widget = self.custom_params[-1]
-                    
-                    param_name_widget.setText(param_name)
-                    param_type_widget.setCurrentText(param_type)
-                    
-                    if param_type == "bool":
-                        param_value_widget.setText("True" if converted_value else "False")
-                    else:
-                        param_value_widget.setText(str(converted_value))
+                    param_value_widget.setText(str(converted_value))
 
             QMessageBox.information(self, 
                                     "Import Success", 
@@ -786,21 +727,20 @@ class Base(QDialog):
             # Use a single flat dictionary for export
             export_data = {}
 
-            # Standard parameters
+            # Standard parameters matching get_parameters()
             export_data['epochs'] = self.epochs_spinbox.value()
             export_data['patience'] = self.patience_spinbox.value()
             export_data['imgsz'] = self.imgsz_spinbox.value()
             export_data['batch'] = self.batch_spinbox.value()
             export_data['workers'] = self.workers_spinbox.value()
-            export_data['save_period'] = self.save_period_spinbox.value()
-            export_data['freeze_layers'] = self.freeze_layers_spinbox.value()
+            export_data['freeze'] = self.freeze_layers_spinbox.value()
             export_data['dropout'] = self.dropout_spinbox.value()
-            export_data['save'] = self.save_combo.currentText() == "True"
-            export_data['weighted'] = self.weighted_combo.currentText() == "True"
-            export_data['single_cls'] = self.single_class_combo.currentText() == "True"
+            export_data['lr'] = self.lr_spinbox.value()
+            export_data['augment_data'] = self.augmentation_combo.currentText() == "True"
             export_data['val'] = self.val_combo.currentText() == "True"
-            export_data['verbose'] = self.verbose_combo.currentText() == "True"
             export_data['optimizer'] = self.optimizer_combo.currentText()
+            export_data['loss_function'] = self.loss_combo.currentText()
+            export_data['ignore_index'] = 0 if self.ignore_index_combo.currentText() == "True" else None
 
             # Custom parameters
             for param_info in self.custom_params:
@@ -841,61 +781,84 @@ class Base(QDialog):
                                  f"Failed to export parameters: {str(e)}")
 
     def accept(self):
-        """
-        Handle the OK button click event.
-        """
+        """Handle the OK button click event with validation."""
+        # Validate model selection
+        pre_trained_path = self.model_edit.text().strip()
+        encoder_selected = bool(self.encoder_combo.currentText())
+        decoder_selected = bool(self.decoder_combo.currentText())
+        
+        if pre_trained_path and (encoder_selected or decoder_selected):
+            reply = QMessageBox.question(
+                self, 
+                "Model Selection", 
+                "You have selected both a pre-trained model and encoder/decoder. "
+                "The pre-trained model will be used. Continue?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply == QMessageBox.No:
+                return
+        
+        if not pre_trained_path and not (encoder_selected and decoder_selected):
+            QMessageBox.warning(
+                self, 
+                "Model Selection", 
+                "Please either select a pre-trained model OR choose both encoder and decoder."
+            )
+            return
+        
         self.train_model()
-        # Close the dialog immediately after starting training so the UI is free.
-        # The training continues in a background thread and will emit completion/error signals.
         super().accept()
 
     def get_parameters(self):
-        """
-        Get the training parameters from the dialog widgets.
-    
-        Returns:
-            dict: A dictionary of training parameters.
-        """
+        """Get parameters, customized for SemanticModel."""
         # Extract values from dialog widgets
         params = {
             'task': self.task,
             'project': self.project_edit.text(),
             'name': self.name_edit.text(),
-            'data': self.dataset_edit.text(),
+            'data_yaml': self.dataset_edit.text(),
             'epochs': self.epochs_spinbox.value(),
             'patience': self.patience_spinbox.value(),
             'batch': self.batch_spinbox.value(),
             'imgsz': self.imgsz_spinbox.value(),
-            'save': self.save_combo.currentText() == "True",
-            'save_period': self.save_period_spinbox.value(),
+            'augment_data': self.augmentation_combo.currentText() == "True",
             'workers': self.workers_spinbox.value(),
             'optimizer': self.optimizer_combo.currentText(),
-            'verbose': self.verbose_combo.currentText() == "True",
-            'freeze_layers': self.freeze_layers_spinbox.value(),
-            'weighted': self.weighted_combo.currentText() == "True",
-            'single_cls': self.single_class_combo.currentText() == "True",
+            'freeze': self.freeze_layers_spinbox.value(),
             'dropout': self.dropout_spinbox.value(),
+            'lr': self.lr_spinbox.value(),
+            'loss_function': self.loss_combo.currentText(),
+            'ignore_index': 0 if self.ignore_index_combo.currentText() == "True" else None,
             'val': self.val_combo.currentText() == "True",
             'exist_ok': True,
-            'plots': True,
+            'num_vis_samples': 5,
+            'class_mapping': self.class_mapping_path,  # provide path to class mapping file
         }
+        
+        # Handle model selection logic
+        pre_trained_path = self.model_edit.text().strip()
+        
+        if pre_trained_path:
+            # Use existing model - don't pass encoder/decoder names
+            params['pre_trained_path'] = pre_trained_path
+            print(f"Using pre-trained model: {pre_trained_path}")
+        else:
+            # Use encoder/decoder selection - don't pass pre_trained_path
+            params['encoder_name'] = self.encoder_combo.currentText()
+            params['decoder_name'] = self.decoder_combo.currentText()
+            print(f"Building new model: {params['decoder_name']}-{params['encoder_name']}")
+        
         # Default project folder
         project = 'Data/Training'
         params['project'] = params['project'] if params['project'] else project
+        
         # Default project name
         now = datetime.datetime.now()
         now = now.strftime("%Y-%m-%d_%H-%M-%S")
         params['name'] = params['name'] if params['name'] else now
-        # Either the model path, or the model name provided from combo box
-        params['model'] = self.model_edit.text() if self.model_edit.text() else self.model_combo.currentText()
         
-        # If using an existing model, set specific parameters
-        if self.model_edit.text():
-            params['warmup_epochs'] = 0
-            params['lr0'] = 0.0005
-            params['optimizer'] = 'AdamW'
-    
-        # Add custom parameters (allows overriding the above parameters)
+        # Add custom parameters...
         for param_info in self.custom_params:
             param_name, param_value, param_type = param_info
             name = param_name.text().strip()
@@ -906,31 +869,26 @@ class Base(QDialog):
                 if type_name == "bool":
                     params[name] = value.lower() == "true"
                 elif type_name == "int":
-                    try:
+                    try: 
                         params[name] = int(value)
                     except ValueError:
-                        print(f"Warning: Could not convert '{value}' to int for parameter '{name}', using as string")
                         params[name] = value
                 elif type_name == "float":
-                    try:
+                    try: 
                         params[name] = float(value)
-                    except ValueError:
-                        print(f"Warning: Could not convert '{value}' to float for parameter '{name}', using as string")
+                    except ValueError: 
                         params[name] = value
                 else:  # string type
                     params[name] = value
-    
-        # Return the dictionary of parameters
+                        
         return params
 
     def train_model(self):
-        """
-        Train the model based on the provided parameters.
-        """
-        # Get training parameters
+        """Train the model using the Semantic-specific worker."""
+        # Get parameters
         self.params = self.get_parameters()
-
-        # Create and start the worker thread
+        
+        # Create and start the training worker
         self.worker = TrainModelWorker(self.params, self.main_window.device)
         self.worker.training_started.connect(self.on_training_started)
         self.worker.training_completed.connect(self.on_training_completed)
@@ -938,177 +896,55 @@ class Base(QDialog):
         self.worker.start()
 
     def on_training_started(self):
-        """
-        Handle the event when the training starts.
-        """
-        # Save the class mapping JSON file
+        """Handle the event when training starts."""
         output_dir_path = os.path.join(self.params['project'], self.params['name'])
         os.makedirs(output_dir_path, exist_ok=True)
-
-        # Check if single_cls is True. self.params is set in self.train_model()
-        is_single_cls = self.params.get('single_cls', False)
-
-        mapping_to_save = {}
-        if is_single_cls:
-            # If single_cls=True, the model will be trained with one class: 'item'.
-            # We must save a class_mapping.json that reflects this,
-            # regardless of what the original dataset's mapping was.
-            # The model's output will be 'item', so deployment needs an 'item' label.
-            print("Note: single_cls=True. Saving 'item' class mapping.")
-            item_label = {
-                'id': str(uuid.uuid4()),  # Generate a new unique ID
-                'short_label_code': 'item',
-                'long_label_code': 'item',
-                'color': [255, 0, 0]  # Default to red
-            }
-            # The mapping file maps index (as string) to label dict.
-            # For single_cls, the index will always be '0'.
-            mapping_to_save = {'0': item_label}
-
-        elif self.class_mapping:
-            # Standard multi-class case: save the dataset's class mapping
-            mapping_to_save = self.class_mapping
-        
-        # Only write if there is a mapping to save
-        if mapping_to_save:
-            # Write the (potentially modified) json file to the output directory
+        if self.class_mapping:
             with open(f"{output_dir_path}/class_mapping.json", 'w') as json_file:
-                json.dump(mapping_to_save, json_file, indent=4)
-
+                json.dump(self.class_mapping, json_file, indent=4)
         message = "Model training has commenced.\nMonitor the console for real-time progress."
         QMessageBox.information(self, "Model Training Status", message)
         
     def on_training_error(self, error_message):
-        """
-        Handle the event when an error occurs during training.
-
-        Args:
-            error_message (str): The error message.
-        """
+        """Handle the event when an error occurs during training."""
         QMessageBox.critical(self, "Error", error_message)
         print(error_message)
 
     def on_training_completed(self):
-        """
-        Handle the event when the training completes.
-        """
+        """Handle the event when training completes."""
         msg_box = QMessageBox(self)
         msg_box.setWindowTitle("Model Training Status")
         msg_box.setText("Model training has successfully been completed.")
-        ok_button = msg_box.addButton(QMessageBox.Ok)
-        
-        # TODO: Re-enable optimization option when CUDA is supported
-        # has_cuda = torch.cuda.is_available()
-        # if has_cuda:
-        #     optimize_button = msg_box.addButton("Optimize Model", QMessageBox.AcceptRole)
-        deploy_button = msg_box.addButton("Deploy Model", QMessageBox.AcceptRole)
-        msg_box.exec_()
-
-        clicked = msg_box.clickedButton()
-        if clicked == ok_button:
-            super().accept()
-        # elif has_cuda and clicked == optimize_button:
-        #     self.is_optimizing = True
-        #     self.optimize_trained_model()
-        elif clicked == deploy_button:
-            self.deploy_trained_model()
-            super().accept()
-            
-    def optimize_trained_model(self):
-        """
-        Automatically export the trained model with pre-filled parameters without showing the dialog.
-        """
-        output_folder = f"{self.params['project']}/{self.params['name']}"
-        weights_folder = f"{output_folder}/weights"
-        
-        # Find the best weights file
-        best_weights = None
-        for fname in os.listdir(weights_folder):
-            if fname.startswith("best") and fname.endswith(".pt"):
-                best_weights = f"{weights_folder}/{fname}"
-                break
-
-        if not best_weights:
-            QMessageBox.warning(self, "Optimize Model", "Could not find trained model weights.")
-            return
-
-        # Get the optimize dialog
-        optimize_dialog = self.main_window.optimize_model_dialog
-
-        # Pre-fill the parameters
-        optimize_dialog.model_path_edit.setText(best_weights)
-        optimize_dialog.imgsz_spinbox.setValue(self.params['imgsz'])
-        optimize_dialog.dynamic_combo.setCurrentText("True")  # Enable dynamic shapes
-        optimize_dialog.data_edit.setText(self.params['data'])  # Dataset YAML or directory
-        optimize_dialog.int8_combo.setCurrentText("True")  # Enable INT8 quantization
-
-        # Connect the export completed signal
-        optimize_dialog.export_completed.connect(self.on_export_completed_signal)
-
-        # Automatically start the export process
-        optimize_dialog.export_model()
-
-    def on_export_completed_signal(self, exported_path):
-        """
-        Handle the event when the export completes.
-        """
-        self.exported_model_path = exported_path
-        if self.is_optimizing:
-            self.on_optimize_completed()
-
-    def on_optimize_completed(self):
-        """
-        Handle the event when the optimization completes.
-        """
-        msg_box = QMessageBox(self)
-        msg_box.setWindowTitle("Model Optimization Status")
-        msg_box.setText("Model optimization has successfully been completed.")
-        deploy_button = msg_box.addButton("Deploy Model", QMessageBox.AcceptRole)
         msg_box.addButton(QMessageBox.Ok)
+        deploy_button = msg_box.addButton("Deploy Model", QMessageBox.AcceptRole)
         msg_box.exec_()
+        if msg_box.clickedButton() == deploy_button:
+            self.deploy_trained_model()
 
-        clicked = msg_box.clickedButton()
-        if clicked == deploy_button:
-            self.deploy_trained_model(self.exported_model_path)
-        super().accept()
-
-    def deploy_trained_model(self, model_path=None):
-        """
-        Load the trained model and class mapping into the existing deployment dialog,
-        update the status and labels, but do not show the dialog.
-        """
+    def deploy_trained_model(self):
+        """Load the trained SMP model and class mapping into a deployment dialog."""
         if not self.main_window.image_window.raster_manager.image_paths:
             QMessageBox.warning(self, 
                                 "Deploy Model", 
                                 "No images found for deployment, you must import images first.")
             return
+
+        output_folder = os.path.join(self.params['project'], self.params['name'])
+
+        # SemanticModel saves weights in a structure like:
+        # {project}/{name}/{encoder}_{decoder}/weights/best.pt
+        best_weights = None
+        for root, dirs, files in os.walk(output_folder):
+            if "best.pt" in files and "weights" in root:
+                best_weights = os.path.join(root, "best.pt")
+                output_folder = os.path.dirname(os.path.dirname(best_weights))  # The run dir
+                break
         
-        output_folder = f"{self.params['project']}/{self.params['name']}"
-        weights_folder = f"{output_folder}/weights"
-        
-        if model_path is None:
-            # Find the best weights file (usually 'best.pt' or similar)
-            best_weights = None
-            for fname in os.listdir(weights_folder):
-                if fname.startswith("best") and fname.endswith(".pt"):
-                    best_weights = f"{weights_folder}/{fname}"
-                    break
+        if not best_weights:
+            QMessageBox.warning(self, "Deploy Model", f"Could not find 'best.pt' in {output_folder}.")
+            return
 
-            if not best_weights:
-                QMessageBox.warning(self, "Deploy Model", "Could not find trained model weights.")
-                return
-
-            task = self.task
-        else:
-            best_weights = model_path
-            if not os.path.exists(best_weights):
-                QMessageBox.warning(self, "Deploy Model", "Could not find model weights.")
-                return
-
-            # Use the same task as the trained model
-            task = self.task
-
-        # Load class mapping if available
+        # Load class mapping
         class_mapping_path = f"{output_folder}/class_mapping.json"
         class_mapping = {}
         if os.path.exists(class_mapping_path):
@@ -1119,19 +955,18 @@ class Base(QDialog):
                 QMessageBox.warning(self, "Deploy Model", f"Failed to load class mapping: {str(e)}")
 
         # Use the existing deployment dialog instance from main_window
-        if task == "classify":
-            deploy_dialog = self.main_window.classify_deploy_model_dialog
-        elif task == "detect":
-            deploy_dialog = self.main_window.detect_deploy_model_dialog
-        elif task == "segment":
-            deploy_dialog = self.main_window.segment_deploy_model_dialog
+        if self.task == "semantic":
+            if not hasattr(self.main_window, "semantic_deploy_model_dialog"):
+                QMessageBox.warning(self, "Deploy Model", "No deployment dialog found for 'semantic' task.")
+                return
+            deploy_dialog = self.main_window.semantic_deploy_model_dialog
         else:
             QMessageBox.warning(self, "Deploy Model", "Unknown task type for deployment.")
             return
 
-        # Set the model path and class mapping, then load the model
+        # Set path and mapping, then load the model
         deploy_dialog.model_path = best_weights
-        deploy_dialog.class_mapping = class_mapping
+        deploy_dialog.class_mapping = class_mapping  # use the loaded class mapping
         deploy_dialog.load_model()
 
         # Update label window and status bar
@@ -1141,4 +976,5 @@ class Base(QDialog):
             deploy_dialog.check_and_display_class_names()
         if hasattr(deploy_dialog, "status_bar"):
             deploy_dialog.status_bar.setText(f"Model loaded: {os.path.basename(best_weights)}")
+
 
