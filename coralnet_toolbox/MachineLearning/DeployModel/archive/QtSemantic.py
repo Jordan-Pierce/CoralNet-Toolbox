@@ -12,8 +12,7 @@ from torch.cuda import empty_cache
 
 from coralnet_toolbox.MachineLearning.DeployModel.QtBase import Base
 
-from ultralytics import YOLO
-import torch
+from coralnet_toolbox.MachineLearning.SMP import SemanticModel 
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -33,87 +32,44 @@ def _reconstruct_semantic_mask(results, model_class_names, label_window, mask_an
     Converts an Ultralytics Results object (instance format) back into a
     single semantic mask (H, W) with internal class IDs.
     """
-    # Prefer using a dense semantic mask if the model produced one
-    if hasattr(results, 'semantic_mask') and results.semantic_mask is not None:
-        sem = results.semantic_mask
-        # Convert tensors to numpy arrays if needed
-        try:
-            sem = sem.cpu().numpy()
-        except Exception:
-            sem = np.array(sem)
-
-        # Collapse channels if one-hot or channel-first
-        if sem.ndim == 3:
-            # common shapes: (C, H, W) or (1, H, W)
-            if sem.shape[0] == 1:
-                sem = sem[0]
-            else:
-                sem = np.argmax(sem, axis=0)
-
-        h, w = results.orig_shape[:2]
-        semantic_mask = np.zeros((h, w), dtype=np.uint8)
-
-        unique_vals = np.unique(sem)
-        for v in unique_vals:
-            if v == 0:
-                continue
-            model_class_index = int(v)
-            if model_class_index >= len(model_class_names):
-                continue
-            model_class_name = model_class_names[model_class_index]
-            if model_class_name.lower() == 'background':
-                continue
-
-            label_obj = label_window.get_label_by_short_code(model_class_name, return_review=False)
-            if not label_obj:
-                continue
-            mask_class_id = mask_annotation_map.get(label_obj.id)
-            if not mask_class_id:
-                continue
-
-            semantic_mask[sem == v] = mask_class_id
-
-        return semantic_mask
-
-    # Fallback to instance-mask reconstruction (old behavior)
     # If no masks or boxes, return an empty mask
     if results.masks is None or results.boxes is None:
         return np.zeros(results.orig_shape[:2], dtype=np.uint8)
-
+        
     h, w = results.orig_shape[:2]
     semantic_mask = np.zeros((h, w), dtype=np.uint8)
-
+    
     # Get masks and class indices
     masks = results.masks.data.cpu().numpy().astype(bool)  # (N, H, W)
     classes = results.boxes.cls.cpu().numpy().astype(int)  # (N,)
-
+    
     # Iterate over each detected instance (from highest conf to lowest)
     for i in range(len(classes)):
         # 1. Get the class name from the model's results (e.g., index 1)
-        model_class_index = classes[i]
+        model_class_index = classes[i] 
         if model_class_index >= len(model_class_names):
             continue
         model_class_name = model_class_names[model_class_index]
-
+        
         # Skip 'background' class by name
         if model_class_name.lower() == 'background':
             continue
-
+        
         label_obj = label_window.get_label_by_short_code(model_class_name, return_review=False)
         if not label_obj:
             # This label isn't in the project (e.g., it was deleted). Skip it.
             continue
-
+        
         mask_class_id = mask_annotation_map.get(label_obj.id)
         if not mask_class_id:
             # This should not happen if sync_label_map was called correctly,
             # but it's a good safeguard.
             continue
-
+            
         # 4. Apply this class ID to the semantic mask
         instance_mask = masks[i]  # (H, W)
         semantic_mask[instance_mask] = mask_class_id
-
+        
     return semantic_mask
 
 
@@ -127,8 +83,7 @@ class Semantic(Base):
         super().__init__(main_window, parent)
         self.setWindowTitle("Deploy Semantic Segmentation Model (Ctrl + 4)")
 
-        # Ultralytics uses 'segment' task for semantic segmentation
-        self.task = 'segment'
+        self.task = 'semantic'
 
     def showEvent(self, event):
         """
@@ -165,51 +120,52 @@ class Semantic(Base):
         self.layout.addWidget(self.thresholds_widget)
 
     def load_model(self):
-        """Load the semantic model using Ultralytics YOLO (segment task)."""
+        """
+        Load the semantic model using the SemanticModel class.
+        """
         if not self.model_path:
             QMessageBox.warning(self, "Warning", "Please select a model file first")
             return
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
-            # Use YOLO for semantic segmentation
-            # Ensure task is correct
-            self.task = 'segment'
-
-            # Adjust batch size heuristics (keep consistent with Detect)
-            if self.model_path.endswith('.engine'):
-                self.BATCH_SIZE = 1
-            else:
-                self.BATCH_SIZE = 16
-
-            # Load the model
-            self.loaded_model = YOLO(self.model_path, task=self.task)
+        try: 
+            # --- Use SemanticModel ---
+            self.loaded_model = SemanticModel(self.model_path)
 
             try:
-                imgsz = self.loaded_model.__dict__['overrides'].get('imgsz', 640)
+                # Get imgsz from the loaded model
+                imgsz = self.loaded_model.imgsz if self.loaded_model.imgsz else 640
             except Exception:
                 imgsz = 640
 
             # Warm up the model
-            self.loaded_model(np.zeros((imgsz, imgsz, 3), dtype=np.uint8))
-
-            # Get class names from the loaded model (preserves background if present)
-            try:
-                self.class_names = list(self.loaded_model.names.values())
-            except Exception:
-                # Fallback
-                self.class_names = []
+            self.loaded_model.predict(np.zeros((imgsz, imgsz, 3), dtype=np.uint8))
+            
+            # Get class names from the loaded model
+            # We keep the original list from the model (including background)
+            # to preserve the model's output index mapping.
+            self.class_names = self.loaded_model.class_names
+            self.class_names = [name for name in self.class_names if name.lower() != 'background']
+            
+            # We can still filter the mapping dictionary, as the new 
+            # label methods will handle 'background' properly.
+            self.class_mapping = {k: v for k, v in self.class_mapping.items() if k.lower() != 'background'}
 
             # Check for unmapped classes
             mapped_classes, unmapped_classes, unused_mapping_keys = self._find_unmapped_classes()
 
+            # These methods (now updated in QtBase.py) will
+            # intelligently synchronize with the project's labels.
             if not self.class_mapping:
+                # No mapping file at all
                 self.handle_missing_class_mapping()
             elif unmapped_classes:
+                # Partial mapping - some classes are missing
                 self.add_labels_to_label_window()
                 self.handle_missing_class_mapping(unmapped_classes)
             else:
+                # Complete mapping - all classes are mapped
                 self.add_labels_to_label_window()
 
             # Display the class names
@@ -252,10 +208,7 @@ class Semantic(Base):
         # Get project labels for mask annotation creation
         project_labels = self.main_window.label_window.labels
         # Get full list of model class names for _reconstruct_semantic_mask
-        try:
-            model_class_names = list(self.loaded_model.names.values())
-        except Exception:
-            model_class_names = ['background'] + self.class_names
+        model_class_names = ['background'] + self.class_names 
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -292,8 +245,7 @@ class Semantic(Base):
                 else:
                     # Get both parallel lists: coordinate objects and data arrays
                     work_areas = raster.get_work_areas()  # List of WorkArea objects
-                    # Request BGR arrays to match cv2.imread behavior
-                    work_items_data = raster.get_work_areas_data(as_format='BGR')  # List of np.ndarray
+                    work_items_data = raster.get_work_areas_data()  # List of np.ndarray
 
                 if not work_items_data or not work_areas:
                     print(f"Warning: No work items found for {image_path}. Skipping.")
@@ -334,14 +286,14 @@ class Semantic(Base):
                         # --- 3b. Apply Model ---
                         results_list = self._apply_model(input_data)
                         
-                        if not results_list:
+                        if not results_list or not results_list[0]:
                             if not is_full_image: 
                                 item.unhighlight()
                             progress_bar.update_progress()
                             continue
                             
                         # Get the single Results object. 
-                        results_obj = results_list[0]
+                        results_obj = results_list[0][0] 
                         results_obj.path = image_path  # Fix path
 
                         # --- 3c. Reconstruct Small Mask ---
@@ -396,20 +348,20 @@ class Semantic(Base):
         Apply the SemanticModel to the inputs.
         (This method no longer shows its own progress bar)
         """
+        
         # Get prediction parameters
         confidence = self.thresholds_widget.get_uncertainty_thresh()
-
-        # Run prediction on the batch of inputs using Ultralytics YOLO
-        results_generator = self.loaded_model(
-            inputs,
-            conf=confidence,
-            device=self.main_window.device,
-            imgsz=self.imgsz,
-            stream=True,
+        
+        # Run prediction on the batch of inputs
+        # Our SemanticModel returns a list of Results objects
+        results_list = self.loaded_model.predict(
+            source=inputs,
+            confidence_threshold=confidence,
+            # Add other inference params here if needed
         )
-
-        # Convert stream to list and cleanup
-        results = list(results_generator)
+        
+        # Clean up GPU memory
         gc.collect()
         empty_cache()
-        return results
+        
+        return results_list
