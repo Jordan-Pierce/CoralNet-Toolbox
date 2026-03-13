@@ -55,15 +55,12 @@ def _reconstruct_semantic_mask(results, model_class_names, label_window, mask_an
 
         unique_vals = np.unique(sem)
         for v in unique_vals:
-            if v == 0:
-                continue
             model_class_index = int(v)
             if model_class_index >= len(model_class_names):
                 continue
             model_class_name = model_class_names[model_class_index]
-            if model_class_name.lower() == 'background':
-                continue
 
+            # Map model class to project label (including 'background' if present)
             label_obj = label_window.get_label_by_short_code(model_class_name, return_review=False)
             if not label_obj:
                 continue
@@ -94,10 +91,6 @@ def _reconstruct_semantic_mask(results, model_class_names, label_window, mask_an
         if model_class_index >= len(model_class_names):
             continue
         model_class_name = model_class_names[model_class_index]
-
-        # Skip 'background' class by name
-        if model_class_name.lower() == 'background':
-            continue
 
         label_obj = label_window.get_label_by_short_code(model_class_name, return_review=False)
         if not label_obj:
