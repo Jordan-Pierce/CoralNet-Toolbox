@@ -28,7 +28,13 @@ class WorkAreaTool(Tool):
         self.drawing = False
         self.start_pos = None
         self.current_rect = None
+        self.drawing_work_area = None  # Temporary work area while drawing
         self.work_areas = []  # List to store WorkArea objects for the current image
+        
+        # Placement mode state (Ctrl+drag to move instead of resize)
+        self.placement_mode = False  # Whether we're in placement mode
+        self.locked_width = 0  # Width when placement mode is entered
+        self.locked_height = 0  # Height when placement mode is entered
         
         # Style settings for drawing the work area rectangle - update to use blue dashed line
         self.work_area_pen = QPen(QColor(0, 168, 230), 2, Qt.DashLine)
@@ -78,10 +84,18 @@ class WorkAreaTool(Tool):
                     self.annotation_window.scene.removeItem(work_area.graphics_item)
                 except RuntimeError as e:
                     print(f"Error removing graphics item: {e}")
+            
+            # Remove tag if it exists
+            if work_area.tag_item and work_area.tag_item.scene():
+                try:
+                    self.annotation_window.scene.removeItem(work_area.tag_item)
+                except RuntimeError as e:
+                    print(f"Error removing tag item: {e}")
                 
             # Always clear references, even if scene removal fails
             work_area.graphics_item = None
             work_area.remove_button = None
+            work_area.tag_item = None
         
         # Clear our internal list since we removed the graphics items
         # This doesn't remove them from the raster
@@ -92,18 +106,28 @@ class WorkAreaTool(Tool):
         if not self.annotation_window.active_image or not self.annotation_window.cursorInWindow(event.pos()):
             return
             
-        # If Ctrl is pressed, don't start drawing - user is likely trying to delete work areas
+        # If Ctrl+Shift is pressed, don't start drawing - user is managing work areas
         if self.ctrl_pressed:
             return
             
         if event.button() == Qt.LeftButton:
             scene_pos = self.annotation_window.mapToScene(event.pos())
             
-            if not self.drawing:
+            # Check if we're in placement mode
+            modifiers = event.modifiers()
+            ctrl_held = (modifiers & Qt.ControlModifier)
+            
+            if self.placement_mode and ctrl_held:
+                # Finalize current placement and create new one with same dimensions
+                self._finalize_placement_work_area(scene_pos)
+            elif self.placement_mode:
+                # Finalize current placement and exit placement mode
+                self.finish_drawing(scene_pos)
+            elif not self.drawing:
                 # Start drawing a new work area
                 self.start_drawing(scene_pos)
             else:
-                # Finish drawing the current work area
+                # Finish drawing the current work area (exit placement mode if entered)
                 self.finish_drawing(scene_pos)
                 
     def mouseMoveEvent(self, event: QMouseEvent):
@@ -117,8 +141,12 @@ class WorkAreaTool(Tool):
         
         if not self.drawing or not self.annotation_window.active_image:
             return
-            
-        self.update_drawing(scene_pos)
+        
+        # Check if Ctrl is held (for placement mode)
+        modifiers = event.modifiers()
+        ctrl_held = (modifiers & Qt.ControlModifier)
+        
+        self.update_drawing(scene_pos, ctrl_held)
         
     def mouseReleaseEvent(self, event: QMouseEvent):
         """Handle mouse release events."""
@@ -135,12 +163,9 @@ class WorkAreaTool(Tool):
             self.finish_drawing(self.hover_pos)
             return
 
-        # Ctrl+Alt for temporary work area
-        if (modifiers & Qt.ControlModifier) and (modifiers & Qt.AltModifier):
-            if not self.temporary_work_area:
-                self.temporary_work_area = self._create_temporary_work_area()
-                if self.temporary_work_area:
-                    self.save_work_area(self.temporary_work_area)  # Save to raster
+        # Exit placement mode with Backspace
+        if key == Qt.Key_Backspace and self.placement_mode:
+            self.cancel_drawing()
             return
 
         # Ctrl+Shift to show remove buttons
@@ -148,6 +173,7 @@ class WorkAreaTool(Tool):
             self.ctrl_pressed = True
             if self.work_areas:  # Only show remove buttons if there are work areas exist
                 self.update_remove_buttons_visibility(True)
+                self.update_tags_visibility(True)  # Show tags with remove buttons
                 self.annotation_window.viewport().setCursor(Qt.PointingHandCursor)
             
             # Clear all work areas (Ctrl+Shift+Backspace)
@@ -178,12 +204,21 @@ class WorkAreaTool(Tool):
             if self.temporary_work_area is not None:
                 self._remove_temporary_work_area()
         
+        # For Ctrl release during placement mode: place work area and return to normal drawing
+        if event.key() == Qt.Key_Control and self.placement_mode and self.drawing:
+            # Only place if Ctrl is released without other modifiers - not if this is part of Ctrl+Shift
+            if not (modifiers & Qt.ShiftModifier):
+                # Place at current position and return to normal drawing
+                self.finish_drawing(self.hover_pos if self.hover_pos else self.start_pos)
+                return
+        
         # For Ctrl+Shift: hide remove buttons when either key is released
         if (event.key() == Qt.Key_Control or event.key() == Qt.Key_Shift) and not (
             (modifiers & Qt.ControlModifier) and (modifiers & Qt.ShiftModifier)
         ):
             self.ctrl_pressed = False
             self.update_remove_buttons_visibility(False)
+            self.update_tags_visibility(False)  # Hide tags with remove buttons
             self.annotation_window.viewport().setCursor(self.cursor)
 
     def _create_temporary_work_area(self):
@@ -235,31 +270,139 @@ class WorkAreaTool(Tool):
         self.current_rect.setBrush(QBrush(QColor(0, 168, 230, 30)))  # Light blue transparent fill
         self.annotation_window.scene.addItem(self.current_rect)
         
-    def update_drawing(self, pos):
+        # Create a temporary work area for managing the tag
+        self.drawing_work_area = WorkArea.from_rect(QRectF(pos.x(), pos.y(), 0, 0), 
+                                                     self.get_current_image_name())
+        self.drawing_work_area.create_tag(self.annotation_window.scene)
+        
+    def update_drawing(self, pos, ctrl_held=False):
         """Update the work area rectangle as the mouse moves."""
         if not self.current_rect:
             return
+        
+        # Handle placement mode - move instead of resize
+        if self.placement_mode or (ctrl_held and self.drawing and not self.placement_mode):
+            # If Ctrl just pressed and we're not yet in placement mode, enter it
+            if ctrl_held and not self.placement_mode:
+                self._enter_placement_mode(pos)
+                return
             
-        # Create a normalized rectangle (handles drawing in any direction)
-        rect = QRectF(self.start_pos, pos).normalized()
+            # In placement mode: position rectangle with center at cursor
+            half_width = self.locked_width / 2
+            half_height = self.locked_height / 2
+            new_rect = QRectF(
+                pos.x() - half_width,
+                pos.y() - half_height,
+                self.locked_width,
+                self.locked_height
+            )
+            
+            # Constrain to image boundaries
+            constrained_rect = self.constrain_rect_to_image_bounds(new_rect)
+            self.current_rect.setRect(constrained_rect)
+            
+            # Update the temporary work area's rectangle and tag
+            if self.drawing_work_area:
+                self.drawing_work_area.rect = constrained_rect
+                self.drawing_work_area.update_tag(constrained_rect.width(), constrained_rect.height())
+        else:
+            # Normal drawing mode - resize from start_pos
+            # Create a normalized rectangle (handles drawing in any direction)
+            rect = QRectF(self.start_pos, pos).normalized()
+            
+            # Constrain to image boundaries for visual feedback during drawing
+            constrained_rect = self.constrain_rect_to_image_bounds(rect)
+            
+            self.current_rect.setRect(constrained_rect)
+            
+            # Update the temporary work area's rectangle and tag
+            if self.drawing_work_area:
+                self.drawing_work_area.rect = constrained_rect
+                self.drawing_work_area.update_tag(constrained_rect.width(), constrained_rect.height())
+    
+    def _enter_placement_mode(self, pos):
+        """Enter placement mode by locking current dimensions."""
+        if not self.drawing_work_area:
+            return
         
-        # Constrain to image boundaries for visual feedback during drawing
-        constrained_rect = self.constrain_rect_to_image_bounds(rect)
+        # Lock current dimensions
+        self.locked_width = self.drawing_work_area.rect.width()
+        self.locked_height = self.drawing_work_area.rect.height()
+        self.placement_mode = True
         
+        # Update position to center on cursor
+        half_width = self.locked_width / 2
+        half_height = self.locked_height / 2
+        new_rect = QRectF(
+            pos.x() - half_width,
+            pos.y() - half_height,
+            self.locked_width,
+            self.locked_height
+        )
+        
+        constrained_rect = self.constrain_rect_to_image_bounds(new_rect)
         self.current_rect.setRect(constrained_rect)
-        self.hover_pos = pos  # Update hover position for key events
+        self.drawing_work_area.rect = constrained_rect
+        self.drawing_work_area.update_tag(constrained_rect.width(), constrained_rect.height())
+    
+    def _finalize_placement_work_area(self, pos):
+        """Finalize the current placement work area and create a new one with same dimensions."""
+        if not self.current_rect or not self.drawing_work_area:
+            return
+        
+        # Finalize current work area
+        work_area = self.drawing_work_area
+        
+        # Set animation manager and finalize
+        work_area.set_animation_manager(self.annotation_window.animation_manager)
+        work_area.create_graphics(self.annotation_window.scene)
+        work_area.animate()
+        
+        # Add close button
+        work_area.create_remove_button()
+        work_area.set_remove_button_visibility(self.ctrl_pressed)
+        work_area.hide_tag()
+        
+        # Connect to remove signal
+        work_area.removed.connect(self.on_work_area_removed)
+        
+        # Add to work areas list
+        self.work_areas.append(work_area)
+        
+        # Store in raster
+        self.save_work_area(work_area)
+        
+        # Create a new work area in placement mode with same dimensions
+        self.drawing_work_area = WorkArea.from_rect(
+            QRectF(pos.x() - self.locked_width / 2, 
+                   pos.y() - self.locked_height / 2,
+                   self.locked_width, 
+                   self.locked_height),
+            self.get_current_image_name()
+        )
+        self.drawing_work_area.create_tag(self.annotation_window.scene)
+        
+        # Update the preview rectangle and tag
+        constrained_rect = self.constrain_rect_to_image_bounds(self.drawing_work_area.rect)
+        self.current_rect.setRect(constrained_rect)
+        self.drawing_work_area.rect = constrained_rect
+        self.drawing_work_area.update_tag(constrained_rect.width(), constrained_rect.height())
         
     def finish_drawing(self, pos):
         """Finish drawing the work area and add it to the list."""
         if not self.current_rect:
             self.cancel_drawing()
             return
-            
-        # Get the final rectangle
-        rect = QRectF(self.start_pos, pos).normalized()
         
-        # Ensure the rectangle stays within image boundaries
-        rect = self.constrain_rect_to_image_bounds(rect)
+        # Determine the final rectangle based on placement mode
+        if self.placement_mode:
+            # Use the current placement rectangle
+            rect = self.current_rect.rect()
+        else:
+            # Get the final rectangle from normal drawing
+            rect = QRectF(self.start_pos, pos).normalized()
+            # Ensure the rectangle stays within image boundaries
+            rect = self.constrain_rect_to_image_bounds(rect)
         
         # Check if the work area is too small
         if rect.width() < 10 or rect.height() < 10:
@@ -289,6 +432,11 @@ class WorkAreaTool(Tool):
         work_area.create_remove_button()
         work_area.set_remove_button_visibility(self.ctrl_pressed)
         
+        # Transfer the tag from the temporary work area to the final one
+        if self.drawing_work_area and self.drawing_work_area.tag_item:
+            work_area.tag_item = self.drawing_work_area.tag_item
+            work_area.hide_tag()
+        
         # Connect to remove signal
         work_area.removed.connect(self.on_work_area_removed)
         
@@ -298,19 +446,32 @@ class WorkAreaTool(Tool):
         # Store the work area in the raster
         self.save_work_area(work_area)
         
-        # Reset state
+        # Reset state including placement mode
         self.drawing = False
+        self.drawing_work_area = None  # Clear the temporary work area reference
         self.start_pos = None
         self.current_rect = None
+        self.placement_mode = False
+        self.locked_width = 0
+        self.locked_height = 0
         
     def cancel_drawing(self):
         """Cancel the current work area drawing."""
         if self.current_rect:
             self.annotation_window.scene.removeItem(self.current_rect)
             self.current_rect = None
+        
+        # Clean up the temporary work area and its tag
+        if self.drawing_work_area:
+            if self.drawing_work_area.tag_item and self.drawing_work_area.tag_item.scene():
+                self.annotation_window.scene.removeItem(self.drawing_work_area.tag_item)
+            self.drawing_work_area = None
             
         self.drawing = False
         self.start_pos = None
+        self.placement_mode = False
+        self.locked_width = 0
+        self.locked_height = 0
         
     def create_work_area_from_current_view(self):
         """Create a work area based on the current viewport view."""
@@ -384,6 +545,14 @@ class WorkAreaTool(Tool):
         """Update the visibility of all remove buttons based on Ctrl key state."""
         for work_area in self.work_areas:
             work_area.set_remove_button_visibility(visible)
+    
+    def update_tags_visibility(self, visible):
+        """Update the visibility of all work area dimension tags based on Ctrl+Shift state."""
+        for work_area in self.work_areas:
+            if visible:
+                work_area.show_tag()
+            else:
+                work_area.hide_tag()
         
     def on_work_area_removed(self, work_area):
         """Handle when a work area is removed."""
@@ -511,6 +680,11 @@ class WorkAreaTool(Tool):
         
         # Remove each work area's graphics item from the scene
         for work_area in work_areas_copy:
+            # Remove the tag item if it exists
+            if work_area.tag_item and work_area.tag_item.scene():
+                self.annotation_window.scene.removeItem(work_area.tag_item)
+                work_area.tag_item = None
+            
             # If the graphics item exists and is in the scene, it will automatically
             # remove all its children (including the remove_button) when removed
             if work_area.graphics_item and work_area.graphics_item.scene():

@@ -5,6 +5,8 @@ from PyQt5.QtCore import QRectF, QObject, pyqtSignal, Qt, pyqtProperty
 from PyQt5.QtWidgets import (QGraphicsRectItem, QGraphicsItemGroup, QGraphicsLineItem, QGraphicsPathItem,
                              QGraphicsPixmapItem)
 
+from coralnet_toolbox.Annotations.QtAnnotation import FloatingTagItem
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
@@ -44,6 +46,7 @@ class WorkArea(QObject):
         self.graphics_item = None  # Reference to the main graphics item in the scene
         self.remove_button = None  # Reference to the remove button graphics item
         self.shadow_area = None  # Reference to the shadow graphics item
+        self.tag_item = None  # Reference to the FloatingTagItem for displaying dimensions
         
         # Create a random color for the work area
         self.work_area_pen = QPen(QColor(0, 168, 230), 3, Qt.DotLine)  # Changed to static dotted line
@@ -366,6 +369,11 @@ class WorkArea(QObject):
         if self.shadow_area is not None and hasattr(self.shadow_area, "scene") and self.shadow_area.scene():
             self.shadow_area.scene().removeItem(self.shadow_area)
             self.shadow_area = None
+        
+        # Remove the tag item if it exists
+        if self.tag_item is not None and hasattr(self.tag_item, "scene") and self.tag_item.scene():
+            self.tag_item.scene().removeItem(self.tag_item)
+            self.tag_item = None
             
         if self.graphics_item and self.graphics_item.scene():
             self.graphics_item.scene().removeItem(self.graphics_item)
@@ -428,6 +436,45 @@ class WorkArea(QObject):
             if visible:
                 self.update_remove_button_appearance()
             self.remove_button.setVisible(visible)
+    
+    def create_tag(self, scene):
+        """
+        Create the dimension tag (width × height) and add it to the scene.
+        
+        Args:
+            scene: The QGraphicsScene to add the tag to
+        """
+        if not self.tag_item:
+            # Create the tag with cyan color matching the work area
+            self.tag_item = FloatingTagItem("0 × 0", QColor(0, 168, 230))
+            scene.addItem(self.tag_item)
+    
+    def update_tag(self, width, height):
+        """
+        Update the tag text and position based on current rectangle dimensions.
+        
+        Args:
+            width (float): The width of the work area
+            height (float): The height of the work area
+        """
+        if self.tag_item:
+            # Update the text
+            self.tag_item.setText(f"{int(width)} × {int(height)}")
+            
+            # Position the tag at the bottom-left corner with a small offset
+            tag_offset = 5
+            self.tag_item.setPos(self.rect.left() + tag_offset, 
+                                 self.rect.bottom() - tag_offset)
+    
+    def show_tag(self):
+        """Show the dimension tag."""
+        if self.tag_item:
+            self.tag_item.show()
+    
+    def hide_tag(self):
+        """Hide the dimension tag."""
+        if self.tag_item:
+            self.tag_item.hide()
         
     def contains_point(self, point):
         """
