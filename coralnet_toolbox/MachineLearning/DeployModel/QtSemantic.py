@@ -6,7 +6,7 @@ import os
 import numpy as np
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import (QApplication, QMessageBox)
+from PyQt5.QtWidgets import (QApplication, QMessageBox, QGroupBox, QFormLayout, QCheckBox)
 
 from torch.cuda import empty_cache
 
@@ -28,7 +28,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-def _reconstruct_semantic_mask(results, model_class_names, label_window, mask_annotation_map):
+def _reconstruct_semantic_mask(results, model_class_names, label_window, mask_annotation_map, include_background=False):
     """
     Converts an Ultralytics Results object (instance format) back into a
     single semantic mask (H, W) with internal class IDs.
@@ -60,7 +60,11 @@ def _reconstruct_semantic_mask(results, model_class_names, label_window, mask_an
                 continue
             model_class_name = model_class_names[model_class_index]
 
-            # Map model class to project label (including 'background' if present)
+            # Optionally ignore background class
+            if not include_background and model_class_name.lower() == 'background':
+                continue
+
+            # Map model class to project label
             label_obj = label_window.get_label_by_short_code(model_class_name, return_review=False)
             if not label_obj:
                 continue
@@ -91,6 +95,10 @@ def _reconstruct_semantic_mask(results, model_class_names, label_window, mask_an
         if model_class_index >= len(model_class_names):
             continue
         model_class_name = model_class_names[model_class_index]
+
+        # Optionally ignore background class
+        if not include_background and model_class_name.lower() == 'background':
+            continue
 
         label_obj = label_window.get_label_by_short_code(model_class_name, return_review=False)
         if not label_obj:
@@ -137,8 +145,17 @@ class Semantic(Base):
         """
         Setup parameter control section in a group box.
         """
-        # Currently no parameters other than thresholds for semantic segmentation
-        pass
+        group_box = QGroupBox("Options")
+        layout = QFormLayout()
+
+        # Checkbox to include/predict 'background' class
+        self.predict_background_checkbox = QCheckBox("Predict 'background' class")
+        # Default: do not predict background unless user enables it
+        self.predict_background_checkbox.setChecked(False)
+
+        layout.addRow("Include background:", self.predict_background_checkbox)
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
     
     def setup_sam_layout(self):
         pass
@@ -342,7 +359,8 @@ class Semantic(Base):
                             results_obj,
                             model_class_names,                            # List of model class names
                             self.main_window.label_window,                # Live project labels
-                            mask_annotation_map                           # Mask's map {LabelObj.id: 2}
+                            mask_annotation_map,                          # Mask's map {LabelObj.id: 2}
+                            include_background=getattr(self, 'predict_background_checkbox', None) and self.predict_background_checkbox.isChecked()
                         )
                         
                         # --- 3d. Update Main Annotation (Streaming) ---

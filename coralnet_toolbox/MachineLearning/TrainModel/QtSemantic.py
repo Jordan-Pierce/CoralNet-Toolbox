@@ -64,7 +64,10 @@ class Semantic(Base):
 
         standard_models = [
             'yolo26n-semseg.yaml',
-            'yolo26m-semseg.yaml'
+            'yolo26s-semseg.yaml',
+            'yolo26m-semseg.yaml',
+            'yolo26l-semseg.yaml',
+            'yolo26x-semseg.yaml'
         ]
 
         self.model_combo.addItems(standard_models)
