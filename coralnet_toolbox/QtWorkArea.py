@@ -448,6 +448,8 @@ class WorkArea(QObject):
             # Create the tag with cyan color matching the work area
             self.tag_item = FloatingTagItem("0 × 0", QColor(0, 168, 230))
             scene.addItem(self.tag_item)
+            # Hide initially - will be shown when positioned
+            self.tag_item.hide()
     
     def update_tag(self, width, height):
         """
@@ -463,6 +465,10 @@ class WorkArea(QObject):
             
             # Position the tag at the bottom-left corner with a small offset
             tag_offset = 5
+            
+            # Show the tag when first positioned (if not already visible)
+            if not self.tag_item.isVisible():
+                self.tag_item.show()
             self.tag_item.setPos(self.rect.left() + tag_offset, 
                                  self.rect.bottom() - tag_offset)
     

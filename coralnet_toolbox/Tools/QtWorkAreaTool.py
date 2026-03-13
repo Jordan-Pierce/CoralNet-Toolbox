@@ -197,19 +197,12 @@ class WorkAreaTool(Tool):
         """Handle key release events."""
         modifiers = event.modifiers()
         
-        # For Ctrl+Alt: remove temporary work area when either key is released
-        if (event.key() == Qt.Key_Control or event.key() == Qt.Key_Alt) and not (
-            (modifiers & Qt.ControlModifier) and (modifiers & Qt.AltModifier)
-        ):
-            if self.temporary_work_area is not None:
-                self._remove_temporary_work_area()
-        
-        # For Ctrl release during placement mode: place work area and return to normal drawing
+        # For Ctrl release during placement mode: exit drawing without finalizing
         if event.key() == Qt.Key_Control and self.placement_mode and self.drawing:
-            # Only place if Ctrl is released without other modifiers - not if this is part of Ctrl+Shift
+            # Only cancel if Ctrl is released without other modifiers - not if this is part of Ctrl+Shift
             if not (modifiers & Qt.ShiftModifier):
-                # Place at current position and return to normal drawing
-                self.finish_drawing(self.hover_pos if self.hover_pos else self.start_pos)
+                # Cancel placement mode and exit drawing entirely
+                self.cancel_drawing()
                 return
         
         # For Ctrl+Shift: hide remove buttons when either key is released
