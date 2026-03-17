@@ -16,6 +16,7 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QToolBar, QComboBox,
     QLabel, QPushButton, QSizePolicy, QApplication, QListView
 )
+from types import SimpleNamespace
 
 from coralnet_toolbox.Explorer.core.QtDataItem import AnnotationDataItem
 from coralnet_toolbox.Explorer.models.annotation_list_model import AnnotationListModel, AnnotationItemDelegate
@@ -283,16 +284,14 @@ class AnnotationViewerWindow(QWidget):
         toolbar.setMovable(False)
         toolbar.setFloatable(False)
         
-        # Image filter - searchable combo box
+        # Image filter - multi-select combo
         image_label = QLabel(" Image: ")
         toolbar.addWidget(image_label)
-        
-        self.image_filter_combo = QComboBox()
-        self.image_filter_combo.setEditable(True)
-        self.image_filter_combo.setInsertPolicy(QComboBox.NoInsert)
-        self.image_filter_combo.setMinimumWidth(150)
-        self.image_filter_combo.setToolTip("Filter by image (searchable)")
-        self.image_filter_combo.lineEdit().setPlaceholderText("Search images...")
+
+        self.image_filter_combo = MultiSelectCombo()
+        self.image_filter_combo.setFixedWidth(180)
+        self.image_filter_combo.setToolTip("Filter by image (multi-select)")
+        self.image_filter_combo.selection_changed.connect(lambda v: None)
         toolbar.addWidget(self.image_filter_combo)
         
         toolbar.addSeparator()
@@ -301,18 +300,16 @@ class AnnotationViewerWindow(QWidget):
         type_label = QLabel(" Type: ")
         toolbar.addWidget(type_label)
         
-        self.type_filter_combo = QComboBox()
-        self.type_filter_combo.setEditable(True)
-        self.type_filter_combo.setInsertPolicy(QComboBox.NoInsert)
-        self.type_filter_combo.setMinimumWidth(120)
-        self.type_filter_combo.setToolTip("Filter by annotation type")
-        self.type_filter_combo.lineEdit().setPlaceholderText("Search types...")
+        self.type_filter_combo = MultiSelectCombo()
+        self.type_filter_combo.setFixedWidth(180)
         # Populate type filter with fixed options
-        self.type_filter_combo.addItem("All Types", "all")
-        self.type_filter_combo.addItem("Patch", "PatchAnnotation")
-        self.type_filter_combo.addItem("Rectangle", "RectangleAnnotation")
-        self.type_filter_combo.addItem("Polygon", "PolygonAnnotation")
-        self.type_filter_combo.addItem("MultiPolygon", "MultiPolygonAnnotation")
+        type_opts = [
+            ("Patch", "PatchAnnotation"),
+            ("Rectangle", "RectangleAnnotation"),
+            ("Polygon", "PolygonAnnotation"),
+            ("MultiPolygon", "MultiPolygonAnnotation"),
+        ]
+        self.type_filter_combo.set_options(type_opts)
         toolbar.addWidget(self.type_filter_combo)
         
         toolbar.addSeparator()
@@ -321,12 +318,9 @@ class AnnotationViewerWindow(QWidget):
         label_label = QLabel(" Label: ")
         toolbar.addWidget(label_label)
         
-        self.label_filter_combo = QComboBox()
-        self.label_filter_combo.setEditable(True)
-        self.label_filter_combo.setInsertPolicy(QComboBox.NoInsert)
-        self.label_filter_combo.setMinimumWidth(120)
-        self.label_filter_combo.setToolTip("Filter by label (searchable)")
-        self.label_filter_combo.lineEdit().setPlaceholderText("Search labels...")
+        self.label_filter_combo = MultiSelectCombo()
+        self.label_filter_combo.setFixedWidth(180)
+        self.label_filter_combo.setToolTip("Filter by label (multi-select)")
         toolbar.addWidget(self.label_filter_combo)
         
         # Spacer to push apply button to the right
@@ -358,40 +352,36 @@ class AnnotationViewerWindow(QWidget):
     
     def _populate_image_filter(self):
         """Populate image filter combo with current images."""
-        self.image_filter_combo.clear()
-        self.image_filter_combo.addItem("All Images", "all")
-        
+        opts = []
         current_image = None
         if hasattr(self.annotation_window, 'current_image_path') and self.annotation_window.current_image_path:
             current_image = os.path.basename(self.annotation_window.current_image_path)
-        
-        # Access raster_manager through image_window
         image_window = getattr(self.main_window, 'image_window', None)
         if image_window:
             raster_manager = getattr(image_window, 'raster_manager', None)
             if raster_manager:
                 for path in raster_manager.image_paths:
                     image_name = os.path.basename(path)
-                    self.image_filter_combo.addItem(image_name, image_name)
-        
-        # Set default to current image if available
-        if current_image:
-            index = self.image_filter_combo.findData(current_image)
-            if index >= 0:
-                self.image_filter_combo.setCurrentIndex(index)
+                    opts.append((image_name, image_name))
+        # set options (MultiSelectCombo expects list of tuples)
+        try:
+            self.image_filter_combo.set_options(opts)
+        except Exception:
+            pass
     
     def _populate_label_filter(self):
         """Populate label filter combo with current labels."""
-        self.label_filter_combo.clear()
-        self.label_filter_combo.addItem("All Labels", "all")
-        
-        # Access labels through label_window
+        opts = []
         label_window = getattr(self.main_window, 'label_window', None)
         if label_window:
             labels = getattr(label_window, 'labels', [])
             for label in labels:
                 if hasattr(label, 'short_label_code'):
-                    self.label_filter_combo.addItem(label.short_label_code, label.short_label_code)
+                    opts.append((label.short_label_code, label.short_label_code))
+        try:
+            self.label_filter_combo.set_options(opts)
+        except Exception:
+            pass
     
     def refresh_filter_options(self):
         """Refresh filter options based on current state."""
@@ -721,58 +711,68 @@ class AnnotationViewerWindow(QWidget):
         """Get list of selected image names from filter combo."""
         if not hasattr(self, 'image_filter_combo'):
             return None  # No filter = show all
-        
-        current_data = self.image_filter_combo.currentData()
-        if current_data == "all":
-            return None  # Show all images
-        
-        current_text = self.image_filter_combo.currentText()
-        if current_text == "All Images":
-            return None
-        
-        # Return list with single selected image
-        return [current_text] if current_text else None
+        # Support MultiSelectCombo's API
+        try:
+            vals = self.image_filter_combo.selected_values()
+            return vals
+        except Exception:
+            # Fallback to legacy QComboBox behavior if present
+            try:
+                current_data = self.image_filter_combo.currentData()
+                if current_data == "all":
+                    return None
+                current_text = self.image_filter_combo.currentText()
+                if current_text == "All Images":
+                    return None
+                return [current_text] if current_text else None
+            except Exception:
+                return None
     
     def _get_selected_types(self):
         """Get list of selected annotation types from filter combo."""
         if not hasattr(self, 'type_filter_combo'):
-            return None  # No filter = show all
-        
-        current_data = self.type_filter_combo.currentData()
-        if current_data == "all":
-            return None  # Show all types
-        
-        current_text = self.type_filter_combo.currentText()
-        if current_text == "All Types":
             return None
-        
-        # Map display name back to class name if needed
-        type_map = {
-            "Patch": "PatchAnnotation",
-            "Rectangle": "RectangleAnnotation", 
-            "Polygon": "PolygonAnnotation",
-            "MultiPolygon": "MultiPolygonAnnotation"
-        }
-        
-        if current_data:
-            return [current_data]
-        return [type_map.get(current_text, current_text)] if current_text else None
+        try:
+            vals = self.type_filter_combo.selected_values()
+            return vals
+        except Exception:
+            try:
+                current_data = self.type_filter_combo.currentData()
+                if current_data == "all":
+                    return None
+                current_text = self.type_filter_combo.currentText()
+                if current_text == "All Types":
+                    return None
+                type_map = {
+                    "Patch": "PatchAnnotation",
+                    "Rectangle": "RectangleAnnotation",
+                    "Polygon": "PolygonAnnotation",
+                    "MultiPolygon": "MultiPolygonAnnotation"
+                }
+                if current_data:
+                    return [current_data]
+                return [type_map.get(current_text, current_text)] if current_text else None
+            except Exception:
+                return None
     
     def _get_selected_labels(self):
         """Get list of selected labels from filter combo."""
         if not hasattr(self, 'label_filter_combo'):
-            return None  # No filter = show all
-        
-        current_data = self.label_filter_combo.currentData()
-        if current_data == "all":
-            return None  # Show all labels
-        
-        current_text = self.label_filter_combo.currentText()
-        if current_text == "All Labels":
             return None
-        
-        # Return list with single selected label
-        return [current_text] if current_text else None
+        try:
+            vals = self.label_filter_combo.selected_values()
+            return vals
+        except Exception:
+            try:
+                current_data = self.label_filter_combo.currentData()
+                if current_data == "all":
+                    return None
+                current_text = self.label_filter_combo.currentText()
+                if current_text == "All Labels":
+                    return None
+                return [current_text] if current_text else None
+            except Exception:
+                return None
     
     def _ensure_cropped_images(self, annotations):
         """Ensure cropped images are available for annotations."""
@@ -977,16 +977,16 @@ class AnnotationViewerWindow(QWidget):
             annotation_id: ID of the annotation.
             new_label: New label ID.
         """
-        # Update widget visuals
-        if annotation_id in self.annotation_widgets_by_id:
-            widget = self.annotation_widgets_by_id[annotation_id]
-            widget.update()
-            widget.update_tooltip()
-        
+        # Update cache for changed annotation and refresh view
+        if hasattr(self.annotation_window, 'annotations_dict'):
+            ann = self.annotation_window.annotations_dict.get(annotation_id)
+            if ann:
+                self.data_item_cache[annotation_id] = AnnotationDataItem(ann)
+
         # Recalculate layout if sorting by label
         if self.sort_combo.currentText() == "Label":
-            self._recalculate_layout()
-            
+            QTimer.singleShot(0, self.refresh_annotations)
+
         # Refresh label filter options
         self._populate_label_filter()
     
@@ -1133,24 +1133,13 @@ class AnnotationViewerWindow(QWidget):
         # If the user has not applied the filter, do not update or create widgets
         if not getattr(self, '_filter_applied', False):
             return
-
-        if self.isolated_mode:
-            self._show_all_annotations()
-        
-        # Remove widgets for items no longer in the set
-        current_ids = {item.annotation.id for item in data_items}
-        for ann_id, widget in list(self.annotation_widgets_by_id.items()):
-            if ann_id not in current_ids:
-                if widget in self.selected_widgets:
-                    self.selected_widgets.remove(widget)
-                widget.setParent(None)
-                widget.deleteLater()
-                del self.annotation_widgets_by_id[ann_id]
-        
+        # Migrate to model/view: replace widget-centric management with model updates
         self.all_data_items = data_items
-        self.selected_widgets.clear()
+        # clear any legacy selection tracking and let the view manage selection
+        self.selected_widgets.clear() if hasattr(self, 'selected_widgets') else None
         self.last_selected_item_id = None
-        
+
+        # Rebuild model layout (groups + headers) and show gallery
         self._recalculate_layout()
         self._update_toolbar_state()
         
@@ -1174,8 +1163,9 @@ class AnnotationViewerWindow(QWidget):
             if isolated_ids:
                 sorted_data_items = [item for item in sorted_data_items if item.annotation.id in isolated_ids]
 
-        # Group and set into model
+        # Group and set into model (supports headers and collapsed groups)
         groups = self._group_data_items_by_sort_key(sorted_data_items)
+        # groups is a list of tuples (group_key, group_color, [items])
         self.list_model.set_grouped_items(groups)
         # Inform delegate of size change
         if self.list_delegate:
@@ -1191,43 +1181,9 @@ class AnnotationViewerWindow(QWidget):
     
     def _update_visible_widgets(self):
         """Show widgets in viewport, hide others for performance."""
-        if not self.widget_positions:
-            return
-        
-        self.content_widget.setUpdatesEnabled(False)
-        
-        scroll_y = self.scroll_area.verticalScrollBar().value()
-        
-        vp_width = self.scroll_area.viewport().width()
-        vp_height = self.scroll_area.viewport().height()
-        
-        # Fallback for initial layout before window is fully shown
-        if vp_width < 100 or vp_height < 100:
-            vp_width = max(self.width(), 400)
-            vp_height = max(self.height(), 400)
-            
-        visible_rect = QRect(0, scroll_y, vp_width, vp_height)
-        
-        # Add buffer for smoother scrolling
-        buffer = vp_height // 2
-        visible_rect.adjust(0, -buffer, 0, buffer)
-        
-        visible_ids = set()
-        for ann_id, rect in self.widget_positions.items():
-            if rect.intersects(visible_rect):
-                visible_ids.add(ann_id)
-        
-        # FIX: Remove isVisible() checks. Aggressively force states.
-        for ann_id, widget in self.annotation_widgets_by_id.items():
-            if ann_id in visible_ids:
-                widget.setGeometry(self.widget_positions[ann_id])
-                widget.load_image()
-                widget.show()
-            else:
-                widget.hide()
-                widget.unload_image()
-        
-        self.content_widget.setUpdatesEnabled(True)
+        # Virtualization removed in model/view refactor; keep stub to avoid
+        # accidental calls to legacy code paths.
+        return
     
     # -------------------------------------------------------------------------
     # Sorting Logic
@@ -1338,39 +1294,26 @@ class AnnotationViewerWindow(QWidget):
     
     def _isolate_selection(self):
         """Hide non-selected annotations."""
-        if not self.selected_widgets:
+        # Determine current selected ids from the view
+        sel_ids = set(self.get_selected_annotation_ids())
+        if not sel_ids:
             return
-        
-        self.isolated_widgets = set(self.selected_widgets)
-        self.content_widget.setUpdatesEnabled(False)
-        try:
-            for widget in self.annotation_widgets_by_id.values():
-                if widget not in self.isolated_widgets:
-                    widget.hide()
-            self.isolated_mode = True
-            self._recalculate_layout()
-        finally:
-            self.content_widget.setUpdatesEnabled(True)
-        
+
+        self.isolated_mode = True
+        self.isolated_ids = sel_ids
+        # Rebuild model to show only isolated items
+        self._recalculate_layout()
         self._update_toolbar_state()
     
     def _show_all_annotations(self):
         """Show all annotations, exit isolation mode."""
         if not self.isolated_mode:
             return
-        
+
         self.isolated_mode = False
-        self.isolated_widgets.clear()
+        self.isolated_ids = None
         self.active_ordered_ids = []
-        
-        self.content_widget.setUpdatesEnabled(False)
-        try:
-            for widget in self.annotation_widgets_by_id.values():
-                widget.show()
-            self._recalculate_layout()
-        finally:
-            self.content_widget.setUpdatesEnabled(True)
-        
+        self._recalculate_layout()
         self._update_toolbar_state()
     
     def _update_toolbar_state(self):
@@ -1469,10 +1412,16 @@ class AnnotationViewerWindow(QWidget):
             sel_model = self.list_view.selectionModel()
             indexes = sel_model.selectedIndexes()
             ids = []
+            selected_widgets = []
             for idx in indexes:
                 data = idx.data(self.list_model.DataItemRole)
                 if data and data.get('type') == 'annotation':
-                    ids.append(data['item'].annotation.id)
+                    aid = data['item'].annotation.id
+                    ids.append(aid)
+                    # maintain legacy `selected_widgets` as simple namespace objects
+                    selected_widgets.append(SimpleNamespace(data_item=data['item']))
+            # update legacy list for compatibility
+            self.selected_widgets = selected_widgets
             if ids:
                 self._syncing_selection = True
                 try:
@@ -1491,66 +1440,9 @@ class AnnotationViewerWindow(QWidget):
     
     def handle_annotation_selection(self, widget, event):
         """Handle selection with keyboard modifiers."""
-        if self.selection_blocked:
-            return
-        
-        sorted_items = self._get_sorted_data_items()
-        if self.isolated_mode:
-            isolated_ids = {w.data_item.annotation.id for w in self.isolated_widgets}
-            sorted_items = [i for i in sorted_items if i.annotation.id in isolated_ids]
-        
-        try:
-            current_index = sorted_items.index(widget.data_item)
-        except ValueError:
-            return
-        
-        modifiers = event.modifiers()
-        changed_ids = []
-        
-        # Shift: range selection
-        if modifiers in (Qt.ShiftModifier, Qt.ShiftModifier | Qt.ControlModifier):
-            last_index = -1
-            if self.last_selected_item_id:
-                try:
-                    last_item = self.data_item_cache[self.last_selected_item_id]
-                    last_index = sorted_items.index(last_item)
-                except (KeyError, ValueError):
-                    last_index = -1
-            
-            if last_index != -1:
-                start = min(last_index, current_index)
-                end = max(last_index, current_index)
-                for i in range(start, end + 1):
-                    item = sorted_items[i]
-                    w = self.annotation_widgets_by_id.get(item.annotation.id)
-                    if w and self.select_widget(w):
-                        changed_ids.append(item.annotation.id)
-            else:
-                if self.select_widget(widget):
-                    changed_ids.append(widget.data_item.annotation.id)
-            
-            self.last_selected_item_id = widget.data_item.annotation.id
-        
-        # Ctrl: toggle
-        elif modifiers == Qt.ControlModifier:
-            if self.toggle_widget_selection(widget):
-                changed_ids.append(widget.data_item.annotation.id)
-            self.last_selected_item_id = widget.data_item.annotation.id
-        
-        # No modifier: single selection
-        else:
-            newly_selected_id = widget.data_item.annotation.id
-            for w in list(self.selected_widgets):
-                if w.data_item.annotation.id != newly_selected_id:
-                    if self.deselect_widget(w):
-                        changed_ids.append(w.data_item.annotation.id)
-            if self.select_widget(widget):
-                changed_ids.append(newly_selected_id)
-            self.last_selected_item_id = widget.data_item.annotation.id
-        
-        if changed_ids:
-            # Emit selection change - SelectionManager will handle tool switching
-            self.selection_changed.emit(changed_ids)
+        # Legacy widget selection handler no longer used with QListView.
+        # Selection is handled by the view and `_on_list_selection_changed`.
+        return
     
     def handle_annotation_context_menu(self, widget, event):
         """Handle right-click context menu on annotation."""
@@ -1631,106 +1523,25 @@ class AnnotationViewerWindow(QWidget):
     
     def _viewport_mouse_press(self, event):
         """Handle mouse press for selection."""
-        if self.selection_blocked:
-            return False
-        
-        if event.button() == Qt.LeftButton and event.modifiers() == Qt.ControlModifier:
-            self.selection_at_press = set(self.selected_widgets)
-            self.rubber_band_origin = event.pos()
-            
-            content_pos = self.content_widget.mapFrom(self.scroll_area.viewport(), event.pos())
-            child = self.content_widget.childAt(content_pos)
-            self.mouse_pressed_on_widget = isinstance(child, AnnotationImageWidget)
-            return True
-        
-        elif event.button() == Qt.LeftButton and not event.modifiers():
-            content_pos = self.content_widget.mapFrom(self.scroll_area.viewport(), event.pos())
-            if self.content_widget.childAt(content_pos) is None:
-                if self.selected_widgets:
-                    changed_ids = [w.data_item.annotation.id for w in self.selected_widgets]
-                    self.clear_selection()
-                    self.selection_changed.emit(changed_ids)
-                return True
-        
+        # Let QListView handle mouse presses and selection; disable legacy rubber-band.
         return False
     
     def _viewport_mouse_double_click(self, event):
         """Handle double-click to reset view."""
-        if self.selection_blocked:
-            return False
-        
+        # Let QListView handle double-clicks; forward reset-view when double-clicking empty space.
         if event.button() == Qt.LeftButton:
-            if self.selected_widgets:
-                changed_ids = [w.data_item.annotation.id for w in self.selected_widgets]
-                self.clear_selection()
-                self.selection_changed.emit(changed_ids)
-            if self.isolated_mode:
-                self._show_all_annotations()
             self.reset_view_requested.emit()
             return True
         return False
     
     def _viewport_mouse_move(self, event):
         """Handle mouse move for rubber band selection."""
-        if self.selection_blocked:
-            return False
-        
-        if (self.rubber_band_origin is None or
-            event.buttons() != Qt.LeftButton or
-            event.modifiers() != Qt.ControlModifier or
-            self.mouse_pressed_on_widget):
-            return False
-        
-        distance = (event.pos() - self.rubber_band_origin).manhattanLength()
-        if distance < self.drag_threshold:
-            return True
-        
-        if not self.rubber_band:
-            self.rubber_band = QRubberBand(QRubberBand.Rectangle, self.scroll_area.viewport())
-        
-        rect = QRect(self.rubber_band_origin, event.pos()).normalized()
-        self.rubber_band.setGeometry(rect)
-        self.rubber_band.show()
-        
-        selection_rect = self.rubber_band.geometry()
-        
-        for widget in self.annotation_widgets_by_id.values():
-            mapped_pos = self.content_widget.mapTo(self.scroll_area.viewport(), widget.geometry().topLeft())
-            widget_rect = QRect(mapped_pos, widget.geometry().size())
-            
-            is_in_band = selection_rect.intersects(widget_rect)
-            should_select = (widget in self.selection_at_press) or is_in_band
-            
-            if should_select and not widget.is_selected():
-                self.select_widget(widget)
-            elif not should_select and widget.is_selected():
-                self.deselect_widget(widget)
-        
-        return True
+        # Rubber-band selection removed; QListView provides native selection.
+        return False
     
     def _viewport_mouse_release(self, event):
         """Handle mouse release to finalize selection."""
-        if self.selection_blocked:
-            if self.rubber_band:
-                self.rubber_band.hide()
-                self.rubber_band.deleteLater()
-                self.rubber_band = None
-            self.rubber_band_origin = None
-            return False
-        
-        if self.rubber_band_origin is not None and event.button() == Qt.LeftButton:
-            if self.rubber_band and self.rubber_band.isVisible():
-                self.rubber_band.hide()
-                self.rubber_band.deleteLater()
-                self.rubber_band = None
-                # Emit the final selection state exactly once
-                try:
-                    changed_ids = [w.data_item.annotation.id for w in self.selected_widgets]
-                    self.selection_changed.emit(changed_ids)
-                except Exception:
-                    pass
-            self.rubber_band_origin = None
-            return True
+        # No-op for legacy rubber-band release
         return False
     
     # -------------------------------------------------------------------------
@@ -1778,28 +1589,24 @@ class AnnotationViewerWindow(QWidget):
         signals and the `cleared` signal for other viewers to respond.
         """
         try:
-            # Remove all widgets
-            for widget in list(self.annotation_widgets_by_id.values()):
-                try:
-                    if widget in self.selected_widgets:
-                        self.selected_widgets.remove(widget)
-                    widget.setParent(None)
-                    widget.deleteLater()
-                except Exception:
-                    pass
-            self.annotation_widgets_by_id.clear()
-
-            # Clear caches and lists
+            # Clear caches and lists (model/view)
             self.data_item_cache.clear()
             self.all_data_items = []
-            self.selected_widgets.clear()
+            self.selected_widgets = []
             self.last_selected_item_id = None
             self.active_ordered_ids = []
             self.isolated_mode = False
-            self.isolated_widgets.clear()
+            self.isolated_ids = None
 
-            # Clear group headers
-            self._clear_separator_labels()
+            # Clear model and headers
+            try:
+                self.list_model.set_grouped_items([])
+            except Exception:
+                pass
+            try:
+                self._clear_separator_labels()
+            except Exception:
+                pass
 
             # Recalculate layout and show placeholder
             try:

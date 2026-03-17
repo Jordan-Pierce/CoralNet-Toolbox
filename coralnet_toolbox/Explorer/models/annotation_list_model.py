@@ -147,20 +147,39 @@ class AnnotationItemDelegate(QtWidgets.QStyledItemDelegate):
         if pix:
             painter.drawPixmap(rect, pix)
 
-        # selection border
+        # selection border: use the item's effective color when available
         if option.state & QtWidgets.QStyle.State_Selected:
-            pen = QtGui.QPen(QtGui.QColor('#ffd700'))
-            pen.setWidth(4)
-            painter.setPen(pen)
-            painter.drawRect(rect.adjusted(2, 2, -2, -2))
+            try:
+                color = item.effective_color if hasattr(item, 'effective_color') else QtGui.QColor('#ffd700')
+                pen = QtGui.QPen(QtGui.QColor(color))
+                pen.setWidth(4)
+                painter.setPen(pen)
+                painter.drawRect(rect.adjusted(2, 2, -2, -2))
+            except Exception:
+                pen = QtGui.QPen(QtGui.QColor('#ffd700'))
+                pen.setWidth(4)
+                painter.setPen(pen)
+                painter.drawRect(rect.adjusted(2, 2, -2, -2))
 
-        # nametag
-        label = getattr(item, 'short_label_code', None) or getattr(item, 'annotation', None) and getattr(item.annotation, 'label', None) and getattr(item.annotation.label, 'short_label_code', '')
+        # nametag with readable text color
+        label = None
+        try:
+            label = item.effective_label.short_label_code if hasattr(item, 'effective_label') else (item.annotation.label.short_label_code if item.annotation and item.annotation.label else None)
+        except Exception:
+            label = None
+
         if label:
             tag_rect = QtCore.QRect(rect.right() - 60, rect.bottom() - 20, 58, 18)
-            bg = getattr(item, 'effective_color', QtGui.QColor('#000000'))
+            bg = item.effective_color if hasattr(item, 'effective_color') else QtGui.QColor('#000000')
             painter.fillRect(tag_rect, bg)
-            painter.setPen(QtGui.QPen(QtGui.QColor('#fff')))
+            # choose text color with sufficient contrast
+            try:
+                r, g, b = bg.red(), bg.green(), bg.blue()
+                luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+                text_color = QtGui.QColor('#000000') if luminance > 0.5 else QtGui.QColor('#ffffff')
+            except Exception:
+                text_color = QtGui.QColor('#ffffff')
+            painter.setPen(QtGui.QPen(text_color))
             painter.drawText(tag_rect, QtCore.Qt.AlignCenter, str(label))
 
     def editorEvent(self, event, model, option, index):

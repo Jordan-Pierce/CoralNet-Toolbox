@@ -474,10 +474,10 @@ class AnnotationImageWidget(QWidget):
         painter.setBrush(QBrush(bg_color))
         painter.drawRoundedRect(bg_rect, 4, 4)
         
-        # Smart text contrast
+        # Smart text contrast: pick black on light backgrounds, white on dark
         luminance = (0.299 * bg_color.red() + 0.587 * bg_color.green() + 0.114 * bg_color.blue()) / 255
-        text_color = bg_color.darker(200) if luminance > 0.5 else bg_color.lighter(200)
-    
+        text_color = QColor('#000000') if luminance > 0.5 else QColor('#ffffff')
+
         painter.setPen(text_color)
         painter.drawText(bg_rect, Qt.AlignCenter, self._cached_tag_text)
         

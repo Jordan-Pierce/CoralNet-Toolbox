@@ -46,6 +46,37 @@ class MultiSelectCombo(QtWidgets.QWidget):
 
         self._update_button_text()
 
+    # Compatibility helpers to mimic QComboBox API for legacy callers
+    def currentData(self):
+        """Return a single representative data value or 'all' when all selected."""
+        vals = self.selected_values()
+        if vals is None:
+            return 'all'
+        if isinstance(vals, (list, tuple)) and len(vals) == 1:
+            return vals[0]
+        # return first selected as representative
+        return vals[0] if vals else None
+
+    def currentText(self):
+        vals = self.selected_values()
+        if vals is None:
+            return 'All'
+        if isinstance(vals, (list, tuple)):
+            if len(vals) > 2:
+                return f"{len(vals)} selected"
+            return ', '.join(str(v) for v in vals)
+        return str(vals)
+
+    def clear(self):
+        # reset to All
+        if not self._actions:
+            return
+        # check the All action and uncheck others
+        self._actions[0][0].setChecked(True)
+        for act, val in self._actions[1:]:
+            act.setChecked(False)
+        self._update_button_text()
+
     def _on_all_toggled(self, checked):
         if checked:
             # uncheck all others
