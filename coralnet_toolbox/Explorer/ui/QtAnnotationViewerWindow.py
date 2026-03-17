@@ -179,23 +179,18 @@ class AnnotationViewerWindow(QWidget):
         # Data model
         self.data_item_cache = {}  # annotation_id -> AnnotationDataItem
         self.all_data_items = []  # Currently filtered data items
-        self.annotation_widgets_by_id = {}  # annotation_id -> AnnotationImageWidget
         
-        # Selection state
+        # Selection state (compatibility lists maintained; real selection via QListView)
         self.selected_widgets = []
         self.last_selected_item_id = None
-        self.selection_at_press = set()
-        self.mouse_pressed_on_widget = False
         self._syncing_selection = False  # Flag to prevent selection sync loops
         
         # Isolation state
         self.isolated_mode = False
+        self.isolated_ids = None
         self.isolated_widgets = set()
         
-        # Rubber band selection
-        self.rubber_band = None
-        self.rubber_band_origin = None
-        self.drag_threshold = 5
+        # (legacy rubber-band removed; QListView provides native selection)
         
         # Sorting state
         self.active_ordered_ids = []
@@ -1383,7 +1378,10 @@ class AnnotationViewerWindow(QWidget):
     def _update_toolbar_state(self):
         """Update toolbar button states."""
         if hasattr(self, 'list_view') and self.list_view is not None:
-            selection_exists = self.list_view.selectionModel().hasSelection()
+            try:
+                selection_exists = self.list_view.selectionModel().hasSelection()
+            except Exception:
+                selection_exists = bool(self.selected_widgets)
         else:
             selection_exists = bool(self.selected_widgets)
         
@@ -1397,31 +1395,91 @@ class AnnotationViewerWindow(QWidget):
     
     def select_widget(self, widget):
         """Select a widget."""
-        if not widget.is_selected():
-            widget.data_item.set_selected(True)
-            widget.update_selection_visuals()
-            self.selected_widgets.append(widget)
-            self._update_toolbar_state()
-            return True
-        return False
+        # Accept either a widget-like object, data_item, or annotation id
+        aid = None
+        try:
+            if isinstance(widget, (str, int)):
+                aid = widget
+            elif hasattr(widget, 'data_item'):
+                aid = widget.data_item.annotation.id
+            elif hasattr(widget, 'annotation'):
+                aid = widget.annotation.id
+        except Exception:
+            return False
+
+        if aid is None:
+            return False
+
+        # Map to model row and select in the view
+        row = self.list_model._id_to_row.get(aid)
+        if row is None:
+            return False
+        idx = self.list_model.index(row)
+        sel_model = self.list_view.selectionModel()
+        sel_model.select(idx, sel_model.Select | sel_model.Rows)
+        # update compatibility list
+        try:
+            data = idx.data(self.list_model.DataItemRole)
+            self.selected_widgets.append(SimpleNamespace(data_item=data['item']))
+        except Exception:
+            pass
+        self._update_toolbar_state()
+        return True
     
     def deselect_widget(self, widget):
         """Deselect a widget."""
-        if widget.is_selected():
-            widget.data_item.set_selected(False)
-            widget.update_selection_visuals()
-            if widget in self.selected_widgets:
-                self.selected_widgets.remove(widget)
-            self._update_toolbar_state()
-            return True
-        return False
+        aid = None
+        try:
+            if isinstance(widget, (str, int)):
+                aid = widget
+            elif hasattr(widget, 'data_item'):
+                aid = widget.data_item.annotation.id
+            elif hasattr(widget, 'annotation'):
+                aid = widget.annotation.id
+        except Exception:
+            return False
+
+        if aid is None:
+            return False
+
+        row = self.list_model._id_to_row.get(aid)
+        if row is None:
+            return False
+        idx = self.list_model.index(row)
+        sel_model = self.list_view.selectionModel()
+        sel_model.select(idx, sel_model.Deselect | sel_model.Rows)
+        # update compatibility list
+        try:
+            self.selected_widgets = [s for s in self.selected_widgets if s.data_item.annotation.id != aid]
+        except Exception:
+            pass
+        self._update_toolbar_state()
+        return True
     
     def toggle_widget_selection(self, widget):
         """Toggle widget selection state."""
-        if widget.is_selected():
-            return self.deselect_widget(widget)
+        aid = None
+        try:
+            if isinstance(widget, (str, int)):
+                aid = widget
+            elif hasattr(widget, 'data_item'):
+                aid = widget.data_item.annotation.id
+            elif hasattr(widget, 'annotation'):
+                aid = widget.annotation.id
+        except Exception:
+            return False
+        if aid is None:
+            return False
+        # determine current selection
+        sel_model = self.list_view.selectionModel()
+        row = self.list_model._id_to_row.get(aid)
+        if row is None:
+            return False
+        idx = self.list_model.index(row)
+        if sel_model.isSelected(idx):
+            return self.deselect_widget(aid)
         else:
-            return self.select_widget(widget)
+            return self.select_widget(aid)
     
     def clear_selection(self):
         """Clear all selections."""
@@ -1683,6 +1741,11 @@ class AnnotationViewerWindow(QWidget):
 
         self.isolated_mode = True
         self.isolated_ids = ids_set
+        # maintain compatibility set of widgets (store ids)
+        try:
+            self.isolated_widgets = set(ids_set)
+        except Exception:
+            self.isolated_widgets = set()
         self.list_model.set_grouped_items(new_groups)
         self.render_selection_from_ids(ids_to_isolate)
         self._update_toolbar_state()
@@ -1697,6 +1760,10 @@ class AnnotationViewerWindow(QWidget):
         self.list_model.set_grouped_items([("", None, ordered_items)])
         self.isolated_mode = True
         self.isolated_ids = set(ordered_ids)
+        try:
+            self.isolated_widgets = set(ordered_ids)
+        except Exception:
+            self.isolated_widgets = set()
         self.render_selection_from_ids(set(ordered_ids))
         self._update_toolbar_state()
 
