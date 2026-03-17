@@ -12,10 +12,12 @@ import warnings
 import os
 
 from PyQt5.QtCore import Qt, QTimer, QRect, pyqtSignal, pyqtSlot, QEvent, QThread, QSignalBlocker
+from PyQt5 import QtCore, QtGui
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QToolBar, QComboBox,
     QLabel, QPushButton, QSizePolicy, QApplication, QListView
 )
+from PyQt5.QtWidgets import QHBoxLayout
 from types import SimpleNamespace
 
 from coralnet_toolbox.Explorer.core.QtDataItem import AnnotationDataItem
@@ -452,7 +454,9 @@ class AnnotationViewerWindow(QWidget):
         self.list_view.setResizeMode(QListView.Adjust)
         self.list_view.setSelectionMode(QListView.ExtendedSelection)
         self.list_view.setSpacing(5)
-        self.list_view.setStyleSheet("background-color: #1e1e1e;")
+        # Set background and rubber-band styling (cyan rubber band)
+        self.list_view.setStyleSheet("background-color: #1e1e1e;"
+                         "QRubberBand { border: 1px solid rgba(0,255,255,200); background: rgba(0,255,255,40); }")
         layout.addWidget(self.list_view)
 
         # Backwards-compatibility aliases for code paths that still reference the
@@ -480,6 +484,64 @@ class AnnotationViewerWindow(QWidget):
         self.list_view.setModel(self.list_model)
         self.list_view.setItemDelegate(self.list_delegate)
         self.list_view.selectionModel().selectionChanged.connect(self._on_list_selection_changed)
+        # Sticky header overlay (hidden until needed)
+        class StickyHeaderWidget(QWidget):
+            def __init__(self, parent=None, height=32):
+                super().__init__(parent)
+                self.setFixedHeight(height)
+                self.setAutoFillBackground(False)
+                self._group_key = None
+                self._callback = None
+                hl = QHBoxLayout(self)
+                hl.setContentsMargins(8, 0, 8, 0)
+                self.title = QLabel('', self)
+                self.title.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+                self.chev = QLabel('', self)
+                self.chev.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
+                hl.addWidget(self.title)
+                hl.addWidget(self.chev)
+
+            def set_callback(self, cb):
+                self._callback = cb
+
+            def mousePressEvent(self, event):
+                if event.button() == Qt.LeftButton and self._callback:
+                    try:
+                        self._callback(self._group_key)
+                    except Exception:
+                        pass
+                return super().mousePressEvent(event)
+
+            def set_content(self, text, bg_color, text_color, expanded, group_key):
+                self._group_key = group_key
+                self.title.setText(text)
+                self.chev.setText('▾' if expanded else '▸')
+                # apply styles
+                try:
+                    r, g, b = bg_color.red(), bg_color.green(), bg_color.blue()
+                except Exception:
+                    r, g, b = (51, 51, 51)
+                self.setStyleSheet(f'background-color: rgba({r},{g},{b},220);')
+                col = text_color.name() if hasattr(text_color, 'name') else '#fff'
+                self.title.setStyleSheet(f'color: {col}; font-weight: bold;')
+                self.chev.setStyleSheet(f'color: {col}; font-weight: bold;')
+
+        self._sticky_header = StickyHeaderWidget(self.list_view.viewport(), height=self.list_delegate.header_height)
+        self._sticky_header.hide()
+        # clicking header will toggle group expansion
+        self._sticky_header.set_callback(lambda key: self._toggle_group_from_header(key))
+
+        # update sticky header when view scrolls or model changes
+        self.list_view.verticalScrollBar().valueChanged.connect(self._update_sticky_header)
+        try:
+            self.list_model.layoutChanged.connect(self._update_sticky_header)
+        except Exception:
+            pass
+        try:
+            self.list_model.modelReset.connect(self._update_sticky_header)
+        except Exception:
+            pass
+
         
     # -------------------------------------------------------------------------
     # Public API
@@ -1211,13 +1273,12 @@ class AnnotationViewerWindow(QWidget):
         
         if (not self.active_ordered_ids and sort_type == "None") or self.active_ordered_ids:
             return [("", None, data_items)]
-        
-        # Group by Label or Image
-        groups = []
-        current_group = []
-        current_key = None
-        current_color = None
-        
+
+        # Group by Label or Image — collect into OrderedDict so identical keys
+        # are merged even if items appear out-of-order in the incoming list.
+        from collections import OrderedDict
+        groups_map = OrderedDict()
+
         for item in data_items:
             if sort_type == "Label":
                 key = item.effective_label.short_label_code
@@ -1228,19 +1289,22 @@ class AnnotationViewerWindow(QWidget):
             else:
                 key = ""
                 color = None
-            
-            if key and current_key != key:
-                if current_group:
-                    groups.append((current_key, current_color, current_group))
-                current_group = [item]
-                current_key = key
-                current_color = color
-            else:
-                current_group.append(item)
-        
-        if current_group:
-            groups.append((current_key, current_color, current_group))
-        
+
+            if not key:
+                # treat empty key as a single unnamed group
+                key = ""
+
+            if key not in groups_map:
+                groups_map[key] = {"color": color, "items": []}
+            # prefer the first-seen color for the group
+            if groups_map[key]["color"] is None and color is not None:
+                groups_map[key]["color"] = color
+            groups_map[key]["items"].append(item)
+
+        groups = []
+        for k, v in groups_map.items():
+            groups.append((k, v.get("color"), v.get("items", [])))
+
         return groups
     
     def _clear_separator_labels(self):
@@ -1520,6 +1584,61 @@ class AnnotationViewerWindow(QWidget):
                 except Exception:
                     return True
         return super().eventFilter(source, event)
+
+    def _toggle_group_from_header(self, group_key):
+        """Toggle group expansion when sticky header clicked."""
+        if not group_key:
+            return
+        try:
+            self.list_model.toggle_group(group_key)
+        except Exception:
+            try:
+                grouped = getattr(self.list_model, '_grouped_items', [])
+                self.list_model.set_grouped_items(grouped)
+            except Exception:
+                pass
+
+    def _update_sticky_header(self):
+        """Update the header overlay to show the group for the top visible items."""
+        try:
+            if not hasattr(self, 'list_view') or self.list_view is None:
+                return
+            top_pt = QtCore.QPoint(2, 2)
+            idx = self.list_view.indexAt(top_pt)
+            if not idx.isValid():
+                self._sticky_header.hide()
+                return
+            row = idx.row()
+            model = self.list_model
+            header_found = None
+            while row >= 0:
+                data = model.data(model.index(row), model.DataItemRole)
+                if data and data.get('type') == 'header':
+                    header_found = data
+                    break
+                row -= 1
+
+            if header_found is None:
+                self._sticky_header.hide()
+                return
+
+            text = header_found.get('text', '')
+            color = header_found.get('color') or QtGui.QColor('#333333')
+            try:
+                bg = QtGui.QColor(color) if not isinstance(color, QtGui.QColor) else color
+            except Exception:
+                bg = QtGui.QColor('#333333')
+            r, g, b = bg.red(), bg.green(), bg.blue()
+            luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+            text_color = QtGui.QColor('#000000') if luminance > 0.5 else QtGui.QColor('#ffffff')
+            expanded = header_found.get('expanded', True)
+            self._sticky_header.set_content(text, bg, text_color, expanded, header_found.get('key'))
+            vh = self.list_delegate.header_height if self.list_delegate else 32
+            self._sticky_header.setGeometry(0, 0, self.list_view.viewport().width(), vh)
+            self._sticky_header.show()
+            self._sticky_header.raise_()
+        except Exception:
+            pass
     
     def _viewport_mouse_press(self, event):
         """Handle mouse press for selection."""

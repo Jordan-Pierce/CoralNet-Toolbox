@@ -88,7 +88,19 @@ class AnnotationItemDelegate(QtWidgets.QStyledItemDelegate):
         if not data:
             return QtCore.QSize(self.item_size, self.item_size)
         if data.get("type") == "header":
-            return QtCore.QSize(option.rect.width(), self.header_height)
+            # Try to span the full view width for header rows so they appear
+            try:
+                if option and getattr(option, 'widget', None):
+                    w = option.widget
+                    try:
+                        width = w.viewport().width()
+                    except Exception:
+                        width = w.width()
+                else:
+                    width = max(400, self.item_size * 6)
+            except Exception:
+                width = max(400, self.item_size * 6)
+            return QtCore.QSize(width, self.header_height)
         item = data.get("item")
         aspect = getattr(item, 'aspect_ratio', 1.0)
         width = max(10, int(self.item_size * aspect))
@@ -102,17 +114,31 @@ class AnnotationItemDelegate(QtWidgets.QStyledItemDelegate):
         rect = option.rect
         if data.get("type") == "header":
             color = data.get("color")
-            bg = QtGui.QColor('#333333') if color is None else color
+            bg = QtGui.QColor('#333333') if color is None else (QtGui.QColor(color) if not isinstance(color, QtGui.QColor) else color)
             painter.fillRect(rect, bg)
-            # draw chevron
-            expanded = data.get('expanded', True)
-            pen = QtGui.QPen(QtGui.QColor('#ffffff'))
-            painter.setPen(pen)
+
+            # Determine readable text color based on luminance
+            try:
+                r, g, b = bg.red(), bg.green(), bg.blue()
+                luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+                text_color = QtGui.QColor('#000000') if luminance > 0.5 else QtGui.QColor('#ffffff')
+            except Exception:
+                text_color = QtGui.QColor('#ffffff')
+
+            # Draw header text and chevron
+            painter.setPen(QtGui.QPen(text_color))
+            font = painter.font()
+            font.setBold(True)
+            font.setPointSize(10)
+            painter.setFont(font)
             text = data.get('text', '')
-            painter.drawText(rect.adjusted(8, 0, 0, 0), QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft, text)
+            painter.drawText(rect.adjusted(12, 0, 0, 0), QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft, text)
+
             # chevron on right
+            expanded = data.get('expanded', True)
             chev = '▾' if expanded else '▸'
-            painter.drawText(rect.adjusted(-24, 0, -8, 0), QtCore.Qt.AlignVCenter | QtCore.Qt.AlignRight, chev)
+            chev_rect = rect.adjusted(-28, 0, -8, 0)
+            painter.drawText(chev_rect, QtCore.Qt.AlignVCenter | QtCore.Qt.AlignRight, chev)
             return
 
         # annotation
@@ -184,13 +210,63 @@ class AnnotationItemDelegate(QtWidgets.QStyledItemDelegate):
 
     def editorEvent(self, event, model, option, index):
         # Toggle group on header click
-        if event.type() == QtCore.QEvent.MouseButtonRelease and event.button() == QtCore.Qt.LeftButton:
-            data = index.data(AnnotationListModel.DataItemRole)
-            if data and data.get('type') == 'header':
-                group_key = data.get('key')
-                # flip expanded state stored in model
-                model._group_expanded[group_key] = not model._group_expanded.get(group_key, True)
-                # ask view to rebuild by emitting layoutChanged; caller may re-set grouped items
-                model.layoutChanged.emit()
-                return True
+        # Left-click on header toggles group
+        try:
+            if event.type() == QtCore.QEvent.MouseButtonRelease and event.button() == QtCore.Qt.LeftButton:
+                data = index.data(AnnotationListModel.DataItemRole)
+                if data and data.get('type') == 'header':
+                    group_key = data.get('key')
+                    model._group_expanded[group_key] = not model._group_expanded.get(group_key, True)
+                    # rebuild using stored grouped items
+                    grouped_items = getattr(model, '_grouped_items', [])
+                    model.set_grouped_items(grouped_items)
+                    model.layoutChanged.emit()
+                    return True
+
+            # Ctrl + Right-click on an annotation: navigate to AnnotationWindow
+            if event.type() == QtCore.QEvent.MouseButtonRelease and event.button() == QtCore.Qt.RightButton:
+                modifiers = QtWidgets.QApplication.keyboardModifiers()
+                if modifiers & QtCore.Qt.ControlModifier:
+                    data = index.data(AnnotationListModel.DataItemRole)
+                    if data and data.get('type') == 'annotation':
+                        ann = data['item'].annotation
+                        # model.parent() should be the AnnotationViewerWindow instance
+                        viewer = getattr(model, 'parent', lambda: None)()
+                        if viewer is None:
+                            try:
+                                viewer = model.parent()
+                            except Exception:
+                                viewer = None
+                        try:
+                            if viewer and hasattr(viewer, 'main_window') and hasattr(viewer, 'annotation_window'):
+                                # select in gallery
+                                try:
+                                    viewer.clear_selection()
+                                except Exception:
+                                    pass
+                                try:
+                                    viewer.render_selection_from_ids([ann.id])
+                                except Exception:
+                                    pass
+
+                                # Change image if needed and select annotation in AnnotationWindow
+                                try:
+                                    if viewer.annotation_window.current_image_path != ann.image_path:
+                                        viewer.annotation_window.set_image(ann.image_path)
+                                except Exception:
+                                    pass
+                                try:
+                                    viewer.annotation_window.select_annotation(ann, quiet_mode=True)
+                                except Exception:
+                                    pass
+                                try:
+                                    if hasattr(viewer.annotation_window, 'center_on_annotation'):
+                                        viewer.annotation_window.center_on_annotation(ann)
+                                except Exception:
+                                    pass
+                                return True
+                        except Exception:
+                            pass
+        except Exception:
+            pass
         return super().editorEvent(event, model, option, index)
