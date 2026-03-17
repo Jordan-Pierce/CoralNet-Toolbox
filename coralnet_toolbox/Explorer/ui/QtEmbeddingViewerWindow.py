@@ -1242,7 +1242,6 @@ class EmbeddingViewerWindow(QWidget):
         
         for item in data_items:
             point = EmbeddingPointItem(item, self)
-            point.set_animation_manager(self.animation_manager)
             self.graphics_scene.addItem(point)
             self.points_by_id[item.annotation.id] = point
         

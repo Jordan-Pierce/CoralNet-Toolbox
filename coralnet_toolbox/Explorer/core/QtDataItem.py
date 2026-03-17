@@ -72,6 +72,9 @@ class EmbeddingPointItem(QGraphicsObject):
         Args:
             manager (AnimationManager): The central animation manager instance.
         """
+        # Keep a reference but do NOT register with the global manager.
+        # These items draw a static selection outline; animation ticks
+        # are intentionally disabled to avoid per-frame timers.
         self.animation_manager = manager
         
     def is_graphics_item_valid(self):
@@ -230,24 +233,28 @@ class EmbeddingPointItem(QGraphicsObject):
     
     def tick_animation(self):
         """Perform one 'tick' of the marching ants animation."""
-        self.animation_offset = (self.animation_offset + 1) % 8
-        self.update()  # Trigger repaint
+        # Animations disabled for gallery/embedding points to keep
+        # rendering static and avoid global timer registration.
+        return
         
     def animate(self):
-        """Register with the global animation timer."""
+        """Enable animated state visually without registering global timers.
+
+        We keep the flag and trigger a repaint so selection visuals update,
+        but do not register with the global AnimationManager.
+        """
         self.is_animating = True
-        if self.animation_manager:
-            self.animation_manager.register_animating_object(self)
+        try:
+            self.update()
+        except RuntimeError:
+            pass
             
     def deanimate(self):
-        """Unregister from the global animation timer and reset."""
+        """Disable animated state and reset visuals (no global unregister)."""
         self.is_animating = False
-        if self.animation_manager:
-            self.animation_manager.unregister_animating_object(self)
-            
-        self.animation_offset = 0  # Reset the dash offset
+        self.animation_offset = 0
         try:
-            self.update()  # Trigger a final repaint to draw the solid line
+            self.update()
         except RuntimeError:
             pass
     
@@ -476,23 +483,19 @@ class AnnotationImageWidget(QWidget):
         
     def tick_animation(self):
         """Perform one 'tick' of the marching ants animation."""
-        # Check visibility here instead! This saves CPU cycles by pausing 
-        # the math and repaint requests while the widget is scrolled out of view.
-        if not self.isVisible():
-            return 
-            
-        self.animation_offset = (self.animation_offset + 1) % 8
-        self.update()  # Trigger repaint
+        # Animations disabled for gallery image widgets; keep static visuals.
+        return
         
     def animate(self):
+        # Mark as 'animating' visually but do not register with global timers.
         self.is_animating = True
-        if self.animation_manager:
-            self.animation_manager.register_animating_object(self)
+        try:
+            self.update()
+        except RuntimeError:
+            pass
             
     def deanimate(self):
         self.is_animating = False
-        if self.animation_manager:
-            self.animation_manager.unregister_animating_object(self)
         self.animation_offset = 0
         try:
             self.update()

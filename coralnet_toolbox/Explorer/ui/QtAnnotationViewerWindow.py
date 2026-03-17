@@ -11,15 +11,119 @@ import warnings
 
 import os
 
-from PyQt5.QtCore import Qt, QTimer, QRect, pyqtSignal, pyqtSlot, QEvent
+from PyQt5.QtCore import Qt, QTimer, QRect, pyqtSignal, pyqtSlot, QEvent, QThread
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QToolBar, QComboBox,
     QLabel, QPushButton, QScrollArea, QRubberBand,
-    QSizePolicy
+    QSizePolicy, QApplication
 )
 
 from coralnet_toolbox.Explorer.core.QtDataItem import AnnotationDataItem
 from coralnet_toolbox.Explorer.core.QtDataItem import AnnotationImageWidget
+from coralnet_toolbox.QtProgressBar import ProgressBar
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Background Worker for Cropping
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+class CroppingWorker(QThread):
+    """Background worker to create cropped images for a set of annotations.
+
+    Emits integer progress percentages (0-100), and `finished` when done.
+    """
+    progress = pyqtSignal(int)
+    finished = pyqtSignal()
+    error = pyqtSignal(str)
+
+    def __init__(self, annotations, raster_manager, parent=None):
+        super().__init__(parent)
+        self.annotations = list(annotations)
+        self.raster_manager = raster_manager
+        self._cancelled = False
+
+    def cancel(self):
+        self._cancelled = True
+
+    def run(self):
+        try:
+            # Group annotations by image_path
+            anns_by_image = {}
+            for ann in self.annotations:
+                if not hasattr(ann, 'cropped_image') or ann.cropped_image is None:
+                    anns_by_image.setdefault(ann.image_path, []).append(ann)
+
+            total = sum(len(v) for v in anns_by_image.values())
+            if total == 0:
+                self.finished.emit()
+                return
+
+            processed = 0
+            last_percent = -1
+            for image_path, anns in anns_by_image.items():
+                if self._cancelled:
+                    break
+
+                raster = None
+                try:
+                    raster = self.raster_manager.get_raster(image_path)
+                except Exception:
+                    raster = None
+
+                if not raster:
+                    # skip this image
+                    processed += len(anns)
+                    percent = int((processed / total) * 100)
+                    if percent != last_percent:
+                        last_percent = percent
+                        self.progress.emit(percent)
+                    continue
+
+                # Ensure rasterio source is available in this thread
+                try:
+                    if not hasattr(raster, '_rasterio_src') or raster._rasterio_src is None:
+                        raster.load_rasterio()
+                except Exception:
+                    # Can't open raster; skip
+                    processed += len(anns)
+                    percent = int((processed / total) * 100)
+                    if percent != last_percent:
+                        last_percent = percent
+                        self.progress.emit(percent)
+                    continue
+
+                rasterio_src = getattr(raster, '_rasterio_src', None)
+                if rasterio_src is None:
+                    processed += len(anns)
+                    percent = int((processed / total) * 100)
+                    if percent != last_percent:
+                        last_percent = percent
+                        self.progress.emit(percent)
+                    continue
+
+                for ann in anns:
+                    if self._cancelled:
+                        break
+                    try:
+                        ann.create_cropped_image(rasterio_src)
+                    except Exception:
+                        # Non-fatal: continue with next
+                        pass
+
+                    processed += 1
+                    # Emit a single-step progress event (worker will emit one
+                    # signal per processed annotation). The caller will increment
+                    # the ProgressBar via `update_progress()` which increments
+                    # by one per call.
+                    self.progress.emit(1)
+
+            self.finished.emit()
+        except Exception as e:
+            try:
+                self.error.emit(str(e))
+            except Exception:
+                pass
 
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -65,6 +169,9 @@ class AnnotationViewerWindow(QWidget):
         
         # Animation manager reference
         self.animation_manager = None
+        # Cropping state
+        self._cropping_in_progress = False
+        self._cropping_worker = None
         
         # Data model
         self.data_item_cache = {}  # annotation_id -> AnnotationDataItem
@@ -491,8 +598,94 @@ class AnnotationViewerWindow(QWidget):
             
             filtered_annotations.append(ann)
         
-        # Ensure cropped images are available
-        self._ensure_cropped_images(filtered_annotations)
+        # Ensure cropped images are available. If any are missing, run
+        # cropping in a background worker and show a modal ProgressBar.
+        anns_needing_crops = [ann for ann in filtered_annotations
+                              if not hasattr(ann, 'cropped_image') or ann.cropped_image is None]
+
+        if anns_needing_crops:
+            # If already cropping, wait for the worker to finish
+            if getattr(self, '_cropping_in_progress', False):
+                return
+
+            image_window = getattr(self.main_window, 'image_window', None)
+            raster_manager = getattr(image_window, 'raster_manager', None) if image_window else None
+
+            # If no raster manager available, fall back to synchronous cropping
+            if raster_manager is None:
+                try:
+                    self._ensure_cropped_images(filtered_annotations)
+                except Exception:
+                    pass
+            else:
+                # Start background worker
+                progress_bar = ProgressBar(parent=self.main_window, title="Cropping images...")
+                progress_bar.set_title("Cropping images...")
+                progress_bar.start_progress(len(anns_needing_crops))
+                progress_bar.cancel_button.setEnabled(True)
+                progress_bar.show()
+                QApplication.processEvents()
+
+                worker = CroppingWorker(anns_needing_crops, raster_manager)
+                self._cropping_in_progress = True
+                self._cropping_worker = worker
+
+                # Track processed count locally so we can update the modal
+                # ProgressBar via the `update_progress()` incrementing API.
+                processed_counter = {'count': 0}
+
+                def _on_progress(step):
+                    try:
+                        # Increment internal counter and update dialog by one step.
+                        processed_counter['count'] += int(step)
+                        progress_bar.update_progress()
+                        # Update status message with percentage
+                        pct = int((processed_counter['count'] / max(1, len(anns_needing_crops))) * 100)
+                        self.main_window.statusBar().showMessage(f"Cropping images... {pct}%")
+                    except Exception:
+                        pass
+
+                def _on_finished():
+                    try:
+                        progress_bar.finish_progress()
+                    except Exception:
+                        pass
+                    try:
+                        progress_bar.close()
+                    except Exception:
+                        pass
+                    try:
+                        self.main_window.statusBar().clearMessage()
+                    except Exception:
+                        pass
+                    self._cropping_in_progress = False
+                    self._cropping_worker = None
+                    # Re-run the refresh now that crops should exist
+                    QTimer.singleShot(50, self.refresh_annotations)
+
+                def _on_error(msg):
+                    try:
+                        progress_bar.close()
+                    except Exception:
+                        pass
+                    try:
+                        from PyQt5.QtWidgets import QMessageBox
+                        QMessageBox.warning(self, "Cropping Error", str(msg))
+                    except Exception:
+                        pass
+                    self._cropping_in_progress = False
+                    self._cropping_worker = None
+                    try:
+                        self.main_window.statusBar().clearMessage()
+                    except Exception:
+                        pass
+
+                worker.progress.connect(_on_progress)
+                worker.finished.connect(_on_finished)
+                worker.error.connect(_on_error)
+                progress_bar.cancel_button.clicked.connect(worker.cancel)
+                worker.start()
+                return
         
         # Get or create data items
         data_items = []
@@ -1116,8 +1309,8 @@ class AnnotationViewerWindow(QWidget):
                     
                     # FIX: Explicitly hide on creation to prevent the (0,0) rendering trap
                     widget.hide()
-                    
-                    widget.set_animation_manager(self.animation_manager)
+                    # Do NOT set the global animation manager for gallery widgets.
+                    # Animations for these widgets are intentionally disabled.
                     widget.recalculate_aspect_ratio()
                     self.annotation_widgets_by_id[ann_id] = widget
                 
