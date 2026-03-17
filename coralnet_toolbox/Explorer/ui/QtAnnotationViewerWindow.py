@@ -11,15 +11,15 @@ import warnings
 
 import os
 
-from PyQt5.QtCore import Qt, QTimer, QRect, pyqtSignal, pyqtSlot, QEvent, QThread
+from PyQt5.QtCore import Qt, QTimer, QRect, pyqtSignal, pyqtSlot, QEvent, QThread, QSignalBlocker
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QToolBar, QComboBox,
-    QLabel, QPushButton, QScrollArea, QRubberBand,
-    QSizePolicy, QApplication
+    QLabel, QPushButton, QSizePolicy, QApplication, QListView
 )
 
 from coralnet_toolbox.Explorer.core.QtDataItem import AnnotationDataItem
-from coralnet_toolbox.Explorer.core.QtDataItem import AnnotationImageWidget
+from coralnet_toolbox.Explorer.models.annotation_list_model import AnnotationListModel, AnnotationItemDelegate
+from coralnet_toolbox.Explorer.ui.widgets import MultiSelectCombo
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 
@@ -211,11 +211,7 @@ class AnnotationViewerWindow(QWidget):
         # (the user must explicitly press "Apply Filter" to set this).
         self._filter_applied = False
         
-        # Virtualization
-        self.widget_positions = {}  # annotation_id -> QRect
-        self.update_timer = QTimer(self)
-        self.update_timer.setSingleShot(True)
-        self.update_timer.timeout.connect(self._update_visible_widgets)
+        # Virtualization disabled: using model/view
         
         # Build the UI
         self._setup_ui()
@@ -430,23 +426,23 @@ class AnnotationViewerWindow(QWidget):
             return
 
         # Remember current filter selection before refreshing
-        current_data = "all"
+        current_selection = None
         if hasattr(self, 'image_filter_combo'):
-            current_data = self.image_filter_combo.currentData()
-        
+            try:
+                current_selection = self.image_filter_combo.selected_values()
+            except Exception:
+                try:
+                    current_selection = self.image_filter_combo.currentData()
+                except Exception:
+                    current_selection = None
+
         # Refresh filters to include any new images
         self._populate_filter_combos()
 
-        # Only update filter if a specific image was selected (not "All Images")
-        # This allows filtering by specific image to follow the user as they switch images
-        if current_data != "all" and image_path:
-            image_name = os.path.basename(image_path)
-            index = self.image_filter_combo.findData(image_name)
-            if index >= 0:
-                self.image_filter_combo.setCurrentIndex(index)
-            # If the gallery was previously showing items, switching images
-            # should clear it and revert to the placeholder until the user
-            # explicitly applies the filter for the new image.
+        # If a specific image was selected previously, preserve selection if possible
+        if current_selection and image_path:
+            # For MultiSelectCombo we won't try to programmatically reselect by name
+            # Just clear the gallery so the user can re-apply if needed
             if getattr(self, '_filter_applied', False):
                 self.clear()
     
@@ -459,18 +455,21 @@ class AnnotationViewerWindow(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        
-        # Create scroll area for content
-        self.content_widget = QWidget()
-        self.content_widget.setStyleSheet("background-color: #1e1e1e;")
-        
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.scroll_area.setWidget(self.content_widget)
-        self.scroll_area.viewport().setStyleSheet("background-color: #1e1e1e;")
-        layout.addWidget(self.scroll_area)
+
+        # Create list view for content
+        self.list_view = QListView()
+        self.list_view.setViewMode(QListView.IconMode)
+        self.list_view.setResizeMode(QListView.Adjust)
+        self.list_view.setSelectionMode(QListView.ExtendedSelection)
+        self.list_view.setSpacing(5)
+        self.list_view.setStyleSheet("background-color: #1e1e1e;")
+        layout.addWidget(self.list_view)
+
+        # Backwards-compatibility aliases for code paths that still reference the
+        # old scroll-area/content_widget API. These point to the list view so
+        # older methods won't crash while the refactor is completed.
+        self.content_widget = self.list_view
+        self.scroll_area = self.list_view
 
         # Placeholder label shown when no annotations are available
         self.placeholder_label = QLabel(
@@ -482,11 +481,15 @@ class AnnotationViewerWindow(QWidget):
         self._show_placeholder()
         layout.addWidget(self.placeholder_label)
 
-        # Connect scrollbar for virtualization
-        self.scroll_area.verticalScrollBar().valueChanged.connect(self._schedule_update)
+        # Install event filter for Ctrl+Wheel on list viewport
+        self.list_view.viewport().installEventFilter(self)
 
-        # Install event filter for rubber band selection
-        self.scroll_area.viewport().installEventFilter(self)
+        # Setup model and delegate
+        self.list_model = AnnotationListModel(self)
+        self.list_delegate = AnnotationItemDelegate(item_size=self.current_widget_size)
+        self.list_view.setModel(self.list_model)
+        self.list_view.setItemDelegate(self.list_delegate)
+        self.list_view.selectionModel().selectionChanged.connect(self._on_list_selection_changed)
         
     # -------------------------------------------------------------------------
     # Public API
@@ -510,6 +513,14 @@ class AnnotationViewerWindow(QWidget):
         Returns:
             list: List of selected annotation IDs.
         """
+        if hasattr(self, 'list_view') and self.list_view is not None:
+            sel = self.list_view.selectionModel().selectedIndexes()
+            ids = []
+            for idx in sel:
+                data = idx.data(self.list_model.DataItemRole)
+                if data and data.get('type') == 'annotation':
+                    ids.append(data['item'].annotation.id)
+            return ids
         return [w.data_item.annotation.id for w in self.selected_widgets]
     
     def highlight_annotations(self, ids):
@@ -530,8 +541,8 @@ class AnnotationViewerWindow(QWidget):
         try:
             if hasattr(self, 'placeholder_label'):
                 self.placeholder_label.show()
-            if hasattr(self, 'scroll_area'):
-                self.scroll_area.hide()
+            if hasattr(self, 'list_view') and self.list_view is not None:
+                self.list_view.hide()
         except Exception:
             pass
             
@@ -546,8 +557,8 @@ class AnnotationViewerWindow(QWidget):
                 return
             if hasattr(self, 'placeholder_label'):
                 self.placeholder_label.hide()
-            if hasattr(self, 'scroll_area'):
-                self.scroll_area.show()
+            if hasattr(self, 'list_view') and self.list_view is not None:
+                self.list_view.show()
         except Exception:
             pass
         
@@ -877,17 +888,8 @@ class AnnotationViewerWindow(QWidget):
         self.all_data_items = [item for item in self.all_data_items 
                                if item.annotation.id != annotation_id]
         
-        # Remove widget if exists
-        if annotation_id in self.annotation_widgets_by_id:
-            widget = self.annotation_widgets_by_id[annotation_id]
-            if widget in self.selected_widgets:
-                self.selected_widgets.remove(widget)
-            widget.setParent(None)
-            widget.deleteLater()
-            del self.annotation_widgets_by_id[annotation_id]
-        
-        # Refresh layout
-        self._recalculate_layout()
+        # Refresh list view
+        QTimer.singleShot(0, self.refresh_annotations)
         
     @pyqtSlot(list)
     def on_annotations_deleted(self, annotation_ids):
@@ -907,18 +909,8 @@ class AnnotationViewerWindow(QWidget):
         self.all_data_items = [item for item in self.all_data_items 
                                if item.annotation.id not in ids_set]
 
-        # 2. Destroy the widgets
-        for ann_id in annotation_ids:
-            if ann_id in self.annotation_widgets_by_id:
-                widget = self.annotation_widgets_by_id[ann_id]
-                if widget in self.selected_widgets:
-                    self.selected_widgets.remove(widget)
-                widget.setParent(None)
-                widget.deleteLater()
-                del self.annotation_widgets_by_id[ann_id]
-
-        # 3. Recalculate layout EXACTLY ONCE at the very end
-        self._recalculate_layout()
+        # Rebuild list view based on new state
+        QTimer.singleShot(0, self.refresh_annotations)
 
     @pyqtSlot(list)
     def on_annotations_created(self, annotation_ids):
@@ -973,8 +965,8 @@ class AnnotationViewerWindow(QWidget):
             if data_item not in self.all_data_items:
                 self.all_data_items.append(data_item)
 
-        # Recalculate layout exactly once
-        self._recalculate_layout()
+        # Refresh the list view
+        QTimer.singleShot(0, self.refresh_annotations)
     
     @pyqtSlot(str, str)
     def on_annotation_label_changed(self, annotation_id, new_label):
@@ -1006,25 +998,13 @@ class AnnotationViewerWindow(QWidget):
         Args:
             annotation_id: ID of the modified annotation.
         """
-        if annotation_id in self.annotation_widgets_by_id:
-            # Get the updated annotation
-            if hasattr(self.annotation_window, 'annotations_dict'):
-                ann = self.annotation_window.annotations_dict.get(annotation_id)
-                if ann:
-                    # Regenerate the cropped image
-                    self._ensure_cropped_images([ann])
-                    
-                    # Update data item cache
-                    if annotation_id in self.data_item_cache:
-                        self.data_item_cache[annotation_id] = AnnotationDataItem(ann)
-                    
-                    # Update the widget
-                    widget = self.annotation_widgets_by_id[annotation_id]
-                    widget.data_item = self.data_item_cache[annotation_id]
-                    widget.recalculate_aspect_ratio()
-                    widget.unload_image()  # Unload old image
-                    widget.load_image()  # Load new regenerated image
-                    self._recalculate_layout()
+        # Update cache and refresh list view
+        if hasattr(self.annotation_window, 'annotations_dict'):
+            ann = self.annotation_window.annotations_dict.get(annotation_id)
+            if ann:
+                self._ensure_cropped_images([ann])
+                self.data_item_cache[annotation_id] = AnnotationDataItem(ann)
+                QTimer.singleShot(0, self.refresh_annotations)
     
     @pyqtSlot(object)
     def on_annotation_selection_changed(self, selected_ids):
@@ -1050,17 +1030,17 @@ class AnnotationViewerWindow(QWidget):
         Args:
             changes: List of tuples (annotation_id, old_label, new_label)
         """
-        # Update widgets for all changed annotations
+        # Update caches for changed annotations
         for annotation_id, old_label, new_label in changes:
-            if annotation_id in self.annotation_widgets_by_id:
-                widget = self.annotation_widgets_by_id[annotation_id]
-                widget.update()
-                widget.update_tooltip()
-        
-        # Recalculate layout if sorting by label
+            if hasattr(self.annotation_window, 'annotations_dict'):
+                ann = self.annotation_window.annotations_dict.get(annotation_id)
+                if ann:
+                    self.data_item_cache[annotation_id] = AnnotationDataItem(ann)
+
+        # Rebuild view if sorting by label
         if self.sort_combo.currentText() == "Label":
-            self._recalculate_layout()
-        
+            QTimer.singleShot(0, self.refresh_annotations)
+
         # Refresh label filter options
         self._populate_label_filter()
     
@@ -1073,27 +1053,13 @@ class AnnotationViewerWindow(QWidget):
             annotation_id: ID of the moved annotation
             move_data: Dict with 'old_center' and 'new_center' QPointF
         """
-        # Moved annotations need crop regeneration since position changed
-        if annotation_id in self.annotation_widgets_by_id:
-            # Get the updated annotation
-            if hasattr(self.annotation_window, 'annotations_dict'):
-                ann = self.annotation_window.annotations_dict.get(annotation_id)
-                if ann:
-                    # Regenerate the cropped image
-                    self._ensure_cropped_images([ann])
-                    
-                    # Update data item cache
-                    if annotation_id in self.data_item_cache:
-                        self.data_item_cache[annotation_id] = AnnotationDataItem(ann)
-                    
-                    # Update the widget
-                    widget = self.annotation_widgets_by_id[annotation_id]
-                    widget.data_item = self.data_item_cache[annotation_id]
-                    widget.recalculate_aspect_ratio()
-                    widget.unload_image()  # Unload old image
-                    widget.load_image()  # Load new regenerated image
-                    widget.update_tooltip()
-                    self._recalculate_layout()
+        # Update cache and refresh list view for moved annotation
+        if hasattr(self.annotation_window, 'annotations_dict'):
+            ann = self.annotation_window.annotations_dict.get(annotation_id)
+            if ann:
+                self._ensure_cropped_images([ann])
+                self.data_item_cache[annotation_id] = AnnotationDataItem(ann)
+                QTimer.singleShot(0, self.refresh_annotations)
     
     @pyqtSlot(str, object)
     def on_annotation_geometry_edited(self, annotation_id, geometry_data):
@@ -1104,26 +1070,13 @@ class AnnotationViewerWindow(QWidget):
             annotation_id: ID of the annotation
             geometry_data: Dict with 'old_geom' and 'new_geom'
         """
-        # Geometry changed - need to regenerate the crop
-        if annotation_id in self.annotation_widgets_by_id:
-            # Get the updated annotation
-            if hasattr(self.annotation_window, 'annotations_dict'):
-                ann = self.annotation_window.annotations_dict.get(annotation_id)
-                if ann:
-                    # Regenerate the cropped image
-                    self._ensure_cropped_images([ann])
-                    
-                    # Update data item cache
-                    if annotation_id in self.data_item_cache:
-                        self.data_item_cache[annotation_id] = AnnotationDataItem(ann)
-                    
-                    # Update the widget
-                    widget = self.annotation_widgets_by_id[annotation_id]
-                    widget.data_item = self.data_item_cache[annotation_id]
-                    widget.recalculate_aspect_ratio()
-                    widget.unload_image()  # Unload old image
-                    widget.load_image()  # Load new regenerated image
-                    self._recalculate_layout()
+        # Geometry changed - regenerate crop and refresh
+        if hasattr(self.annotation_window, 'annotations_dict'):
+            ann = self.annotation_window.annotations_dict.get(annotation_id)
+            if ann:
+                self._ensure_cropped_images([ann])
+                self.data_item_cache[annotation_id] = AnnotationDataItem(ann)
+                QTimer.singleShot(0, self.refresh_annotations)
     
     @pyqtSlot(str, object)
     def on_annotation_cut(self, original_annotation_id, new_annotations):
@@ -1134,27 +1087,12 @@ class AnnotationViewerWindow(QWidget):
             original_annotation_id: ID of the original annotation
             new_annotations: List of new annotation objects
         """
-        # Remove original
-        if original_annotation_id in self.data_item_cache:
-            del self.data_item_cache[original_annotation_id]
-        if original_annotation_id in self.annotation_widgets_by_id:
-            widget = self.annotation_widgets_by_id[original_annotation_id]
-            if widget in self.selected_widgets:
-                self.selected_widgets.remove(widget)
-            widget.setParent(None)
-            widget.deleteLater()
-            del self.annotation_widgets_by_id[original_annotation_id]
-        
-        # Add new annotations
+        # Remove original from cache and add new ones, then refresh
+        self.data_item_cache.pop(original_annotation_id, None)
         self._ensure_cropped_images(new_annotations)
         for ann in new_annotations:
-            if ann.id not in self.data_item_cache:
-                self.data_item_cache[ann.id] = AnnotationDataItem(ann)
-            data_item = self.data_item_cache[ann.id]
-            if data_item not in self.all_data_items:
-                self.all_data_items.append(data_item)
-        
-        self._recalculate_layout()
+            self.data_item_cache[ann.id] = AnnotationDataItem(ann)
+        QTimer.singleShot(0, self.refresh_annotations)
     
     @pyqtSlot(object)
     def on_annotations_merged(self, merge_data):
@@ -1167,31 +1105,12 @@ class AnnotationViewerWindow(QWidget):
         original_ids = merge_data['original_ids']
         merged_annotation = merge_data['merged']
         
-        # Remove originals
+        # Remove originals from cache and add merged annotation
         for ann_id in original_ids:
-            if ann_id in self.data_item_cache:
-                del self.data_item_cache[ann_id]
-            if ann_id in self.annotation_widgets_by_id:
-                widget = self.annotation_widgets_by_id[ann_id]
-                if widget in self.selected_widgets:
-                    self.selected_widgets.remove(widget)
-                widget.setParent(None)
-                widget.deleteLater()
-                del self.annotation_widgets_by_id[ann_id]
-            
-            # Remove from all_data_items
-            self.all_data_items = [item for item in self.all_data_items 
-                                   if item.annotation.id != ann_id]
-        
-        # Add merged annotation
+            self.data_item_cache.pop(ann_id, None)
         self._ensure_cropped_images([merged_annotation])
-        if merged_annotation.id not in self.data_item_cache:
-            self.data_item_cache[merged_annotation.id] = AnnotationDataItem(merged_annotation)
-        data_item = self.data_item_cache[merged_annotation.id]
-        if data_item not in self.all_data_items:
-            self.all_data_items.append(data_item)
-        
-        self._recalculate_layout()
+        self.data_item_cache[merged_annotation.id] = AnnotationDataItem(merged_annotation)
+        QTimer.singleShot(0, self.refresh_annotations)
     
     @pyqtSlot(str, object)
     def on_annotation_split(self, original_annotation_id, new_annotations):
@@ -1236,100 +1155,35 @@ class AnnotationViewerWindow(QWidget):
         self._update_toolbar_state()
         
     def _recalculate_layout(self):
-        """Calculate positions for all widgets and resize content area."""
-        # If the user has not applied the filter, keep content area minimal
-        # and avoid creating widgets.
+        """Rebuild list model layout by grouping items and updating model/delegate."""
+        # If the user has not applied the filter, show placeholder and skip
         if not getattr(self, '_filter_applied', False):
-            try:
-                self.content_widget.setMinimumSize(1, 1)
-            except Exception:
-                pass
+            self._show_placeholder()
             return
 
         if not self.all_data_items:
-            self.content_widget.setMinimumSize(1, 1)
+            self._show_placeholder()
             return
-        
-        self._clear_separator_labels()
+
+        # Build sorted list
         sorted_data_items = self._get_sorted_data_items()
-        
-        # If isolated, only consider isolated widgets
+
+        # If isolated, only consider isolated ids
         if self.isolated_mode:
-            isolated_ids = {w.data_item.annotation.id for w in self.isolated_widgets}
-            sorted_data_items = [item for item in sorted_data_items if item.annotation.id in isolated_ids]
-        
-        if not sorted_data_items:
-            self.content_widget.setMinimumSize(1, 1)
-            return
-        
-        # Group items by sort key
+            isolated_ids = getattr(self, 'isolated_ids', None)
+            if isolated_ids:
+                sorted_data_items = [item for item in sorted_data_items if item.annotation.id in isolated_ids]
+
+        # Group and set into model
         groups = self._group_data_items_by_sort_key(sorted_data_items)
-        spacing = max(5, int(self.current_widget_size * 0.08))
-        
-        # Fallback for initial layout before Qt assigns proper dimensions
-        available_width = self.scroll_area.viewport().width()
-        if available_width < 100:
-            available_width = max(self.width(), 400)
-            
-        x, y = spacing, spacing
-        max_height_in_row = 0
-        
-        self.widget_positions.clear()
-        
-        # Calculate positions
-        for group_data in groups:
-            if len(group_data) == 3:
-                group_name, group_color, group_items = group_data
-            else:
-                group_name, group_items = group_data
-                group_color = None
-            
-            # Add header if grouped
-            if group_name and self.sort_combo.currentText() != "None":
-                if x > spacing:
-                    x = spacing
-                    y += max_height_in_row + spacing
-                    max_height_in_row = 0
-                header = self._create_group_header(group_name, group_color)
-                header.move(x, y)
-                y += header.height() + spacing
-                x = spacing
-                max_height_in_row = 0
-            
-            for data_item in group_items:
-                ann_id = data_item.annotation.id
-                
-                if ann_id in self.annotation_widgets_by_id:
-                    widget = self.annotation_widgets_by_id[ann_id]
-                    widget.update_height(self.current_widget_size)
-                else:
-                    widget = AnnotationImageWidget(
-                        data_item, self.current_widget_size, self, self.content_widget
-                    )
-                    
-                    # FIX: Explicitly hide on creation to prevent the (0,0) rendering trap
-                    widget.hide()
-                    # Do NOT set the global animation manager for gallery widgets.
-                    # Animations for these widgets are intentionally disabled.
-                    widget.recalculate_aspect_ratio()
-                    self.annotation_widgets_by_id[ann_id] = widget
-                
-                # Calculate width mathematically instead of trusting the lagging GUI engine
-                expected_width = max(10, int(self.current_widget_size * widget.aspect_ratio))
-                if x > spacing and x + expected_width > available_width:
-                    x = spacing
-                    y += max_height_in_row + spacing
-                    max_height_in_row = 0
-                
-                self.widget_positions[ann_id] = QRect(x, y, expected_width, self.current_widget_size)
-                
-                x += expected_width + spacing
-                max_height_in_row = max(max_height_in_row, self.current_widget_size)
-        
-        total_height = y + max_height_in_row + spacing
-        self.content_widget.setMinimumSize(available_width, total_height)
-        
-        self._update_visible_widgets()
+        self.list_model.set_grouped_items(groups)
+        # Inform delegate of size change
+        if self.list_delegate:
+            self.list_delegate.item_size = self.current_widget_size
+        try:
+            self._show_annotation_gallery()
+        except Exception:
+            pass
     
     def _schedule_update(self):
         """Schedule a delayed update for virtualization."""
@@ -1464,7 +1318,10 @@ class AnnotationViewerWindow(QWidget):
             }}
         """)
         header.setFixedHeight(32)
-        header.setMinimumWidth(self.scroll_area.viewport().width() - 20)
+        if hasattr(self, 'list_view') and self.list_view is not None:
+            header.setMinimumWidth(self.list_view.viewport().width() - 20)
+        else:
+            header.setMinimumWidth(400)
         header.show()
         self._group_headers.append(header)
         return header
@@ -1518,7 +1375,10 @@ class AnnotationViewerWindow(QWidget):
     
     def _update_toolbar_state(self):
         """Update toolbar button states."""
-        selection_exists = bool(self.selected_widgets)
+        if hasattr(self, 'list_view') and self.list_view is not None:
+            selection_exists = self.list_view.selectionModel().hasSelection()
+        else:
+            selection_exists = bool(self.selected_widgets)
         
         # Isolate button: enabled only when NOT in isolation mode AND has selection
         # When isolated, button is disabled (user exits via double-click)
@@ -1558,55 +1418,76 @@ class AnnotationViewerWindow(QWidget):
     
     def clear_selection(self):
         """Clear all selections."""
-        for widget in list(self.selected_widgets):
-            self.deselect_widget(widget)
-        self.selected_widgets.clear()
+        if hasattr(self, 'list_view') and self.list_view is not None:
+            blocker = QSignalBlocker(self.list_view.selectionModel())
+            try:
+                self.list_view.clearSelection()
+            finally:
+                del blocker
+        else:
+            for widget in list(self.selected_widgets):
+                self.deselect_widget(widget)
+            self.selected_widgets.clear()
         self._update_toolbar_state()
     
     def render_selection_from_ids(self, selected_ids):
         """Update visual selection using fast set-diffing."""
-        # Removed self.setUpdatesEnabled(False) - This was dropping the paint events!
-        
-        selected_ids_set = set(selected_ids) if selected_ids else set()
-        current_selected_ids = {w.data_item.annotation.id for w in self.selected_widgets}
+        # New model-based selection mapping
+        if not selected_ids:
+            # clear selection
+            self.clear_selection()
+            return
 
-        to_select = selected_ids_set - current_selected_ids
-        to_deselect = current_selected_ids - selected_ids_set
+        selected_ids_set = set(selected_ids)
+        if not hasattr(self, 'list_view') or self.list_view is None:
+            return
 
-        for ann_id in to_select:
-            if ann_id in self.annotation_widgets_by_id:
-                widget = self.annotation_widgets_by_id[ann_id]
-                widget.data_item.set_selected(True)
-                widget.update_selection_visuals()
-                self.selected_widgets.append(widget)
-
-        for ann_id in to_deselect:
-            if ann_id in self.annotation_widgets_by_id:
-                widget = self.annotation_widgets_by_id[ann_id]
-                widget.data_item.set_selected(False)
-                widget.update_selection_visuals()
-                if widget in self.selected_widgets:
-                    self.selected_widgets.remove(widget)
-                    
+        sel_model = self.list_view.selectionModel()
+        blocker = QSignalBlocker(sel_model)
+        try:
+            sel_model.clearSelection()
+            for aid in selected_ids_set:
+                row = self.list_model._id_to_row.get(aid)
+                if row is None:
+                    continue
+                idx = self.list_model.index(row)
+                sel_model.select(idx, sel_model.Select | sel_model.Rows)
+                try:
+                    self.list_view.scrollTo(idx)
+                except Exception:
+                    pass
+        finally:
+            del blocker
         self._update_toolbar_state()
-        
-        # --- Auto-scroll to the newly selected item ---
-        # Because of how the SelectionManager passes data, `to_select` will 
-        # only have items if the selection originated from OUTSIDE the gallery.
-        if to_select:
-            first_id = next(iter(to_select))
-            if first_id in self.widget_positions:
-                rect = self.widget_positions[first_id]
-                
-                # Scroll the gallery so the widget's center is visible
-                self.scroll_area.ensureVisible(
-                    rect.center().x(), 
-                    rect.center().y(), 
-                    rect.width() // 2 + 10, 
-                    rect.height() // 2 + 10
-                )
-                # Instantly load the virtualized widgets in the new scroll area
-                self._update_visible_widgets()
+
+    def _on_list_selection_changed(self, selected, deselected):
+        """Slot for list view selection changes -> emit selection_changed(ids)."""
+        if getattr(self, '_syncing_selection', False):
+            return
+        # build list of selected ids
+        try:
+            sel_model = self.list_view.selectionModel()
+            indexes = sel_model.selectedIndexes()
+            ids = []
+            for idx in indexes:
+                data = idx.data(self.list_model.DataItemRole)
+                if data and data.get('type') == 'annotation':
+                    ids.append(data['item'].annotation.id)
+            if ids:
+                self._syncing_selection = True
+                try:
+                    self.selection_changed.emit(ids)
+                finally:
+                    self._syncing_selection = False
+            else:
+                # emit empty selection
+                self._syncing_selection = True
+                try:
+                    self.selection_changed.emit([])
+                finally:
+                    self._syncing_selection = False
+        except Exception:
+            pass
     
     def handle_annotation_selection(self, widget, event):
         """Handle selection with keyboard modifiers."""
@@ -1716,20 +1597,9 @@ class AnnotationViewerWindow(QWidget):
         self._resize_timer.start(100)
     
     def eventFilter(self, source, event):
-        """Filter events for rubber band selection."""
-        if source is self.scroll_area.viewport():
-            # Rubber-band mouse handling
-            if event.type() == QEvent.MouseButtonPress:
-                return self._viewport_mouse_press(event)
-            elif event.type() == QEvent.MouseMove:
-                return self._viewport_mouse_move(event)
-            elif event.type() == QEvent.MouseButtonRelease:
-                return self._viewport_mouse_release(event)
-            elif event.type() == QEvent.MouseButtonDblClick:
-                return self._viewport_mouse_double_click(event)
-
-            # Ctrl + Mouse Wheel: resize gallery thumbnails
-            elif event.type() == QEvent.Wheel:
+        """Filter events for list viewport (Ctrl+Wheel zoom)."""
+        if hasattr(self, 'list_view') and source is self.list_view.viewport():
+            if event.type() == QEvent.Wheel:
                 try:
                     if event.modifiers() & Qt.ControlModifier:
                         delta = event.angleDelta().y()
@@ -1744,7 +1614,16 @@ class AnnotationViewerWindow(QWidget):
                             new_size = max(self._widget_size_min, min(self._widget_size_max, new_size))
                         if new_size != self.current_widget_size:
                             self.current_widget_size = new_size
-                            self._recalculate_layout()
+                            if self.list_delegate:
+                                self.list_delegate.item_size = self.current_widget_size
+                            try:
+                                self.list_model.layoutChanged.emit()
+                            except Exception:
+                                pass
+                            try:
+                                self.list_view.doItemsLayout()
+                            except Exception:
+                                pass
                         return True
                 except Exception:
                     return True
@@ -1860,40 +1739,35 @@ class AnnotationViewerWindow(QWidget):
     
     def isolate_and_select_from_ids(self, ids_to_isolate):
         """Isolate and select specific annotations by ID."""
-        widgets = {
-            self.annotation_widgets_by_id[aid]
-            for aid in ids_to_isolate
-            if aid in self.annotation_widgets_by_id
-        }
-        
-        if not widgets:
+        # Build grouped list containing only the requested IDs
+        ids_set = set(ids_to_isolate)
+        groups = self._group_data_items_by_sort_key(self.all_data_items)
+        new_groups = []
+        for group_key, group_color, items in groups:
+            filtered = [it for it in items if it.annotation.id in ids_set]
+            if filtered:
+                new_groups.append((group_key, group_color, filtered))
+
+        if not new_groups:
             return
-        
-        self.isolated_widgets = widgets
+
         self.isolated_mode = True
-        
+        self.isolated_ids = ids_set
+        self.list_model.set_grouped_items(new_groups)
         self.render_selection_from_ids(ids_to_isolate)
-        self._recalculate_layout()
         self._update_toolbar_state()
     
     def display_and_isolate_ordered_results(self, ordered_ids):
         """Display annotations in a specific order (e.g., similarity results)."""
         self.active_ordered_ids = ordered_ids
+        # Build ordered data items
+        item_map = {i.annotation.id: i for i in self.all_data_items}
+        ordered_items = [item_map[aid] for aid in ordered_ids if aid in item_map]
+        # Single unnamed group to present ordered results
+        self.list_model.set_grouped_items([("", None, ordered_items)])
+        self.isolated_mode = True
+        self.isolated_ids = set(ordered_ids)
         self.render_selection_from_ids(set(ordered_ids))
-        
-        self.isolated_widgets = set(self.selected_widgets)
-        self.content_widget.setUpdatesEnabled(False)
-        try:
-            for widget in self.annotation_widgets_by_id.values():
-                if widget in self.isolated_widgets:
-                    widget.show()
-                else:
-                    widget.hide()
-            self.isolated_mode = True
-            self._recalculate_layout()
-        finally:
-            self.content_widget.setUpdatesEnabled(True)
-        
         self._update_toolbar_state()
 
     def clear(self):
