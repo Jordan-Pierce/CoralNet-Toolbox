@@ -175,9 +175,9 @@ class WorkAreaTool(Tool):
                 self.update_remove_buttons_visibility(True)
                 self.update_tags_visibility(True)  # Show tags with remove buttons
                 self.annotation_window.viewport().setCursor(Qt.PointingHandCursor)
-            
-            # Clear all work areas (Ctrl+Shift+Backspace)
-            if key == Qt.Key_Backspace:
+
+            # Clear all work areas (Ctrl+Shift+Backspace or Ctrl+Shift+Delete)
+            if key in (Qt.Key_Backspace, Qt.Key_Delete):
                 if self.temporary_work_area:
                     self._remove_temporary_work_area()
                 self.clear_work_areas()

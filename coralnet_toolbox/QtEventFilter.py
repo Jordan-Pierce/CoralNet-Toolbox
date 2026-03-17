@@ -117,6 +117,15 @@ class GlobalEventFilter(QObject):
 
                 # Delete (backspace or delete key) selected annotations when select tool is active
                 if event.key() == Qt.Key_Delete or event.key() == Qt.Key_Backspace:
+                    # Allow Ctrl+Shift+Delete/Backspace to reach the work area tool
+                    if (
+                        (event.modifiers() & Qt.ControlModifier) and
+                        (event.modifiers() & Qt.ShiftModifier) and
+                        self.annotation_window.selected_tool == "work_area"
+                    ):
+                        # Don't consume; let the active tool handle this shortcut
+                        return False
+
                     # Check if a text input field has focus first
                     if isinstance(QApplication.focusWidget(), QLineEdit):
                         return False  # Pass the event on to the QLineEdit
