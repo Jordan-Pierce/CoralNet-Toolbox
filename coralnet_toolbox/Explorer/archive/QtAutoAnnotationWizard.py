@@ -1690,12 +1690,13 @@ class AutoAnnotationWizard(QDialog):
         # Clear all selections in both viewers
         if hasattr(self.explorer_window.embedding_viewer, 'graphics_scene'):
             self.explorer_window.embedding_viewer.graphics_scene.clearSelection()
-        
-        if hasattr(self.explorer_window.annotation_viewer, 'selected_widgets'):
-            for widget in list(self.explorer_window.annotation_viewer.selected_widgets):
-                widget.data_item.set_selected(False)
-                widget.update_selection_visuals()
-            self.explorer_window.annotation_viewer.selected_widgets.clear()
+
+        # Clear selection in the annotation viewer via its public API
+        try:
+            if hasattr(self.explorer_window.annotation_viewer, 'clear_selection'):
+                self.explorer_window.annotation_viewer.clear_selection()
+        except Exception:
+            pass
         
         # Reset annotation viewer sort to None and unlock it
         if hasattr(self.explorer_window.annotation_viewer, 'sort_combo'):
@@ -1883,11 +1884,11 @@ class AutoAnnotationWizard(QDialog):
         if hasattr(self.explorer_window.embedding_viewer, 'graphics_scene'):
             self.explorer_window.embedding_viewer.graphics_scene.clearSelection()
         
-        if hasattr(self.explorer_window.annotation_viewer, 'selected_widgets'):
-            for widget in list(self.explorer_window.annotation_viewer.selected_widgets):
-                widget.data_item.set_selected(False)
-                widget.update_selection_visuals()
-            self.explorer_window.annotation_viewer.selected_widgets.clear()
+        try:
+            if hasattr(self.explorer_window.annotation_viewer, 'clear_selection'):
+                self.explorer_window.annotation_viewer.clear_selection()
+        except Exception:
+            pass
         
         # Re-enable and reset sort combo
         self.explorer_window.annotation_viewer.sort_combo.setEnabled(True)

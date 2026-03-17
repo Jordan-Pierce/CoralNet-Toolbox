@@ -180,15 +180,13 @@ class AnnotationViewerWindow(QWidget):
         self.data_item_cache = {}  # annotation_id -> AnnotationDataItem
         self.all_data_items = []  # Currently filtered data items
         
-        # Selection state (compatibility lists maintained; real selection via QListView)
-        self.selected_widgets = []
+        # Selection state (real selection via QListView)
         self.last_selected_item_id = None
         self._syncing_selection = False  # Flag to prevent selection sync loops
         
         # Isolation state
         self.isolated_mode = False
         self.isolated_ids = None
-        self.isolated_widgets = set()
         
         # (legacy rubber-band removed; QListView provides native selection)
         
@@ -568,7 +566,7 @@ class AnnotationViewerWindow(QWidget):
                 if data and data.get('type') == 'annotation':
                     ids.append(data['item'].annotation.id)
             return ids
-        return [w.data_item.annotation.id for w in self.selected_widgets]
+        return []
     
     def highlight_annotations(self, ids):
         """
@@ -1192,8 +1190,7 @@ class AnnotationViewerWindow(QWidget):
             return
         # Migrate to model/view: replace widget-centric management with model updates
         self.all_data_items = data_items
-        # clear any legacy selection tracking and let the view manage selection
-        self.selected_widgets.clear() if hasattr(self, 'selected_widgets') else None
+        # let the view manage selection
         self.last_selected_item_id = None
 
         # Rebuild model layout (groups + headers) and show gallery
@@ -1381,9 +1378,9 @@ class AnnotationViewerWindow(QWidget):
             try:
                 selection_exists = self.list_view.selectionModel().hasSelection()
             except Exception:
-                selection_exists = bool(self.selected_widgets)
+                selection_exists = False
         else:
-            selection_exists = bool(self.selected_widgets)
+            selection_exists = False
         
         # Isolate button: enabled only when NOT in isolation mode AND has selection
         # When isolated, button is disabled (user exits via double-click)
@@ -1418,11 +1415,7 @@ class AnnotationViewerWindow(QWidget):
         sel_model = self.list_view.selectionModel()
         sel_model.select(idx, sel_model.Select | sel_model.Rows)
         # update compatibility list
-        try:
-            data = idx.data(self.list_model.DataItemRole)
-            self.selected_widgets.append(SimpleNamespace(data_item=data['item']))
-        except Exception:
-            pass
+        # No compatibility list maintained anymore
         self._update_toolbar_state()
         return True
     
@@ -1448,11 +1441,7 @@ class AnnotationViewerWindow(QWidget):
         idx = self.list_model.index(row)
         sel_model = self.list_view.selectionModel()
         sel_model.select(idx, sel_model.Deselect | sel_model.Rows)
-        # update compatibility list
-        try:
-            self.selected_widgets = [s for s in self.selected_widgets if s.data_item.annotation.id != aid]
-        except Exception:
-            pass
+        # No compatibility list maintained anymore
         self._update_toolbar_state()
         return True
     
@@ -1490,9 +1479,8 @@ class AnnotationViewerWindow(QWidget):
             finally:
                 del blocker
         else:
-            for widget in list(self.selected_widgets):
-                self.deselect_widget(widget)
-            self.selected_widgets.clear()
+            # Nothing to clear when no list view is present
+            pass
         self._update_toolbar_state()
     
     def render_selection_from_ids(self, selected_ids):
@@ -1534,16 +1522,11 @@ class AnnotationViewerWindow(QWidget):
             sel_model = self.list_view.selectionModel()
             indexes = sel_model.selectedIndexes()
             ids = []
-            selected_widgets = []
             for idx in indexes:
                 data = idx.data(self.list_model.DataItemRole)
                 if data and data.get('type') == 'annotation':
                     aid = data['item'].annotation.id
                     ids.append(aid)
-                    # maintain legacy `selected_widgets` as simple namespace objects
-                    selected_widgets.append(SimpleNamespace(data_item=data['item']))
-            # update legacy list for compatibility
-            self.selected_widgets = selected_widgets
             if ids:
                 self._syncing_selection = True
                 try:
@@ -1741,11 +1724,6 @@ class AnnotationViewerWindow(QWidget):
 
         self.isolated_mode = True
         self.isolated_ids = ids_set
-        # maintain compatibility set of widgets (store ids)
-        try:
-            self.isolated_widgets = set(ids_set)
-        except Exception:
-            self.isolated_widgets = set()
         self.list_model.set_grouped_items(new_groups)
         self.render_selection_from_ids(ids_to_isolate)
         self._update_toolbar_state()
@@ -1760,10 +1738,6 @@ class AnnotationViewerWindow(QWidget):
         self.list_model.set_grouped_items([("", None, ordered_items)])
         self.isolated_mode = True
         self.isolated_ids = set(ordered_ids)
-        try:
-            self.isolated_widgets = set(ordered_ids)
-        except Exception:
-            self.isolated_widgets = set()
         self.render_selection_from_ids(set(ordered_ids))
         self._update_toolbar_state()
 
@@ -1778,7 +1752,6 @@ class AnnotationViewerWindow(QWidget):
             # Clear caches and lists (model/view)
             self.data_item_cache.clear()
             self.all_data_items = []
-            self.selected_widgets = []
             self.last_selected_item_id = None
             self.active_ordered_ids = []
             self.isolated_mode = False

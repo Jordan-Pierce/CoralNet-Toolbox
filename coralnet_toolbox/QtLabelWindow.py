@@ -609,9 +609,14 @@ class LabelWindow(QWidget):
         # Check if we're using the dock-based annotation gallery viewer
         annotation_viewer = getattr(self.main_window, 'annotation_viewer_window', None) if self.main_window else None
         if annotation_viewer:
-           
+
             # Priority 1: Always check for a selection in Gallery first.
-            gallery_selected_count = len(annotation_viewer.selected_widgets) if hasattr(annotation_viewer, 'selected_widgets') else 0
+            try:
+                sel_ids = annotation_viewer.get_selected_annotation_ids()
+                gallery_selected_count = len(sel_ids) if sel_ids is not None else 0
+            except Exception:
+                gallery_selected_count = 0
+
             if gallery_selected_count > 0:
                 if gallery_selected_count == 1:
                     text = "Annotation: 1"
@@ -619,13 +624,17 @@ class LabelWindow(QWidget):
                     text = f"Annotations: {gallery_selected_count}"
                 self.annotation_count_display.setText(text)
                 return  # Exit early, selection count is most important.
-            
+
             # Priority 2: If no selection, THEN check for isolation mode.
-            if hasattr(annotation_viewer, 'isolated_mode') and annotation_viewer.isolated_mode:
-                count = len(annotation_viewer.isolated_widgets) if hasattr(annotation_viewer, 'isolated_widgets') else 0
-                text = f"Annotations: {count}"
-                self.annotation_count_display.setText(text)
-                return  # Exit early
+            try:
+                if getattr(annotation_viewer, 'isolated_mode', False):
+                    isolated_ids = getattr(annotation_viewer, 'isolated_ids', None)
+                    count = len(isolated_ids) if isolated_ids else 0
+                    text = f"Annotations: {count}"
+                    self.annotation_count_display.setText(text)
+                    return
+            except Exception:
+                pass
             
         # --- ORIGINAL FALLBACK LOGIC ---
         annotation_window_selected_count = len(self.annotation_window.selected_annotations)
