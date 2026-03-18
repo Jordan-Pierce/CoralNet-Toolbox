@@ -2185,8 +2185,31 @@ class AnnotationWindow(QGraphicsView):
         # Animate the view to the padded annotation rect instead of jumping
         self.animate_to_rect(padded_rect, duration=600)
     
-    def cycle_annotations(self, direction):
+    def cycle_annotations(self, direction, _bypass_debounce: bool = False):
         """Cycle through annotations in the specified direction."""
+        # Debounce: coalesce rapid repeated calls into one action
+        debounce_ms = 150
+        if not _bypass_debounce:
+            # Lazy-create a single-shot timer to coalesce repeated calls
+            if not hasattr(self, '_cycle_debounce_timer'):
+                self._cycle_debounce_timer = QTimer(self)
+                self._cycle_debounce_timer.setSingleShot(True)
+                # When timer fires, call the cycle with bypass flag to actually run
+                self._cycle_debounce_timer.timeout.connect(lambda: self.cycle_annotations(getattr(self, '_pending_cycle', 0), True))
+            # Store the most recent requested direction
+            self._pending_cycle = direction
+            # Restart debounce timer
+            self._cycle_debounce_timer.stop()
+            self._cycle_debounce_timer.start(debounce_ms)
+            return
+
+        # When bypassing debounce, clear pending marker
+        if hasattr(self, '_pending_cycle'):
+            try:
+                del self._pending_cycle
+            except Exception:
+                self._pending_cycle = None
+
         # Get the annotations for the current image
         annotations = self.get_image_annotations()
         if not annotations:
