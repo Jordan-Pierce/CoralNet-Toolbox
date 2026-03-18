@@ -91,22 +91,21 @@ class ConfidenceBar(QFrame):
         current_width = self.width()
         current_height = self.height()
 
-        # Guard against painting on a widget with no size
         if current_width < 1 or current_height < 1:
             return
 
-        # Draw the border for the entire bar area
+        # Draw the border for the entire bar area with rounded corners
         painter.setPen(self.color)
-        painter.drawRect(0, 0, current_width - 1, current_height - 1)
+        painter.drawRoundedRect(0, 0, current_width - 1, current_height - 1, 4, 4)
 
         # Draw the filled part of the bar
         painter.setBrush(QColor(self.color.red(), self.color.green(), self.color.blue(), 192))
+        painter.setPen(Qt.NoPen) # Turn off the pen so the fill doesn't have a harsh outline
         
-        # Clamp the _fill_width to be valid and within the widget's bounds
         fill_w = min(self._fill_width, current_width - 1)
         
         if fill_w > 0:
-            painter.drawRect(0, 0, fill_w, current_height - 1)
+            painter.drawRoundedRect(0, 0, fill_w, current_height - 1, 4, 4)
 
     def mousePressEvent(self, event):
         """Handle mouse press events on the bar."""
@@ -153,10 +152,14 @@ class ConfidenceWindow(QWidget):
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(0)
 
-        # Create a groupbox and set its title
-        self.groupBox = QGroupBox("")
-        self.groupBoxLayout = QVBoxLayout()
-        self.groupBox.setLayout(self.groupBoxLayout)
+        # Replaced QGroupBox with a QFrame to eliminate awkward top padding
+        self.container = QFrame(self)
+        self.container.setFrameShape(QFrame.StyledPanel)
+        
+        # Main layout for the container
+        self.containerLayout = QVBoxLayout(self.container)
+        self.containerLayout.setContentsMargins(6, 6, 6, 6) # Give it some breathing room
+        self.containerLayout.setSpacing(6)
 
         self.max_graphic_size = 256
         self.graphics_view = None
@@ -165,8 +168,7 @@ class ConfidenceWindow(QWidget):
         self.bar_chart_widget = None
         self.bar_chart_layout = None
 
-        self.init_graphics_view()
-
+        # Prepare variables
         self.annotation = None
         self.user_confidence = None
         self.machine_confidence = None
@@ -187,50 +189,46 @@ class ConfidenceWindow(QWidget):
             "5": get_icon("5.svg").pixmap(12, 12)
         }
 
-        # --- Graphics View Controls Layout ---
-        
-        # Create navigation buttons for previous/next annotation
-        self.prev_button = QPushButton(self.prev_icon, " Prev")
+        # 1. Initialize the Image View (Top)
+        self.init_graphics_view()
+
+        # 2. Create the Unified Control Bar (Middle)
+        self.prev_button = QPushButton(self.prev_icon, "")
         self.prev_button.setToolTip("Select an annotation to enable navigation")
-        self.prev_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.prev_button.setFixedSize(28, 24) # Made them compact icon buttons
         self.prev_button.clicked.connect(self.on_prev_clicked)
         
-        self.next_button = QPushButton(self.next_icon, " Next")
+        self.next_button = QPushButton(self.next_icon, "")
         self.next_button.setToolTip("Select an annotation to enable navigation")
-        self.next_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.next_button.setFixedSize(28, 24)
         self.next_button.clicked.connect(self.on_next_clicked)
-        
-        nav_layout = QHBoxLayout()
-        nav_layout.addStretch()
-        nav_layout.addWidget(self.prev_button)
-        nav_layout.addWidget(self.next_button)
-        nav_layout.addStretch()
-        
-        self.groupBoxLayout.addLayout(nav_layout)
-        
-        # --- End Graphics View Controls ---
 
-        # Initialize the bar chart (adds it to the layout)
-        self.init_bar_chart_widget()
-
-        # Create a label for the dimensions and a toggle button (NOW AT THE BOTTOM)
         self.dimensions_label = QLabel(self)
         self.dimensions_label.setAlignment(Qt.AlignCenter)
+        self.dimensions_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
         self.toggle_button = QPushButton(self)
         self.toggle_button.setFixedSize(24, 24)
         self.toggle_state = False  # False = user, True = machine
-        self.toggle_button.setIcon(get_icon("user.svg"))
+        self.toggle_button.setIcon(self.user_icon)
         self.toggle_button.clicked.connect(self.toggle_user_machine_confidence_icon)
-        self.set_user_icon(False)  # Set to disabled user mode by default
+        self.set_user_icon(False)
 
-        dim_layout = QHBoxLayout()
-        dim_layout.addWidget(self.dimensions_label)
-        dim_layout.addWidget(self.toggle_button)
-        self.groupBoxLayout.addLayout(dim_layout)  # Add layout to the bottom
+        # Pack controls into a horizontal row
+        control_layout = QHBoxLayout()
+        control_layout.setContentsMargins(0, 0, 0, 0)
+        control_layout.addWidget(self.prev_button)
+        control_layout.addWidget(self.dimensions_label)
+        control_layout.addWidget(self.toggle_button)
+        control_layout.addWidget(self.next_button)
+        
+        self.containerLayout.addLayout(control_layout)
 
-        # Add the groupbox to the main layout
-        self.layout.addWidget(self.groupBox)
+        # 3. Initialize the Bar Chart (Bottom)
+        self.init_bar_chart_widget()
+
+        # Add the main container to the window's layout
+        self.layout.addWidget(self.container)
         
         # Set initial state of buttons
         self.set_navigation_enabled(False)
@@ -302,17 +300,18 @@ class ConfidenceWindow(QWidget):
     def init_graphics_view(self):
         """Initialize the graphics view for displaying the cropped image."""
         self.graphics_view = QGraphicsView(self)
+        self.graphics_view.setStyleSheet("QGraphicsView { border: 2px solid transparent; border-radius: 4px; }")
         self.scene = QGraphicsScene(self)
         self.graphics_view.setScene(self.scene)
-        self.groupBoxLayout.addWidget(self.graphics_view, 2)  # 2 for stretch factor
+        self.containerLayout.addWidget(self.graphics_view, 2)  # 2 for stretch factor
 
     def init_bar_chart_widget(self):
         """Initialize the widget and layout for the confidence bar chart."""
         self.bar_chart_widget = QWidget()
         self.bar_chart_layout = QVBoxLayout(self.bar_chart_widget)
         self.bar_chart_layout.setContentsMargins(0, 0, 0, 0)
-        self.bar_chart_layout.setSpacing(2)  # Set spacing to make bars closer
-        self.groupBoxLayout.addWidget(self.bar_chart_widget, 1)  # 1 for stretch factor
+        self.bar_chart_layout.setSpacing(4)  # Slightly more breathing room between rows
+        self.containerLayout.addWidget(self.bar_chart_widget, 1)  # 1 for stretch factor
         
     def toggle_user_machine_confidence_icon(self):
         """Toggle the button icon and switch between user/machine confidences."""
@@ -411,7 +410,7 @@ class ConfidenceWindow(QWidget):
                 self.scene.addPixmap(cropped_image_graphic)
                 # Add the border color with increased width
                 self.scene.setSceneRect(QRectF(cropped_image_graphic.rect()))
-                self.graphics_view.setStyleSheet("QGraphicsView { border: 3px solid transparent; }")
+                self.graphics_view.setStyleSheet("QGraphicsView { border: 2px solid transparent; border-radius: 4px; }")
                 # Fit the view to the scene
                 self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
                 self.graphics_view.centerOn(self.scene.sceneRect().center())
@@ -660,7 +659,9 @@ class ConfidenceWindow(QWidget):
 
         # Set border color based on the top prediction
         max_color = labels[confidences.index(max_confidence)].color
-        self.graphics_view.setStyleSheet(f"border: 2px solid {max_color.name()};")
+        self.graphics_view.setStyleSheet(
+            f"QGraphicsView {{ border: 2px solid {max_color.name()}; border-radius: 4px; }}"
+        )
 
         # Use actual confidence values for both bar fill and display
         for idx, (label, confidence) in enumerate(zip(labels, confidences)):
@@ -678,42 +679,41 @@ class ConfidenceWindow(QWidget):
 
     def add_bar_to_layout(self, label, display_confidence, bar_confidence, top_k):
         """Create and add a composite widget for the confidence bar to the layout."""
-        # 1. Create a container widget for the entire row
         container_widget = QWidget()
         row_layout = QHBoxLayout(container_widget)
-        row_layout.setContentsMargins(5, 2, 5, 2)
-        row_layout.setSpacing(5)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(8)
 
-        # 2. Create the individual components
+        # Icon
         icon_label = QLabel()
         icon_label.setPixmap(self.top_k_icons[str(top_k)])
         icon_label.setFixedSize(14, 14)
 
-        # Truncate the label text to 10 characters and add "..." if longer
+        # Class Label
         label_text = label.short_label_code
         if len(label_text) > 10:
             label_text = label_text[:10] + "..."
         
         class_label = QLabel(label_text)
-        class_label.setFixedWidth(80)
-        class_label.setToolTip(label.short_label_code)  # Show full text on hover
+        class_label.setMinimumWidth(75) # Use minimum instead of fixed
+        class_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        class_label.setToolTip(label.short_label_code) 
 
-        # Use the actual confidence value for the bar's visual fill
+        # Progress Bar
         bar_widget = ConfidenceBar(self, label, bar_confidence)
         bar_widget.barClicked.connect(self.handle_bar_click)
 
-        # Use the actual confidence value for the text display
+        # Percentage
         percentage_label = QLabel(f"{display_confidence:.2f}%")
-        percentage_label.setFixedWidth(55)
+        percentage_label.setMinimumWidth(55)
         percentage_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
-        # 3. Add the components to the row's layout
+        # Add to row
         row_layout.addWidget(icon_label)
         row_layout.addWidget(class_label)
-        row_layout.addWidget(bar_widget, 1)  # Add bar_widget with stretch factor
+        row_layout.addWidget(bar_widget, 1)  # 1 allows the bar to stretch and absorb extra space
         row_layout.addWidget(percentage_label)
 
-        # 4. Add the container for the whole row to the main vertical layout
         self.bar_chart_layout.addWidget(container_widget)
 
     def handle_bar_click(self, label):

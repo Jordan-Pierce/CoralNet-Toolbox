@@ -9,7 +9,8 @@ from PyQt5.QtGui import (QColor, QPainter, QPen, QBrush, QFontMetrics, QLinearGr
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QHBoxLayout,
                              QVBoxLayout, QColorDialog, QLineEdit, QDialog, 
                              QPushButton, QApplication, QScrollArea,
-                             QGraphicsDropShadowEffect, QToolBar)
+                             QGraphicsDropShadowEffect, QToolBar,
+                             QListWidget, QListWidgetItem, QComboBox, QLabel)
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -270,7 +271,8 @@ class Label(QWidget):
         This is the public entry point for the global manager.
         """
         # This just calls the existing private method that holds the logic
-        self._update_pulse_alpha()
+        # self._update_pulse_alpha()
+        pass  # TODO
 
     @pyqtProperty(int)
     def pulse_alpha(self):
@@ -388,6 +390,7 @@ class LabelWindow(QWidget):
         # Connections
         self.add_label_button.clicked.connect(self.open_add_label_dialog)
         self.edit_label_button.clicked.connect(self.open_edit_label_dialog)
+        self.bulk_map_button.clicked.connect(self.open_bulk_map_dialog)
         self.delete_label_button.clicked.connect(self.delete_active_label)
         self.labelSelected.connect(self.annotation_window.set_selected_label)
 
@@ -399,6 +402,9 @@ class LabelWindow(QWidget):
         self.add_review_label()
 
         self.label_lock_button.setEnabled(False)
+        # Set initial enabled state for bulk_map_button: enabled when unlocked
+        # (allow bulk mapping even if there are fewer than two non-review labels)
+        self.bulk_map_button.setEnabled(not self.label_locked)
 
         self.show_confirmation_dialog = True
         self.setAcceptDrops(True)
@@ -440,6 +446,15 @@ class LabelWindow(QWidget):
         self.edit_label_button.setIcon(self.main_window.edit_icon)
         self.edit_label_button.setToolTip("Edit Label / Merge Labels")
         self.edit_label_button.setEnabled(False)
+
+        # Bulk map (merge multiple source labels into a single target)
+        self.bulk_map_button = QPushButton()
+        icon = get_icon("map.svg")
+        if not icon:
+            icon = self.main_window.edit_icon
+        self.bulk_map_button.setIcon(icon)
+        self.bulk_map_button.setToolTip("Map Labels (bulk)")
+        self.bulk_map_button.setEnabled(False)
 
         self.label_lock_button = QPushButton()
         self.label_lock_button.setIcon(self.main_window.unlock_icon)
@@ -501,6 +516,7 @@ class LabelWindow(QWidget):
         container_layout.addWidget(self.add_label_button)
         container_layout.addWidget(self.delete_label_button)
         container_layout.addWidget(self.edit_label_button)
+        container_layout.addWidget(self.bulk_map_button)
         container_layout.addWidget(self.label_lock_button)
         container_layout.addWidget(self.toggle_all_button)
 
@@ -594,9 +610,14 @@ class LabelWindow(QWidget):
         # Check if we're using the dock-based annotation gallery viewer
         annotation_viewer = getattr(self.main_window, 'annotation_viewer_window', None) if self.main_window else None
         if annotation_viewer:
-           
+
             # Priority 1: Always check for a selection in Gallery first.
-            gallery_selected_count = len(annotation_viewer.selected_widgets) if hasattr(annotation_viewer, 'selected_widgets') else 0
+            try:
+                sel_ids = annotation_viewer.get_selected_annotation_ids()
+                gallery_selected_count = len(sel_ids) if sel_ids is not None else 0
+            except Exception:
+                gallery_selected_count = 0
+
             if gallery_selected_count > 0:
                 if gallery_selected_count == 1:
                     text = "Annotation: 1"
@@ -604,13 +625,17 @@ class LabelWindow(QWidget):
                     text = f"Annotations: {gallery_selected_count}"
                 self.annotation_count_display.setText(text)
                 return  # Exit early, selection count is most important.
-            
+
             # Priority 2: If no selection, THEN check for isolation mode.
-            if hasattr(annotation_viewer, 'isolated_mode') and annotation_viewer.isolated_mode:
-                count = len(annotation_viewer.isolated_widgets) if hasattr(annotation_viewer, 'isolated_widgets') else 0
-                text = f"Annotations: {count}"
-                self.annotation_count_display.setText(text)
-                return  # Exit early
+            try:
+                if getattr(annotation_viewer, 'isolated_mode', False):
+                    isolated_ids = getattr(annotation_viewer, 'isolated_ids', None)
+                    count = len(isolated_ids) if isolated_ids else 0
+                    text = f"Annotations: {count}"
+                    self.annotation_count_display.setText(text)
+                    return
+            except Exception:
+                pass
             
         # --- ORIGINAL FALLBACK LOGIC ---
         annotation_window_selected_count = len(self.annotation_window.selected_annotations)
@@ -680,6 +705,12 @@ class LabelWindow(QWidget):
         """Update the label count display."""
         count = len(self.labels)
         self.label_count_display.setText(f"Labels: {count}")
+        # Enable bulk map button when unlocked (do not require >=2 non-review labels)
+        try:
+            if hasattr(self, 'bulk_map_button'):
+                self.bulk_map_button.setEnabled(not self.label_locked)
+        except Exception:
+            pass
 
     def update_labels_per_row(self):
         """Calculate and update the number of labels per row based on width."""
@@ -1093,12 +1124,20 @@ class LabelWindow(QWidget):
         if label_id is not None:
             for label in self.labels:
                 if label.id == label_id:
+                    try:
+                        self.update_label_count()
+                    except Exception:
+                        pass
                     return label
 
         # Check if a label with matching short and long codes exists (case-insensitive)
         for label in self.labels:
             if (s_code == label.short_label_code.strip().lower() and
                 l_code == label.long_label_code.strip().lower()):
+                try:
+                    self.update_label_count()
+                except Exception:
+                    pass
                 return label
 
         # Create default values if not provided
@@ -1224,6 +1263,82 @@ class LabelWindow(QWidget):
             current_mask.update_graphics_item()
             
         # Return cursor to normal
+        QApplication.restoreOverrideCursor()
+
+    def open_bulk_map_dialog(self):
+        """Open the BulkMapDialog and perform bulk mapping if accepted."""
+        dialog = BulkMapDialog(self)
+        if dialog.exec_() == QDialog.Accepted:
+            source_labels, target_label = dialog.get_selection()
+            if source_labels and target_label:
+                self.bulk_merge_labels(source_labels, target_label)
+
+    def bulk_merge_labels(self, source_labels, target_label):
+        """Merge multiple source labels into a single target label in batch."""
+        # Validate inputs
+        if not source_labels:
+            QMessageBox.warning(self, "Invalid Selection", "No source labels selected.")
+            return
+        if target_label in source_labels:
+            QMessageBox.warning(self, "Invalid Selection", "Target label cannot be one of the sources.")
+            return
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        self.main_window.showMessage(f"Bulk merging {len(source_labels)} labels into '{target_label.short_label_code}'...", 5000)
+
+        # Update all rasters once
+        for raster in self.main_window.image_window.raster_manager.rasters.values():
+            if raster.mask_annotation is not None:
+                mask_anno = raster.mask_annotation
+                for source_label in source_labels:
+                    source_cid = mask_anno.label_id_to_class_id_map.get(source_label.id)
+                    target_cid = mask_anno.label_id_to_class_id_map.get(target_label.id)
+
+                    if source_cid and target_cid:
+                        pixels_to_reassign = (mask_anno.mask_data % mask_anno.LOCK_BIT) == source_cid
+                        mask_anno.mask_data[pixels_to_reassign] = target_cid + mask_anno.LOCK_BIT
+                        mask_anno.class_id_to_label_map.pop(source_cid, None)
+                        mask_anno.label_id_to_class_id_map.pop(source_label.id, None)
+
+        # Update annotations and machine_confidence
+        for annotation in list(self.annotation_window.annotations_dict.values()):
+            if annotation.label in source_labels:
+                annotation.update_label(target_label)
+
+            if getattr(annotation, 'machine_confidence', None):
+                for source_label in source_labels:
+                    annotation.machine_confidence.pop(source_label, None)
+
+        # Remove source labels from UI and internal list
+        for source_label in list(source_labels):
+            if source_label in self.labels:
+                try:
+                    self.labels.remove(source_label)
+                except ValueError:
+                    pass
+                source_label.deleteLater()
+
+        # Update active label
+        if self.active_label in source_labels:
+            self.set_active_label(target_label)
+
+        # Final UI updates
+        self.update_label_count()
+        self.reorganize_labels()
+
+        current_image_path = self.annotation_window.current_image_path
+        if current_image_path:
+            self.annotation_window.set_image(current_image_path)
+            self.update_annotation_count()
+
+        self.sync_all_masks_with_labels()
+        self.main_window.image_window.update_search_bars()
+        self.update_tooltips()
+
+        current_mask = self.annotation_window.current_mask_annotation
+        if current_mask:
+            current_mask.update_graphics_item()
+
         QApplication.restoreOverrideCursor()
 
     def delete_label(self, label):
@@ -1378,6 +1493,8 @@ class LabelWindow(QWidget):
             self.add_label_button.setEnabled(False)
             self.delete_label_button.setEnabled(False)
             self.edit_label_button.setEnabled(False)
+            if hasattr(self, 'bulk_map_button'):
+                self.bulk_map_button.setEnabled(False)
             # Set the active label to locked
             self.locked_label = self.active_label
         else:
@@ -1387,6 +1504,9 @@ class LabelWindow(QWidget):
             self.add_label_button.setEnabled(True)
             self.delete_label_button.setEnabled(True)
             self.edit_label_button.setEnabled(True)
+            # Recompute bulk map enable state: enable when unlocked regardless of label count
+            if hasattr(self, 'bulk_map_button'):
+                self.bulk_map_button.setEnabled(True)
             # Reset the locked label
             self.locked_label = None
 
@@ -1733,3 +1853,151 @@ class EditLabelDialog(QDialog):
                 new_color=new_color
             )
             self.accept()
+
+
+class BulkMapDialog(QDialog):
+    """Dialog to select multiple source labels and a single target label for bulk mapping."""
+    def __init__(self, label_window, parent=None):
+        super().__init__(parent)
+        self.label_window = label_window
+
+        self.setWindowIcon(get_icon("coralnet.svg"))
+        self.setWindowTitle("Map Labels (bulk)")
+        self.setObjectName("BulkMapDialog")
+
+        self.layout = QVBoxLayout(self)
+
+        self.info_label = QLabel("Select source labels and choose a target label:", self)
+        self.layout.addWidget(self.info_label)
+
+        # Quick-select buttons
+        select_btn_row = QHBoxLayout()
+        self.select_all_button = QPushButton("Select All", self)
+        self.select_all_button.clicked.connect(self.select_all)
+        select_btn_row.addWidget(self.select_all_button)
+
+        self.unselect_all_button = QPushButton("Unselect All", self)
+        self.unselect_all_button.clicked.connect(self.unselect_all)
+        select_btn_row.addWidget(self.unselect_all_button)
+
+        self.layout.addLayout(select_btn_row)
+
+        self.list_widget = QListWidget(self)
+        self.list_widget.itemChanged.connect(self._on_item_changed)
+        self.layout.addWidget(self.list_widget)
+
+        self.target_combo = QComboBox(self)
+        self.layout.addWidget(self.target_combo)
+
+        # Buttons
+        self.button_box = QHBoxLayout()
+        self.ok_button = QPushButton("OK", self)
+        self.ok_button.clicked.connect(self._on_ok)
+        self.ok_button.setEnabled(False)
+        self.button_box.addWidget(self.ok_button)
+
+        self.cancel_button = QPushButton("Cancel", self)
+        self.cancel_button.clicked.connect(self.reject)
+        self.button_box.addWidget(self.cancel_button)
+
+        self.layout.addLayout(self.button_box)
+
+        self._populate_lists()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Unselect annotations like other dialogs
+        self.label_window.annotation_window.unselect_annotations()
+
+    def _populate_lists(self):
+        """Populate the source list and target combo excluding the Review label."""
+        self.list_widget.clear()
+        self.target_combo.clear()
+
+        # Add all non-Review labels to the source (checkable) list
+        for label in self.label_window.labels:
+            if label.short_label_code == "Review" and label.long_label_code == "Review":
+                continue
+            item = QListWidgetItem(label.short_label_code)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
+            item.setData(Qt.UserRole, label)
+            self.list_widget.addItem(item)
+
+        # Add all labels (including Review) to the target combo
+        for label in self.label_window.labels:
+            self.target_combo.addItem(label.short_label_code, label)
+
+        self._update_ok_state()
+
+    def _on_item_changed(self, item):
+        # When sources change, ensure target combo doesn't allow selecting a source
+        checked_labels = self._checked_labels()
+        # Rebuild combo while preserving previously selected non-source if possible
+        current_data = self.target_combo.currentData()
+        self._rebuild_target_combo(checked_labels, current_data)
+        self._update_ok_state()
+
+    def _rebuild_target_combo(self, checked_labels, current_data=None):
+        """Helper to rebuild the target combo excluding checked source labels."""
+        self.target_combo.blockSignals(True)
+        self.target_combo.clear()
+        for label in self.label_window.labels:
+            # Allow Review as a target but skip any labels chosen as sources
+            if label in checked_labels:
+                continue
+            self.target_combo.addItem(label.short_label_code, label)
+        # Try to restore selection if still valid
+        if current_data and current_data not in checked_labels:
+            idx = self.target_combo.findData(current_data)
+            if idx >= 0:
+                self.target_combo.setCurrentIndex(idx)
+        self.target_combo.blockSignals(False)
+
+    def _checked_labels(self):
+        labels = []
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if item.checkState() == Qt.Checked:
+                labels.append(item.data(Qt.UserRole))
+        return labels
+
+    def _update_ok_state(self):
+        sources = self._checked_labels()
+        target = self.target_combo.currentData()
+        ok_enabled = bool(sources) and (target is not None)
+        # Ensure target not in sources (shouldn't happen due to combo rebuild)
+        if target and target in sources:
+            ok_enabled = False
+        self.ok_button.setEnabled(ok_enabled)
+
+    def select_all(self):
+        """Select all source labels (check all checkable items)."""
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            item.setCheckState(Qt.Checked)
+        # After changing checks, rebuild target combo and update state
+        checked = self._checked_labels()
+        current_data = self.target_combo.currentData()
+        self._rebuild_target_combo(checked, current_data)
+        self._update_ok_state()
+
+    def unselect_all(self):
+        """Unselect all source labels (uncheck all checkable items)."""
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            item.setCheckState(Qt.Unchecked)
+        # After changing checks, rebuild target combo and update state
+        checked = self._checked_labels()
+        current_data = self.target_combo.currentData()
+        self._rebuild_target_combo(checked, current_data)
+        self._update_ok_state()
+
+    def _on_ok(self):
+        self.accept()
+
+    def get_selection(self):
+        """Return (source_labels, target_label)."""
+        sources = self._checked_labels()
+        target = self.target_combo.currentData()
+        return sources, target

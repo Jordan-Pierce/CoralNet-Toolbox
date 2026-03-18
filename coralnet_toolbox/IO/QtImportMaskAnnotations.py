@@ -73,7 +73,7 @@ class ImportMaskAnnotations(QDialog):
 
         self.setWindowIcon(get_icon("mask.svg"))
         self.setWindowTitle("Import Mask Annotations")
-        self.resize(800, 700)
+        self.resize(800, 400)
 
         # State variables
         self.valid_mask_pairs = []  # List of (mask_path, raster) tuples

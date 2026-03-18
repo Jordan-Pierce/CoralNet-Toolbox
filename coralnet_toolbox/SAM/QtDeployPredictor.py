@@ -331,21 +331,13 @@ class DeployPredictorDialog(QDialog):
         """
         Run SAM inference with prompts on the currently set image.
         
-        The image should be set first with set_image(). This method only passes
-        the prompts to the predictor for efficient inference.
-        
-        Args:
-            bbox (list or np.ndarray): Bounding box [x1, y1, x2, y2] or list of bboxes (optional).
-            points (list or np.ndarray): Point coordinates [[x, y], ...] (optional).
-            labels (list or np.ndarray): Point labels [1, -1, ...] (optional).
-        
-        Returns:
-            list: List of Ultralytics Results objects.
+        Optimized version: Bypasses the high-level Ultralytics Predictor loop 
+        and directly queries the mask decoder using cached image features.
         """
         if self.loaded_model is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
         
-        if self.original_image is None:
+        if self.original_image is None or getattr(self.loaded_model, 'features', None) is None:
             raise RuntimeError("No image set. Call set_image() first.")
         
         # Update the parameters and threshold from the UI
@@ -354,16 +346,57 @@ class DeployPredictorDialog(QDialog):
         
         # Make cursor busy while predicting
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        self.main_window.status_bar.showMessage("Running prediction...", 2000)
+        self.main_window.status_bar.showMessage("Running fast prediction...", 2000)
         
         try:
-            # Call the predictor with prompts
-            # Image is already set, so we just pass the prompts
-            results = self.loaded_model(
-                points=points,
-                labels=labels,
-                bboxes=bbox
-            )
+            import torch
+            from ultralytics.engine.results import Results
+            
+            src_shape = self.original_image.shape[:2]
+            dst_shape = (self.loaded_model.args.imgsz, self.loaded_model.args.imgsz)
+            
+            # Determine if we are using SAM 3 (which has a slightly different inference signature)
+            selected_model_name = self.model_combo.currentText()
+            is_sam3 = "SAM 3" in selected_model_name
+            
+            # Run inference directly on the pre-encoded features
+            with torch.inference_mode():
+                if is_sam3:
+                    # SAM 3 handles geometric prompts (boxes) and text, but not points in the same way
+                    pred_masks, pred_bboxes = self.loaded_model.inference_features(
+                        features=self.loaded_model.features,
+                        src_shape=src_shape,
+                        bboxes=bbox,
+                        labels=labels if bbox is not None else None
+                    )
+                else:
+                    # SAM and SAM 2
+                    pred_masks, pred_bboxes = self.loaded_model.inference_features(
+                        features=self.loaded_model.features,
+                        src_shape=src_shape,
+                        dst_shape=dst_shape,
+                        bboxes=bbox,
+                        points=points,
+                        labels=labels,
+                        multimask_output=False
+                    )
+            
+            # Gracefully handle empty predictions
+            if pred_masks is None or len(pred_masks) == 0:
+                return []
+                
+            # Create dummy names dictionary (Ultralytics Results objects expect this)
+            names = {i: str(i) for i in range(len(pred_masks))}
+            
+            # Pack the raw tensors back into an Ultralytics Results object 
+            # so the rest of your app doesn't break
+            results = [Results(
+                orig_img=self.original_image, 
+                path=self.image_path, 
+                names=names, 
+                masks=pred_masks, 
+                boxes=pred_bboxes
+            )]
             
             return results
             
@@ -380,90 +413,115 @@ class DeployPredictorDialog(QDialog):
         """
         Apply SAM to YOLO detection results to add segmentation masks.
         Extracts bounding boxes from YOLO detections and uses them as prompts for SAM.
-        """
-        if self.loaded_model is None or len(results_list) == 0:
-            return results_list
         
-        output_results = []
+        Optimized version: Directly queries the mask decoder using cached features,
+        bypassing UI overhead and redundant wrapper logic during batch processing.
+        """
+        if self.loaded_model is None or not results_list:
+            return results_list
+            
         import torch
         
-        for results in results_list:
-            original_image = results.orig_img
-            
-            # Fast shape check to avoid re-running the heavy ViT encoder
-            image_changed = True
-            if self.original_image is not None:
-                if self.original_image.shape == original_image.shape:
-                    if np.array_equal(self.original_image, original_image):
-                        image_changed = False
-                        
-            if image_changed:
-                self.set_image(original_image, image_path or results.path)
-            
-            if results.boxes is None or len(results.boxes) == 0:
-                output_results.append(results)
-                continue
-            
-            # Keep bounding boxes on the GPU as a PyTorch tensor!
-            bboxes = results.boxes.xyxy 
-            
-            # --- THE HARDWARE-AGNOSTIC FIX: ADAPTIVE CHUNKING ---
-            # Start with a highly optimistic chunk size
-            current_chunk_size = 256
-            
-            # We use a while loop so we can dynamically adjust the chunk size if we hit an OOM
-            i = 0
-            all_sam_masks = []
-            
-            while i < len(bboxes):
-                bbox_chunk = bboxes[i:i + current_chunk_size]
-                
-                try:
-                    # Attempt to run SAM with the current chunk
-                    sam_results = self.predict_from_prompts(bbox=bbox_chunk)
-                    
-                    if sam_results and len(sam_results) > 0 and sam_results[0].masks is not None:
-                        # --- THE VRAM SWAP FIX: COMPRESS TO BOOLEAN ---
-                        # Shrinks the stored output by 32x to prevent memory accumulation
-                        compressed_masks = sam_results[0].masks.data.to(torch.bool)
-                        all_sam_masks.append(compressed_masks)
-                    
-                    # If successful, move forward by the chunk size
-                    i += current_chunk_size
-                    
-                except RuntimeError as e:
-                    # Check if the error is a CUDA Out Of Memory error
-                    if "out of memory" in str(e).lower() or "oom" in str(e).lower():
-                        # If we are already at chunk size 1 and it OOMs, the user's GPU is simply too small
-                        if current_chunk_size <= 1:
-                            from PyQt5.QtWidgets import QMessageBox
-                            QMessageBox.critical(self.annotation_window, 
-                                                 "GPU Memory Error", 
-                                                 "Your GPU does not have enough memory to process this image.")
-                            break
-                        
-                        # The chunk was too big. Clear the failed memory allocation...
-                        import gc
-                        gc.collect()
-                        if torch.cuda.is_available():
-                            torch.cuda.empty_cache()
-                            
-                        # ...cut the chunk size in half, and try this exact same index (i) again!
-                        current_chunk_size = current_chunk_size // 2
-                        print(f"VRAM limit reached. Reducing SAM batch size to {current_chunk_size}...")
-                    else:
-                        # If it's a different runtime error, raise it normally
-                        raise e
-            
-            # Stitch all the chunks back together into a single tensor
-            if all_sam_masks:
-                # Concatenate the boolean masks, then cast back to float to satisfy Ultralytics
-                combined_masks = torch.cat(all_sam_masks, dim=0).float()
-                results.update(masks=combined_masks)
-            
-            output_results.append(results)
+        # Set UI state once for the entire batch operation
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        self.main_window.status_bar.showMessage("Refining masks with SAM...", 2000)
         
-        return output_results
+        try:
+            output_results = []
+            
+            selected_model_name = self.model_combo.currentText()
+            is_sam3 = "SAM 3" in selected_model_name
+            
+            # Sync parameters once
+            self.loaded_model.args.imgsz = self.imgsz_spinbox.value()
+            self.loaded_model.args.conf = self.thresholds_widget.get_uncertainty_thresh()
+            
+            for results in results_list:
+                original_image = results.orig_img
+                
+                # Fast shape check to avoid re-running the heavy ViT encoder
+                image_changed = True
+                if self.original_image is not None:
+                    if self.original_image.shape == original_image.shape:
+                        if np.array_equal(self.original_image, original_image):
+                            image_changed = False
+                            
+                if image_changed:
+                    # set_image handles the heavy ViT backbone feature extraction
+                    self.set_image(original_image, image_path or results.path)
+                
+                if results.boxes is None or len(results.boxes) == 0:
+                    output_results.append(results)
+                    continue
+                
+                # Keep bounding boxes on the GPU as a PyTorch tensor!
+                bboxes = results.boxes.xyxy 
+                
+                # --- THE HARDWARE-AGNOSTIC FIX: ADAPTIVE CHUNKING ---
+                current_chunk_size = 256
+                i = 0
+                all_sam_masks = []
+                
+                src_shape = original_image.shape[:2]
+                dst_shape = (self.loaded_model.args.imgsz, self.loaded_model.args.imgsz)
+                
+                while i < len(bboxes):
+                    bbox_chunk = bboxes[i:i + current_chunk_size]
+                    
+                    try:
+                        # Run fast inference directly on the chunk
+                        with torch.inference_mode():
+                            if is_sam3:
+                                pred_masks, _ = self.loaded_model.inference_features(
+                                    features=self.loaded_model.features,
+                                    src_shape=src_shape,
+                                    bboxes=bbox_chunk
+                                )
+                            else:
+                                pred_masks, _ = self.loaded_model.inference_features(
+                                    features=self.loaded_model.features,
+                                    src_shape=src_shape,
+                                    dst_shape=dst_shape,
+                                    bboxes=bbox_chunk,
+                                    multimask_output=False
+                                )
+                        
+                        if pred_masks is not None and len(pred_masks) > 0:
+                            # --- THE VRAM SWAP FIX: COMPRESS TO BOOLEAN ---
+                            compressed_masks = pred_masks.to(torch.bool)
+                            all_sam_masks.append(compressed_masks)
+                        
+                        i += current_chunk_size
+                        
+                    except RuntimeError as e:
+                        if "out of memory" in str(e).lower() or "oom" in str(e).lower():
+                            if current_chunk_size <= 1:
+                                QMessageBox.critical(self.annotation_window, 
+                                                     "GPU Memory Error", 
+                                                     "Your GPU does not have enough memory to process this image.")
+                                break
+                            
+                            import gc
+                            gc.collect()
+                            if torch.cuda.is_available():
+                                torch.cuda.empty_cache()
+                                
+                            current_chunk_size = current_chunk_size // 2
+                            print(f"VRAM limit reached. Reducing SAM batch size to {current_chunk_size}...")
+                        else:
+                            raise e
+                
+                if all_sam_masks:
+                    # Concatenate the boolean masks, then cast back to float to satisfy Ultralytics
+                    combined_masks = torch.cat(all_sam_masks, dim=0).float()
+                    results.update(masks=combined_masks)
+                
+                output_results.append(results)
+            
+            return output_results
+            
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def deactivate_model(self):
         """

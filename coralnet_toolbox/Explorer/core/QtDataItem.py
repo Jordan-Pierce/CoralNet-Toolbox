@@ -72,6 +72,9 @@ class EmbeddingPointItem(QGraphicsObject):
         Args:
             manager (AnimationManager): The central animation manager instance.
         """
+        # Keep a reference but do NOT register with the global manager.
+        # These items draw a static selection outline; animation ticks
+        # are intentionally disabled to avoid per-frame timers.
         self.animation_manager = manager
         
     def is_graphics_item_valid(self):
@@ -97,18 +100,21 @@ class EmbeddingPointItem(QGraphicsObject):
             # Map normalized z to a scale factor (e.g., from 0.5x to 1.5x)
             scale_factor = 0.5 + z_normalized
     
+        # Allow viewer to override base sizes (dynamic resizing via Ctrl+Wheel)
+        base_sprite = getattr(self.viewer, 'sprite_size', SPRITE_SIZE) if self.viewer else SPRITE_SIZE
+        base_point = getattr(self.viewer, 'point_size', POINT_SIZE) if self.viewer else POINT_SIZE
+
         if self.viewer and self.viewer.display_mode == 'sprites':
             ar = self.data_item.aspect_ratio
             if ar >= 1.0:
-                width = SPRITE_SIZE * scale_factor
-                height = (SPRITE_SIZE / ar) * scale_factor
+                width = base_sprite * scale_factor
+                height = (base_sprite / ar) * scale_factor
             else:
-                height = SPRITE_SIZE * scale_factor
-                width = (SPRITE_SIZE * ar) * scale_factor
+                height = base_sprite * scale_factor
+                width = (base_sprite * ar) * scale_factor
             return QRectF(0, 0, width, height)
         else:
-            
-            size = POINT_SIZE * scale_factor
+            size = base_point * scale_factor
             return QRectF(0, 0, size, size)
 
     def update_tooltip(self):
@@ -200,19 +206,38 @@ class EmbeddingPointItem(QGraphicsObject):
                 painter.setBrush(effective_brush_color)
                 painter.drawEllipse(self.boundingRect())
     
+    # def itemChange(self, change, value):
+    #     """Safely handle selection state changes without spamming the paint loop."""
+    #     if change == QGraphicsItem.ItemSelectedChange:
+    #         if value:  # It is being selected
+    #             # Bring this item to the front so it is not occluded by other points.
+    #             sc = self.scene()
+    #             if sc is not None:
+    #                 # Compute max z among items and set this to max+1
+    #                 try:
+    #                     max_z = max((it.zValue() for it in sc.items()), default=0)
+    #                 except Exception:
+    #                     max_z = 0
+    #                 self.setZValue(max_z + 1)
+    #             self.animate()
+    #         else:      # It is being deselected
+    #             # Reset z-value so normal stacking resumes
+    #             self.setZValue(0)
+    #             self.deanimate()
+                
+    #     elif change == QGraphicsItem.ItemSceneChange and value is None:
+    #         # Clean up if it gets deleted from the scene
+    #         self.deanimate()
+            
+    #     return super().itemChange(change, value)
+    
     def itemChange(self, change, value):
         """Safely handle selection state changes without spamming the paint loop."""
         if change == QGraphicsItem.ItemSelectedChange:
             if value:  # It is being selected
                 # Bring this item to the front so it is not occluded by other points.
-                sc = self.scene()
-                if sc is not None:
-                    # Compute max z among items and set this to max+1
-                    try:
-                        max_z = max((it.zValue() for it in sc.items()), default=0)
-                    except Exception:
-                        max_z = 0
-                    self.setZValue(max_z + 1)
+                # O(1) assignment instead of an O(N) scene iteration
+                self.setZValue(1000)
                 self.animate()
             else:      # It is being deselected
                 # Reset z-value so normal stacking resumes
@@ -227,24 +252,28 @@ class EmbeddingPointItem(QGraphicsObject):
     
     def tick_animation(self):
         """Perform one 'tick' of the marching ants animation."""
-        self.animation_offset = (self.animation_offset + 1) % 8
-        self.update()  # Trigger repaint
+        # Animations disabled for gallery/embedding points to keep
+        # rendering static and avoid global timer registration.
+        return
         
     def animate(self):
-        """Register with the global animation timer."""
+        """Enable animated state visually without registering global timers.
+
+        We keep the flag and trigger a repaint so selection visuals update,
+        but do not register with the global AnimationManager.
+        """
         self.is_animating = True
-        if self.animation_manager:
-            self.animation_manager.register_animating_object(self)
+        try:
+            self.update()
+        except RuntimeError:
+            pass
             
     def deanimate(self):
-        """Unregister from the global animation timer and reset."""
+        """Disable animated state and reset visuals (no global unregister)."""
         self.is_animating = False
-        if self.animation_manager:
-            self.animation_manager.unregister_animating_object(self)
-            
-        self.animation_offset = 0  # Reset the dash offset
+        self.animation_offset = 0
         try:
-            self.update()  # Trigger a final repaint to draw the solid line
+            self.update()
         except RuntimeError:
             pass
     
@@ -464,32 +493,28 @@ class AnnotationImageWidget(QWidget):
         painter.setBrush(QBrush(bg_color))
         painter.drawRoundedRect(bg_rect, 4, 4)
         
-        # Smart text contrast
+        # Smart text contrast: pick black on light backgrounds, white on dark
         luminance = (0.299 * bg_color.red() + 0.587 * bg_color.green() + 0.114 * bg_color.blue()) / 255
-        text_color = bg_color.darker(200) if luminance > 0.5 else bg_color.lighter(200)
-    
+        text_color = QColor('#000000') if luminance > 0.5 else QColor('#ffffff')
+
         painter.setPen(text_color)
         painter.drawText(bg_rect, Qt.AlignCenter, self._cached_tag_text)
         
     def tick_animation(self):
         """Perform one 'tick' of the marching ants animation."""
-        # Check visibility here instead! This saves CPU cycles by pausing 
-        # the math and repaint requests while the widget is scrolled out of view.
-        if not self.isVisible():
-            return 
-            
-        self.animation_offset = (self.animation_offset + 1) % 8
-        self.update()  # Trigger repaint
+        # Animations disabled for gallery image widgets; keep static visuals.
+        return
         
     def animate(self):
+        # Mark as 'animating' visually but do not register with global timers.
         self.is_animating = True
-        if self.animation_manager:
-            self.animation_manager.register_animating_object(self)
+        try:
+            self.update()
+        except RuntimeError:
+            pass
             
     def deanimate(self):
         self.is_animating = False
-        if self.animation_manager:
-            self.animation_manager.unregister_animating_object(self)
         self.animation_offset = 0
         try:
             self.update()

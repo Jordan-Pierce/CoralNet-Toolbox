@@ -67,6 +67,8 @@ class Base(QDialog):
         self.setup_ratio_layout()
         # Setup the data selection layout
         self.setup_data_selection_layout()
+        # Setup the unlabeled handling layout (for semantic segmentation)
+        self.setup_unlabeled_handling_layout()
         # Setup the table layout
         self.setup_table_layout()
         # Setup the status layout
@@ -225,6 +227,10 @@ class Base(QDialog):
 
         group_box.setLayout(layout)
         return group_box
+    
+    def setup_unlabeled_handling_layout(self):
+        """Setup the unlabeled handling options layout group box (for semantic segmentation)."""
+        raise NotImplementedError("Method must be implemented in the subclass.")
 
     def setup_table_layout(self):
         """Setup the label counts table layout."""

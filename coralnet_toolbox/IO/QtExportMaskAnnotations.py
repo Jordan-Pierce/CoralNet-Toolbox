@@ -133,9 +133,10 @@ class ExportMaskAnnotations(QDialog):
         layout = QVBoxLayout()
         info_text = (
             "This tool exports annotations to image masks for three primary use cases:<br><br>"
-            "<b>1. Semantic Segmentation (Integer IDs):</b> Creates masks where each class (e.g., coral, rock) "
-            "is represented by a unique integer value (1, 2, 3...). The background is typically 0. These are used "
-            "to train machine learning models.<br><br>"
+            "<b>1. Semantic Segmentation (Integer IDs):</b> Creates masks where each class is represented by a "
+            "unique integer. <br><i>Training Tip:</i> Set the background value to <b>255 (Ignore)</b> if your images "
+            "are sparsely labeled (so the model isn't penalized for unlabeled objects). Set it to <b>0 (Background)</b> "
+            "if your images are exhaustively labeled (to actively teach the model negative space).<br><br>"
             "<b>2. Structure from Motion (SfM) (Binary Mask):</b> Creates masks where a foreground value "
             "(e.g., 255) represents objects to keep, and a background value (e.g., 0) represents areas to "
             "ignore. This is used by software like Metashape to improve 3D model reconstruction.<br><br>"

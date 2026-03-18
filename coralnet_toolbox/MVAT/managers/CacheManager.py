@@ -36,61 +36,70 @@ class CacheManager:
         # Create cache directory if it doesn't exist
         os.makedirs(self.cache_dir, exist_ok=True)
     
-    def _generate_cache_key(self, extrinsics: np.ndarray, point_cloud_path: str) -> str:
+    def _generate_cache_key(self, extrinsics: np.ndarray, point_cloud_path: str,
+                             element_type: str = 'point') -> str:
         """
-        Generate a unique cache key based on camera extrinsics and point cloud path.
+        Generate a unique cache key based on camera extrinsics, geometry path, and element type.
         
         Args:
             extrinsics (np.ndarray): Camera extrinsic matrix (4x4)
-            point_cloud_path (str): Path to the point cloud file
+            point_cloud_path (str): Path to the geometry file (point cloud, mesh, or DEM)
+            element_type (str): Type of indexed elements ('point', 'face', or 'cell')
             
         Returns:
             str: MD5 hash string to use as cache key
         """
-        # Combine extrinsics and path into a single string for hashing
+        # Combine extrinsics, path, and element_type into a single string for hashing
         extrinsics_bytes = extrinsics.tobytes()
         path_bytes = point_cloud_path.encode('utf-8')
+        element_type_bytes = element_type.encode('utf-8')
         
         # Create MD5 hash
         hash_obj = hashlib.md5()
         hash_obj.update(extrinsics_bytes)
         hash_obj.update(path_bytes)
+        hash_obj.update(element_type_bytes)
         
         return hash_obj.hexdigest()
     
-    def get_cache_path(self, extrinsics: np.ndarray, point_cloud_path: str) -> str:
+    def get_cache_path(self, extrinsics: np.ndarray, point_cloud_path: str,
+                        element_type: str = 'point') -> str:
         """
         Get the full path to the cache file for given parameters.
         
         Args:
             extrinsics (np.ndarray): Camera extrinsic matrix
-            point_cloud_path (str): Path to the point cloud file
+            point_cloud_path (str): Path to the geometry file
+            element_type (str): Type of indexed elements ('point', 'face', or 'cell')
             
         Returns:
             str: Full path to the cache file (.npz)
         """
-        cache_key = self._generate_cache_key(extrinsics, point_cloud_path)
+        cache_key = self._generate_cache_key(extrinsics, point_cloud_path, element_type)
         return os.path.join(self.cache_dir, f"{cache_key}.npz")
     
-    def load_visibility(self, extrinsics: np.ndarray, point_cloud_path: str) -> Optional[Dict[str, np.ndarray]]:
+    def load_visibility(self, extrinsics: np.ndarray, point_cloud_path: str,
+                         element_type: str = 'point') -> Optional[Dict]:
         """
         Load visibility data from cache if it exists.
         
         Args:
             extrinsics (np.ndarray): Camera extrinsic matrix
-            point_cloud_path (str): Path to the point cloud file
+            point_cloud_path (str): Path to the geometry file
+            element_type (str): Type of indexed elements ('point', 'face', or 'cell')
             
         Returns:
-            dict or None: Dictionary with 'index_map' and 'visible_indices' if cache exists, None otherwise
+            dict or None: Dictionary with 'index_map', 'visible_indices', 'depth_map',
+                         and 'element_type' if cache exists, None otherwise
         """
-        cache_path = self.get_cache_path(extrinsics, point_cloud_path)
+        cache_path = self.get_cache_path(extrinsics, point_cloud_path, element_type)
         
         if not os.path.exists(cache_path):
             return None
         
         try:
             # Load compressed numpy archive
-            data = np.load(cache_path)
+            data = np.load(cache_path, allow_pickle=True)
             
             result = {
                 'index_map': data['index_map'],
@@ -101,6 +110,12 @@ class CacheManager:
                 result['depth_map'] = data['depth_map']
             else:
                 result['depth_map'] = None
+            
+            # element_type: load from file or use provided parameter for backward compat
+            if 'element_type' in data:
+                result['element_type'] = str(data['element_type'])
+            else:
+                result['element_type'] = element_type
 
             return result
         except Exception as e:
@@ -109,36 +124,36 @@ class CacheManager:
     
     def save_visibility(self, extrinsics: np.ndarray, point_cloud_path: str, 
                         index_map: np.ndarray, visible_indices: np.ndarray,
-                        depth_map: Optional[np.ndarray] = None) -> str:
+                        depth_map: Optional[np.ndarray] = None,
+                        element_type: str = 'point') -> str:
         """
         Save visibility data to cache.
         
         Args:
             extrinsics (np.ndarray): Camera extrinsic matrix
-            point_cloud_path (str): Path to the point cloud file
+            point_cloud_path (str): Path to the geometry file
             index_map (np.ndarray): 2D index map (H x W)
-            visible_indices (np.ndarray): 1D array of visible point IDs
+            visible_indices (np.ndarray): 1D array of visible element IDs
+            depth_map (np.ndarray, optional): 2D depth map (H x W)
+            element_type (str): Type of indexed elements ('point', 'face', or 'cell')
             
         Returns:
             str: Path to the saved cache file
         """
-        cache_path = self.get_cache_path(extrinsics, point_cloud_path)
+        cache_path = self.get_cache_path(extrinsics, point_cloud_path, element_type)
         
         try:
+            # Build save dict with required and optional fields
+            save_dict = {
+                'index_map': index_map,
+                'visible_indices': visible_indices,
+                'element_type': element_type
+            }
+            if depth_map is not None:
+                save_dict['depth_map'] = depth_map
+            
             # Save as compressed numpy archive
-            if depth_map is None:
-                np.savez_compressed(
-                    cache_path,
-                    index_map=index_map,
-                    visible_indices=visible_indices
-                )
-            else:
-                np.savez_compressed(
-                    cache_path,
-                    index_map=index_map,
-                    visible_indices=visible_indices,
-                    depth_map=depth_map
-                )
+            np.savez_compressed(cache_path, **save_dict)
 
             return cache_path
         except Exception as e:

@@ -508,6 +508,11 @@ class MainWindow(QMainWindow):
         self.save_project_action.setToolTip("Ctrl + Shift + S")
         self.save_project_action.triggered.connect(self.open_save_project_dialog)
         self.file_menu.addAction(self.save_project_action)
+        
+        # ========== VIEW MENU ==========
+        # Fetch the fully encapsulated menu from the MVAT Viewer and add it to the main menu bar
+        self.view_menu = self.mvat_viewer.create_view_menu()
+        self.menu_bar.addMenu(self.view_menu)
 
         # ========== UTILITIES MENU ==========
         # Utilities menu
@@ -714,12 +719,6 @@ class MainWindow(QMainWindow):
         self.coralnet_download_action = QAction("Download", self)
         self.coralnet_download_action.triggered.connect(self.open_coralnet_download_dialog)
         self.coralnet_menu.addAction(self.coralnet_download_action)
-
-        # # ========== MVAT ACTION ==========
-        # # MVAT (Multi-View Annotation Tool) action
-        # self.open_mvat_action = QAction("MVAT", self)
-        # self.open_mvat_action.triggered.connect(self.open_mvat_window)
-        # self.menu_bar.addAction(self.open_mvat_action)
 
         # ========== HELP MENU ==========
         # Help menu
@@ -1202,13 +1201,8 @@ class MainWindow(QMainWindow):
             main_widget=self.mvat_viewer,
             parent=self
         )
-        if hasattr(self.mvat_viewer, 'create_view_toolbar'):
-            view_toolbar = self.mvat_viewer.create_view_toolbar()
-            self.mvat_viewer_dock.add_toolbar(view_toolbar, Qt.TopToolBarArea)
-        if hasattr(self.mvat_viewer, 'create_top_toolbar'):
-            self.mvat_viewer_dock.add_toolbar(self.mvat_viewer.create_top_toolbar(), Qt.TopToolBarArea)
-        if hasattr(self.mvat_viewer, 'create_bottom_toolbar'):
-            self.mvat_viewer_dock.add_toolbar(self.mvat_viewer.create_bottom_toolbar(), Qt.BottomToolBarArea)
+        # if hasattr(self.mvat_viewer, 'create_bottom_toolbar'):
+        #     self.mvat_viewer_dock.add_toolbar(self.mvat_viewer.create_bottom_toolbar(), Qt.BottomToolBarArea)
 
         # Setup Camera Grid Dock (Bottom-right) using DockWrapper
         self.camera_grid_dock = DockWrapper(

@@ -11,13 +11,15 @@ import numpy as np
 
 from PyQt5.QtCore import QObject, QTimer, pyqtSignal, Qt, QThread
 from PyQt5.QtWidgets import QApplication, QMessageBox
-from coralnet_toolbox.QtProgressBar import ProgressBar
+
 from coralnet_toolbox.MVAT.core.Camera import Camera
 from coralnet_toolbox.MVAT.core.Ray import CameraRay
+
 from coralnet_toolbox.MVAT.managers.SelectionManager import SelectionManager
 from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
 from coralnet_toolbox.MVAT.managers.VisibilityWorker import VisibilityWorker
 from coralnet_toolbox.MVAT.managers.CacheManager import CacheManager
+
 from coralnet_toolbox.MVAT.core.constants import (
     MARKER_COLOR_SELECTED,
     MARKER_COLOR_INVALID,
@@ -26,6 +28,15 @@ from coralnet_toolbox.MVAT.core.constants import (
     RAY_COLOR_INVALID,
     MOUSE_THROTTLE_MS,
 )
+
+from coralnet_toolbox.MVAT.core.Model import DEMProduct
+
+from coralnet_toolbox.QtProgressBar import ProgressBar
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Classes
+# ----------------------------------------------------------------------------------------------------------------------
 
 
 class MousePositionBridge(QObject):
@@ -122,7 +133,11 @@ class MousePositionBridge(QObject):
         highlighted_paths = {cam.image_path for cam in highlighted_cameras}
         selected_path = camera.image_path
         try:
-            self.manager.camera_grid.update_markers(projections, accuracies, highlighted_paths, visibility_status, selected_path)
+            self.manager.camera_grid.update_markers(projections, 
+                                                    accuracies, 
+                                                    highlighted_paths, 
+                                                    visibility_status,
+                                                    selected_path)
         except Exception:
             self.clear_all_markers()
                 
@@ -240,15 +255,10 @@ class MVATManager(QObject):
             return
             
         # Indicate busy state via cursor and status bar (no modal progress)
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
         try:
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-        except Exception:
-            pass
-        try:
-            try:
-                self.main_window.status_bar.showMessage("Loading cameras...", 0)
-            except Exception:
-                pass
+            self.main_window.status_bar.showMessage("Loading cameras...", 0)
 
             valid_count = 0
             ortho_count = 0
@@ -282,13 +292,12 @@ class MVATManager(QObject):
                 QApplication.restoreOverrideCursor()
             except Exception:
                 pass
-            try:
-                self.main_window.status_bar.showMessage(
-                    f"Loaded cameras: {valid_count} total ({ortho_count} orthomosaics, {valid_count - ortho_count} perspective)",
-                    3000
-                )
-            except Exception:
-                pass
+            
+            self.main_window.status_bar.showMessage(
+                f"Loaded cameras: {valid_count} total ({ortho_count} orthomosaics, "
+                f"{valid_count - ortho_count} perspective)",
+                3000
+            )
             
         if valid_count == 0:
             QMessageBox.information(self.main_window, "No Camera Data", "No valid camera parameters found.")
@@ -306,7 +315,10 @@ class MVATManager(QObject):
             pass
         
         self.camera_grid.set_cameras(perspective_cameras)
-        self._render_frustums()
+        
+        # Generate and load 3D elevation for any orthomosaics with DEMs
+        self._populate_ortho_elevation()
+        self._render_frustums()  
         self.viewer.fit_to_view()
         
         # Initial Synchronization
@@ -342,6 +354,49 @@ class MVATManager(QObject):
             highlighted_paths=highlighted,
             hovered_camera=self.hovered_camera
         )
+        
+    def _populate_ortho_elevation(self):
+        """
+        Scans loaded cameras for Orthomosaics with attached DEMs 
+        and adds them as 3D elevation meshes to the scene viewer.
+        """
+        elevation_added = False
+        
+        for path, camera in self.cameras.items():
+            # Check if it is an OrthographicCamera and actually has DEM data
+            if camera.is_orthographic and camera.z_channel is not None:
+                # Generate the expected product ID to check for duplicates
+                expected_id = f"Elevation_{camera.label}"
+                
+                # Skip if this elevation product already exists in the scene
+                if expected_id in self.viewer.scene_context:
+                    print(f"⏭️ Skipping {camera.label}: elevation already in scene")
+                    continue
+                    
+                print(f"🏔️ Found DEM for {camera.label}, generating 3D elevation mesh...")
+                
+                try:
+                    # Create the wrapper using the camera
+                    elevation = DEMProduct(camera)
+                    
+                    # Add via viewer method to ensure placeholder is hidden
+                    self.viewer.add_product(elevation)
+                    elevation_added = True
+                    
+                    # Usually only one master orthomosaic per project, but we'll 
+                    # let it loop in case there are multiple.
+                except Exception as e:
+                    print(f"❌ Failed to generate 3D elevation mesh for {camera.label}: {e}")
+                
+        if elevation_added:
+            if hasattr(self.viewer, 'render_scene'):
+                self.viewer.render_scene()
+            elif hasattr(self.viewer, 'load_scene'):
+                self.viewer.load_scene()
+                
+            # Force the 3D camera to zoom to the newly added elevation bounds
+            if hasattr(self.viewer, 'fit_to_view'):
+                self.viewer.fit_to_view()
 
     # --- Signal Handlers ---
 
@@ -412,68 +467,83 @@ class MVATManager(QObject):
     def _on_compute_index_maps_toggled(self, state: bool):
         """Enable/disable background computation of index maps."""
         self.compute_index_maps_enabled = state
-        try:
-            msg = "Compute Index Maps: ON" if state else "Compute Index Maps: OFF"
-            self.main_window.status_bar.showMessage(msg, 2000)
-        except Exception:
-            pass
+        self.main_window.status_bar.showMessage("Compute Index Maps: ON" if state else "Compute Index Maps: OFF", 2000)
 
     def _on_visibility_computed(self, results: dict):
         """Handle results emitted from VisibilityWorker (runs on main thread)."""
         try:
-            for path, result in results.items():
-                camera = self.cameras.get(path)
-                if not camera:
-                    continue
-
-                cache_path = None
-                if self.cache_manager is not None:
-                    try:
-                        cache_path = self.cache_manager.save_visibility(
-                            camera._raster.extrinsics,
-                            self.viewer.point_cloud.file_path,
-                            result.get('index_map'),
-                            result.get('visible_indices'),
-                            result.get('depth_map') if self.compute_depth_maps_enabled else None
-                        )
-                    except Exception:
-                        cache_path = None
-
-                try:
-                    camera._raster.add_index_map(result.get('index_map'), cache_path, result.get('visible_indices'))
-                except Exception:
-                    pass
-
-                if self.compute_depth_maps_enabled and result.get('depth_map') is not None:
-                    try:
-                        camera._raster.merge_or_set_depth_map(result.get('depth_map'))
-                    except Exception:
-                        pass
+            # Get primary target file path for cache key
+            primary_target = self.viewer.scene_context.get_primary_target()
+            target_file_path = primary_target.file_path if primary_target else ""
+            
+            self._process_visibility_results(results, target_file_path)
 
         finally:
             self._is_computing_visibility = False
+            self.main_window.status_bar.showMessage("Visibility maps updated.", 3000)
+            QApplication.restoreOverrideCursor()
+
+    def _process_visibility_results(self, results: dict, target_file_path: str):
+        """
+        Process visibility computation results and store in cameras.
+        
+        Shared by both sync (VTK mesh) and async (worker) code paths.
+        If the async worker already saved the cache to disk, it skips IO on the main thread.
+        
+        Args:
+            results: Dict mapping image_path -> visibility result dict
+            target_file_path: Path to primary target for cache key
+        """
+        for path, result in results.items():
+            camera = self.cameras.get(path)
+            if not camera:
+                continue
+
+            # Store index map with element type metadata
+            element_type = result.get('element_type', 'point')
+            
+            # 1. Check if the background worker already handled the disk I/O
+            cache_path = result.get('cache_path')
+            
+            # 2. Fallback for sync paths (like VTK) that run on the main thread
+            if cache_path is None and self.cache_manager is not None and target_file_path:
+                try:
+                    # Use transform_matrix for orthomosaic, extrinsics for perspective
+                    cache_key = camera.transform_matrix if camera.is_orthographic else camera._raster.extrinsics
+                    
+                    cache_path = self.cache_manager.save_visibility(
+                        cache_key,
+                        target_file_path,
+                        result.get('index_map'),
+                        result.get('visible_indices'),
+                        result.get('depth_map') if self.compute_depth_maps_enabled else None,
+                        element_type=element_type
+                    )
+                except Exception:
+                    cache_path = None
+                    
+            # 3. Apply the results to the camera
             try:
-                self.main_window.status_bar.showMessage("Visibility maps updated.", 3000)
+                camera._raster.add_index_map(
+                    result.get('index_map'), 
+                    cache_path, 
+                    result.get('visible_indices'),
+                    element_type=element_type
+                )
             except Exception:
                 pass
-            # Restore cursor when done
-            try:
-                QApplication.restoreOverrideCursor()
-            except Exception:
-                pass
+
+            if self.compute_depth_maps_enabled and result.get('depth_map') is not None:
+                try:
+                    camera._raster.merge_or_set_depth_map(result.get('depth_map'))
+                except Exception:
+                    pass
             
     def _on_visibility_error(self, error_str: str):
         print(f"Visibility worker error:\n{error_str}")
         self._is_computing_visibility = False
-        try:
-            self.main_window.status_bar.showMessage("Visibility computation failed. See console for details.", 5000)
-        except Exception:
-            pass
-        # Restore cursor on error
-        try:
-            QApplication.restoreOverrideCursor()
-        except Exception:
-            pass
+        self.main_window.status_bar.showMessage("Visibility computation failed. See console for details.", 5000)
+        QApplication.restoreOverrideCursor()
 
     def _on_active_camera_changed(self, path):
         """
@@ -572,10 +642,6 @@ class MVATManager(QObject):
             pass
 
         self.viewer.clear_ray()
-        try:
-            print(f"MVATManager: selections changed -> {selected_paths}")
-        except Exception:
-            pass
         self._update_visibility_filter(list(selected_paths))
 
     # --- Core Logic Methods ---
@@ -614,77 +680,208 @@ class MVATManager(QObject):
         Refresh viewer frustum appearances based on selected, highlighted,
         and hovered camera state.
 
-        Delegates to the viewer's `update_frustum_states` if available; errors
-        are caught and ignored to avoid destabilizing the UI for non-critical
-        failures.
+        Updates:
+        1. Wireframe state scalars via update_frustum_states()
+        2. Thumbnail visibility to show selected and highlighted cameras
+
+        Errors are caught and ignored to avoid destabilizing the UI for
+        non-critical failures.
         """
         selected_path = self.selected_camera.image_path if self.selected_camera else None
         highlighted_paths = [cam.image_path for cam in self.highlighted_cameras]
+        
+        # Update wireframe state scalars (colors based on selection/highlight)
         try:
             if hasattr(self.viewer, 'update_frustum_states'):
                 self.viewer.update_frustum_states(selected_path, highlighted_paths, self.hovered_camera)
-        except Exception: pass
+        except Exception: 
+            pass
+        
+        # Update thumbnails (show/hide based on selection/highlight state)
+        try:
+            if hasattr(self.viewer, '_show_thumbnails_enabled') and self.viewer._show_thumbnails_enabled:
+                # Clear all existing thumbnails
+                if hasattr(self.viewer, 'remove_thumbnails'):
+                    self.viewer.remove_thumbnails()
+                
+                # Add thumbnail for selected camera
+                if self.selected_camera is not None:
+                    try:
+                        if hasattr(self.viewer, '_add_thumbnail_for_camera'):
+                            self.viewer._add_thumbnail_for_camera(self.selected_camera)
+                    except Exception:
+                        pass
+                
+                # Add thumbnails for highlighted cameras (excluding the selected camera to avoid duplication)
+                for cam in self.highlighted_cameras:
+                    if self.selected_camera is None or cam.image_path != self.selected_camera.image_path:
+                        try:
+                            if hasattr(self.viewer, '_add_thumbnail_for_camera'):
+                                self.viewer._add_thumbnail_for_camera(cam)
+                        except Exception:
+                            pass
+        except Exception:
+            pass
 
     def _update_visibility_filter(self, highlighted_paths):
         """
-        Asynchronously compute visibility index maps for the supplied highlighted
-        cameras and cache results. Does NOT modify the viewer's rendered
-        point cloud (subsetting removed).
+        Compute visibility index maps for the supplied highlighted cameras.
+        Intercepts and loads from disk cache if available before using the worker.
         """
-        # Preconditions
-        if not self.viewer.point_cloud:
+        if not self.viewer.scene_context.has_any_product():
             return
         if not self.compute_index_maps_enabled:
             return
         if not highlighted_paths:
             return
+        
+        primary_target = self.viewer.scene_context.get_primary_target()
+        if primary_target is None:
+            return
+            
+        target_file_path = primary_target.file_path
+        element_type = primary_target.get_element_type()
 
-        # Collect cameras that need visibility computation
         cameras_needing_visibility = []
         for path in highlighted_paths:
             camera = self.cameras.get(path)
-            if camera and camera.visible_indices is None:
+            if not camera:
+                continue
+                
+            # 1. Check if already in active memory (RAM)
+            if camera.visible_indices is not None:
+                continue
+
+            # 2. Check Disk Cache [New Logic]
+            loaded_from_cache = False
+            if self.cache_manager is not None and target_file_path:
+                self.main_window.status_bar.showMessage(f"Checking cache for {camera.label}...", 1000)
+                # Use transform_matrix for orthomosaics, extrinsics for perspective
+                cache_key = camera.transform_matrix if camera.is_orthographic else camera._raster.extrinsics
+                cached_data = self.cache_manager.load_visibility(cache_key, target_file_path, element_type)
+                
+                if cached_data is not None:
+                    self.main_window.status_bar.showMessage(f"Loaded visibility from cache for {camera.label}", 2000)
+                    cache_path = self.cache_manager.get_cache_path(cache_key, target_file_path, element_type)
+                    
+                    # Store results in the camera's raster object
+                    camera._raster.add_index_map(
+                        cached_data.get('index_map'), 
+                        cache_path, 
+                        cached_data.get('visible_indices'),
+                        element_type=element_type
+                    )
+                    
+                    # Also restore the depth map if it exists and is enabled
+                    if self.compute_depth_maps_enabled and cached_data.get('depth_map') is not None:
+                        self.main_window.status_bar.showMessage(
+                            f"Restoring depth map from cache for {camera.label}", 2000
+                        )
+                        camera._raster.merge_or_set_depth_map(cached_data['depth_map'])
+                            
+                    loaded_from_cache = True
+                    print(f"💽 Loaded visibility from disk cache: {camera.label}")
+
+            # 3. Only if missing from both RAM and Disk, queue for computation
+            if not loaded_from_cache:
                 cameras_needing_visibility.append(camera)
 
         if not cameras_needing_visibility:
             return
 
-        # Prevent concurrent computations
         if self._is_computing_visibility:
             return
 
-        points_world = self.viewer.point_cloud.get_points_array()
-        if points_world is None or len(points_world) == 0:
-            return
+        # Proceed to async computation for only the remaining cameras
+        self._compute_visibility_async(primary_target, cameras_needing_visibility)
 
-        # Build camera params dict keyed by image path
-        # For perspective cameras: (K, R, t, width, height)
-        # For orthographic cameras: ('ortho', transform_matrix_inv, width, height)
+    def _compute_mesh_visibility_sync(self, mesh_product, cameras):
+        """
+        Compute mesh visibility using VTK rasterization (main thread).
+        
+        VTK/PyVista rendering requires the GUI thread's OpenGL context.
+        This method performs synchronous rasterization for accurate mesh depth maps.
+        """
+        from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
+        
+        self._is_computing_visibility = True
+        try:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+        except Exception:
+            pass
+        
+        try:
+            target_file_path = mesh_product.file_path
+            n_cameras = len(cameras)
+            
+            self.main_window.status_bar.showMessage(f"Rasterizing mesh for {n_cameras} camera(s)...")
+            print(f"MVATManager: VTK mesh rasterization for {n_cameras} cameras")
+            
+            results = {}
+            for i, camera in enumerate(cameras):
+                if camera.is_orthographic:
+                    # Skip orthographic cameras for now (use fallback)
+                    continue
+                
+                try:
+                    result = VisibilityManager._compute_mesh_visibility(
+                        mesh_product,
+                        camera.K, camera.R, camera.t,
+                        camera.width, camera.height,
+                        compute_depth_map=self.compute_depth_maps_enabled
+                    )
+                    result['element_type'] = 'face'
+                    results[camera.image_path] = result
+                except Exception as e:
+                    print(f"⚠️ Failed to compute mesh visibility for {camera.label}: {e}")
+            
+            # Process results (same logic as _on_visibility_computed)
+            self._process_visibility_results(results, target_file_path)
+            
+        except Exception as e:
+            print(f"⚠️ Mesh visibility computation failed: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            self._is_computing_visibility = False
+            self.main_window.status_bar.showMessage("Visibility maps updated.", 3000)
+            QApplication.restoreOverrideCursor()
+
+    def _compute_visibility_async(self, primary_target, cameras):
+        """
+        Asynchronously compute visibility for a set of cameras using a worker thread.
+        Supports both orthographic and perspective cameras, and leverages caching
+        to avoid redundant computations.
+        """
+        # Prepare camera parameters and cache keys for asynchronous visibility computation.
         camera_params_dict = {}
-        for cam in cameras_needing_visibility:
+        cache_keys_dict = {} 
+        
+        for cam in cameras:
             if cam.is_orthographic:
                 camera_params_dict[cam.image_path] = ('ortho', cam.transform_matrix_inv, cam.width, cam.height)
+                cache_keys_dict[cam.image_path] = cam.transform_matrix
             else:
                 camera_params_dict[cam.image_path] = (cam.K, cam.R, cam.t, cam.width, cam.height)
+                cache_keys_dict[cam.image_path] = cam._raster.extrinsics
 
-        # Start worker thread
         try:
             self._is_computing_visibility = True
-            try:
-                extra = " (including depth maps)" if self.compute_depth_maps_enabled else ""
-                self.main_window.status_bar.showMessage(f"Computing occlusion maps for {len(camera_params_dict)} cameras{extra}...")
-            except Exception:
-                pass
+            self.main_window.status_bar.showMessage(
+                f"Computing occlusion maps for {len(camera_params_dict)} cameras..."
+            )
+            QApplication.setOverrideCursor(Qt.WaitCursor)
 
-            print(f"MVATManager: starting visibility worker for {len(camera_params_dict)} cameras")
-            try:
-                QApplication.setOverrideCursor(Qt.WaitCursor)
-            except Exception:
-                pass
-
-            worker = VisibilityWorker(points_world, 
-                                      camera_params_dict, 
-                                      compute_depth_maps=self.compute_depth_maps_enabled)
+            # Pass the cache data to the worker
+            worker = VisibilityWorker(
+                primary_target=primary_target, 
+                camera_params_dict=camera_params_dict, 
+                compute_depth_maps=self.compute_depth_maps_enabled,
+                cache_manager=self.cache_manager,
+                cache_keys_dict=cache_keys_dict,
+                target_file_path=primary_target.file_path if primary_target else ""
+            )
+            
             thread = QThread()
             worker.moveToThread(thread)
             thread.started.connect(worker.run)
@@ -707,6 +904,58 @@ class MVATManager(QObject):
             print(f"Failed to start visibility worker: {e}")
             self._is_computing_visibility = False
 
+    def _extract_visibility_geometry(self, primary_target):
+        """
+        Extract 3D geometry from the primary target for visibility computation.
+        
+        Handles different product types:
+        - PointCloudProduct: Returns point coordinates directly
+        - MeshProduct: Returns face center coordinates with face IDs
+        - DEMProduct: Returns grid cell center coordinates with cell IDs
+        
+        Args:
+            primary_target: AbstractSceneProduct instance
+            
+        Returns:
+            tuple: (points_world, element_ids, element_type) where:
+                - points_world: (N, 3) array of 3D coordinates
+                - element_ids: (N,) array of element IDs or None for default indexing
+                - element_type: str ('point', 'face', or 'cell')
+        """
+        from coralnet_toolbox.MVAT.core.Model import PointCloudProduct, MeshProduct, DEMProduct
+        
+        element_type = primary_target.get_element_type()
+        
+        # Strategy A: Point Cloud - use points directly
+        if isinstance(primary_target, PointCloudProduct):
+            points = primary_target.get_points_array()
+            if points is not None and len(points) > 0:
+                return points, None, 'point'
+            return None, None, 'point'
+        
+        # Strategy B & C UNIFIED: Mesh and DEM - treat both as solid triangulated surfaces!
+        if isinstance(primary_target, (MeshProduct, DEMProduct)):
+            try:
+                # Ensure GPU tensors are built for the Bounding Volume Hierarchy
+                if hasattr(primary_target, 'prepare_geometry'):
+                    primary_target.prepare_geometry()
+                
+                # Ask the product for its true PyVista PolyData mesh
+                mesh = primary_target.get_render_mesh()
+                if mesh is None:
+                    return None, None, 'face'
+                
+                # Extract the physical centers of the triangles
+                face_centers = mesh.cell_centers().points
+                face_ids = np.arange(len(face_centers), dtype=np.int32)
+                
+                print(f"📐 Extracted {len(face_centers):,} solid faces for {primary_target.label} visibility")
+                return face_centers, face_ids, 'face'
+                
+            except Exception as e:
+                print(f"⚠️ Failed to extract face centers for {primary_target.label}: {e}")
+                return None, None, 'face'
+
     def _calculate_camera_proximity_score(self, reference_camera, candidate_camera):
         """
         Calculate a scalar proximity score between two cameras used for
@@ -728,7 +977,7 @@ class MVATManager(QObject):
         
         try:
             bounds = self.viewer.get_bounds()
-            scene_size = np.sqrt((bounds[1]-bounds[0])**2 + (bounds[3]-bounds[2])**2 + (bounds[5]-bounds[4])**2)
+            scene_size = np.sqrt((bounds[1] - bounds[0])**2 + (bounds[3] - bounds[2])**2 + (bounds[5] - bounds[4])**2)
             normalized_distance = spatial_distance / (scene_size + 1e-6)
         except Exception:
             normalized_distance = spatial_distance / 10.0

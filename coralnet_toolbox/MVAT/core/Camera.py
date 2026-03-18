@@ -328,7 +328,8 @@ class Camera:
         if cache_manager is not None:
             cached_data = cache_manager.load_visibility(
                 self._raster.extrinsics,
-                point_cloud.file_path
+                point_cloud.file_path,
+                point_cloud.get_element_type()
             )
             
             if cached_data is not None:
@@ -349,10 +350,6 @@ class Camera:
                     except Exception:
                         pass
                 return True
-        
-        # Step 3: Compute visibility using VisibilityManager
-        # TODO: Implement frustum-based cone intersection as fallback when z_channel is None.
-        # Could use conservative rasterization of frustum volume.
         
         # Check if we have the required data for computation
         if self._raster.extrinsics is None or self._raster.intrinsics is None:
@@ -480,7 +477,8 @@ class OrthographicCamera(Camera):
             raise ValueError(f"Transform matrix for {raster.basename} is singular (non-invertible)")
 
         # 2. DEM PROPERTIES
-        self.z_channel = raster.z_channel
+        # Use the lazy loader so it pulls from disk if restoring from a project!
+        self.z_channel = raster.z_channel_lazy
 
         if self.z_channel is None:
             print(f"WARNING: {raster.basename} has no DEM. Assuming flat terrain at Z=0")
@@ -550,7 +548,160 @@ class OrthographicCamera(Camera):
     def index_map(self):
         """Get the index map for this camera."""
         return self._raster.index_map_lazy
-
+    
+    # --------------------------------------------------------------------------
+    # DEM Association
+    # --------------------------------------------------------------------------
+    
+    def get_elevation_mesh(self, max_resolution=10000):
+        """
+        Generate a 3D elevation mesh from the DEM z_channel with proper texture coordinates.
+        
+        This method creates a triangulated surface mesh from the DEM that can be textured
+        with the orthomosaic imagery. Key considerations:
+        
+        1. PyVista StructuredGrid requires 'ij' indexing for meshgrid (matrix indexing)
+           to avoid 90-degree rotation of the mesh.
+           
+        2. UV coordinates must be flipped vertically (V = 1 - v) because OpenGL/VTK
+           texture coordinates have origin at bottom-left, while image pixels have
+           origin at top-left.
+           
+        3. Cell removal must use Fortran (column-major) ordering to match PyVista's
+           internal cell indexing for StructuredGrids.
+        
+        Args:
+            max_resolution: Maximum dimension for the downsampled mesh grid.
+            
+        Returns:
+            pv.PolyData: Triangulated mesh with texture coordinates, or None if no DEM.
+        """
+        import pyvista as pv
+        import cv2
+        import numpy as np
+        
+        if self.z_channel is None:
+            print(f"Cannot generate elevation: {self.label} has no DEM (z_channel).")
+            return None
+            
+        # Calculate smooth scaling factor
+        scale = min(1.0, max_resolution / max(self.width, self.height))
+        target_w = max(1, int(self.width * scale))
+        target_h = max(1, int(self.height * scale))
+        
+        print(f"🔍 DEM mesh generation: image={self.width}x{self.height}, target={target_w}x{target_h}")
+        
+        # 1. Mask NoData properly
+        temp_z = self.z_channel.copy()
+        valid_mask = ~np.isnan(temp_z)
+        if self._raster.z_nodata is not None:
+            valid_mask &= (temp_z != self._raster.z_nodata)
+        valid_mask &= (temp_z > -10000.0)
+        
+        baseline_z = float(np.nanmin(temp_z[valid_mask])) if np.any(valid_mask) else 0.0
+        temp_z[~valid_mask] = baseline_z
+        
+        # 2. Smoothly downsample elevation and mask
+        z_smooth = cv2.resize(temp_z, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+        mask_smooth = cv2.resize(valid_mask.astype(np.uint8), (target_w, target_h), interpolation=cv2.INTER_NEAREST)
+        
+        # 3. Generate spatial grids in pixel space
+        # CRITICAL: Use indexing='ij' for PyVista compatibility (matrix indexing)
+        # x corresponds to columns (width), y corresponds to rows (height)
+        col_coords = np.linspace(0, self.width - 1, target_w)   # pixel x (columns)
+        row_coords = np.linspace(0, self.height - 1, target_h)  # pixel y (rows)
+        
+        # With indexing='ij': output[i,j] corresponds to (col_coords[i], row_coords[j])
+        # Shape will be (target_w, target_h) - note the order!
+        pixel_x, pixel_y = np.meshgrid(col_coords, row_coords, indexing='ij')
+        
+        # Transform pixel coordinates to world coordinates
+        pixels_hom = np.column_stack((pixel_x.flatten(), pixel_y.flatten(), np.ones(pixel_x.size)))
+        world_hom = (self.transform_matrix @ pixels_hom.T).T
+        
+        # Reshape to match meshgrid output shape (target_w, target_h)
+        x_world = world_hom[:, 0].reshape(target_w, target_h)
+        y_world = world_hom[:, 1].reshape(target_w, target_h)
+        
+        # z_smooth is (target_h, target_w) from cv2.resize, need to transpose for 'ij' indexing
+        z_grid = z_smooth.T  # Now shape is (target_w, target_h)
+        
+        # Also transpose the mask
+        mask_grid = mask_smooth.T  # Now shape is (target_w, target_h)
+        
+        # 4. Create the StructuredGrid
+        grid = pv.StructuredGrid(x_world, y_world, z_grid)
+        print(f"📐 StructuredGrid dimensions: {grid.dimensions}")
+        
+        # 5. Compute cell validity mask
+        # StructuredGrid cells are indexed in Fortran (column-major) order
+        # Cell [i,j] connects points [i,j], [i+1,j], [i,j+1], [i+1,j+1]
+        # Grid dimensions are (ni, nj, 1), so we have (ni-1) * (nj-1) cells
+        ni, nj = target_w, target_h
+        
+        # Check all 4 corners of each cell
+        # For 'ij' indexed arrays of shape (ni, nj):
+        corner_00 = mask_grid[:-1, :-1]    # [i, j]
+        corner_10 = mask_grid[1:, :-1]     # [i+1, j]
+        corner_01 = mask_grid[:-1, 1:]     # [i, j+1]
+        corner_11 = mask_grid[1:, 1:]      # [i+1, j+1]
+        
+        # Cell is valid only if ALL 4 corners are valid
+        cell_valid_2d = (corner_00 & corner_10 & corner_01 & corner_11).astype(np.uint8)
+        
+        # Flatten in Fortran order to match PyVista's cell indexing
+        cell_valid = cell_valid_2d.flatten(order='F')
+        
+        print(f"📊 Valid cells: {np.sum(cell_valid)} / {len(cell_valid)}")
+        
+        # 6. Extract valid cells and triangulate
+        valid_cell_ids = np.where(cell_valid == 1)[0]
+        
+        if len(valid_cell_ids) == 0:
+            print(f"⚠️ Warning: No valid cells in DEM for {self.label}")
+            mesh = grid.extract_surface().triangulate()
+        else:
+            filtered_grid = grid.extract_cells(valid_cell_ids)
+            mesh = filtered_grid.extract_surface().triangulate()
+        
+        # 7. Recompute texture coordinates from world positions
+        world_points = np.asarray(mesh.points)
+        n_points = len(world_points)
+        
+        # Project world XY back to pixel coordinates
+        world_xy_hom = np.column_stack([world_points[:, 0], world_points[:, 1], np.ones(n_points)])
+        pixel_coords = (self.transform_matrix_inv @ world_xy_hom.T).T
+        
+        # Normalize to [0, 1] UV range
+        u = pixel_coords[:, 0] / (self.width - 1)
+        # Flip V coordinate for OpenGL texture convention (origin at bottom-left)
+        v = 1.0 - (pixel_coords[:, 1] / (self.height - 1))
+        
+        # Clamp UV coordinates to valid range
+        u = np.clip(u, 0.0, 1.0)
+        v = np.clip(v, 0.0, 1.0)
+        
+        # Set texture coordinates
+        texture_coords = np.column_stack((u, v)).astype(np.float32)
+        mesh.point_data['TCoords'] = texture_coords
+        mesh.active_texture_coordinates = texture_coords
+        
+        # Verify texture coordinates were set
+        if mesh.active_texture_coordinates is None:
+            print(f"⚠️ Warning: Failed to set texture coordinates for {self.label}")
+        else:
+            print(f"✅ Texture coordinates set: {mesh.active_texture_coordinates.shape}")
+        
+        # Clean up leftover data arrays
+        for key in list(mesh.point_data.keys()):
+            if key not in ['TCoords', 'Texture Coordinates']:
+                del mesh.point_data[key]
+        for key in list(mesh.cell_data.keys()):
+            del mesh.cell_data[key]
+        
+        print(f"🌍 Generated smooth 3D elevation mesh for {self.label} ({mesh.n_cells} faces)")
+        return mesh
+    
     # --------------------------------------------------------------------------
     # Geometric Methods
     # --------------------------------------------------------------------------
@@ -649,7 +800,8 @@ class OrthographicCamera(Camera):
             # Use transform_matrix as unique identifier for orthomosaics
             cached_data = cache_manager.load_visibility(
                 self.transform_matrix,
-                point_cloud.file_path
+                point_cloud.file_path,
+                point_cloud.get_element_type()
             )
             if cached_data is not None:
                 cache_path = cache_manager.get_cache_path(

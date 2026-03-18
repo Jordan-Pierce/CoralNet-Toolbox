@@ -9,6 +9,7 @@ the scatter plot visualization with built-in ML pipeline controls.
 
 import os
 import warnings
+import time
 
 import numpy as np
 import torch
@@ -32,7 +33,7 @@ from PyQt5.QtWidgets import (
     QGraphicsRectItem, QSizePolicy, QMessageBox, QApplication
 )
 
-from coralnet_toolbox.Explorer.core.QtDataItem import EmbeddingPointItem
+from coralnet_toolbox.Explorer.core.QtDataItem import EmbeddingPointItem, POINT_SIZE, SPRITE_SIZE
 from coralnet_toolbox.Explorer.core.QtDataItem import AnnotationDataItem
 from coralnet_toolbox.Explorer.managers.QtCacheManager import CacheManager
 from coralnet_toolbox.Explorer.models.yolo_models import YOLO_MODELS, is_yolo_model
@@ -146,6 +147,15 @@ class EmbeddingViewerWindow(QWidget):
         
         # Display mode
         self.display_mode = 'dots'  # 'dots' or 'sprites'
+        # Dynamic sizing for points and sprites (Ctrl+Wheel will modify these)
+        self.point_size = getattr(self, 'point_size', POINT_SIZE)
+        self.sprite_size = getattr(self, 'sprite_size', SPRITE_SIZE)
+        self._point_min = 4
+        self._point_max = 128
+        self._sprite_min = 16
+        self._sprite_max = 512
+        self._resize_step_point = 2
+        self._resize_step_sprite = 8
         
         # Location indicator
         self.locate_lines = []
@@ -340,8 +350,8 @@ class EmbeddingViewerWindow(QWidget):
         self.graphics_view.mouseReleaseEvent = self._mouse_release_event
         self.graphics_view.mouseMoveEvent = self._mouse_move_event
         self.graphics_view.wheelEvent = self._wheel_event
-        self.graphics_view.setStyleSheet("background-color: black;")
-        self.graphics_scene.setBackgroundBrush(QColor('black'))
+        self.graphics_view.setStyleSheet("background-color: #1e1e1e;")
+        self.graphics_scene.setBackgroundBrush(QColor('#1e1e1e'))
         
         layout.addWidget(self.graphics_view)
         
@@ -349,7 +359,7 @@ class EmbeddingViewerWindow(QWidget):
         self.placeholder_label = QLabel(
             "No embedding data available\nRun embedding to see visualizations."
         )
-        self.placeholder_label.setStyleSheet("color: white; background-color: black; font-size: 14px; padding: 16px;")
+        self.placeholder_label.setStyleSheet("color: white; background-color: #1e1e1e; font-size: 14px; padding: 16px;")
         self.placeholder_label.setAlignment(Qt.AlignCenter)
         self.placeholder_label.setAutoFillBackground(True)
         self._show_placeholder()
@@ -723,6 +733,48 @@ class EmbeddingViewerWindow(QWidget):
         model_name = self._get_selected_model()
         embedding_params = self._get_embedding_parameters()
         
+        # Block LDA if only one class/label is selected in the annotation viewer
+        try:
+            if embedding_params.get('technique') == 'LDA':
+                annotation_viewer = getattr(self.main_window, 'annotation_viewer_window', None)
+                selected_labels = None
+                if annotation_viewer is not None:
+                    # Prefer the viewer's filter selection if available
+                    try:
+                        selected_labels = annotation_viewer._get_selected_labels()
+                    except Exception:
+                        selected_labels = None
+
+                # If label filter is not restrictive, infer labels from the annotations
+                labels_in_data = set()
+                for ann in annotations:
+                    try:
+                        lbl = getattr(ann, 'label', None)
+                        if lbl is None:
+                            continue
+                        code = getattr(lbl, 'short_label_code', None) or getattr(lbl, 'code', None) or str(lbl)
+                        labels_in_data.add(code)
+                    except Exception:
+                        continue
+
+                # Decide how many unique labels are effectively selected
+                if selected_labels is None:
+                    n_labels = len(labels_in_data)
+                else:
+                    # selected_labels may be a list of label codes
+                    n_labels = len(selected_labels)
+
+                if n_labels < 2:
+                    QMessageBox.warning(
+                        self,
+                        "LDA Not Available",
+                        "LDA requires at least two distinct classes. Select multiple labels in the Annotation Gallery or include multiple classes in the working set."
+                    )
+                    return
+        except Exception:
+            # If anything goes wrong during this check, fail-safe: allow pipeline to continue
+            pass
+
         # Generate model key for caching
         if os.path.sep in model_name or '/' in model_name:
             sanitized_model_name = os.path.basename(model_name)
@@ -1233,7 +1285,6 @@ class EmbeddingViewerWindow(QWidget):
         
         for item in data_items:
             point = EmbeddingPointItem(item, self)
-            point.set_animation_manager(self.animation_manager)
             self.graphics_scene.addItem(point)
             self.points_by_id[item.annotation.id] = point
         
@@ -1342,30 +1393,53 @@ class EmbeddingViewerWindow(QWidget):
         finally:
             blocker.unblock()
 
-        # One consolidated update after changes
-        self._on_selection_changed()
-        self._update_visible_points()
+        # Update internal selection state without re-iterating all points.
+        # We already applied the minimal set-diff changes above, so just update
+        # the cached `previous_selection_ids` and emit a consolidated signal.
+        self.previous_selection_ids = set(selected_ids) if selected_ids else set()
+        # Notify SelectionManager / other listeners about the new selection
+        try:
+            self.selection_changed.emit(list(self.previous_selection_ids))
+        except Exception:
+            pass
+
+        # Lightweight UI updates
+        self._update_toolbar_state()
+        self._schedule_view_update()
     
     def _on_selection_changed(self):
         """Handle selection changes in scene."""
         if not self.graphics_scene:
             return
-        
+
         try:
             selected_items = self.graphics_scene.selectedItems()
         except RuntimeError:
             return
-        
+
         current_ids = {item.data_item.annotation.id for item in selected_items
                        if isinstance(item, EmbeddingPointItem)}
-        
+
         if current_ids != self.previous_selection_ids:
-            for point_id, point in self.points_by_id.items():
-                point.data_item.set_selected(point_id in current_ids)
-            
+            # Only update the points that changed to avoid O(N) work on every event
+            to_select = current_ids - self.previous_selection_ids
+            to_deselect = self.previous_selection_ids - current_ids
+
+            for ann_id in to_select:
+                if ann_id in self.points_by_id:
+                    pt = self.points_by_id[ann_id]
+                    pt.data_item.set_selected(True)
+                    pt.setSelected(True)
+
+            for ann_id in to_deselect:
+                if ann_id in self.points_by_id:
+                    pt = self.points_by_id[ann_id]
+                    pt.data_item.set_selected(False)
+                    pt.setSelected(False)
+
+            self.previous_selection_ids = set(current_ids)
             self.selection_changed.emit(list(current_ids))
-            self.previous_selection_ids = current_ids
-        
+
         self._update_toolbar_state()
         self._schedule_view_update()
     
@@ -1774,23 +1848,54 @@ class EmbeddingViewerWindow(QWidget):
             self.graphics_view.setDragMode(QGraphicsView.NoDrag)
     
     def _wheel_event(self, event):
-        """Handle mouse wheel for zooming."""
+        """Handle mouse wheel for zooming or point/sprite resizing when Ctrl is held."""
+        # If Ctrl is pressed, adjust point/sprite sizes instead of zooming
+        try:
+            if event.modifiers() & Qt.ControlModifier:
+                delta = event.angleDelta().y()
+                if delta == 0:
+                    return
+                # Decide whether to resize sprites (when in sprites mode) or points
+                if self.display_mode == 'sprites':
+                    step = self._resize_step_sprite if delta > 0 else -self._resize_step_sprite
+                    new_size = self.sprite_size + step
+                    new_size = max(self._sprite_min, min(self._sprite_max, new_size))
+                    if new_size != self.sprite_size:
+                        self.sprite_size = new_size
+                        # Update all point items to use new sprite size
+                        for pt in self.points_by_id.values():
+                            pt.update()
+                        self.graphics_scene.update()
+                else:
+                    step = self._resize_step_point if delta > 0 else -self._resize_step_point
+                    new_size = self.point_size + step
+                    new_size = max(self._point_min, min(self._point_max, new_size))
+                    if new_size != self.point_size:
+                        self.point_size = new_size
+                        for pt in self.points_by_id.values():
+                            pt.update()
+                        self.graphics_scene.update()
+                return
+        except Exception:
+            return
+
+        # Default behavior: zoom
         zoom_in_factor = 1.25
         zoom_out_factor = 1 / zoom_in_factor
-        
         self.graphics_view.setTransformationAnchor(QGraphicsView.NoAnchor)
         self.graphics_view.setResizeAnchor(QGraphicsView.NoAnchor)
-        
+
         old_pos = self.graphics_view.mapToScene(event.pos())
         zoom_factor = zoom_in_factor if event.angleDelta().y() > 0 else zoom_out_factor
         self.graphics_view.scale(zoom_factor, zoom_factor)
         new_pos = self.graphics_view.mapToScene(event.pos())
         delta = new_pos - old_pos
         self.graphics_view.translate(delta.x(), delta.y())
-        
+
         if self.locate_graphics_item:
-            self._update_location_lines()
-        
+            # refresh location indicator positions
+            QTimer.singleShot(0, self._update_location_lines)
+
         self._schedule_view_update()
     
     # -------------------------------------------------------------------------

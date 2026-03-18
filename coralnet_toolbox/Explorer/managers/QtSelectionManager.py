@@ -9,6 +9,7 @@ ExplorerWindow implementation.
 """
 
 import warnings
+import time
 
 from typing import List, Set
 
@@ -160,7 +161,6 @@ class SelectionManager(QObject):
             self._update_label_window_selection()
             
             self.selection_changed.emit([])
-            
         finally:
             self._syncing = False
     
@@ -174,7 +174,7 @@ class SelectionManager(QObject):
         """
         if self._syncing:
             return
-        
+                
         self._syncing = True
         try:
             self._selected_ids = set(annotation_ids)
@@ -205,7 +205,6 @@ class SelectionManager(QObject):
             self._update_confidence_window()
             
             self.selection_changed.emit(list(self._selected_ids))
-            
         finally:
             self._syncing = False
     
@@ -287,8 +286,8 @@ class SelectionManager(QObject):
                 # Selection was cleared - just clear selection but DON'T exit isolation mode
                 # (User can double-click to exit isolation mode via reset_view_requested)
                 self._annotation_viewer.clear_selection()
-            
-            # Sync to annotation window
+
+            # Sync to annotation window synchronously to maintain the syncing lock.
             if self._annotation_window:
                 self._sync_annotation_window_selection(all_selected_ann_ids)
             
@@ -406,23 +405,25 @@ class SelectionManager(QObject):
         if not self._annotation_window:
             return
         
-        # Always unselect first
-        self._annotation_window.unselect_annotations()
-        
-        if not annotation_ids:
-            return
-        
-        # Get annotations dict
-        annotations_dict = getattr(self._annotation_window, 'annotations_dict', {})
-        
-        # Select each annotation with multi_select=True to accumulate selections
-        # (We already cleared above, so first selection can use multi_select=True too)
-        for ann_id in annotation_ids:
-            if ann_id in annotations_dict:
-                ann = annotations_dict[ann_id]
-                # Use multi_select=True to accumulate selections without clearing
-                # Use quiet_mode=True to avoid label window updates (handled centrally)
-                self._annotation_window.select_annotation(ann, multi_select=True, quiet_mode=True)
+        # Use the batched selection API on AnnotationWindow when available
+        try:
+            if hasattr(self._annotation_window, 'select_annotations_by_ids'):
+                self._annotation_window.select_annotations_by_ids(annotation_ids, scroll_to_first=True, quiet_mode=True)
+            else:
+                # Fallback to older per-item selection
+                self._annotation_window.unselect_annotations()
+                if annotation_ids:
+                    annotations_dict = getattr(self._annotation_window, 'annotations_dict', {})
+                    for ann_id in annotation_ids:
+                        if ann_id in annotations_dict:
+                            ann = annotations_dict[ann_id]
+                            self._annotation_window.select_annotation(ann, multi_select=True, quiet_mode=True)
+        except Exception:
+            # Ensure we don't crash selection manager on unexpected errors
+            try:
+                self._annotation_window.unselect_annotations()
+            except Exception:
+                pass
     
     def _switch_to_select_tool(self):
         """Switch to the Select tool when annotations are selected, preserving the selection.

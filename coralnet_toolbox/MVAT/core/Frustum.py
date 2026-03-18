@@ -170,6 +170,9 @@ class Frustum:
                 line_width=self.line_width,
                 name=f"frustum_wire_{id(self)}"  # Unique name
             )
+            # Make sure it's not pickable to avoid interfering with selection
+            self.actors[plotter].SetPickable(False)
+            
         return self.actors[plotter]
 
     def create_image_plane_actor(self, plotter, scale=0.1, opacity=0.8):
@@ -225,6 +228,8 @@ class Frustum:
                 show_edges=False,
                 name=f"frustum_plane_{id(self)}"
             )
+            # Make sure it's not pickable to avoid interfering with selection
+            actor.SetPickable(False)
             
             # 5. Disable Lighting
             # This ensures the image is shown as "emissive" (true colors) 
@@ -525,6 +530,8 @@ class BatchedFrustumManager:
             style='wireframe',
             name='_batched_frustums'
         )
+        # Make sure it's not pickable to avoid interfering with selection
+        self.wireframe_actor.SetPickable(False)
         
         return self.wireframe_actor
     

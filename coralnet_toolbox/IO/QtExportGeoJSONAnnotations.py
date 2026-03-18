@@ -12,7 +12,7 @@ from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QFormLayout,
     QCheckBox, QComboBox, QLineEdit, QPushButton, QFileDialog,
-    QApplication, QMessageBox, QLabel, QWidget, QGridLayout,
+    QApplication, QMessageBox, QLabel, QWidget,
     QListWidget, QListWidgetItem, QTabWidget
 )
 
@@ -129,37 +129,38 @@ class ExportGeoJSONAnnotations(QDialog):
         self.layout.addWidget(groupbox)
 
     def setup_annotation_layout(self):
-        """Setup annotation types in a grid layout."""
+        """Setup annotation types in a vertical layout in the requested order."""
         groupbox = QGroupBox("Annotations to Include")
-        layout = QGridLayout()
-        layout.setColumnStretch(1, 1) 
-        layout.setColumnStretch(2, 1)
+        layout = QVBoxLayout()
 
-        # Patch Annotations (Row 0)
+        # Rectangle
+        self.rectangle_checkbox = QCheckBox("Rectangle")
+        self.rectangle_checkbox.setChecked(True)
+        layout.addWidget(self.rectangle_checkbox)
+
+        # Polygon
+        self.polygon_checkbox = QCheckBox("Polygon")
+        self.polygon_checkbox.setChecked(True)
+        layout.addWidget(self.polygon_checkbox)
+
+        # MultiPolygon
+        self.multipolygon_checkbox = QCheckBox("MultiPolygon")
+        self.multipolygon_checkbox.setChecked(True)
+        layout.addWidget(self.multipolygon_checkbox)
+
+        # Patch Annotations
         self.patch_checkbox = QCheckBox("Patch Annotations")
         self.patch_checkbox.setChecked(True)
-        layout.addWidget(self.patch_checkbox, 0, 0)
+        layout.addWidget(self.patch_checkbox)
 
-        # Patch Representation Combo (Row 0, Col 1)
+        # Patch representation combobox with explicit label
         patch_rep_layout = QHBoxLayout()
-        patch_rep_layout.addWidget(QLabel("Representation:"))
+        patch_rep_layout.addWidget(QLabel("Patches should be represented as:"))
         self.patch_representation_combo = QComboBox()
         self.patch_representation_combo.addItems(["Polygon", "Point"])
         patch_rep_layout.addWidget(self.patch_representation_combo)
         patch_rep_layout.addStretch()
-        layout.addLayout(patch_rep_layout, 0, 1)
-
-        # Geometry Types (Row 1)
-        self.rectangle_checkbox = QCheckBox("Rectangle")
-        self.rectangle_checkbox.setChecked(True)
-        self.polygon_checkbox = QCheckBox("Polygon")
-        self.polygon_checkbox.setChecked(True)
-        self.multipolygon_checkbox = QCheckBox("MultiPolygon")
-        self.multipolygon_checkbox.setChecked(True)
-
-        layout.addWidget(self.rectangle_checkbox, 1, 0)
-        layout.addWidget(self.polygon_checkbox, 1, 1)
-        layout.addWidget(self.multipolygon_checkbox, 1, 2)
+        layout.addLayout(patch_rep_layout)
 
         groupbox.setLayout(layout)
         self.layout.addWidget(groupbox)
@@ -170,30 +171,13 @@ class ExportGeoJSONAnnotations(QDialog):
         layout = QVBoxLayout()
 
         # WGS84 Reprojection
-        self.wgs84_checkbox = QCheckBox("Reproject to WGS84 (Lat/Lon)")
+        self.wgs84_checkbox = QCheckBox("Output coordinates in WGS84 (lat/lon)")
         self.wgs84_checkbox.setChecked(True)
         self.wgs84_checkbox.setToolTip(
             "If checked, coordinates will be transformed to EPSG:4326 (Latitude/Longitude).\n"
             "This is required for compatibility with web maps (Leaflet, Mapbox, etc.)."
         )
         layout.addWidget(self.wgs84_checkbox)
-
-        # Styling
-        self.style_checkbox = QCheckBox("Include Styling Properties (Color)")
-        self.style_checkbox.setChecked(True)
-        self.style_checkbox.setToolTip(
-            "If checked, 'marker-color', 'stroke', and 'fill' properties will be added \n"
-            "based on the Label's color assignment."
-        )
-        layout.addWidget(self.style_checkbox)
-
-        # Metadata
-        self.metadata_checkbox = QCheckBox("Include Extra Metadata (Area, Date)")
-        self.metadata_checkbox.setChecked(True)
-        self.metadata_checkbox.setToolTip(
-            "If checked, calculates pixel area and adds timestamps/annotator info."
-        )
-        layout.addWidget(self.metadata_checkbox)
 
         # Pixel Coordinates for Non-Georeferenced
         self.pixel_checkbox = QCheckBox("Allow pixel coordinates for non-georeferenced images")
@@ -203,6 +187,32 @@ class ExportGeoJSONAnnotations(QDialog):
             "Otherwise, such images are skipped."
         )
         layout.addWidget(self.pixel_checkbox)
+
+        # Force Pixel Coordinates Even If CRS Exists
+        self.force_pixel_checkbox = QCheckBox("Force pixel coordinates (ignore CRS)")
+        self.force_pixel_checkbox.setChecked(False)
+        self.force_pixel_checkbox.setToolTip(
+            "If checked, exporter will use raw pixel coordinates for all images and ignore any image CRS.\n"
+            "This is useful when you need purely image-space coordinates rather than georeferenced coordinates."
+        )
+        layout.addWidget(self.force_pixel_checkbox)
+
+        # Styling
+        self.style_checkbox = QCheckBox("Include label color/style in output")
+        self.style_checkbox.setChecked(True)
+        self.style_checkbox.setToolTip(
+            "If checked, 'marker-color', 'stroke', and 'fill' properties will be added \n"
+            "based on the Label's color assignment."
+        )
+        layout.addWidget(self.style_checkbox)
+
+        # Metadata
+        self.metadata_checkbox = QCheckBox("Include extra metadata (area, export timestamp)")
+        self.metadata_checkbox.setChecked(True)
+        self.metadata_checkbox.setToolTip(
+            "If checked, calculates pixel area and adds timestamps/annotator info."
+        )
+        layout.addWidget(self.metadata_checkbox)
 
         groupbox.setLayout(layout)
         self.layout.addWidget(groupbox)
@@ -383,6 +393,11 @@ class ExportGeoJSONAnnotations(QDialog):
 
     def transform_coordinates(self, coords, src_transform, src_crs):
         """Transform coordinates from pixel space to geographic coordinates."""
+        # If user requested forcing pixel coordinates, always return raw pixel coords
+        if getattr(self, 'force_pixel_checkbox', None) and self.force_pixel_checkbox.isChecked():
+            return coords
+
+        # Allow pixel coordinates only when raster has no CRS and the user enabled that option
         if not src_crs and self.pixel_checkbox.isChecked():
             return coords
 
@@ -579,6 +594,9 @@ class ExportGeoJSONAnnotations(QDialog):
         
         # Determine final CRS name for GeoJSON header
         final_crs_name = "urn:ogc:def:crs:OGC:1.3:CRS84" if self.wgs84_checkbox.isChecked() else None
+        # If forcing pixel coordinates, do not include any CRS in output
+        if getattr(self, 'force_pixel_checkbox', None) and self.force_pixel_checkbox.isChecked():
+            final_crs_name = None
 
         try:
             for image_path in all_images:

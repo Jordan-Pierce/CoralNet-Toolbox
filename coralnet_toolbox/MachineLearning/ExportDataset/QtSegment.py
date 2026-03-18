@@ -42,6 +42,9 @@ class Segment(Base):
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
+    def setup_unlabeled_handling_layout(self):
+        pass
+
     def update_annotation_type_checkboxes(self):
         """
         Update the state of annotation type checkboxes based on the selected dataset type.

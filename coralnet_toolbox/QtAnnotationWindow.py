@@ -2,6 +2,7 @@ import warnings
 
 import os
 import traceback
+import time
 from typing import Optional
 
 import numpy as np
@@ -10,7 +11,7 @@ import pyqtgraph as pg
 from PyQt5.QtGui import QMouseEvent, QPixmap, QImage, QBrush
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QSize
 from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QGraphicsPixmapItem, 
-                             QSlider, QSpinBox, QLabel, QHBoxLayout, QWidget, QComboBox, QToolButton, QToolBar)
+                             QSlider, QSpinBox, QLabel, QHBoxLayout, QWidget, QComboBox, QToolButton, QToolBar, QSizePolicy)
 
 from coralnet_toolbox.MVAT.core.Marker import Marker
 from coralnet_toolbox.MVAT.core.Ray import CameraRay
@@ -103,10 +104,11 @@ class AnnotationWindow(QGraphicsView):
         self.setScene(self.scene)
         # Default to a dark background for the annotation workspace
         try:
-            self.scene.setBackgroundBrush(QBrush(Qt.black))
-            self.setBackgroundBrush(QBrush(Qt.black))
+            from PyQt5.QtGui import QColor
+            self.scene.setBackgroundBrush(QBrush(QColor('#1e1e1e')))
+            self.setBackgroundBrush(QBrush(QColor('#1e1e1e')))
             # also ensure the viewport widget background matches
-            self.viewport().setStyleSheet("background-color: black;")
+            self.viewport().setStyleSheet("background-color: #1e1e1e;")
         except Exception:
             # Fall back silently if the view isn't fully initialized yet
             pass
@@ -155,7 +157,7 @@ class AnnotationWindow(QGraphicsView):
             "No image loaded\nImport or drag and drop an image or Project file.", 
             self.viewport()
         )
-        self._placeholder_label.setStyleSheet("color: white; background-color: black; font-size: 14px; padding: 16px;")
+        self._placeholder_label.setStyleSheet("color: white; background-color: #1e1e1e; font-size: 14px; padding: 16px;")
         self._placeholder_label.setAlignment(Qt.AlignCenter)
         self._placeholder_label.setAutoFillBackground(True)
         self._placeholder_label.setWordWrap(True)
@@ -201,7 +203,8 @@ class AnnotationWindow(QGraphicsView):
         self.transparency_slider = QSlider(Qt.Horizontal)
         self.transparency_slider.setRange(0, 255)
         self.transparency_slider.setValue(128)
-        self.transparency_slider.setMinimumWidth(100)
+        # Let the annotation transparency slider naturally expand
+        self.transparency_slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.transparency_slider.valueChanged.connect(self.update_label_transparency)
 
         # --- Annotation Size ---
@@ -211,6 +214,8 @@ class AnnotationWindow(QGraphicsView):
         self.annotation_size_spinbox.setValue(self.annotation_size)
         self.annotation_size_spinbox.valueChanged.connect(self.set_annotation_size)
         self.annotationSizeChanged.connect(self.annotation_size_spinbox.setValue)
+        # Only enable the patch size control when the Patch tool is active
+        self.annotation_size_spinbox.setEnabled(False)
 
         # --- Positional/Dimensional Labels ---
         self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
@@ -257,7 +262,8 @@ class AnnotationWindow(QGraphicsView):
         self.z_transparency_widget = QSlider(Qt.Horizontal)
         self.z_transparency_widget.setRange(0, 255)
         self.z_transparency_widget.setValue(128)
-        self.z_transparency_widget.setMaximumWidth(150)
+        # Allow the Z transparency slider to naturally expand like the main transparency slider
+        self.z_transparency_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.z_transparency_widget.setEnabled(False)
         self.z_transparency_widget.valueChanged.connect(self.update_z_transparency)
 
@@ -595,8 +601,17 @@ class AnnotationWindow(QGraphicsView):
         """
         toolbar = QToolBar("Annotation Tools")
         toolbar.setMovable(False)
+        # Patch Size widget (far left)
+        size_widget = QWidget()
+        size_layout = QHBoxLayout(size_widget)
+        size_layout.setContentsMargins(4, 0, 4, 0)
+        size_layout.addWidget(QLabel("Patch Size"))
+        size_layout.addWidget(self.annotation_size_spinbox)
+        toolbar.addWidget(size_widget)
         
-        # Transparency widget
+        toolbar.addSeparator()
+
+        # Transparency widget (annotation transparency)
         trans_widget = QWidget()
         trans_layout = QHBoxLayout(trans_widget)
         trans_layout.setContentsMargins(4, 0, 4, 0)
@@ -610,15 +625,19 @@ class AnnotationWindow(QGraphicsView):
         toolbar.addWidget(trans_widget)
         
         toolbar.addSeparator()
-        
-        # Patch Size widget
-        size_widget = QWidget()
-        size_layout = QHBoxLayout(size_widget)
-        size_layout.setContentsMargins(4, 0, 4, 0)
-        size_layout.addWidget(QLabel("Patch Size"))
-        size_layout.addWidget(self.annotation_size_spinbox)
-        toolbar.addWidget(size_widget)
-        
+
+        # Z-channel controls moved to top toolbar (to the right of annotation transparency)
+        z_widget = QWidget()
+        z_layout = QHBoxLayout(z_widget)
+        z_layout.setContentsMargins(4, 0, 4, 0)
+        # Order: dynamic range button, z transparency slider, then colormap combo (swapped)
+        z_layout.addWidget(self.z_dynamic_button)
+        z_layout.addWidget(self.z_transparency_widget)
+        z_layout.addWidget(self.z_colormap_dropdown)
+        toolbar.addWidget(z_widget)
+
+        toolbar.addSeparator()
+
         return toolbar
 
     def create_bottom_toolbar(self) -> QToolBar:
@@ -645,11 +664,8 @@ class AnnotationWindow(QGraphicsView):
         group_image = make_group(self.image_dimensions_label)
         group_view = make_group(self.view_dimensions_label)
         group_scale = make_group(self.scale_unit_dropdown, self.scaled_dimensions_label)
-        group_z = make_group(self.z_unit_dropdown, 
-                             self.z_label, 
-                             self.z_transparency_widget, 
-                             self.z_dynamic_button, 
-                             self.z_colormap_dropdown)
+        # Keep only the unit dropdown and the z value label in the bottom status bar.
+        group_z = make_group(self.z_unit_dropdown, self.z_label)
         
         layout.addWidget(group_mouse)
         layout.addStretch(1)
@@ -2210,11 +2226,19 @@ class AnnotationWindow(QGraphicsView):
         # Turn on signal blocking for selection
         self._syncing_selection = True
         
+        # --- Disable BSP Indexing ---
+        if self.scene:
+            self.scene.setItemIndexMethod(QGraphicsScene.NoIndex)
+        
         for annotation in annotations:
             if label_locked and annotation.label.id != locked_label_id:
                 continue
             # Pass bulk_mode=True to prevent viewport repaints on every item
             self.select_annotation(annotation, multi_select=True, bulk_mode=True)
+
+        # --- Restore BSP Indexing ---
+        if self.scene:
+            self.scene.setItemIndexMethod(QGraphicsScene.BspTreeIndex)
 
         self._syncing_selection = False
         
@@ -2223,6 +2247,71 @@ class AnnotationWindow(QGraphicsView):
             self.main_window.label_window.deselect_active_label()
             self.main_window.confidence_window.clear_display()
             
+        self.viewport().update()
+        self._emit_selection_changed()
+        QApplication.restoreOverrideCursor()
+
+    def select_annotations_by_ids(self, annotation_ids, scroll_to_first=True, quiet_mode=True):
+        """Select a batch of annotations by their IDs."""
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
+        # Prevent selection feedback loops BEFORE clearing the existing selection
+        self._syncing_selection = True
+
+        # Clear existing selection first
+        self.unselect_annotations()
+
+        # --- Correctly handle empty selections by clearing the canvas ---
+        if not annotation_ids:
+            self._syncing_selection = False
+            self.viewport().update()
+            self._emit_selection_changed()
+            QApplication.restoreOverrideCursor()
+            return
+        # -----------------------------------------------------------------------
+
+        annotations_dict = getattr(self, 'annotations_dict', {})
+
+        # Disable BSP indexing and block signals for speed
+        if self.scene:
+            self.scene.setItemIndexMethod(QGraphicsScene.NoIndex)
+        self.blockSignals(True)
+
+        first_selected = None
+        for ann_id in annotation_ids:
+            ann = annotations_dict.get(ann_id)
+            if not ann:
+                continue
+            
+            # --- Only select annotations belonging to the current image! ---
+            if ann.image_path != self.current_image_path:
+                continue
+            # ----------------------------------------------------------------------
+
+            if first_selected is None:
+                first_selected = ann
+            # Use bulk_mode to avoid per-item heavy UI updates
+            self.select_annotation(ann, multi_select=True, quiet_mode=quiet_mode, bulk_mode=True)
+
+        # Restore indexing and signals
+        self.blockSignals(False)
+        if self.scene:
+            self.scene.setItemIndexMethod(QGraphicsScene.BspTreeIndex)
+
+        self._syncing_selection = False
+
+        # One consolidated UI update
+        if len(self.selected_annotations) > 1:
+            self.main_window.label_window.deselect_active_label()
+            self.main_window.confidence_window.clear_display()
+
+        # Optionally center/scroll to the first selected item
+        try:
+            if first_selected and scroll_to_first:
+                self.center_on_annotation(first_selected)
+        except Exception:
+            pass
+
         self.viewport().update()
         self._emit_selection_changed()
         QApplication.restoreOverrideCursor()
@@ -2257,6 +2346,10 @@ class AnnotationWindow(QGraphicsView):
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
+        # --- Disable BSP indexing ---
+        if self.scene:
+            self.scene.setItemIndexMethod(QGraphicsScene.NoIndex)
+        
         # Create a copy to safely iterate through
         annotations_to_unselect = self.selected_annotations.copy()
         
@@ -2269,18 +2362,20 @@ class AnnotationWindow(QGraphicsView):
                 try:
                     annotation.annotationUpdated.disconnect(self.main_window.confidence_window.display_cropped_image)
                 except TypeError:
-                    # Already disconnected
                     pass
                 try:
                     annotation.annotationUpdated.disconnect(self.on_annotation_updated)
                 except TypeError:
-                    # Already disconnected
                     pass
             
             # Update annotation's internal state
             annotation.deselect()
             # Set the visibility of the annotation
             self.set_annotation_visibility(annotation)
+            
+        # --- NEW: Restore BSP indexing ---
+        if self.scene:
+            self.scene.setItemIndexMethod(QGraphicsScene.BspTreeIndex)
         
         # Clear the confidence window
         self.main_window.confidence_window.clear_display()
