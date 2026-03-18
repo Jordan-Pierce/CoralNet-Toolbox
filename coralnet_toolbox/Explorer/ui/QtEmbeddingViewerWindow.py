@@ -9,6 +9,7 @@ the scatter plot visualization with built-in ML pipeline controls.
 
 import os
 import warnings
+import time
 
 import numpy as np
 import torch
@@ -1328,6 +1329,7 @@ class EmbeddingViewerWindow(QWidget):
     
     def render_selection_from_ids(self, selected_ids):
         """Update visual selection using set-diffing to minimize updates."""
+        start = time.perf_counter()
         blocker = QSignalBlocker(self.graphics_scene)
         try:
             selected_ids_set = set(selected_ids) if selected_ids else set()
@@ -1350,32 +1352,61 @@ class EmbeddingViewerWindow(QWidget):
         finally:
             blocker.unblock()
 
-        # One consolidated update after changes
-        self._on_selection_changed()
-        self._update_visible_points()
+        # Update internal selection state without re-iterating all points.
+        # We already applied the minimal set-diff changes above, so just update
+        # the cached `previous_selection_ids` and emit a consolidated signal.
+        self.previous_selection_ids = set(selected_ids) if selected_ids else set()
+        # Notify SelectionManager / other listeners about the new selection
+        try:
+            self.selection_changed.emit(list(self.previous_selection_ids))
+        except Exception:
+            pass
+
+        # Lightweight UI updates
+        self._update_toolbar_state()
+        self._schedule_view_update()
+
+        dur = time.perf_counter() - start
+        print(f"[EmbeddingViewer.render_selection_from_ids] to_select={len(to_select)} to_deselect={len(to_deselect)} total_time={dur:.4f}s")
     
     def _on_selection_changed(self):
         """Handle selection changes in scene."""
         if not self.graphics_scene:
             return
-        
+
+        start = time.perf_counter()
         try:
             selected_items = self.graphics_scene.selectedItems()
         except RuntimeError:
             return
-        
+
         current_ids = {item.data_item.annotation.id for item in selected_items
                        if isinstance(item, EmbeddingPointItem)}
-        
+
         if current_ids != self.previous_selection_ids:
-            for point_id, point in self.points_by_id.items():
-                point.data_item.set_selected(point_id in current_ids)
-            
+            # Only update the points that changed to avoid O(N) work on every event
+            to_select = current_ids - self.previous_selection_ids
+            to_deselect = self.previous_selection_ids - current_ids
+
+            for ann_id in to_select:
+                if ann_id in self.points_by_id:
+                    pt = self.points_by_id[ann_id]
+                    pt.data_item.set_selected(True)
+                    pt.setSelected(True)
+
+            for ann_id in to_deselect:
+                if ann_id in self.points_by_id:
+                    pt = self.points_by_id[ann_id]
+                    pt.data_item.set_selected(False)
+                    pt.setSelected(False)
+
+            self.previous_selection_ids = set(current_ids)
             self.selection_changed.emit(list(current_ids))
-            self.previous_selection_ids = current_ids
-        
+
         self._update_toolbar_state()
         self._schedule_view_update()
+        dur = time.perf_counter() - start
+        print(f"[EmbeddingViewer._on_selection_changed] selected_count={len(current_ids)} time={dur:.4f}s")
     
     # -------------------------------------------------------------------------
     # Isolation

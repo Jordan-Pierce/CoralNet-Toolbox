@@ -850,7 +850,8 @@ class Annotation(QObject):
         Perform one 'tick' of the animation.
         This is the public entry point for the global manager.
         """
-        self._update_dash_offset()
+        # self._update_dash_offset()  # TODO
+        pass
         
     @pyqtProperty(float)
     def dash_offset(self):

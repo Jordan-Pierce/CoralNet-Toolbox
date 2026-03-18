@@ -271,7 +271,8 @@ class Label(QWidget):
         This is the public entry point for the global manager.
         """
         # This just calls the existing private method that holds the logic
-        self._update_pulse_alpha()
+        # self._update_pulse_alpha()
+        pass  # TODO
 
     @pyqtProperty(int)
     def pulse_alpha(self):

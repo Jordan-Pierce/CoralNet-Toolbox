@@ -2,6 +2,7 @@ import warnings
 
 import os
 import traceback
+import time
 from typing import Optional
 
 import numpy as np
@@ -2225,11 +2226,19 @@ class AnnotationWindow(QGraphicsView):
         # Turn on signal blocking for selection
         self._syncing_selection = True
         
+        # --- Disable BSP Indexing ---
+        if self.scene:
+            self.scene.setItemIndexMethod(QGraphicsScene.NoIndex)
+        
         for annotation in annotations:
             if label_locked and annotation.label.id != locked_label_id:
                 continue
             # Pass bulk_mode=True to prevent viewport repaints on every item
             self.select_annotation(annotation, multi_select=True, bulk_mode=True)
+
+        # --- Restore BSP Indexing ---
+        if self.scene:
+            self.scene.setItemIndexMethod(QGraphicsScene.BspTreeIndex)
 
         self._syncing_selection = False
         
@@ -2238,6 +2247,61 @@ class AnnotationWindow(QGraphicsView):
             self.main_window.label_window.deselect_active_label()
             self.main_window.confidence_window.clear_display()
             
+        self.viewport().update()
+        self._emit_selection_changed()
+        QApplication.restoreOverrideCursor()
+
+    def select_annotations_by_ids(self, annotation_ids, scroll_to_first=True, quiet_mode=True):
+        """Select a batch of annotations by their IDs."""
+        if not annotation_ids:
+            return
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
+        # Prevent selection feedback loops BEFORE clearing the existing selection
+        self._syncing_selection = True
+
+        # Clear existing selection first
+        self.unselect_annotations()
+
+        annotations_dict = getattr(self, 'annotations_dict', {})
+
+        # --- Disable BSP indexing and block signals for speed ---
+        if self.scene:
+            self.scene.setItemIndexMethod(QGraphicsScene.NoIndex)
+        self.blockSignals(True)
+        # -------------------------------------------------------------
+
+        first_selected = None
+        for ann_id in annotation_ids:
+            ann = annotations_dict.get(ann_id)
+            if not ann:
+                continue
+            if first_selected is None:
+                first_selected = ann
+            # Use bulk_mode to avoid per-item heavy UI updates
+            self.select_annotation(ann, multi_select=True, quiet_mode=quiet_mode, bulk_mode=True)
+
+        # --- Restore indexing and signals ---
+        self.blockSignals(False)
+        if self.scene:
+            self.scene.setItemIndexMethod(QGraphicsScene.BspTreeIndex)
+        # -----------------------------------------
+
+        self._syncing_selection = False
+
+        # One consolidated UI update
+        if len(self.selected_annotations) > 1:
+            self.main_window.label_window.deselect_active_label()
+            self.main_window.confidence_window.clear_display()
+
+        # Optionally center/scroll to the first selected item
+        try:
+            if first_selected and scroll_to_first:
+                self.center_on_annotation(first_selected)
+        except Exception:
+            pass
+
         self.viewport().update()
         self._emit_selection_changed()
         QApplication.restoreOverrideCursor()
@@ -2270,7 +2334,12 @@ class AnnotationWindow(QGraphicsView):
     def unselect_annotations(self):
         """Unselect all currently selected annotations."""
         # Make cursor busy
+        start = time.perf_counter()
         QApplication.setOverrideCursor(Qt.WaitCursor)
+        
+        # --- Disable BSP indexing ---
+        if self.scene:
+            self.scene.setItemIndexMethod(QGraphicsScene.NoIndex)
         
         # Create a copy to safely iterate through
         annotations_to_unselect = self.selected_annotations.copy()
@@ -2284,18 +2353,20 @@ class AnnotationWindow(QGraphicsView):
                 try:
                     annotation.annotationUpdated.disconnect(self.main_window.confidence_window.display_cropped_image)
                 except TypeError:
-                    # Already disconnected
                     pass
                 try:
                     annotation.annotationUpdated.disconnect(self.on_annotation_updated)
                 except TypeError:
-                    # Already disconnected
                     pass
             
             # Update annotation's internal state
             annotation.deselect()
             # Set the visibility of the annotation
             self.set_annotation_visibility(annotation)
+            
+        # --- NEW: Restore BSP indexing ---
+        if self.scene:
+            self.scene.setItemIndexMethod(QGraphicsScene.BspTreeIndex)
         
         # Clear the confidence window
         self.main_window.confidence_window.clear_display()
@@ -2308,6 +2379,8 @@ class AnnotationWindow(QGraphicsView):
         
         # Emit selection changed signal
         self._emit_selection_changed()
+        dur = time.perf_counter() - start
+        print(f"[AnnotationWindow.unselect_annotations] count_cleared={len(annotations_to_unselect)} time={dur:.4f}s")
     
     def _emit_selection_changed(self):
         """Emit the annotationSelectionChanged signal with current selection IDs."""

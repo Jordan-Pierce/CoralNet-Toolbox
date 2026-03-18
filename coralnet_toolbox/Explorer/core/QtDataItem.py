@@ -206,19 +206,38 @@ class EmbeddingPointItem(QGraphicsObject):
                 painter.setBrush(effective_brush_color)
                 painter.drawEllipse(self.boundingRect())
     
+    # def itemChange(self, change, value):
+    #     """Safely handle selection state changes without spamming the paint loop."""
+    #     if change == QGraphicsItem.ItemSelectedChange:
+    #         if value:  # It is being selected
+    #             # Bring this item to the front so it is not occluded by other points.
+    #             sc = self.scene()
+    #             if sc is not None:
+    #                 # Compute max z among items and set this to max+1
+    #                 try:
+    #                     max_z = max((it.zValue() for it in sc.items()), default=0)
+    #                 except Exception:
+    #                     max_z = 0
+    #                 self.setZValue(max_z + 1)
+    #             self.animate()
+    #         else:      # It is being deselected
+    #             # Reset z-value so normal stacking resumes
+    #             self.setZValue(0)
+    #             self.deanimate()
+                
+    #     elif change == QGraphicsItem.ItemSceneChange and value is None:
+    #         # Clean up if it gets deleted from the scene
+    #         self.deanimate()
+            
+    #     return super().itemChange(change, value)
+    
     def itemChange(self, change, value):
         """Safely handle selection state changes without spamming the paint loop."""
         if change == QGraphicsItem.ItemSelectedChange:
             if value:  # It is being selected
                 # Bring this item to the front so it is not occluded by other points.
-                sc = self.scene()
-                if sc is not None:
-                    # Compute max z among items and set this to max+1
-                    try:
-                        max_z = max((it.zValue() for it in sc.items()), default=0)
-                    except Exception:
-                        max_z = 0
-                    self.setZValue(max_z + 1)
+                # O(1) assignment instead of an O(N) scene iteration
+                self.setZValue(1000)
                 self.animate()
             else:      # It is being deselected
                 # Reset z-value so normal stacking resumes

@@ -10,6 +10,7 @@ the gallery display functionality with built-in filtering capabilities.
 import warnings
 
 import os
+import time
 
 from PyQt5.QtCore import Qt, QTimer, QRect, pyqtSignal, pyqtSlot, QEvent, QThread, QSignalBlocker
 from PyQt5 import QtCore, QtGui
@@ -1220,7 +1221,11 @@ class AnnotationViewerWindow(QWidget):
         # Group and set into model (supports headers and collapsed groups)
         groups = self._group_data_items_by_sort_key(sorted_data_items)
         # groups is a list of tuples (group_key, group_color, [items])
-        self.list_model.set_grouped_items(groups)
+        # Defer model reset to avoid blocking UI during tight selection flows
+        try:
+            QTimer.singleShot(0, lambda grouped=groups: self.list_model.set_grouped_items(grouped))
+        except Exception:
+            self.list_model.set_grouped_items(groups)
         # Inform delegate of size change
         if self.list_delegate:
             self.list_delegate.item_size = self.current_widget_size
@@ -1384,7 +1389,11 @@ class AnnotationViewerWindow(QWidget):
         
         # Isolate button: enabled only when NOT in isolation mode AND has selection
         # When isolated, button is disabled (user exits via double-click)
-        self.isolate_button.setEnabled(not self.isolated_mode and selection_exists)
+        if hasattr(self, 'isolate_button') and self.isolate_button is not None:
+            try:
+                self.isolate_button.setEnabled(not self.isolated_mode and selection_exists)
+            except Exception:
+                pass
     
     # -------------------------------------------------------------------------
     # Selection Management
@@ -1485,6 +1494,7 @@ class AnnotationViewerWindow(QWidget):
     
     def render_selection_from_ids(self, selected_ids):
         """Update visual selection using fast set-diffing."""
+        start = time.perf_counter()
         # New model-based selection mapping
         if not selected_ids:
             # clear selection
@@ -1499,24 +1509,32 @@ class AnnotationViewerWindow(QWidget):
         blocker = QSignalBlocker(sel_model)
         try:
             sel_model.clearSelection()
+            first_idx = None
             for aid in selected_ids_set:
                 row = self.list_model._id_to_row.get(aid)
                 if row is None:
                     continue
                 idx = self.list_model.index(row)
                 sel_model.select(idx, sel_model.Select | sel_model.Rows)
+                if first_idx is None:
+                    first_idx = idx
+            # Scroll once to the first selected index to avoid repeated repaints
+            if first_idx is not None:
                 try:
-                    self.list_view.scrollTo(idx)
+                    self.list_view.scrollTo(first_idx)
                 except Exception:
                     pass
         finally:
             del blocker
         self._update_toolbar_state()
+        dur = time.perf_counter() - start
+        print(f"[AnnotationViewer.render_selection_from_ids] requested={len(selected_ids)} time={dur:.4f}s")
 
     def _on_list_selection_changed(self, selected, deselected):
         """Slot for list view selection changes -> emit selection_changed(ids)."""
         if getattr(self, '_syncing_selection', False):
             return
+        start = time.perf_counter()
         # build list of selected ids
         try:
             sel_model = self.list_view.selectionModel()
@@ -1533,6 +1551,8 @@ class AnnotationViewerWindow(QWidget):
                     self.selection_changed.emit(ids)
                 finally:
                     self._syncing_selection = False
+                dur = time.perf_counter() - start
+                print(f"[AnnotationViewer._on_list_selection_changed] emitted_count={len(ids)} time={dur:.4f}s")
             else:
                 # emit empty selection
                 self._syncing_selection = True
@@ -1540,6 +1560,8 @@ class AnnotationViewerWindow(QWidget):
                     self.selection_changed.emit([])
                 finally:
                     self._syncing_selection = False
+                dur = time.perf_counter() - start
+                print(f"[AnnotationViewer._on_list_selection_changed] emitted_count=0 time={dur:.4f}s")
         except Exception:
             pass
     
@@ -1710,6 +1732,7 @@ class AnnotationViewerWindow(QWidget):
     
     def isolate_and_select_from_ids(self, ids_to_isolate):
         """Isolate and select specific annotations by ID."""
+        start = time.perf_counter()
         # Build grouped list containing only the requested IDs
         ids_set = set(ids_to_isolate)
         groups = self._group_data_items_by_sort_key(self.all_data_items)
@@ -1724,9 +1747,14 @@ class AnnotationViewerWindow(QWidget):
 
         self.isolated_mode = True
         self.isolated_ids = ids_set
+        
+        # --- Synchronous Layout update so selection doesn't get erased! ---
         self.list_model.set_grouped_items(new_groups)
+        
         self.render_selection_from_ids(ids_to_isolate)
         self._update_toolbar_state()
+        dur = time.perf_counter() - start
+        print(f"[AnnotationViewer.isolate_and_select_from_ids] requested={len(ids_to_isolate)} time={dur:.4f}s")
     
     def display_and_isolate_ordered_results(self, ordered_ids):
         """Display annotations in a specific order (e.g., similarity results)."""
@@ -1734,8 +1762,10 @@ class AnnotationViewerWindow(QWidget):
         # Build ordered data items
         item_map = {i.annotation.id: i for i in self.all_data_items}
         ordered_items = [item_map[aid] for aid in ordered_ids if aid in item_map]
-        # Single unnamed group to present ordered results
+        
+        # --- Synchronous Layout Update ---
         self.list_model.set_grouped_items([("", None, ordered_items)])
+        
         self.isolated_mode = True
         self.isolated_ids = set(ordered_ids)
         self.render_selection_from_ids(set(ordered_ids))
@@ -1759,9 +1789,12 @@ class AnnotationViewerWindow(QWidget):
 
             # Clear model and headers
             try:
-                self.list_model.set_grouped_items([])
+                QTimer.singleShot(0, lambda: self.list_model.set_grouped_items([]))
             except Exception:
-                pass
+                try:
+                    self.list_model.set_grouped_items([])
+                except Exception:
+                    pass
             try:
                 self._clear_separator_labels()
             except Exception:
