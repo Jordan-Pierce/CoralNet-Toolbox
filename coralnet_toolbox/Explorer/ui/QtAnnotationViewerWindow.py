@@ -1218,14 +1218,28 @@ class AnnotationViewerWindow(QWidget):
             if isolated_ids:
                 sorted_data_items = [item for item in sorted_data_items if item.annotation.id in isolated_ids]
 
+        # --- Use the central SelectionManager as the absolute source of truth ---
+        # This prevents highlights from being lost during delayed layout rebuilds 
+        # or cache wipes triggered by image cropping.
+        if hasattr(self.main_window, 'selection_manager'):
+            current_selection = self.main_window.selection_manager.get_selected_ids()
+        else:
+            current_selection = self.get_selected_annotation_ids()
+        # -----------------------------------------------------------------------------
+
         # Group and set into model (supports headers and collapsed groups)
         groups = self._group_data_items_by_sort_key(sorted_data_items)
-        # groups is a list of tuples (group_key, group_color, [items])
-        # Defer model reset to avoid blocking UI during tight selection flows
-        try:
-            QTimer.singleShot(0, lambda grouped=groups: self.list_model.set_grouped_items(grouped))
-        except Exception:
-            self.list_model.set_grouped_items(groups)
+        
+        # Synchronous update wrapped in lock to prevent rogue signals
+        self._syncing_selection = True
+        self.list_model.set_grouped_items(groups)
+        
+        # Restore the persistent selection
+        if current_selection:
+            self.render_selection_from_ids(set(current_selection))
+            
+        self._syncing_selection = False
+        
         # Inform delegate of size change
         if self.list_delegate:
             self.list_delegate.item_size = self.current_widget_size
@@ -1485,6 +1499,11 @@ class AnnotationViewerWindow(QWidget):
             blocker = QSignalBlocker(self.list_view.selectionModel())
             try:
                 self.list_view.clearSelection()
+                
+                # --- Ensure underlying data items are unmarked ---
+                for item in self.all_data_items:
+                    item.set_selected(False)
+                # ------------------------------------------------------
             finally:
                 del blocker
         else:
@@ -1495,7 +1514,6 @@ class AnnotationViewerWindow(QWidget):
     def render_selection_from_ids(self, selected_ids):
         """Update visual selection using fast set-diffing."""
         start = time.perf_counter()
-        # New model-based selection mapping
         if not selected_ids:
             # clear selection
             self.clear_selection()
@@ -1509,6 +1527,12 @@ class AnnotationViewerWindow(QWidget):
         blocker = QSignalBlocker(sel_model)
         try:
             sel_model.clearSelection()
+            
+            # --- Sync the underlying data items so custom widgets draw correctly ---
+            for item in self.all_data_items:
+                item.set_selected(item.annotation.id in selected_ids_set)
+            # ----------------------------------------------------------------------------
+                
             first_idx = None
             for aid in selected_ids_set:
                 row = self.list_model._id_to_row.get(aid)
@@ -1518,6 +1542,7 @@ class AnnotationViewerWindow(QWidget):
                 sel_model.select(idx, sel_model.Select | sel_model.Rows)
                 if first_idx is None:
                     first_idx = idx
+                    
             # Scroll once to the first selected index to avoid repeated repaints
             if first_idx is not None:
                 try:
@@ -1526,6 +1551,7 @@ class AnnotationViewerWindow(QWidget):
                     pass
         finally:
             del blocker
+            
         self._update_toolbar_state()
         dur = time.perf_counter() - start
         print(f"[AnnotationViewer.render_selection_from_ids] requested={len(selected_ids)} time={dur:.4f}s")
@@ -1748,13 +1774,15 @@ class AnnotationViewerWindow(QWidget):
         self.isolated_mode = True
         self.isolated_ids = ids_set
         
-        # --- Synchronous Layout update so selection doesn't get erased! ---
+        # --- Synchronous update wrapped in lock to prevent rogue signals ---
+        self._syncing_selection = True
         self.list_model.set_grouped_items(new_groups)
         
         self.render_selection_from_ids(ids_to_isolate)
+        self._syncing_selection = False
+        # ------------------------------------------------------------------------
+        
         self._update_toolbar_state()
-        dur = time.perf_counter() - start
-        print(f"[AnnotationViewer.isolate_and_select_from_ids] requested={len(ids_to_isolate)} time={dur:.4f}s")
     
     def display_and_isolate_ordered_results(self, ordered_ids):
         """Display annotations in a specific order (e.g., similarity results)."""
@@ -1763,8 +1791,11 @@ class AnnotationViewerWindow(QWidget):
         item_map = {i.annotation.id: i for i in self.all_data_items}
         ordered_items = [item_map[aid] for aid in ordered_ids if aid in item_map]
         
-        # --- Synchronous Layout Update ---
+        # --- Synchronous update wrapped in lock to prevent rogue signals ---
+        self._syncing_selection = True
         self.list_model.set_grouped_items([("", None, ordered_items)])
+        self._syncing_selection = False
+        # ------------------------------------------------------------------------
         
         self.isolated_mode = True
         self.isolated_ids = set(ordered_ids)
@@ -1788,13 +1819,15 @@ class AnnotationViewerWindow(QWidget):
             self.isolated_ids = None
 
             # Clear model and headers
+            self._syncing_selection = True
+
             try:
-                QTimer.singleShot(0, lambda: self.list_model.set_grouped_items([]))
+                self.list_model.set_grouped_items([])
             except Exception:
-                try:
-                    self.list_model.set_grouped_items([])
-                except Exception:
-                    pass
+                pass
+            
+            self._syncing_selection = False
+
             try:
                 self._clear_separator_labels()
             except Exception:
@@ -1805,6 +1838,7 @@ class AnnotationViewerWindow(QWidget):
                 self._recalculate_layout()
             except Exception:
                 pass
+
             # Mark that filters are not applied when cleared so the gallery
             # will remain in placeholder state until the user presses
             # "Apply Filter" again.
@@ -1819,6 +1853,7 @@ class AnnotationViewerWindow(QWidget):
                 self.selection_changed.emit([])
             except Exception:
                 pass
+
         finally:
             try:
                 self.cleared.emit()
