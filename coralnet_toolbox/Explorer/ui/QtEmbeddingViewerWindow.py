@@ -733,6 +733,48 @@ class EmbeddingViewerWindow(QWidget):
         model_name = self._get_selected_model()
         embedding_params = self._get_embedding_parameters()
         
+        # Block LDA if only one class/label is selected in the annotation viewer
+        try:
+            if embedding_params.get('technique') == 'LDA':
+                annotation_viewer = getattr(self.main_window, 'annotation_viewer_window', None)
+                selected_labels = None
+                if annotation_viewer is not None:
+                    # Prefer the viewer's filter selection if available
+                    try:
+                        selected_labels = annotation_viewer._get_selected_labels()
+                    except Exception:
+                        selected_labels = None
+
+                # If label filter is not restrictive, infer labels from the annotations
+                labels_in_data = set()
+                for ann in annotations:
+                    try:
+                        lbl = getattr(ann, 'label', None)
+                        if lbl is None:
+                            continue
+                        code = getattr(lbl, 'short_label_code', None) or getattr(lbl, 'code', None) or str(lbl)
+                        labels_in_data.add(code)
+                    except Exception:
+                        continue
+
+                # Decide how many unique labels are effectively selected
+                if selected_labels is None:
+                    n_labels = len(labels_in_data)
+                else:
+                    # selected_labels may be a list of label codes
+                    n_labels = len(selected_labels)
+
+                if n_labels < 2:
+                    QMessageBox.warning(
+                        self,
+                        "LDA Not Available",
+                        "LDA requires at least two distinct classes. Select multiple labels in the Annotation Gallery or include multiple classes in the working set."
+                    )
+                    return
+        except Exception:
+            # If anything goes wrong during this check, fail-safe: allow pipeline to continue
+            pass
+
         # Generate model key for caching
         if os.path.sep in model_name or '/' in model_name:
             sanitized_model_name = os.path.basename(model_name)
@@ -1329,7 +1371,6 @@ class EmbeddingViewerWindow(QWidget):
     
     def render_selection_from_ids(self, selected_ids):
         """Update visual selection using set-diffing to minimize updates."""
-        start = time.perf_counter()
         blocker = QSignalBlocker(self.graphics_scene)
         try:
             selected_ids_set = set(selected_ids) if selected_ids else set()
@@ -1365,16 +1406,12 @@ class EmbeddingViewerWindow(QWidget):
         # Lightweight UI updates
         self._update_toolbar_state()
         self._schedule_view_update()
-
-        dur = time.perf_counter() - start
-        print(f"[EmbeddingViewer.render_selection_from_ids] to_select={len(to_select)} to_deselect={len(to_deselect)} total_time={dur:.4f}s")
     
     def _on_selection_changed(self):
         """Handle selection changes in scene."""
         if not self.graphics_scene:
             return
 
-        start = time.perf_counter()
         try:
             selected_items = self.graphics_scene.selectedItems()
         except RuntimeError:
@@ -1405,8 +1442,6 @@ class EmbeddingViewerWindow(QWidget):
 
         self._update_toolbar_state()
         self._schedule_view_update()
-        dur = time.perf_counter() - start
-        print(f"[EmbeddingViewer._on_selection_changed] selected_count={len(current_ids)} time={dur:.4f}s")
     
     # -------------------------------------------------------------------------
     # Isolation

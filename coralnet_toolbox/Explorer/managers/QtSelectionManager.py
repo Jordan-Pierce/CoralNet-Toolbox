@@ -140,7 +140,6 @@ class SelectionManager(QObject):
         """Clear all selections across all viewers."""
         if self._syncing:
             return
-        start = time.perf_counter()
         
         self._syncing = True
         try:
@@ -162,8 +161,6 @@ class SelectionManager(QObject):
             self._update_label_window_selection()
             
             self.selection_changed.emit([])
-            dur = time.perf_counter() - start
-            print(f"[SelectionManager.clear_selection] cleared all selections in {dur:.4f}s")
         finally:
             self._syncing = False
     
@@ -177,8 +174,7 @@ class SelectionManager(QObject):
         """
         if self._syncing:
             return
-        start = time.perf_counter()
-        
+                
         self._syncing = True
         try:
             self._selected_ids = set(annotation_ids)
@@ -209,9 +205,6 @@ class SelectionManager(QObject):
             self._update_confidence_window()
             
             self.selection_changed.emit(list(self._selected_ids))
-            dur = time.perf_counter() - start
-            print(f"[SelectionManager.select_annotations] source={source} ids={len(annotation_ids)} total_time={dur:.4f}s")
-            
         finally:
             self._syncing = False
     
@@ -231,7 +224,6 @@ class SelectionManager(QObject):
         """
         if self._syncing:
             return
-        start = time.perf_counter()
         
         self._syncing = True
         try:
@@ -261,8 +253,6 @@ class SelectionManager(QObject):
             self._update_confidence_window()
             
             self.selection_changed.emit(list(self._selected_ids))
-            dur = time.perf_counter() - start
-            print(f"[SelectionManager._on_annotation_viewer_selection_changed] changed={len(changed_ann_ids)} total_selected={len(self._selected_ids)} time={dur:.4f}s")
             
         finally:
             self._syncing = False
@@ -282,7 +272,6 @@ class SelectionManager(QObject):
         """
         if self._syncing:
             return
-        start = time.perf_counter()
         
         self._syncing = True
         try:
@@ -312,8 +301,6 @@ class SelectionManager(QObject):
             self._update_confidence_window()
             
             self.selection_changed.emit(list(self._selected_ids))
-            dur = time.perf_counter() - start
-            print(f"[SelectionManager._on_embedding_viewer_selection_changed] ids={len(all_selected_ann_ids)} time={dur:.4f}s")
             
         finally:
             self._syncing = False
@@ -330,7 +317,6 @@ class SelectionManager(QObject):
         """
         if self._syncing:
             return
-        start = time.perf_counter()
         
         self._syncing = True
         try:
@@ -360,8 +346,6 @@ class SelectionManager(QObject):
             self._update_confidence_window()
             
             self.selection_changed.emit(list(self._selected_ids))
-            dur = time.perf_counter() - start
-            print(f"[SelectionManager._on_annotation_window_selection_changed] ids={len(selected_ids) if selected_ids else 0} time={dur:.4f}s")
             
         finally:
             self._syncing = False
@@ -420,7 +404,6 @@ class SelectionManager(QObject):
         """
         if not self._annotation_window:
             return
-        start = time.perf_counter()
         
         # Use the batched selection API on AnnotationWindow when available
         try:
@@ -441,8 +424,6 @@ class SelectionManager(QObject):
                 self._annotation_window.unselect_annotations()
             except Exception:
                 pass
-        dur = time.perf_counter() - start
-        print(f"[SelectionManager._sync_annotation_window_selection] ids={len(annotation_ids)} time={dur:.4f}s")
     
     def _switch_to_select_tool(self):
         """Switch to the Select tool when annotations are selected, preserving the selection.

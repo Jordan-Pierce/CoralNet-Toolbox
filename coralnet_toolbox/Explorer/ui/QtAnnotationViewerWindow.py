@@ -1033,18 +1033,22 @@ class AnnotationViewerWindow(QWidget):
             annotation_id: ID of the annotation.
             new_label: New label ID.
         """
-        # Update cache for changed annotation and refresh view
-        if hasattr(self.annotation_window, 'annotations_dict'):
-            ann = self.annotation_window.annotations_dict.get(annotation_id)
-            if ann:
-                self.data_item_cache[annotation_id] = AnnotationDataItem(ann)
+        # We don't recreate AnnotationDataItem here because it references the 
+        # mutated annotation in-place. Recreating it would orphan the model's reference!
 
-        # Recalculate layout if sorting by label
-        if self.sort_combo.currentText() == "Label":
-            QTimer.singleShot(0, self.refresh_annotations)
-
-        # Refresh label filter options
+        # Refresh label filter options to pick up new label types
         self._populate_label_filter()
+
+        # Check if structural changes are needed
+        active_label_filters = self._get_selected_labels()
+        is_sorting_by_label = (self.sort_combo.currentText() == "Label")
+
+        if active_label_filters or is_sorting_by_label:
+            QTimer.singleShot(0, self.refresh_annotations)
+        else:
+            # For pure color/text updates, just force a repaint for instant feedback
+            if hasattr(self, 'list_view') and self.list_view is not None:
+                self.list_view.viewport().update()
     
     @pyqtSlot(str)
     def on_annotation_modified(self, annotation_id):
@@ -1086,19 +1090,19 @@ class AnnotationViewerWindow(QWidget):
         Args:
             changes: List of tuples (annotation_id, old_label, new_label)
         """
-        # Update caches for changed annotations
-        for annotation_id, old_label, new_label in changes:
-            if hasattr(self.annotation_window, 'annotations_dict'):
-                ann = self.annotation_window.annotations_dict.get(annotation_id)
-                if ann:
-                    self.data_item_cache[annotation_id] = AnnotationDataItem(ann)
-
-        # Rebuild view if sorting by label
-        if self.sort_combo.currentText() == "Label":
-            QTimer.singleShot(0, self.refresh_annotations)
-
-        # Refresh label filter options
+        # Refresh label filter options to pick up new label types
         self._populate_label_filter()
+
+        # Check if structural changes are needed
+        active_label_filters = self._get_selected_labels()
+        is_sorting_by_label = (self.sort_combo.currentText() == "Label")
+
+        if active_label_filters or is_sorting_by_label:
+            QTimer.singleShot(0, self.refresh_annotations)
+        else:
+            # For pure color/text updates, just force a repaint for instant feedback
+            if hasattr(self, 'list_view') and self.list_view is not None:
+                self.list_view.viewport().update()
     
     @pyqtSlot(str, object)
     def on_annotation_moved(self, annotation_id, move_data):
@@ -1513,7 +1517,6 @@ class AnnotationViewerWindow(QWidget):
     
     def render_selection_from_ids(self, selected_ids):
         """Update visual selection using fast set-diffing."""
-        start = time.perf_counter()
         if not selected_ids:
             # clear selection
             self.clear_selection()
@@ -1553,14 +1556,12 @@ class AnnotationViewerWindow(QWidget):
             del blocker
             
         self._update_toolbar_state()
-        dur = time.perf_counter() - start
-        print(f"[AnnotationViewer.render_selection_from_ids] requested={len(selected_ids)} time={dur:.4f}s")
 
     def _on_list_selection_changed(self, selected, deselected):
         """Slot for list view selection changes -> emit selection_changed(ids)."""
         if getattr(self, '_syncing_selection', False):
             return
-        start = time.perf_counter()
+        
         # build list of selected ids
         try:
             sel_model = self.list_view.selectionModel()
@@ -1577,8 +1578,7 @@ class AnnotationViewerWindow(QWidget):
                     self.selection_changed.emit(ids)
                 finally:
                     self._syncing_selection = False
-                dur = time.perf_counter() - start
-                print(f"[AnnotationViewer._on_list_selection_changed] emitted_count={len(ids)} time={dur:.4f}s")
+
             else:
                 # emit empty selection
                 self._syncing_selection = True
@@ -1586,8 +1586,7 @@ class AnnotationViewerWindow(QWidget):
                     self.selection_changed.emit([])
                 finally:
                     self._syncing_selection = False
-                dur = time.perf_counter() - start
-                print(f"[AnnotationViewer._on_list_selection_changed] emitted_count=0 time={dur:.4f}s")
+
         except Exception:
             pass
     

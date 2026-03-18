@@ -2253,9 +2253,6 @@ class AnnotationWindow(QGraphicsView):
 
     def select_annotations_by_ids(self, annotation_ids, scroll_to_first=True, quiet_mode=True):
         """Select a batch of annotations by their IDs."""
-        if not annotation_ids:
-            return
-
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
         # Prevent selection feedback loops BEFORE clearing the existing selection
@@ -2264,29 +2261,42 @@ class AnnotationWindow(QGraphicsView):
         # Clear existing selection first
         self.unselect_annotations()
 
+        # --- Correctly handle empty selections by clearing the canvas ---
+        if not annotation_ids:
+            self._syncing_selection = False
+            self.viewport().update()
+            self._emit_selection_changed()
+            QApplication.restoreOverrideCursor()
+            return
+        # -----------------------------------------------------------------------
+
         annotations_dict = getattr(self, 'annotations_dict', {})
 
-        # --- Disable BSP indexing and block signals for speed ---
+        # Disable BSP indexing and block signals for speed
         if self.scene:
             self.scene.setItemIndexMethod(QGraphicsScene.NoIndex)
         self.blockSignals(True)
-        # -------------------------------------------------------------
 
         first_selected = None
         for ann_id in annotation_ids:
             ann = annotations_dict.get(ann_id)
             if not ann:
                 continue
+            
+            # --- Only select annotations belonging to the current image! ---
+            if ann.image_path != self.current_image_path:
+                continue
+            # ----------------------------------------------------------------------
+
             if first_selected is None:
                 first_selected = ann
             # Use bulk_mode to avoid per-item heavy UI updates
             self.select_annotation(ann, multi_select=True, quiet_mode=quiet_mode, bulk_mode=True)
 
-        # --- Restore indexing and signals ---
+        # Restore indexing and signals
         self.blockSignals(False)
         if self.scene:
             self.scene.setItemIndexMethod(QGraphicsScene.BspTreeIndex)
-        # -----------------------------------------
 
         self._syncing_selection = False
 
@@ -2334,7 +2344,6 @@ class AnnotationWindow(QGraphicsView):
     def unselect_annotations(self):
         """Unselect all currently selected annotations."""
         # Make cursor busy
-        start = time.perf_counter()
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
         # --- Disable BSP indexing ---
@@ -2379,8 +2388,6 @@ class AnnotationWindow(QGraphicsView):
         
         # Emit selection changed signal
         self._emit_selection_changed()
-        dur = time.perf_counter() - start
-        print(f"[AnnotationWindow.unselect_annotations] count_cleared={len(annotations_to_unselect)} time={dur:.4f}s")
     
     def _emit_selection_changed(self):
         """Emit the annotationSelectionChanged signal with current selection IDs."""
