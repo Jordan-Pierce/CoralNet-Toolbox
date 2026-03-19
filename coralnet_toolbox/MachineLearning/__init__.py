@@ -36,6 +36,11 @@ from .EvaluateModel.QtSemantic import Semantic as EvalSemantic
 from .MergeDatasets.QtClassify import Classify as MergeClassify
 from .OptimizeModel.QtBase import Base as Optimize
 
+from .TileDataset.QtClassify import Classify as TileClassifyDataset
+from .TileDataset.QtDetect import Detect as TileDetectDataset
+from .TileDataset.QtSegment import Segment as TileSegmentDataset
+from .TileDataset.QtSemantic import Semantic as TileSemanticDataset
+
 
 __all__ = [
     'get_available_configs',
@@ -63,8 +68,10 @@ __all__ = [
     'EvalDetect', 
     'EvalSegment',
     'EvalSemantic',
-    'TileDetect',
-    'TileSegment',
+    'TileClassifyDataset',
+    'TileDetectDataset',
+    'TileSegmentDataset',
+    'TileSemanticDataset',
     'MergeClassify', 
     'Optimize'
 ]

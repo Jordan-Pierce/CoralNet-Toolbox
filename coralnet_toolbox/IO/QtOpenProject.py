@@ -20,7 +20,7 @@ from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotati
 from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
 from coralnet_toolbox.Annotations.QtMaskAnnotation import MaskAnnotation
 
-from coralnet_toolbox.QtWorkArea import WorkArea
+from coralnet_toolbox.WorkArea import WorkArea
 
 from coralnet_toolbox.Common.QtUpdateImagePaths import UpdateImagePaths
 from coralnet_toolbox.QtProgressBar import ProgressBar

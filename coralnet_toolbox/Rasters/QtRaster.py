@@ -17,7 +17,7 @@ from PyQt5.QtCore import QObject, pyqtSignal
 
 from coralnet_toolbox.Annotations import MaskAnnotation
 
-from coralnet_toolbox.QtWorkArea import WorkArea
+from coralnet_toolbox.WorkArea import WorkArea
 
 from coralnet_toolbox.utilities import convert_scale_units
 from coralnet_toolbox.utilities import rasterio_open
@@ -1326,7 +1326,7 @@ class Raster(QObject):
         work_areas_list = raster_dict.get('work_areas', [])
         for work_area_data in work_areas_list:
             try:
-                from coralnet_toolbox.QtWorkArea import WorkArea
+                from coralnet_toolbox.WorkArea import WorkArea
                 work_area = WorkArea.from_dict(work_area_data, image_path)
                 raster.add_work_area(work_area)
             except Exception as e:

@@ -16,7 +16,7 @@ from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 
-from coralnet_toolbox.QtWorkArea import WorkArea
+from coralnet_toolbox.WorkArea import WorkArea
 from coralnet_toolbox.Common.QtMarginInput import MarginInput
 
 from coralnet_toolbox.QtProgressBar import ProgressBar

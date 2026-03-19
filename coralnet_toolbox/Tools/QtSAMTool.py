@@ -13,7 +13,7 @@ from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotati
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtMaskAnnotation import MaskAnnotation
 
-from coralnet_toolbox.QtWorkArea import WorkArea
+from coralnet_toolbox.WorkArea import WorkArea
 
 from coralnet_toolbox.utilities import pixmap_to_numpy
 from coralnet_toolbox.utilities import polygonize_mask_with_holes

@@ -19,7 +19,7 @@ from PyQt5.QtWidgets import (QApplication, QDialog, QWidget, QVBoxLayout,
                              QGraphicsLineItem, QFileDialog)
 
 from coralnet_toolbox.Tools.QtTool import Tool
-from coralnet_toolbox.QtWorkArea import WorkArea
+from coralnet_toolbox.WorkArea import WorkArea
 from coralnet_toolbox.Common.QtMarginInput import MarginInput
 
 from coralnet_toolbox.Icons import get_icon

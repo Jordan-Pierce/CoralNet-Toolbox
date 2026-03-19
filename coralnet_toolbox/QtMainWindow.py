@@ -9,11 +9,10 @@ from packaging import version
 import torch
 
 from PyQt5.QtGui import QMouseEvent
-from PyQt5.QtCore import Qt, pyqtSignal, QEvent
-from PyQt5.QtWidgets import QListWidget
+from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy,
                              QMessageBox, QWidget, QVBoxLayout, QLabel, QHBoxLayout,
-                             QSpinBox, QSlider, QDialog, QPushButton)
+                             QSpinBox, QSlider, QDialog, QPushButton, QListWidget)
 
 # Utilities
 from coralnet_toolbox.QtEventFilter import GlobalEventFilter
@@ -37,18 +36,9 @@ from coralnet_toolbox.MVAT import MVATViewer
 from coralnet_toolbox.MVAT import CameraGrid
 from coralnet_toolbox.MVAT import MVATManager
 
-
 # Other Dialogs
 from coralnet_toolbox.QtBatchInference import BatchInferenceDialog
-
-
-from coralnet_toolbox.Tile import (
-    TileClassifyDataset as ClassifyTileDatasetDialog,
-    TileDetectDataset as DetectTileDatasetDialog,
-    TileSegmentDataset as SegmentTileDatasetDialog,
-    TileSemanticDataset as SemanticTileDatasetDialog,
-    TileManager as TileManagerDialog,
-)
+from coralnet_toolbox.WorkArea import WorkAreaManager as WorkAreaManagerDialog
 
 # Import Dialogs
 # TODO update IO classes to have dialogs
@@ -104,7 +94,11 @@ from coralnet_toolbox.MachineLearning import (
     EvalSegment as SegmentEvaluateModelDialog,
     EvalSemantic as SemanticEvaluateModelDialog,
     MergeClassify as ClassifyMergeDatasetsDialog,
-    Optimize as OptimizeModelDialog
+    Optimize as OptimizeModelDialog,
+    TileClassifyDataset as ClassifyTileDatasetDialog,
+    TileDetectDataset as DetectTileDatasetDialog,
+    TileSegmentDataset as SegmentTileDatasetDialog,
+    TileSemanticDataset as SemanticTileDatasetDialog,
 )
 
 # SAM dialogs
@@ -336,8 +330,8 @@ class MainWindow(QMainWindow):
         # This is accessed via ImageWindow right-click context menu
         self.batch_inference_dialog = BatchInferenceDialog(self)
 
-        # Create dialogs (Tile)
-        self.tile_manager_dialog = TileManagerDialog(self)
+        # Create dialogs (Work Areas)
+        self.tile_manager_dialog = WorkAreaManagerDialog(self)
         self.classify_tile_dataset_dialog = ClassifyTileDatasetDialog(self)
         self.detect_tile_dataset_dialog = DetectTileDatasetDialog(self)
         self.segment_tile_dataset_dialog = SegmentTileDatasetDialog(self)
@@ -533,38 +527,10 @@ class MainWindow(QMainWindow):
         self.scale_action.triggered.connect(self.open_scale_dialog)
         self.utilities_menu.addAction(self.scale_action)
 
-        # Add a separator
-        self.utilities_menu.addSeparator()
-        
-        # Tile submenu
-        self.tile_menu = self.utilities_menu.addMenu("Tile")
-        
-        # Tile Creation
-        self.tile_manager_action = QAction("Tile Manager", self)
+        # Work Area Manager
+        self.tile_manager_action = QAction("Work Areas", self)
         self.tile_manager_action.triggered.connect(self.open_tile_manager_dialog)
-        self.tile_menu.addAction(self.tile_manager_action)
-        
-        # Add a separator
-        self.tile_menu.addSeparator()
-        
-        # Tile Dataset submenu
-        self.tile_dataset_menu = self.tile_menu.addMenu("Tile Dataset")
-        # Tile Classify Dataset
-        self.classify_tile_dataset_action = QAction("Classify", self)
-        self.classify_tile_dataset_action.triggered.connect(self.open_classify_tile_dataset_dialog)
-        self.tile_dataset_menu.addAction(self.classify_tile_dataset_action)
-        # Tile Detect Dataset
-        self.detect_tile_dataset_action = QAction("Detect", self)
-        self.detect_tile_dataset_action.triggered.connect(self.open_detect_tile_dataset_dialog)
-        self.tile_dataset_menu.addAction(self.detect_tile_dataset_action)
-        # Tile Segment Dataset
-        self.segment_tile_dataset_action = QAction("Segment", self)
-        self.segment_tile_dataset_action.triggered.connect(self.open_segment_tile_dataset_dialog)
-        self.tile_dataset_menu.addAction(self.segment_tile_dataset_action)
-        # Tile Semantic Dataset
-        self.semantic_tile_dataset_action = QAction("Semantic", self)
-        self.semantic_tile_dataset_action.triggered.connect(self.open_semantic_tile_dataset_dialog)
-        self.tile_dataset_menu.addAction(self.semantic_tile_dataset_action)
+        self.utilities_menu.addAction(self.tile_manager_action)
         
         # ========== AI-ASSIST MENU ==========
         # AI-Assist menu
@@ -608,6 +574,25 @@ class MainWindow(QMainWindow):
         self.ml_classify_merge_datasets_action = QAction("Classify", self)
         self.ml_classify_merge_datasets_action.triggered.connect(self.open_classify_merge_datasets_dialog)
         self.ml_merge_datasets_menu.addAction(self.ml_classify_merge_datasets_action)
+        
+        # Tile Dataset submenu
+        self.tile_dataset_menu = self.ml_menu.addMenu("Tile Dataset")
+        # Tile Classify Dataset
+        self.classify_tile_dataset_action = QAction("Classify", self)
+        self.classify_tile_dataset_action.triggered.connect(self.open_classify_tile_dataset_dialog)
+        self.tile_dataset_menu.addAction(self.classify_tile_dataset_action)
+        # Tile Detect Dataset
+        self.detect_tile_dataset_action = QAction("Detect", self)
+        self.detect_tile_dataset_action.triggered.connect(self.open_detect_tile_dataset_dialog)
+        self.tile_dataset_menu.addAction(self.detect_tile_dataset_action)
+        # Tile Segment Dataset
+        self.segment_tile_dataset_action = QAction("Segment", self)
+        self.segment_tile_dataset_action.triggered.connect(self.open_segment_tile_dataset_dialog)
+        self.tile_dataset_menu.addAction(self.segment_tile_dataset_action)
+        # Tile Semantic Dataset
+        self.semantic_tile_dataset_action = QAction("Semantic", self)
+        self.semantic_tile_dataset_action.triggered.connect(self.open_semantic_tile_dataset_dialog)
+        self.tile_dataset_menu.addAction(self.semantic_tile_dataset_action)
         
         # Tune Model submenu
         self.ml_tune_model_menu = self.ml_menu.addMenu("Tune Model")
@@ -1102,7 +1087,7 @@ class MainWindow(QMainWindow):
         # Add the Counts to the Bottom Area
         if hasattr(self.label_window, 'create_bottom_toolbar'):
             self.left_dock.add_toolbar(self.label_window.create_bottom_toolbar(), Qt.BottomToolBarArea)
-            
+                        
         # Setup Timer Dock (Left, below Labels) using DockWrapper
         self.timer_dock = DockWrapper(
             title="Timer Window", 
@@ -1146,7 +1131,7 @@ class MainWindow(QMainWindow):
         # Add the Bulk Action buttons to the Bottom Area
         if hasattr(self.image_window, 'create_action_toolbar'):
             self.right_dock.add_toolbar(self.image_window.create_action_toolbar(), Qt.BottomToolBarArea)
-
+            
         # Setup Confidence Dock (Right) using DockWrapper
         self.confidence_dock = DockWrapper(
             title="Confidence Window", 
@@ -1201,8 +1186,6 @@ class MainWindow(QMainWindow):
             main_widget=self.mvat_viewer,
             parent=self
         )
-        # if hasattr(self.mvat_viewer, 'create_bottom_toolbar'):
-        #     self.mvat_viewer_dock.add_toolbar(self.mvat_viewer.create_bottom_toolbar(), Qt.BottomToolBarArea)
 
         # Setup Camera Grid Dock (Bottom-right) using DockWrapper
         self.camera_grid_dock = DockWrapper(
