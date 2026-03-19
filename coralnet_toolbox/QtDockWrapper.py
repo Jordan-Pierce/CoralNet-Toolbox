@@ -1,148 +1,89 @@
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QCursor
-from PyQt5.QtWidgets import (QDockWidget, QMainWindow, QMenu, QMenuBar, 
-                             QToolBar, QWidget, QStatusBar, QSizePolicy)
+# Critial: order of imports matter
+import PyQt5.QtCore
+import PyQtAds
+from PyQtAds import ads
 
-# -----------------------------------------------------------------------------------------
-# Secondary Window Host 
-# -----------------------------------------------------------------------------------------
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import (QMenu, QMenuBar, QToolBar, QWidget, 
+                             QStatusBar, QSizePolicy, QVBoxLayout)
 
-class SecondaryDockHost(QMainWindow):
+# ----------------------------------------------------------------------------------------------------------------------
+# Classes
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+class DockWrapper(ads.CDockWidget):
     """
-    A temporary floating window that catches torn-off docks.
-    If it becomes empty, it automatically cleans itself up.
+    Safely encapsulates a widget inside an ADS dock without crashing the C++ layout engine.
+    Uses a standard QVBoxLayout to safely stack menus, toolbars, and the payload.
     """
-    def __init__(self, main_window_ref, parent=None):
-        super().__init__(parent)
-        self.main_app_window = main_window_ref
-        
-        self.setWindowFlags(Qt.Window)
-        self.setWindowTitle("Floating Workspace")
-        self.setDockNestingEnabled(True)
-        
-        # Zero-height central widget to yield all space to the docks
-        self.central_widget = QWidget()
-        self.central_widget.setFixedHeight(0)
-        self.setCentralWidget(self.central_widget)
-
-    def check_empty(self):
-        """Checks if there are any docks left in this host. If not, destroy it."""
-        docks = self.findChildren(QDockWidget)
-        if not docks:
-            self.deleteLater() # Safely destroy the empty shell
-
-    def closeEvent(self, event):
-        """If the user explicitly hits the red X on the host, send docks home."""
-        for dock in self.findChildren(QDockWidget):
-            self.main_app_window.addDockWidget(Qt.RightDockWidgetArea, dock)
-            dock.setFloating(False)
-        super().closeEvent(event)
-
-
-# -----------------------------------------------------------------------------------------
-# Main Wrapper Class
-# -----------------------------------------------------------------------------------------
-
-class DockWrapper(QDockWidget):
     def __init__(self, title: str, object_name: str, main_widget: QWidget, parent=None):
-        super().__init__(title, parent)
-        
-        # Store a hard reference to the original main window for snap-back detection
-        self.main_app_window = parent
+        # Do NOT pass parent here. ADS must take exclusive memory ownership.
+        super().__init__(title)
         
         self.setObjectName(object_name)
-        self.setAllowedAreas(Qt.AllDockWidgetAreas)
-        self.setFeatures(QDockWidget.DockWidgetMovable | 
-                         QDockWidget.DockWidgetFloatable | 
-                         QDockWidget.DockWidgetClosable)
+        self.setWindowTitle(title)
+        
+        self.setFeature(ads.CDockWidget.DockWidgetClosable, True)
+        self.setFeature(ads.CDockWidget.DockWidgetFloatable, True)
+        self.setFeature(ads.CDockWidget.DockWidgetMovable, True)
 
-        # Catch the exact moment the dock becomes floating (dropped outside its host)
-        self.topLevelChanged.connect(self._on_float_state_changed)
-
-        # -- UI Mounting (Your existing QMainWindow Trick) --
-        self.inner_window = QMainWindow()
-        self.inner_window.setWindowFlags(Qt.Widget) 
-        self.inner_window.setContentsMargins(0, 0, 0, 0)
+        # Use a simple QWidget + QVBoxLayout instead of QMainWindow
+        self.inner_widget = QWidget()
+        self.layout = QVBoxLayout(self.inner_widget)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(0) # Keeps toolbars flush against each other
         
         self.payload_widget = main_widget
-        self.inner_window.setCentralWidget(self.payload_widget)
-        self.setWidget(self.inner_window)
         
-        self.inner_window.setStyleSheet("""
+        # Add payload to layout. Toolbars and menus will be inserted ABOVE this dynamically.
+        self.layout.addWidget(self.payload_widget)
+        
+        # Mount the safe widget to the ADS Dock
+        self.setWidget(self.inner_widget)
+        
+        self.inner_widget.setStyleSheet("""
             QMenuBar { background-color: rgb(248, 249, 250); border-bottom: 1px solid #ddd; }
-            QToolBar { background-color: rgb(248, 249, 250); border: none; spacing: 4px; }
+            QToolBar { background-color: rgb(248, 249, 250); border: none; padding: 2px; }
         """)
 
-    # --- THE LIFECYCLE MAGIC ---
-
-    def _on_float_state_changed(self, is_floating: bool):
-        if is_floating:
-            # We must use a slight delay. When Qt emits this signal, the internal 
-            # C++ drag-and-drop state machine is still finishing. Reparenting 
-            # instantly will crash the UI.
-            QTimer.singleShot(10, self._handle_drop_location)
-
-    def _handle_drop_location(self):
-        # 1. Get the current global position of the mouse where they dropped it
-        cursor_pos = QCursor.pos()
-        
-        # Keep track of where we came from to clean up empty shells
-        previous_parent = self.parent()
-
-        # 2. THE SNAP BACK: Did they drop it over the main window?
-        # frameGeometry() gets the global screen coordinates of the main window
-        if self.main_app_window.frameGeometry().contains(cursor_pos):
-            self.setParent(self.main_app_window)
-            # Default it to the right side. The user can drag it again to place it precisely.
-            self.main_app_window.addDockWidget(Qt.RightDockWidgetArea, self)
-            self.setFloating(False)
-            
-            # Clean up the shell we just left
-            if isinstance(previous_parent, SecondaryDockHost):
-                previous_parent.check_empty()
-            return
-
-        # 3. THE WRAP: They dropped it on the desktop or second monitor
-        # If it's already in a secondary host, leave it alone (they just moved the floating dock)
-        if isinstance(previous_parent, SecondaryDockHost):
-            return
-
-        # Create a new secondary host exactly where they dropped it
-        new_host = SecondaryDockHost(self.main_app_window, parent=self.main_app_window)
-        new_host.move(self.pos())  # Move host to match the floating dock's position
-        new_host.resize(self.size())
-        
-        # Mount this dock into the new host
-        self.setParent(new_host)
-        new_host.addDockWidget(Qt.LeftDockWidgetArea, self)
-        self.setFloating(False) 
-        new_host.show()
-
-        # Clean up the shell we just left (in case they dragged from Host A to Desktop to make Host B)
-        if isinstance(previous_parent, SecondaryDockHost):
-            previous_parent.check_empty()
-
-    # --- YOUR EXISTING METHODS ---
+    # --- UI COMPONENT MOUNTING ---
     
     def add_menu(self, menu: QMenu):
         if not hasattr(self, '_local_menubar'):
-            self._local_menubar = QMenuBar(self.inner_window)
+            self._local_menubar = QMenuBar()
             self._local_menubar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            self.inner_window.setMenuWidget(self._local_menubar)
+            self._local_menubar.setStyleSheet("""
+                QMenuBar { color: black; }
+                QMenuBar::item { background-color: transparent; padding: 4px 8px; }
+                QMenuBar::item:selected { background-color: #e2e6ea; }
+            """)
+            # Insert menu at the absolute top (index 0)
+            self.layout.insertWidget(0, self._local_menubar)
+            
         if not hasattr(self, '_menus'):
             self._menus = []
         self._menus.append(menu)
-        menu.setParent(self._local_menubar)
         self._local_menubar.addMenu(menu)
 
     def add_toolbar(self, toolbar: QToolBar, area=Qt.TopToolBarArea):
-        self.inner_window.addToolBar(area, toolbar)
+        """Attaches a QToolBar to the dock, respecting Top or Bottom placement."""
+        if area == Qt.BottomToolBarArea:
+            # Append it to the layout so it sits below the payload widget
+            self.layout.addWidget(toolbar)
+        else:
+            # Insert it right above the payload widget
+            payload_index = self.layout.indexOf(self.payload_widget)
+            self.layout.insertWidget(payload_index, toolbar)
 
-    def add_toolbar_break(self, area=Qt.TopToolBarArea):
-        self.inner_window.addToolBarBreak(area)
+    def add_toolbar_break(self, area=None):
+        # QVBoxLayout stacks toolbars automatically, so "breaks" aren't strictly necessary,
+        # but you can add a small spacer line here if you want visual separation.
+        pass
 
     def set_status_bar(self, status_bar: QStatusBar):
-        self.inner_window.setStatusBar(status_bar)
+        # Add status bar to the absolute bottom (after the payload)
+        self.layout.addWidget(status_bar)
 
     def get_payload(self) -> QWidget:
         return self.payload_widget
@@ -150,15 +91,22 @@ class DockWrapper(QDockWidget):
     def update_title(self, new_title: str):
         self.setWindowTitle(new_title)
 
-    def set_locked(self, locked: bool = True):
-        if locked:
-            self.setFeatures(QDockWidget.NoDockWidgetFeatures)
-        else:
-            self.setFeatures(QDockWidget.DockWidgetMovable | 
-                             QDockWidget.DockWidgetFloatable | 
-                             QDockWidget.DockWidgetClosable)
+    def toggle_toolbars(self, visible: bool):
+        for toolbar in self.inner_widget.findChildren(QToolBar):
+            toolbar.setVisible(visible)
 
+    # --- LIFECYCLE EVENT FORWARDING ---
     def closeEvent(self, event):
         if hasattr(self.payload_widget, 'closeEvent'):
             self.payload_widget.closeEvent(event)
         super().closeEvent(event)
+
+    def showEvent(self, event):
+        if hasattr(self.payload_widget, 'showEvent'):
+            self.payload_widget.showEvent(event)
+        super().showEvent(event)
+
+    def hideEvent(self, event):
+        if hasattr(self.payload_widget, 'hideEvent'):
+            self.payload_widget.hideEvent(event)
+        super().hideEvent(event)

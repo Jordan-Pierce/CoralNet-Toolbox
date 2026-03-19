@@ -8,6 +8,11 @@ from packaging import version
 
 import torch
 
+# Important, order this way
+import PyQt5.QtCore
+import PyQtAds
+from PyQtAds import ads
+
 from PyQt5.QtGui import QMouseEvent
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy,
@@ -1044,219 +1049,153 @@ class MainWindow(QMainWindow):
         self.toolbar.addAction(self.device_tool_action)
 
         # --------------------------------------------------
-        # Setup Main Docking Layout (With Vacant Center Trick)
+        # 1. Initialize the Advanced Dock Manager
         # --------------------------------------------------
         
-        # 1. Bring back the blank central widget. This creates the permanent "void".
-        self.central_widget = QWidget()
-        # Force the dummy widget to be 0 pixels tall so it yields all vertical space
-        self.central_widget.setFixedHeight(0) 
-        # Expand horizontally to maintain the gap, but stay fixed vertically
-        self.central_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.setCentralWidget(self.central_widget)
-        self.setDockNestingEnabled(True)
-
-        # 2. The Qt Corner Trick: 
-        # Force the Left and Right dock areas to stretch all the way from the very top 
-        # of the window to the very bottom. This traps the Top and Bottom dock areas 
-        # strictly in the center column.
-        self.setCorner(Qt.TopLeftCorner, Qt.LeftDockWidgetArea)
-        self.setCorner(Qt.BottomLeftCorner, Qt.LeftDockWidgetArea)
-        self.setCorner(Qt.TopRightCorner, Qt.RightDockWidgetArea)
-        self.setCorner(Qt.BottomRightCorner, Qt.RightDockWidgetArea)
+        # Instantiate the ADS dock manager. This safely takes over the entire central area 
+        # of the QMainWindow without the need for empty dummy widgets or Qt corner tricks.
+        self.dock_manager = ads.CDockManager(self)
 
         # --------------------------------------------------
-        # Create the Docks & Containers
+        # 2. Create the Docks & Containers
         # --------------------------------------------------
         
         # Setup Label Dock (Left) using DockWrapper
-        self.left_dock = DockWrapper(
-            title="Label Window", 
-            object_name="LabelDock", 
-            main_widget=self.label_window, 
-            parent=self
-        )
-        # Add the Actions to the Top Area
+        self.left_dock = DockWrapper("Label Window", 
+                                     "LabelDock", 
+                                     self.label_window, 
+                                     self)
+        
         if hasattr(self.label_window, 'create_action_toolbar'):
-            self.left_dock.add_toolbar(self.label_window.create_action_toolbar(), Qt.TopToolBarArea)
-        # Add a line break so the next toolbar drops to row 2
-        self.left_dock.add_toolbar_break(Qt.TopToolBarArea)
-        # Add the Filter to the Top Area (Row 2)
+            self.left_dock.add_toolbar(self.label_window.create_action_toolbar())
+        self.left_dock.add_toolbar_break()
         if hasattr(self.label_window, 'create_filter_toolbar'):
-            self.left_dock.add_toolbar(self.label_window.create_filter_toolbar(), Qt.TopToolBarArea)
-        # Add the Counts to the Bottom Area
+            self.left_dock.add_toolbar(self.label_window.create_filter_toolbar())
         if hasattr(self.label_window, 'create_bottom_toolbar'):
-            self.left_dock.add_toolbar(self.label_window.create_bottom_toolbar(), Qt.BottomToolBarArea)
-                        
+            # Note: with the simplified QVBoxLayout in our updated DockWrapper, 
+            # all toolbars stack safely above the payload widget.
+            self.left_dock.add_toolbar(self.label_window.create_bottom_toolbar())
+            
         # Setup Timer Dock (Left, below Labels) using DockWrapper
-        self.timer_dock = DockWrapper(
-            title="Timer Window", 
-            object_name="TimerDock", 
-            main_widget=self.timer_window, 
-            parent=self
-        )
-        # Set the size policy to fixed vertically
-        self.timer_dock.setMaximumHeight(100)  # Set height
-        # Hide timer by default (don't show on startup)
-        self.timer_dock.hide()
+        self.timer_dock = DockWrapper("Timer Window", 
+                                      "TimerDock", 
+                                      self.timer_window, 
+                                      self)
+        # Note: Set height/width restrictions on the inner widget now, not the dock
+        self.timer_window.setMaximumHeight(100) 
 
         # Setup the Annotation Dock using DockWrapper
-        self.annotation_dock = DockWrapper(
-            title="Annotation Workspace", 
-            object_name="AnnotationDock", 
-            main_widget=self.annotation_window, 
-            parent=self
-        )
-        # Mount the fully-encapsulated toolbars
+        self.annotation_dock = DockWrapper("Annotation Workspace", 
+                                           "AnnotationDock", 
+                                           self.annotation_window, 
+                                           self)
+        
         if hasattr(self.annotation_window, 'create_top_toolbar'):
-            self.annotation_dock.add_toolbar(self.annotation_window.create_top_toolbar(), Qt.TopToolBarArea)
+            self.annotation_dock.add_toolbar(self.annotation_window.create_top_toolbar())
         if hasattr(self.annotation_window, 'create_bottom_toolbar'):
-            self.annotation_dock.add_toolbar(self.annotation_window.create_bottom_toolbar(), Qt.BottomToolBarArea)
+            self.annotation_dock.add_toolbar(self.annotation_window.create_bottom_toolbar())
 
         # Setup Image Dock (Right) using DockWrapper
-        self.right_dock = DockWrapper(
-            title="Image Window", 
-            object_name="ImageDock", 
-            main_widget=self.image_window, 
-            parent=self
-        )
-        # Add the Filter Form to the Top Area
+        self.right_dock = DockWrapper("Image Window", 
+                                      "ImageDock", 
+                                      self.image_window,
+                                      self)
+        
         if hasattr(self.image_window, 'create_filter_toolbar'):
-            self.right_dock.add_toolbar(self.image_window.create_filter_toolbar(), Qt.TopToolBarArea)
-        # Add a line break so the info labels drop to row 2
-        self.right_dock.add_toolbar_break(Qt.TopToolBarArea)
-        # Add the Info Labels to the Top Area (Row 2)
+            self.right_dock.add_toolbar(self.image_window.create_filter_toolbar())
+        self.right_dock.add_toolbar_break()
         if hasattr(self.image_window, 'create_info_toolbar'):
-            self.right_dock.add_toolbar(self.image_window.create_info_toolbar(), Qt.TopToolBarArea)
-        # Add the Bulk Action buttons to the Bottom Area
+            self.right_dock.add_toolbar(self.image_window.create_info_toolbar())
         if hasattr(self.image_window, 'create_action_toolbar'):
-            self.right_dock.add_toolbar(self.image_window.create_action_toolbar(), Qt.BottomToolBarArea)
-            
+            self.right_dock.add_toolbar(self.image_window.create_action_toolbar())
+
         # Setup Confidence Dock (Right) using DockWrapper
-        self.confidence_dock = DockWrapper(
-            title="Confidence Window", 
-            object_name="ConfidenceDock", 
-            main_widget=self.confidence_window, 
-            parent=self
-        )
+        self.confidence_dock = DockWrapper("Confidence Window", 
+                                           "ConfidenceDock", 
+                                           self.confidence_window, 
+                                           self)
         
         # Setup Performance Dock (Right) using DockWrapper
-        self.performance_dock = DockWrapper(
-            title="Performance Window",
-            object_name="PerformanceWindowDock",
-            main_widget=self.performance_window,
-            parent=self
-        )
-        # Set the size policy to fixed vertically
-        self.performance_dock.setMaximumHeight(125)  # Set height
+        self.performance_dock = DockWrapper("Performance Window", 
+                                            "PerformanceWindowDock",
+                                            self.performance_window, 
+                                            self)
+        
+        self.performance_window.setMaximumHeight(125) 
         
         # Setup Annotation Gallery Dock (Bottom) using DockWrapper
-        self.annotation_gallery_dock = DockWrapper(
-            title="Annotation Gallery",
-            object_name="AnnotationGalleryDock",
-            main_widget=self.annotation_viewer_window,
-            parent=self
-        )
-        # Add toolbars from the viewer window
+        self.annotation_gallery_dock = DockWrapper("Annotation Gallery", 
+                                                   "AnnotationGalleryDock",
+                                                   self.annotation_viewer_window,
+                                                   self)
+        
         if hasattr(self.annotation_viewer_window, 'create_top_toolbar'):
-            self.annotation_gallery_dock.add_toolbar(self.annotation_viewer_window.create_top_toolbar(), 
-                                                     Qt.TopToolBarArea)
+            self.annotation_gallery_dock.add_toolbar(self.annotation_viewer_window.create_top_toolbar())
         if hasattr(self.annotation_viewer_window, 'create_bottom_toolbar'):
-            self.annotation_gallery_dock.add_toolbar(self.annotation_viewer_window.create_bottom_toolbar(), 
-                                                     Qt.BottomToolBarArea)
+            self.annotation_gallery_dock.add_toolbar(self.annotation_viewer_window.create_bottom_toolbar())
 
         # Setup Embedding Viewer Dock (Bottom) using DockWrapper
-        self.embedding_viewer_dock = DockWrapper(
-            title="Embedding Viewer",
-            object_name="EmbeddingViewerDock",
-            main_widget=self.embedding_viewer_window,
-            parent=self
-        )
+        self.embedding_viewer_dock = DockWrapper("Embedding Viewer", 
+                                                 "EmbeddingViewerDock", 
+                                                 self.embedding_viewer_window, 
+                                                 self)
+        
         if hasattr(self.embedding_viewer_window, 'create_top_toolbar'):
-            self.embedding_viewer_dock.add_toolbar(self.embedding_viewer_window.create_top_toolbar(), 
-                                                   Qt.TopToolBarArea)
+            self.embedding_viewer_dock.add_toolbar(self.embedding_viewer_window.create_top_toolbar())
         if hasattr(self.embedding_viewer_window, 'create_bottom_toolbar'):
-            self.embedding_viewer_dock.add_toolbar(self.embedding_viewer_window.create_bottom_toolbar(), 
-                                                   Qt.BottomToolBarArea)
+            self.embedding_viewer_dock.add_toolbar(self.embedding_viewer_window.create_bottom_toolbar())
 
         # Setup MVAT Viewer Dock (Bottom-left) using DockWrapper
-        self.mvat_viewer_dock = DockWrapper(
-            title="3D Viewer",
-            object_name="MVATViewerDock",
-            main_widget=self.mvat_viewer,
-            parent=self
-        )
+        self.mvat_viewer_dock = DockWrapper("3D Viewer", "MVATViewerDock", self.mvat_viewer, self)
 
         # Setup Camera Grid Dock (Bottom-right) using DockWrapper
-        self.camera_grid_dock = DockWrapper(
-            title="Camera Grid",
-            object_name="CameraGridDock",
-            main_widget=self.camera_grid,
-            parent=self
-        )
+        self.camera_grid_dock = DockWrapper("Camera Grid", 
+                                            "CameraGridDock", 
+                                            self.camera_grid, 
+                                            self)
+        
         if hasattr(self.camera_grid, 'create_top_toolbar'):
-            self.camera_grid_dock.add_toolbar(self.camera_grid.create_top_toolbar(), Qt.TopToolBarArea)
+            self.camera_grid_dock.add_toolbar(self.camera_grid.create_top_toolbar())
 
         # --------------------------------------------------
-        # Explicitly arrange the docks on the screen
+        # 3. Explicitly arrange the docks using PyQtADS
         # --------------------------------------------------
 
-        # 3. Add the side docks to the right area: Image+Label tab group above Confidence
-        # Add Image dock first
-        self.addDockWidget(Qt.RightDockWidgetArea, self.right_dock)
-        # Add Confidence dock and split it under the Image dock so it sits below the tab group
-        self.addDockWidget(Qt.RightDockWidgetArea, self.confidence_dock)
-        self.splitDockWidget(self.right_dock, self.confidence_dock, Qt.Vertical)
-        # Add Performance dock under Confidence (hidden by default)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.performance_dock)
-        self.splitDockWidget(self.confidence_dock, self.performance_dock, Qt.Vertical)
-        # Now add the Label dock and tabify it with the Image dock (so Image/Label are tabs above Confidence)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.left_dock)
-        self.tabifyDockWidget(self.right_dock, self.left_dock)
+        # 1. Add Workspace dock first as the central anchor
+        workspace_area = self.dock_manager.addDockWidget(ads.TopDockWidgetArea, self.annotation_dock)
         
-        # 4. Add the Workspace dock to the TOP area.
-        self.addDockWidget(Qt.TopDockWidgetArea, self.annotation_dock)
+        # 2. Add Image dock to the Right of the WORKSPACE explicitly
+        right_area = self.dock_manager.addDockWidget(ads.RightDockWidgetArea, self.right_dock, workspace_area)
         
-        # 5. Add the Annotation Gallery dock to the Bottom area
-        self.addDockWidget(Qt.BottomDockWidgetArea, self.annotation_gallery_dock)
+        # 3. Add Confidence dock below the Image dock
+        conf_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.confidence_dock, right_area)
         
-        # 6. Add the Embedding Viewer dock next to the Annotation Gallery (under the Annotation workspace)
-        # Place both viewer docks in the Bottom area and split them horizontally
-        self.addDockWidget(Qt.BottomDockWidgetArea, self.embedding_viewer_dock)
-        try:
-            self.splitDockWidget(self.annotation_gallery_dock, self.embedding_viewer_dock, Qt.Horizontal)
-            # Make them approximately equal width
-            self.resizeDocks([self.annotation_gallery_dock, self.embedding_viewer_dock], [600, 600], Qt.Horizontal)
-        except Exception:
-            pass
-
-        # 7. Place the MVAT Viewer under the Annotation Gallery (left bottom column)
-        try:
-            self.addDockWidget(Qt.BottomDockWidgetArea, self.mvat_viewer_dock)
-            self.splitDockWidget(self.annotation_gallery_dock, self.mvat_viewer_dock, Qt.Vertical)
-        except Exception:
-            pass
-
-        # 8. Place the Camera Grid under the Embedding Viewer (right bottom column)
-        try:
-            self.addDockWidget(Qt.BottomDockWidgetArea, self.camera_grid_dock)
-            self.splitDockWidget(self.embedding_viewer_dock, self.camera_grid_dock, Qt.Vertical)
-        except Exception:
-            pass
-
-        # 9. Place the Timer under the Confidence/Performance area and tabify it with Performance
-        # Timer is hidden by default.
-        self.addDockWidget(Qt.RightDockWidgetArea, self.timer_dock)
-        try:
-            self.tabifyDockWidget(self.performance_dock, self.timer_dock)
-        except Exception:
-            pass
-
-        # 10. Shrink the default width of the side docks.
-        self.resizeDocks([self.left_dock, self.right_dock], [800, 800], Qt.Horizontal)
+        # 4. Add Performance dock below Confidence
+        perf_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.performance_dock, conf_area)
         
-        # Give the Workspace dock the absolute maximum vertical space available
-        self.resizeDocks([self.annotation_dock], [2000], Qt.Vertical)
+        # 5. TAB the Label dock INSIDE the Image dock 
+        # (ADS tabs widgets automatically when dropped into the Center area of an existing dock)
+        self.dock_manager.addDockWidget(ads.CenterDockWidgetArea, self.left_dock, right_area)
+        
+        # 6. Add Annotation Gallery to the Bottom of the WORKSPACE explicitly
+        gallery_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, 
+                                                       self.annotation_gallery_dock, 
+                                                       workspace_area)
+        
+        # 7. Add Embedding Viewer to the Right of the Annotation Gallery
+        embed_area = self.dock_manager.addDockWidget(ads.RightDockWidgetArea, 
+                                                     self.embedding_viewer_dock, 
+                                                     gallery_area)
+
+        # 8. Place the MVAT Viewer below the Annotation Gallery
+        self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.mvat_viewer_dock, gallery_area)
+
+        # 9. Place Camera Grid below Embedding Viewer
+        self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.camera_grid_dock, embed_area)
+
+        # 10. TAB the Timer dock into Performance, but hide it initially
+        self.dock_manager.addDockWidget(ads.CenterDockWidgetArea, self.timer_dock, perf_area)
+        self.timer_dock.toggleView(False)
         
         # --------------------------------------------------
         # Enable drag and drop
