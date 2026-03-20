@@ -24,7 +24,7 @@ from coralnet_toolbox.QtEventFilter import GlobalEventFilter
 from coralnet_toolbox.QtAnimationManager import AnimationManager
 from coralnet_toolbox.QtPerformanceWindow import PerformanceWindow
 from coralnet_toolbox.QtTimerWindow import TimerWindow
-from coralnet_toolbox.QtLayoutManager import QtLayoutManager
+from coralnet_toolbox.Layout import QtLayoutManager
 
 # Main Windows
 from coralnet_toolbox.QtAnnotationWindow import AnnotationWindow
@@ -126,7 +126,7 @@ from coralnet_toolbox.CoralNet import (
     DownloadDialog as CoralNetDownloadDialog
 )
 
-from coralnet_toolbox.QtDockWrapper import DockWrapper
+from coralnet_toolbox.Layout import DockWrapper
 
 from coralnet_toolbox.Common import (
     CollapsibleSection,
