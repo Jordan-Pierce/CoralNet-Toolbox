@@ -1083,7 +1083,7 @@ class MainWindow(QMainWindow):
             margin-top: 2px; /* Pushes inactive tabs down so they don't protrude */
             font-weight: 500;
             min-width: 100px;
-            max-width: 350px;
+            max-width: 600px;
             }
 
             /* Slight highlight when hovering over inactive tabs */
@@ -1101,7 +1101,7 @@ class MainWindow(QMainWindow):
             margin-top: 0px; /* Zero margin pulls it flush to the top, making it protrude */
             padding: 4px 12px;
             min-width: 100px;
-            max-width: 350px;
+            max-width: 600px;
             }
 
             /* Active tab on hover - slightly darker cyan */
@@ -1153,8 +1153,7 @@ class MainWindow(QMainWindow):
         self.label_dock = DockWrapper("Label Window", 
                                       "LabelDock", 
                                       self.label_window, 
-                                      self,
-                                      self.coralnet_icon)
+                                      self)
         
         if hasattr(self.label_window, 'create_action_toolbar'):
             self.label_dock.add_toolbar(self.label_window.create_action_toolbar())
@@ -1162,35 +1161,30 @@ class MainWindow(QMainWindow):
         if hasattr(self.label_window, 'create_filter_toolbar'):
             self.label_dock.add_toolbar(self.label_window.create_filter_toolbar())
         if hasattr(self.label_window, 'create_bottom_toolbar'):
-            # Note: with the simplified QVBoxLayout in our updated DockWrapper, 
-            # all toolbars stack safely above the payload widget.
-            self.label_dock.add_toolbar(self.label_window.create_bottom_toolbar())
+            self.label_dock.add_toolbar(self.label_window.create_bottom_toolbar(), Qt.BottomToolBarArea)
             
         # Setup Timer Dock (Left, below Labels) using DockWrapper
         self.timer_dock = DockWrapper("Timer Window", 
                                       "TimerDock", 
                                       self.timer_window, 
-                                      self,
-                                      self.coralnet_icon)
+                                      self)
 
         # Setup the Annotation Dock using DockWrapper
         self.annotation_dock = DockWrapper("Annotation Workspace", 
                                            "AnnotationDock", 
                                            self.annotation_window, 
-                                           self,
-                                           self.coralnet_icon)
+                                           self)
         
         if hasattr(self.annotation_window, 'create_top_toolbar'):
             self.annotation_dock.add_toolbar(self.annotation_window.create_top_toolbar())
         if hasattr(self.annotation_window, 'create_bottom_toolbar'):
-            self.annotation_dock.add_toolbar(self.annotation_window.create_bottom_toolbar())
+            self.annotation_dock.add_toolbar(self.annotation_window.create_bottom_toolbar(), Qt.BottomToolBarArea)
 
         # Setup Image Dock using DockWrapper
         self.image_dock = DockWrapper("Image Window", 
                                       "ImageDock", 
                                       self.image_window, 
-                                      self,
-                                      self.coralnet_icon)
+                                      self)
         
         if hasattr(self.image_window, 'create_filter_toolbar'):
             self.image_dock.add_toolbar(self.image_window.create_filter_toolbar())
@@ -1204,49 +1198,48 @@ class MainWindow(QMainWindow):
         self.confidence_dock = DockWrapper("Confidence Window", 
                                            "ConfidenceDock", 
                                            self.confidence_window, 
-                                           self,
-                                           self.coralnet_icon)
+                                           self)
         
         # Setup Performance Dock (Right) using DockWrapper
         self.performance_dock = DockWrapper("Performance Window", 
                                             "PerformanceWindowDock",
                                             self.performance_window, 
-                                            self,
-                                            self.coralnet_icon)
+                                            self)
                 
         # Setup Annotation Gallery Dock (Bottom) using DockWrapper
         self.annotation_gallery_dock = DockWrapper("Annotation Gallery", 
                                                    "AnnotationGalleryDock",
                                                    self.annotation_viewer_window,
-                                                   self,
-                                                   self.coralnet_icon)
+                                                   self)
         
         if hasattr(self.annotation_viewer_window, 'create_top_toolbar'):
             self.annotation_gallery_dock.add_toolbar(self.annotation_viewer_window.create_top_toolbar())
         if hasattr(self.annotation_viewer_window, 'create_bottom_toolbar'):
-            self.annotation_gallery_dock.add_toolbar(self.annotation_viewer_window.create_bottom_toolbar())
+            self.annotation_gallery_dock.add_toolbar(
+                self.annotation_viewer_window.create_bottom_toolbar(),
+                Qt.BottomToolBarArea)
 
         # Setup Embedding Viewer Dock (Bottom) using DockWrapper
         self.embedding_viewer_dock = DockWrapper("Embedding Viewer", 
                                                  "EmbeddingViewerDock", 
                                                  self.embedding_viewer_window, 
-                                                 self,
-                                                 self.coralnet_icon)
+                                                 self)
         
         if hasattr(self.embedding_viewer_window, 'create_top_toolbar'):
             self.embedding_viewer_dock.add_toolbar(self.embedding_viewer_window.create_top_toolbar())
         if hasattr(self.embedding_viewer_window, 'create_bottom_toolbar'):
-            self.embedding_viewer_dock.add_toolbar(self.embedding_viewer_window.create_bottom_toolbar())
+            self.embedding_viewer_dock.add_toolbar(
+                self.embedding_viewer_window.create_bottom_toolbar(),
+                Qt.BottomToolBarArea)
 
         # Setup MVAT Viewer Dock (Bottom-left) using DockWrapper
-        self.mvat_viewer_dock = DockWrapper("3D Viewer", "MVATViewerDock", self.mvat_viewer, self, self.coralnet_icon)
+        self.mvat_viewer_dock = DockWrapper("3D Viewer", "MVATViewerDock", self.mvat_viewer, self)
 
         # Setup Camera Grid Dock (Bottom-right) using DockWrapper
         self.camera_grid_dock = DockWrapper("Camera Grid", 
                                             "CameraGridDock", 
                                             self.camera_grid, 
-                                            self,
-                                            self.coralnet_icon)
+                                            self)
         
         if hasattr(self.camera_grid, 'create_top_toolbar'):
             self.camera_grid_dock.add_toolbar(self.camera_grid.create_top_toolbar())

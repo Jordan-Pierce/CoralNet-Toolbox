@@ -24,6 +24,13 @@ class DockWrapper(ads.CDockWidget):
         self.setObjectName(object_name)
         self.setWindowTitle(title)
         
+        # If icon not provided, try to get it from parent (MainWindow)
+        if icon is None and parent is not None and hasattr(parent, 'coralnet_icon'):
+            icon = parent.coralnet_icon
+        
+        # Store icon reference to prevent garbage collection
+        self._window_icon = icon
+        
         # Set window icon if provided (displays when dock is floated)
         if icon is not None:
             self.setWindowIcon(icon)
