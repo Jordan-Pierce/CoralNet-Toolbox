@@ -1,6 +1,6 @@
 # Critial: order of imports matter
-import PyQt5.QtCore
-import PyQtAds
+import PyQt5.QtCore  # noqa: F401
+import PyQtAds  # noqa: F401
 from PyQtAds import ads
 
 from PyQt5.QtCore import Qt
@@ -24,6 +24,9 @@ class DockWrapper(ads.CDockWidget):
         self.setObjectName(object_name)
         self.setWindowTitle(title)
         
+        # Store parent reference for potential icon updates
+        self._parent = parent
+        
         # If icon not provided, try to get it from parent (MainWindow)
         if icon is None and parent is not None and hasattr(parent, 'coralnet_icon'):
             icon = parent.coralnet_icon
@@ -34,6 +37,8 @@ class DockWrapper(ads.CDockWidget):
         # Set window icon if provided (displays when dock is floated)
         if icon is not None:
             self.setWindowIcon(icon)
+            # Also set it on the dock widget itself for floating windows
+            self.setWindowIconText(title)
         
         self.setFeature(ads.CDockWidget.DockWidgetClosable, True)
         self.setFeature(ads.CDockWidget.DockWidgetFloatable, True)
@@ -46,7 +51,7 @@ class DockWrapper(ads.CDockWidget):
         self.inner_widget = QWidget()
         self.layout = QVBoxLayout(self.inner_widget)
         self.layout.setContentsMargins(0, 0, 0, 0)
-        self.layout.setSpacing(0) # Keeps toolbars flush against each other
+        self.layout.setSpacing(0)  # Keeps toolbars flush against each other
         
         self.payload_widget = main_widget
         
@@ -116,6 +121,9 @@ class DockWrapper(ads.CDockWidget):
         super().closeEvent(event)
 
     def showEvent(self, event):
+        # Reapply icon when showing (important for floating windows)
+        if self._window_icon is not None:
+            self.setWindowIcon(self._window_icon)
         if hasattr(self.payload_widget, 'showEvent'):
             self.payload_widget.showEvent(event)
         super().showEvent(event)
