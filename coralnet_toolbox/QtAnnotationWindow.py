@@ -2025,8 +2025,6 @@ class AnnotationWindow(QGraphicsView):
         # Create and return a QRectF object from these points
         return QRectF(top_left, bottom_right)
 
-    
-
     def animate_to_rect(self, target_rect: QRectF, duration: int = 500, max_zoom: float = 4.0):
         """Smoothly animate the view center and zoom to fit `target_rect`.
 
