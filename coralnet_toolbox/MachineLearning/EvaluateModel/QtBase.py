@@ -16,7 +16,6 @@ from PyQt5.QtWidgets import (QFileDialog, QMessageBox, QVBoxLayout,
                              QDoubleSpinBox)
 
 from coralnet_toolbox.MachineLearning.Callbacks import EvaluationSignalEmitter
-from coralnet_toolbox.MachineLearning.Callbacks import create_evaluation_callbacks
 from coralnet_toolbox.MachineLearning.ConfusionMatrix import ConfusionMatrixMetrics
 
 from coralnet_toolbox.Icons import get_icon
@@ -85,9 +84,12 @@ class EvaluateModelWorker(QThread):
             # Evaluate the model
             results = self.model.val(**self.params)
 
-            # Output confusion matrix metrics as json
-            metrics = ConfusionMatrixMetrics(results, self.model.names)
-            metrics.save_results(save_dir)
+            try:
+                # Output confusion matrix metrics as json
+                metrics = ConfusionMatrixMetrics(results, self.model.names)
+                metrics.save_results(save_dir)
+            except Exception as e:
+                print(f"Error saving confusion matrix metrics: {e}")
             
             # Emit final metrics
             metrics_dict = {}

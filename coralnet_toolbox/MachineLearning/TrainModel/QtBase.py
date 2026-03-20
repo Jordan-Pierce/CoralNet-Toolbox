@@ -50,13 +50,13 @@ class TrainModelWorker(QThread):
         training_completed: Emitted when the training completes.
         training_error: Emitted when an error occurs during training.
         training_status: Emitted with status message updates.
-        epoch_completed: Emitted at end of each epoch with (epoch, total_epochs, loss, lr).
+        epoch_completed: Emitted at end of each epoch with (epoch, total_epochs, losses_dict, lr).
     """
     training_started = pyqtSignal()
     training_completed = pyqtSignal()
     training_error = pyqtSignal(str)
     training_status = pyqtSignal(str)
-    epoch_completed = pyqtSignal(int, int, float, float)
+    epoch_completed = pyqtSignal(int, int, dict, float)
 
     def __init__(self, params, device):
         """
@@ -1015,18 +1015,25 @@ class Base(QDialog):
         if hasattr(self.main_window, 'statusBar'):
             self.main_window.statusBar().showMessage(message, 5000)  # Show for 5 seconds
     
-    def on_epoch_completed(self, epoch, total_epochs, loss, lr):
+    def on_epoch_completed(self, epoch, total_epochs, losses_dict, lr):
         """
         Handle end of training epoch.
 
         Args:
             epoch (int): Current epoch number (1-indexed).
             total_epochs (int): Total number of epochs.
-            loss (float): Current loss value.
+            losses_dict (dict): Dictionary of loss/metric values.
             lr (float): Current learning rate.
         """
         # Update MainWindow status bar with detailed progress
-        message = f"Epoch {epoch}/{total_epochs} - Loss: {loss:.4f} - LR: {lr:.6f}"
+        # Show first loss value or combined summary
+        if losses_dict:
+            loss_str = ", ".join([f"{k}: {v}" for k, v in list(losses_dict.items())[:3]])
+            if len(losses_dict) > 3:
+                loss_str += f", +{len(losses_dict) - 3} more"
+            message = f"Epoch {epoch}/{total_epochs} - {loss_str} - LR: {lr:.6f}"
+        else:
+            message = f"Epoch {epoch}/{total_epochs} - LR: {lr:.6f}"
         if hasattr(self.main_window, 'statusBar'):
             self.main_window.statusBar().showMessage(message, 5000)
 
