@@ -1082,7 +1082,7 @@ class MainWindow(QMainWindow):
             padding: 2px 12px;
             color: #666666;
             margin-top: 2px; /* Pushes inactive tabs down so they don't protrude */
-            font-weight: 500;
+            font-weight: 700;
             min-width: 100px;
             max-width: 600px;
             }
@@ -1098,7 +1098,7 @@ class MainWindow(QMainWindow):
             background-color: #00A8E6; /* Bright, vibrant cyan */
             border: none;
             color: #ffffff; /* Pure white text for maximum contrast */
-            font-weight: 600; /* Bold for prominence */
+            font-weight: 800; /* Bold for prominence */
             margin-top: 0px; /* Zero margin pulls it flush to the top, making it protrude */
             padding: 4px 12px;
             min-width: 100px;
