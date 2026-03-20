@@ -1150,31 +1150,8 @@ class MainWindow(QMainWindow):
         # 2. Create the Docks & Containers
         # --------------------------------------------------
         
-        # Setup Label Dock using DockWrapper
-        self.label_dock = DockWrapper("Labels", 
-                                      "LabelDock", 
-                                      self.label_window, 
-                                      self)
-        
-        if hasattr(self.label_window, 'create_action_toolbar'):
-            self.label_dock.add_toolbar(self.label_window.create_action_toolbar())
-        self.label_dock.add_toolbar_break()
-        if hasattr(self.label_window, 'create_filter_toolbar'):
-            self.label_dock.add_toolbar(self.label_window.create_filter_toolbar())
-        if hasattr(self.label_window, 'create_bottom_toolbar'):
-            self.label_dock.add_toolbar(self.label_window.create_bottom_toolbar(), Qt.BottomToolBarArea)
-            
-        # Setup Timer Dock (Left, below Labels) using DockWrapper
-        self.timer_dock = DockWrapper("Timer", 
-                                      "TimerDock", 
-                                      self.timer_window, 
-                                      self)
-
         # Setup the Annotation Dock using DockWrapper
-        self.annotation_dock = DockWrapper("Annotation", 
-                                           "AnnotationDock", 
-                                           self.annotation_window, 
-                                           self)
+        self.annotation_dock = DockWrapper("Annotation", "AnnotationDock", self.annotation_window, self)
         
         if hasattr(self.annotation_window, 'create_top_toolbar'):
             self.annotation_dock.add_toolbar(self.annotation_window.create_top_toolbar())
@@ -1182,121 +1159,111 @@ class MainWindow(QMainWindow):
             self.annotation_dock.add_toolbar(self.annotation_window.create_bottom_toolbar(), Qt.BottomToolBarArea)
 
         # Setup Image Dock using DockWrapper
-        self.image_dock = DockWrapper("Rasters", 
-                                      "ImageDock", 
-                                      self.image_window, 
-                                      self)
+        self.rasters_dock = DockWrapper("Rasters", "RastersDock", self.image_window, self)
         
         if hasattr(self.image_window, 'create_filter_toolbar'):
-            self.image_dock.add_toolbar(self.image_window.create_filter_toolbar())
-        self.image_dock.add_toolbar_break()
+            self.rasters_dock.add_toolbar(self.image_window.create_filter_toolbar())
+        self.rasters_dock.add_toolbar_break()
         if hasattr(self.image_window, 'create_info_toolbar'):
-            self.image_dock.add_toolbar(self.image_window.create_info_toolbar())
+            self.rasters_dock.add_toolbar(self.image_window.create_info_toolbar())
         if hasattr(self.image_window, 'create_action_toolbar'):
-            self.image_dock.add_toolbar(self.image_window.create_action_toolbar())
+            self.rasters_dock.add_toolbar(self.image_window.create_action_toolbar())
 
+        # Setup Label Dock using DockWrapper
+        self.labels_dock = DockWrapper("Labels", "LabelsDock",  self.label_window, self)
+        
+        if hasattr(self.label_window, 'create_action_toolbar'):
+            self.labels_dock.add_toolbar(self.label_window.create_action_toolbar())
+        self.labels_dock.add_toolbar_break()
+        if hasattr(self.label_window, 'create_filter_toolbar'):
+            self.labels_dock.add_toolbar(self.label_window.create_filter_toolbar())
+        if hasattr(self.label_window, 'create_bottom_toolbar'):
+            self.labels_dock.add_toolbar(self.label_window.create_bottom_toolbar(), Qt.BottomToolBarArea)
+            
         # Setup Confidence Dock (Right) using DockWrapper
-        self.confidence_dock = DockWrapper("Confidence", 
-                                           "ConfidenceDock", 
-                                           self.confidence_window, 
-                                           self)
+        self.confidence_dock = DockWrapper("Confidence", "ConfidenceDock", self.confidence_window, self)
         
         # Setup Performance Dock (Right) using DockWrapper
-        self.performance_dock = DockWrapper("Performance", 
-                                            "PerformanceWindowDock",
-                                            self.performance_window, 
-                                            self)
+        self.performance_dock = DockWrapper("Performance", "PerformanceDock", self.performance_window, self)
+
+        # Setup Timer Dock (Left, below Labels) using DockWrapper
+        self.timer_dock = DockWrapper("Timer", "TimerDock", self.timer_window, self)
                 
         # Setup Annotation Gallery Dock (Bottom) using DockWrapper
-        self.annotation_gallery_dock = DockWrapper("Gallery", 
-                                                   "AnnotationGalleryDock",
-                                                   self.annotation_viewer_window,
-                                                   self)
+        self.gallery_dock = DockWrapper("Gallery", "GalleryDock", self.annotation_viewer_window, self)
         
         if hasattr(self.annotation_viewer_window, 'create_top_toolbar'):
-            self.annotation_gallery_dock.add_toolbar(self.annotation_viewer_window.create_top_toolbar())
+            self.gallery_dock.add_toolbar(self.annotation_viewer_window.create_top_toolbar())
         if hasattr(self.annotation_viewer_window, 'create_bottom_toolbar'):
-            self.annotation_gallery_dock.add_toolbar(
+            self.gallery_dock.add_toolbar(
                 self.annotation_viewer_window.create_bottom_toolbar(),
                 Qt.BottomToolBarArea)
 
         # Setup Embedding Viewer Dock (Bottom) using DockWrapper
-        self.embedding_viewer_dock = DockWrapper("Embeddings", 
-                                                 "EmbeddingViewerDock", 
-                                                 self.embedding_viewer_window, 
-                                                 self)
+        self.embeddings_dock = DockWrapper("Embeddings", "EmbeddingsDock", self.embedding_viewer_window, self)
         
         if hasattr(self.embedding_viewer_window, 'create_top_toolbar'):
-            self.embedding_viewer_dock.add_toolbar(self.embedding_viewer_window.create_top_toolbar())
+            self.embeddings_dock.add_toolbar(self.embedding_viewer_window.create_top_toolbar())
         if hasattr(self.embedding_viewer_window, 'create_bottom_toolbar'):
-            self.embedding_viewer_dock.add_toolbar(
+            self.embeddings_dock.add_toolbar(
                 self.embedding_viewer_window.create_bottom_toolbar(),
                 Qt.BottomToolBarArea)
 
         # Setup MVAT Viewer Dock (Bottom-left) using DockWrapper
-        self.mvat_viewer_dock = DockWrapper("3D Viewer", "MVATViewerDock", self.mvat_viewer, self)
+        self.mvat_dock = DockWrapper("3D Viewer", "3DViewerDock", self.mvat_viewer, self)
 
         # Setup Camera Grid Dock (Bottom-right) using DockWrapper
-        self.camera_grid_dock = DockWrapper("Grid", 
-                                            "CameraGridDock", 
-                                            self.camera_grid, 
-                                            self)
+        self.grid_dock = DockWrapper("Grid", "GridDock", self.camera_grid, self)
         
         if hasattr(self.camera_grid, 'create_top_toolbar'):
-            self.camera_grid_dock.add_toolbar(self.camera_grid.create_top_toolbar())
+            self.grid_dock.add_toolbar(self.camera_grid.create_top_toolbar())
 
         # --------------------------------------------------
         # 3. Explicitly arrange the docks using PyQtADS
         # --------------------------------------------------
 
         # 1. Add Workspace dock first as the central anchor
-        workspace_area = self.dock_manager.addDockWidget(ads.TopDockWidgetArea, self.annotation_dock)
+        annotation_area = self.dock_manager.addDockWidget(ads.TopDockWidgetArea, self.annotation_dock)
         
-        # 2. Add Image dock to the Right of the WORKSPACE explicitly
-        right_area = self.dock_manager.addDockWidget(ads.RightDockWidgetArea, self.image_dock, workspace_area)
+        # 2. Add Image dock to the right of the Annotation dock
+        raster_area = self.dock_manager.addDockWidget(ads.RightDockWidgetArea, self.rasters_dock, annotation_area)
         
-        # 3. Add Confidence dock below the Image dock
-        conf_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.confidence_dock, right_area)
+        # 3. Add Label dock below the Image dock 
+        label_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.labels_dock, raster_area)
+
+        # 3. Add Confidence dock below the Label dock
+        conf_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.confidence_dock, label_area)
         
         # 4. Add Performance dock below Confidence
         perf_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.performance_dock, conf_area)
-        
-        # 5. TAB the Label dock INSIDE the Image dock 
-        # (ADS tabs widgets automatically when dropped into the Center area of an existing dock)
-        self.dock_manager.addDockWidget(ads.CenterDockWidgetArea, self.label_dock, right_area)
+
+        # 5. TAB the Timer dock into Performance, but hide it initially
+        timer_area = self.dock_manager.addDockWidget(ads.CenterDockWidgetArea, self.timer_dock, perf_area)
         
         # 6. Add Annotation Gallery to the Bottom of the WORKSPACE explicitly
-        gallery_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, 
-                                                       self.annotation_gallery_dock, 
-                                                       workspace_area)
+        gallery_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.gallery_dock, annotation_area)
         
         # 7. Add Embedding Viewer to the Right of the Annotation Gallery
-        embed_area = self.dock_manager.addDockWidget(ads.RightDockWidgetArea, 
-                                                     self.embedding_viewer_dock, 
-                                                     gallery_area)
+        embed_area = self.dock_manager.addDockWidget(ads.RightDockWidgetArea, self.embeddings_dock, gallery_area)
 
         # 8. Place the MVAT Viewer below the Annotation Gallery
-        self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.mvat_viewer_dock, gallery_area)
+        mvat_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.mvat_dock, gallery_area)
 
         # 9. Place Camera Grid below Embedding Viewer
-        self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.camera_grid_dock, embed_area)
-
-        # 10. TAB the Timer dock into Performance, but hide it initially
-        self.dock_manager.addDockWidget(ads.CenterDockWidgetArea, self.timer_dock, perf_area)
-        self.timer_dock.toggleView(False)
+        grid_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.grid_dock, embed_area)
         
         # Populate the Windows menu with dock toggle actions
         dock_windows = [
             ("Annotation", self.annotation_dock),
-            ("Rasters", self.image_dock),
-            ("Labels", self.label_dock),
+            ("Rasters", self.rasters_dock),
+            ("Labels", self.labels_dock),
             ("Confidence", self.confidence_dock),
             ("Performance", self.performance_dock),
             ("Timer", self.timer_dock),
-            ("Gallery", self.annotation_gallery_dock),
-            ("Embeddings", self.embedding_viewer_dock),
-            ("3D Viewer", self.mvat_viewer_dock),
-            ("Grid", self.camera_grid_dock),
+            ("Gallery", self.gallery_dock),
+            ("Embeddings", self.embeddings_dock),
+            ("3D Viewer", self.mvat_dock),
+            ("Grid", self.grid_dock),
         ]
 
         for dock_name, dock_widget in dock_windows:
