@@ -17,10 +17,19 @@ class CacheManager:
     """
     Manages storing and retrieving annotation features for MULTIPLE models
     using a single SQLite database and multiple, model-specific FAISS indexes.
+    
+    Cache files stored in .cache/embedding/ directory.
     """
-    def __init__(self, db_path='cache_manager.db', index_path_base='features'):
-        self.db_path = db_path
-        self.index_path_base = index_path_base  # Base name for index files, e.g., 'features'
+    CACHE_SUBDIR = '.cache/embedding'
+    
+    def __init__(self, db_path='manager.db', index_path_base='features'):
+        # Ensure cache directory exists
+        os.makedirs(self.CACHE_SUBDIR, exist_ok=True)
+        
+        # Prepend cache directory to paths
+        self.db_path = os.path.join(self.CACHE_SUBDIR, db_path)
+        self.index_path_base = os.path.join(self.CACHE_SUBDIR, index_path_base)
+        
         # Note: do NOT keep a long-lived sqlite3 connection here — sqlite3
         # connections are thread-affine. Open connections per-call instead.
         self._create_table()

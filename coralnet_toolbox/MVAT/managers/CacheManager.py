@@ -19,7 +19,7 @@ class CacheManager:
     """
     Manages persistent caching of visibility data (index maps and visible indices).
     
-    Cache files are stored in `.mvat_cache/visibility/` relative to the project root.
+    Cache files are stored in `.cache/mvat/` relative to the project root.
     Each cache file is named using an MD5 hash of the camera extrinsics and point cloud path.
     """
     
@@ -31,7 +31,7 @@ class CacheManager:
             project_root (str): Root directory of the project where cache will be stored.
         """
         self.project_root = project_root
-        self.cache_dir = os.path.join(project_root, '.mvat_cache', 'visibility')
+        self.cache_dir = os.path.join(project_root, '.cache', 'mvat')
         
         # Create cache directory if it doesn't exist
         os.makedirs(self.cache_dir, exist_ok=True)

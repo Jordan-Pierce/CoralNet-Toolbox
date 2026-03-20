@@ -24,6 +24,7 @@ from coralnet_toolbox.QtEventFilter import GlobalEventFilter
 from coralnet_toolbox.QtAnimationManager import AnimationManager
 from coralnet_toolbox.QtPerformanceWindow import PerformanceWindow
 from coralnet_toolbox.QtTimerWindow import TimerWindow
+from coralnet_toolbox.QtLayoutManager import QtLayoutManager
 
 # Main Windows
 from coralnet_toolbox.QtAnnotationWindow import AnnotationWindow
@@ -508,9 +509,9 @@ class MainWindow(QMainWindow):
         self.save_project_action.triggered.connect(self.open_save_project_dialog)
         self.file_menu.addAction(self.save_project_action)
         
-        # ========== WINDOWS MENU ==========
-        # Windows menu - will be populated after docks are created
-        self.windows_menu = self.menu_bar.addMenu("Windows")
+        # ========== LAYOUT MENU ==========
+        # Layout menu - for saving and loading dock configurations
+        self.layout_menu = self.menu_bar.addMenu("Layout")
         self.dock_toggle_actions = {}
         
         # ========== VIEW MENU ==========
@@ -1305,16 +1306,28 @@ class MainWindow(QMainWindow):
             action.triggered.connect(lambda checked, dw=dock_widget: dw.toggleView(checked))
             # Also update the action when the dock visibility changes
             dock_widget.visibilityChanged.connect(lambda visible, act=action: act.setChecked(visible))
-            self.windows_menu.addAction(action)
+            self.layout_menu.addAction(action)
             self.dock_toggle_actions[dock_name] = action
 
-        # Add separator before reset layout option
-        self.windows_menu.addSeparator()
+        # Add separator before layout actions
+        self.layout_menu.addSeparator()
 
-        # Reset Layout action
-        self.reset_layout_action = QAction("Reset Layout to Default", self)
-        self.reset_layout_action.triggered.connect(self.reset_layout_to_default)
-        self.windows_menu.addAction(self.reset_layout_action)
+        # Save Layout action
+        self.save_layout_action = QAction("Save Layout", self)
+        self.save_layout_action.triggered.connect(self.on_save_layout)
+        self.layout_menu.addAction(self.save_layout_action)
+
+        # Load Layout submenu
+        self.load_layout_menu = self.layout_menu.addMenu("Load Layout")
+        self.populate_load_layout_menu()
+        
+        # --------------------------------------------------
+        # Restore layout from cache
+        # --------------------------------------------------
+        QtLayoutManager.restore_or_default(
+            self.dock_manager,
+            layout_name='default'
+        )
         
         # --------------------------------------------------
         # Enable drag and drop
@@ -1629,6 +1642,10 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Ensure special windows (explorer, mvat) and Performance Window are closed when the main window closes."""
+        
+        # Save layout configuration before closing
+        if hasattr(self, 'dock_manager'):
+            QtLayoutManager.save_and_close(self.dock_manager, layout_name='default')
         
         if hasattr(self, 'mvat_manager') and self.mvat_manager:
             self.mvat_manager.cleanup()
@@ -2502,19 +2519,52 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
-    def reset_layout_to_default(self):
-        """Reset all dock windows to their default visibility state."""
-        # Show all docks by default
-        self.annotation_dock.toggleView(True)
-        self.image_dock.toggleView(True)
-        self.label_dock.toggleView(True)
-        self.confidence_dock.toggleView(True)
-        self.performance_dock.toggleView(True)
-        self.timer_dock.toggleView(False)  # Timer is hidden by default
-        self.annotation_gallery_dock.toggleView(True)
-        self.embedding_viewer_dock.toggleView(True)
-        self.mvat_viewer_dock.toggleView(True)
-        self.camera_grid_dock.toggleView(True)
+    def on_save_layout(self):
+        """Show save layout dialog and save the current layout."""
+        QtLayoutManager.show_save_dialog_and_save(self.dock_manager, parent=self)
+        # Refresh the load menu to include the newly saved layout
+        self.populate_load_layout_menu()
+
+    def populate_load_layout_menu(self):
+        """Discover and populate the Load Layout submenu with available layouts."""
+        # Clear existing actions
+        self.load_layout_menu.clear()
+        
+        # Get list of available layouts
+        layouts = QtLayoutManager.list_available_layouts()
+        
+        # Remove "default" from the list (we don't show it as an option)
+        layouts = [name for name in layouts if name != "default"]
+        
+        if not layouts:
+            no_layouts_action = QAction("(No saved layouts)", self)
+            no_layouts_action.setEnabled(False)
+            self.load_layout_menu.addAction(no_layouts_action)
+            return
+        
+        # Add all custom saved layouts
+        for layout_name in layouts:
+            action = QAction(layout_name, self)
+            action.triggered.connect(
+                lambda checked, name=layout_name: self.load_specific_layout(name)
+            )
+            self.load_layout_menu.addAction(action)
+
+    def load_specific_layout(self, layout_name: str):
+        """Load a specific layout configuration."""
+        success = QtLayoutManager.load_layout(self.dock_manager, layout_name)
+        if success:
+            QMessageBox.information(
+                self,
+                "Layout Loaded",
+                f"Layout '{layout_name}' has been loaded successfully."
+            )
+        else:
+            QMessageBox.warning(
+                self,
+                "Load Failed",
+                f"Failed to load layout '{layout_name}'."
+            )
 
     def open_import_dataset_dialog(self):
         """Open the Import Dataset dialog to import datasets into the project."""
