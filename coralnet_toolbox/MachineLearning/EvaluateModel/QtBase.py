@@ -1,7 +1,7 @@
 import warnings
 
-import datetime
 import gc
+import datetime
 from pathlib import Path
 
 from torch.cuda import empty_cache
@@ -12,9 +12,11 @@ import ultralytics.engine.validator as validator
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (QFileDialog, QMessageBox, QVBoxLayout,
                              QLineEdit, QDialog, QHBoxLayout, QPushButton,
-                             QSpinBox, QFormLayout, QComboBox,
-                             QGroupBox, QLabel, QCheckBox, QDoubleSpinBox)
+                             QSpinBox, QFormLayout, QComboBox, QGroupBox, 
+                             QDoubleSpinBox)
 
+from coralnet_toolbox.MachineLearning.Callbacks import EvaluationSignalEmitter
+from coralnet_toolbox.MachineLearning.Callbacks import create_evaluation_callbacks
 from coralnet_toolbox.MachineLearning.ConfusionMatrix import ConfusionMatrixMetrics
 
 from coralnet_toolbox.Icons import get_icon
@@ -36,10 +38,14 @@ class EvaluateModelWorker(QThread):
         evaluation_started: Emitted when the evaluation starts.
         evaluation_completed: Emitted when the evaluation completes.
         evaluation_error: Emitted when an error occurs during evaluation.
+        eval_status: Emitted with status message updates.
+        eval_metrics: Emitted with metrics dict when evaluation ends.
     """
     evaluation_started = pyqtSignal()
     evaluation_completed = pyqtSignal()
     evaluation_error = pyqtSignal(str)
+    eval_status = pyqtSignal(str)
+    eval_metrics = pyqtSignal(dict)
 
     def __init__(self, model, params):
         """
@@ -67,12 +73,27 @@ class EvaluateModelWorker(QThread):
             save_dir = self.params['save_dir']
             validator.get_save_dir = lambda x: save_dir
 
+            # Register evaluation callbacks to emit signals
+            signal_emitter = EvaluationSignalEmitter()
+            signal_emitter.eval_status.connect(self.eval_status.emit)
+            signal_emitter.eval_completed.connect(self.eval_metrics.emit)
+            # Note: For standalone validation, callbacks will be handled via signal emission below
+            
+            # For now, we'll just emit status messages manually
+            self.eval_status.emit("Starting evaluation...")
+
             # Evaluate the model
             results = self.model.val(**self.params)
 
             # Output confusion matrix metrics as json
             metrics = ConfusionMatrixMetrics(results, self.model.names)
             metrics.save_results(save_dir)
+            
+            # Emit final metrics
+            metrics_dict = {}
+            if hasattr(results, 'results_dict'):
+                metrics_dict = results.results_dict
+            self.eval_metrics.emit(metrics_dict)
 
             # Emit signal to indicate evaluation has completed
             self.evaluation_completed.emit()
@@ -290,6 +311,8 @@ class Base(QDialog):
             self.worker.evaluation_started.connect(self.on_evaluation_started)
             self.worker.evaluation_completed.connect(self.on_evaluation_completed)
             self.worker.evaluation_error.connect(self.on_evaluation_error)
+            self.worker.eval_status.connect(self.on_eval_status)
+            self.worker.eval_metrics.connect(self.on_eval_metrics)
             self.worker.start()
             
             del self.model
@@ -312,3 +335,27 @@ class Base(QDialog):
     def on_evaluation_error(self, error_message):
         QMessageBox.critical(self, "Error", error_message)
         print(error_message)
+    
+    def on_eval_status(self, message):
+        """
+        Handle evaluation status updates.
+
+        Args:
+            message (str): The status message.
+        """
+        # Update MainWindow status bar if available
+        if hasattr(self, 'main_window') and hasattr(self.main_window, 'statusBar'):
+            self.main_window.statusBar().showMessage(message, 5000)
+    
+    def on_eval_metrics(self, metrics_dict):
+        """
+        Handle evaluation metrics when complete.
+
+        Args:
+            metrics_dict (dict): Dictionary of evaluation metrics.
+        """
+        # Update MainWindow status bar with completion message
+        if hasattr(self, 'main_window') and hasattr(self.main_window, 'statusBar'):
+            self.main_window.statusBar().showMessage("Evaluation completed successfully", 5000)
+        if metrics_dict:
+            print(f"Evaluation Metrics: {metrics_dict}")

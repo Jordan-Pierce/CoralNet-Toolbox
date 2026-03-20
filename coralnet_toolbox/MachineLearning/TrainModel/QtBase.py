@@ -9,6 +9,8 @@ import traceback
 import ujson as json
 from pathlib import Path
 
+from torch.cuda import empty_cache
+
 from ultralytics import YOLO
 import ultralytics.data.build as detection_build
 from ultralytics.data.dataset import YOLODataset
@@ -20,9 +22,9 @@ from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QWidget, QVB
                              QLabel, QLineEdit, QDialog, QHBoxLayout, QPushButton, QComboBox,
                              QFormLayout, QTabWidget, QDoubleSpinBox, QGroupBox, QFrame, QSpinBox)
 
-from torch.cuda import empty_cache
-import torch
 
+from coralnet_toolbox.MachineLearning.Callbacks import TrainingSignalEmitter
+from coralnet_toolbox.MachineLearning.Callbacks import create_training_callbacks
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedInstanceDataset
 from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedClassificationDataset
@@ -47,10 +49,14 @@ class TrainModelWorker(QThread):
         training_started: Emitted when the training starts.
         training_completed: Emitted when the training completes.
         training_error: Emitted when an error occurs during training.
+        training_status: Emitted with status message updates.
+        epoch_completed: Emitted at end of each epoch with (epoch, total_epochs, loss, lr).
     """
     training_started = pyqtSignal()
     training_completed = pyqtSignal()
     training_error = pyqtSignal(str)
+    training_status = pyqtSignal(str)
+    epoch_completed = pyqtSignal(int, int, float, float)
 
     def __init__(self, params, device):
         """
@@ -134,6 +140,14 @@ class TrainModelWorker(QThread):
 
             # Set up the model and parameters
             self.pre_run()
+
+            # Register training callbacks to emit signals
+            signal_emitter = TrainingSignalEmitter()
+            signal_emitter.training_status.connect(self.training_status.emit)
+            signal_emitter.epoch_completed.connect(self.epoch_completed.emit)
+            callbacks = create_training_callbacks(signal_emitter)
+            for event, callback in callbacks.items():
+                self.model.add_callback(event, callback)
 
             # Train the model
             self.model.train(**self.params, device=self.device)
@@ -935,6 +949,8 @@ class Base(QDialog):
         self.worker.training_started.connect(self.on_training_started)
         self.worker.training_completed.connect(self.on_training_completed)
         self.worker.training_error.connect(self.on_training_error)
+        self.worker.training_status.connect(self.on_training_status)
+        self.worker.epoch_completed.connect(self.on_epoch_completed)
         self.worker.start()
 
     def on_training_started(self):
@@ -987,6 +1003,32 @@ class Base(QDialog):
         """
         QMessageBox.critical(self, "Error", error_message)
         print(error_message)
+    
+    def on_training_status(self, message):
+        """
+        Handle training status updates.
+
+        Args:
+            message (str): The status message.
+        """
+        # Update MainWindow status bar
+        if hasattr(self.main_window, 'statusBar'):
+            self.main_window.statusBar().showMessage(message, 5000)  # Show for 5 seconds
+    
+    def on_epoch_completed(self, epoch, total_epochs, loss, lr):
+        """
+        Handle end of training epoch.
+
+        Args:
+            epoch (int): Current epoch number (1-indexed).
+            total_epochs (int): Total number of epochs.
+            loss (float): Current loss value.
+            lr (float): Current learning rate.
+        """
+        # Update MainWindow status bar with detailed progress
+        message = f"Epoch {epoch}/{total_epochs} - Loss: {loss:.4f} - LR: {lr:.6f}"
+        if hasattr(self.main_window, 'statusBar'):
+            self.main_window.statusBar().showMessage(message, 5000)
 
     def on_training_completed(self):
         """
