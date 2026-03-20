@@ -1151,7 +1151,7 @@ class MainWindow(QMainWindow):
         # --------------------------------------------------
         
         # Setup Label Dock using DockWrapper
-        self.label_dock = DockWrapper("Label Window", 
+        self.label_dock = DockWrapper("Labels", 
                                       "LabelDock", 
                                       self.label_window, 
                                       self)
@@ -1165,13 +1165,13 @@ class MainWindow(QMainWindow):
             self.label_dock.add_toolbar(self.label_window.create_bottom_toolbar(), Qt.BottomToolBarArea)
             
         # Setup Timer Dock (Left, below Labels) using DockWrapper
-        self.timer_dock = DockWrapper("Timer Window", 
+        self.timer_dock = DockWrapper("Timer", 
                                       "TimerDock", 
                                       self.timer_window, 
                                       self)
 
         # Setup the Annotation Dock using DockWrapper
-        self.annotation_dock = DockWrapper("Annotation Workspace", 
+        self.annotation_dock = DockWrapper("Annotation", 
                                            "AnnotationDock", 
                                            self.annotation_window, 
                                            self)
@@ -1182,7 +1182,7 @@ class MainWindow(QMainWindow):
             self.annotation_dock.add_toolbar(self.annotation_window.create_bottom_toolbar(), Qt.BottomToolBarArea)
 
         # Setup Image Dock using DockWrapper
-        self.image_dock = DockWrapper("Image Window", 
+        self.image_dock = DockWrapper("Rasters", 
                                       "ImageDock", 
                                       self.image_window, 
                                       self)
@@ -1196,19 +1196,19 @@ class MainWindow(QMainWindow):
             self.image_dock.add_toolbar(self.image_window.create_action_toolbar())
 
         # Setup Confidence Dock (Right) using DockWrapper
-        self.confidence_dock = DockWrapper("Confidence Window", 
+        self.confidence_dock = DockWrapper("Confidence", 
                                            "ConfidenceDock", 
                                            self.confidence_window, 
                                            self)
         
         # Setup Performance Dock (Right) using DockWrapper
-        self.performance_dock = DockWrapper("Performance Window", 
+        self.performance_dock = DockWrapper("Performance", 
                                             "PerformanceWindowDock",
                                             self.performance_window, 
                                             self)
                 
         # Setup Annotation Gallery Dock (Bottom) using DockWrapper
-        self.annotation_gallery_dock = DockWrapper("Annotation Gallery", 
+        self.annotation_gallery_dock = DockWrapper("Gallery", 
                                                    "AnnotationGalleryDock",
                                                    self.annotation_viewer_window,
                                                    self)
@@ -1221,7 +1221,7 @@ class MainWindow(QMainWindow):
                 Qt.BottomToolBarArea)
 
         # Setup Embedding Viewer Dock (Bottom) using DockWrapper
-        self.embedding_viewer_dock = DockWrapper("Embedding Viewer", 
+        self.embedding_viewer_dock = DockWrapper("Embeddings", 
                                                  "EmbeddingViewerDock", 
                                                  self.embedding_viewer_window, 
                                                  self)
@@ -1237,7 +1237,7 @@ class MainWindow(QMainWindow):
         self.mvat_viewer_dock = DockWrapper("3D Viewer", "MVATViewerDock", self.mvat_viewer, self)
 
         # Setup Camera Grid Dock (Bottom-right) using DockWrapper
-        self.camera_grid_dock = DockWrapper("Camera Grid", 
+        self.camera_grid_dock = DockWrapper("Grid", 
                                             "CameraGridDock", 
                                             self.camera_grid, 
                                             self)
@@ -1287,16 +1287,16 @@ class MainWindow(QMainWindow):
         
         # Populate the Windows menu with dock toggle actions
         dock_windows = [
-            ("Annotation Workspace", self.annotation_dock),
-            ("Image Window", self.image_dock),
-            ("Label Window", self.label_dock),
-            ("Confidence Window", self.confidence_dock),
-            ("Performance Window", self.performance_dock),
-            ("Timer Window", self.timer_dock),
-            ("Annotation Gallery", self.annotation_gallery_dock),
-            ("Embedding Viewer", self.embedding_viewer_dock),
+            ("Annotation", self.annotation_dock),
+            ("Rasters", self.image_dock),
+            ("Labels", self.label_dock),
+            ("Confidence", self.confidence_dock),
+            ("Performance", self.performance_dock),
+            ("Timer", self.timer_dock),
+            ("Gallery", self.annotation_gallery_dock),
+            ("Embeddings", self.embedding_viewer_dock),
             ("3D Viewer", self.mvat_viewer_dock),
-            ("Camera Grid", self.camera_grid_dock),
+            ("Grid", self.camera_grid_dock),
         ]
 
         for dock_name, dock_widget in dock_windows:
@@ -2532,9 +2532,6 @@ class MainWindow(QMainWindow):
         
         # Get list of available layouts
         layouts = QtLayoutManager.list_available_layouts()
-        
-        # Remove "default" from the list (we don't show it as an option)
-        layouts = [name for name in layouts if name != "default"]
         
         if not layouts:
             no_layouts_action = QAction("(No saved layouts)", self)
