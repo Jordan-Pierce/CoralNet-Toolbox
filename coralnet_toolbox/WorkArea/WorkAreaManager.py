@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import (QMessageBox, QVBoxLayout, QLabel, QDialog, QDialogB
                              QGroupBox, QPushButton, QHBoxLayout, QCheckBox,
                              QTableWidget, QTableWidgetItem, QApplication)
 
-from coralnet_toolbox.QtWorkArea import WorkArea
+from coralnet_toolbox.WorkArea.QtWorkArea import WorkArea
 
 from coralnet_toolbox.Common.QtTileSizeInput import TileSizeInput
 from coralnet_toolbox.Common.QtOverlapInput import OverlapInput
@@ -25,7 +25,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class TileManager(QDialog):
+class WorkAreaManager(QDialog):
     """
     Base class for performing tiled creation on images using object detection, and instance segmentation.
 
@@ -41,7 +41,7 @@ class TileManager(QDialog):
         self.animation_manager = main_window.animation_manager
 
         self.setWindowIcon(get_icon("tile.svg"))
-        self.setWindowTitle("Tile Manager")
+        self.setWindowTitle("Work Area Manager")
         self.resize(400, 600)
         
         # Keep dialog on top while user is working

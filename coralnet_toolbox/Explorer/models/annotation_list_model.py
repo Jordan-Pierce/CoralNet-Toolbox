@@ -179,11 +179,13 @@ class AnnotationItemDelegate(QtWidgets.QStyledItemDelegate):
                 color = item.effective_color if hasattr(item, 'effective_color') else QtGui.QColor('#ffd700')
                 pen = QtGui.QPen(QtGui.QColor(color))
                 pen.setWidth(4)
+                pen.setStyle(QtCore.Qt.DashLine)
                 painter.setPen(pen)
                 painter.drawRect(rect.adjusted(2, 2, -2, -2))
             except Exception:
                 pen = QtGui.QPen(QtGui.QColor('#ffd700'))
                 pen.setWidth(4)
+                pen.setStyle(QtCore.Qt.DashLine)
                 painter.setPen(pen)
                 painter.drawRect(rect.adjusted(2, 2, -2, -2))
 

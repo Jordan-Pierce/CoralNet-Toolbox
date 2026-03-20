@@ -8,18 +8,23 @@ from packaging import version
 
 import torch
 
+# Important, order this way
+import PyQt5.QtCore
+import PyQtAds
+from PyQtAds import ads
+
 from PyQt5.QtGui import QMouseEvent
-from PyQt5.QtCore import Qt, pyqtSignal, QEvent
-from PyQt5.QtWidgets import QListWidget
+from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy,
                              QMessageBox, QWidget, QVBoxLayout, QLabel, QHBoxLayout,
-                             QSpinBox, QSlider, QDialog, QPushButton)
+                             QSpinBox, QSlider, QDialog, QPushButton, QListWidget)
 
 # Utilities
 from coralnet_toolbox.QtEventFilter import GlobalEventFilter
 from coralnet_toolbox.QtAnimationManager import AnimationManager
 from coralnet_toolbox.QtPerformanceWindow import PerformanceWindow
 from coralnet_toolbox.QtTimerWindow import TimerWindow
+from coralnet_toolbox.Layout import QtLayoutManager
 
 # Main Windows
 from coralnet_toolbox.QtAnnotationWindow import AnnotationWindow
@@ -37,18 +42,9 @@ from coralnet_toolbox.MVAT import MVATViewer
 from coralnet_toolbox.MVAT import CameraGrid
 from coralnet_toolbox.MVAT import MVATManager
 
-
 # Other Dialogs
 from coralnet_toolbox.QtBatchInference import BatchInferenceDialog
-
-
-from coralnet_toolbox.Tile import (
-    TileClassifyDataset as ClassifyTileDatasetDialog,
-    TileDetectDataset as DetectTileDatasetDialog,
-    TileSegmentDataset as SegmentTileDatasetDialog,
-    TileSemanticDataset as SemanticTileDatasetDialog,
-    TileManager as TileManagerDialog,
-)
+from coralnet_toolbox.WorkArea import WorkAreaManager as WorkAreaManagerDialog
 
 # Import Dialogs
 # TODO update IO classes to have dialogs
@@ -104,7 +100,11 @@ from coralnet_toolbox.MachineLearning import (
     EvalSegment as SegmentEvaluateModelDialog,
     EvalSemantic as SemanticEvaluateModelDialog,
     MergeClassify as ClassifyMergeDatasetsDialog,
-    Optimize as OptimizeModelDialog
+    Optimize as OptimizeModelDialog,
+    TileClassifyDataset as ClassifyTileDatasetDialog,
+    TileDetectDataset as DetectTileDatasetDialog,
+    TileSegmentDataset as SegmentTileDatasetDialog,
+    TileSemanticDataset as SemanticTileDatasetDialog,
 )
 
 # SAM dialogs
@@ -126,7 +126,7 @@ from coralnet_toolbox.CoralNet import (
     DownloadDialog as CoralNetDownloadDialog
 )
 
-from coralnet_toolbox.QtDockWrapper import DockWrapper
+from coralnet_toolbox.Layout import DockWrapper
 
 from coralnet_toolbox.Common import (
     CollapsibleSection,
@@ -336,8 +336,8 @@ class MainWindow(QMainWindow):
         # This is accessed via ImageWindow right-click context menu
         self.batch_inference_dialog = BatchInferenceDialog(self)
 
-        # Create dialogs (Tile)
-        self.tile_manager_dialog = TileManagerDialog(self)
+        # Create dialogs (Work Areas)
+        self.tile_manager_dialog = WorkAreaManagerDialog(self)
         self.classify_tile_dataset_dialog = ClassifyTileDatasetDialog(self)
         self.detect_tile_dataset_dialog = DetectTileDatasetDialog(self)
         self.segment_tile_dataset_dialog = SegmentTileDatasetDialog(self)
@@ -509,6 +509,11 @@ class MainWindow(QMainWindow):
         self.save_project_action.triggered.connect(self.open_save_project_dialog)
         self.file_menu.addAction(self.save_project_action)
         
+        # ========== LAYOUT MENU ==========
+        # Layout menu - for saving and loading dock configurations
+        self.layout_menu = self.menu_bar.addMenu("Layout")
+        self.dock_toggle_actions = {}
+        
         # ========== VIEW MENU ==========
         # Fetch the fully encapsulated menu from the MVAT Viewer and add it to the main menu bar
         self.view_menu = self.mvat_viewer.create_view_menu()
@@ -533,38 +538,10 @@ class MainWindow(QMainWindow):
         self.scale_action.triggered.connect(self.open_scale_dialog)
         self.utilities_menu.addAction(self.scale_action)
 
-        # Add a separator
-        self.utilities_menu.addSeparator()
-        
-        # Tile submenu
-        self.tile_menu = self.utilities_menu.addMenu("Tile")
-        
-        # Tile Creation
-        self.tile_manager_action = QAction("Tile Manager", self)
+        # Work Area Manager
+        self.tile_manager_action = QAction("Work Areas", self)
         self.tile_manager_action.triggered.connect(self.open_tile_manager_dialog)
-        self.tile_menu.addAction(self.tile_manager_action)
-        
-        # Add a separator
-        self.tile_menu.addSeparator()
-        
-        # Tile Dataset submenu
-        self.tile_dataset_menu = self.tile_menu.addMenu("Tile Dataset")
-        # Tile Classify Dataset
-        self.classify_tile_dataset_action = QAction("Classify", self)
-        self.classify_tile_dataset_action.triggered.connect(self.open_classify_tile_dataset_dialog)
-        self.tile_dataset_menu.addAction(self.classify_tile_dataset_action)
-        # Tile Detect Dataset
-        self.detect_tile_dataset_action = QAction("Detect", self)
-        self.detect_tile_dataset_action.triggered.connect(self.open_detect_tile_dataset_dialog)
-        self.tile_dataset_menu.addAction(self.detect_tile_dataset_action)
-        # Tile Segment Dataset
-        self.segment_tile_dataset_action = QAction("Segment", self)
-        self.segment_tile_dataset_action.triggered.connect(self.open_segment_tile_dataset_dialog)
-        self.tile_dataset_menu.addAction(self.segment_tile_dataset_action)
-        # Tile Semantic Dataset
-        self.semantic_tile_dataset_action = QAction("Semantic", self)
-        self.semantic_tile_dataset_action.triggered.connect(self.open_semantic_tile_dataset_dialog)
-        self.tile_dataset_menu.addAction(self.semantic_tile_dataset_action)
+        self.utilities_menu.addAction(self.tile_manager_action)
         
         # ========== AI-ASSIST MENU ==========
         # AI-Assist menu
@@ -608,6 +585,25 @@ class MainWindow(QMainWindow):
         self.ml_classify_merge_datasets_action = QAction("Classify", self)
         self.ml_classify_merge_datasets_action.triggered.connect(self.open_classify_merge_datasets_dialog)
         self.ml_merge_datasets_menu.addAction(self.ml_classify_merge_datasets_action)
+        
+        # Tile Dataset submenu
+        self.tile_dataset_menu = self.ml_menu.addMenu("Tile Dataset")
+        # Tile Classify Dataset
+        self.classify_tile_dataset_action = QAction("Classify", self)
+        self.classify_tile_dataset_action.triggered.connect(self.open_classify_tile_dataset_dialog)
+        self.tile_dataset_menu.addAction(self.classify_tile_dataset_action)
+        # Tile Detect Dataset
+        self.detect_tile_dataset_action = QAction("Detect", self)
+        self.detect_tile_dataset_action.triggered.connect(self.open_detect_tile_dataset_dialog)
+        self.tile_dataset_menu.addAction(self.detect_tile_dataset_action)
+        # Tile Segment Dataset
+        self.segment_tile_dataset_action = QAction("Segment", self)
+        self.segment_tile_dataset_action.triggered.connect(self.open_segment_tile_dataset_dialog)
+        self.tile_dataset_menu.addAction(self.segment_tile_dataset_action)
+        # Tile Semantic Dataset
+        self.semantic_tile_dataset_action = QAction("Semantic", self)
+        self.semantic_tile_dataset_action.triggered.connect(self.open_semantic_tile_dataset_dialog)
+        self.tile_dataset_menu.addAction(self.semantic_tile_dataset_action)
         
         # Tune Model submenu
         self.ml_tune_model_menu = self.ml_menu.addMenu("Tune Model")
@@ -1059,221 +1055,246 @@ class MainWindow(QMainWindow):
         self.toolbar.addAction(self.device_tool_action)
 
         # --------------------------------------------------
-        # Setup Main Docking Layout (With Vacant Center Trick)
+        # 1. Initialize the Advanced Dock Manager
         # --------------------------------------------------
         
-        # 1. Bring back the blank central widget. This creates the permanent "void".
-        self.central_widget = QWidget()
-        # Force the dummy widget to be 0 pixels tall so it yields all vertical space
-        self.central_widget.setFixedHeight(0) 
-        # Expand horizontally to maintain the gap, but stay fixed vertically
-        self.central_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.setCentralWidget(self.central_widget)
-        self.setDockNestingEnabled(True)
-
-        # 2. The Qt Corner Trick: 
-        # Force the Left and Right dock areas to stretch all the way from the very top 
-        # of the window to the very bottom. This traps the Top and Bottom dock areas 
-        # strictly in the center column.
-        self.setCorner(Qt.TopLeftCorner, Qt.LeftDockWidgetArea)
-        self.setCorner(Qt.BottomLeftCorner, Qt.LeftDockWidgetArea)
-        self.setCorner(Qt.TopRightCorner, Qt.RightDockWidgetArea)
-        self.setCorner(Qt.BottomRightCorner, Qt.RightDockWidgetArea)
-
-        # --------------------------------------------------
-        # Create the Docks & Containers
-        # --------------------------------------------------
+        # Instantiate the ADS dock manager.
+        self.dock_manager = ads.CDockManager(self)
         
-        # Setup Label Dock (Left) using DockWrapper
-        self.left_dock = DockWrapper(
-            title="Label Window", 
-            object_name="LabelDock", 
-            main_widget=self.label_window, 
-            parent=self
+        # Disable the "List all tabs" button in the dock tab bars
+        self.dock_manager.setConfigFlags(
+            self.dock_manager.configFlags() & ~ads.CDockManager.DockAreaHasTabsMenuButton
         )
-        # Add the Actions to the Top Area
-        if hasattr(self.label_window, 'create_action_toolbar'):
-            self.left_dock.add_toolbar(self.label_window.create_action_toolbar(), Qt.TopToolBarArea)
-        # Add a line break so the next toolbar drops to row 2
-        self.left_dock.add_toolbar_break(Qt.TopToolBarArea)
-        # Add the Filter to the Top Area (Row 2)
-        if hasattr(self.label_window, 'create_filter_toolbar'):
-            self.left_dock.add_toolbar(self.label_window.create_filter_toolbar(), Qt.TopToolBarArea)
-        # Add the Counts to the Bottom Area
-        if hasattr(self.label_window, 'create_bottom_toolbar'):
-            self.left_dock.add_toolbar(self.label_window.create_bottom_toolbar(), Qt.BottomToolBarArea)
+        
+        # Apply custom QSS for vibrant cyan tabs
+        self.dock_manager.setStyleSheet("""
+            /* The flat grey background behind the tabs */
+            ads--CDockAreaTabBar {
+            background-color: #f0f0f0;
+            height: 28px;
+            }
+
+            /* Inactive tabs - subtle grey, pushed down slightly */
+            ads--CDockWidgetTab {
+            background-color: #e8e8e8;
+            border: none;
+            border-right: 1px solid #d0d0d0; /* Subtle separator between inactive tabs */
+            padding: 2px 12px;
+            color: #666666;
+            margin-top: 2px; /* Pushes inactive tabs down so they don't protrude */
+            font-weight: 700;
+            min-width: 100px;
+            max-width: 600px;
+            }
+
+            /* Slight highlight when hovering over inactive tabs */
+            ads--CDockWidgetTab:hover {
+            background-color: #d9d9d9;
+            color: #333333;
+            }
+
+            /* The currently active tab - Vibrant Cyan, protruding up */
+            ads--CDockWidgetTab[activeTab="true"] {
+            background-color: #00A8E6; /* Bright, vibrant cyan */
+            border: none;
+            color: #ffffff; /* Pure white text for maximum contrast */
+            font-weight: 800; /* Bold for prominence */
+            margin-top: 0px; /* Zero margin pulls it flush to the top, making it protrude */
+            padding: 4px 12px;
+            min-width: 100px;
+            max-width: 600px;
+            }
+
+            /* Active tab on hover - slightly darker cyan */
+            ads--CDockWidgetTab[activeTab="true"]:hover {
+            background-color: #0095CC; /* Slightly darker cyan on hover */
+            }
+
+            /* Close button - blend with tab, no button appearance */
+            ads--CDockWidgetTab QAbstractButton {
+            background-color: transparent;
+            border: none;
+            padding: 0px;
+            margin: 0px 4px;
+            width: 14px;
+            height: 14px;
+            }
+
+            ads--CDockWidgetTab[activeTab="true"] QAbstractButton {
+            background-color: transparent;
+            }
+
+            ads--CDockWidgetTab QAbstractButton:hover {
+            background-color: rgba(255, 255, 255, 0.3);
+            border-radius: 2px;
+            }
+
+            ads--CDockWidgetTab[activeTab="true"] QAbstractButton:hover {
+            background-color: rgba(0, 0, 0, 0.2);
+            border-radius: 2px;
+            }
+
+            /* Focus state - keep the same solid block look */
+            ads--CDockWidgetTab:focus {
+            outline: none; /* Kills default Qt dotted line */
+            }
             
-        # Setup Timer Dock (Left, below Labels) using DockWrapper
-        self.timer_dock = DockWrapper(
-            title="Timer Window", 
-            object_name="TimerDock", 
-            main_widget=self.timer_window, 
-            parent=self
-        )
-        # Set the size policy to fixed vertically
-        self.timer_dock.setMaximumHeight(100)  # Set height
-        # Hide timer by default (don't show on startup)
-        self.timer_dock.hide()
+            /* Dock area background */
+            ads--CDockArea {
+            background-color: #ffffff;
+            border: 1px solid #d0d0d0;
+            }
+        """)
 
+        # --------------------------------------------------
+        # 2. Create the Docks & Containers
+        # --------------------------------------------------
+        
         # Setup the Annotation Dock using DockWrapper
-        self.annotation_dock = DockWrapper(
-            title="Annotation Workspace", 
-            object_name="AnnotationDock", 
-            main_widget=self.annotation_window, 
-            parent=self
-        )
-        # Mount the fully-encapsulated toolbars
+        self.annotation_dock = DockWrapper("Annotation", "AnnotationDock", self.annotation_window, self)
+        
         if hasattr(self.annotation_window, 'create_top_toolbar'):
-            self.annotation_dock.add_toolbar(self.annotation_window.create_top_toolbar(), Qt.TopToolBarArea)
+            self.annotation_dock.add_toolbar(self.annotation_window.create_top_toolbar())
         if hasattr(self.annotation_window, 'create_bottom_toolbar'):
             self.annotation_dock.add_toolbar(self.annotation_window.create_bottom_toolbar(), Qt.BottomToolBarArea)
 
-        # Setup Image Dock (Right) using DockWrapper
-        self.right_dock = DockWrapper(
-            title="Image Window", 
-            object_name="ImageDock", 
-            main_widget=self.image_window, 
-            parent=self
-        )
-        # Add the Filter Form to the Top Area
+        # Setup Image Dock using DockWrapper
+        self.rasters_dock = DockWrapper("Rasters", "RastersDock", self.image_window, self)
+        
         if hasattr(self.image_window, 'create_filter_toolbar'):
-            self.right_dock.add_toolbar(self.image_window.create_filter_toolbar(), Qt.TopToolBarArea)
-        # Add a line break so the info labels drop to row 2
-        self.right_dock.add_toolbar_break(Qt.TopToolBarArea)
-        # Add the Info Labels to the Top Area (Row 2)
+            self.rasters_dock.add_toolbar(self.image_window.create_filter_toolbar())
+        self.rasters_dock.add_toolbar_break()
         if hasattr(self.image_window, 'create_info_toolbar'):
-            self.right_dock.add_toolbar(self.image_window.create_info_toolbar(), Qt.TopToolBarArea)
-        # Add the Bulk Action buttons to the Bottom Area
+            self.rasters_dock.add_toolbar(self.image_window.create_info_toolbar())
         if hasattr(self.image_window, 'create_action_toolbar'):
-            self.right_dock.add_toolbar(self.image_window.create_action_toolbar(), Qt.BottomToolBarArea)
+            self.rasters_dock.add_toolbar(self.image_window.create_action_toolbar())
 
+        # Setup Label Dock using DockWrapper
+        self.labels_dock = DockWrapper("Labels", "LabelsDock",  self.label_window, self)
+        
+        if hasattr(self.label_window, 'create_action_toolbar'):
+            self.labels_dock.add_toolbar(self.label_window.create_action_toolbar())
+        self.labels_dock.add_toolbar_break()
+        if hasattr(self.label_window, 'create_filter_toolbar'):
+            self.labels_dock.add_toolbar(self.label_window.create_filter_toolbar())
+        if hasattr(self.label_window, 'create_bottom_toolbar'):
+            self.labels_dock.add_toolbar(self.label_window.create_bottom_toolbar(), Qt.BottomToolBarArea)
+            
         # Setup Confidence Dock (Right) using DockWrapper
-        self.confidence_dock = DockWrapper(
-            title="Confidence Window", 
-            object_name="ConfidenceDock", 
-            main_widget=self.confidence_window, 
-            parent=self
-        )
+        self.confidence_dock = DockWrapper("Confidence", "ConfidenceDock", self.confidence_window, self)
         
         # Setup Performance Dock (Right) using DockWrapper
-        self.performance_dock = DockWrapper(
-            title="Performance Window",
-            object_name="PerformanceWindowDock",
-            main_widget=self.performance_window,
-            parent=self
-        )
-        # Set the size policy to fixed vertically
-        self.performance_dock.setMaximumHeight(125)  # Set height
-        
+        self.performance_dock = DockWrapper("Performance", "PerformanceDock", self.performance_window, self)
+
+        # Setup Timer Dock (Left, below Labels) using DockWrapper
+        self.timer_dock = DockWrapper("Timer", "TimerDock", self.timer_window, self)
+                
         # Setup Annotation Gallery Dock (Bottom) using DockWrapper
-        self.annotation_gallery_dock = DockWrapper(
-            title="Annotation Gallery",
-            object_name="AnnotationGalleryDock",
-            main_widget=self.annotation_viewer_window,
-            parent=self
-        )
-        # Add toolbars from the viewer window
+        self.gallery_dock = DockWrapper("Gallery", "GalleryDock", self.annotation_viewer_window, self)
+        
         if hasattr(self.annotation_viewer_window, 'create_top_toolbar'):
-            self.annotation_gallery_dock.add_toolbar(self.annotation_viewer_window.create_top_toolbar(), 
-                                                     Qt.TopToolBarArea)
+            self.gallery_dock.add_toolbar(self.annotation_viewer_window.create_top_toolbar())
         if hasattr(self.annotation_viewer_window, 'create_bottom_toolbar'):
-            self.annotation_gallery_dock.add_toolbar(self.annotation_viewer_window.create_bottom_toolbar(), 
-                                                     Qt.BottomToolBarArea)
+            self.gallery_dock.add_toolbar(
+                self.annotation_viewer_window.create_bottom_toolbar(),
+                Qt.BottomToolBarArea)
 
         # Setup Embedding Viewer Dock (Bottom) using DockWrapper
-        self.embedding_viewer_dock = DockWrapper(
-            title="Embedding Viewer",
-            object_name="EmbeddingViewerDock",
-            main_widget=self.embedding_viewer_window,
-            parent=self
-        )
+        self.embeddings_dock = DockWrapper("Embeddings", "EmbeddingsDock", self.embedding_viewer_window, self)
+        
         if hasattr(self.embedding_viewer_window, 'create_top_toolbar'):
-            self.embedding_viewer_dock.add_toolbar(self.embedding_viewer_window.create_top_toolbar(), 
-                                                   Qt.TopToolBarArea)
+            self.embeddings_dock.add_toolbar(self.embedding_viewer_window.create_top_toolbar())
         if hasattr(self.embedding_viewer_window, 'create_bottom_toolbar'):
-            self.embedding_viewer_dock.add_toolbar(self.embedding_viewer_window.create_bottom_toolbar(), 
-                                                   Qt.BottomToolBarArea)
+            self.embeddings_dock.add_toolbar(
+                self.embedding_viewer_window.create_bottom_toolbar(),
+                Qt.BottomToolBarArea)
 
         # Setup MVAT Viewer Dock (Bottom-left) using DockWrapper
-        self.mvat_viewer_dock = DockWrapper(
-            title="3D Viewer",
-            object_name="MVATViewerDock",
-            main_widget=self.mvat_viewer,
-            parent=self
-        )
-        # if hasattr(self.mvat_viewer, 'create_bottom_toolbar'):
-        #     self.mvat_viewer_dock.add_toolbar(self.mvat_viewer.create_bottom_toolbar(), Qt.BottomToolBarArea)
+        self.mvat_dock = DockWrapper("3D Viewer", "3DViewerDock", self.mvat_viewer, self)
 
         # Setup Camera Grid Dock (Bottom-right) using DockWrapper
-        self.camera_grid_dock = DockWrapper(
-            title="Camera Grid",
-            object_name="CameraGridDock",
-            main_widget=self.camera_grid,
-            parent=self
-        )
+        self.grid_dock = DockWrapper("Grid", "GridDock", self.camera_grid, self)
+        
         if hasattr(self.camera_grid, 'create_top_toolbar'):
-            self.camera_grid_dock.add_toolbar(self.camera_grid.create_top_toolbar(), Qt.TopToolBarArea)
+            self.grid_dock.add_toolbar(self.camera_grid.create_top_toolbar())
 
         # --------------------------------------------------
-        # Explicitly arrange the docks on the screen
+        # 3. Explicitly arrange the docks using PyQtADS
         # --------------------------------------------------
 
-        # 3. Add the side docks to the right area: Image+Label tab group above Confidence
-        # Add Image dock first
-        self.addDockWidget(Qt.RightDockWidgetArea, self.right_dock)
-        # Add Confidence dock and split it under the Image dock so it sits below the tab group
-        self.addDockWidget(Qt.RightDockWidgetArea, self.confidence_dock)
-        self.splitDockWidget(self.right_dock, self.confidence_dock, Qt.Vertical)
-        # Add Performance dock under Confidence (hidden by default)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.performance_dock)
-        self.splitDockWidget(self.confidence_dock, self.performance_dock, Qt.Vertical)
-        # Now add the Label dock and tabify it with the Image dock (so Image/Label are tabs above Confidence)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.left_dock)
-        self.tabifyDockWidget(self.right_dock, self.left_dock)
+        # 1. Add Workspace dock first as the central anchor
+        annotation_area = self.dock_manager.addDockWidget(ads.TopDockWidgetArea, self.annotation_dock)
         
-        # 4. Add the Workspace dock to the TOP area.
-        self.addDockWidget(Qt.TopDockWidgetArea, self.annotation_dock)
+        # 2. Add Image dock to the right of the Annotation dock
+        raster_area = self.dock_manager.addDockWidget(ads.RightDockWidgetArea, self.rasters_dock, annotation_area)
         
-        # 5. Add the Annotation Gallery dock to the Bottom area
-        self.addDockWidget(Qt.BottomDockWidgetArea, self.annotation_gallery_dock)
+        # 3. Add Label dock below the Image dock 
+        label_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.labels_dock, raster_area)
+
+        # 3. Add Confidence dock below the Label dock
+        conf_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.confidence_dock, label_area)
         
-        # 6. Add the Embedding Viewer dock next to the Annotation Gallery (under the Annotation workspace)
-        # Place both viewer docks in the Bottom area and split them horizontally
-        self.addDockWidget(Qt.BottomDockWidgetArea, self.embedding_viewer_dock)
-        try:
-            self.splitDockWidget(self.annotation_gallery_dock, self.embedding_viewer_dock, Qt.Horizontal)
-            # Make them approximately equal width
-            self.resizeDocks([self.annotation_gallery_dock, self.embedding_viewer_dock], [600, 600], Qt.Horizontal)
-        except Exception:
-            pass
+        # 4. Add Performance dock below Confidence
+        perf_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.performance_dock, conf_area)
 
-        # 7. Place the MVAT Viewer under the Annotation Gallery (left bottom column)
-        try:
-            self.addDockWidget(Qt.BottomDockWidgetArea, self.mvat_viewer_dock)
-            self.splitDockWidget(self.annotation_gallery_dock, self.mvat_viewer_dock, Qt.Vertical)
-        except Exception:
-            pass
-
-        # 8. Place the Camera Grid under the Embedding Viewer (right bottom column)
-        try:
-            self.addDockWidget(Qt.BottomDockWidgetArea, self.camera_grid_dock)
-            self.splitDockWidget(self.embedding_viewer_dock, self.camera_grid_dock, Qt.Vertical)
-        except Exception:
-            pass
-
-        # 9. Place the Timer under the Confidence/Performance area and tabify it with Performance
-        # Timer is hidden by default.
-        self.addDockWidget(Qt.RightDockWidgetArea, self.timer_dock)
-        try:
-            self.tabifyDockWidget(self.performance_dock, self.timer_dock)
-        except Exception:
-            pass
-
-        # 10. Shrink the default width of the side docks.
-        self.resizeDocks([self.left_dock, self.right_dock], [800, 800], Qt.Horizontal)
+        # 5. TAB the Timer dock into Performance, but hide it initially
+        timer_area = self.dock_manager.addDockWidget(ads.CenterDockWidgetArea, self.timer_dock, perf_area)
         
-        # Give the Workspace dock the absolute maximum vertical space available
-        self.resizeDocks([self.annotation_dock], [2000], Qt.Vertical)
+        # 6. Add Annotation Gallery to the Bottom of the WORKSPACE explicitly
+        gallery_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.gallery_dock, annotation_area)
+        
+        # 7. Add Embedding Viewer to the Right of the Annotation Gallery
+        embed_area = self.dock_manager.addDockWidget(ads.RightDockWidgetArea, self.embeddings_dock, gallery_area)
+
+        # 8. Place the MVAT Viewer below the Annotation Gallery
+        mvat_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.mvat_dock, gallery_area)
+
+        # 9. Place Camera Grid below Embedding Viewer
+        grid_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.grid_dock, embed_area)
+        
+        # Populate the Windows menu with dock toggle actions
+        dock_windows = [
+            ("Annotation", self.annotation_dock),
+            ("Rasters", self.rasters_dock),
+            ("Labels", self.labels_dock),
+            ("Confidence", self.confidence_dock),
+            ("Performance", self.performance_dock),
+            ("Timer", self.timer_dock),
+            ("Gallery", self.gallery_dock),
+            ("Embeddings", self.embeddings_dock),
+            ("3D Viewer", self.mvat_dock),
+            ("Grid", self.grid_dock),
+        ]
+
+        for dock_name, dock_widget in dock_windows:
+            action = QAction(dock_name, self, checkable=True)
+            action.setChecked(dock_widget.isVisible())
+            # Connect the action to toggle the dock visibility
+            action.triggered.connect(lambda checked, dw=dock_widget: dw.toggleView(checked))
+            # Also update the action when the dock visibility changes
+            dock_widget.visibilityChanged.connect(lambda visible, act=action: act.setChecked(visible))
+            self.layout_menu.addAction(action)
+            self.dock_toggle_actions[dock_name] = action
+
+        # Add separator before layout actions
+        self.layout_menu.addSeparator()
+
+        # Save Layout action
+        self.save_layout_action = QAction("Save Layout", self)
+        self.save_layout_action.triggered.connect(self.on_save_layout)
+        self.layout_menu.addAction(self.save_layout_action)
+
+        # Load Layout submenu
+        self.load_layout_menu = self.layout_menu.addMenu("Load Layout")
+        self.populate_load_layout_menu()
+        
+        # --------------------------------------------------
+        # Restore layout from cache
+        # --------------------------------------------------
+        QtLayoutManager.restore_or_default(
+            self.dock_manager,
+            layout_name='default'
+        )
         
         # --------------------------------------------------
         # Enable drag and drop
@@ -1588,6 +1609,10 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Ensure special windows (explorer, mvat) and Performance Window are closed when the main window closes."""
+        
+        # Save layout configuration before closing
+        if hasattr(self, 'dock_manager'):
+            QtLayoutManager.save_and_close(self.dock_manager, layout_name='default')
         
         if hasattr(self, 'mvat_manager') and self.mvat_manager:
             self.mvat_manager.cleanup()
@@ -2460,6 +2485,46 @@ class MainWindow(QMainWindow):
             self.coralnet_download_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def on_save_layout(self):
+        """Show save layout dialog and save the current layout."""
+        QtLayoutManager.show_save_dialog_and_save(self.dock_manager, parent=self)
+        # Refresh the load menu to include the newly saved layout
+        self.populate_load_layout_menu()
+
+    def populate_load_layout_menu(self):
+        """Discover and populate the Load Layout submenu with available layouts."""
+        # Clear existing actions
+        self.load_layout_menu.clear()
+        
+        # Get list of available layouts
+        layouts = QtLayoutManager.list_available_layouts()
+        
+        if not layouts:
+            no_layouts_action = QAction("(No saved layouts)", self)
+            no_layouts_action.setEnabled(False)
+            self.load_layout_menu.addAction(no_layouts_action)
+            return
+        
+        # Add all custom saved layouts
+        for layout_name in layouts:
+            action = QAction(layout_name, self)
+            action.triggered.connect(
+                lambda checked, name=layout_name: self.load_specific_layout(name)
+            )
+            self.load_layout_menu.addAction(action)
+
+    def load_specific_layout(self, layout_name: str):
+        """Load a specific layout configuration."""
+        success = QtLayoutManager.load_layout(self.dock_manager, layout_name)
+        if success:
+            pass
+        else:
+            QMessageBox.warning(
+                self,
+                "Load Failed",
+                f"Failed to load layout '{layout_name}'."
+            )
 
     def open_import_dataset_dialog(self):
         """Open the Import Dataset dialog to import datasets into the project."""

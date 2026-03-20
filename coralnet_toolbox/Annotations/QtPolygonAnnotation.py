@@ -51,8 +51,33 @@ class PolygonAnnotation(Annotation):
 
         # Set the main polygon points and calculate initial properties
         self.set_precision(points, False)
-        self.set_centroid()
-        self.set_cropped_bbox()
+        self._set_centroid_and_bbox()
+
+    def _set_centroid_and_bbox(self):
+        """Compute centroid and bounding box in a single pass over self.points."""
+        if not self.points:
+            self.center_xy = QPointF(0, 0)
+            self.cropped_bbox = (0, 0, 0, 0)
+            self.annotation_size = 0
+            return
+
+        sum_x = sum_y = 0.0
+        min_x = min_y = float('inf')
+        max_x = max_y = float('-inf')
+        for p in self.points:
+            x = p.x()
+            y = p.y()
+            sum_x += x
+            sum_y += y
+            if x < min_x: min_x = x
+            if x > max_x: max_x = x
+            if y < min_y: min_y = y
+            if y > max_y: max_y = y
+
+        n = len(self.points)
+        self.center_xy = QPointF(sum_x / n, sum_y / n)
+        self.cropped_bbox = (min_x, min_y, max_x, max_y)
+        self.annotation_size = int(max(max_x - min_x, max_y - min_y))
 
     def set_precision(self, points: list, reduce: bool = True):
         """
@@ -92,6 +117,10 @@ class PolygonAnnotation(Annotation):
 
     def set_cropped_bbox(self):
         """Calculate the bounding box of the polygon defined by the points."""
+        if not self.points:
+            self.cropped_bbox = (0, 0, 0, 0)
+            self.annotation_size = 0
+            return
         min_x = min(point.x() for point in self.points)
         min_y = min(point.y() for point in self.points)
         max_x = max(point.x() for point in self.points)

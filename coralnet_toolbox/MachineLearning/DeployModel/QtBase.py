@@ -40,7 +40,7 @@ class Base(QDialog):
 
         self.setWindowIcon(get_icon("coralnet.svg"))
         self.setWindowTitle("Deploy Model")
-        self.resize(450, 650)
+        self.resize(900, 200)
 
         # Initialize variables
         self.imgsz = 1024
@@ -60,11 +60,20 @@ class Base(QDialog):
         self.auto_created_labels = set()  # Track which labels were auto-created
         self.label_to_class_name = {}  # Map row index to class name for checkbox tracking
 
-        self.layout = QVBoxLayout(self)
+        # Create main horizontal layout
+        main_layout = QHBoxLayout(self)
+        
+        # Create left and right columns
+        left_layout = QVBoxLayout()
+        right_layout = QVBoxLayout()
+        
+        self.layout = left_layout  # Keep backward compatibility for subclasses
+        self.left_layout = left_layout
+        self.right_layout = right_layout
 
         # Setup the info layout
         self.setup_info_layout()
-        # Setup the labels layout
+        # Setup the labels layout (goes to right column)
         self.setup_labels_layout()
         # Setup parameters layout
         self.setup_parameters_layout()
@@ -76,6 +85,14 @@ class Base(QDialog):
         self.setup_buttons_layout()
         # Setup the status layout
         self.setup_status_layout()
+        
+        # Add stretch to left layout to push everything to the top
+        self.left_layout.addStretch()
+        
+        # Add left column to main layout (more balanced ratio)
+        main_layout.addLayout(left_layout, stretch=2)
+        # Add right column to main layout (labels panel)
+        main_layout.addLayout(right_layout, stretch=1)
 
     def setup_info_layout(self):
         """Set up the layout and widgets for the info layout."""
@@ -104,8 +121,8 @@ class Base(QDialog):
         self.labels_table.setHorizontalHeaderLabels(["Status", "Short Label", "Long Label"])
         self.labels_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.labels_table.horizontalHeader().setStretchLastSection(True)
-        self.labels_table.setColumnWidth(0, 60)
-        self.labels_table.setColumnWidth(1, 140)
+        self.labels_table.setColumnWidth(0, 50)
+        self.labels_table.setColumnWidth(1, 90)
         layout.addWidget(self.labels_table)
 
         # Add status label
@@ -113,7 +130,8 @@ class Base(QDialog):
         layout.addWidget(self.labels_status_label)
 
         group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
+        # Add to right layout instead of main layout
+        self.right_layout.addWidget(group_box)
 
     def setup_parameters_layout(self):
         raise NotImplementedError("Subclasses must implement this method")

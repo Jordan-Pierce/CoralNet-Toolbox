@@ -9,9 +9,9 @@ import numpy as np
 
 import pyqtgraph as pg
 from PyQt5.QtGui import QMouseEvent, QPixmap, QImage, QBrush
-from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QSize
+from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QSize, QObject, pyqtProperty, QPropertyAnimation, QEasingCurve
 from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QGraphicsPixmapItem, 
-                             QSlider, QSpinBox, QLabel, QHBoxLayout, QWidget, QComboBox, QToolButton, QToolBar, QSizePolicy)
+                             QSlider, QLabel, QHBoxLayout, QWidget, QComboBox, QToolButton, QToolBar, QSizePolicy)
 
 from coralnet_toolbox.MVAT.core.Marker import Marker
 from coralnet_toolbox.MVAT.core.Ray import CameraRay
@@ -65,6 +65,7 @@ from coralnet_toolbox.utilities import convert_scale_units
 
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -206,16 +207,6 @@ class AnnotationWindow(QGraphicsView):
         # Let the annotation transparency slider naturally expand
         self.transparency_slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.transparency_slider.valueChanged.connect(self.update_label_transparency)
-
-        # --- Annotation Size ---
-        self.annotation_size_spinbox = QSpinBox()
-        self.annotation_size_spinbox.setMinimum(1)
-        self.annotation_size_spinbox.setMaximum(5000)
-        self.annotation_size_spinbox.setValue(self.annotation_size)
-        self.annotation_size_spinbox.valueChanged.connect(self.set_annotation_size)
-        self.annotationSizeChanged.connect(self.annotation_size_spinbox.setValue)
-        # Only enable the patch size control when the Patch tool is active
-        self.annotation_size_spinbox.setEnabled(False)
 
         # --- Positional/Dimensional Labels ---
         self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
@@ -596,18 +587,10 @@ class AnnotationWindow(QGraphicsView):
         
     # --- DOCK WRAPPER HOOKS ---
     def create_top_toolbar(self) -> QToolBar:
-        """Create the top toolbar with annotation tools, transparency slider,
-        and patch size control.
+        """Create the top toolbar with annotation tools and transparency slider.
         """
         toolbar = QToolBar("Annotation Tools")
         toolbar.setMovable(False)
-        # Patch Size widget (far left)
-        size_widget = QWidget()
-        size_layout = QHBoxLayout(size_widget)
-        size_layout.setContentsMargins(4, 0, 4, 0)
-        size_layout.addWidget(QLabel("Patch Size"))
-        size_layout.addWidget(self.annotation_size_spinbox)
-        toolbar.addWidget(size_widget)
         
         toolbar.addSeparator()
 
@@ -2024,6 +2007,82 @@ class AnnotationWindow(QGraphicsView):
         # Create and return a QRectF object from these points
         return QRectF(top_left, bottom_right)
 
+    def animate_to_rect(self, target_rect: QRectF, duration: int = 500, max_zoom: float = 4.0):
+        """Smoothly animate the view center and zoom to fit `target_rect`.
+
+        This avoids instant jumps and provides a brief inertia-like transition.
+        """
+        if target_rect is None or target_rect.isNull():
+            return
+
+        # View geometry
+        view_rect = self.viewport().rect()
+        view_w = max(1.0, float(view_rect.width()))
+        view_h = max(1.0, float(view_rect.height()))
+
+        # Compute desired zoom to fit the target rect (KeepAspectRatio behaviour)
+        tw = max(1.0, float(target_rect.width()))
+        th = max(1.0, float(target_rect.height()))
+        desired_zoom = min(view_w / tw, view_h / th)
+        desired_zoom = min(desired_zoom, max_zoom)
+
+        # Current center and zoom
+        start_center = self.mapToScene(self.viewport().rect().center())
+        end_center = target_rect.center()
+        try:
+            start_zoom = float(self.transform().m11())
+        except Exception:
+            start_zoom = 1.0
+
+        # Prepare animator object and animations
+        animator = ViewAnimator(self)
+        animator._center_x = start_center.x()
+        animator._center_y = start_center.y()
+        animator._zoom = start_zoom
+
+        cx_anim = QPropertyAnimation(animator, b'center_x')
+        cx_anim.setStartValue(start_center.x())
+        cx_anim.setEndValue(end_center.x())
+        cx_anim.setDuration(duration)
+        cx_anim.setEasingCurve(QEasingCurve.OutCubic)
+
+        cy_anim = QPropertyAnimation(animator, b'center_y')
+        cy_anim.setStartValue(start_center.y())
+        cy_anim.setEndValue(end_center.y())
+        cy_anim.setDuration(duration)
+        cy_anim.setEasingCurve(QEasingCurve.OutCubic)
+
+        z_anim = QPropertyAnimation(animator, b'zoom')
+        z_anim.setStartValue(start_zoom)
+        z_anim.setEndValue(desired_zoom)
+        z_anim.setDuration(duration)
+        z_anim.setEasingCurve(QEasingCurve.OutCubic)
+
+        # Keep references to animations so they are not garbage collected
+        self._active_view_animations = [cx_anim, cy_anim, z_anim]
+
+        # Restore anchor back to previous behavior when animations finish
+        def _on_finished():
+            try:
+                self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+            except Exception:
+                pass
+            # Clean up references
+            self._active_view_animations = []
+            # Emit a viewChanged signal for status updates
+            try:
+                self.viewChanged.emit(*self.get_image_dimensions())
+            except Exception:
+                pass
+
+        # Connect last animation finished to cleanup
+        z_anim.finished.connect(_on_finished)
+
+        # Start animations
+        cx_anim.start()
+        cy_anim.start()
+        z_anim.start()
+
     def get_image_dimensions(self):
         """Get the dimensions of the currently loaded image."""
         if self.pixmap_image:
@@ -2046,8 +2105,8 @@ class AnnotationWindow(QGraphicsView):
         work_area_rect = work_area.graphics_item.boundingRect()
         work_area_center = work_area_rect.center()
 
-        # Center the view on the work area's center
-        self.centerOn(work_area_center)
+        # Smoothly animate the view to the work area
+        self.animate_to_rect(work_area_rect)
 
     def center_on_annotation(self, annotation):
         """Center the view on the specified annotation."""
@@ -2059,8 +2118,8 @@ class AnnotationWindow(QGraphicsView):
         annotation_rect = annotation.graphics_item.boundingRect()
         annotation_center = annotation_rect.center()
 
-        # Center the view on the annotation's center
-        self.centerOn(annotation_center)
+        # Smoothly animate the view to the annotation
+        self.animate_to_rect(annotation_rect)
     
     def center_and_zoom_on_annotation(self, annotation):
         """Center and zoom in to focus on the specified annotation with relaxed zoom and dynamic padding."""
@@ -2103,30 +2162,34 @@ class AnnotationWindow(QGraphicsView):
         padding_y = max(annotation_rect.height() * padding_factor, min_padding_absolute)
         padded_rect = annotation_rect.adjusted(-padding_x, -padding_y, padding_x, padding_y)
 
-        # Fit the padded annotation rect in the view
-        self.fitInView(padded_rect, Qt.KeepAspectRatio)
-
-        # Update the zoom factor based on the new view transformation with safety checks
-        view_rect = self.viewport().rect()
-        if padded_rect.width() > 0:
-            zoom_x = view_rect.width() / padded_rect.width()
-        else:
-            zoom_x = 1.0  # Default zoom if width is zero
-
-        if padded_rect.height() > 0:
-            zoom_y = view_rect.height() / padded_rect.height()
-        else:
-            zoom_y = 1.0  # Default zoom if height is zero
-
-        # Relax the zoom by capping the maximum zoom factor
-        max_zoom = 4.0  # Do not zoom in more than 4x
-        self.zoom_factor = min(min(zoom_x, zoom_y), max_zoom)
-
-        # Signal that the view has changed
-        self.viewChanged.emit(*self.get_image_dimensions())
+        # Animate the view to the padded annotation rect instead of jumping
+        self.animate_to_rect(padded_rect, duration=600)
     
-    def cycle_annotations(self, direction):
+    def cycle_annotations(self, direction, _bypass_debounce: bool = False):
         """Cycle through annotations in the specified direction."""
+        # Debounce: coalesce rapid repeated calls into one action
+        debounce_ms = 150
+        if not _bypass_debounce:
+            # Lazy-create a single-shot timer to coalesce repeated calls
+            if not hasattr(self, '_cycle_debounce_timer'):
+                self._cycle_debounce_timer = QTimer(self)
+                self._cycle_debounce_timer.setSingleShot(True)
+                # When timer fires, call the cycle with bypass flag to actually run
+                self._cycle_debounce_timer.timeout.connect(lambda: self.cycle_annotations(getattr(self, '_pending_cycle', 0), True))
+            # Store the most recent requested direction
+            self._pending_cycle = direction
+            # Restart debounce timer
+            self._cycle_debounce_timer.stop()
+            self._cycle_debounce_timer.start(debounce_ms)
+            return
+
+        # When bypassing debounce, clear pending marker
+        if hasattr(self, '_pending_cycle'):
+            try:
+                del self._pending_cycle
+            except Exception:
+                self._pending_cycle = None
+
         # Get the annotations for the current image
         annotations = self.get_image_annotations()
         if not annotations:
@@ -2417,10 +2480,12 @@ class AnnotationWindow(QGraphicsView):
         # Set the visibility based on the label's visibility checkbox
         self.set_annotation_visibility(annotation)
         
-        # Connect essential update signals
-        annotation.selected.connect(self.select_annotation)
-        annotation.annotationDeleted.connect(self.delete_annotation)
-        annotation.annotationUpdated.connect(self.on_annotation_updated)
+        # Connect essential update signals (guard prevents duplicate connections)
+        if not annotation._signals_connected:
+            annotation.selected.connect(self.select_annotation)
+            annotation.annotationDeleted.connect(self.delete_annotation)
+            annotation.annotationUpdated.connect(self.on_annotation_updated)
+            annotation._signals_connected = True
 
     def load_annotations(self, image_path=None, annotations=None):
         """Load annotations for the specified image path or current image."""
@@ -2698,9 +2763,12 @@ class AnnotationWindow(QGraphicsView):
 
             images_to_update.add(annotation.image_path)
 
-            annotation.selected.connect(self.select_annotation)
-            annotation.annotationDeleted.connect(self.delete_annotation)
-            annotation.annotationUpdated.connect(self.on_annotation_updated)
+            # Connect signals (guard prevents duplicates if load_annotation is also called)
+            if not annotation._signals_connected:
+                annotation.selected.connect(self.select_annotation)
+                annotation.annotationDeleted.connect(self.delete_annotation)
+                annotation.annotationUpdated.connect(self.on_annotation_updated)
+                annotation._signals_connected = True
 
             if isinstance(annotation, MaskAnnotation):
                 raster = self.main_window.image_window.raster_manager.get_raster(annotation.image_path)
@@ -2902,3 +2970,58 @@ class AnnotationWindow(QGraphicsView):
             self.pixmap_image = None
             self.rasterio_image = None
             self.active_image = False
+
+
+class ViewAnimator(QObject):
+    """Top-level helper QObject with animatable properties to smoothly update view center and zoom.
+
+    The animator exposes `center_x`, `center_y`, and `zoom` properties so
+    `QPropertyAnimation` can interpolate them. On each setter call the
+    corresponding view transform/centering is applied immediately.
+    """
+    def __init__(self, view):
+        super().__init__()
+        self.view = view
+        self._center_x = 0.0
+        self._center_y = 0.0
+        # Use current horizontal scale as zoom (assumes uniform scaling)
+        try:
+            self._zoom = float(self.view.transform().m11())
+        except Exception:
+            self._zoom = 1.0
+
+    def _get_center_x(self):
+        return self._center_x
+
+    def _set_center_x(self, v):
+        self._center_x = float(v)
+        # Keep center_y in sync when centering
+        self.view.centerOn(QPointF(self._center_x, self._center_y))
+
+    def _get_center_y(self):
+        return self._center_y
+
+    def _set_center_y(self, v):
+        self._center_y = float(v)
+        self.view.centerOn(QPointF(self._center_x, self._center_y))
+
+    def _get_zoom(self):
+        return self._zoom
+
+    def _set_zoom(self, v):
+        # Apply absolute zoom by resetting transform and scaling
+        try:
+            self._zoom = float(v)
+            self.view.setTransformationAnchor(QGraphicsView.AnchorViewCenter)
+            self.view.resetTransform()
+            # Clamp zoom to a sensible positive range
+            z = max(0.0001, self._zoom)
+            self.view.scale(z, z)
+            # Remember zoom on view object as well
+            self.view.zoom_factor = z
+        except Exception:
+            pass
+
+    center_x = pyqtProperty(float, _get_center_x, _set_center_x)
+    center_y = pyqtProperty(float, _get_center_y, _set_center_y)
+    zoom = pyqtProperty(float, _get_zoom, _set_zoom)

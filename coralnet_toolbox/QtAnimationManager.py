@@ -14,7 +14,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 class AnimationManager(QObject):
     """
     Manages a single, global timer to handle animations for all
-    registered objects (like Annotations and WorkAreas).
+    registered objects (like Annotations and WorkArea).
     
     This avoids creating thousands of QTimer objects, which can
     exhaust system resources and crash the application.

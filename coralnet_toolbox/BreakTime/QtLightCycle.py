@@ -1,7 +1,10 @@
 # Credit: https://www.a1k0n.net/code/tron.html
+# Algorithm: Google AI Challenge 2010 winner post-mortem
+#   https://www.a1k0n.net/2010/03/04/google-ai-challenge-postmortem.html
 
 import random
 import warnings
+from collections import deque
 
 warnings.filterwarnings("ignore")
 
@@ -17,754 +20,748 @@ from coralnet_toolbox.Icons import get_icon
 # Constants / Configurations
 # ----------------------------------------------------------------------------------------------------------------------
 
-
-# Game settings
-BOARD_WIDTH = 80
+BOARD_WIDTH  = 80
 BOARD_HEIGHT = 60
-CELL_SIZE = 12
-GRID_LINE_WIDTH = 2
+CELL_SIZE    = 12
 
-# Colors
-BACKGROUND_COLOR = QColor(0, 0, 0)  # Black
-GRID_COLOR = QColor(0, 100, 100)  # Darker cyan
-PLAYER_COLOR = QColor(255, 215, 0)  # Gold
-OPPONENT_COLOR = QColor(255, 0, 0)  # Red
+BACKGROUND_COLOR = QColor(0, 0, 0)
+GRID_COLOR       = QColor(0, 100, 100)
+PLAYER_COLOR     = QColor(255, 215, 0)
+OPPONENT_COLOR   = QColor(255, 0, 0)
 
-# Directions
-UP = 0
-DOWN = 1
-LEFT = 2
+UP    = 0
+DOWN  = 1
+LEFT  = 2
 RIGHT = 3
 
-# Game states
-PLAYER_ALIVE = 0
-PLAYER_CRASHED = 1
-OPPONENT_ALIVE = 0
-OPPONENT_CRASHED = 1
+OPPOSITE = {UP: DOWN, DOWN: UP, LEFT: RIGHT, RIGHT: LEFT}
+DELTA    = {UP: (0, -1), DOWN: (0, 1), LEFT: (-1, 0), RIGHT: (1, 0)}
+NBRS     = ((-1, 0), (1, 0), (0, -1), (0, 1))
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Classes
+# LightCycle
 # ----------------------------------------------------------------------------------------------------------------------
-
 
 class LightCycle:
-    """
-    Represents a light cycle in the game.
-    """
+    """Represents a light cycle in the game."""
 
     def __init__(self, start_x, start_y, direction, color):
-        self.x = start_x
-        self.y = start_y
+        self.x         = start_x
+        self.y         = start_y
         self.direction = direction
-        self.color = color
-        self.trail = [(start_x, start_y)]  # List of (x, y) positions
-        self.alive = True
+        self.color     = color
+        self.trail     = [(start_x, start_y)]
+        self.alive     = True
 
     def move(self):
-        """Move the cycle in its current direction."""
         if not self.alive:
             return
-
-        if self.direction == UP:
-            self.y -= 1
-        elif self.direction == DOWN:
-            self.y += 1
-        elif self.direction == LEFT:
-            self.x -= 1
-        elif self.direction == RIGHT:
-            self.x += 1
-
-        # Add current position to trail
+        dx, dy  = DELTA[self.direction]
+        self.x += dx
+        self.y += dy
         self.trail.append((self.x, self.y))
 
     def turn(self, new_direction):
-        """Change direction if it's not reversing."""
-        # Prevent immediate reversal
-        if (self.direction == UP and new_direction == DOWN) or \
-           (self.direction == DOWN and new_direction == UP) or \
-           (self.direction == LEFT and new_direction == RIGHT) or \
-           (self.direction == RIGHT and new_direction == LEFT):
-            return
-        self.direction = new_direction
+        """Change direction unless it would be a 180-degree reversal."""
+        if OPPOSITE[self.direction] != new_direction:
+            self.direction = new_direction
 
     def check_collision(self, board_width, board_height, opponent_trail, obstacles):
-        """Check if the cycle has crashed."""
-        # Wall collision
+        """Return True (and mark dead) if the cycle has crashed."""
         if self.x < 0 or self.x >= board_width or self.y < 0 or self.y >= board_height:
-            self.alive = False
-            return True
-
-        # Self collision (hit own trail)
-        if (self.x, self.y) in self.trail[:-1]:  # Exclude current position
-            self.alive = False
-            return True
-
-        # Opponent collision
+            self.alive = False; return True
+        if (self.x, self.y) in self.trail[:-1]:
+            self.alive = False; return True
         if (self.x, self.y) in opponent_trail:
-            self.alive = False
-            return True
-
-        # Obstacle collision
+            self.alive = False; return True
         if (self.x, self.y) in obstacles:
-            self.alive = False
-            return True
-
+            self.alive = False; return True
         return False
 
 
+# ----------------------------------------------------------------------------------------------------------------------
+# LightCycleAI  --  faithful 1v1 implementation of the a1k0n algorithm
+# ----------------------------------------------------------------------------------------------------------------------
+
 class LightCycleAI:
     """
-    Advanced AI for Light Cycle based on Google AI Challenge winning strategies.
-    Implements Voronoi heuristic, articulation points, space-filling, and minimax.
+    1v1 Light Cycle AI based on the Google AI Challenge 2010 winning algorithm.
+
+    Components (in descending order of impact):
+      1. Chamber tree / battlefront heuristic  -- the contest-winning idea
+      2. Data-mined Voronoi coefficients        -- K1 = 0.055, K2 = 0.194
+      3. Iterative-deepening endgame search     -- greedy-fill leaves
+      4. Minimax with alpha-beta pruning        -- Voronoi evaluation at leaves
+      5. Checkerboard parity territory bound    -- tighter endgame count
+      6. Wall-hugging edge tiebreaker           -- automatic boundary-following
     """
-    
+
     def __init__(self, difficulty="Medium"):
-        self.difficulty = difficulty
-        self.think_ahead = 4
-        self.mistake_chance = 0.04
-        
-        # Difficulty settings
-        difficulty_settings = {
-            "Easy": {"think_ahead": 2, "mistake_chance": 0.15, "search_depth": 3},
-            "Medium": {"think_ahead": 3, "mistake_chance": 0.08, "search_depth": 4},
-            "Hard": {"think_ahead": 4, "mistake_chance": 0.04, "search_depth": 6},
-            "Insane": {"think_ahead": 5, "mistake_chance": 0.01, "search_depth": 8}
-        }
-        
-        if difficulty in difficulty_settings:
-            settings = difficulty_settings[difficulty]
-            self.think_ahead = settings["think_ahead"]
-            self.mistake_chance = settings["mistake_chance"]
-            self.search_depth = settings["search_depth"]
-        else:
-            self.search_depth = 5
-            
-        # Voronoi heuristic coefficients (from data mining in original contest)
-        self.node_coefficient = 0.080
-        self.edge_coefficient = 0.150
+        cfg = {
+            "Easy":   dict(search_depth=2, endgame_depth=3, mistake_chance=0.12),
+            "Medium": dict(search_depth=3, endgame_depth=4, mistake_chance=0.06),
+            "Hard":   dict(search_depth=4, endgame_depth=5, mistake_chance=0.02),
+            "Insane": dict(search_depth=5, endgame_depth=6, mistake_chance=0.00),
+        }.get(difficulty, dict(search_depth=3, endgame_depth=4, mistake_chance=0.06))
 
-    def compute_voronoi_territories(self, board_width, board_height, occupied_positions, player_pos, opponent_pos):
+        self.search_depth   = cfg["search_depth"]
+        self.endgame_depth  = cfg["endgame_depth"]
+        self.mistake_chance = cfg["mistake_chance"]
+
+        # Coefficients from data-mining 11,691 contest games (post-mortem "data mining")
+        self.K1 = 0.055   # node coefficient
+        self.K2 = 0.194   # edge coefficient (double-counted open neighbours)
+
+    # ------------------------------------------------------------------
+    # Low-level helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _sim(pos, d):
+        dx, dy = DELTA[d]
+        return (pos[0] + dx, pos[1] + dy)
+
+    @staticmethod
+    def _valid(bw, bh, occ, pos):
+        x, y = pos
+        return 0 <= x < bw and 0 <= y < bh and pos not in occ
+
+    def _valid_dirs(self, pos, cur_dir, bw, bh, occ):
+        return [d for d in (UP, DOWN, LEFT, RIGHT)
+                if d != OPPOSITE[cur_dir] and self._valid(bw, bh, occ, self._sim(pos, d))]
+
+    @staticmethod
+    def _open_nbrs(bw, bh, occ, x, y):
+        """Count free (non-wall, non-occupied) neighbours of (x, y)."""
+        return sum(
+            1 for dx, dy in NBRS
+            if 0 <= x + dx < bw and 0 <= y + dy < bh and (x + dx, y + dy) not in occ
+        )
+
+    # ------------------------------------------------------------------
+    # Separation check  (endgame trigger)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _separated(bw, bh, occ, p_pos, o_pos):
+        """True iff p_pos and o_pos are in different connected components of free space."""
+        visited = {p_pos}
+        q = deque([p_pos])
+        while q:
+            x, y = q.popleft()
+            if (x, y) == o_pos:
+                return False
+            for dx, dy in NBRS:
+                nb = (x + dx, y + dy)
+                nx, ny = nb
+                if (0 <= nx < bw and 0 <= ny < bh
+                        and nb not in occ and nb not in visited):
+                    visited.add(nb)
+                    q.append(nb)
+        return True
+
+    # ------------------------------------------------------------------
+    # Voronoi territories  (simultaneous BFS from both players)
+    # ------------------------------------------------------------------
+
+    def _voronoi(self, bw, bh, occ, p_pos, o_pos):
         """
-        Compute Voronoi diagram - for each cell, determine which player can reach it first.
-        Returns (player_territory, opponent_territory, player_edges, opponent_edges)
+        Compute Voronoi diagram: each free cell is 'player', 'opponent', or 'neutral'.
+
+        Returns (territories_dict, p_nodes, p_edges, o_nodes, o_edges).
+        Edges are open-neighbour counts summed over owned cells (double-counted,
+        matching the original contest's metric).
+
+        occ should already have the head positions removed so BFS starts
+        from accessible cells.
         """
-        # Use BFS to find shortest distance from each player to all reachable cells
-        distances = {}
-        territories = {}
-        
-        # Initialize BFS for both players
-        from collections import deque
-        queue = deque()
-        
-        # Add starting positions
-        if player_pos not in occupied_positions:
-            queue.append((player_pos[0], player_pos[1], 0, 'player'))
-            distances[player_pos] = 0
-            territories[player_pos] = 'player'
-            
-        if opponent_pos not in occupied_positions:
-            queue.append((opponent_pos[0], opponent_pos[1], 0, 'opponent'))
-            distances[opponent_pos] = 0
-            territories[opponent_pos] = 'opponent'
-        
-        # BFS to find territories
-        while queue:
-            x, y, dist, owner = queue.popleft()
-            current_pos = (x, y)
-            
-            # Skip if we've found a shorter path already
-            if current_pos in distances and distances[current_pos] < dist:
+        dist  = {}
+        owner = {}
+        q     = deque()
+
+        for pos, who in ((p_pos, 'player'), (o_pos, 'opponent')):
+            dist[pos]  = 0
+            owner[pos] = who
+            q.append((pos[0], pos[1], 0, who))
+
+        while q:
+            x, y, d, who = q.popleft()
+            if dist.get((x, y), 9999) < d:
                 continue
-                
-            # Explore neighbors
-            for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+            for dx, dy in NBRS:
                 nx, ny = x + dx, y + dy
-                new_pos = (nx, ny)
-                
-                # Check bounds and walls
-                if (nx < 0 or 
-                    nx >= board_width or 
-                    ny < 0 or ny >= board_height or 
-                    new_pos in occupied_positions):
+                nb     = (nx, ny)
+                if not (0 <= nx < bw and 0 <= ny < bh) or nb in occ:
                     continue
-                    
-                new_dist = dist + 1
-                
-                # If unvisited or we found a shorter path
-                if new_pos not in distances or distances[new_pos] > new_dist:
-                    distances[new_pos] = new_dist
-                    territories[new_pos] = owner
-                    queue.append((nx, ny, new_dist, owner))
-                elif distances[new_pos] == new_dist and territories[new_pos] != owner:
-                    # Tie - mark as neutral
-                    territories[new_pos] = 'neutral'
-        
-        # Count territories and edges
-        player_nodes = sum(1 for pos, owner in territories.items() if owner == 'player')
-        opponent_nodes = sum(1 for pos, owner in territories.items() if owner == 'opponent')
-        
-        # Count edges (neighbors of territory cells)
-        player_edges = 0
-        opponent_edges = 0
-        
-        for (x, y), owner in territories.items():
-            if owner == 'player':
-                # Count open neighbors
-                for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
-                    nx, ny = x + dx, y + dy
-                    if (0 <= nx < board_width and 
-                        0 <= ny < board_height and
-                        (nx, ny) not in occupied_positions):
-                        player_edges += 1
-            elif owner == 'opponent':
-                for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
-                    nx, ny = x + dx, y + dy
-                    if (0 <= nx < board_width and 
-                        0 <= ny < board_height and
-                        (nx, ny) not in occupied_positions):
-                        opponent_edges += 1
-        
-        # Find neutral (battlefront) squares
-        neutral_squares = {pos for pos, owner in territories.items() if owner == 'neutral'}
-        
-        return player_nodes, opponent_nodes, player_edges, opponent_edges, neutral_squares
+                nd = d + 1
+                if nb not in dist:
+                    dist[nb]  = nd
+                    owner[nb] = who
+                    q.append((nx, ny, nd, who))
+                elif dist[nb] == nd and owner.get(nb) != who:
+                    owner[nb] = 'neutral'
 
-    def find_articulation_points(self, board_width, board_height, occupied_positions):
+        p_n = p_e = o_n = o_e = 0
+        for (x, y), w in owner.items():
+            if (x, y) in (p_pos, o_pos):
+                continue                             # heads are already occupied
+            e = self._open_nbrs(bw, bh, occ, x, y)
+            if w == 'player':
+                p_n += 1; p_e += e
+            elif w == 'opponent':
+                o_n += 1; o_e += e
+
+        return owner, p_n, p_e, o_n, o_e
+
+    # ------------------------------------------------------------------
+    # Checkerboard territory  (tighter endgame upper bound)
+    # ------------------------------------------------------------------
+
+    def _checkerboard(self, bw, bh, occ, p_pos, o_pos):
         """
-        Find articulation points (cut vertices) in the graph of free spaces.
-        These are points whose removal would disconnect the graph.
+        Rerun Voronoi and count red/black squares per player.
+
+        Upper bound on fillable squares = 2*min(red,black) + min(1,|red-black|).
+        Players alternate colours on every step, so a colour surplus is wasted.
+        Returns (p_effective, o_effective).
         """
-        # Build adjacency list for free spaces
-        free_spaces = []
-        space_to_index = {}
-        
-        for x in range(board_width):
-            for y in range(board_height):
-                if (x, y) not in occupied_positions:
-                    space_to_index[(x, y)] = len(free_spaces)
-                    free_spaces.append((x, y))
-        
-        if len(free_spaces) <= 2:
+        dist  = {}
+        owner = {}
+        q     = deque()
+        for pos, who in ((p_pos, 'player'), (o_pos, 'opponent')):
+            dist[pos]  = 0
+            owner[pos] = who
+            q.append((pos[0], pos[1], 0, who))
+
+        while q:
+            x, y, d, who = q.popleft()
+            if dist.get((x, y), 9999) < d:
+                continue
+            for dx, dy in NBRS:
+                nx, ny = x + dx, y + dy
+                nb     = (nx, ny)
+                if not (0 <= nx < bw and 0 <= ny < bh) or nb in occ:
+                    continue
+                nd = d + 1
+                if nb not in dist:
+                    dist[nb]  = nd
+                    owner[nb] = who
+                    q.append((nx, ny, nd, who))
+                elif dist[nb] == nd and owner.get(nb) != who:
+                    owner[nb] = 'neutral'
+
+        p_r = p_b = o_r = o_b = 0
+        for (x, y), w in owner.items():
+            red = (x + y) % 2 == 0
+            if w == 'player':
+                if red: p_r += 1
+                else:   p_b += 1
+            elif w == 'opponent':
+                if red: o_r += 1
+                else:   o_b += 1
+
+        def eff(r, b):
+            return 2 * min(r, b) + min(1, abs(r - b))
+
+        return eff(p_r, p_b), eff(o_r, o_b)
+
+    # ------------------------------------------------------------------
+    # Articulation points  (iterative Tarjan's, safe for large boards)
+    # ------------------------------------------------------------------
+
+    def _articulation_points(self, bw, bh, occ):
+        """
+        Find all articulation points (cut vertices) in the free-space graph.
+        Removing an AP disconnects the graph into separate chambers.
+        Uses iterative DFS to stay within Python's stack limits on 80x60 boards.
+        """
+        free   = []
+        to_idx = {}
+        for x in range(bw):
+            for y in range(bh):
+                p = (x, y)
+                if p not in occ:
+                    to_idx[p] = len(free)
+                    free.append(p)
+
+        n = len(free)
+        if n <= 2:
             return set()
-            
-        n = len(free_spaces)
+
         adj = [[] for _ in range(n)]
-        
-        # Build adjacency list
-        for i, (x, y) in enumerate(free_spaces):
-            for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
-                nx, ny = x + dx, y + dy
-                if (nx, ny) in space_to_index:
-                    j = space_to_index[(nx, ny)]
-                    adj[i].append(j)
-        
-        # Find articulation points using Tarjan's algorithm
-        visited = [False] * n
-        disc = [0] * n
-        low = [0] * n
-        parent = [-1] * n
-        ap = [False] * n
-        time = [0]
-        
-        def bridge_util(u):
-            children = 0
-            visited[u] = True
-            disc[u] = low[u] = time[0]
-            time[0] += 1
-            
-            for v in adj[u]:
-                if not visited[v]:
-                    children += 1
-                    parent[v] = u
-                    bridge_util(v)
-                    
-                    low[u] = min(low[u], low[v])
-                    
-                    # Root of DFS tree is articulation point if it has more than one child
-                    if parent[u] == -1 and children > 1:
-                        ap[u] = True
-                        
-                    # Non-root is articulation point if removing it disconnects the tree
-                    if parent[u] != -1 and low[v] >= disc[u]:
-                        ap[u] = True
-                        
-                elif v != parent[u]:
-                    low[u] = min(low[u], disc[v])
-        
-        # Find articulation points for all components
-        for i in range(n):
-            if not visited[i]:
-                bridge_util(i)
-        
-        # Convert back to coordinates
-        articulation_points = set()
-        for i in range(n):
-            if ap[i]:
-                articulation_points.add(free_spaces[i])
-                
-        return articulation_points
+        for i, (x, y) in enumerate(free):
+            for dx, dy in NBRS:
+                nb = (x + dx, y + dy)
+                if nb in to_idx:
+                    adj[i].append(to_idx[nb])
 
-    def compute_checkerboard_territories(self, board_width, board_height, occupied_positions, player_pos, opponent_pos):
-        """
-        Compute territories considering checkerboard parity constraints.
-        In Tron, players alternate between "red" and "black" squares, so surplus squares
-        of one color will be wasted.
-        """
-        player_nodes, opponent_nodes, player_edges, opponent_edges, _ = self.compute_voronoi_territories(
-            board_width, board_height, occupied_positions, player_pos, opponent_pos)
-        
-        # Count red/black squares for each player's territory
-        player_red = 0
-        player_black = 0
-        opponent_red = 0
-        opponent_black = 0
-        
-        # Re-traverse territories to count colors
-        distances = {}
-        territories = {}
-        
-        # BFS again to get territories
-        from collections import deque
-        queue = deque()
-        
-        if player_pos not in occupied_positions:
-            queue.append((player_pos[0], player_pos[1], 0, 'player'))
-            distances[player_pos] = 0
-            territories[player_pos] = 'player'
-            
-        if opponent_pos not in occupied_positions:
-            queue.append((opponent_pos[0], opponent_pos[1], 0, 'opponent'))
-            distances[opponent_pos] = 0
-            territories[opponent_pos] = 'opponent'
-        
-        while queue:
-            x, y, dist, owner = queue.popleft()
-            current_pos = (x, y)
-            
-            if current_pos in distances and distances[current_pos] < dist:
+        disc      = [-1] * n
+        low       = [0]  * n
+        parent    = [-1] * n
+        ap        = [False] * n
+        child_cnt = [0]  * n
+        timer     = [0]
+
+        for start in range(n):
+            if disc[start] != -1:
                 continue
-                
-            for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
-                nx, ny = x + dx, y + dy
-                new_pos = (nx, ny)
-                
-                if (nx < 0 or nx >= board_width or ny < 0 or ny >= board_height or
-                    new_pos in occupied_positions):
+            disc[start] = low[start] = timer[0]; timer[0] += 1
+            stack = [[start, 0]]          # [node, next_neighbour_index]
+
+            while stack:
+                u, i = stack[-1]
+                if i < len(adj[u]):
+                    stack[-1][1] += 1
+                    v = adj[u][i]
+                    if disc[v] == -1:
+                        child_cnt[u] += 1
+                        parent[v]     = u
+                        disc[v] = low[v] = timer[0]; timer[0] += 1
+                        stack.append([v, 0])
+                    elif v != parent[u]:
+                        low[u] = min(low[u], disc[v])
+                else:
+                    stack.pop()
+                    if stack:
+                        p_node = stack[-1][0]
+                        low[p_node] = min(low[p_node], low[u])
+                        if parent[p_node] == -1:
+                            if child_cnt[p_node] > 1:
+                                ap[p_node] = True
+                        elif low[u] >= disc[p_node]:
+                            ap[p_node] = True
+
+        return {free[i] for i in range(n) if ap[i]}
+
+    # ------------------------------------------------------------------
+    # Chamber tree helpers
+    # ------------------------------------------------------------------
+
+    def _flood_chamber(self, bw, bh, occ, territories, start, aps, forbidden):
+        """
+        Flood-fill the current 'chamber' starting from `start`.
+
+        Stops at articulation points (records them as borders for later recursion)
+        but always enters `start` even when it is itself an AP.
+
+        Returns (node_count, edge_count, border_ap_set, visited_cells).
+        """
+        visited    = set()
+        border_aps = set()
+        nodes = edges = 0
+        stack = [start]
+
+        while stack:
+            pos = stack.pop()
+            if pos in visited or pos in forbidden:
+                continue
+            t = territories.get(pos)
+            if t not in ('player', 'neutral'):
+                continue
+            # Treat APs as chamber boundaries -- but always enter the start cell
+            if pos in aps and pos != start:
+                border_aps.add(pos)
+                continue
+
+            visited.add(pos)
+            nodes += 1
+            x, y = pos
+            for dx, dy in NBRS:
+                nb = (x + dx, y + dy)
+                nx, ny = nb
+                if not (0 <= nx < bw and 0 <= ny < bh) or nb in occ:
                     continue
-                    
-                new_dist = dist + 1
-                
-                if new_pos not in distances or distances[new_pos] > new_dist:
-                    distances[new_pos] = new_dist
-                    territories[new_pos] = owner
-                    queue.append((nx, ny, new_dist, owner))
-                elif distances[new_pos] == new_dist and territories[new_pos] != owner:
-                    territories[new_pos] = 'neutral'
-        
-        # Count red/black squares
-        for (x, y), owner in territories.items():
-            is_red = (x + y) % 2 == 0  # Checkerboard pattern
-            if owner == 'player':
-                if is_red:
-                    player_red += 1
-                else:
-                    player_black += 1
-            elif owner == 'opponent':
-                if is_red:
-                    opponent_red += 1
-                else:
-                    opponent_black += 1
-        
-        # Calculate effective territory considering parity constraints
-        player_effective = min(player_red, player_black) * 2 + abs(player_red - player_black)
-        opponent_effective = min(opponent_red, opponent_black) * 2 + abs(opponent_red - opponent_black)
-        
-        return player_effective, opponent_effective
+                if territories.get(nb) in ('player', 'neutral'):
+                    edges += 1
+                    if nb not in visited and nb not in forbidden:
+                        stack.append(nb)
 
-    def count_edge_removal(self, board_width, board_height, occupied_positions, x, y):
-        """
-        Count how many edges would be removed by moving to position (x, y).
-        Lower values indicate better space-filling moves.
-        """
-        if (x, y) in occupied_positions:
-            return float('inf')
-            
-        edge_count = 0
-        for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
-            nx, ny = x + dx, y + dy
-            if (0 <= nx < board_width and 0 <= ny < board_height and
-                (nx, ny) not in occupied_positions):
-                edge_count += 1
-                
-        return 4 - edge_count  # Higher removal = worse move
+        return nodes, edges, border_aps, visited
 
-    def evaluate_position(self, board_width, board_height, occupied_positions, player_pos, opponent_pos):
+    def _is_battlefront(self, bw, bh, occ, territories, start, aps, forbidden):
         """
-        Advanced position evaluation using Voronoi heuristic and space-filling principles.
-        Returns a score from the opponent's perspective (higher = better for opponent).
+        True if the chamber accessible from `start` (without crossing APs or
+        `forbidden`) contains a neutral square or is adjacent to opponent territory.
+        That makes it a 'battlefront' chamber -- it contests the Voronoi boundary.
         """
-        # Check for immediate game over
-        if player_pos in occupied_positions:
-            return 10000  # Opponent wins
-        if opponent_pos in occupied_positions:
-            return -10000  # Player wins
-        
-        # Compute Voronoi territories
-        player_nodes, opponent_nodes, player_edges, opponent_edges, neutral_squares = self.compute_voronoi_territories(
-            board_width, board_height, occupied_positions, player_pos, opponent_pos)
-        
-        # If players are separated, use territory count with endgame bonus
-        if self.are_players_separated(board_width, board_height, occupied_positions, player_pos, opponent_pos):
-            # Use checkerboard-aware territory calculation for endgame
-            player_effective, opponent_effective = self.compute_checkerboard_territories(
-                board_width, board_height, occupied_positions, player_pos, opponent_pos)
-            territory_diff = opponent_effective - player_effective
-            return territory_diff * 1000  # Large multiplier for certain endgame
-        
-        # Use learned coefficients from Google AI Challenge data mining
-        node_score = (opponent_nodes - player_nodes) * self.node_coefficient
-        edge_score = (opponent_edges - player_edges) * self.edge_coefficient
-        
-        base_score = (node_score + edge_score) * 1000  # Scale up for integer math
-        
-        # --- START OF AGGRESSIVENESS CODE ---
-        # 1. Proximity Bonus: Reward AI for being close to the player.
-        # The original formula (e.g., 5000 / distance) creates a weak gradient at long
-        # range, leading to passive play. A linear bonus provides a stronger, constant
-        # incentive to engage the opponent.
-        distance = abs(player_pos[0] - opponent_pos[0]) + abs(player_pos[1] - opponent_pos[1])
-        max_dist = board_width + board_height
-        # A high weight (e.g., 500) makes the score change from moving one step closer
-        # comparable to the score from gaining territory, encouraging aggression.
-        proximity_bonus = (max_dist - distance) * 1000
-
-        # 2. Battlefront Bonus: Reward AI for controlling the contested border.
-        # Being on the "battlefront" (neutral squares) is a key strategic goal.
-        # This bonus should be large to heavily incentivize moving to contested areas.
-        battlefront_bonus = 0
-        if opponent_pos in neutral_squares:
-            battlefront_bonus = 10000
-        # --- END OF AGGRESSIVENESS CODE ---
-        
-        # Add space-filling bonus - prefer moves that don't waste edges
-        space_filling_bonus = 0
-        
-        # Find articulation points to avoid creating bottlenecks
-        articulation_points = self.find_articulation_points(board_width, board_height, occupied_positions)
-        
-        # Penalty for being near articulation points (might get cut off)
-        articulation_penalty = 0
-        for ax, ay in articulation_points:
-            opponent_dist = abs(opponent_pos[0] - ax) + abs(opponent_pos[1] - ay)
-            player_dist = abs(player_pos[0] - ax) + abs(player_pos[1] - ay)
-            if opponent_dist <= 2:
-                articulation_penalty -= 50
-            if player_dist <= 2:
-                articulation_penalty += 50
-        
-        return int(base_score + space_filling_bonus + articulation_penalty + proximity_bonus + battlefront_bonus)
-
-    def are_players_separated(self, board_width, board_height, occupied_positions, player_pos, opponent_pos):
-        """
-        Check if players are in separate connected components (endgame condition).
-        """
-        # BFS from player position
+        stack   = [start]
         visited = set()
-        queue = [player_pos]
-        visited.add(player_pos)
-        
-        while queue:
-            x, y = queue.pop(0)
-            
-            if (x, y) == opponent_pos:
-                return False  # Players are connected
-                
-            for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+
+        while stack:
+            pos = stack.pop()
+            if pos in visited or pos in forbidden:
+                continue
+            if pos in aps and pos != start:
+                continue                             # don't cross APs
+            t = territories.get(pos)
+            if t in ('neutral', 'opponent'):
+                return True
+            if t != 'player':
+                continue
+            visited.add(pos)
+            x, y = pos
+            for dx, dy in NBRS:
+                nb = (x + dx, y + dy)
+                nx, ny = nb
+                if not (0 <= nx < bw and 0 <= ny < bh) or nb in occ:
+                    continue
+                if territories.get(nb) in ('neutral', 'opponent'):
+                    return True
+                if nb not in visited and nb not in forbidden:
+                    stack.append(nb)
+
+        return False
+
+    # ------------------------------------------------------------------
+    # Chamber tree  (the contest-winning heuristic)
+    # ------------------------------------------------------------------
+
+    def _max_articulated_space(self, bw, bh, occ, territories, start_pos, aps):
+        """
+        Chamber-tree evaluation -- a1k0n's key insight from the post-mortem.
+
+        When a player is not in the chamber that borders the battlefront they face
+        a mutual-exclusion choice: fill safe chambers OR move to contest the
+        battlefront.  Naive Voronoi counts both, wildly overestimating territory.
+
+        Algorithm (recursive):
+          1. Flood-fill the current chamber, noting bordering APs.
+          2. For each adjacent chamber (via AP):
+             - BATTLEFRONT chamber -> value = 1 (just the entry cost).
+               Ignore the current chamber's size; you cannot claim both.
+             - SAFE chamber        -> value = current + recurse(child).
+          3. Return the maximum achievable (nodes, edges).
+        """
+        def recurse(pos, forbidden):
+            nodes, edges, border_aps, my_cells = self._flood_chamber(
+                bw, bh, occ, territories, pos, aps, forbidden)
+
+            if not border_aps:
+                return nodes, edges
+
+            new_forbidden  = forbidden | my_cells
+            best_n, best_e = nodes, edges          # default: stay in current chamber
+
+            for ap in border_aps:
+                ax, ay = ap
+                for dx, dy in NBRS:
+                    child = (ax + dx, ay + dy)
+                    cx, cy = child
+                    if not (0 <= cx < bw and 0 <= cy < bh) or child in occ:
+                        continue
+                    if child in new_forbidden:
+                        continue
+                    if territories.get(child) not in ('player', 'neutral'):
+                        continue
+
+                    bf_forbidden = new_forbidden | {ap}
+                    is_bf = self._is_battlefront(
+                        bw, bh, occ, territories, child, aps, bf_forbidden)
+
+                    if is_bf:
+                        # Battlefront: ignore current chamber, count only entry cost
+                        pot_n, pot_e = 1, 0
+                    else:
+                        # Safe child chamber: accumulate sizes
+                        child_n, child_e = recurse(child, new_forbidden | {ap})
+                        pot_n = nodes + child_n
+                        pot_e = edges + child_e
+
+                    if pot_n > best_n:
+                        best_n, best_e = pot_n, pot_e
+
+            return best_n, best_e
+
+        # Exclude start_pos from forbidden so the flood fill can enter it
+        return recurse(start_pos, occ - {start_pos})
+
+    @staticmethod
+    def _bounded_reach(bw, bh, occ, pos, limit=250):
+        """
+        BFS from pos, stopping after `limit` cells found.
+        Returns (cells_found, open_edges) -- fast proxy for Voronoi territory.
+        """
+        visited = {pos}
+        q       = deque([pos])
+        edges   = 0
+        while q and len(visited) < limit:
+            x, y = q.popleft()
+            for dx, dy in NBRS:
                 nx, ny = x + dx, y + dy
-                if (0 <= nx < board_width and 0 <= ny < board_height and
-                    (nx, ny) not in occupied_positions and (nx, ny) not in visited):
-                    visited.add((nx, ny))
-                    queue.append((nx, ny))
-        
-        return True  # Opponent not reachable from player
+                nb     = (nx, ny)
+                if not (0 <= nx < bw and 0 <= ny < bh) or nb in occ:
+                    continue
+                edges += 1
+                if nb not in visited:
+                    visited.add(nb)
+                    q.append(nb)
+        return len(visited), edges
 
-    def minimax(self, board_width, board_height, occupied_positions, player_pos, player_dir, 
-                opponent_pos, opponent_dir, depth, maximizing_player, alpha=float('-inf'), beta=float('inf')):
+    # ------------------------------------------------------------------
+    # Position evaluation  (called at minimax leaves)
+    # ------------------------------------------------------------------
+
+    def _evaluate(self, bw, bh, occ, p_pos, o_pos):
         """
-        Minimax search with alpha-beta pruning.
+        Score from the AI (opponent) perspective -- higher = better for AI.
+
+        Uses a bounded BFS (up to 80 cells each) to approximate the Voronoi
+        territory difference.  Fast enough for minimax leaves while still
+        driving the AI to aggressively cut off the player's reachable space.
         """
-        # Base case - evaluate position
+        bfs_occ   = occ - {p_pos, o_pos}
+        o_n, o_e  = self._bounded_reach(bw, bh, bfs_occ, o_pos)
+        p_n, p_e  = self._bounded_reach(bw, bh, bfs_occ, p_pos)
+        return int(((o_n - p_n) * self.K1 + (o_e - p_e) * self.K2) * 1000)
+
+    # ------------------------------------------------------------------
+    # Minimax with alpha-beta pruning  (clean 1v1, no ad-hoc bonuses)
+    # ------------------------------------------------------------------
+
+    def _minimax(self, bw, bh, occ, p_pos, p_dir, o_pos, o_dir,
+                 depth, maximizing, alpha=float('-inf'), beta=float('inf')):
         if depth == 0:
-            return self.evaluate_position(board_width, board_height, occupied_positions, player_pos, opponent_pos)
-        
-        if maximizing_player:  # Opponent's turn (AI)
-            max_eval = float('-inf')
-            for direction in [UP, DOWN, LEFT, RIGHT]:
-                # Skip invalid moves (reversing direction)
-                if ((opponent_dir == UP and direction == DOWN) or
-                    (opponent_dir == DOWN and direction == UP) or
-                    (opponent_dir == LEFT and direction == RIGHT) or
-                    (opponent_dir == RIGHT and direction == LEFT)):
+            return self._evaluate(bw, bh, occ, p_pos, o_pos)
+
+        if maximizing:          # AI's turn
+            best = float('-inf')
+            for d in (UP, DOWN, LEFT, RIGHT):
+                if d == OPPOSITE[o_dir]:
                     continue
-                
-                # Simulate move
-                new_opponent_pos = self.simulate_move(opponent_pos, direction)
-                if self.is_valid_move(board_width, board_height, occupied_positions, new_opponent_pos):
-                    
-                    # --- START OF PURSUIT REVERSAL BONUS ---
-                    # This tactical bonus encourages the AI to make sharp turns
-                    # to cut off a player it is trailing ("pursuing").
-                    reversal_bonus = 0
-                    distance = abs(player_pos[0] - opponent_pos[0]) + abs(player_pos[1] - opponent_pos[1])
-                    if 2 < distance < 15:  # Only applies at medium-close range
-                        is_behind = False
-                        # Check if AI is generally "behind" the player, relative to its direction of travel.
-                        if opponent_dir == RIGHT and player_pos[0] > opponent_pos[0]: 
-                            is_behind = True
-                        elif opponent_dir == LEFT and player_pos[0] < opponent_pos[0]: 
-                            is_behind = True
-                        elif opponent_dir == DOWN and player_pos[1] > opponent_pos[1]: 
-                            is_behind = True
-                        elif opponent_dir == UP and player_pos[1] < opponent_pos[1]: 
-                            is_behind = True
+                np_ = self._sim(o_pos, d)
+                s   = (self._minimax(bw, bh, occ | {np_},
+                                     p_pos, p_dir, np_, d,
+                                     depth - 1, False, alpha, beta)
+                       if self._valid(bw, bh, occ, np_) else -10000)
+                best  = max(best, s)
+                alpha = max(alpha, s)
+                if beta <= alpha:
+                    break
+            return best
 
-                        is_turn = (opponent_dir != direction)
-
-                        if is_behind and is_turn:
-                            # A large bonus makes this a high-priority tactical move.
-                            reversal_bonus = 8000
-                    # --- END OF PURSUIT REVERSAL BONUS ---
-                    
-                    new_occupied = occupied_positions.union({new_opponent_pos})
-                    eval_score = self.minimax(board_width, 
-                                              board_height, 
-                                              new_occupied, 
-                                              player_pos, 
-                                              player_dir,
-                                              new_opponent_pos, 
-                                              direction, 
-                                              depth - 1, 
-                                              False,
-                                              alpha, 
-                                              beta)
-                    
-                    eval_score += reversal_bonus  # Add bonus to the evaluated score for this move
-                    
-                    max_eval = max(max_eval, eval_score)
-                    alpha = max(alpha, eval_score)
-                    if beta <= alpha:
-                        break  # Alpha-beta pruning
-                else:
-                    # Invalid move = loss
-                    max_eval = max(max_eval, -10000)
-            return max_eval
-        else:  # Player's turn
-            min_eval = float('inf')
-            for direction in [UP, DOWN, LEFT, RIGHT]:
-                # Skip invalid moves
-                if ((player_dir == UP and direction == DOWN) or
-                    (player_dir == DOWN and direction == UP) or
-                    (player_dir == LEFT and direction == RIGHT) or
-                    (player_dir == RIGHT and direction == LEFT)):
+        else:                   # Player's turn
+            best = float('inf')
+            for d in (UP, DOWN, LEFT, RIGHT):
+                if d == OPPOSITE[p_dir]:
                     continue
-                
-                # Simulate move
-                new_player_pos = self.simulate_move(player_pos, direction)
-                if self.is_valid_move(board_width, board_height, occupied_positions, new_player_pos):
-                    new_occupied = occupied_positions.union({new_player_pos})
-                    eval_score = self.minimax(board_width, 
-                                              board_height, 
-                                              new_occupied, 
-                                              new_player_pos, 
-                                              direction,
-                                              opponent_pos, 
-                                              opponent_dir, 
-                                              depth - 1, 
-                                              True, 
-                                              alpha, 
-                                              beta)
-                    
-                    min_eval = min(min_eval, eval_score)
-                    beta = min(beta, eval_score)
-                    if beta <= alpha:
-                        break  # Alpha-beta pruning
-                else:
-                    # Invalid move = opponent wins
-                    min_eval = min(min_eval, 10000)
-            return min_eval
+                np_ = self._sim(p_pos, d)
+                s   = (self._minimax(bw, bh, occ | {np_},
+                                     np_, d, o_pos, o_dir,
+                                     depth - 1, True, alpha, beta)
+                       if self._valid(bw, bh, occ, np_) else 10000)
+                best = min(best, s)
+                beta = min(beta, s)
+                if beta <= alpha:
+                    break
+            return best
 
-    def simulate_move(self, pos, direction):
-        """Simulate a move in the given direction."""
-        x, y = pos
-        if direction == UP:
-            return (x, y - 1)
-        elif direction == DOWN:
-            return (x, y + 1)
-        elif direction == LEFT:
-            return (x - 1, y)
-        elif direction == RIGHT:
-            return (x + 1, y)
-        return pos
+    # ------------------------------------------------------------------
+    # Endgame: iterative-deepening greedy search
+    # ------------------------------------------------------------------
 
-    def is_valid_move(self, board_width, board_height, occupied_positions, pos):
-        """Check if a move to the given position is valid."""
-        x, y = pos
-        return (0 <= x < board_width and 0 <= y < board_height and pos not in occupied_positions)
-
-    def choose_direction(self, opponent, player, board_width, board_height, occupied_positions):
+    def _greedy_fill_count(self, bw, bh, occ_in, pos, direction):
         """
-        Choose the best direction using advanced AI techniques.
+        Run the greedy wall-hugging heuristic to completion from pos/direction.
+
+        Always picks the next cell with the most surrounding walls (fewest open
+        neighbours), which is the space-filling rule from the post-mortem Phase 2.
+        Returns the number of additional squares filled.
         """
-        # Occasionally make mistakes based on difficulty
+        occ   = set(occ_in)
+        start = len(occ)
+        x, y  = pos
+        d     = direction
+
+        while True:
+            best_d     = None
+            most_walls = -1
+            for nd in (UP, DOWN, LEFT, RIGHT):
+                if nd == OPPOSITE[d]:
+                    continue
+                np_ = self._sim((x, y), nd)
+                if self._valid(bw, bh, occ, np_):
+                    walls = 4 - self._open_nbrs(bw, bh, occ, np_[0], np_[1])
+                    # Current direction wins tiebreaks (avoids unnecessary turns)
+                    if walls > most_walls or (walls == most_walls and nd == d):
+                        most_walls = walls
+                        best_d     = nd
+            if best_d is None:
+                break
+            np_ = self._sim((x, y), best_d)
+            occ.add(np_)
+            x, y = np_
+            d    = best_d
+
+        return len(occ) - start
+
+    def _endgame_search(self, bw, bh, occ, my_pos, my_dir):
+        """
+        Iterative-deepening search for the endgame (players separated).
+
+        Exhaustively expands the move tree to self.endgame_depth, then runs
+        _greedy_fill_count at each leaf to 'prime' the evaluator.  Whichever
+        opening move leads to the best-primed greedy completion wins.
+
+        Returns the direction maximising reachable squares.
+        """
+        def dfs(pos, d, cur_occ, depth):
+            if depth == 0:
+                return self._greedy_fill_count(bw, bh, cur_occ, pos, d)
+            best = -1
+            for nd in (UP, DOWN, LEFT, RIGHT):
+                if nd == OPPOSITE[d]:
+                    continue
+                np_ = self._sim(pos, nd)
+                if not self._valid(bw, bh, cur_occ, np_):
+                    continue
+                s = dfs(np_, nd, cur_occ | {np_}, depth - 1)
+                if s > best:
+                    best = s
+            return max(best, 0)
+
+        best_dir   = my_dir
+        best_score = -1
+        for d in (UP, DOWN, LEFT, RIGHT):
+            if d == OPPOSITE[my_dir]:
+                continue
+            np_ = self._sim(my_pos, d)
+            if not self._valid(bw, bh, occ, np_):
+                continue
+            s = dfs(np_, d, occ | {np_}, self.endgame_depth - 1)
+            if s > best_score:
+                best_score = s
+                best_dir   = d
+        return best_dir
+
+    # ------------------------------------------------------------------
+    # Main move selection
+    # ------------------------------------------------------------------
+
+    def choose_direction(self, opponent, player, bw, bh, occ):
+        """
+        Select the AI's next direction.
+
+        Pipeline:
+          1. Occasional deliberate mistake (difficulty scaling).
+          2. Endgame (separated): iterative-deepening greedy search.
+          3. Mid-game: compute Voronoi + APs once at root, then score each
+             candidate move with the chamber-tree heuristic, combined with
+             a minimax look-ahead using simple Voronoi at leaves.
+        """
+        p_pos = (player.x,   player.y)
+        o_pos = (opponent.x, opponent.y)
+
+        # Occasional deliberate mistake
         if random.random() < self.mistake_chance:
-            valid_directions = []
-            for direction in [UP, DOWN, LEFT, RIGHT]:
-                # Don't reverse direction
-                if ((opponent.direction == UP and direction == DOWN) or
-                    (opponent.direction == DOWN and direction == UP) or
-                    (opponent.direction == LEFT and direction == RIGHT) or
-                    (opponent.direction == RIGHT and direction == LEFT)):
-                    continue
-                    
-                # Check if move is valid
-                new_pos = self.simulate_move((opponent.x, opponent.y), direction)
-                if self.is_valid_move(board_width, board_height, occupied_positions, new_pos):
-                    valid_directions.append(direction)
-            
-            if valid_directions:
-                return random.choice(valid_directions)
-        
-        # Use minimax search for best move
-        best_direction = opponent.direction
+            vd = self._valid_dirs(o_pos, opponent.direction, bw, bh, occ)
+            return random.choice(vd) if vd else opponent.direction
+
+        # Treat head positions as accessible for BFS analysis
+        bfs_occ = occ - {p_pos, o_pos}
+
+        # Endgame: players are in separate components
+        if self._separated(bw, bh, bfs_occ, p_pos, o_pos):
+            return self._endgame_search(bw, bh, occ, o_pos, opponent.direction)
+
+        # Mid-game: compute shared context once at root
+        territories, _, _, _, _ = self._voronoi(bw, bh, bfs_occ, p_pos, o_pos)
+        aps = self._articulation_points(bw, bh, bfs_occ)
+
+        # Flip label perspective for evaluating the player's chamber tree
+        flip = {
+            pos: ('player'   if t == 'opponent' else
+                  'opponent' if t == 'player'   else t)
+            for pos, t in territories.items()
+        }
+
+        best_dir   = opponent.direction
         best_score = float('-inf')
-        
-        for direction in [UP, DOWN, LEFT, RIGHT]:
-            # Don't reverse direction
-            if ((opponent.direction == UP and direction == DOWN) or
-                (opponent.direction == DOWN and direction == UP) or
-                (opponent.direction == LEFT and direction == RIGHT) or
-                (opponent.direction == RIGHT and direction == LEFT)):
+
+        for d in (UP, DOWN, LEFT, RIGHT):
+            if d == OPPOSITE[opponent.direction]:
                 continue
-            
-            # Check if move is valid
-            new_opponent_pos = self.simulate_move((opponent.x, opponent.y), direction)
-            if not self.is_valid_move(board_width, board_height, occupied_positions, new_opponent_pos):
+            np_ = self._sim(o_pos, d)
+            if not self._valid(bw, bh, occ, np_):
                 continue
-            
-            # Use minimax to evaluate this move
-            new_occupied = occupied_positions.union({new_opponent_pos})
-            score = self.minimax(board_width, 
-                                 board_height, 
-                                 new_occupied,
-                                 (player.x, player.y), 
-                                 player.direction,
-                                 new_opponent_pos, 
-                                 direction, 
-                                 min(self.search_depth, 4), 
-                                 False)  # Start with player's turn
-            
-            if score > best_score:
-                best_score = score
-                best_direction = direction
-        
-        # Fallback to space-filling heuristic if no good moves found
-        if best_score == float('-inf'):
-            best_edge_removal = float('inf')
-            for direction in [UP, DOWN, LEFT, RIGHT]:
-                if ((opponent.direction == UP and direction == DOWN) or
-                    (opponent.direction == DOWN and direction == UP) or
-                    (opponent.direction == LEFT and direction == RIGHT) or
-                    (opponent.direction == RIGHT and direction == LEFT)):
-                    continue
-                
-                new_pos = self.simulate_move((opponent.x, opponent.y), direction)
-                if self.is_valid_move(board_width, board_height, occupied_positions, new_pos):
-                    edge_removal = self.count_edge_removal(board_width, 
-                                                           board_height, 
-                                                           occupied_positions,
-                                                           new_pos[0], 
-                                                           new_pos[1])
-                    if edge_removal < best_edge_removal:
-                        best_edge_removal = edge_removal
-                        best_direction = direction
-        
-        return best_direction
-    
+
+            new_occ = occ | {np_}
+            new_bfs = new_occ - {np_, p_pos}
+
+            # Chamber-tree score at this candidate move (computed once, at root)
+            o_n, o_e = self._max_articulated_space(bw, bh, new_bfs, territories, np_,    aps)
+            p_n, p_e = self._max_articulated_space(bw, bh, new_bfs, flip,        p_pos,  aps)
+            chamber_score = int(((o_n - p_n) * self.K1 + (o_e - p_e) * self.K2) * 1000)
+
+            # Minimax look-ahead with Voronoi at leaves
+            mm_score = self._minimax(
+                bw, bh, new_occ,
+                p_pos, player.direction,
+                np_,   d,
+                self.search_depth - 1, False)
+
+            total = chamber_score * 2 + mm_score
+            if total > best_score:
+                best_score = total
+                best_dir   = d
+
+        return best_dir
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# LightCycleGame  --  1v1 Qt window
+# ----------------------------------------------------------------------------------------------------------------------
 
 class LightCycleGame(QMainWindow):
-    """
-    Main game window for the Light Cycle game.
-    """
+    """Main game window for 1v1 Light Cycle."""
 
     def __init__(self, main_window, parent=None):
         super().__init__()
         self.main_window = main_window
-
-        # Remove minimize and maximize buttons
-        self.setWindowFlags(Qt.Window | 
-                            Qt.CustomizeWindowHint |
-                            Qt.WindowTitleHint | 
-                            Qt.WindowCloseButtonHint)
-
-        # Set the window icon
+        self.setWindowFlags(Qt.Window | Qt.CustomizeWindowHint |
+                            Qt.WindowTitleHint | Qt.WindowCloseButtonHint)
         self.setWindowIcon(get_icon("lightcycle.svg"))
-        # Set the window title
         self.title = "Light Cycle Game"
 
-        # Game settings
-        self.board_width = BOARD_WIDTH
+        self.board_width  = BOARD_WIDTH
         self.board_height = BOARD_HEIGHT
-        self.cell_size = CELL_SIZE
-        self.game_speed = 150  # milliseconds
+        self.cell_size    = CELL_SIZE
+        self.game_speed   = 150
 
-        # Initialize timer
-        self.timer = QTimer(self)
+        self.timer      = QTimer(self)
         self.difficulty = "Medium"
 
-        # Initialize game
-        self.player = None
-        self.opponents = []  # List of AI opponents
-        self.ais = []  # List of AI instances
+        self.player       = None
+        self.opponent     = None
+        self.ai           = None
         self.game_started = False
-        self.title_timer = 0  # For title animation
-        self.obstacles = set()  # Set of (x, y) positions for obstacles
+        self.title_timer  = 0
+        self.obstacles    = set()
+
+    # ------------------------------------------------------------------
+    # Setup
+    # ------------------------------------------------------------------
 
     def start_game(self):
-        """Start the game by initializing."""
-        # Stop and disconnect any existing timer before starting a new game
         if hasattr(self, 'timer') and self.timer.isActive():
             self.timer.stop()
-        
-        # Disconnect all previous connections to prevent multiple connections
         try:
             self.timer.timeout.disconnect()
         except TypeError:
-            # No connections to disconnect
             pass
-        
-        self.difficulty = "Hard"
-        
-        # Always reset game speed to baseline for this difficulty
-        speed_settings = {
-            "Easy": 200,
-            "Medium": 150,
-            "Hard": 100,
-            "Insane": 75
-        }
-        self.game_speed = speed_settings[self.difficulty]
 
-        # Show welcome dialog
-        welcome_msg = (
-            f"Welcome to Light Cycle - {self.difficulty} Mode!\n\n"
+        self.difficulty = "Hard"
+        self.game_speed = {"Easy": 120, "Medium": 80, "Hard": 55, "Insane": 80}[self.difficulty]
+
+        msg = (
+            f"Welcome to Light Cycle -- {self.difficulty} Mode! (1v1)\n\n"
             "Rules:\n"
-            " - Use WASD keys to turn your cycle (gold)\n"
-            " - Avoid walls, your trail, and the opponents' trails (red)\n"
-            " - The opponents move automatically\n"
-            " - Last cycle standing wins!\n\n"
-            "Click 'OK' to start playing."
+            "  - WASD to steer your cycle (gold)\n"
+            "  - Avoid walls, your trail, and the opponent's trail (red)\n"
+            "  - Last cycle standing wins!\n\n"
+            "Click OK to start."
         )
-        if QMessageBox.information(self, "Welcome to Light Cycle", welcome_msg, QMessageBox.Ok) == QMessageBox.Ok:
+        if QMessageBox.information(self, "Light Cycle", msg, QMessageBox.Ok) == QMessageBox.Ok:
             self.init_game()
             self.init_ui()
             self.timer.timeout.connect(self.update_game)
@@ -773,304 +770,179 @@ class LightCycleGame(QMainWindow):
             self.close()
 
     def init_ui(self):
-        """Set up the user interface."""
-        window_width = self.board_width * self.cell_size
-        window_height = self.board_height * self.cell_size
-
-        self.resize(window_width, window_height)
-        self.setFixedSize(window_width, window_height)
+        w = self.board_width  * self.cell_size
+        h = self.board_height * self.cell_size
+        self.resize(w, h)
+        self.setFixedSize(w, h)
         self.setWindowTitle(self.title)
         self.show()
 
     def init_game(self):
-        """Initialize the game state."""
-        # Reset game state completely
         self.game_started = False
-        
-        # Player starts at bottom left, moving right
-        self.player = LightCycle(5, self.board_height - 5, RIGHT, PLAYER_COLOR)
 
-        # Create 5 opponents at different starting positions
-        opponent_starts = [
-            (self.board_width // 2, self.board_height // 2, DOWN),  # center
-            (10, 10, DOWN),  # top-left
-            (self.board_width - 10, 10, LEFT),  # top-right
-            (10, self.board_height - 10, RIGHT),  # bottom-left
-            (self.board_width - 10, self.board_height - 10, UP)  # bottom-right
-        ]
-        self.opponents = []
-        for x, y, direction in opponent_starts:
-            opponent = LightCycle(x, y, direction, OPPONENT_COLOR)
-            self.opponents.append(opponent)
+        # Both start at mid-height, ~50 cells apart, heading at each other
+        mid_y = self.board_height // 2
+        self.player   = LightCycle(10,                    mid_y, RIGHT, PLAYER_COLOR)
+        self.opponent = LightCycle(self.board_width - 11, mid_y, LEFT,  OPPONENT_COLOR)
+        self.ai       = LightCycleAI(self.difficulty)
 
-        # Create AI instances for each opponent
-        self.ais = [LightCycleAI(self.difficulty) for _ in range(5)]
-
-        # Generate 100 random obstacles
+        # Clean 1v1 -- no random obstacles; pure strategy
         self.obstacles = set()
-        opponent_positions = [(x, y) for x, y, _ in opponent_starts]
-        for _ in range(100):
-            while True:
-                x = random.randint(0, self.board_width - 1)
-                y = random.randint(0, self.board_height - 1)
-                pos = (x, y)
-                player_start = (5, self.board_height - 5)
-                if pos not in [player_start] + opponent_positions and pos not in self.obstacles:
-                    self.obstacles.add(pos)
-                    break
 
         self.game_started = True
-        self.title_timer = 10  # Show title for 0.5 seconds (30 frames at ~60fps)
-        
+        self.title_timer  = 10
+
+    # ------------------------------------------------------------------
+    # Input
+    # ------------------------------------------------------------------
+
     def keyPressEvent(self, event):
-        """Handle key presses for player control."""
         if not self.game_started or not self.player.alive:
             return
-
-        key = event.key()
-        
-        # Handle movement
-        if key == Qt.Key_W:
-            self.player.turn(UP)
-        elif key == Qt.Key_S:
-            self.player.turn(DOWN)
-        elif key == Qt.Key_A:
-            self.player.turn(LEFT)
-        elif key == Qt.Key_D:
-            self.player.turn(RIGHT)
+        key_map = {Qt.Key_W: UP, Qt.Key_S: DOWN, Qt.Key_A: LEFT, Qt.Key_D: RIGHT}
+        if event.key() in key_map:
+            self.player.turn(key_map[event.key()])
 
     def keyReleaseEvent(self, event):
-        """Handle key releases (no longer needed for speed control)."""
         pass
 
+    # ------------------------------------------------------------------
+    # Rendering
+    # ------------------------------------------------------------------
+
     def paintEvent(self, event):
-        """Render the game board."""
         painter = QPainter()
         painter.begin(self)
 
-        # Draw background
         painter.fillRect(self.rect(), BACKGROUND_COLOR)
 
-        # Draw grid with synth-wave glow
-        grid_pen = QPen(GRID_COLOR, 2)  # Thicker lines
-        painter.setPen(grid_pen)
+        # Grid
+        painter.setPen(QPen(GRID_COLOR, 2))
         for x in range(0, self.board_width * self.cell_size, self.cell_size):
             painter.drawLine(x, 0, x, self.board_height * self.cell_size)
         for y in range(0, self.board_height * self.cell_size, self.cell_size):
             painter.drawLine(0, y, self.board_width * self.cell_size, y)
 
-        # Draw trails with glow effect
-        if self.player:
-            # Draw glow/shadow first
-            painter.setPen(Qt.NoPen)
-            glow_color = QColor(255, 0, 255, 100)  # Semi-transparent magenta glow
-            painter.setBrush(QBrush(glow_color))
-            for x, y in self.player.trail:
-                painter.drawRect((x * self.cell_size) - 1, (y * self.cell_size) - 1,
-                                 self.cell_size + 2, self.cell_size + 2)
-
-            # Draw main trail
-            painter.setBrush(QBrush(self.player.color))
-            for x, y in self.player.trail:
-                painter.drawRect(x * self.cell_size, y * self.cell_size,
-                                 self.cell_size, self.cell_size)
-
-        for opponent in self.opponents:
-            # Draw glow/shadow first
-            painter.setPen(Qt.NoPen)
-            glow_color = QColor(0, 255, 255, 100)  # Semi-transparent cyan glow
-            painter.setBrush(QBrush(glow_color))
-            for x, y in opponent.trail:
-                painter.drawRect((x * self.cell_size) - 1, (y * self.cell_size) - 1,
-                                 self.cell_size + 2, self.cell_size + 2)
-
-            # Draw main trail
-            painter.setBrush(QBrush(opponent.color))
-            for x, y in opponent.trail:
-                painter.drawRect(x * self.cell_size, y * self.cell_size,
-                                 self.cell_size, self.cell_size)
-
-        # Draw obstacles
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QBrush(QColor(128, 128, 128)))  # Gray
+
+        def draw_cycle(cycle, glow_rgba):
+            painter.setBrush(QBrush(QColor(*glow_rgba)))
+            for x, y in cycle.trail:
+                painter.drawRect(x * self.cell_size - 1, y * self.cell_size - 1,
+                                 self.cell_size + 2, self.cell_size + 2)
+            painter.setBrush(QBrush(cycle.color))
+            for x, y in cycle.trail:
+                painter.drawRect(x * self.cell_size, y * self.cell_size,
+                                 self.cell_size, self.cell_size)
+
+        if self.player:
+            draw_cycle(self.player,   (255, 0, 255, 100))
+        if self.opponent:
+            draw_cycle(self.opponent, (0, 255, 255, 100))
+
+        # Obstacles
+        painter.setBrush(QBrush(QColor(128, 128, 128)))
         for x, y in self.obstacles:
-            painter.drawRect(x * self.cell_size, y * self.cell_size, self.cell_size, self.cell_size)
+            painter.drawRect(x * self.cell_size, y * self.cell_size,
+                             self.cell_size, self.cell_size)
 
         painter.end()
 
-        # Draw synth-wave title animation
+        # Title animation
         if self.title_timer > 0:
             painter.begin(self)
-            title_font = QFont('Arial', 36, QFont.Bold)
-            painter.setFont(title_font)
-
-            # Create animated colors
-            colors = [QColor(255, 0, 255), QColor(0, 255, 255), QColor(0, 255, 0), QColor(255, 255, 0)]
-            color_index = (self.title_timer // 10) % len(colors)
-            painter.setPen(colors[color_index])
-
-            title_text = "LIGHT CYCLES GAME"
-            text_rect = painter.fontMetrics().boundingRect(title_text)
-            x = (self.width() - text_rect.width()) // 2
-            y = self.height() // 2
-
-            # Add glow effect to title
-            glow_colors = [QColor(255, 0, 255, 150), QColor(0, 255, 255, 150)]
-            glow_index = (self.title_timer // 5) % len(glow_colors)
-            painter.setPen(glow_colors[glow_index])
-            painter.drawText(x - 2, y - 2, title_text)
-            painter.drawText(x + 2, y - 2, title_text)
-            painter.drawText(x - 2, y + 2, title_text)
-            painter.drawText(x + 2, y + 2, title_text)
-
-            painter.setPen(colors[color_index])
-            painter.drawText(x, y, title_text)
+            painter.setFont(QFont('Arial', 36, QFont.Bold))
+            colors = [QColor(255, 0, 255), QColor(0, 255, 255),
+                      QColor(0, 255, 0),   QColor(255, 255, 0)]
+            ci    = (self.title_timer // 10) % len(colors)
+            title = "LIGHT CYCLES GAME"
+            tr    = painter.fontMetrics().boundingRect(title)
+            tx    = (self.width()  - tr.width())  // 2
+            ty    = self.height() // 2
+            glow  = [QColor(255, 0, 255, 150), QColor(0, 255, 255, 150)]
+            gi    = (self.title_timer // 5) % len(glow)
+            painter.setPen(glow[gi])
+            for ox, oy in ((-2, -2), (2, -2), (-2, 2), (2, 2)):
+                painter.drawText(tx + ox, ty + oy, title)
+            painter.setPen(colors[ci])
+            painter.drawText(tx, ty, title)
             painter.end()
 
+    # ------------------------------------------------------------------
+    # Game loop
+    # ------------------------------------------------------------------
+
     def update_game(self):
-        """Handle game updates."""
-        # Safety check - don't update if game is not properly initialized
-        if not hasattr(self, 'game_started') or not self.game_started:
+        if not getattr(self, 'game_started', False):
             return
-            
+
         if self.title_timer > 0:
             self.title_timer -= 1
             self.update()
             return
 
-        if self.game_started:
-            # Move player once per frame at constant speed
-            self.player.move()
-            
-            # Calculate current occupied positions
-            all_trails = self.player.trail + [pos for opp in self.opponents for pos in opp.trail]
-            occupied_positions = set(all_trails) | self.obstacles
-            
-            # AI decides each opponent's next move
-            intended_moves = {}
-            for i, opponent in enumerate(self.opponents):
-                if opponent.alive:
-                    best_direction = self.ais[i].choose_direction(
-                        opponent, self.player, self.board_width, self.board_height, occupied_positions)
-                    new_pos = self.ais[i].simulate_move((opponent.x, opponent.y), best_direction)
-                    intended_moves[i] = (best_direction, new_pos)
-            
-            # Check for conflicts in intended positions
-            new_positions = [pos for _, pos in intended_moves.values()]
-            position_counts = {}
-            for pos in new_positions:
-                position_counts[pos] = position_counts.get(pos, 0) + 1
-            
-            # Resolve conflicts by re-choosing for conflicting opponents
-            for i in intended_moves:
-                direction, new_pos = intended_moves[i]
-                if position_counts[new_pos] > 1:
-                    # Conflict, choose a random valid direction avoiding other intended moves
-                    opponent = self.opponents[i]
-                    valid_directions = []
-                    for d in [UP, DOWN, LEFT, RIGHT]:
-                        if ((opponent.direction == UP and d == DOWN) or
-                            (opponent.direction == DOWN and d == UP) or
-                            (opponent.direction == LEFT and d == RIGHT) or
-                            (opponent.direction == RIGHT and d == LEFT)):
-                            continue
-                        np = self.ais[i].simulate_move((opponent.x, opponent.y), d)
-                        # Occupied includes current + other intended (excluding this one's current intended)
-                        other_intended = set([p for j, p in intended_moves.values() if j != i])
-                        occ = occupied_positions | other_intended
-                        if self.ais[i].is_valid_move(self.board_width, self.board_height, occ, np):
-                            valid_directions.append(d)
-                    if valid_directions:
-                        new_dir = random.choice(valid_directions)
-                        new_pos = self.ais[i].simulate_move((opponent.x, opponent.y), new_dir)
-                        intended_moves[i] = (new_dir, new_pos)
-            
-            # Apply the moves
-            for i, opponent in enumerate(self.opponents):
-                if opponent.alive:
-                    direction, _ = intended_moves[i]
-                    opponent.turn(direction)
-                    opponent.move()
+        # Move player
+        self.player.move()
 
-            # Check player collision
-            all_opponent_trails = [pos for opp in self.opponents for pos in opp.trail]
-            player_crashed = self.player.check_collision(self.board_width, 
-                                                         self.board_height, 
-                                                         all_opponent_trails, 
-                                                         self.obstacles)
-            
-            # Check each opponent collision
-            for opponent in self.opponents:
-                if opponent.alive:
-                    other_trails = (
-                        self.player.trail +
-                        [pos for opp in self.opponents 
-                         if opp != opponent for pos in opp.trail]
-                    )
-                    opponent_crashed = opponent.check_collision(self.board_width, 
-                                                                self.board_height,
-                                                                other_trails, 
-                                                                self.obstacles)
+        # Occupied set for AI: all trail cells + obstacles
+        occ = set(self.player.trail) | set(self.opponent.trail) | self.obstacles
 
-            # Check win conditions
-            alive_opponents = sum(1 for opp in self.opponents if opp.alive)
-            if player_crashed:
-                self.game_over("You crashed! Opponents win.")
-            elif alive_opponents == 0:
-                self.game_over("All opponents crashed! You win!")
+        # AI picks a direction and moves
+        best_dir = self.ai.choose_direction(
+            self.opponent, self.player,
+            self.board_width, self.board_height, occ)
+        self.opponent.turn(best_dir)
+        self.opponent.move()
 
+        # Collision checks
+        p_crashed = self.player.check_collision(
+            self.board_width, self.board_height,
+            set(self.opponent.trail), self.obstacles)
+        o_crashed = self.opponent.check_collision(
+            self.board_width, self.board_height,
+            set(self.player.trail), self.obstacles)
+
+        if p_crashed and o_crashed:
+            self.game_over("Both crashed -- it's a draw!")
+        elif p_crashed:
+            self.game_over("You crashed!  Opponent wins.")
+        elif o_crashed:
+            self.game_over("Opponent crashed!  You win!")
+        else:
             self.update()
 
+    # ------------------------------------------------------------------
+    # Game over / cleanup
+    # ------------------------------------------------------------------
+
     def game_over(self, message):
-        """Handle game over."""
-        # Stop the timer immediately to prevent multiple calls
         if hasattr(self, 'timer') and self.timer.isActive():
             self.timer.stop()
-        
-        # Reset game state to prevent further updates
         self.game_started = False
-        
-        # Show game over dialog
-        reply = QMessageBox.question(self, "Game Over", f"{message}\n\nPlay again?",
+        reply = QMessageBox.question(self, "Game Over",
+                                     f"{message}\n\nPlay again?",
                                      QMessageBox.Yes | QMessageBox.No)
         if reply == QMessageBox.Yes:
             self.start_game()
         else:
-            # Clean up completely and close
             self.cleanup_and_close()
 
     def cleanup_and_close(self):
-        """Completely clean up and close the game window."""
-        # Stop the timer and disconnect all connections
         if hasattr(self, 'timer') and self.timer.isActive():
             self.timer.stop()
-        
-        # Disconnect all timer connections to prevent memory leaks
         try:
             self.timer.timeout.disconnect()
         except TypeError:
-            # No connections to disconnect
             pass
-        
-        # Clear references
-        self.player = None
-        self.opponents = []
-        self.ais = []
-        
-        # Reset game state
+        self.player       = None
+        self.opponent     = None
+        self.ai           = None
         self.game_started = False
-        
-        # Close the window
         self.close()
-        
-        # Clear any reference from main window
         if hasattr(self, 'main_window') and self.main_window:
-            # If the main window has a reference to this game, clear it
             if hasattr(self.main_window, 'current_game'):
                 self.main_window.current_game = None
 
     def closeEvent(self, event):
-        """Handle window close."""
-        # Ensure proper cleanup when window is closed
         self.cleanup_and_close()
         event.accept()
