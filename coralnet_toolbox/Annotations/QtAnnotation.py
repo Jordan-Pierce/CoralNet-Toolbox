@@ -120,6 +120,7 @@ class Annotation(QObject):
         # Attributes to store the graphics items for center/centroid and bounding box
         self.center_graphics_item = None
         self.bounding_box_graphics_item = None
+        self.dimension_tag_item = None  # For displaying size/dimensions when selected
 
         # Group for all graphics items
         self.graphics_item_group = None
@@ -724,6 +725,10 @@ class Annotation(QObject):
         self.is_selected = True
         if self.bounding_box_graphics_item:
             self.bounding_box_graphics_item.setVisible(True)
+        if hasattr(self, 'tag_item') and self.tag_item:
+            self.tag_item.setVisible(True)
+        if hasattr(self, 'dimension_tag_item') and self.dimension_tag_item:
+            self.dimension_tag_item.setVisible(True)
             
         self._update_pen_styles()
         self.animate()
@@ -733,6 +738,10 @@ class Annotation(QObject):
         self.is_selected = False
         if self.bounding_box_graphics_item:
             self.bounding_box_graphics_item.setVisible(False)
+        if hasattr(self, 'tag_item') and self.tag_item:
+            self.tag_item.setVisible(False)
+        if hasattr(self, 'dimension_tag_item') and self.dimension_tag_item:
+            self.dimension_tag_item.setVisible(False)
             
         self.deanimate()
         self._update_pen_styles()

@@ -194,6 +194,9 @@ class RectangleTool(Tool):
             if self.cursor_annotation:
                 self.cursor_annotation.update_transparency(self.annotation_window.main_window.get_transparency_value())
                 self.cursor_annotation.create_graphics_item(self.annotation_window.scene)
+                # Show the dimension tag while drawing
+                if hasattr(self.cursor_annotation, 'dimension_tag_item') and self.cursor_annotation.dimension_tag_item:
+                    self.cursor_annotation.dimension_tag_item.setVisible(True)
 
     def update_cursor_annotation(self, scene_pos: QPointF = None):
         """Update the rectangle cursor annotation."""

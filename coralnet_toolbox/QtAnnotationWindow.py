@@ -11,7 +11,7 @@ import pyqtgraph as pg
 from PyQt5.QtGui import QMouseEvent, QPixmap, QImage, QBrush
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QSize, QObject, pyqtProperty, QPropertyAnimation, QEasingCurve
 from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QGraphicsPixmapItem, 
-                             QSlider, QSpinBox, QLabel, QHBoxLayout, QWidget, QComboBox, QToolButton, QToolBar, QSizePolicy)
+                             QSlider, QLabel, QHBoxLayout, QWidget, QComboBox, QToolButton, QToolBar, QSizePolicy)
 
 from coralnet_toolbox.MVAT.core.Marker import Marker
 from coralnet_toolbox.MVAT.core.Ray import CameraRay
@@ -207,16 +207,6 @@ class AnnotationWindow(QGraphicsView):
         # Let the annotation transparency slider naturally expand
         self.transparency_slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.transparency_slider.valueChanged.connect(self.update_label_transparency)
-
-        # --- Annotation Size ---
-        self.annotation_size_spinbox = QSpinBox()
-        self.annotation_size_spinbox.setMinimum(1)
-        self.annotation_size_spinbox.setMaximum(5000)
-        self.annotation_size_spinbox.setValue(self.annotation_size)
-        self.annotation_size_spinbox.valueChanged.connect(self.set_annotation_size)
-        self.annotationSizeChanged.connect(self.annotation_size_spinbox.setValue)
-        # Only enable the patch size control when the Patch tool is active
-        self.annotation_size_spinbox.setEnabled(False)
 
         # --- Positional/Dimensional Labels ---
         self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
@@ -597,18 +587,10 @@ class AnnotationWindow(QGraphicsView):
         
     # --- DOCK WRAPPER HOOKS ---
     def create_top_toolbar(self) -> QToolBar:
-        """Create the top toolbar with annotation tools, transparency slider,
-        and patch size control.
+        """Create the top toolbar with annotation tools and transparency slider.
         """
         toolbar = QToolBar("Annotation Tools")
         toolbar.setMovable(False)
-        # Patch Size widget (far left)
-        size_widget = QWidget()
-        size_layout = QHBoxLayout(size_widget)
-        size_layout.setContentsMargins(4, 0, 4, 0)
-        size_layout.addWidget(QLabel("Patch Size"))
-        size_layout.addWidget(self.annotation_size_spinbox)
-        toolbar.addWidget(size_widget)
         
         toolbar.addSeparator()
 

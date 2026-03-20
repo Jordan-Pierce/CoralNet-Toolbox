@@ -265,6 +265,20 @@ class PatchAnnotation(Annotation):
         
         # Call the parent class method to handle grouping, styling, and adding to the scene.
         super().create_graphics_item(scene)
+        
+        # --- Add the Dimension Tag ---
+        from coralnet_toolbox.Annotations.QtAnnotation import FloatingTagItem
+        dimension_text = f"{int(self.annotation_size)}×{int(self.annotation_size)}"
+        self.dimension_tag_item = FloatingTagItem(dimension_text, self.label.color)
+        
+        # Position it at the bottom-left corner of the bounding box
+        bottom_left = QPointF(self.get_bounding_box_top_left().x(), self.get_bounding_box_bottom_right().y())
+        self.dimension_tag_item.setPos(bottom_left.x(), bottom_left.y())
+        
+        # Only show when selected
+        self.dimension_tag_item.setVisible(self.is_selected)
+        
+        self.graphics_item_group.addToGroup(self.dimension_tag_item)
     
     def update_graphics_item(self):
         """Update the graphical representation of the patch annotation."""

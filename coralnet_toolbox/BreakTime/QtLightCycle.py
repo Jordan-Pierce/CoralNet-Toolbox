@@ -99,11 +99,11 @@ class LightCycleAI:
 
     def __init__(self, difficulty="Medium"):
         cfg = {
-            "Easy":   dict(search_depth=2, endgame_depth=3, mistake_chance=0.15),
-            "Medium": dict(search_depth=3, endgame_depth=4, mistake_chance=0.08),
-            "Hard":   dict(search_depth=4, endgame_depth=5, mistake_chance=0.04),
-            "Insane": dict(search_depth=4, endgame_depth=6, mistake_chance=0.01),
-        }.get(difficulty, dict(search_depth=3, endgame_depth=4, mistake_chance=0.08))
+            "Easy":   dict(search_depth=2, endgame_depth=3, mistake_chance=0.12),
+            "Medium": dict(search_depth=3, endgame_depth=4, mistake_chance=0.06),
+            "Hard":   dict(search_depth=4, endgame_depth=5, mistake_chance=0.02),
+            "Insane": dict(search_depth=5, endgame_depth=6, mistake_chance=0.00),
+        }.get(difficulty, dict(search_depth=3, endgame_depth=4, mistake_chance=0.06))
 
         self.search_depth   = cfg["search_depth"]
         self.endgame_depth  = cfg["endgame_depth"]
@@ -476,6 +476,28 @@ class LightCycleAI:
         # Exclude start_pos from forbidden so the flood fill can enter it
         return recurse(start_pos, occ - {start_pos})
 
+    @staticmethod
+    def _bounded_reach(bw, bh, occ, pos, limit=250):
+        """
+        BFS from pos, stopping after `limit` cells found.
+        Returns (cells_found, open_edges) -- fast proxy for Voronoi territory.
+        """
+        visited = {pos}
+        q       = deque([pos])
+        edges   = 0
+        while q and len(visited) < limit:
+            x, y = q.popleft()
+            for dx, dy in NBRS:
+                nx, ny = x + dx, y + dy
+                nb     = (nx, ny)
+                if not (0 <= nx < bw and 0 <= ny < bh) or nb in occ:
+                    continue
+                edges += 1
+                if nb not in visited:
+                    visited.add(nb)
+                    q.append(nb)
+        return len(visited), edges
+
     # ------------------------------------------------------------------
     # Position evaluation  (called at minimax leaves)
     # ------------------------------------------------------------------
@@ -484,21 +506,14 @@ class LightCycleAI:
         """
         Score from the AI (opponent) perspective -- higher = better for AI.
 
-        Mid-game: K1*(o_nodes - p_nodes) + K2*(o_edges - p_edges), scaled x1000,
-                  plus a small wall-hugging tiebreaker.
-        End-game: checkerboard-aware territory difference, scaled x1000.
-
-        Crash detection is the caller's responsibility.  Head positions are
-        excluded from occ so BFS treats them as accessible starting points.
+        Uses a bounded BFS (up to 80 cells each) to approximate the Voronoi
+        territory difference.  Fast enough for minimax leaves while still
+        driving the AI to aggressively cut off the player's reachable space.
         """
-        bfs_occ = occ - {p_pos, o_pos}
-
-        # Cheap leaf heuristic: wall-hugging tiebreaker only.
-        # Full Voronoi + chamber-tree is computed once per turn at root level;
-        # running BFS at every minimax leaf is too slow in Python on 80x60 boards.
-        o_open = self._open_nbrs(bw, bh, bfs_occ, o_pos[0], o_pos[1])
-        p_open = self._open_nbrs(bw, bh, bfs_occ, p_pos[0], p_pos[1])
-        return (p_open - o_open) * 100
+        bfs_occ   = occ - {p_pos, o_pos}
+        o_n, o_e  = self._bounded_reach(bw, bh, bfs_occ, o_pos)
+        p_n, p_e  = self._bounded_reach(bw, bh, bfs_occ, p_pos)
+        return int(((o_n - p_n) * self.K1 + (o_e - p_e) * self.K2) * 1000)
 
     # ------------------------------------------------------------------
     # Minimax with alpha-beta pruning  (clean 1v1, no ad-hoc bonuses)
@@ -685,7 +700,7 @@ class LightCycleAI:
                 np_,   d,
                 self.search_depth - 1, False)
 
-            total = chamber_score + mm_score
+            total = chamber_score * 2 + mm_score
             if total > best_score:
                 best_score = total
                 best_dir   = d
@@ -736,7 +751,7 @@ class LightCycleGame(QMainWindow):
             pass
 
         self.difficulty = "Hard"
-        self.game_speed = {"Easy": 200, "Medium": 150, "Hard": 100, "Insane": 75}[self.difficulty]
+        self.game_speed = {"Easy": 120, "Medium": 80, "Hard": 55, "Insane": 80}[self.difficulty]
 
         msg = (
             f"Welcome to Light Cycle -- {self.difficulty} Mode! (1v1)\n\n"
@@ -765,10 +780,10 @@ class LightCycleGame(QMainWindow):
     def init_game(self):
         self.game_started = False
 
-        # Player: bottom-left, heading right
-        self.player   = LightCycle(5, self.board_height - 5, RIGHT, PLAYER_COLOR)
-        # Opponent: top-right, heading left
-        self.opponent = LightCycle(self.board_width - 6, 4, LEFT, OPPONENT_COLOR)
+        # Both start at mid-height, ~50 cells apart, heading at each other
+        mid_y = self.board_height // 2
+        self.player   = LightCycle(10,                    mid_y, RIGHT, PLAYER_COLOR)
+        self.opponent = LightCycle(self.board_width - 11, mid_y, LEFT,  OPPONENT_COLOR)
         self.ai       = LightCycleAI(self.difficulty)
 
         # Clean 1v1 -- no random obstacles; pure strategy

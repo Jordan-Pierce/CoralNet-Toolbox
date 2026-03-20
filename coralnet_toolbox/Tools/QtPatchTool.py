@@ -24,12 +24,10 @@ class PatchTool(Tool):
     def activate(self):
         self.active = True
         self.annotation_window.setCursor(self.cursor)
-        self.annotation_window.annotation_size_spinbox.setEnabled(True)
 
     def deactivate(self):
         self.active = False
         self.annotation_window.setCursor(self.default_cursor)
-        self.annotation_window.annotation_size_spinbox.setEnabled(False)
         self.clear_cursor_annotation()
         
         # Call parent deactivate to ensure crosshair is properly cleared
@@ -116,6 +114,9 @@ class PatchTool(Tool):
             # Make the cursor annotation semi-transparent to distinguish it from actual annotations
             self.cursor_annotation.update_transparency(self.annotation_window.main_window.get_transparency_value())
             self.cursor_annotation.create_graphics_item(self.annotation_window.scene)
+            # Show the dimension tag while drawing
+            if hasattr(self.cursor_annotation, 'dimension_tag_item') and self.cursor_annotation.dimension_tag_item:
+                self.cursor_annotation.dimension_tag_item.setVisible(True)
 
     def update_cursor_annotation(self, scene_pos: QPointF = None):
         """Update the cursor annotation position."""
