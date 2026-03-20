@@ -17,16 +17,23 @@ class DockWrapper(ads.CDockWidget):
     Safely encapsulates a widget inside an ADS dock without crashing the C++ layout engine.
     Uses a standard QVBoxLayout to safely stack menus, toolbars, and the payload.
     """
-    def __init__(self, title: str, object_name: str, main_widget: QWidget, parent=None):
+    def __init__(self, title: str, object_name: str, main_widget: QWidget, parent=None, icon=None):
         # Do NOT pass parent here. ADS must take exclusive memory ownership.
         super().__init__(title)
         
         self.setObjectName(object_name)
         self.setWindowTitle(title)
         
+        # Set window icon if provided (displays when dock is floated)
+        if icon is not None:
+            self.setWindowIcon(icon)
+        
         self.setFeature(ads.CDockWidget.DockWidgetClosable, True)
         self.setFeature(ads.CDockWidget.DockWidgetFloatable, True)
         self.setFeature(ads.CDockWidget.DockWidgetMovable, True)
+        
+        # Disable the "List all tabs" button that appears in the tab bar
+        self.setFeature(ads.CDockWidget.DockWidgetDeleteOnClose, False)
 
         # Use a simple QWidget + QVBoxLayout instead of QMainWindow
         self.inner_widget = QWidget()

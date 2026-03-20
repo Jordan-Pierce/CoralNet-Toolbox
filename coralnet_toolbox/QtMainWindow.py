@@ -508,6 +508,11 @@ class MainWindow(QMainWindow):
         self.save_project_action.triggered.connect(self.open_save_project_dialog)
         self.file_menu.addAction(self.save_project_action)
         
+        # ========== WINDOWS MENU ==========
+        # Windows menu - will be populated after docks are created
+        self.windows_menu = self.menu_bar.addMenu("Windows")
+        self.dock_toggle_actions = {}
+        
         # ========== VIEW MENU ==========
         # Fetch the fully encapsulated menu from the MVAT Viewer and add it to the main menu bar
         self.view_menu = self.mvat_viewer.create_view_menu()
@@ -1052,82 +1057,169 @@ class MainWindow(QMainWindow):
         # 1. Initialize the Advanced Dock Manager
         # --------------------------------------------------
         
-        # Instantiate the ADS dock manager. This safely takes over the entire central area 
-        # of the QMainWindow without the need for empty dummy widgets or Qt corner tricks.
+        # Instantiate the ADS dock manager.
         self.dock_manager = ads.CDockManager(self)
+        
+        # Disable the "List all tabs" button in the dock tab bars
+        self.dock_manager.setConfigFlags(
+            self.dock_manager.configFlags() & ~ads.CDockManager.DockAreaHasTabsMenuButton
+        )
+        
+        # Apply custom QSS for vibrant cyan tabs
+        self.dock_manager.setStyleSheet("""
+            /* The flat grey background behind the tabs */
+            ads--CDockAreaTabBar {
+            background-color: #f0f0f0;
+            height: 28px;
+            }
+
+            /* Inactive tabs - subtle grey, pushed down slightly */
+            ads--CDockWidgetTab {
+            background-color: #e8e8e8;
+            border: none;
+            border-right: 1px solid #d0d0d0; /* Subtle separator between inactive tabs */
+            padding: 2px 12px;
+            color: #666666;
+            margin-top: 2px; /* Pushes inactive tabs down so they don't protrude */
+            font-weight: 500;
+            min-width: 100px;
+            max-width: 350px;
+            }
+
+            /* Slight highlight when hovering over inactive tabs */
+            ads--CDockWidgetTab:hover {
+            background-color: #d9d9d9;
+            color: #333333;
+            }
+
+            /* The currently active tab - Vibrant Cyan, protruding up */
+            ads--CDockWidgetTab[activeTab="true"] {
+            background-color: #00A8E6; /* Bright, vibrant cyan */
+            border: none;
+            color: #ffffff; /* Pure white text for maximum contrast */
+            font-weight: 600; /* Bold for prominence */
+            margin-top: 0px; /* Zero margin pulls it flush to the top, making it protrude */
+            padding: 4px 12px;
+            min-width: 100px;
+            max-width: 350px;
+            }
+
+            /* Active tab on hover - slightly darker cyan */
+            ads--CDockWidgetTab[activeTab="true"]:hover {
+            background-color: #0095CC; /* Slightly darker cyan on hover */
+            }
+
+            /* Close button - blend with tab, no button appearance */
+            ads--CDockWidgetTab QAbstractButton {
+            background-color: transparent;
+            border: none;
+            padding: 0px;
+            margin: 0px 4px;
+            width: 14px;
+            height: 14px;
+            }
+
+            ads--CDockWidgetTab[activeTab="true"] QAbstractButton {
+            background-color: transparent;
+            }
+
+            ads--CDockWidgetTab QAbstractButton:hover {
+            background-color: rgba(255, 255, 255, 0.3);
+            border-radius: 2px;
+            }
+
+            ads--CDockWidgetTab[activeTab="true"] QAbstractButton:hover {
+            background-color: rgba(0, 0, 0, 0.2);
+            border-radius: 2px;
+            }
+
+            /* Focus state - keep the same solid block look */
+            ads--CDockWidgetTab:focus {
+            outline: none; /* Kills default Qt dotted line */
+            }
+            
+            /* Dock area background */
+            ads--CDockArea {
+            background-color: #ffffff;
+            border: 1px solid #d0d0d0;
+            }
+        """)
 
         # --------------------------------------------------
         # 2. Create the Docks & Containers
         # --------------------------------------------------
         
-        # Setup Label Dock (Left) using DockWrapper
-        self.left_dock = DockWrapper("Label Window", 
-                                     "LabelDock", 
-                                     self.label_window, 
-                                     self)
+        # Setup Label Dock using DockWrapper
+        self.label_dock = DockWrapper("Label Window", 
+                                      "LabelDock", 
+                                      self.label_window, 
+                                      self,
+                                      self.coralnet_icon)
         
         if hasattr(self.label_window, 'create_action_toolbar'):
-            self.left_dock.add_toolbar(self.label_window.create_action_toolbar())
-        self.left_dock.add_toolbar_break()
+            self.label_dock.add_toolbar(self.label_window.create_action_toolbar())
+        self.label_dock.add_toolbar_break()
         if hasattr(self.label_window, 'create_filter_toolbar'):
-            self.left_dock.add_toolbar(self.label_window.create_filter_toolbar())
+            self.label_dock.add_toolbar(self.label_window.create_filter_toolbar())
         if hasattr(self.label_window, 'create_bottom_toolbar'):
             # Note: with the simplified QVBoxLayout in our updated DockWrapper, 
             # all toolbars stack safely above the payload widget.
-            self.left_dock.add_toolbar(self.label_window.create_bottom_toolbar())
+            self.label_dock.add_toolbar(self.label_window.create_bottom_toolbar())
             
         # Setup Timer Dock (Left, below Labels) using DockWrapper
         self.timer_dock = DockWrapper("Timer Window", 
                                       "TimerDock", 
                                       self.timer_window, 
-                                      self)
-        # Note: Set height/width restrictions on the inner widget now, not the dock
-        self.timer_window.setMaximumHeight(100) 
+                                      self,
+                                      self.coralnet_icon)
 
         # Setup the Annotation Dock using DockWrapper
         self.annotation_dock = DockWrapper("Annotation Workspace", 
                                            "AnnotationDock", 
                                            self.annotation_window, 
-                                           self)
+                                           self,
+                                           self.coralnet_icon)
         
         if hasattr(self.annotation_window, 'create_top_toolbar'):
             self.annotation_dock.add_toolbar(self.annotation_window.create_top_toolbar())
         if hasattr(self.annotation_window, 'create_bottom_toolbar'):
             self.annotation_dock.add_toolbar(self.annotation_window.create_bottom_toolbar())
 
-        # Setup Image Dock (Right) using DockWrapper
-        self.right_dock = DockWrapper("Image Window", 
+        # Setup Image Dock using DockWrapper
+        self.image_dock = DockWrapper("Image Window", 
                                       "ImageDock", 
-                                      self.image_window,
-                                      self)
+                                      self.image_window, 
+                                      self,
+                                      self.coralnet_icon)
         
         if hasattr(self.image_window, 'create_filter_toolbar'):
-            self.right_dock.add_toolbar(self.image_window.create_filter_toolbar())
-        self.right_dock.add_toolbar_break()
+            self.image_dock.add_toolbar(self.image_window.create_filter_toolbar())
+        self.image_dock.add_toolbar_break()
         if hasattr(self.image_window, 'create_info_toolbar'):
-            self.right_dock.add_toolbar(self.image_window.create_info_toolbar())
+            self.image_dock.add_toolbar(self.image_window.create_info_toolbar())
         if hasattr(self.image_window, 'create_action_toolbar'):
-            self.right_dock.add_toolbar(self.image_window.create_action_toolbar())
+            self.image_dock.add_toolbar(self.image_window.create_action_toolbar())
 
         # Setup Confidence Dock (Right) using DockWrapper
         self.confidence_dock = DockWrapper("Confidence Window", 
                                            "ConfidenceDock", 
                                            self.confidence_window, 
-                                           self)
+                                           self,
+                                           self.coralnet_icon)
         
         # Setup Performance Dock (Right) using DockWrapper
         self.performance_dock = DockWrapper("Performance Window", 
                                             "PerformanceWindowDock",
                                             self.performance_window, 
-                                            self)
-        
-        self.performance_window.setMaximumHeight(125) 
-        
+                                            self,
+                                            self.coralnet_icon)
+                
         # Setup Annotation Gallery Dock (Bottom) using DockWrapper
         self.annotation_gallery_dock = DockWrapper("Annotation Gallery", 
                                                    "AnnotationGalleryDock",
                                                    self.annotation_viewer_window,
-                                                   self)
+                                                   self,
+                                                   self.coralnet_icon)
         
         if hasattr(self.annotation_viewer_window, 'create_top_toolbar'):
             self.annotation_gallery_dock.add_toolbar(self.annotation_viewer_window.create_top_toolbar())
@@ -1138,7 +1230,8 @@ class MainWindow(QMainWindow):
         self.embedding_viewer_dock = DockWrapper("Embedding Viewer", 
                                                  "EmbeddingViewerDock", 
                                                  self.embedding_viewer_window, 
-                                                 self)
+                                                 self,
+                                                 self.coralnet_icon)
         
         if hasattr(self.embedding_viewer_window, 'create_top_toolbar'):
             self.embedding_viewer_dock.add_toolbar(self.embedding_viewer_window.create_top_toolbar())
@@ -1146,13 +1239,14 @@ class MainWindow(QMainWindow):
             self.embedding_viewer_dock.add_toolbar(self.embedding_viewer_window.create_bottom_toolbar())
 
         # Setup MVAT Viewer Dock (Bottom-left) using DockWrapper
-        self.mvat_viewer_dock = DockWrapper("3D Viewer", "MVATViewerDock", self.mvat_viewer, self)
+        self.mvat_viewer_dock = DockWrapper("3D Viewer", "MVATViewerDock", self.mvat_viewer, self, self.coralnet_icon)
 
         # Setup Camera Grid Dock (Bottom-right) using DockWrapper
         self.camera_grid_dock = DockWrapper("Camera Grid", 
                                             "CameraGridDock", 
                                             self.camera_grid, 
-                                            self)
+                                            self,
+                                            self.coralnet_icon)
         
         if hasattr(self.camera_grid, 'create_top_toolbar'):
             self.camera_grid_dock.add_toolbar(self.camera_grid.create_top_toolbar())
@@ -1165,7 +1259,7 @@ class MainWindow(QMainWindow):
         workspace_area = self.dock_manager.addDockWidget(ads.TopDockWidgetArea, self.annotation_dock)
         
         # 2. Add Image dock to the Right of the WORKSPACE explicitly
-        right_area = self.dock_manager.addDockWidget(ads.RightDockWidgetArea, self.right_dock, workspace_area)
+        right_area = self.dock_manager.addDockWidget(ads.RightDockWidgetArea, self.image_dock, workspace_area)
         
         # 3. Add Confidence dock below the Image dock
         conf_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.confidence_dock, right_area)
@@ -1175,7 +1269,7 @@ class MainWindow(QMainWindow):
         
         # 5. TAB the Label dock INSIDE the Image dock 
         # (ADS tabs widgets automatically when dropped into the Center area of an existing dock)
-        self.dock_manager.addDockWidget(ads.CenterDockWidgetArea, self.left_dock, right_area)
+        self.dock_manager.addDockWidget(ads.CenterDockWidgetArea, self.label_dock, right_area)
         
         # 6. Add Annotation Gallery to the Bottom of the WORKSPACE explicitly
         gallery_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, 
@@ -1196,6 +1290,38 @@ class MainWindow(QMainWindow):
         # 10. TAB the Timer dock into Performance, but hide it initially
         self.dock_manager.addDockWidget(ads.CenterDockWidgetArea, self.timer_dock, perf_area)
         self.timer_dock.toggleView(False)
+        
+        # Populate the Windows menu with dock toggle actions
+        dock_windows = [
+            ("Annotation Workspace", self.annotation_dock),
+            ("Image Window", self.image_dock),
+            ("Label Window", self.label_dock),
+            ("Confidence Window", self.confidence_dock),
+            ("Performance Window", self.performance_dock),
+            ("Timer Window", self.timer_dock),
+            ("Annotation Gallery", self.annotation_gallery_dock),
+            ("Embedding Viewer", self.embedding_viewer_dock),
+            ("3D Viewer", self.mvat_viewer_dock),
+            ("Camera Grid", self.camera_grid_dock),
+        ]
+
+        for dock_name, dock_widget in dock_windows:
+            action = QAction(dock_name, self, checkable=True)
+            action.setChecked(dock_widget.isVisible())
+            # Connect the action to toggle the dock visibility
+            action.triggered.connect(lambda checked, dw=dock_widget: dw.toggleView(checked))
+            # Also update the action when the dock visibility changes
+            dock_widget.visibilityChanged.connect(lambda visible, act=action: act.setChecked(visible))
+            self.windows_menu.addAction(action)
+            self.dock_toggle_actions[dock_name] = action
+
+        # Add separator before reset layout option
+        self.windows_menu.addSeparator()
+
+        # Reset Layout action
+        self.reset_layout_action = QAction("Reset Layout to Default", self)
+        self.reset_layout_action.triggered.connect(self.reset_layout_to_default)
+        self.windows_menu.addAction(self.reset_layout_action)
         
         # --------------------------------------------------
         # Enable drag and drop
@@ -2382,6 +2508,20 @@ class MainWindow(QMainWindow):
             self.coralnet_download_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def reset_layout_to_default(self):
+        """Reset all dock windows to their default visibility state."""
+        # Show all docks by default
+        self.annotation_dock.toggleView(True)
+        self.image_dock.toggleView(True)
+        self.label_dock.toggleView(True)
+        self.confidence_dock.toggleView(True)
+        self.performance_dock.toggleView(True)
+        self.timer_dock.toggleView(False)  # Timer is hidden by default
+        self.annotation_gallery_dock.toggleView(True)
+        self.embedding_viewer_dock.toggleView(True)
+        self.mvat_viewer_dock.toggleView(True)
+        self.camera_grid_dock.toggleView(True)
 
     def open_import_dataset_dialog(self):
         """Open the Import Dataset dialog to import datasets into the project."""
