@@ -2763,6 +2763,13 @@ class AnnotationWindow(QGraphicsView):
 
             images_to_update.add(annotation.image_path)
 
+            # Connect signals (guard prevents duplicates if load_annotation is also called)
+            if not annotation._signals_connected:
+                annotation.selected.connect(self.select_annotation)
+                annotation.annotationDeleted.connect(self.delete_annotation)
+                annotation.annotationUpdated.connect(self.on_annotation_updated)
+                annotation._signals_connected = True
+
             if isinstance(annotation, MaskAnnotation):
                 raster = self.main_window.image_window.raster_manager.get_raster(annotation.image_path)
                 if raster:
