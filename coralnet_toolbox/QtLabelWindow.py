@@ -396,6 +396,7 @@ class LabelWindow(QWidget):
 
         # Initialize labels
         self.labels = []
+        self._short_code_map = {}  # Fast lookup: short_code.strip().lower() -> Label
         self.active_label = None
 
         # Add default label (unselected)
@@ -774,6 +775,7 @@ class LabelWindow(QWidget):
         label.label_deleted.connect(self.delete_label)
         label.visibilityChanged.connect(self._on_label_visibility_changed)
         self.labels.insert(0, label)
+        self._short_code_map[label.short_label_code.strip().lower()] = label
         # Do not set active by default
         # Update in LabelWindow
         self.update_labels_per_row()
@@ -793,6 +795,7 @@ class LabelWindow(QWidget):
         label.label_deleted.connect(self.delete_label)
         label.visibilityChanged.connect(self._on_label_visibility_changed)
         self.labels.append(label)
+        self._short_code_map[label.short_label_code.strip().lower()] = label
         self.set_active_label(label)
         # Update in LabelWindow
         self.update_labels_per_row()
@@ -1063,16 +1066,13 @@ class LabelWindow(QWidget):
     def get_label_by_short_code(self, short_label_code, return_review=True):
         """Find and return a label by its short code (case-insensitive)."""
         s_code = short_label_code.strip().lower()
-        for label in self.labels:
-            if s_code == label.short_label_code.strip().lower():
-                return label
+        label = self._short_code_map.get(s_code)
+        if label:
+            return label
         print(f"Warning: Label with short code '{short_label_code}' not found.")
-
         if return_review:
-            for label in self.labels:
-                if label.short_label_code == "Review" and label.long_label_code == "Review":
-                    return label
-        return None  # Return None if not found and not returning review label
+            return self._short_code_map.get('review')
+        return None
 
     def get_label_by_long_code(self, long_label_code, return_review=True):
         """Find and return a label by its long code (case-insensitive)."""
@@ -1164,7 +1164,9 @@ class LabelWindow(QWidget):
         This is for a simple edit, not a merge.
         """
         # Update the label object's properties
+        self._short_code_map.pop(label_to_update.short_label_code.strip().lower(), None)
         label_to_update.short_label_code = new_short
+        self._short_code_map[new_short.strip().lower()] = label_to_update
         label_to_update.long_label_code = new_long
         label_to_update.update_label_color(new_color)  # This already updates color and emits signal
 
@@ -1243,6 +1245,7 @@ class LabelWindow(QWidget):
             
         if source_label in self.labels:
             self.labels.remove(source_label)
+            self._short_code_map.pop(source_label.short_label_code.strip().lower(), None)
             source_label.deleteLater()
 
         self.update_label_count()
@@ -1314,6 +1317,7 @@ class LabelWindow(QWidget):
             if source_label in self.labels:
                 try:
                     self.labels.remove(source_label)
+                    self._short_code_map.pop(source_label.short_label_code.strip().lower(), None)
                 except ValueError:
                     pass
                 source_label.deleteLater()
@@ -1418,6 +1422,7 @@ class LabelWindow(QWidget):
 
         # Remove from the LabelWindow
         self.labels.remove(label)
+        self._short_code_map.pop(label.short_label_code.strip().lower(), None)
         label.deleteLater()
 
         # Delete annotations associated with the label
