@@ -218,13 +218,14 @@ class RasterTableModel(QAbstractTableModel):
             # Signal that the insertion is complete
             self.endInsertRows()
             
-    def highlight_path(self, path: str, highlighted: bool = True):
+    def highlight_path(self, path: str, highlighted: bool = True, emit_signals: bool = True):
         """
         Set the highlight state for a specific path
         
         Args:
             path (str): Image path to highlight/unhighlight
             highlighted (bool): Whether to highlight (True) or unhighlight (False)
+            emit_signals (bool): Whether to emit signals (set False for batch operations)
         """
         raster = self.raster_manager.get_raster(path)
         if raster:
@@ -232,29 +233,39 @@ class RasterTableModel(QAbstractTableModel):
             if raster.is_highlighted != highlighted:
                 raster.set_highlighted(highlighted)
                 
-                # Update the view
-                row = self.get_row_for_path(path)
-                if row >= 0:
-                    self.dataChanged.emit(
-                        self.index(row, 0),
-                        self.index(row, self.columnCount() - 1)
-                    )
-                
-                # Emit signal to notify listeners of highlighting change
-                self.rowsChanged.emit()
+                # Update the view (only if emitting signals)
+                if emit_signals:
+                    row = self.get_row_for_path(path)
+                    if row >= 0:
+                        self.dataChanged.emit(
+                            self.index(row, 0),
+                            self.index(row, self.columnCount() - 1)
+                        )
+                    
+                    # Emit signal to notify listeners of highlighting change
+                    self.rowsChanged.emit()
                     
     def clear_highlights(self):
         """Clear all highlighted paths"""
-        # Find all highlighted rasters
-        highlighted_paths = []
+        # Find all highlighted rasters and update in batch
+        highlighted_rows = []
         for path in self.filtered_paths:
             raster = self.raster_manager.get_raster(path)
             if raster and raster.is_highlighted:
-                highlighted_paths.append(path)
+                raster.set_highlighted(False)
+                row = self.get_row_for_path(path)
+                if row >= 0:
+                    highlighted_rows.append(row)
         
-        # Unhighlight all paths
-        for path in highlighted_paths:
-            self.highlight_path(path, False)
+        # Emit a single update signal for all changed rows
+        if highlighted_rows:
+            min_row = min(highlighted_rows)
+            max_row = max(highlighted_rows)
+            self.dataChanged.emit(
+                self.index(min_row, 0),
+                self.index(max_row, self.columnCount() - 1)
+            )
+            self.rowsChanged.emit()
 
     def set_highlighted_paths(self, paths: List[str]):
         """
@@ -263,18 +274,41 @@ class RasterTableModel(QAbstractTableModel):
         Args:
             paths (List[str]): List of image paths to highlight
         """
+        # Collect all rows that will change
+        changed_rows = []
+        
         # First get all currently highlighted paths
         current_highlighted = self.get_highlighted_paths()
         
         # Unhighlight those that shouldn't be highlighted
         for path in current_highlighted:
             if path not in paths:
-                self.highlight_path(path, False)
+                raster = self.raster_manager.get_raster(path)
+                if raster:
+                    raster.set_highlighted(False)
+                    row = self.get_row_for_path(path)
+                    if row >= 0:
+                        changed_rows.append(row)
                 
         # Highlight those that should be highlighted
         for path in paths:
             if path in self.filtered_paths:  # Only highlight visible paths
-                self.highlight_path(path, True)
+                raster = self.raster_manager.get_raster(path)
+                if raster and not raster.is_highlighted:
+                    raster.set_highlighted(True)
+                    row = self.get_row_for_path(path)
+                    if row >= 0:
+                        changed_rows.append(row)
+        
+        # Emit a single update signal for all changed rows
+        if changed_rows:
+            min_row = min(changed_rows)
+            max_row = max(changed_rows)
+            self.dataChanged.emit(
+                self.index(min_row, 0),
+                self.index(max_row, self.columnCount() - 1)
+            )
+            self.rowsChanged.emit()
 
     def clear_highlights_except(self, paths_to_keep: List[str]):
         """

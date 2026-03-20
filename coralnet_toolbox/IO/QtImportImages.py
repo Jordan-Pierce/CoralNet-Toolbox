@@ -58,6 +58,8 @@ class ImportImages:
 
         try:
             imported_paths = []
+            progress_batch = 0
+            PROGRESS_BATCH_SIZE = 50  # Update UI every 50 images instead of every image
             
             # Add images directly to the manager without emitting signals
             for file_name in file_names:
@@ -69,14 +71,20 @@ class ImportImages:
                 else:
                     imported_paths.append(file_name)
 
+                # Batch progress updates to reduce UI thread load
+                progress_batch += 1
+                if progress_batch >= PROGRESS_BATCH_SIZE:
+                    for _ in range(progress_batch):
+                        progress_bar.update_progress()
+                    progress_batch = 0
+            
+            # Flush remaining progress
+            for _ in range(progress_batch):
                 progress_bar.update_progress()
 
             # After the silent loop, manually update the UI exactly once.
             self.image_window.update_search_bars()
-            self.image_window.filter_images()
-            
-            if imported_paths:
-                self.image_window.load_image_by_path(imported_paths[0])
+            self.image_window.filter_images(use_threading=False)
 
         except Exception as e:
             self._show_error_message(str(e))

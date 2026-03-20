@@ -217,6 +217,8 @@ class OpenProject(QDialog):
 
         try:
             image_data_map = {img['path']: img for img in images_data} if is_new_format else {}
+            progress_batch = 0
+            PROGRESS_BATCH_SIZE = 50  # Update UI every 50 images instead of every image
 
             # Add images directly to the manager without emitting signals
             for path in image_paths:
@@ -225,7 +227,11 @@ class OpenProject(QDialog):
                 
                 raster = self.image_window.raster_manager.get_raster(path)
                 if not raster:
-                    progress_bar.update_progress()
+                    progress_batch += 1
+                    if progress_batch >= PROGRESS_BATCH_SIZE:
+                        for _ in range(progress_batch):
+                            progress_bar.update_progress()
+                        progress_batch = 0
                     continue
 
                 if is_new_format and path in image_data_map:
@@ -233,6 +239,15 @@ class OpenProject(QDialog):
                     # Use the raster's update_from_dict method
                     raster.update_from_dict(data)
                 
+                # Batch progress updates to reduce UI thread load
+                progress_batch += 1
+                if progress_batch >= PROGRESS_BATCH_SIZE:
+                    for _ in range(progress_batch):
+                        progress_bar.update_progress()
+                    progress_batch = 0
+            
+            # Flush remaining progress
+            for _ in range(progress_batch):
                 progress_bar.update_progress()
 
             if legacy_workareas:
@@ -251,10 +266,7 @@ class OpenProject(QDialog):
         finally:
             # Manually perform the UI updates ONCE for all imported images
             self.image_window.update_search_bars()
-            self.image_window.filter_images()
-
-            if self.image_window.raster_manager.image_paths:
-                self.image_window.load_image_by_path(self.image_window.raster_manager.image_paths[0])
+            self.image_window.filter_images(use_threading=False)
             
             progress_bar.stop_progress()
             progress_bar.close()

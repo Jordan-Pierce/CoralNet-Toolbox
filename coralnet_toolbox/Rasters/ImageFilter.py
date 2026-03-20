@@ -42,7 +42,7 @@ class ImageFilter(QObject):
                       require_no_annotations: bool = False,
                       require_predictions: bool = False,
                       selected_paths: List[str] = None,
-                      use_threading: bool = True,
+                      use_threading: bool = False,
                       callback: Callable = None) -> List[str]:
         """
         Filter images based on various criteria.

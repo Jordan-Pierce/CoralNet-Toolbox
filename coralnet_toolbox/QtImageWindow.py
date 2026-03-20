@@ -877,7 +877,7 @@ class ImageWindow(QWidget):
             # Scroll to the index
             self.tableView.scrollTo(index, QTableView.PositionAtCenter)
             
-    def filter_images(self):
+    def filter_images(self, use_threading: bool = True):
         """Filter images based on current criteria."""
         # Get filter criteria
         search_text = self.search_bar_images.currentText()
@@ -896,7 +896,7 @@ class ImageWindow(QWidget):
         # Get highlighted paths if needed
         highlighted_paths = self.table_model.get_highlighted_paths() if highlighted_only else None
         
-        # Run the filter
+        # Run the filter (skip threading for initial import/load for speed)
         self.image_filter.filter_images(
             search_text=search_text,
             search_label=search_label,
@@ -904,7 +904,7 @@ class ImageWindow(QWidget):
             require_no_annotations=no_annotations,
             require_predictions=has_predictions,
             selected_paths=highlighted_paths,
-            use_threading=True
+            use_threading=use_threading
         )
         
     def update_current_image_index_label(self):
@@ -1066,8 +1066,8 @@ class ImageWindow(QWidget):
         
     def highlight_all_rows(self):
         """Highlight all rows in the filtered view."""
-        for path in self.table_model.filtered_paths:
-            self.table_model.highlight_path(path, True)
+        # Batch highlight all filtered paths for better performance
+        self.table_model.set_highlighted_paths(self.table_model.filtered_paths)
         
         # Update the last highlighted row
         if self.table_model.filtered_paths:
