@@ -2518,11 +2518,7 @@ class MainWindow(QMainWindow):
         """Load a specific layout configuration."""
         success = QtLayoutManager.load_layout(self.dock_manager, layout_name)
         if success:
-            QMessageBox.information(
-                self,
-                "Layout Loaded",
-                f"Layout '{layout_name}' has been loaded successfully."
-            )
+            pass
         else:
             QMessageBox.warning(
                 self,
