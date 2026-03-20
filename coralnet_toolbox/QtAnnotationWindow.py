@@ -2480,10 +2480,12 @@ class AnnotationWindow(QGraphicsView):
         # Set the visibility based on the label's visibility checkbox
         self.set_annotation_visibility(annotation)
         
-        # Connect essential update signals
-        annotation.selected.connect(self.select_annotation)
-        annotation.annotationDeleted.connect(self.delete_annotation)
-        annotation.annotationUpdated.connect(self.on_annotation_updated)
+        # Connect essential update signals (guard prevents duplicate connections)
+        if not annotation._signals_connected:
+            annotation.selected.connect(self.select_annotation)
+            annotation.annotationDeleted.connect(self.delete_annotation)
+            annotation.annotationUpdated.connect(self.on_annotation_updated)
+            annotation._signals_connected = True
 
     def load_annotations(self, image_path=None, annotations=None):
         """Load annotations for the specified image path or current image."""
@@ -2760,10 +2762,6 @@ class AnnotationWindow(QGraphicsView):
             self.image_annotations_dict[annotation.image_path].append(annotation)
 
             images_to_update.add(annotation.image_path)
-
-            annotation.selected.connect(self.select_annotation)
-            annotation.annotationDeleted.connect(self.delete_annotation)
-            annotation.annotationUpdated.connect(self.on_annotation_updated)
 
             if isinstance(annotation, MaskAnnotation):
                 raster = self.main_window.image_window.raster_manager.get_raster(annotation.image_path)

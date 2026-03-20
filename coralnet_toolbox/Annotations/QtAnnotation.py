@@ -133,6 +133,9 @@ class Annotation(QObject):
         self._dash_offset = 0.0
         self._dash_speed = 1.0  # Pixels to move per animation tick
         
+        # Guard to prevent duplicate QtSignal connections
+        self._signals_connected = False
+        
     def contains_point(self, point: QPointF) -> bool:
         """Check if the annotation contains a given point."""
         raise NotImplementedError("Subclasses must implement this method.")

@@ -460,13 +460,8 @@ class OpenProject(QDialog):
                 if raster:
                     raster.mask_annotation = mask_ann
 
-            # Update UI and counts only ONCE after the batch is added
-            for path in images_to_update:
-                img_window.update_image_annotations(path)
-
-            # Load the annotations for current image and update counts
-            self.annotation_window.load_annotations()
-            self.label_window.update_annotation_count()
+            # Load the mask annotation for the current image into the scene
+            self.annotation_window.load_mask_annotation()
 
         except Exception as e:
             QMessageBox.warning(self.annotation_window,
