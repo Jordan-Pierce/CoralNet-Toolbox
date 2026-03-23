@@ -454,7 +454,7 @@ class MVATManager(QObject):
                 color = MARKER_COLOR_SELECTED if depth is not None and depth > 0 else MARKER_COLOR_INVALID
                 self.annotation_window.set_incoming_marker(u, v, color)
             else:
-                self.annotation_window.marker.hide()
+                self.annotation_window.clear_static_marker()
         
         # Project focal point into context matrix canvases (Phase 4)
         if self.context_matrix is not None:

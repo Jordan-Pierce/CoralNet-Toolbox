@@ -15,7 +15,6 @@ from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QMessa
 
 from coralnet_toolbox.QtBaseCanvas import BaseCanvas
 
-from coralnet_toolbox.MVAT.core.Marker import Marker
 from coralnet_toolbox.MVAT.core.Ray import CameraRay
 
 from coralnet_toolbox.Annotations import (
@@ -107,10 +106,6 @@ class AnnotationWindow(BaseCanvas):
         
         # Central annotation data store (owned by MainWindow's AnnotationManager)
         self.annotation_manager = self.main_window.annotation_manager
-        
-        # MVAT visualization attributes
-        self.marker = Marker()  # Marker for focal point display from MVAT
-        self.focal_marker = None  # Focal marker for scene (cleared on scene clear)
 
         self.annotation_size = 224
         self.transparency = 128
@@ -690,11 +685,6 @@ class AnnotationWindow(BaseCanvas):
         """Check if the annotation window is currently in mask editing mode."""
         return self.selected_tool and self.selected_tool in self.mask_tools
     
-    def set_incoming_marker(self, u, v, color):
-        """Set the incoming marker position and color from MVAT."""
-        self.marker.set_position(u, v, color)
-        self.scene.addItem(self.marker.marker_item)
-    
     def on_annotation_updated(self, updated_annotation):
         """
         Handle annotation update signal - refresh graphics if annotation is currently displayed.
@@ -705,6 +695,15 @@ class AnnotationWindow(BaseCanvas):
         if (updated_annotation.image_path == self.current_image_path and 
             updated_annotation.is_graphics_item_valid()):
             updated_annotation.update_graphics_item()
+            
+    def set_incoming_marker(self, u, v, color):
+        """Set the incoming marker (focal point) position and color from MVAT.
+        
+        Routes to the unified BaseCanvas static marker system so AnnotationWindow
+        displays the focal point using the same marker as all other viewports.
+        """
+        # Use BaseCanvas's unified static marker (crosshair) instead of a separate marker
+        self.update_static_marker(int(u), int(v), color=color)
             
     def showEvent(self, event):
         """Handle show events to fit the view to the image."""
@@ -821,18 +820,14 @@ class AnnotationWindow(BaseCanvas):
             super().mouseDoubleClickEvent(event)
             return
         
-        # Check if MVAT window exists and is accessible
-        if not hasattr(self.main_window, 'mvat_window'):
-            super().mouseDoubleClickEvent(event)
-            return
-        
-        mvat_window = self.main_window.mvat_window
-        if mvat_window is None:
+        # Check if MVAT manager exists and is accessible
+        mvat_manager = getattr(self.main_window, 'mvat_manager', None)
+        if mvat_manager is None:
             super().mouseDoubleClickEvent(event)
             return
         
         # Check if current image has camera data
-        if not self.current_image_path or self.current_image_path not in mvat_window.cameras:
+        if not self.current_image_path or self.current_image_path not in mvat_manager.cameras:
             super().mouseDoubleClickEvent(event)
             return
         
@@ -841,7 +836,7 @@ class AnnotationWindow(BaseCanvas):
         x, y = int(scene_pos.x()), int(scene_pos.y())
         
         # Check if position is within image bounds
-        camera = mvat_window.cameras[self.current_image_path]
+        camera = mvat_manager.cameras[self.current_image_path]
         if not (0 <= x < camera.width and 0 <= y < camera.height):
             super().mouseDoubleClickEvent(event)
             return
@@ -855,7 +850,7 @@ class AnnotationWindow(BaseCanvas):
         
         # Get default depth from scene if no depth available
         if depth is None or depth <= 0 or np.isnan(depth):
-            default_depth = mvat_window.viewer.get_scene_median_depth(camera.position)
+            default_depth = mvat_manager.viewer.get_scene_median_depth(camera.position)
         else:
             default_depth = depth
         
@@ -870,7 +865,7 @@ class AnnotationWindow(BaseCanvas):
             
             # Update MVATViewer focal point with the ray's terminal point
             # This will trigger the existing signal chain that projects back to all camera views
-            mvat_window.viewer.set_focal_point(ray.terminal_point)
+            mvat_manager.viewer.set_focal_point(ray.terminal_point)
             
         except Exception as e:
             # Silently handle any errors to allow AnnotationWindow to work independently
@@ -1335,23 +1330,13 @@ class AnnotationWindow(BaseCanvas):
     
     def _on_scene_cleared(self):
         """Hook called by BaseCanvas after scene is cleared. Handles AnnotationWindow-specific cleanup."""
-        # Reset focal marker
-        self.focal_marker = None
         # Allow BaseCanvas to re-create its markers and other scene-level items
         try:
             super()._on_scene_cleared()
         except Exception:
             pass
     
-    def _hide_focal_marker(self):
-        """Hide the focal marker (stub for MVAT integration)."""
-        # TODO: Implement focal marker visibility control
-        if self.focal_marker is not None:
-            try:
-                self.focal_marker.hide()
-            except Exception:
-                pass
-        
+    
     def reset_scene_view(self):
         """Resets the scene view"""
         # Fit the image to the view and recalculate zoom constraints
@@ -1506,14 +1491,6 @@ class AnnotationWindow(BaseCanvas):
         # Set the image dimensions, and current view in status bar
         self.imageLoaded.emit(self.pixmap_image.width(), self.pixmap_image.height())
         self.viewChanged.emit(self.pixmap_image.width(), self.pixmap_image.height())
-        
-        # Update focal marker visibility
-        if self.current_image_path == image_path:
-            # If this image is the selected camera, the marker should be shown if focal point exists
-            # But since the signal will be emitted again if needed, just ensure it's hidden for now
-            pass
-        else:
-            self._hide_focal_marker()
         
         # Show loaded message in status bar (centralized here per MVAT convention)
         try:
