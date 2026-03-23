@@ -235,6 +235,12 @@ class MainWindow(QMainWindow):
         self.timer_window = TimerWindow(self)   
         self.performance_window = PerformanceWindow(self) 
          
+        # Create ContextMatrixWidget for multi-viewport context viewing
+        # (must be created BEFORE MVATManager so the manager can find it via getattr)
+        self.context_matrix = ContextMatrixWidget(parent=None)
+        self.context_matrix.set_raster_manager(self.image_window.raster_manager)
+        self.context_matrix.set_annotation_manager(self.annotation_manager)
+        
         # Create dock-based mvat windows
         self.mvat_viewer = MVATViewer(self)
         self.camera_grid = CameraGrid(model=None, mvat_window=None)
@@ -249,11 +255,6 @@ class MainWindow(QMainWindow):
                 self.camera_grid.load_btn.setEnabled(True)
         except Exception:
             pass
-        
-        # Create ContextMatrixWidget for multi-viewport context viewing
-        self.context_matrix = ContextMatrixWidget(parent=None)
-        self.context_matrix.set_raster_manager(self.image_window.raster_manager)
-        self.context_matrix.set_annotation_manager(self.annotation_manager)
         
         # Create dock-based explorer windows
         self.annotation_viewer_window = AnnotationViewerWindow(self)

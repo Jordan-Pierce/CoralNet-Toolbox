@@ -210,6 +210,9 @@ class BaseCanvas(QGraphicsView):
         # Fit view to image after resize
         if self.active_image and self.pixmap_image and self.scene:
             self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
+            # Sync zoom state after fitInView
+            self._calculate_min_zoom()
+            self.zoom_factor = self.transform().m11()
         
         # Keep placeholder geometry in sync
         try:
@@ -336,6 +339,9 @@ class BaseCanvas(QGraphicsView):
         # Recalculate minimum zoom
         self._calculate_min_zoom()
         
+        # Sync zoom_factor to the actual transform scale after fitInView
+        self.zoom_factor = self.transform().m11()
+        
         self._emit_view_navigated()
     
     def _calculate_min_zoom(self):
@@ -361,37 +367,40 @@ class BaseCanvas(QGraphicsView):
     def center_on_pixel(self, x, y):
         """Center the view on the given image pixel coordinate."""
         self.centerOn(QPointF(x, y))
-        self._emit_view_navigated()
     
     def set_zoom_level(self, factor):
         """
-        Set the view transformation to a specific zoom level.
+        Set the absolute view transform scale.
         
         Args:
-            factor (float): Zoom factor (1.0 = normal, 2.0 = 2x zoom, etc.)
+            factor (float): Absolute zoom factor (e.g. 0.1 = fit-to-view on a large image).
         """
         if factor <= 0:
             return
         
+        # Reset transform and apply the absolute scale
+        self.resetTransform()
+        self.scale(factor, factor)
         self.zoom_factor = factor
-        self.setTransform(self.transform().fromScale(factor, factor))
-        self._emit_view_navigated()
     
     def snap_to_target(self, target_x, target_y, relative_zoom):
         """
-        Snap to a specific pixel location with a specific zoom level.
+        Snap to a specific pixel location with a proportional zoom level.
         Used by Phase 5 sync engine to synchronize context canvases.
         
         Args:
             target_x (float): Target pixel X coordinate
             target_y (float): Target pixel Y coordinate
-            relative_zoom (float): Target zoom factor
+            relative_zoom (float): Zoom ratio relative to fit-to-view
+                                   (1.0 = fit whole image, 2.0 = 2x beyond fit, etc.)
         """
         if not self.active_image:
             return
         
+        # Convert the relative zoom ratio to an absolute scale for THIS canvas
+        absolute_zoom = self._min_zoom * relative_zoom
+        self.set_zoom_level(absolute_zoom)
         self.center_on_pixel(target_x, target_y)
-        self.set_zoom_level(relative_zoom)
         self._emit_view_navigated()
     
     # ==================== Helper Methods ====================
@@ -443,7 +452,7 @@ class BaseCanvas(QGraphicsView):
                     self.scene.addItem(item)
                     self._readonly_annotation_items.append(item)
             except Exception:
-                pass
+                traceback.print_exc()
     
     def _clear_readonly_annotations(self):
         """Remove all read-only annotation items from the scene."""

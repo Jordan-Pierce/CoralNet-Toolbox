@@ -1100,8 +1100,18 @@ class MVATManager(QObject):
             if 0 <= target_u < camera.width and 0 <= target_v < camera.height:
                 targets[i] = (target_u, target_v)
 
-        # Step 3: Command the context matrix to sync (throttled)
-        self.context_matrix.request_sync(targets, zoom_factor)
+        # Step 3: Compute relative zoom ratio (how far beyond fit-to-view)
+        if self.selected_camera and hasattr(self.annotation_window, '_min_zoom'):
+            min_zoom = self.annotation_window._min_zoom
+            if min_zoom > 0:
+                relative_zoom = zoom_factor / min_zoom
+            else:
+                relative_zoom = 1.0
+        else:
+            relative_zoom = 1.0
+
+        # Step 4: Command the context matrix to sync (throttled)
+        self.context_matrix.request_sync(targets, relative_zoom)
 
     def _get_world_point_at_pixel(self, camera, px, py):
         """Get the 3D world point at a specific pixel coordinate.
