@@ -56,6 +56,7 @@ class ContextMatrixWidget(QWidget):
     # Signal: emit when user double-clicks a context canvas
     contextImagePromoted = pyqtSignal(str)  # camera_path
     rankIndicatorUpdated = pyqtSignal(int, int, int)  # start, end, total
+    multiAnnotateToggled = pyqtSignal(bool)  # enabled state
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -77,6 +78,9 @@ class ContextMatrixWidget(QWidget):
         # Target-lock sync state (Phase 5)
         self.target_lock_enabled = False
         self._mvat_manager = None
+
+        # Multi-camera annotation state
+        self.multi_annotate_enabled = False
         self._sync_timer = QTimer()
         self._sync_timer.setSingleShot(True)
         self._sync_timer.timeout.connect(self._process_pending_sync)
@@ -387,7 +391,15 @@ class ContextMatrixWidget(QWidget):
         self._sync_btn.setToolTip("Target-Lock Sync (disabled)")
         self._sync_btn.toggled.connect(self._on_sync_toggled)
         toolbar.addWidget(self._sync_btn)
-        
+
+        # Multi-camera annotation toggle
+        self._multi_annotate_btn = QPushButton("⊕ Multi-Annotate")
+        self._multi_annotate_btn.setCheckable(True)
+        self._multi_annotate_btn.setChecked(False)
+        self._multi_annotate_btn.setToolTip("Multi-Camera Annotation (disabled): create patch annotations in all visible context cameras")
+        self._multi_annotate_btn.toggled.connect(self._on_multi_annotate_toggled)
+        toolbar.addWidget(self._multi_annotate_btn)
+
         # Spacer to push rank label to the right
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
@@ -573,6 +585,16 @@ class ContextMatrixWidget(QWidget):
         # If re-enabled, immediately sync to current main view
         if checked:
             self._request_sync_from_main_view()
+
+    def _on_multi_annotate_toggled(self, checked: bool):
+        """Handle multi-camera annotation toggle button."""
+        self.multi_annotate_enabled = checked
+        self._multi_annotate_btn.setToolTip(
+            "Multi-Camera Annotation (enabled): create patch annotations in all visible context cameras"
+            if checked else
+            "Multi-Camera Annotation (disabled): create patch annotations in all visible context cameras"
+        )
+        self.multiAnnotateToggled.emit(checked)
     
     def request_sync(self, targets: dict, zoom_factor: float):
         """Throttled sync request from MVATManager."""

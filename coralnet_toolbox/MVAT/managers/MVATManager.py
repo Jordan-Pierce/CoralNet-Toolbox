@@ -33,6 +33,8 @@ from coralnet_toolbox.MVAT.core.Model import DEMProduct
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
+from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -199,6 +201,10 @@ class MVATManager(QObject):
         self._is_computing_visibility = False
         # Track active worker threads to prevent GC
         self._active_workers = []
+
+        # Multi-camera annotation state
+        self.multi_annotate_enabled = False
+        self._propagating_annotation = False
         
         # Internal Managers
         self.selection_model = SelectionManager(self)
@@ -259,6 +265,7 @@ class MVATManager(QObject):
         if self.context_matrix is not None:
             self.context_matrix.contextImagePromoted.connect(self._on_camera_selected)
             self.context_matrix.set_mvat_manager(self)
+            self.context_matrix.multiAnnotateToggled.connect(self._on_multi_annotate_toggled)
         
         # 7. Target-Lock Sync (Phase 5): AnnotationWindow viewNavigated -> sync engine
         if hasattr(self.annotation_window, 'viewNavigated'):
@@ -1155,6 +1162,113 @@ class MVATManager(QObject):
             return ray.terminal_point
         except Exception:
             return None
+
+    # --- Multi-Camera Annotation ---
+
+    def _on_multi_annotate_toggled(self, enabled: bool):
+        """Connect or disconnect the patch-annotation propagation handler."""
+        self.multi_annotate_enabled = enabled
+        if enabled:
+            self.annotation_window.annotationCreated.connect(self._on_patch_annotation_created)
+        else:
+            try:
+                self.annotation_window.annotationCreated.disconnect(self._on_patch_annotation_created)
+            except TypeError:
+                pass
+
+    def _on_patch_annotation_created(self, annotation_id: str):
+        """Propagate a newly created PatchAnnotation into all visible context cameras."""
+        # Guard against re-entrant propagation
+        if self._propagating_annotation:
+            return
+
+        # Retrieve the source annotation
+        annotation = self.annotation_window.annotations_dict.get(annotation_id)
+        if annotation is None or not isinstance(annotation, PatchAnnotation):
+            return
+
+        # Only propagate if the annotation belongs to the currently selected camera
+        if self.selected_camera is None:
+            return
+        if annotation.image_path != self.selected_camera.image_path:
+            return
+
+        # Build a ray from the annotation's pixel position
+        px = int(annotation.center_xy.x())
+        py = int(annotation.center_xy.y())
+
+        depth = None
+        try:
+            raster = self.selected_camera._raster
+            if raster.z_channel is not None and raster.z_data_type == 'depth':
+                depth = raster.get_z_value(px, py)
+        except Exception:
+            pass
+
+        try:
+            default_depth = self.viewer.get_scene_median_depth(self.selected_camera.position)
+        except Exception:
+            default_depth = 10.0
+        if default_depth is None or default_depth <= 0:
+            default_depth = 10.0
+
+        try:
+            ray = CameraRay.from_pixel_and_camera(
+                pixel_xy=(px, py),
+                camera=self.selected_camera,
+                depth=depth,
+                default_depth=default_depth,
+            )
+        except Exception:
+            return
+
+        projections = ray.project_to_cameras(self.cameras)
+
+        # Collect the visible context camera paths from the context matrix
+        visible_paths = set()
+        if self.context_matrix is not None:
+            for row in self.context_matrix._visible_canvases:
+                for canvas in row:
+                    if canvas and canvas.active_image and canvas.current_image_path:
+                        visible_paths.add(canvas.current_image_path)
+
+        self._propagating_annotation = True
+        try:
+            for target_path, proj in projections.items():
+                # Skip source camera
+                if target_path == annotation.image_path:
+                    continue
+                # Only propagate to cameras currently visible in the context matrix
+                if target_path not in visible_paths:
+                    continue
+
+                u, v, is_valid = proj
+                if not is_valid:
+                    continue
+
+                target_camera = self.cameras.get(target_path)
+                if target_camera is None:
+                    continue
+                if not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
+                    continue
+
+                from PyQt5.QtCore import QPointF
+                new_annotation = PatchAnnotation(
+                    center_xy=QPointF(u, v),
+                    annotation_size=annotation.annotation_size,
+                    short_label_code=annotation.label.short_label_code,
+                    long_label_code=annotation.label.long_label_code,
+                    color=annotation.label.color,
+                    image_path=target_path,
+                    label_id=annotation.label.id,
+                    transparency=annotation.transparency,
+                )
+                try:
+                    self.annotation_window.add_annotation(new_annotation, record_action=True)
+                except Exception:
+                    pass
+        finally:
+            self._propagating_annotation = False
 
     def cleanup(self):
         """Clean up resources before closing."""
