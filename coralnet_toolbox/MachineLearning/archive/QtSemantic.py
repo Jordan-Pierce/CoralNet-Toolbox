@@ -16,14 +16,14 @@ from PyQt5.QtWidgets import (QLineEdit, QHBoxLayout, QPushButton, QFormLayout, Q
                              QVBoxLayout, QWidget, QTabWidget, QSpinBox, QDoubleSpinBox,
                              QLabel, QMessageBox, QScrollArea, QFrame, QDialog, QFileDialog)
 
-from coralnet_toolbox.MachineLearning.SMP import SemanticModel
+from coralnet_toolbox.MachineLearning.archive.SMP import SemanticModel
 
 from coralnet_toolbox.MachineLearning.EvaluateModel.QtSemantic import EvaluateModelWorker
 
-from coralnet_toolbox.MachineLearning.SMP import get_segmentation_losses
-from coralnet_toolbox.MachineLearning.SMP import get_segmentation_encoders
-from coralnet_toolbox.MachineLearning.SMP import get_segmentation_decoders
-from coralnet_toolbox.MachineLearning.SMP import get_segmentation_optimizers
+from coralnet_toolbox.MachineLearning.archive.SMP import get_segmentation_losses
+from coralnet_toolbox.MachineLearning.archive.SMP import get_segmentation_encoders
+from coralnet_toolbox.MachineLearning.archive.SMP import get_segmentation_decoders
+from coralnet_toolbox.MachineLearning.archive.SMP import get_segmentation_optimizers
 
 from coralnet_toolbox.Icons import get_icon
 

@@ -2,10 +2,7 @@
 
 from .Community.cfg import get_available_configs
 
-from .TuneModel.QtClassify import Classify as TuneClassify
-from .TuneModel.QtDetect import Detect as TuneDetect
-from .TuneModel.QtSegment import Segment as TuneSegment
-from .TuneModel.QtSemantic import Semantic as TuneSemantic
+from .PreTrainModel.QtBase import Base as PreTrainModel
 
 from .TrainModel.QtClassify import Classify as TrainClassify
 from .TrainModel.QtDetect import Detect as TrainDetect 
@@ -34,7 +31,7 @@ from .EvaluateModel.QtSegment import Segment as EvalSegment
 from .EvaluateModel.QtSemantic import Semantic as EvalSemantic
 
 from .MergeDatasets.QtClassify import Classify as MergeClassify
-from .OptimizeModel.QtBase import Base as Optimize
+from .OptimizeModel.QtBase import Base as OptimizeModel
 
 from .TileDataset.QtClassify import Classify as TileClassifyDataset
 from .TileDataset.QtDetect import Detect as TileDetectDataset
@@ -44,10 +41,7 @@ from .TileDataset.QtSemantic import Semantic as TileSemanticDataset
 
 __all__ = [
     'get_available_configs',
-    "TuneClassify",
-    "TuneDetect",
-    "TuneSegment",
-    "TuneSemantic",
+    "PreTrainModel",
     'TrainClassify', 
     'TrainDetect', 
     'TrainSegment',
@@ -73,5 +67,5 @@ __all__ = [
     'TileSegmentDataset',
     'TileSemanticDataset',
     'MergeClassify', 
-    'Optimize'
+    'OptimizeModel'
 ]

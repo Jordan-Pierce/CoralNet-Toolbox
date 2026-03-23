@@ -5,6 +5,9 @@ Simple callbacks for ultralytics training and evaluation to emit Qt signals.
 import logging
 from PyQt5.QtCore import pyqtSignal, QObject
 
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import Callback
+
 logger = logging.getLogger(__name__)
 
 
@@ -189,6 +192,85 @@ def _extract_metrics_from_validator(validator):
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
+
+
+class LightlyPretrainingCallback(Callback):
+    """
+    PyTorch Lightning callback for LightlyTrain pre-training.
+    Emits Qt signals to update the UI during self-supervised learning.
+    """
+    def __init__(self, signal_emitter):
+        """
+        Initialize with a TrainingSignalEmitter.
+        
+        Args:
+            signal_emitter: TrainingSignalEmitter instance
+        """
+        super().__init__()
+        self.signal_emitter = signal_emitter
+
+    def on_train_start(self, trainer, pl_module):
+        """Called when pre-training starts."""
+        try:
+            total_epochs = trainer.max_epochs
+            msg = f"Pre-training started: {total_epochs} epochs"
+            self.signal_emitter.training_status.emit(msg)
+            logger.info("Lightly pre-training started.")
+        except Exception as e:
+            logger.error(f"Error in Lightly on_train_start: {e}", exc_info=True)
+            self.signal_emitter.training_status.emit(f"Error starting pre-training: {e}")
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        """Called at the end of each training epoch."""
+        try:
+            # PyTorch Lightning epochs are 0-indexed
+            epoch = trainer.current_epoch + 1
+            total_epochs = trainer.max_epochs
+
+            # Extract metrics from Lightning's callback_metrics dictionary
+            losses_dict = {}
+            if hasattr(trainer, 'callback_metrics'):
+                for key, val in trainer.callback_metrics.items():
+                    scalar_val = _tensor_to_scalar(val)
+                    if scalar_val is not None:
+                        clean_key = _clean_metric_name(key)
+                        losses_dict[clean_key] = round(scalar_val, 4)
+
+            # Get learning rate from the optimizer
+            lr = 0.0
+            try:
+                if trainer.optimizers:
+                    lr = trainer.optimizers[0].param_groups[0]['lr']
+            except (IndexError, KeyError, TypeError, AttributeError) as e:
+                logger.warning(f"Failed to get learning rate: {e}")
+
+            # Emit all losses and metrics
+            self.signal_emitter.epoch_completed.emit(epoch, total_epochs, losses_dict, lr)
+
+            # Create a readable summary for the status message
+            if losses_dict:
+                loss_str = ", ".join([f"{k}: {v}" for k, v in list(losses_dict.items())[:5]])
+                if len(losses_dict) > 5:
+                    loss_str += f", +{len(losses_dict) - 5} more"
+                status_msg = f"Epoch {epoch}/{total_epochs} - {loss_str}"
+            else:
+                status_msg = f"Epoch {epoch}/{total_epochs} - LR: {lr:.6f}"
+                
+            self.signal_emitter.training_status.emit(status_msg)
+
+        except Exception as e:
+            logger.error(f"Error in Lightly on_train_epoch_end: {e}", exc_info=True)
+            self.signal_emitter.training_status.emit(f"Error during epoch: {e}")
+
+    def on_train_end(self, trainer, pl_module):
+        """Called when pre-training ends."""
+        try:
+            msg = "Pre-training completed successfully"
+            self.signal_emitter.training_status.emit(msg)
+            logger.info("Lightly pre-training completed.")
+        except Exception as e:
+            logger.error(f"Error in Lightly on_train_end: {e}", exc_info=True)
+            self.signal_emitter.training_status.emit(f"Error ending pre-training: {e}")
 
 
 class TrainingSignalEmitter(QObject):
