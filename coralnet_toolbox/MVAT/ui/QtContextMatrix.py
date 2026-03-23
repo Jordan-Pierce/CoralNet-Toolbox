@@ -83,6 +83,9 @@ class ContextMatrixWidget(QWidget):
         self._pending_sync = None
         self._sync_throttle_ms = 30  # ~33 fps
         
+        # Annotation visualization state (Phase 6)
+        self._annotation_manager = None
+        
         # Layout presets: index -> (rows, cols)
         self._layout_map = {
             0: (1, 1),
@@ -315,6 +318,11 @@ class ContextMatrixWidget(QWidget):
             if q_image:
                 canvas.load_visuals(q_image, camera_path, raster)
                 canvas.fit_to_image()
+                # Render read-only annotation overlays (Phase 6)
+                if self._annotation_manager:
+                    annotations = self._annotation_manager.get_image_annotations(camera_path)
+                    if annotations:
+                        canvas._render_annotations_readonly(annotations)
             else:
                 canvas._show_placeholder("Failed to load image")
         except Exception as e:
@@ -629,3 +637,103 @@ class ContextMatrixWidget(QWidget):
         end = min(self._current_offset + capacity, total)
         self._rank_label.setText(f"Neighbors {start}–{end} of {total}")
         self.rankIndicatorUpdated.emit(start, end, total)
+    
+    # ==================== Annotation Visualization (Phase 6) ====================
+    
+    def set_annotation_manager(self, manager):
+        """Wire the central AnnotationManager for read-only annotation display.
+        
+        Args:
+            manager: AnnotationManager instance.
+        """
+        self._annotation_manager = manager
+        if manager is None:
+            return
+        
+        manager.annotationAdded.connect(self._on_annotation_changed)
+        manager.annotationRemoved.connect(self._on_annotation_changed)
+        manager.annotationModified.connect(self._on_annotation_changed)
+        manager.annotationLabelChanged.connect(
+            lambda ann_id, _label: self._on_annotation_changed(ann_id)
+        )
+        manager.annotationsAdded.connect(self._on_annotations_changed)
+        manager.annotationsRemoved.connect(self._on_annotations_changed)
+        manager.selectionChanged.connect(self._on_selection_changed)
+    
+    def _on_annotation_changed(self, annotation_id: str):
+        """Refresh read-only annotations on context canvases if affected.
+        
+        Args:
+            annotation_id: UUID of the changed annotation.
+        """
+        if not self._annotation_manager:
+            return
+        
+        # Look up annotation to get its image_path
+        annotation = self._annotation_manager.annotations_dict.get(annotation_id)
+        if annotation:
+            affected_path = annotation.image_path
+        else:
+            # Annotation was deleted — check all visible canvases
+            affected_path = None
+        
+        self._refresh_annotations_for_path(affected_path)
+    
+    def _on_annotations_changed(self, annotation_ids: list):
+        """Refresh annotations for all affected images after a batch change.
+        
+        Args:
+            annotation_ids: List of annotation UUIDs.
+        """
+        if not self._annotation_manager:
+            return
+        
+        # Collect affected image paths
+        affected_paths = set()
+        for ann_id in annotation_ids:
+            annotation = self._annotation_manager.annotations_dict.get(ann_id)
+            if annotation:
+                affected_paths.add(annotation.image_path)
+        
+        if affected_paths:
+            for path in affected_paths:
+                self._refresh_annotations_for_path(path)
+        else:
+            # Annotations were deleted — refresh all canvases
+            self._refresh_annotations_for_path(None)
+    
+    def _refresh_annotations_for_path(self, image_path: str = None):
+        """Re-render read-only annotations on canvases showing the given image.
+        
+        Args:
+            image_path: Image path to match. If None, refresh all canvases.
+        """
+        if not self._annotation_manager:
+            return
+        
+        for row in self._visible_canvases:
+            for canvas in row:
+                if canvas and canvas.active_image and canvas.current_image_path:
+                    if image_path is None or canvas.current_image_path == image_path:
+                        annotations = self._annotation_manager.get_image_annotations(
+                            canvas.current_image_path
+                        )
+                        canvas._render_annotations_readonly(annotations)
+    
+    def _on_selection_changed(self, selected_ids):
+        """Highlight selected annotations in context views.
+        
+        Args:
+            selected_ids: List of annotation IDs that are now selected.
+        """
+        selected_set = set(selected_ids) if selected_ids else set()
+        
+        for row in self._visible_canvases:
+            for canvas in row:
+                if canvas and canvas.active_image:
+                    for item in canvas._readonly_annotation_items:
+                        ann_id = getattr(item, '_source_annotation_id', None)
+                        if ann_id:
+                            canvas._highlight_readonly_annotation(
+                                ann_id, ann_id in selected_set
+                            )

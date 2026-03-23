@@ -105,8 +105,8 @@ class AnnotationWindow(BaseCanvas):
         self.animation_manager = None
         self.set_animation_manager(main_window.animation_manager)
         
-        # Initialize the action stack for undo/redo
-        self.action_stack = ActionStack()
+        # Central annotation data store (owned by MainWindow's AnnotationManager)
+        self.annotation_manager = self.main_window.annotation_manager
         
         # MVAT visualization attributes
         self.marker = Marker()  # Marker for focal point display from MVAT
@@ -117,11 +117,6 @@ class AnnotationWindow(BaseCanvas):
 
         self.drag_start_pos = None
         self.cursor_annotation = None
-
-        self.annotations_dict = {}  # Dictionary to store annotations by UUID
-        self.image_annotations_dict = {}  # Dictionary to store annotations by image path
-
-        self.selected_annotations = []  # Stores the selected annotations
         self.rasterized_annotations_cache = []  # Caches vector annotations during mask mode
         self.selected_label = None  # Flag to check if an active label is set
         self.selected_tool = None  # Store the current tool state
@@ -149,8 +144,39 @@ class AnnotationWindow(BaseCanvas):
         self.tools = {}
         self.mask_tools = {}
         
+        # Bridge AnnotationWindow lifecycle signals to the central AnnotationManager
+        self.annotationCreated.connect(self.annotation_manager.annotationAdded)
+        self.annotationsCreated.connect(self.annotation_manager.annotationsAdded)
+        self.annotationDeleted.connect(self.annotation_manager.annotationRemoved)
+        self.annotationsDeleted.connect(self.annotation_manager.annotationsRemoved)
+        self.annotationModified.connect(self.annotation_manager.annotationModified)
+        self.annotationLabelChanged.connect(self.annotation_manager.annotationLabelChanged)
+        self.annotationSelectionChanged.connect(self.annotation_manager.selectionChanged)
+        
         # Initialize toolbar and status bar widgets
         self._init_toolbar_widgets()  # Likely causes an error
+
+    # --- Property aliases delegating data to central AnnotationManager ---
+
+    @property
+    def annotations_dict(self):
+        return self.annotation_manager.annotations_dict
+
+    @property
+    def image_annotations_dict(self):
+        return self.annotation_manager.image_annotations_dict
+
+    @property
+    def selected_annotations(self):
+        return self.annotation_manager.selected_annotations
+
+    @selected_annotations.setter
+    def selected_annotations(self, value):
+        self.annotation_manager.selected_annotations = value
+
+    @property
+    def action_stack(self):
+        return self.annotation_manager.action_stack
         
     def _init_toolbar_widgets(self):
         """Instantiate all status and toolbar widgets previously held by MainWindow."""

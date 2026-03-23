@@ -15,7 +15,7 @@ from PyQt5.QtGui import QMouseEvent, QPixmap, QImage, QBrush, QColor, QPen
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QSize, QObject
 from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, 
                              QGraphicsItemGroup, QGraphicsEllipseItem, QGraphicsLineItem,
-                             QGraphicsItem, QLabel, QApplication)
+                             QGraphicsItem, QGraphicsPathItem, QLabel, QApplication)
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -91,6 +91,9 @@ class BaseCanvas(QGraphicsView):
         # Marker slots (containers; Phase 4 will populate these)
         self._static_marker = None
         self._dynamic_marker = None
+        
+        # Read-only annotation overlays (Phase 6)
+        self._readonly_annotation_items = []
         
         # Placeholder label for empty canvas
         self._placeholder_label = QLabel(
@@ -259,6 +262,9 @@ class BaseCanvas(QGraphicsView):
         self._base_image_item = None
         self.z_item = None
         
+        # Clear read-only annotation overlay references
+        self._readonly_annotation_items = []
+        
         # Clear Z-channel data
         self.z_data_raw = None
         self.z_data_normalized = None
@@ -413,6 +419,112 @@ class BaseCanvas(QGraphicsView):
         if self.active_image:
             center = self.mapToScene(self.viewport().rect().center())
             self.viewNavigated.emit(center.x(), center.y(), self.zoom_factor)
+    
+    # ==================== Read-Only Annotation Overlays (Phase 6) ====================
+    
+    def _render_annotations_readonly(self, annotations):
+        """Render annotations as non-interactive overlays on this canvas.
+        
+        Args:
+            annotations (list): List of Annotation objects to display.
+        """
+        from coralnet_toolbox.Annotations import MaskAnnotation
+        
+        self._clear_readonly_annotations()
+        
+        for annotation in annotations:
+            # Skip MaskAnnotation — it's a full-image raster overlay
+            if isinstance(annotation, MaskAnnotation):
+                continue
+            
+            try:
+                item = self._create_readonly_graphics_item(annotation)
+                if item is not None:
+                    self.scene.addItem(item)
+                    self._readonly_annotation_items.append(item)
+            except Exception:
+                pass
+    
+    def _clear_readonly_annotations(self):
+        """Remove all read-only annotation items from the scene."""
+        for item in self._readonly_annotation_items:
+            try:
+                if item.scene() == self.scene:
+                    self.scene.removeItem(item)
+            except Exception:
+                pass
+        self._readonly_annotation_items = []
+    
+    def _create_readonly_graphics_item(self, annotation):
+        """Create a non-interactive QGraphicsPathItem from an Annotation object.
+        
+        Args:
+            annotation: An Annotation object with get_painter_path() method.
+            
+        Returns:
+            QGraphicsPathItem or None if creation fails.
+        """
+        try:
+            path = annotation.get_painter_path()
+        except (NotImplementedError, AttributeError):
+            return None
+        
+        if path is None or path.isEmpty():
+            return None
+        
+        item = QGraphicsPathItem(path)
+        
+        # Style: label color at 50% alpha fill, 1px pen at full color
+        color = QColor(annotation.label.color)
+        fill_color = QColor(color)
+        fill_color.setAlpha(80)
+        
+        pen = QPen(color, 1)
+        pen.setCosmetic(True)  # Constant width regardless of zoom
+        
+        item.setBrush(QBrush(fill_color))
+        item.setPen(pen)
+        
+        # Non-interactive
+        item.setFlag(QGraphicsItem.ItemIsSelectable, False)
+        item.setFlag(QGraphicsItem.ItemIsMovable, False)
+        item.setAcceptHoverEvents(False)
+        
+        # Z-value above base image but below markers
+        item.setZValue(5)
+        
+        # Tag with source annotation ID for selection matching
+        item.setData(0, annotation.id)
+        item._source_annotation_id = annotation.id
+        
+        return item
+    
+    def _highlight_readonly_annotation(self, annotation_id, highlighted):
+        """Highlight or un-highlight a read-only annotation overlay.
+        
+        Args:
+            annotation_id (str): The annotation UUID to highlight.
+            highlighted (bool): Whether to highlight (True) or revert (False).
+        """
+        for item in self._readonly_annotation_items:
+            if getattr(item, '_source_annotation_id', None) == annotation_id:
+                try:
+                    if highlighted:
+                        pen = QPen(QColor(255, 255, 0), 3)
+                        pen.setCosmetic(True)
+                        item.setPen(pen)
+                        item.setZValue(6)
+                    else:
+                        # Restore original style from annotation data
+                        original_color = item.brush().color()
+                        original_color.setAlpha(255)
+                        pen = QPen(original_color, 1)
+                        pen.setCosmetic(True)
+                        item.setPen(pen)
+                        item.setZValue(5)
+                except Exception:
+                    pass
+                break
     
     # ==================== Z-Channel Visualization ====================
     

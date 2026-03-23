@@ -22,6 +22,7 @@ from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSize
 # Utilities
 from coralnet_toolbox.QtEventFilter import GlobalEventFilter
 from coralnet_toolbox.QtAnimationManager import AnimationManager
+from coralnet_toolbox.QtAnnotationManager import AnnotationManager
 from coralnet_toolbox.QtPerformanceWindow import PerformanceWindow
 from coralnet_toolbox.QtTimerWindow import TimerWindow
 from coralnet_toolbox.Layout import QtLayoutManager
@@ -223,6 +224,9 @@ class MainWindow(QMainWindow):
         self.area_thresh_min = 0.00
         self.area_thresh_max = 0.70
 
+        # Create the central annotation data store (before AnnotationWindow)
+        self.annotation_manager = AnnotationManager(self)
+
         # Create main windows
         self.annotation_window = AnnotationWindow(self)
         self.image_window = ImageWindow(self)
@@ -249,6 +253,7 @@ class MainWindow(QMainWindow):
         # Create ContextMatrixWidget for multi-viewport context viewing
         self.context_matrix = ContextMatrixWidget(parent=None)
         self.context_matrix.set_raster_manager(self.image_window.raster_manager)
+        self.context_matrix.set_annotation_manager(self.annotation_manager)
         
         # Create dock-based explorer windows
         self.annotation_viewer_window = AnnotationViewerWindow(self)
