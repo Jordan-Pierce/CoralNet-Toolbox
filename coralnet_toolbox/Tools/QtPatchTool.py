@@ -29,8 +29,7 @@ class PatchTool(Tool):
         self.active = False
         self.annotation_window.setCursor(self.default_cursor)
         self.clear_cursor_annotation()
-        
-        # Call parent deactivate to ensure crosshair is properly cleared
+        # Call parent deactivate to ensure crosshair and cursor preview are properly cleared
         super().deactivate()
 
     def mousePressEvent(self, event: QMouseEvent):
@@ -68,6 +67,18 @@ class PatchTool(Tool):
             scene_pos = self.annotation_window.mapToScene(event.pos())
             if self.annotation_window.cursorInWindow(event.pos()):
                 self.create_cursor_annotation(scene_pos)
+                if self.cursor_move_callback:
+                    self.cursor_move_callback(
+                        scene_pos,
+                        self.annotation_window.annotation_size,
+                        self.annotation_window.selected_label.color,
+                    )
+            else:
+                if self.cursor_clear_callback:
+                    self.cursor_clear_callback()
+        else:
+            if self.cursor_clear_callback:
+                self.cursor_clear_callback()
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if self.annotation_window.active_image and self.annotation_window.selected_label:

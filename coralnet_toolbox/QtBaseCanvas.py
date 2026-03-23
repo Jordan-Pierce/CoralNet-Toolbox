@@ -91,7 +91,9 @@ class BaseCanvas(QGraphicsView):
         # Marker slots (containers; Phase 4 will populate these)
         self._static_marker = None
         self._dynamic_marker = None
-        
+        self._cursor_preview_item = None  # Preview rect for tool cursor propagation
+        self._mask_overlay_item = None    # Read-only MaskAnnotation overlay for brush propagation
+
         # Read-only annotation overlays (Phase 6)
         self._readonly_annotation_items = []
         
@@ -919,6 +921,11 @@ class BaseCanvas(QGraphicsView):
             self._dynamic_marker.setZValue(100)
             self.scene.addItem(self._dynamic_marker)
             self._dynamic_marker.hide()
+
+            # Tool cursor preview rect (created lazily; just reset the reference here)
+            self._cursor_preview_item = None
+            # Mask overlay item (created lazily; reset reference on scene rebuild)
+            self._mask_overlay_item = None
         except Exception:
             traceback.print_exc()
 
@@ -935,3 +942,83 @@ class BaseCanvas(QGraphicsView):
         """
         # TODO: implement rendering of read-only annotations for context canvases
         pass
+
+    # ==================== Cursor Preview (Tool Propagation) ====================
+
+    def update_cursor_preview(self, u: float, v: float, size: int, color=None):
+        """Show a square preview at image pixel (u, v) representing the propagated cursor.
+
+        Args:
+            u, v: Centre pixel coordinates in image space.
+            size: Side length of the preview square in pixels.
+            color: QColor for the border/fill. Defaults to white.
+        """
+        from PyQt5.QtWidgets import QGraphicsRectItem
+        from PyQt5.QtGui import QColor as _QColor, QPen as _QPen, QBrush as _QBrush
+
+        # Lazily create (or re-create if the old item lost its scene after clear_scene)
+        if self._cursor_preview_item is None or self._cursor_preview_item.scene() is None:
+            self._cursor_preview_item = QGraphicsRectItem()
+            self._cursor_preview_item.setZValue(101)  # Above markers
+            self._cursor_preview_item.setFlag(QGraphicsItem.ItemIsSelectable, False)
+            self._cursor_preview_item.setFlag(QGraphicsItem.ItemIsMovable, False)
+            self._cursor_preview_item.setAcceptHoverEvents(False)
+            self.scene.addItem(self._cursor_preview_item)
+
+        half = size / 2.0
+        self._cursor_preview_item.setRect(u - half, v - half, size, size)
+
+        base = _QColor(color) if color is not None else _QColor(255, 255, 255)
+        pen = _QPen(base, 2)
+        pen.setCosmetic(True)
+        fill = _QColor(base)
+        fill.setAlpha(40)
+        self._cursor_preview_item.setPen(pen)
+        self._cursor_preview_item.setBrush(_QBrush(fill))
+        self._cursor_preview_item.show()
+
+    def clear_cursor_preview(self):
+        """Hide the tool cursor preview rectangle."""
+        if self._cursor_preview_item is not None:
+            try:
+                self._cursor_preview_item.hide()
+            except Exception:
+                pass
+
+    # ==================== Mask Overlay (Brush Propagation) ====================
+
+    def set_mask_overlay(self, mask_annotation):
+        """Display or refresh a MaskAnnotation as a read-only overlay on this canvas.
+
+        Creates a lightweight MaskGraphicsItem that paints directly from
+        mask_annotation.qimage (kept up-to-date by update_mask) so the view stays
+        in sync with every brush stroke without rebuilding the full pixmap.
+        Safe to call repeatedly — reuses the existing item unless the annotation changes.
+        """
+        from coralnet_toolbox.Annotations.QtMaskAnnotation import MaskGraphicsItem
+
+        item = self._mask_overlay_item
+        needs_new = (
+            item is None
+            or item.scene() is None
+            or item.mask_annotation is not mask_annotation
+        )
+        if needs_new:
+            self.clear_mask_overlay()
+            item = MaskGraphicsItem(mask_annotation)
+            item.setZValue(2)  # Above base image, below markers
+            item.setAcceptHoverEvents(False)
+            self.scene.addItem(item)
+            self._mask_overlay_item = item
+
+        item.update()
+
+    def clear_mask_overlay(self):
+        """Remove the mask overlay item from the scene."""
+        if self._mask_overlay_item is not None:
+            try:
+                if self._mask_overlay_item.scene() is not None:
+                    self._mask_overlay_item.scene().removeItem(self._mask_overlay_item)
+            except Exception:
+                pass
+            self._mask_overlay_item = None

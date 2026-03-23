@@ -86,9 +86,17 @@ class BrushTool(Tool):
         if (cursor_in_window and self.active and 
             self.annotation_window.selected_label):
             self.update_cursor_annotation(scene_pos)
+            if self.cursor_move_callback:
+                self.cursor_move_callback(
+                    scene_pos,
+                    self.brush_size,
+                    self.annotation_window.selected_label.color,
+                )
         else:
             self.clear_cursor_annotation()
-        
+            if self.cursor_clear_callback:
+                self.cursor_clear_callback()
+
         # Apply brush if painting is active
         if self.painting:
             self._apply_brush(event)

@@ -209,10 +209,6 @@ class MVATManager(QObject):
         self.multi_annotate_enabled = False
         self._propagating_annotation = False
 
-        # Multi-camera annotation state
-        self.multi_annotate_enabled = False
-        self._propagating_annotation = False
-        
         # Internal Managers
         self.selection_model = SelectionManager(self)
         self.cache_manager = CacheManager("")
@@ -272,7 +268,6 @@ class MVATManager(QObject):
         if self.context_matrix is not None:
             self.context_matrix.contextImagePromoted.connect(self._on_camera_selected)
             self.context_matrix.set_mvat_manager(self)
-            self.context_matrix.multiAnnotateToggled.connect(self._on_multi_annotate_toggled)
             self.context_matrix.multiAnnotateToggled.connect(self._on_multi_annotate_toggled)
         
         # 7. Target-Lock Sync (Phase 5): AnnotationWindow viewNavigated -> sync engine
@@ -1174,121 +1169,20 @@ class MVATManager(QObject):
     # --- Multi-Camera Annotation ---
 
     def _on_multi_annotate_toggled(self, enabled: bool):
-        """Connect or disconnect the patch-annotation propagation handler."""
-        self.multi_annotate_enabled = enabled
-        if enabled:
-            self.annotation_window.annotationCreated.connect(self._on_patch_annotation_created)
-        else:
-            try:
-                self.annotation_window.annotationCreated.disconnect(self._on_patch_annotation_created)
-            except TypeError:
-                pass
-
-    def _on_patch_annotation_created(self, annotation_id: str):
-        """Propagate a newly created PatchAnnotation into all visible context cameras."""
-        # Guard against re-entrant propagation
-        if self._propagating_annotation:
-            return
-
-        # Retrieve the source annotation
-        annotation = self.annotation_window.annotations_dict.get(annotation_id)
-        if annotation is None or not isinstance(annotation, PatchAnnotation):
-            return
-
-        # Only propagate if the annotation belongs to the currently selected camera
-        if self.selected_camera is None:
-            return
-        if annotation.image_path != self.selected_camera.image_path:
-            return
-
-        # Build a ray from the annotation's pixel position
-        px = int(annotation.center_xy.x())
-        py = int(annotation.center_xy.y())
-
-        depth = None
-        try:
-            raster = self.selected_camera._raster
-            if raster.z_channel is not None and raster.z_data_type == 'depth':
-                depth = raster.get_z_value(px, py)
-        except Exception:
-            pass
-
-        try:
-            default_depth = self.viewer.get_scene_median_depth(self.selected_camera.position)
-        except Exception:
-            default_depth = 10.0
-        if default_depth is None or default_depth <= 0:
-            default_depth = 10.0
-
-        try:
-            ray = CameraRay.from_pixel_and_camera(
-                pixel_xy=(px, py),
-                camera=self.selected_camera,
-                depth=depth,
-                default_depth=default_depth,
-            )
-        except Exception:
-            return
-
-        projections = ray.project_to_cameras(self.cameras)
-
-        # Collect the visible context camera paths from the context matrix
-        visible_paths = set()
-        if self.context_matrix is not None:
-            for row in self.context_matrix._visible_canvases:
-                for canvas in row:
-                    if canvas and canvas.active_image and canvas.current_image_path:
-                        visible_paths.add(canvas.current_image_path)
-
-        self._propagating_annotation = True
-        try:
-            for target_path, proj in projections.items():
-                # Skip source camera
-                if target_path == annotation.image_path:
-                    continue
-                # Only propagate to cameras currently visible in the context matrix
-                if target_path not in visible_paths:
-                    continue
-
-                u, v, is_valid = proj
-                if not is_valid:
-                    continue
-
-                target_camera = self.cameras.get(target_path)
-                if target_camera is None:
-                    continue
-                if not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
-                    continue
-
-                from PyQt5.QtCore import QPointF
-                new_annotation = PatchAnnotation(
-                    center_xy=QPointF(u, v),
-                    annotation_size=annotation.annotation_size,
-                    short_label_code=annotation.label.short_label_code,
-                    long_label_code=annotation.label.long_label_code,
-                    color=annotation.label.color,
-                    image_path=target_path,
-                    label_id=annotation.label.id,
-                    transparency=annotation.transparency,
-                )
-                try:
-                    self.annotation_window.add_annotation(new_annotation, record_action=True)
-                except Exception:
-                    pass
-        finally:
-            self._propagating_annotation = False
-
-    # --- Multi-Camera Annotation ---
-
-    def _on_multi_annotate_toggled(self, enabled: bool):
         """Connect or disconnect annotation propagation handlers when toggle changes."""
         self.multi_annotate_enabled = enabled
         brush_tool = self.annotation_window.tools.get('brush')
+        patch_tool = self.annotation_window.tools.get('patch')
 
         if enabled:
             self.annotation_window.annotationCreated.connect(self._on_patch_annotation_created)
             if brush_tool is not None:
                 brush_tool.post_stroke_callback = self._on_brush_stroke_applied
+                brush_tool.cursor_move_callback = self._on_cursor_preview_moved
+                brush_tool.cursor_clear_callback = self._on_cursor_preview_cleared
+            if patch_tool is not None:
+                patch_tool.cursor_move_callback = self._on_cursor_preview_moved
+                patch_tool.cursor_clear_callback = self._on_cursor_preview_cleared
         else:
             try:
                 self.annotation_window.annotationCreated.disconnect(self._on_patch_annotation_created)
@@ -1296,6 +1190,36 @@ class MVATManager(QObject):
                 pass
             if brush_tool is not None:
                 brush_tool.post_stroke_callback = None
+                brush_tool.cursor_move_callback = None
+                brush_tool.cursor_clear_callback = None
+            if patch_tool is not None:
+                patch_tool.cursor_move_callback = None
+                patch_tool.cursor_clear_callback = None
+            self._on_cursor_preview_cleared()
+
+    def _on_cursor_preview_moved(self, scene_pos, preview_size: int, color):
+        """Project the cursor position into visible context cameras and show previews."""
+        if self.selected_camera is None or self.context_matrix is None:
+            return
+        px, py = int(scene_pos.x()), int(scene_pos.y())
+        projections = self._build_projection(px, py)
+        visible_paths = self._get_visible_context_paths()
+        self.context_matrix.update_cursor_previews(projections, visible_paths, preview_size, color)
+
+    def _on_cursor_preview_cleared(self):
+        """Clear cursor previews from all context canvases."""
+        if self.context_matrix is not None:
+            self.context_matrix.clear_all_cursor_previews()
+
+    def _get_context_canvas_for_path(self, image_path: str):
+        """Return the context canvas currently displaying image_path, or None."""
+        if self.context_matrix is None:
+            return None
+        for row in self.context_matrix._visible_canvases:
+            for canvas in row:
+                if canvas is not None and canvas.current_image_path == image_path:
+                    return canvas
+        return None
 
     def _get_visible_context_paths(self) -> set:
         """Return the set of image paths currently visible in the context matrix."""
@@ -1456,6 +1380,11 @@ class MVATManager(QObject):
                     from PyQt5.QtCore import QPointF
                     brush_location = QPointF(u - brush_w / 2.0, v - brush_h / 2.0)
                     target_mask.update_mask(brush_location, brush_mask, target_class_id)
+
+                    # Push the updated mask pixels into the context canvas overlay
+                    context_canvas = self._get_context_canvas_for_path(target_path)
+                    if context_canvas is not None:
+                        context_canvas.set_mask_overlay(target_mask)
                 except Exception:
                     pass
         finally:

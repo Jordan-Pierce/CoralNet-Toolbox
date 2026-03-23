@@ -762,3 +762,47 @@ class ContextMatrixWidget(QWidget):
                             canvas._highlight_readonly_annotation(
                                 ann_id, ann_id in selected_set
                             )
+
+    # ==================== Cursor Preview (Tool Propagation) ====================
+
+    def update_cursor_previews(self, projections: dict, visible_paths: set, preview_size: int, color):
+        """Show a cursor preview rectangle on each visible context canvas.
+
+        Args:
+            projections: {image_path: (u, v, is_valid)} from _build_projection().
+            visible_paths: Set of image paths currently shown in the matrix.
+            preview_size: Side length of the preview square in source pixels.
+            color: QColor to use for the preview rectangle border/fill.
+        """
+        canvas_map = self._get_canvas_camera_map()
+
+        for path, canvas in canvas_map.items():
+            if path not in visible_paths:
+                canvas.clear_cursor_preview()
+                continue
+
+            proj = projections.get(path)
+            if not proj:
+                canvas.clear_cursor_preview()
+                continue
+
+            u, v, is_valid = proj
+            if not is_valid:
+                canvas.clear_cursor_preview()
+                continue
+
+            # Bounds check via MVATManager camera data
+            target_camera = None
+            if self._mvat_manager is not None:
+                target_camera = self._mvat_manager.cameras.get(path)
+            if target_camera is not None:
+                if not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
+                    canvas.clear_cursor_preview()
+                    continue
+
+            canvas.update_cursor_preview(u, v, preview_size, color)
+
+    def clear_all_cursor_previews(self):
+        """Hide cursor previews on all canvases in the pool."""
+        for canvas in self._canvas_pool:
+            canvas.clear_cursor_preview()

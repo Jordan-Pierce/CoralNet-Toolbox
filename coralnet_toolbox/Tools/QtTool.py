@@ -21,7 +21,14 @@ class Tool:
         self.cursor = Qt.ArrowCursor
         self.default_cursor = Qt.ArrowCursor
         self.cursor_annotation = None
-        
+
+        # Optional callbacks for cursor preview propagation (set by MVATManager or any consumer).
+        # Subclasses that support live cursor previews should call these in their mouseMoveEvent.
+        # cursor_move_callback(scene_pos: QPointF, preview_size: int, color: QColor)
+        self.cursor_move_callback = None
+        # cursor_clear_callback()
+        self.cursor_clear_callback = None
+
         # Crosshair settings
         self.show_crosshair = True  # Flag to toggle crosshair visibility for this tool
         self.h_crosshair_line = None
@@ -35,7 +42,9 @@ class Tool:
         self.active = False
         self.annotation_window.setCursor(self.default_cursor)
         self.clear_cursor_annotation()
-        
+        if self.cursor_clear_callback:
+            self.cursor_clear_callback()
+
         # Ensure crosshair is properly cleared when deactivating tool
         self.clear_crosshair()
         
