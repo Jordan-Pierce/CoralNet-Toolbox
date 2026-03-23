@@ -49,6 +49,7 @@ class ContextMatrixWidget(QWidget):
     
     # Signal: emit when user double-clicks a context canvas
     contextImagePromoted = pyqtSignal(str)  # camera_path
+    rankIndicatorUpdated = pyqtSignal(int, int, int)  # start, end, total
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -196,9 +197,8 @@ class ContextMatrixWidget(QWidget):
         # Add to main layout
         self._main_layout.addWidget(self._canvas_container, 1)
         
-        # Refresh visible canvases with images
-        self._refresh_visible_canvases()
-        self._update_rank_label()
+        # Re-clamp offset, refresh canvases, and update rank label
+        self.shift_offset(0)
     
     # ==================== Data Feed ====================
     
@@ -448,3 +448,4 @@ class ContextMatrixWidget(QWidget):
         start = self._current_offset + 1
         end = min(self._current_offset + capacity, total)
         self._rank_label.setText(f"Neighbors {start}–{end} of {total}")
+        self.rankIndicatorUpdated.emit(start, end, total)
