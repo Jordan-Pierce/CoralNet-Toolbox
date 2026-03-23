@@ -34,6 +34,10 @@ class BrushTool(Tool):
         self.brush_mask = self._create_brush_mask()
         self.painting = False  # Flag to track if painting mode is active
 
+        # Optional callback fired after each successful brush stroke:
+        # callback(scene_pos: QPointF, label_id: str, brush_mask: np.ndarray)
+        self.post_stroke_callback = None
+
     def _create_brush_mask(self):
         """Creates a boolean numpy array for the brush shape."""
         if self.shape == 'circle':
@@ -214,3 +218,7 @@ class BrushTool(Tool):
 
         # Update the display to reflect changes
         self.annotation_window.update_scene()
+
+        # Notify any registered propagation callback (e.g., MVAT multi-annotate)
+        if self.post_stroke_callback:
+            self.post_stroke_callback(scene_pos, selected_label_id, self.brush_mask)

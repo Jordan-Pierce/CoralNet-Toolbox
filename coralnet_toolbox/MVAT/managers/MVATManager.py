@@ -34,6 +34,9 @@ from coralnet_toolbox.MVAT.core.Model import DEMProduct
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
+from coralnet_toolbox.Annotations.QtMaskAnnotation import MaskAnnotation
+
+from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -205,6 +208,10 @@ class MVATManager(QObject):
         # Multi-camera annotation state
         self.multi_annotate_enabled = False
         self._propagating_annotation = False
+
+        # Multi-camera annotation state
+        self.multi_annotate_enabled = False
+        self._propagating_annotation = False
         
         # Internal Managers
         self.selection_model = SelectionManager(self)
@@ -265,6 +272,7 @@ class MVATManager(QObject):
         if self.context_matrix is not None:
             self.context_matrix.contextImagePromoted.connect(self._on_camera_selected)
             self.context_matrix.set_mvat_manager(self)
+            self.context_matrix.multiAnnotateToggled.connect(self._on_multi_annotate_toggled)
             self.context_matrix.multiAnnotateToggled.connect(self._on_multi_annotate_toggled)
         
         # 7. Target-Lock Sync (Phase 5): AnnotationWindow viewNavigated -> sync engine
@@ -1270,8 +1278,192 @@ class MVATManager(QObject):
         finally:
             self._propagating_annotation = False
 
+    # --- Multi-Camera Annotation ---
+
+    def _on_multi_annotate_toggled(self, enabled: bool):
+        """Connect or disconnect annotation propagation handlers when toggle changes."""
+        self.multi_annotate_enabled = enabled
+        brush_tool = self.annotation_window.tools.get('brush')
+
+        if enabled:
+            self.annotation_window.annotationCreated.connect(self._on_patch_annotation_created)
+            if brush_tool is not None:
+                brush_tool.post_stroke_callback = self._on_brush_stroke_applied
+        else:
+            try:
+                self.annotation_window.annotationCreated.disconnect(self._on_patch_annotation_created)
+            except TypeError:
+                pass
+            if brush_tool is not None:
+                brush_tool.post_stroke_callback = None
+
+    def _get_visible_context_paths(self) -> set:
+        """Return the set of image paths currently visible in the context matrix."""
+        paths = set()
+        if self.context_matrix is None:
+            return paths
+        for row in self.context_matrix._visible_canvases:
+            for canvas in row:
+                if canvas and canvas.active_image and canvas.current_image_path:
+                    paths.add(canvas.current_image_path)
+        return paths
+
+    def _build_projection(self, px: int, py: int) -> dict:
+        """Cast a ray from the selected camera at (px, py) and return projections.
+
+        Returns:
+            dict mapping image_path -> (u, v, is_valid), or empty dict on failure.
+        """
+        if self.selected_camera is None:
+            return {}
+
+        depth = None
+        try:
+            raster = self.selected_camera._raster
+            if raster.z_channel is not None and raster.z_data_type == 'depth':
+                depth = raster.get_z_value(px, py)
+        except Exception:
+            pass
+
+        try:
+            default_depth = self.viewer.get_scene_median_depth(self.selected_camera.position)
+        except Exception:
+            default_depth = 10.0
+        if not default_depth or default_depth <= 0:
+            default_depth = 10.0
+
+        try:
+            ray = CameraRay.from_pixel_and_camera(
+                pixel_xy=(px, py),
+                camera=self.selected_camera,
+                depth=depth,
+                default_depth=default_depth,
+            )
+            return ray.project_to_cameras(self.cameras)
+        except Exception:
+            return {}
+
+    def _on_patch_annotation_created(self, annotation_id: str):
+        """Propagate a newly created PatchAnnotation into all visible context cameras."""
+        if self._propagating_annotation:
+            return
+
+        annotation = self.annotation_window.annotations_dict.get(annotation_id)
+        if annotation is None or not isinstance(annotation, PatchAnnotation):
+            return
+        if self.selected_camera is None:
+            return
+        if annotation.image_path != self.selected_camera.image_path:
+            return
+
+        px = int(annotation.center_xy.x())
+        py = int(annotation.center_xy.y())
+        projections = self._build_projection(px, py)
+        if not projections:
+            return
+
+        visible_paths = self._get_visible_context_paths()
+
+        from PyQt5.QtCore import QPointF
+        self._propagating_annotation = True
+        try:
+            for target_path, (u, v, is_valid) in projections.items():
+                if target_path == annotation.image_path:
+                    continue
+                if target_path not in visible_paths:
+                    continue
+                if not is_valid:
+                    continue
+
+                target_camera = self.cameras.get(target_path)
+                if target_camera is None:
+                    continue
+                if not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
+                    continue
+
+                new_annotation = PatchAnnotation(
+                    center_xy=QPointF(u, v),
+                    annotation_size=annotation.annotation_size,
+                    short_label_code=annotation.label.short_label_code,
+                    long_label_code=annotation.label.long_label_code,
+                    color=annotation.label.color,
+                    image_path=target_path,
+                    label_id=annotation.label.id,
+                    transparency=annotation.transparency,
+                )
+                try:
+                    self.annotation_window.add_annotation(new_annotation, record_action=True)
+                except Exception:
+                    pass
+        finally:
+            self._propagating_annotation = False
+
+    def _on_brush_stroke_applied(self, scene_pos, label_id: str, brush_mask):
+        """Propagate a brush stroke into all visible context cameras."""
+        if self._propagating_annotation:
+            return
+        if self.selected_camera is None:
+            return
+
+        px = int(scene_pos.x())
+        py = int(scene_pos.y())
+        projections = self._build_projection(px, py)
+        if not projections:
+            return
+
+        visible_paths = self._get_visible_context_paths()
+        project_labels = list(self.main_window.label_window.labels)
+
+        # Resolve the Label object for the painted label
+        source_label = next((lbl for lbl in project_labels if lbl.id == label_id), None)
+        if source_label is None:
+            return
+
+        brush_h, brush_w = brush_mask.shape
+
+        self._propagating_annotation = True
+        try:
+            for target_path, (u, v, is_valid) in projections.items():
+                if target_path == self.selected_camera.image_path:
+                    continue
+                if target_path not in visible_paths:
+                    continue
+                if not is_valid:
+                    continue
+
+                target_camera = self.cameras.get(target_path)
+                if target_camera is None:
+                    continue
+                if not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
+                    continue
+
+                try:
+                    target_raster = self.raster_manager.get_raster(target_path)
+                    if target_raster is None:
+                        continue
+                    target_mask = target_raster.get_mask_annotation(project_labels)
+                    if target_mask is None:
+                        continue
+
+                    # Resolve target class_id via stable label_id
+                    target_class_id = target_mask.label_id_to_class_id_map.get(label_id)
+                    if target_class_id is None:
+                        target_mask.sync_label_map([source_label])
+                        target_class_id = target_mask.label_id_to_class_id_map.get(label_id)
+                    if target_class_id is None:
+                        continue
+
+                    from PyQt5.QtCore import QPointF
+                    brush_location = QPointF(u - brush_w / 2.0, v - brush_h / 2.0)
+                    target_mask.update_mask(brush_location, brush_mask, target_class_id)
+                except Exception:
+                    pass
+        finally:
+            self._propagating_annotation = False
+
     def cleanup(self):
         """Clean up resources before closing."""
+        self._on_multi_annotate_toggled(False)  # Disconnect all propagation hooks
         self.mouse_bridge.cleanup()
         if hasattr(self.viewer, 'close'):
             self.viewer.close()

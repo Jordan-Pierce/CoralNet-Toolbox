@@ -589,11 +589,14 @@ class ContextMatrixWidget(QWidget):
     def _on_multi_annotate_toggled(self, checked: bool):
         """Handle multi-camera annotation toggle button."""
         self.multi_annotate_enabled = checked
-        self._multi_annotate_btn.setToolTip(
-            "Multi-Camera Annotation (enabled): create patch annotations in all visible context cameras"
+        tip = (
+            "Multi-Camera Annotation (enabled): propagates patch and brush annotations "
+            "to all visible context cameras"
             if checked else
-            "Multi-Camera Annotation (disabled): create patch annotations in all visible context cameras"
+            "Multi-Camera Annotation (disabled): propagates patch and brush annotations "
+            "to all visible context cameras"
         )
+        self._multi_annotate_btn.setToolTip(tip)
         self.multiAnnotateToggled.emit(checked)
     
     def request_sync(self, targets: dict, zoom_factor: float):
