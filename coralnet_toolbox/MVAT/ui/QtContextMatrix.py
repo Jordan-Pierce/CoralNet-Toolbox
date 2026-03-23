@@ -327,6 +327,9 @@ class ContextMatrixWidget(QWidget):
                     annotations = self._annotation_manager.get_image_annotations(camera_path)
                     if annotations:
                         canvas._render_annotations_readonly(annotations)
+                # Show mask overlay if one already exists for this raster
+                if raster.mask_annotation is not None:
+                    canvas.set_mask_overlay(raster.mask_annotation)
             else:
                 canvas._show_placeholder("Failed to load image")
         except Exception as e:
@@ -744,6 +747,11 @@ class ContextMatrixWidget(QWidget):
                             canvas.current_image_path
                         )
                         canvas._render_annotations_readonly(annotations)
+                        # Refresh mask overlay if one exists
+                        if self._raster_manager:
+                            raster = self._raster_manager.get_raster(canvas.current_image_path)
+                            if raster is not None and raster.mask_annotation is not None:
+                                canvas.set_mask_overlay(raster.mask_annotation)
     
     def _on_selection_changed(self, selected_ids):
         """Highlight selected annotations in context views.
@@ -765,14 +773,13 @@ class ContextMatrixWidget(QWidget):
 
     # ==================== Cursor Preview (Tool Propagation) ====================
 
-    def update_cursor_previews(self, projections: dict, visible_paths: set, preview_size: int, color):
-        """Show a cursor preview rectangle on each visible context canvas.
+    def update_cursor_previews(self, projections: dict, visible_paths: set, item_factory):
+        """Show a tool cursor preview on each visible context canvas.
 
         Args:
             projections: {image_path: (u, v, is_valid)} from _build_projection().
             visible_paths: Set of image paths currently shown in the matrix.
-            preview_size: Side length of the preview square in source pixels.
-            color: QColor to use for the preview rectangle border/fill.
+            item_factory: callable(u, v) -> QGraphicsItem that produces the preview item.
         """
         canvas_map = self._get_canvas_camera_map()
 
@@ -800,7 +807,7 @@ class ContextMatrixWidget(QWidget):
                     canvas.clear_cursor_preview()
                     continue
 
-            canvas.update_cursor_preview(u, v, preview_size, color)
+            canvas.update_cursor_preview(u, v, item_factory)
 
     def clear_all_cursor_previews(self):
         """Hide cursor previews on all canvases in the pool."""

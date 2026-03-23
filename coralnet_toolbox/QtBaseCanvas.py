@@ -945,45 +945,39 @@ class BaseCanvas(QGraphicsView):
 
     # ==================== Cursor Preview (Tool Propagation) ====================
 
-    def update_cursor_preview(self, u: float, v: float, size: int, color=None):
-        """Show a square preview at image pixel (u, v) representing the propagated cursor.
+    def update_cursor_preview(self, u: float, v: float, item_factory):
+        """Show a tool cursor preview at image pixel (u, v).
+
+        The item is produced by item_factory(u, v) so each tool can supply its
+        own style (patch square, brush circle, etc.).
 
         Args:
             u, v: Centre pixel coordinates in image space.
-            size: Side length of the preview square in pixels.
-            color: QColor for the border/fill. Defaults to white.
+            item_factory: callable(u, v) -> QGraphicsItem
         """
-        from PyQt5.QtWidgets import QGraphicsRectItem
-        from PyQt5.QtGui import QColor as _QColor, QPen as _QPen, QBrush as _QBrush
+        # Remove the previous preview item before creating a new one
+        self.clear_cursor_preview()
 
-        # Lazily create (or re-create if the old item lost its scene after clear_scene)
-        if self._cursor_preview_item is None or self._cursor_preview_item.scene() is None:
-            self._cursor_preview_item = QGraphicsRectItem()
-            self._cursor_preview_item.setZValue(101)  # Above markers
-            self._cursor_preview_item.setFlag(QGraphicsItem.ItemIsSelectable, False)
-            self._cursor_preview_item.setFlag(QGraphicsItem.ItemIsMovable, False)
-            self._cursor_preview_item.setAcceptHoverEvents(False)
-            self.scene.addItem(self._cursor_preview_item)
-
-        half = size / 2.0
-        self._cursor_preview_item.setRect(u - half, v - half, size, size)
-
-        base = _QColor(color) if color is not None else _QColor(255, 255, 255)
-        pen = _QPen(base, 2)
-        pen.setCosmetic(True)
-        fill = _QColor(base)
-        fill.setAlpha(40)
-        self._cursor_preview_item.setPen(pen)
-        self._cursor_preview_item.setBrush(_QBrush(fill))
-        self._cursor_preview_item.show()
+        try:
+            item = item_factory(u, v)
+            item.setZValue(101)  # Above markers
+            item.setFlag(QGraphicsItem.ItemIsSelectable, False)
+            item.setFlag(QGraphicsItem.ItemIsMovable, False)
+            item.setAcceptHoverEvents(False)
+            self.scene.addItem(item)
+            self._cursor_preview_item = item
+        except Exception:
+            pass
 
     def clear_cursor_preview(self):
-        """Hide the tool cursor preview rectangle."""
+        """Remove the tool cursor preview item from the scene."""
         if self._cursor_preview_item is not None:
             try:
-                self._cursor_preview_item.hide()
+                if self._cursor_preview_item.scene() is not None:
+                    self._cursor_preview_item.scene().removeItem(self._cursor_preview_item)
             except Exception:
                 pass
+            self._cursor_preview_item = None
 
     # ==================== Mask Overlay (Brush Propagation) ====================
 

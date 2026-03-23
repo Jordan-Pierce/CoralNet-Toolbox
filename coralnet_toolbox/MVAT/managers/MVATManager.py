@@ -1197,14 +1197,14 @@ class MVATManager(QObject):
                 patch_tool.cursor_clear_callback = None
             self._on_cursor_preview_cleared()
 
-    def _on_cursor_preview_moved(self, scene_pos, preview_size: int, color):
+    def _on_cursor_preview_moved(self, scene_pos, item_factory):
         """Project the cursor position into visible context cameras and show previews."""
         if self.selected_camera is None or self.context_matrix is None:
             return
         px, py = int(scene_pos.x()), int(scene_pos.y())
         projections = self._build_projection(px, py)
         visible_paths = self._get_visible_context_paths()
-        self.context_matrix.update_cursor_previews(projections, visible_paths, preview_size, color)
+        self.context_matrix.update_cursor_previews(projections, visible_paths, item_factory)
 
     def _on_cursor_preview_cleared(self):
         """Clear cursor previews from all context canvases."""

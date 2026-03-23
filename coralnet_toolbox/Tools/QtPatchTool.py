@@ -1,8 +1,8 @@
 import warnings
 
 from PyQt5.QtCore import Qt, QPointF
-from PyQt5.QtGui import QMouseEvent
-from PyQt5.QtWidgets import QMessageBox
+from PyQt5.QtGui import QMouseEvent, QBrush, QPen, QColor
+from PyQt5.QtWidgets import QGraphicsPathItem, QMessageBox
 
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
@@ -68,11 +68,7 @@ class PatchTool(Tool):
             if self.annotation_window.cursorInWindow(event.pos()):
                 self.create_cursor_annotation(scene_pos)
                 if self.cursor_move_callback:
-                    self.cursor_move_callback(
-                        scene_pos,
-                        self.annotation_window.annotation_size,
-                        self.annotation_window.selected_label.color,
-                    )
+                    self.cursor_move_callback(scene_pos, self.create_cursor_preview_item)
             else:
                 if self.cursor_clear_callback:
                     self.cursor_clear_callback()
@@ -109,6 +105,31 @@ class PatchTool(Tool):
                                      self.annotation_window.selected_label.id,
                                      self.annotation_window.main_window.get_transparency_value())
         return annotation
+
+    def create_cursor_preview_item(self, u: float, v: float):
+        """Return a styled patch square QGraphicsItem centred at image pixel (u, v)."""
+        if not self.annotation_window.selected_label:
+            return None
+
+        label = self.annotation_window.selected_label
+        size = self.annotation_window.annotation_size
+        transparency = self.annotation_window.main_window.get_transparency_value()
+        ann = PatchAnnotation(
+            QPointF(u, v), size,
+            label.short_label_code, label.long_label_code,
+            label.color, "", label.id, transparency,
+        )
+        path = ann.get_painter_path()
+        item = QGraphicsPathItem(path)
+        c = QColor(label.color)
+        fill = QColor(c)
+        fill.setAlpha(transparency)
+        item.setBrush(QBrush(fill))
+        pen = QPen(c, 1)
+        pen.setCosmetic(True)
+        item.setPen(pen)
+
+        return item
 
     def create_cursor_annotation(self, scene_pos: QPointF = None):
         """Create a patch cursor annotation at the given position."""

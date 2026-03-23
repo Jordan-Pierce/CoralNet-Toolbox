@@ -24,7 +24,8 @@ class Tool:
 
         # Optional callbacks for cursor preview propagation (set by MVATManager or any consumer).
         # Subclasses that support live cursor previews should call these in their mouseMoveEvent.
-        # cursor_move_callback(scene_pos: QPointF, preview_size: int, color: QColor)
+        # cursor_move_callback(scene_pos: QPointF, item_factory: callable)
+        #   item_factory(u: float, v: float) -> QGraphicsItem  (positioned at image coords u,v)
         self.cursor_move_callback = None
         # cursor_clear_callback()
         self.cursor_clear_callback = None
@@ -98,6 +99,21 @@ class Tool:
             scene_pos: Position in scene coordinates where to create the annotation
         """
         pass
+
+    def create_cursor_preview_item(self, u: float, v: float):
+        """
+        Create a QGraphicsItem representing this tool's cursor at image pixel (u, v).
+        Used by the MVAT cursor preview propagation system to display the cursor
+        on context canvases at the projected position.
+
+        Subclasses that participate in cursor preview propagation should override
+        this method and return a fully styled, positioned QGraphicsItem.
+        The item must NOT be added to a scene — BaseCanvas does that.
+
+        Returns:
+            QGraphicsItem, or None if this tool does not support cursor preview.
+        """
+        return None
         
     def update_cursor_annotation(self, scene_pos: QPointF = None):
         """
