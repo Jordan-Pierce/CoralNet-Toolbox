@@ -258,6 +258,11 @@ class MVATManager(QObject):
         # 6. Context Matrix Signals
         if self.context_matrix is not None:
             self.context_matrix.contextImagePromoted.connect(self._on_camera_selected)
+            self.context_matrix.set_mvat_manager(self)
+        
+        # 7. Target-Lock Sync (Phase 5): AnnotationWindow viewNavigated -> sync engine
+        if hasattr(self.annotation_window, 'viewNavigated'):
+            self.annotation_window.viewNavigated.connect(self._on_main_view_navigated)
 
     def load_cameras(self):
         """
@@ -1045,6 +1050,101 @@ class MVATManager(QObject):
         # Feed ContextMatrixWidget with proximity-ordered neighbors
         if self.context_matrix is not None:
             self.context_matrix.set_camera_order(ordered_paths, reference_path)
+
+    # --- Target-Lock Sync Engine (Phase 5) ---
+
+    def _on_main_view_navigated(self, center_x: float, center_y: float, zoom_factor: float):
+        """Handle navigation events from the main AnnotationWindow.
+
+        Projects the viewport center into 3D world space, then back into
+        each visible context camera to synchronize their viewports.
+        """
+        if self.context_matrix is None:
+            return
+        if not self.context_matrix.target_lock_enabled:
+            return
+        if self.selected_camera is None:
+            return
+
+        # Step 1: Get the 3D world point at the viewport center
+        world_point = self._get_world_point_at_pixel(
+            self.selected_camera, center_x, center_y
+        )
+        if world_point is None:
+            return
+
+        # Step 2: Project into each visible context camera
+        targets = {}
+        capacity = self.context_matrix._get_visible_capacity()
+
+        for i in range(capacity):
+            canvas = self.context_matrix._canvas_pool[i]
+            if not canvas.isVisible() or not canvas.current_image_path:
+                continue
+
+            camera = self.cameras.get(canvas.current_image_path)
+            if not camera:
+                continue
+
+            try:
+                pixel = camera.project(world_point)
+            except Exception:
+                continue
+
+            if np.isnan(pixel).any():
+                continue
+
+            target_u, target_v = float(pixel[0]), float(pixel[1])
+
+            # Bounds check: only sync if the point is within the image
+            if 0 <= target_u < camera.width and 0 <= target_v < camera.height:
+                targets[i] = (target_u, target_v)
+
+        # Step 3: Command the context matrix to sync (throttled)
+        self.context_matrix.request_sync(targets, zoom_factor)
+
+    def _get_world_point_at_pixel(self, camera, px, py):
+        """Get the 3D world point at a specific pixel coordinate.
+
+        Attempts depth-based unprojection first, falls back to scene
+        median depth for a rough estimate.
+
+        Args:
+            camera: Camera object for the active image.
+            px, py: Pixel coordinates (float).
+
+        Returns:
+            np.ndarray [x,y,z] world point, or None if impossible.
+        """
+        # Clamp to image bounds
+        px = max(0, min(px, camera.width - 1))
+        py = max(0, min(py, camera.height - 1))
+
+        # Try depth from Z-channel
+        raster = camera._raster
+        depth = None
+        if raster.z_channel is not None and raster.z_data_type == 'depth':
+            depth = raster.get_z_value(int(px), int(py))
+
+        if depth is None or depth <= 0 or np.isnan(depth):
+            # Fallback to scene median depth
+            try:
+                default_depth = self.viewer.get_scene_median_depth(camera.position)
+            except Exception:
+                default_depth = 10.0
+        else:
+            default_depth = depth
+
+        try:
+            ray = CameraRay.from_pixel_and_camera(
+                pixel_xy=(px, py),
+                camera=camera,
+                depth=depth,
+                default_depth=default_depth
+            )
+            return ray.terminal_point
+        except Exception:
+            return None
 
     def cleanup(self):
         """Clean up resources before closing."""

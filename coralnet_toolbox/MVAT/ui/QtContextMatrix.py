@@ -74,6 +74,15 @@ class ContextMatrixWidget(QWidget):
         self._last_focal_point = None
         self._cameras_ref: Optional[Dict] = None
         
+        # Target-lock sync state (Phase 5)
+        self.target_lock_enabled = False
+        self._mvat_manager = None
+        self._sync_timer = QTimer()
+        self._sync_timer.setSingleShot(True)
+        self._sync_timer.timeout.connect(self._process_pending_sync)
+        self._pending_sync = None
+        self._sync_throttle_ms = 30  # ~33 fps
+        
         # Layout presets: index -> (rows, cols)
         self._layout_map = {
             0: (1, 1),
@@ -276,6 +285,10 @@ class ContextMatrixWidget(QWidget):
         # Re-apply static focal markers to newly loaded canvases
         if self._last_focal_point is not None and self._cameras_ref is not None:
             self.update_static_markers_from_3d(self._last_focal_point, self._cameras_ref)
+        
+        # Sync new canvases to main view's current target (Phase 5)
+        if self.target_lock_enabled and self._mvat_manager:
+            self._request_sync_from_main_view()
     
     def _get_visible_capacity(self) -> int:
         """Return the number of currently visible canvas slots."""
@@ -358,12 +371,13 @@ class ContextMatrixWidget(QWidget):
         self._auto_flow_btn.toggled.connect(self._on_auto_flow_toggled)
         toolbar.addWidget(self._auto_flow_btn)
         
-        # Sync view toggle (skeleton for Phase 5)
-        self._sync_btn = QPushButton("Sync View")
+        # Target-lock sync toggle (Phase 5)
+        self._sync_btn = QPushButton("🔗 Sync")
         self._sync_btn.setCheckable(True)
         self._sync_btn.setChecked(False)
         self._sync_btn.setMaximumWidth(80)
-        self._sync_btn.setEnabled(False)  # Disabled until Phase 5
+        self._sync_btn.setToolTip("Target-Lock Sync (disabled)")
+        self._sync_btn.toggled.connect(self._on_sync_toggled)
         toolbar.addWidget(self._sync_btn)
         
         # Spacer to push rank label to the right
@@ -535,6 +549,68 @@ class ContextMatrixWidget(QWidget):
         self._last_focal_point = None
         for canvas in self._canvas_pool:
             canvas.clear_static_marker()
+    
+    # ==================== Target-Lock Sync (Phase 5) ====================
+    
+    def set_mvat_manager(self, manager):
+        """Store reference to MVATManager for sync callbacks."""
+        self._mvat_manager = manager
+    
+    def _on_sync_toggled(self, checked):
+        """Handle sync toggle button."""
+        self.target_lock_enabled = checked
+        self._sync_btn.setToolTip(
+            "Target-Lock Sync (enabled)" if checked else "Target-Lock Sync (disabled)"
+        )
+        # If re-enabled, immediately sync to current main view
+        if checked:
+            self._request_sync_from_main_view()
+    
+    def request_sync(self, targets: dict, zoom_factor: float):
+        """Throttled sync request from MVATManager."""
+        self._pending_sync = (targets, zoom_factor)
+        if not self._sync_timer.isActive():
+            self._sync_timer.start(self._sync_throttle_ms)
+    
+    def _process_pending_sync(self):
+        """Execute the most recent pending sync request."""
+        if self._pending_sync:
+            targets, zoom_factor = self._pending_sync
+            self._pending_sync = None
+            self.sync_to_targets(targets, zoom_factor)
+    
+    def sync_to_targets(self, targets: dict, zoom_factor: float):
+        """Synchronize visible canvases to projected target points.
+        
+        Args:
+            targets: dict mapping canvas_index -> (target_x, target_y).
+            zoom_factor: The zoom level from the main AnnotationWindow.
+        """
+        if not self.target_lock_enabled:
+            return
+        
+        for i, (target_x, target_y) in targets.items():
+            if i < len(self._canvas_pool):
+                canvas = self._canvas_pool[i]
+                if canvas.isVisible() and canvas.active_image:
+                    canvas.snap_to_target(target_x, target_y, zoom_factor)
+    
+    def _request_sync_from_main_view(self):
+        """Request a sync using the main AnnotationWindow's current viewport state."""
+        if not self._mvat_manager:
+            return
+        aw = self._mvat_manager.annotation_window
+        if not aw.active_image or not aw.pixmap_image:
+            return
+        
+        # Get current viewport center in scene coordinates
+        viewport_center = aw.mapToScene(aw.viewport().rect().center())
+        center_x = viewport_center.x()
+        center_y = viewport_center.y()
+        zoom_factor = aw.zoom_factor
+        
+        # Trigger the full sync pipeline
+        self._mvat_manager._on_main_view_navigated(center_x, center_y, zoom_factor)
     
     # ==================== Rank Indicator ====================
     
