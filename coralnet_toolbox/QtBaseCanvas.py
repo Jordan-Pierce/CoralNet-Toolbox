@@ -689,15 +689,27 @@ class BaseCanvas(QGraphicsView):
     # ==================== Marker Slots (Phase 4) ====================
 
     def update_static_marker(self, x, y, color=None):
-        """Update or create the static focal point marker."""
+        """Update the static focal point marker at image pixel (x, y).
+        
+        Args:
+            x, y: Pixel coordinates in image space.
+            color: QColor for the marker. Default: keeps current color.
+        """
         if self._static_marker is None:
             return
         try:
+            # Bounds check
+            if self.pixmap_image and not (0 <= x < self.pixmap_image.width() and
+                                           0 <= y < self.pixmap_image.height()):
+                self._static_marker.hide()
+                return
+
             self._static_marker.setPos(x, y)
             if color:
+                pen = QPen(color, 2)
                 for child in self._static_marker.childItems():
                     try:
-                        child.setPen(QPen(QColor(color)))
+                        child.setPen(pen)
                     except Exception:
                         pass
             self._static_marker.show()
@@ -713,17 +725,30 @@ class BaseCanvas(QGraphicsView):
                 pass
 
     def update_dynamic_marker(self, x, y, color=None, is_valid=True):
-        """Update or create the dynamic hover marker."""
+        """Update the dynamic hover marker at image pixel (x, y).
+        
+        Args:
+            x, y: Pixel coordinates in image space.
+            color: QColor for the marker.
+            is_valid: If False, use dashed pen (occluded/estimated).
+        """
         if self._dynamic_marker is None:
             return
         try:
+            # Bounds check
+            if self.pixmap_image and not (0 <= x < self.pixmap_image.width() and
+                                           0 <= y < self.pixmap_image.height()):
+                self._dynamic_marker.hide()
+                return
+
             self._dynamic_marker.setPos(x, y)
-            if color:
-                try:
-                    self._dynamic_marker.setPen(QPen(QColor(color)))
-                except Exception:
-                    pass
-            self._dynamic_marker.setVisible(bool(is_valid))
+            pen = QPen(color or QColor(0, 255, 0), 2)
+            if not is_valid:
+                pen.setStyle(Qt.DashLine)
+            else:
+                pen.setStyle(Qt.SolidLine)
+            self._dynamic_marker.setPen(pen)
+            self._dynamic_marker.show()
         except Exception:
             traceback.print_exc()
 

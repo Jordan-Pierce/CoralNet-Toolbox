@@ -140,12 +140,26 @@ class MousePositionBridge(QObject):
                                                     selected_path)
         except Exception:
             self.clear_all_markers()
+        
+        # Update context matrix canvases (Phase 4)
+        if self.manager.context_matrix is not None:
+            try:
+                self.manager.context_matrix.update_dynamic_markers(
+                    projections, accuracies, visibility_status
+                )
+            except Exception:
+                pass
                 
     def clear_all_markers(self):
         try:
             self.manager.camera_grid.clear_all_markers()
         except Exception:
             pass
+        if self.manager.context_matrix is not None:
+            try:
+                self.manager.context_matrix.clear_all_dynamic_markers()
+            except Exception:
+                pass
             
     def cleanup(self):
         self._throttle_timer.stop()
@@ -436,6 +450,13 @@ class MVATManager(QObject):
                 self.annotation_window.set_incoming_marker(u, v, color)
             else:
                 self.annotation_window.marker.hide()
+        
+        # Project focal point into context matrix canvases (Phase 4)
+        if self.context_matrix is not None:
+            try:
+                self.context_matrix.update_static_markers_from_3d(point_3d, self.cameras)
+            except Exception:
+                pass
 
     def _on_camera_hovered(self, path):
         """

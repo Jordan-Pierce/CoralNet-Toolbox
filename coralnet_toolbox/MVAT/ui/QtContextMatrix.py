@@ -11,7 +11,8 @@ viewing nearby cameras. Features include:
 """
 
 import warnings
-from typing import List, Optional, Tuple
+import numpy as np
+from typing import List, Optional, Tuple, Dict
 
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QSize, QEvent
 from PyQt5.QtGui import QIcon
@@ -21,6 +22,11 @@ from PyQt5.QtWidgets import (
 )
 
 from coralnet_toolbox.QtBaseCanvas import BaseCanvas
+from coralnet_toolbox.MVAT.core.constants import (
+    MARKER_COLOR_SELECTED,
+    MARKER_COLOR_HIGHLIGHTED,
+    MARKER_COLOR_INVALID,
+)
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -63,6 +69,10 @@ class ContextMatrixWidget(QWidget):
         self._loading_flag = False
         self._user_layout_locked = False
         self._auto_flow_enabled = True
+        
+        # Marker state for conveyor belt persistence (Phase 4)
+        self._last_focal_point = None
+        self._cameras_ref: Optional[Dict] = None
         
         # Layout presets: index -> (rows, cols)
         self._layout_map = {
@@ -262,6 +272,10 @@ class ContextMatrixWidget(QWidget):
                         self._load_canvas_image(canvas, camera_path)
                     else:
                         canvas.clear_scene()
+        
+        # Re-apply static focal markers to newly loaded canvases
+        if self._last_focal_point is not None and self._cameras_ref is not None:
+            self.update_static_markers_from_3d(self._last_focal_point, self._cameras_ref)
     
     def _get_visible_capacity(self) -> int:
         """Return the number of currently visible canvas slots."""
@@ -431,6 +445,96 @@ class ContextMatrixWidget(QWidget):
             
             rows, cols = self._layout_map[new_layout]
             self._rebuild_layout(rows, cols)
+    
+    # ==================== Marker Routing (Phase 4) ====================
+    
+    def _get_canvas_camera_map(self) -> Dict[str, 'BaseCanvas']:
+        """Return a mapping of camera_path -> BaseCanvas for visible, loaded canvases."""
+        result = {}
+        for i, canvas_row in enumerate(self._visible_canvases):
+            for j, canvas in enumerate(canvas_row):
+                if canvas and canvas.current_image_path and canvas.active_image:
+                    result[canvas.current_image_path] = canvas
+        return result
+    
+    def update_dynamic_markers(self, projections: dict, accuracies: dict,
+                                visibility_status: dict):
+        """Update dynamic hover markers on all visible canvases.
+        
+        Args:
+            projections: {image_path: (u, v, is_valid)} from ray.project_to_cameras()
+            accuracies: {image_path: has_accurate_depth}
+            visibility_status: {image_path: is_occluded}
+        """
+        canvas_map = self._get_canvas_camera_map()
+        
+        for path, canvas in canvas_map.items():
+            proj = projections.get(path)
+            if not proj:
+                canvas.clear_dynamic_marker()
+                continue
+            
+            px, py, is_valid = proj
+            if not is_valid:
+                canvas.clear_dynamic_marker()
+                continue
+            
+            acc = accuracies.get(path, False)
+            is_occluded = visibility_status.get(path, False)
+            
+            color = MARKER_COLOR_HIGHLIGHTED if (acc and not is_occluded) else MARKER_COLOR_INVALID
+            canvas.update_dynamic_marker(px, py, color=color, is_valid=(acc and not is_occluded))
+    
+    def clear_all_dynamic_markers(self):
+        """Clear dynamic markers from all canvases in the pool."""
+        for canvas in self._canvas_pool:
+            canvas.clear_dynamic_marker()
+    
+    def update_static_markers_from_3d(self, point_3d, cameras: dict):
+        """Project a 3D focal point into all visible canvases as static markers.
+        
+        Args:
+            point_3d: numpy array [x, y, z] in world coordinates.
+            cameras: dict of {image_path: Camera} for projection.
+        """
+        # Store for conveyor belt persistence
+        self._last_focal_point = point_3d
+        self._cameras_ref = cameras
+        
+        canvas_map = self._get_canvas_camera_map()
+        
+        for path, canvas in canvas_map.items():
+            camera = cameras.get(path)
+            if not camera:
+                canvas.clear_static_marker()
+                continue
+            
+            try:
+                pixel = camera.project(point_3d)
+            except Exception:
+                canvas.clear_static_marker()
+                continue
+            
+            if np.isnan(pixel).any():
+                canvas.clear_static_marker()
+                continue
+            
+            u, v = float(pixel[0]), float(pixel[1])
+            
+            # Check occlusion for color
+            try:
+                is_occluded = camera.is_point_occluded_depth_based(point_3d, depth_threshold=0.15)
+            except Exception:
+                is_occluded = False
+            
+            color = MARKER_COLOR_INVALID if is_occluded else MARKER_COLOR_SELECTED
+            canvas.update_static_marker(u, v, color=color)
+    
+    def clear_all_static_markers(self):
+        """Clear static markers from all canvases in the pool."""
+        self._last_focal_point = None
+        for canvas in self._canvas_pool:
+            canvas.clear_static_marker()
     
     # ==================== Rank Indicator ====================
     
