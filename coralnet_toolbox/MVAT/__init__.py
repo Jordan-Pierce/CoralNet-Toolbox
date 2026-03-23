@@ -22,6 +22,7 @@ __all__ = [
     # The following names are provided lazily via __getattr__:
     'MVATViewer',
     'CameraGrid',
+    'ContextMatrixWidget',
 ]
 
 
@@ -38,8 +39,11 @@ def __getattr__(name: str):
     if name == 'CameraGrid':
         from .ui.QtCameraGrid import CameraGrid as _CameraGrid
         return _CameraGrid
+    if name == 'ContextMatrixWidget':
+        from .ui.QtContextMatrix import ContextMatrixWidget as _ContextMatrixWidget
+        return _ContextMatrixWidget
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def __dir__():
-    return sorted(list(globals().keys()) + ['MVATViewer', 'CameraGrid'])
+    return sorted(list(globals().keys()) + ['MVATViewer', 'CameraGrid', 'ContextMatrixWidget'])

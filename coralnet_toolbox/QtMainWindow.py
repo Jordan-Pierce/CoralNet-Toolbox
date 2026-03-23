@@ -41,6 +41,7 @@ from coralnet_toolbox.Explorer import SelectionManager
 from coralnet_toolbox.MVAT import MVATViewer
 from coralnet_toolbox.MVAT import CameraGrid
 from coralnet_toolbox.MVAT import MVATManager
+from coralnet_toolbox.MVAT import ContextMatrixWidget
 
 # Other Dialogs
 from coralnet_toolbox.QtBatchInference import BatchInferenceDialog
@@ -244,6 +245,10 @@ class MainWindow(QMainWindow):
                 self.camera_grid.load_btn.setEnabled(True)
         except Exception:
             pass
+        
+        # Create ContextMatrixWidget for multi-viewport context viewing
+        self.context_matrix = ContextMatrixWidget(parent=None)
+        self.context_matrix.set_raster_manager(self.image_window.raster_manager)
         
         # Create dock-based explorer windows
         self.annotation_viewer_window = AnnotationViewerWindow(self)
@@ -1198,6 +1203,12 @@ class MainWindow(QMainWindow):
         if hasattr(self.camera_grid, 'create_top_toolbar'):
             self.grid_dock.add_toolbar(self.camera_grid.create_top_toolbar())
 
+        # Setup Context Matrix Dock (tabbed with Grid)
+        self.context_dock = DockWrapper("Context", "ContextDock", self.context_matrix, self)
+        
+        if hasattr(self.context_matrix, 'create_top_toolbar'):
+            self.context_dock.add_toolbar(self.context_matrix.create_top_toolbar())
+
         # --------------------------------------------------
         # 3. Explicitly arrange the docks using PyQtADS
         # --------------------------------------------------
@@ -1232,6 +1243,9 @@ class MainWindow(QMainWindow):
         # 9. Place Camera Grid below Embedding Viewer
         grid_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.grid_dock, embed_area)
         
+        # 10. Tab Context Matrix with Camera Grid
+        context_area = self.dock_manager.addDockWidget(ads.CenterDockWidgetArea, self.context_dock, grid_area)
+        
         # Populate the Windows menu with dock toggle actions
         dock_windows = [
             ("Annotation", self.annotation_dock),
@@ -1244,6 +1258,7 @@ class MainWindow(QMainWindow):
             ("Embeddings", self.embeddings_dock),
             ("3D Viewer", self.mvat_dock),
             ("Grid", self.grid_dock),
+            ("Context", self.context_dock),
         ]
 
         for dock_name, dock_widget in dock_windows:

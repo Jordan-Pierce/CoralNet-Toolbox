@@ -168,6 +168,7 @@ class MVATManager(QObject):
         
         self.viewer = viewer
         self.camera_grid = grid
+        self.context_matrix = getattr(main_window, 'context_matrix', None)
         
         # State
         self.cameras = {}
@@ -239,6 +240,10 @@ class MVATManager(QObject):
             self.camera_grid.camera_highlighted_single.connect(self._on_camera_highlighted_single)
         except Exception:
             pass
+        
+        # 6. Context Matrix Signals
+        if self.context_matrix is not None:
+            self.context_matrix.contextImagePromoted.connect(self._on_camera_selected)
 
     def load_cameras(self):
         """
@@ -1015,6 +1020,10 @@ class MVATManager(QObject):
         camera_scores.sort(key=lambda x: x[1], reverse=True)
         ordered_paths = [p for p, s in camera_scores]
         self.camera_grid.set_camera_order(ordered_paths)
+        
+        # Feed ContextMatrixWidget with proximity-ordered neighbors
+        if self.context_matrix is not None:
+            self.context_matrix.set_camera_order(ordered_paths, reference_path)
 
     def cleanup(self):
         """Clean up resources before closing."""
