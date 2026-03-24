@@ -40,7 +40,6 @@ from coralnet_toolbox.Explorer import SelectionManager
 
 # MVAT Windows
 from coralnet_toolbox.MVAT import MVATViewer
-from coralnet_toolbox.MVAT import CameraGrid
 from coralnet_toolbox.MVAT import MVATManager
 from coralnet_toolbox.MVAT import ContextMatrixWidget
 
@@ -243,18 +242,7 @@ class MainWindow(QMainWindow):
         
         # Create dock-based mvat windows
         self.mvat_viewer = MVATViewer(self)
-        self.camera_grid = CameraGrid(model=None, mvat_window=None)
-        self.mvat_manager = MVATManager(self, self.mvat_viewer, self.camera_grid)
-        self.camera_grid.model = self.mvat_manager.selection_model
-        # Wire a reference to the main window so CameraGrid can access the
-        # MVAT manager (used by the Load Cameras toolbar button).
-        try:
-            self.camera_grid.mvat_window = self
-            # Enable the load button if it exists
-            if hasattr(self.camera_grid, 'load_btn'):
-                self.camera_grid.load_btn.setEnabled(True)
-        except Exception:
-            pass
+        self.mvat_manager = MVATManager(self, self.mvat_viewer)
         
         # Create dock-based explorer windows
         self.annotation_viewer_window = AnnotationViewerWindow(self)
@@ -1203,13 +1191,7 @@ class MainWindow(QMainWindow):
         # Setup MVAT Viewer Dock (Bottom-left) using DockWrapper
         self.mvat_dock = DockWrapper("3D Viewer", "3DViewerDock", self.mvat_viewer, self)
 
-        # Setup Camera Grid Dock (Bottom-right) using DockWrapper
-        self.grid_dock = DockWrapper("Grid", "GridDock", self.camera_grid, self)
-        
-        if hasattr(self.camera_grid, 'create_top_toolbar'):
-            self.grid_dock.add_toolbar(self.camera_grid.create_top_toolbar())
-
-        # Setup Context Matrix Dock (tabbed with Grid)
+        # Setup Context Matrix Dock (bottom-right, replaces legacy Camera Grid)
         self.context_dock = DockWrapper("Context", "ContextDock", self.context_matrix, self)
         
         if hasattr(self.context_matrix, 'create_top_toolbar'):
@@ -1246,11 +1228,8 @@ class MainWindow(QMainWindow):
         # 8. Place the MVAT Viewer below the Annotation Gallery
         mvat_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.mvat_dock, gallery_area)
 
-        # 9. Place Camera Grid below Embedding Viewer
-        grid_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.grid_dock, embed_area)
-        
-        # 10. Tab Context Matrix with Camera Grid
-        context_area = self.dock_manager.addDockWidget(ads.CenterDockWidgetArea, self.context_dock, grid_area)
+        # 9. Place Context Matrix below Embedding Viewer (replaces legacy Camera Grid)
+        context_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.context_dock, embed_area)
         
         # Populate the Windows menu with dock toggle actions
         dock_windows = [
@@ -1263,7 +1242,6 @@ class MainWindow(QMainWindow):
             ("Gallery", self.gallery_dock),
             ("Embeddings", self.embeddings_dock),
             ("3D Viewer", self.mvat_dock),
-            ("Grid", self.grid_dock),
             ("Context", self.context_dock),
         ]
 

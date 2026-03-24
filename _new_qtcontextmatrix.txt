@@ -59,12 +59,6 @@ class ContextMatrixWidget(QWidget):
     loadCamerasRequested = pyqtSignal()
     clearSelectionsRequested = pyqtSignal()
 
-    # Selection intent signals (mirror CameraGrid's paradigm)
-    selection_requested = pyqtSignal(list)   # request to set highlight selection (list of paths)
-    toggle_requested = pyqtSignal(str)       # request to toggle a single path (Ctrl+Click)
-    active_requested = pyqtSignal(str)       # request to set active camera (Double-Click)
-    camera_highlighted_single = pyqtSignal(str)  # single plain-click -> jump 3D view
-
     def __init__(self, parent=None):
         super().__init__(parent)
 
@@ -100,9 +94,6 @@ class ContextMatrixWidget(QWidget):
         # Annotation visualization state (Phase 6)
         self._annotation_manager = None
 
-        # Selection tracking for Shift+Click range selection
-        self._last_clicked_path: Optional[str] = None
-
         # Canvas pool
         self._canvas_pool: List[BaseCanvas] = []
         self._visible_canvases: List[List[Optional[BaseCanvas]]] = []
@@ -133,53 +124,22 @@ class ContextMatrixWidget(QWidget):
         while len(self._canvas_pool) < size:
             canvas = BaseCanvas(parent=self)
             canvas.hide()
-            canvas.setStyleSheet("border: 1px solid #444444;")
             canvas.mouseDoubleClickEvent = self._make_canvas_double_click_handler(canvas)
-            canvas.mousePressEvent = self._make_canvas_mouse_press_handler(canvas)
             canvas.installEventFilter(self)  # Catch scroll events hovering over the canvas
             self._canvas_pool.append(canvas)
 
-    def _make_canvas_mouse_press_handler(self, canvas: BaseCanvas):
-        """Intercept left clicks for selection while preserving native canvas interactions."""
-        def handler(event):
-            if event.button() == Qt.LeftButton:
-                path = canvas.current_image_path
-                if path:
-                    modifiers = event.modifiers()
-
-                    if modifiers == Qt.ControlModifier:
-                        # Ctrl+Click: toggle highlight
-                        self.toggle_requested.emit(path)
-
-                    elif modifiers == Qt.ShiftModifier and self._last_clicked_path:
-                        # Shift+Click: range select
-                        try:
-                            start_idx = self._camera_paths.index(self._last_clicked_path)
-                            end_idx = self._camera_paths.index(path)
-                            start, end = min(start_idx, end_idx), max(start_idx, end_idx)
-                            self.selection_requested.emit(self._camera_paths[start:end + 1])
-                        except ValueError:
-                            pass
-
-                    else:
-                        # Plain click: exclusive highlight + 3D view jump
-                        self.selection_requested.emit([path])
-                        self.camera_highlighted_single.emit(path)
-
-                    self._last_clicked_path = path
-
-            # CRITICAL: pass through so drawing/panning tools still work
-            BaseCanvas.mousePressEvent(canvas, event)
-        return handler
-
     def _make_canvas_double_click_handler(self, canvas: BaseCanvas):
-        """Double-click promotes a context camera to the main active camera."""
+        """Create a double-click handler for a specific canvas."""
         def handler(event):
             if event.button() == Qt.LeftButton:
-                path = canvas.current_image_path
-                if path:
-                    self.active_requested.emit(path)
-                    self.contextImagePromoted.emit(path)
+                for row_idx, row in enumerate(self._visible_canvases):
+                    for col_idx, c in enumerate(row):
+                        if c is canvas:
+                            camera_idx = row_idx * self.current_cols + col_idx
+                            if self._current_offset + camera_idx < len(self._camera_paths):
+                                camera_path = self._camera_paths[self._current_offset + camera_idx]
+                                self.contextImagePromoted.emit(camera_path)
+                            return
             BaseCanvas.mouseDoubleClickEvent(canvas, event)
         return handler
 
@@ -488,26 +448,6 @@ class ContextMatrixWidget(QWidget):
     def _on_multi_annotate_toggled(self, checked: bool):
         self.multi_annotate_enabled = checked
         self.multiAnnotateToggled.emit(checked)
-
-    # ==================== Selection Visuals ====================
-
-    def sync_selection_borders(self, active_path: str, selected_paths: set):
-        """Apply CSS borders to canvases based on active/highlighted status.
-
-        Args:
-            active_path: Image path of the currently active (green-bordered) camera.
-            selected_paths: Set of image paths that are highlighted (cyan-bordered).
-        """
-        for canvas in self._canvas_pool:
-            if not canvas.isVisible() or not canvas.current_image_path:
-                continue
-            path = canvas.current_image_path
-            if path == active_path:
-                canvas.setStyleSheet("border: 4px solid #32CD32;")   # Lime Green
-            elif path in selected_paths:
-                canvas.setStyleSheet("border: 2px solid #00FFFF;")   # Cyan
-            else:
-                canvas.setStyleSheet("border: 1px solid #444444;")   # Default
 
     # ==================== Marker Routing (Phase 4) ====================
 

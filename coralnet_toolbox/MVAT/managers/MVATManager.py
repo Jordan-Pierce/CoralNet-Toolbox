@@ -3,7 +3,7 @@ MultiView Annotation Tool (MVAT) Manager
 
 The central controller for the MVAT workspace.
 Handles the business logic, data synchronization, and signal routing between 
-the MainWindow, RasterManager, MVATViewer (3D), and CameraGrid (2D).
+the MainWindow, RasterManager, MVATViewer (3D), and ContextMatrix (2D).
 """
 
 import time
@@ -57,7 +57,7 @@ class MousePositionBridge(QObject):
     - Create corresponding rays from highlighted cameras to the same world
         point and choose colors based on depth accuracy.
     - Project the selected ray into other camera image spaces and forward
-        marker/visibility updates to the CameraGrid for UI presentation.
+        marker/visibility updates to the ContextMatrix for UI presentation.
 
     This class mirrors the behavior previously implemented on the window
     layer but is now manager-owned so it can operate without direct UI
@@ -134,18 +134,6 @@ class MousePositionBridge(QObject):
         self.manager.viewer.show_rays(rays_with_colors)
         projections = ray.project_to_cameras(self.manager.cameras)
         
-        # Update markers on CameraGrid
-        highlighted_paths = {cam.image_path for cam in highlighted_cameras}
-        selected_path = camera.image_path
-        try:
-            self.manager.camera_grid.update_markers(projections, 
-                                                    accuracies, 
-                                                    highlighted_paths, 
-                                                    visibility_status,
-                                                    selected_path)
-        except Exception:
-            self.clear_all_markers()
-        
         # Update context matrix canvases (Phase 4)
         if self.manager.context_matrix is not None:
             try:
@@ -153,13 +141,9 @@ class MousePositionBridge(QObject):
                     projections, accuracies, visibility_status
                 )
             except Exception:
-                pass
+                self.manager.context_matrix.clear_all_dynamic_markers()
                 
     def clear_all_markers(self):
-        try:
-            self.manager.camera_grid.clear_all_markers()
-        except Exception:
-            pass
         if self.manager.context_matrix is not None:
             try:
                 self.manager.context_matrix.clear_all_dynamic_markers()
@@ -177,7 +161,7 @@ class MVATManager(QObject):
     """
     cameraSelectedInMVAT = pyqtSignal(str)
     
-    def __init__(self, main_window, viewer, grid):
+    def __init__(self, main_window, viewer):
         super().__init__()
         
         self.main_window = main_window
@@ -186,7 +170,6 @@ class MVATManager(QObject):
         self.image_window = main_window.image_window
         
         self.viewer = viewer
-        self.camera_grid = grid
         self.context_matrix = getattr(main_window, 'context_matrix', None)
         
         # State
@@ -222,9 +205,8 @@ class MVATManager(QObject):
 
         Connections established:
         1. SelectionModel signals -> manager handlers (active/selection changed)
-        2. CameraGrid intent signals -> SelectionModel methods (selection, toggle,
-            active, clear)
-        3. CameraGrid hover events -> manager hover handlers
+        2. ContextMatrix intent signals (loadCamerasRequested, clearSelectionsRequested)
+        3. ContextMatrix hover/promote events -> manager handlers
         4. Viewer notifications (focal point, full-cloud toggle, compute-depths)
         5. Main window sync: wire the annotation window's mouseMoved and the
             image window's imageLoaded signals to manager handlers when present.
@@ -232,16 +214,6 @@ class MVATManager(QObject):
         # 1. Selection Model (The Source of Truth)
         self.selection_model.active_changed.connect(self._on_active_camera_changed)
         self.selection_model.selection_changed.connect(self._on_selections_changed)
-        
-        # 2. CameraGrid Intents -> Selection Model
-        self.camera_grid.selection_requested.connect(self.selection_model.set_selections)
-        self.camera_grid.toggle_requested.connect(self.selection_model.toggle)
-        self.camera_grid.active_requested.connect(self.selection_model.set_active)
-        self.camera_grid.clear_requested.connect(self.selection_model.clear_selections)
-        
-        # 3. CameraGrid Hover States
-        self.camera_grid.camera_hovered.connect(self._on_camera_hovered)
-        self.camera_grid.camera_unhovered.connect(self._on_camera_unhovered)
         
         # 4. Viewer Signals
         self.viewer.focalPointChanged.connect(self._on_focal_point_changed)
@@ -253,20 +225,19 @@ class MVATManager(QObject):
             self.annotation_window.mouseMoved.connect(self.mouse_bridge.on_mouse_moved)
         if hasattr(self.image_window, 'imageLoaded'):
             self.image_window.imageLoaded.connect(self._on_main_image_loaded)
-        # CameraGrid image selection -> load image in AnnotationWindow
-        try:
-            self.camera_grid.camera_selected.connect(self._on_camera_selected)
-        except Exception:
-            pass
-        # Single highlight intent -> update viewer perspective
-        try:
-            self.camera_grid.camera_highlighted_single.connect(self._on_camera_highlighted_single)
-        except Exception:
-            pass
-        
         # 6. Context Matrix Signals
         if self.context_matrix is not None:
+            # Promote (double-click) -> load image as active camera
             self.context_matrix.contextImagePromoted.connect(self._on_camera_selected)
+            # Toolbar buttons
+            self.context_matrix.loadCamerasRequested.connect(self.load_cameras)
+            self.context_matrix.clearSelectionsRequested.connect(self.selection_model.clear_selections)
+            # Selection intent signals -> SelectionModel (source of truth)
+            self.context_matrix.selection_requested.connect(self.selection_model.set_selections)
+            self.context_matrix.toggle_requested.connect(self.selection_model.toggle)
+            self.context_matrix.active_requested.connect(self.selection_model.set_active)
+            self.context_matrix.camera_highlighted_single.connect(self._on_camera_highlighted_single)
+            # Phase 5 / multi-annotate
             self.context_matrix.set_mvat_manager(self)
             self.context_matrix.multiAnnotateToggled.connect(self._on_multi_annotate_toggled)
         
@@ -340,15 +311,16 @@ class MVATManager(QObject):
         # FILTER: Only pass perspective cameras to grid UI
         perspective_cameras = {p: c for p, c in self.cameras.items() if not c.is_orthographic}
         
-        try:
-            self.camera_grid.stats_label.setText(
-                f"Cameras: {len(perspective_cameras)} perspective" + 
-                (f", {ortho_count} ortho" if ortho_count > 0 else "")
-            )
-        except Exception:
-            pass
-        
-        self.camera_grid.set_cameras(perspective_cameras)
+        if self.context_matrix is not None:
+            try:
+                self.context_matrix.update_stats(len(perspective_cameras), ortho_count)
+            except Exception:
+                pass
+            try:
+                all_ordered = list(perspective_cameras.keys())
+                self.context_matrix.set_camera_data(list(perspective_cameras.values()), all_ordered)
+            except Exception:
+                pass
         
         # Generate and load 3D elevation for any orthomosaics with DEMs
         self._populate_ortho_elevation()
@@ -609,10 +581,18 @@ class MVATManager(QObject):
             if hasattr(self.viewer, 'match_camera_perspective'):
                 self.viewer.match_camera_perspective(camera)
             self._reorder_cameras(path)
-            
+
+            if self.context_matrix is not None:
+                try:
+                    self.context_matrix.sync_selection_borders(
+                        path, self.selection_model.selected_paths
+                    )
+                except Exception:
+                    pass
+
             try:
                 self.image_window.load_image_by_path(path)
-            except Exception: 
+            except Exception:
                 pass
 
     def _on_camera_selected(self, path: str):
@@ -658,7 +638,7 @@ class MVATManager(QObject):
         Respond to selection model changes (highlight toggles).
 
         Applies highlight state to Camera objects, updates viewer frustums,
-        synchronizes the CameraGrid UI to the model, clears any active ray
+        synchronizes the ContextMatrix UI to the model, clears any active ray
         visualization, and triggers visibility recomputation for the new set
         of highlighted cameras.
         """
@@ -677,10 +657,17 @@ class MVATManager(QObject):
         self.highlighted_cameras = [self.cameras.get(path) for path in selected_paths if path in self.cameras]
         self._update_frustum_states()
         
-        try:
-            self.camera_grid._sync_ui_to_model()
-        except Exception: 
-            pass
+        if self.context_matrix is not None:
+            try:
+                active_path = self.selection_model.active_path or ""
+                active_label = ""
+                if active_path:
+                    from pathlib import Path
+                    active_label = Path(active_path).stem
+                self.context_matrix.sync_selection_borders(active_path, selected_paths)
+                self.context_matrix.update_selection_labels(active_label, len(selected_paths))
+            except Exception:
+                pass
 
         self.viewer.clear_ray()
         self._update_visibility_filter(list(selected_paths))
@@ -1055,7 +1042,6 @@ class MVATManager(QObject):
             
         camera_scores.sort(key=lambda x: x[1], reverse=True)
         ordered_paths = [p for p, s in camera_scores]
-        self.camera_grid.set_camera_order(ordered_paths)
         
         # Feed ContextMatrixWidget with proximity-ordered neighbors
         if self.context_matrix is not None:
