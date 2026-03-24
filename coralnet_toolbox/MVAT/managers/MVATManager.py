@@ -1159,6 +1159,7 @@ class MVATManager(QObject):
         self.multi_annotate_enabled = enabled
         brush_tool = self.annotation_window.tools.get('brush')
         patch_tool = self.annotation_window.tools.get('patch')
+        sam_tool = self.annotation_window.tools.get('sam')
 
         if enabled:
             self.annotation_window.annotationCreated.connect(self._on_patch_annotation_created)
@@ -1169,6 +1170,9 @@ class MVATManager(QObject):
             if patch_tool is not None:
                 patch_tool.cursor_move_callback = self._on_cursor_preview_moved
                 patch_tool.cursor_clear_callback = self._on_cursor_preview_cleared
+            if sam_tool is not None:
+                # Final-mask propagation callback (no live-hover propagation for now)
+                sam_tool.post_prediction_callback = self._on_sam_prediction_applied
         else:
             try:
                 self.annotation_window.annotationCreated.disconnect(self._on_patch_annotation_created)
@@ -1181,6 +1185,8 @@ class MVATManager(QObject):
             if patch_tool is not None:
                 patch_tool.cursor_move_callback = None
                 patch_tool.cursor_clear_callback = None
+            if sam_tool is not None:
+                sam_tool.post_prediction_callback = None
             self._on_cursor_preview_cleared()
 
     def _on_cursor_preview_moved(self, scene_pos, item_factory):
@@ -1368,6 +1374,86 @@ class MVATManager(QObject):
                     target_mask.update_mask(brush_location, brush_mask, target_class_id)
 
                     # Push the updated mask pixels into the context canvas overlay
+                    context_canvas = self._get_context_canvas_for_path(target_path)
+                    if context_canvas is not None:
+                        context_canvas.set_mask_overlay(target_mask)
+                except Exception:
+                    pass
+        finally:
+            self._propagating_annotation = False
+
+    def _on_sam_prediction_applied(self, scene_pos, label_id: str, binary_mask: np.ndarray):
+        """Propagate a final SAM mask prediction into all visible context cameras.
+
+        Args:
+            scene_pos: QPointF anchoring the center of the prediction crop in image pixels.
+            label_id: UUID of the label used for the prediction on the source image.
+            binary_mask: small (H,W) uint8 array with 1 for predicted pixels.
+        """
+        if self._propagating_annotation:
+            return
+        if self.selected_camera is None:
+            return
+
+        px = int(scene_pos.x())
+        py = int(scene_pos.y())
+        projections = self._build_projection(px, py)
+        if not projections:
+            return
+
+        visible_paths = self._get_visible_context_paths()
+        project_labels = list(self.main_window.label_window.labels)
+
+        # Resolve the Label object for the prediction
+        source_label = next((lbl for lbl in project_labels if lbl.id == label_id), None)
+        if source_label is None:
+            return
+
+        mask_h, mask_w = binary_mask.shape
+
+        self._propagating_annotation = True
+        try:
+            for target_path, (u, v, is_valid) in projections.items():
+                if target_path == self.selected_camera.image_path:
+                    continue
+                if target_path not in visible_paths:
+                    continue
+                if not is_valid:
+                    continue
+
+                target_camera = self.cameras.get(target_path)
+                if target_camera is None:
+                    continue
+                if not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
+                    continue
+
+                try:
+                    target_raster = self.raster_manager.get_raster(target_path)
+                    if target_raster is None:
+                        continue
+                    target_mask = target_raster.get_mask_annotation(project_labels)
+                    if target_mask is None:
+                        continue
+
+                    # Resolve target class_id via stable label_id
+                    target_class_id = target_mask.label_id_to_class_id_map.get(label_id)
+                    if target_class_id is None:
+                        target_mask.sync_label_map([source_label])
+                        target_class_id = target_mask.label_id_to_class_id_map.get(label_id)
+                    if target_class_id is None:
+                        continue
+
+                    # Remap binary prediction to the target class ID
+                    subset_class_mask = (binary_mask.astype(np.uint8) * int(target_class_id))
+
+                    # Compute top-left paste location assuming binary_mask is centered at (u,v)
+                    top_left_x = int(u - mask_w / 2.0)
+                    top_left_y = int(v - mask_h / 2.0)
+
+                    # Apply the subset mask using existing masked update (respects locks)
+                    target_mask.update_mask_with_mask(subset_class_mask, (top_left_x, top_left_y))
+
+                    # Refresh the overlay
                     context_canvas = self._get_context_canvas_for_path(target_path)
                     if context_canvas is not None:
                         context_canvas.set_mask_overlay(target_mask)
