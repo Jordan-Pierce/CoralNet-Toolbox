@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 
 import rasterio
+import zipfile
 from rasterio.crs import CRS
 from rasterio.warp import calculate_default_transform
 
@@ -492,6 +493,17 @@ class Raster(QObject):
                     self.inv_pixels  = data['inv_pixels']
                 return self.index_map
             except Exception as e:
+                # If the cache file is still being written, numpy will raise a
+                # zipfile.BadZipFile / "File is not a zip file" error when trying
+                # to open the .npz. This is a transient race and noisy on the UI
+                # thread — treat it as 'not ready' and return None silently.
+                try:
+                    if isinstance(e, zipfile.BadZipFile) or 'File is not a zip file' in str(e):
+                        return None
+                except Exception:
+                    pass
+                # For other unexpected errors, fall back to a warning so we
+                # still surface real problems.
                 print(f"Warning: Failed to lazy-load index map from {self.index_map_path}: {e}")
         
         # Return None if no index map is available

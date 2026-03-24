@@ -1305,6 +1305,17 @@ class MVATManager(QObject):
             if sam_tool is not None:
                 # Final-mask propagation callback (no live-hover propagation for now)
                 sam_tool.post_prediction_callback = self._on_sam_prediction_applied
+            # Proactively compute visibility/index maps for visible context cameras
+            # so True 3D mapping will be available when the user paints or applies SAM.
+            try:
+                visible = list(self._get_visible_context_paths())
+                if visible and self.compute_index_maps_enabled:
+                    self.main_window.status_bar.showMessage("Preparing context visibility maps...", 2000)
+                    # Ask the visibility system to compute index maps for these visible cameras
+                    # _update_visibility_filter handles cache checks and async worker dispatch.
+                    self._update_visibility_filter(visible)
+            except Exception:
+                pass
         else:
             try:
                 self.annotation_window.annotationCreated.disconnect(self._on_patch_annotation_created)
@@ -1322,13 +1333,78 @@ class MVATManager(QObject):
             self._on_cursor_preview_cleared()
 
     def _on_cursor_preview_moved(self, scene_pos, item_factory):
-        """Project the cursor position into visible context cameras and show previews."""
+        """Project the cursor position into visible context cameras and show previews.
+
+        For the Brush tool: attempts a True 3D hover preview by extracting the
+        element IDs beneath the brush circle, finding their positions in each
+        target camera via the inverted index, then calling item_factory at the
+        centroid of those projected pixels.
+
+        Falls back to the legacy center-point projection when the source index
+        map is unavailable (visibility not yet computed) or when no geometry
+        was hit (background stroke).
+        """
         if self.selected_camera is None or self.context_matrix is None:
             return
+
         px, py = int(scene_pos.x()), int(scene_pos.y())
-        projections = self._build_projection(px, py)
         visible_paths = self._get_visible_context_paths()
-        self.context_matrix.update_cursor_previews(projections, visible_paths, item_factory)
+
+        # ------------------------------------------------------------------
+        # Attempt True 3D hover preview
+        # ------------------------------------------------------------------
+        use_3d = False
+        per_camera_uv: dict = {}   # target_path -> (u_centroid, v_centroid, True)
+
+        source_index_map = self.selected_camera.index_map
+        if source_index_map is not None:
+            # Derive brush dimensions from item_factory by probing it once at
+            # the source pixel — but we don't want to create a graphics item
+            # mid-hover.  Instead, infer the brush radius from the tool directly.
+            brush_tool = self.annotation_window.tools.get('brush')
+            if brush_tool is not None and hasattr(brush_tool, 'brush_mask'):
+                bm = brush_tool.brush_mask
+                bh, bw = bm.shape
+                x0 = px - bw // 2
+                y0 = py - bh // 2
+                x1 = x0 + bw
+                y1 = y0 + bh
+
+                img_h, img_w = source_index_map.shape
+                if x0 < img_w and y0 < img_h and x1 > 0 and y1 > 0:
+                    cx0 = max(x0, 0); cy0 = max(y0, 0)
+                    cx1 = min(x1, img_w); cy1 = min(y1, img_h)
+                    bx0 = cx0 - x0; by0 = cy0 - y0
+                    bx1 = bx0 + (cx1 - cx0); by1 = by0 + (cy1 - cy0)
+
+                    index_slice = source_index_map[cy0:cy1, cx0:cx1]
+                    brush_clip  = bm[by0:by1, bx0:bx1]
+                    raw_ids = index_slice[brush_clip.astype(bool)]
+                    unique_ids = np.unique(raw_ids)
+                    painted_ids = unique_ids[unique_ids > -1]
+
+                    if len(painted_ids) > 0:
+                        for target_path in visible_paths:
+                            if target_path == self.selected_camera.image_path:
+                                continue
+                            target_camera = self.cameras.get(target_path)
+                            if target_camera is None:
+                                continue
+                            flat = target_camera.get_pixels_for_elements(painted_ids)
+                            if len(flat) == 0:
+                                continue
+                            v_arr, u_arr = np.divmod(flat, target_camera.width)
+                            u_c = float(np.mean(u_arr))
+                            v_c = float(np.mean(v_arr))
+                            per_camera_uv[target_path] = (u_c, v_c, True)
+                        use_3d = len(per_camera_uv) > 0
+
+        if use_3d:
+            self.context_matrix.update_cursor_previews(per_camera_uv, visible_paths, item_factory)
+        else:
+            # Legacy fallback: single center-point projection
+            projections = self._build_projection(px, py)
+            self.context_matrix.update_cursor_previews(projections, visible_paths, item_factory)
 
     def _on_cursor_preview_cleared(self):
         """Clear cursor previews from all context canvases."""
@@ -1447,7 +1523,17 @@ class MVATManager(QObject):
             self._propagating_annotation = False
 
     def _on_brush_stroke_applied(self, scene_pos, label_id: str, brush_mask):
-        """Propagate a brush stroke into all visible context cameras."""
+        """Propagate a brush stroke into all visible context cameras.
+
+        Uses True 3D Mapping when the source camera's index map is available:
+        1. Extract the element IDs painted under the brush using the source
+           camera's index_map.
+        2. Query each target camera's inverted index for the same IDs.
+        3. Paint exactly those pixels with update_mask_at_indices().
+
+        Falls back to the legacy 2D center-stamp when the index map is absent
+        (e.g., visibility not yet computed) or when no scene geometry was hit.
+        """
         if self._propagating_annotation:
             return
         if self.selected_camera is None:
@@ -1455,34 +1541,65 @@ class MVATManager(QObject):
 
         px = int(scene_pos.x())
         py = int(scene_pos.y())
-        projections = self._build_projection(px, py)
-        if not projections:
-            return
 
         visible_paths = self._get_visible_context_paths()
         project_labels = list(self.main_window.label_window.labels)
 
-        # Resolve the Label object for the painted label
         source_label = next((lbl for lbl in project_labels if lbl.id == label_id), None)
         if source_label is None:
             return
 
         brush_h, brush_w = brush_mask.shape
 
+        # ------------------------------------------------------------------
+        # Phase 1: Source ID Extraction (2D → 3D)
+        # ------------------------------------------------------------------
+        painted_ids = None
+        source_index_map = self.selected_camera.index_map
+        if source_index_map is not None:
+            # Bounding box of the brush in source image coordinates
+            x0 = px - brush_w // 2
+            y0 = py - brush_h // 2
+            x1 = x0 + brush_w
+            y1 = y0 + brush_h
+
+            img_h, img_w = source_index_map.shape
+
+            # Only proceed if the brush overlaps the image at all
+            if x0 < img_w and y0 < img_h and x1 > 0 and y1 > 0:
+                # Clip to image bounds
+                cx0 = max(x0, 0)
+                cy0 = max(y0, 0)
+                cx1 = min(x1, img_w)
+                cy1 = min(y1, img_h)
+
+                # Corresponding slice of the brush mask
+                bx0 = cx0 - x0
+                by0 = cy0 - y0
+                bx1 = bx0 + (cx1 - cx0)
+                by1 = by0 + (cy1 - cy0)
+
+                index_slice = source_index_map[cy0:cy1, cx0:cx1]
+                brush_clip  = brush_mask[by0:by1, bx0:bx1]
+
+                raw_ids = index_slice[brush_clip.astype(bool)]
+                unique_ids = np.unique(raw_ids)
+                painted_ids = unique_ids[unique_ids > -1]  # filter background
+
+        # Whether the source camera has valid 3D geometry hits to propagate
+        use_3d = painted_ids is not None and len(painted_ids) > 0
+
+        # Projections for 2D fallback — computed lazily inside the loop
+        projections = None
+
         self._propagating_annotation = True
         try:
-            for target_path, (u, v, is_valid) in projections.items():
+            for target_path in list(visible_paths):
                 if target_path == self.selected_camera.image_path:
-                    continue
-                if target_path not in visible_paths:
-                    continue
-                if not is_valid:
                     continue
 
                 target_camera = self.cameras.get(target_path)
                 if target_camera is None:
-                    continue
-                if not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
                     continue
 
                 try:
@@ -1501,9 +1618,44 @@ class MVATManager(QObject):
                     if target_class_id is None:
                         continue
 
-                    from PyQt5.QtCore import QPointF
-                    brush_location = QPointF(u - brush_w / 2.0, v - brush_h / 2.0)
-                    target_mask.update_mask(brush_location, brush_mask, target_class_id)
+                    # Use 3D mapping only when BOTH source hit geometry AND
+                    # the target camera's inverted index has been computed.
+                    # If the target has no index yet (visibility not computed),
+                    # fall through to the 2D stamp so the user always gets
+                    # some propagation regardless of load state.
+                    target_has_index = target_camera._raster.inv_ids is not None
+
+                    if use_3d and target_has_index:
+                        # --------------------------------------------------
+                        # Phase 2: Target Pixel Injection (3D → 2D)
+                        # --------------------------------------------------
+                        flat_indices = target_camera.get_pixels_for_elements(painted_ids)
+                        if len(flat_indices) == 0:
+                            # Element is genuinely occluded in this view — skip
+                            continue
+                        target_mask.update_mask_at_indices(flat_indices, target_class_id)
+                    else:
+                        # 2D center-stamp fallback:
+                        # Either source hit background, OR target's index isn't
+                        # computed yet.  Build projections lazily (once per stroke).
+                        if projections is None:
+                            projections = self._build_projection(px, py)
+                        proj = projections.get(target_path)
+                        if proj is None:
+                            continue
+                        u, v, is_valid = proj
+                        if not is_valid:
+                            continue
+                        if not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
+                            continue
+                        from PyQt5.QtCore import QPointF
+                        brush_location = QPointF(u - brush_w / 2.0, v - brush_h / 2.0)
+                        target_mask.update_mask(brush_location, brush_mask, target_class_id)
+
+                    # Ensure the label is visible in the target overlay
+                    if label_id not in target_mask.visible_label_ids:
+                        target_mask.visible_label_ids.add(label_id)
+                        target_mask.update_graphics_item()
 
                     # Push the updated mask pixels into the context canvas overlay
                     context_canvas = self._get_context_canvas_for_path(target_path)
@@ -1517,9 +1669,18 @@ class MVATManager(QObject):
     def _on_sam_prediction_applied(self, scene_pos, label_id: str, binary_mask: np.ndarray):
         """Propagate a final SAM mask prediction into all visible context cameras.
 
+        Uses True 3D Mapping when the source camera's index map is available:
+        1. Extract the element IDs beneath the predicted binary_mask using the
+           source camera's index_map (the mask is a crop centred at scene_pos).
+        2. Query each target camera's inverted index for the same IDs.
+        3. Paint exactly those pixels with update_mask_at_indices().
+
+        Falls back to the legacy 2D stamp when the index map is absent or when
+        no scene geometry was hit (e.g., sky prediction).
+
         Args:
-            scene_pos: QPointF anchoring the center of the prediction crop in image pixels.
-            label_id: UUID of the label used for the prediction on the source image.
+            scene_pos: QPointF — centre of the prediction crop in source image pixels.
+            label_id: UUID of the label used for the prediction.
             binary_mask: small (H,W) uint8 array with 1 for predicted pixels.
         """
         if self._propagating_annotation:
@@ -1529,34 +1690,62 @@ class MVATManager(QObject):
 
         px = int(scene_pos.x())
         py = int(scene_pos.y())
-        projections = self._build_projection(px, py)
-        if not projections:
-            return
 
         visible_paths = self._get_visible_context_paths()
         project_labels = list(self.main_window.label_window.labels)
 
-        # Resolve the Label object for the prediction
         source_label = next((lbl for lbl in project_labels if lbl.id == label_id), None)
         if source_label is None:
             return
 
         mask_h, mask_w = binary_mask.shape
 
+        # ------------------------------------------------------------------
+        # Phase 1: Source ID Extraction (2D → 3D)
+        # ------------------------------------------------------------------
+        painted_ids = None
+        source_index_map = self.selected_camera.index_map
+        if source_index_map is not None:
+            # The binary_mask is a crop centred at (px, py)
+            x0 = px - mask_w // 2
+            y0 = py - mask_h // 2
+            x1 = x0 + mask_w
+            y1 = y0 + mask_h
+
+            img_h, img_w = source_index_map.shape
+
+            if x0 < img_w and y0 < img_h and x1 > 0 and y1 > 0:
+                cx0 = max(x0, 0)
+                cy0 = max(y0, 0)
+                cx1 = min(x1, img_w)
+                cy1 = min(y1, img_h)
+
+                # Corresponding slice of the binary_mask
+                bx0 = cx0 - x0
+                by0 = cy0 - y0
+                bx1 = bx0 + (cx1 - cx0)
+                by1 = by0 + (cy1 - cy0)
+
+                index_slice = source_index_map[cy0:cy1, cx0:cx1]
+                mask_clip   = binary_mask[by0:by1, bx0:bx1]
+
+                raw_ids = index_slice[mask_clip.astype(bool)]
+                unique_ids = np.unique(raw_ids)
+                painted_ids = unique_ids[unique_ids > -1]
+
+        use_3d = painted_ids is not None and len(painted_ids) > 0
+
+        # Projections for 2D fallback — computed lazily inside the loop
+        projections = None
+
         self._propagating_annotation = True
         try:
-            for target_path, (u, v, is_valid) in projections.items():
+            for target_path in list(visible_paths):
                 if target_path == self.selected_camera.image_path:
-                    continue
-                if target_path not in visible_paths:
-                    continue
-                if not is_valid:
                     continue
 
                 target_camera = self.cameras.get(target_path)
                 if target_camera is None:
-                    continue
-                if not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
                     continue
 
                 try:
@@ -1575,15 +1764,40 @@ class MVATManager(QObject):
                     if target_class_id is None:
                         continue
 
-                    # Remap binary prediction to the target class ID
-                    subset_class_mask = (binary_mask.astype(np.uint8) * int(target_class_id))
+                    target_has_index = target_camera._raster.inv_ids is not None
 
-                    # Compute top-left paste location assuming binary_mask is centered at (u,v)
-                    top_left_x = int(u - mask_w / 2.0)
-                    top_left_y = int(v - mask_h / 2.0)
+                    if use_3d and target_has_index:
+                        # --------------------------------------------------
+                        # Phase 2: Target Pixel Injection (3D → 2D)
+                        # --------------------------------------------------
+                        flat_indices = target_camera.get_pixels_for_elements(painted_ids)
+                        if len(flat_indices) == 0:
+                            # Genuinely occluded in this view — skip
+                            continue
+                        target_mask.update_mask_at_indices(flat_indices, target_class_id)
+                    else:
+                        # 2D center-stamp fallback:
+                        # Either source hit background, OR target's index isn't
+                        # computed yet.  Build projections lazily (once per prediction).
+                        if projections is None:
+                            projections = self._build_projection(px, py)
+                        proj = projections.get(target_path)
+                        if proj is None:
+                            continue
+                        u, v, is_valid = proj
+                        if not is_valid:
+                            continue
+                        if not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
+                            continue
+                        subset_class_mask = binary_mask.astype(np.uint8) * int(target_class_id)
+                        top_left_x = int(u - mask_w / 2.0)
+                        top_left_y = int(v - mask_h / 2.0)
+                        target_mask.update_mask_with_mask(subset_class_mask, (top_left_x, top_left_y))
 
-                    # Apply the subset mask using existing masked update (respects locks)
-                    target_mask.update_mask_with_mask(subset_class_mask, (top_left_x, top_left_y))
+                    # Ensure the label is visible in the target overlay
+                    if label_id not in target_mask.visible_label_ids:
+                        target_mask.visible_label_ids.add(label_id)
+                        target_mask.update_graphics_item()
 
                     # Refresh the overlay
                     context_canvas = self._get_context_canvas_for_path(target_path)

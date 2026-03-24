@@ -278,6 +278,48 @@ class MaskAnnotation(Annotation):
         self._invalidate_stats_cache()
         self.annotationUpdated.emit(self)
         
+    def update_mask_at_indices(self, flat_indices: np.ndarray, class_id: int):
+        """
+        Paint ``class_id`` at the exact pixel positions given by ``flat_indices``
+        (row-major flat indices into a (height × width) image array).
+
+        Respects the LOCK_BIT: locked pixels are never overwritten.
+        Triggers a full canvas repaint because the painted pixels may be
+        scattered arbitrarily across the image (no useful bounding box).
+
+        Args:
+            flat_indices: 1D int64 array of flat pixel positions.
+            class_id:     Target class ID to paint (must be < LOCK_BIT).
+        """
+        if flat_indices is None or len(flat_indices) == 0:
+            return
+
+        height, width = self.mask_data.shape
+        max_idx = height * width - 1
+
+        # Bounds guard: discard any index outside the image
+        valid = flat_indices[(flat_indices >= 0) & (flat_indices <= max_idx)]
+        if len(valid) == 0:
+            return
+
+        # ravel() returns a C-contiguous view so mutations write through to mask_data
+        flat_view = self.mask_data.ravel()
+
+        # Respect locks: only paint unlocked pixels
+        unlocked = valid[flat_view[valid] < self.LOCK_BIT]
+        if len(unlocked) == 0:
+            return
+
+        flat_view[unlocked] = class_id
+
+        # Full canvas repaint (scattered pixels → no useful slice bbox)
+        self._update_full_canvas()
+        if self.graphics_item is not None:
+            self.graphics_item.update()
+
+        self._invalidate_stats_cache()
+        self.annotationUpdated.emit(self)
+
     def update_mask_with_mask(self, subset_mask: np.ndarray, top_left: tuple[int, int]):
         """
         Updates a subset area of the mask with a provided mask containing multiple labels.

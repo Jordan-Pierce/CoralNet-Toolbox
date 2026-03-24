@@ -155,25 +155,34 @@ class CacheManager:
         """
         cache_path = self.get_cache_path(extrinsics, point_cloud_path, element_type)
         
-        try:
-            # Build save dict with required and optional fields
-            save_dict = {
-                'index_map': index_map,
-                'visible_indices': visible_indices,
-                'element_type': element_type
-            }
-            if depth_map is not None:
-                save_dict['depth_map'] = depth_map
-            if inverted_index is not None:
-                save_dict['inv_ids']     = inverted_index['inv_ids']
-                save_dict['inv_offsets'] = inverted_index['inv_offsets']
-                save_dict['inv_pixels']  = inverted_index['inv_pixels']
-            
-            # Save as compressed numpy archive
-            np.savez_compressed(cache_path, **save_dict)
+        # Build save dict with required and optional fields
+        save_dict = {
+            'index_map': index_map,
+            'visible_indices': visible_indices,
+            'element_type': element_type
+        }
+        if depth_map is not None:
+            save_dict['depth_map'] = depth_map
+        if inverted_index is not None:
+            save_dict['inv_ids']     = inverted_index['inv_ids']
+            save_dict['inv_offsets'] = inverted_index['inv_offsets']
+            save_dict['inv_pixels']  = inverted_index['inv_pixels']
 
+        # Write atomically: write to a temp file then rename into place to avoid
+        # consumers attempting to read a partially-written .npz (which yields
+        # "File is not a zip file" errors).
+        temp_path = cache_path + '.tmp'
+        try:
+            np.savez_compressed(temp_path, **save_dict)
+            # Atomic replace (works on Windows and POSIX)
+            os.replace(temp_path, cache_path)
             return cache_path
         except Exception as e:
+            try:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except Exception:
+                pass
             print(f"Warning: Failed to save visibility cache to {cache_path}: {e}")
             return None
     
