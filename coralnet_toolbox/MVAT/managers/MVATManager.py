@@ -93,47 +93,176 @@ class MousePositionBridge(QObject):
             self.clear_all_markers()
             self.manager.viewer.clear_ray()
             return
-            
-        raster = camera._raster
-        depth = None
-        if raster.z_channel is not None and raster.z_data_type == 'depth':
-            depth = raster.get_z_value(x, y)
-        
-        if depth is None or depth <= 0 or np.isnan(depth):
-            default_depth = self.manager.viewer.get_scene_median_depth(camera.position)
-        else:
-            default_depth = 10.0
-        
-        ray = CameraRay.from_pixel_and_camera(
-            pixel_xy=(x, y),
-            camera=camera,
-            depth=depth,
-            default_depth=default_depth
-        )
-        
+
+        primary_target = self.manager.viewer.scene_context.get_primary_target()
+
+        # --- Path A: Index Map (preferred) ---
+        ray = None
+        candidate_id = -1
+        index_map = camera.index_map
+        if index_map is not None:
+            candidate_id = int(index_map[y, x])
+
+        if candidate_id > -1 and primary_target is not None:
+            coord = primary_target.get_element_coordinate(candidate_id)
+            if coord is not None:
+                origin = camera.position.copy()
+                direction = coord - origin
+                norm = np.linalg.norm(direction)
+                direction = direction / norm if norm > 0 else camera.R.T @ np.array([0, 0, 1])
+                ray = CameraRay(
+                    origin=origin,
+                    direction=direction,
+                    terminal_point=coord,
+                    has_accurate_depth=True,
+                    pixel_coord=(x, y),
+                    source_camera=camera,
+                    element_id=candidate_id,
+                )
+
+        # --- Path B: Z-channel / depth fallback ---
+        if ray is None:
+            raster = camera._raster
+            depth = None
+            if raster.z_channel is not None and raster.z_data_type == 'depth':
+                depth = raster.get_z_value(x, y)
+            if depth is None or depth <= 0 or np.isnan(depth):
+                default_depth = self.manager.viewer.get_scene_median_depth(camera.position)
+            else:
+                default_depth = 10.0
+            ray = CameraRay.from_pixel_and_camera(
+                pixel_xy=(x, y),
+                camera=camera,
+                depth=depth,
+                default_depth=default_depth,
+            )
+
         highlighted_cameras = self.manager.highlighted_cameras
         rays_with_colors = [(ray, RAY_COLOR_SELECTED if ray.has_accurate_depth else RAY_COLOR_INVALID)]
+        
+        # --- Short-Circuit Invalid Primary Rays ---
+        # If the primary ray did not hit real scene geometry, skip secondary rays entirely
+        # (no secondary rays should project into an arbitrary guessed point in empty space).
+        primary_ray_valid = ray.has_accurate_depth or ray.element_id > -1
+        if not primary_ray_valid:
+            # Primary ray is invalid: send only the invalid primary ray (RED), clear markers, and return
+            self.manager.viewer.show_rays(rays_with_colors)
+            self.clear_all_markers()
+            return
+        
+        # --- Primary ray is valid: proceed with secondary rays ---
         visibility_status = {}
         accuracies = {camera.image_path: ray.has_accurate_depth}
-        
+
         for target_cam in highlighted_cameras:
             if target_cam.image_path == camera.image_path:
                 continue
-            
-            is_occluded = target_cam.is_point_occluded_depth_based(ray.terminal_point, depth_threshold=0.15)
-            visibility_status[target_cam.image_path] = is_occluded
-            
-            target_ray = CameraRay.from_world_point_and_camera(
-                world_point=ray.terminal_point,
-                camera=target_cam
+
+            # Orthographic secondary cameras: skip index-map occlusion check
+            if target_cam.is_orthographic:
+                target_ray = CameraRay.from_world_point_and_camera(
+                    world_point=ray.terminal_point, camera=target_cam)
+                rays_with_colors.append((target_ray, RAY_COLOR_HIGHLIGHTED))
+                visibility_status[target_cam.image_path] = False
+                accuracies[target_cam.image_path] = True
+                continue
+
+            # Project primary terminal point into this camera
+            proj = target_cam.project(ray.terminal_point)
+            u_proj = int(round(float(proj[0]))) if not np.isnan(proj[0]) else -1
+            v_proj = int(round(float(proj[1]))) if not np.isnan(proj[1]) else -1
+            in_bounds = (
+                not np.isnan(proj[0])
+                and 0 <= u_proj < target_cam.width
+                and 0 <= v_proj < target_cam.height
             )
-            ray_color = RAY_COLOR_HIGHLIGHTED if target_ray.has_accurate_depth else RAY_COLOR_INVALID
+
+            target_terminal = ray.terminal_point
+            ray_color = RAY_COLOR_INVALID
+            is_occluded = True
+            found_id = -1
+
+            if not in_bounds:
+                target_terminal = camera.position + ray.direction * 5.0
+                accuracies[target_cam.image_path] = False
+
+            elif target_cam.index_map is not None and ray.element_id > -1:
+                found_id = int(target_cam.index_map[v_proj, u_proj])
+
+                # Determine visibility with spatial tolerance.
+                # METHOD A: 3D Distance Threshold (ACTIVE)
+                # Resolves false-positive occlusions caused by sub-pixel rounding when
+                # projecting the primary 3D point into the secondary camera.  A found_id
+                # that differs from primary_element_id may still belong to the same
+                # physical surface patch; we accept it as visible when its 3D centre is
+                # within 5% of the camera-to-point distance.
+                is_visible = False
+                if found_id == ray.element_id:
+                    is_visible = True
+                elif found_id > -1 and primary_target is not None:
+                    found_coord = primary_target.get_element_coordinate(found_id)
+                    if found_coord is not None:
+                        surface_dist = np.linalg.norm(found_coord - ray.terminal_point)
+                        cam_to_point_dist = np.linalg.norm(target_cam.position - ray.terminal_point)
+                        tolerance = 0.05 * cam_to_point_dist
+                        if surface_dist <= tolerance:
+                            is_visible = True
+
+                # METHOD B: 2D Neighbourhood Search (COMMENTED OUT — for comparison testing)
+                # Checks whether primary_element_id appears anywhere in a 5×5 pixel window
+                # around the projected pixel, catching cases where aliasing shifts the hit
+                # by 1-2 pixels.
+                # -----------------------------------------------------------------------
+                # HALF = 2  # half-width of the search window (full window = 2*HALF+1)
+                # v_lo = max(0, v_proj - HALF)
+                # v_hi = min(target_cam.height, v_proj + HALF + 1)
+                # u_lo = max(0, u_proj - HALF)
+                # u_hi = min(target_cam.width,  u_proj + HALF + 1)
+                # neighbourhood = target_cam.index_map[v_lo:v_hi, u_lo:u_hi]
+                # is_visible = int(ray.element_id) in neighbourhood
+                # -----------------------------------------------------------------------
+
+                if is_visible:
+                    ray_color = RAY_COLOR_HIGHLIGHTED
+                    target_terminal = ray.terminal_point
+                    is_occluded = False
+                    accuracies[target_cam.image_path] = True
+
+                elif found_id > -1:                                 # TRUE OCCLUSION
+                    occluder = primary_target.get_element_coordinate(found_id) if primary_target else None
+                    target_terminal = occluder if occluder is not None else ray.terminal_point
+                    accuracies[target_cam.image_path] = False
+
+                else:                                               # BACKGROUND (-1)
+                    accuracies[target_cam.image_path] = False
+
+            else:
+                # Legacy fallback: depth-based occlusion test
+                is_occluded = target_cam.is_point_occluded_depth_based(
+                    ray.terminal_point, depth_threshold=0.15)
+                ray_color = RAY_COLOR_HIGHLIGHTED if not is_occluded else RAY_COLOR_INVALID
+                accuracies[target_cam.image_path] = target_cam._raster.z_channel is not None
+
+            visibility_status[target_cam.image_path] = is_occluded
+
+            # Build secondary ray directly
+            t_origin = target_cam.position.copy()
+            t_direction = target_terminal - t_origin
+            t_norm = np.linalg.norm(t_direction)
+            t_direction = t_direction / t_norm if t_norm > 0 else target_cam.R.T @ np.array([0, 0, 1])
+            target_ray = CameraRay(
+                origin=t_origin,
+                direction=t_direction,
+                terminal_point=target_terminal,
+                has_accurate_depth=(ray_color == RAY_COLOR_HIGHLIGHTED),
+                source_camera=target_cam,
+                element_id=found_id,
+            )
             rays_with_colors.append((target_ray, ray_color))
-            accuracies[target_cam.image_path] = target_ray.has_accurate_depth
-        
+
         self.manager.viewer.show_rays(rays_with_colors)
         projections = ray.project_to_cameras(self.manager.cameras)
-        
+
         # Update context matrix canvases (Phase 4)
         if self.manager.context_matrix is not None:
             try:
@@ -541,7 +670,8 @@ class MVATManager(QObject):
                     result.get('index_map'), 
                     cache_path, 
                     result.get('visible_indices'),
-                    element_type=element_type
+                    element_type=element_type,
+                    inverted_index=result.get('inverted_index')
                 )
             except Exception:
                 pass
@@ -797,7 +927,8 @@ class MVATManager(QObject):
                         cached_data.get('index_map'), 
                         cache_path, 
                         cached_data.get('visible_indices'),
-                        element_type=element_type
+                        element_type=element_type,
+                        inverted_index=cached_data.get('inverted_index')
                     )
                     
                     # Also restore the depth map if it exists and is enabled

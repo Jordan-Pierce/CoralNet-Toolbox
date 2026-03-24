@@ -117,6 +117,16 @@ class CacheManager:
             else:
                 result['element_type'] = element_type
 
+            # CSR inverted index (new; absent in old cache files)
+            if 'inv_ids' in data and 'inv_offsets' in data and 'inv_pixels' in data:
+                result['inverted_index'] = {
+                    'inv_ids':     data['inv_ids'],
+                    'inv_offsets': data['inv_offsets'],
+                    'inv_pixels':  data['inv_pixels'],
+                }
+            else:
+                result['inverted_index'] = None  # backward compat: regenerated on next compute
+
             return result
         except Exception as e:
             print(f"Warning: Failed to load visibility cache from {cache_path}: {e}")
@@ -125,7 +135,8 @@ class CacheManager:
     def save_visibility(self, extrinsics: np.ndarray, point_cloud_path: str, 
                         index_map: np.ndarray, visible_indices: np.ndarray,
                         depth_map: Optional[np.ndarray] = None,
-                        element_type: str = 'point') -> str:
+                        element_type: str = 'point',
+                        inverted_index: Optional[Dict] = None) -> str:
         """
         Save visibility data to cache.
         
@@ -136,6 +147,8 @@ class CacheManager:
             visible_indices (np.ndarray): 1D array of visible element IDs
             depth_map (np.ndarray, optional): 2D depth map (H x W)
             element_type (str): Type of indexed elements ('point', 'face', or 'cell')
+            inverted_index (dict, optional): CSR inverted index with keys
+                'inv_ids', 'inv_offsets', 'inv_pixels'.
             
         Returns:
             str: Path to the saved cache file
@@ -151,6 +164,10 @@ class CacheManager:
             }
             if depth_map is not None:
                 save_dict['depth_map'] = depth_map
+            if inverted_index is not None:
+                save_dict['inv_ids']     = inverted_index['inv_ids']
+                save_dict['inv_offsets'] = inverted_index['inv_offsets']
+                save_dict['inv_pixels']  = inverted_index['inv_pixels']
             
             # Save as compressed numpy archive
             np.savez_compressed(cache_path, **save_dict)

@@ -51,6 +51,41 @@ class VisibilityManager:
     annotation engines to properly interpret index map values.
     """
 
+    @staticmethod
+    def _build_inverted_index(index_map: np.ndarray):
+        """
+        Build a CSR-style inverted index from a 2D index map.
+
+        Maps each visible element ID back to the set of flat pixel indices
+        (row-major: flat_idx = v * width + u) where it appears.
+
+        Returns:
+            dict with keys:
+                'inv_ids'     (int32): sorted unique element IDs with >= 1 pixel
+                'inv_offsets' (int64): length len(inv_ids)+1; offsets into inv_pixels
+                'inv_pixels'  (int32): concatenated flat pixel indices
+            or None if no valid pixels exist.
+        """
+        flat = index_map.ravel()
+        flat_pixel_positions = np.where(flat >= 0)[0].astype(np.int32)
+        if len(flat_pixel_positions) == 0:
+            return None
+        
+        element_ids_at_pixels = flat[flat_pixel_positions].astype(np.int32)
+        sort_order = np.argsort(element_ids_at_pixels, kind='stable')
+        sorted_ids    = element_ids_at_pixels[sort_order]
+        sorted_pixels = flat_pixel_positions[sort_order]
+        unique_ids, start_positions, _ = np.unique(sorted_ids, return_index=True, return_counts=True)
+        offsets = np.empty(len(unique_ids) + 1, dtype=np.int64)
+        offsets[:-1] = start_positions
+        offsets[-1]  = len(sorted_pixels)
+        
+        return {
+            'inv_ids':     unique_ids.astype(np.int32),
+            'inv_offsets': offsets,
+            'inv_pixels':  sorted_pixels,
+        }
+
     @classmethod
     def compute_visibility_from_scene(cls,
                                       scene_context: 'SceneContext',
@@ -90,7 +125,8 @@ class VisibilityManager:
                 'index_map': np.full((height, width), -1, dtype=np.int32),
                 'visible_indices': np.array([], dtype=np.int32),
                 'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
-                'element_type': 'point'
+                'element_type': 'point',
+                'inverted_index': None,
             }
         
         element_type = primary_target.get_element_type()
@@ -119,7 +155,8 @@ class VisibilityManager:
             'index_map': np.full((height, width), -1, dtype=np.int32),
             'visible_indices': np.array([], dtype=np.int32),
             'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
-            'element_type': element_type
+            'element_type': element_type,
+            'inverted_index': None,
         }
 
     @classmethod
@@ -252,7 +289,8 @@ class VisibilityManager:
             return [{
                 'index_map': np.full((h, w), -1, dtype=np.int32),
                 'visible_indices': np.array([], dtype=np.int32),
-                'depth_map': np.full((h, w), np.nan, dtype=np.float32) if compute_depth_maps else None
+                'depth_map': np.full((h, w), np.nan, dtype=np.float32) if compute_depth_maps else None,
+                'inverted_index': None,
             } for _, _, _, w, h in camera_params_list]
 
         # 2. Fast Downsampled Raycasting
@@ -308,7 +346,8 @@ class VisibilityManager:
             results.append({
                 'index_map': index_map,
                 'visible_indices': visible_indices,
-                'depth_map': depth_map
+                'depth_map': depth_map,
+                'inverted_index': cls._build_inverted_index(index_map),
             })
             
         print(f"✅ Full Open3D cycle for {len(camera_params_list)} cameras completed in {time.time() - start_time:.3f}s")
@@ -342,7 +381,8 @@ class VisibilityManager:
             return {
                 'index_map': np.full((height, width), -1, dtype=np.int32),
                 'visible_indices': np.array([], dtype=np.int32),
-                'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None
+                'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
+                'inverted_index': None,
             }
         
         print(f"🎨 Mesh visibility: VTK rasterization for {n_cells:,} cells at {width}x{height}")
@@ -433,7 +473,8 @@ class VisibilityManager:
         return {
             'index_map': index_map,
             'visible_indices': visible_indices,
-            'depth_map': depth_map
+            'depth_map': depth_map,
+            'inverted_index': cls._build_inverted_index(index_map),
         }
 
     @classmethod
@@ -563,7 +604,8 @@ class VisibilityManager:
             return {
                 'index_map': np.full((height, width), -1, dtype=np.int32),
                 'visible_indices': np.array([], dtype=np.int32),
-                'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None
+                'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
+                'inverted_index': None,
             }
 
     @classmethod
@@ -735,7 +777,8 @@ class VisibilityManager:
                 results.append({
                     'index_map': np.full((height, width), -1, dtype=np.int32),
                     'visible_indices': np.array([], dtype=np.int32),
-                    'depth_map': np.full((height, width), np.nan, dtype=np.float32)
+                    'depth_map': np.full((height, width), np.nan, dtype=np.float32),
+                    'inverted_index': None,
                 })
                 continue
             
@@ -782,10 +825,12 @@ class VisibilityManager:
             else:
                 depth_map_np = None
 
+            index_map_np = index_map_2d.cpu().numpy()
             results.append({
-                'index_map': index_map_2d.cpu().numpy(),
+                'index_map': index_map_np,
                 'visible_indices': visible_indices.cpu().numpy(),
-                'depth_map': depth_map_np
+                'depth_map': depth_map_np,
+                'inverted_index': VisibilityManager._build_inverted_index(index_map_np),
             })
         
         compute_time = time.time() - start_time
@@ -845,7 +890,8 @@ class VisibilityManager:
             return {
                 'index_map': np.full((height, width), -1, dtype=np.int32),
                 'visible_indices': np.array([], dtype=np.int32),
-                'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None
+                'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
+                'inverted_index': None,
             }
 
         # 5. Z-Buffering (Scatter Reduce)
@@ -900,10 +946,12 @@ class VisibilityManager:
         else:
             depth_map_np = None
 
+        index_map_np = index_map_2d.cpu().numpy()
         return {
-            'index_map': index_map_2d.cpu().numpy(),
+            'index_map': index_map_np,
             'visible_indices': visible_indices.cpu().numpy(),
-            'depth_map': depth_map_np
+            'depth_map': depth_map_np,
+            'inverted_index': VisibilityManager._build_inverted_index(index_map_np),
         }
 
     @staticmethod
@@ -943,7 +991,8 @@ class VisibilityManager:
             return {
                 'index_map': np.full((height, width), -1, dtype=np.int32),
                 'visible_indices': np.array([], dtype=np.int32),
-                'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None
+                'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
+                'inverted_index': None,
             }
 
         # 4. Z-Buffering (The Sorting Trick)
@@ -973,7 +1022,8 @@ class VisibilityManager:
         return {
             'index_map': index_map,
             'visible_indices': visible_indices,
-            'depth_map': depth_map
+            'depth_map': depth_map,
+            'inverted_index': VisibilityManager._build_inverted_index(index_map),
         }
         
     @classmethod
@@ -1044,7 +1094,8 @@ class VisibilityManager:
         if valid_ids.numel() == 0:
             return {
                 'index_map': np.full((height, width), -1, dtype=np.int32),
-                'visible_indices': np.array([], dtype=np.int32)
+                'visible_indices': np.array([], dtype=np.int32),
+                'inverted_index': None,
             }
 
         # 5. Z-Buffering (Scatter Reduce for Max Z)
@@ -1073,9 +1124,11 @@ class VisibilityManager:
 
         visible_indices = torch.unique(final_ids, sorted=True)
 
+        index_map_np = index_map_2d.cpu().numpy()
         return {
-            'index_map': index_map_2d.cpu().numpy(),
-            'visible_indices': visible_indices.cpu().numpy()
+            'index_map': index_map_np,
+            'visible_indices': visible_indices.cpu().numpy(),
+            'inverted_index': VisibilityManager._build_inverted_index(index_map_np),
         }
 
     @staticmethod
@@ -1099,7 +1152,8 @@ class VisibilityManager:
         if len(id_valid) == 0:
             return {
                 'index_map': np.full((height, width), -1, dtype=np.int32),
-                'visible_indices': np.array([], dtype=np.int32)
+                'visible_indices': np.array([], dtype=np.int32),
+                'inverted_index': None,
             }
 
         # Vectorized Z-Buffering (The Sorting Trick)
@@ -1118,5 +1172,6 @@ class VisibilityManager:
 
         return {
             'index_map': index_map,
-            'visible_indices': visible_indices
+            'visible_indices': visible_indices,
+            'inverted_index': VisibilityManager._build_inverted_index(index_map),
         }

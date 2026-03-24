@@ -163,6 +163,15 @@ class PointCloudProduct(AbstractSceneProduct):
         """Check if point cloud has normal vectors."""
         return 'Normals' in self.array_names or 'normals' in self.array_names
 
+    def get_element_coordinate(self, element_id: int):
+        """Return the 3D world coordinate of a single point by its sequential ID."""
+        if self.mesh is None:
+            return None
+        pts = self.mesh.points
+        if element_id < 0 or element_id >= len(pts):
+            return None
+        return pts[element_id].astype(np.float64)
+
 
 class MeshProduct(AbstractSceneProduct):
     """
@@ -249,6 +258,11 @@ class MeshProduct(AbstractSceneProduct):
         
         if self._original_cell_ids is not None:
             self._original_cell_ids_pt = torch.tensor(self._original_cell_ids.astype(np.int64), device=self.device)
+            # Index map stores original (pre-triangulation) cell IDs; use original mesh cell centers
+            self._element_centers_np = np.asarray(self.mesh.cell_centers().points, dtype=np.float32)
+        else:
+            # Index map stores triangulated face IDs
+            self._element_centers_np = centers_np.copy()
         
         print(f"✅ Geometry extracted and cached in {time.time() - start_time:.3f}s")
     
@@ -326,6 +340,15 @@ class MeshProduct(AbstractSceneProduct):
         """
         self.mesh.compute_normals(cell_normals=True, point_normals=False, inplace=True)
         return self.mesh.cell_data['Normals']
+
+    def get_element_coordinate(self, element_id: int):
+        """Return the 3D center coordinate of a mesh face by its ID."""
+        if not hasattr(self, '_element_centers_np') or self._element_centers_np is None:
+            self.prepare_geometry()
+        centers = self._element_centers_np
+        if centers is None or element_id < 0 or element_id >= len(centers):
+            return None
+        return centers[element_id].astype(np.float64)
 
 
 class DEMProduct(AbstractSceneProduct):
@@ -413,6 +436,7 @@ class DEMProduct(AbstractSceneProduct):
         self._cached_face_centers_pt = torch.tensor(centers_np, device=self.device)
         self._cached_centers_sq_norm_pt = torch.tensor(centers_sq_norm_np, device=self.device)
         self._cached_triangles_pt = torch.tensor(triangles_np.astype(np.int64), device=self.device)
+        self._element_centers_np = centers_np.copy()
         
         # Fulfills the PyTorch GPU raycaster contract
         self._original_cell_ids = None 
@@ -526,6 +550,15 @@ class DEMProduct(AbstractSceneProduct):
             return None
         mesh.compute_normals(cell_normals=True, point_normals=False, inplace=True)
         return mesh.cell_data['Normals']
+
+    def get_element_coordinate(self, element_id: int):
+        """Return the 3D center coordinate of a DEM face by its ID."""
+        if not hasattr(self, '_element_centers_np') or self._element_centers_np is None:
+            self.prepare_geometry()
+        centers = self._element_centers_np
+        if centers is None or element_id < 0 or element_id >= len(centers):
+            return None
+        return centers[element_id].astype(np.float64)
 
     @property
     def elevation(self):

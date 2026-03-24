@@ -135,6 +135,28 @@ class Camera:
         """
         return self._raster.index_map_lazy
 
+    def get_pixels_for_element(self, element_id: int) -> list:
+        """
+        Return all (u, v) pixel coordinates where element_id is visible.
+
+        Uses the CSR inverted index stored on the raster for O(log N) lookup.
+
+        Returns:
+            list of (u, v) tuples, or [] if the inverted index is unavailable
+            or element_id is not visible.
+        """
+        inv_ids     = self._raster.inv_ids
+        inv_offsets = self._raster.inv_offsets
+        inv_pixels  = self._raster.inv_pixels
+        if inv_ids is None or len(inv_ids) == 0:
+            return []
+        idx = int(np.searchsorted(inv_ids, element_id))
+        if idx >= len(inv_ids) or inv_ids[idx] != element_id:
+            return []
+        flat = inv_pixels[inv_offsets[idx] : inv_offsets[idx + 1]]
+        v_arr, u_arr = np.divmod(flat, self.width)
+        return list(zip(u_arr.tolist(), v_arr.tolist()))
+
     # --------------------------------------------------------------------------
     # Geometric Methods
     # --------------------------------------------------------------------------
