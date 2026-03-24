@@ -155,6 +155,13 @@ class CacheManager:
         """
         cache_path = self.get_cache_path(extrinsics, point_cloud_path, element_type)
         
+        # Ensure cache directory exists
+        try:
+            os.makedirs(self.cache_dir, exist_ok=True)
+        except Exception as e:
+            print(f"Warning: Failed to create cache directory {self.cache_dir}: {e}")
+            return None
+        
         # Build save dict with required and optional fields
         save_dict = {
             'index_map': index_map,
