@@ -177,16 +177,17 @@ class MousePositionBridge(QObject):
                 and 0 <= v_proj < target_cam.height
             )
 
+            # If the projected point is out of bounds, skip this camera entirely
+            # (no secondary ray should be drawn into empty space outside the image)
+            if not in_bounds:
+                continue
+
             target_terminal = ray.terminal_point
             ray_color = RAY_COLOR_INVALID
             is_occluded = True
             found_id = -1
 
-            if not in_bounds:
-                target_terminal = camera.position + ray.direction * 5.0
-                accuracies[target_cam.image_path] = False
-
-            elif target_cam.index_map is not None and ray.element_id > -1:
+            if target_cam.index_map is not None and ray.element_id > -1:
                 found_id = int(target_cam.index_map[v_proj, u_proj])
 
                 # Determine visibility with spatial tolerance.
