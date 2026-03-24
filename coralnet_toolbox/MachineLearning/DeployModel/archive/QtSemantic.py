@@ -12,7 +12,7 @@ from torch.cuda import empty_cache
 
 from coralnet_toolbox.MachineLearning.DeployModel.QtBase import Base
 
-from coralnet_toolbox.MachineLearning.SMP import SemanticModel 
+from coralnet_toolbox.MachineLearning.archive.SMP import SemanticModel 
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 

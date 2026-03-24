@@ -81,6 +81,12 @@ class SAMTool(Tool):
         self.output_type = "Polygon"  # Default value, will be synced from dialog
         self.allow_holes = False  # Default value, will be synced from dialog
 
+        # Callback invoked after a final Mask prediction is applied to the active image.
+        # Signature: callback(scene_pos: QPointF, label_id: str, binary_mask: np.ndarray)
+        # The binary_mask is a small (H,W) uint8 array with 1 for predicted pixels.
+        # Targets will remap the mask to their class IDs before applying.
+        self.post_prediction_callback = None
+
         # --- THE FIX: Hover Debounce Timer ---
         # Debounce heavy hover predictions so rapid mouseMoveEvents don't flood the UI thread
         self.hover_timer = QTimer()
@@ -888,19 +894,38 @@ class SAMTool(Tool):
             # --- THE FIX: GPU-Native Math & Type Casting ---
             # 1. Threshold the mask on the GPU (> 0)
             # 2. Cast to an 8-bit integer (drastically reduces PCIe transfer size)
-            # 3. Multiply by the class ID on the GPU
-            # 4. FINALLY move the lightweight result to the CPU
-            cropped_mask_np = ((mask_tensor.squeeze() > 0).to(torch.uint8) * class_id).cpu().numpy()
+            # 3. Move the small binary crop to the CPU first, then multiply by class id
+            #    for the active annotation only. This lets us also send a lightweight
+            #    binary crop to other canvases so they can remap to their own class ids.
+            cropped_binary = (mask_tensor.squeeze() > 0).to(torch.uint8).cpu().numpy()
+            cropped_mask_np = (cropped_binary * class_id).astype(np.uint8)
             
             # Create a prediction mask (full-size, initialized with zeros)
             prediction_mask = np.zeros_like(mask_annotation.mask_data)
-            
+
             # Insert the pre-computed crop directly (no np.where needed!)
             prediction_mask[wa_y:wa_y + wa_height, wa_x:wa_x + wa_width] = cropped_mask_np
-            
+
             # Update the existing mask annotation with the prediction
             mask_annotation.update_mask_with_prediction_mask(prediction_mask)
-            
+
+            # Propagate the final prediction to other visible canvases if requested.
+            # We send a compact binary crop (1 == predicted) and the label_id so
+            # receivers can remap to their local class IDs before applying.
+            try:
+                if self.post_prediction_callback is not None:
+                    # Anchor the crop at its center so receivers can center-paste like brush strokes
+                    center_x = wa_x + wa_width / 2.0
+                    center_y = wa_y + wa_height / 2.0
+                    anchor = QPointF(center_x, center_y)
+                    # cropped_binary is already the small (H,W) uint8 mask with 0/1 values
+                    self.post_prediction_callback(anchor, label.id, cropped_binary)
+            except Exception:
+                pass
+
+            # Note: For live-hover propagation we would produce a lightweight polygon
+            # or bounding-box preview here and call `cursor_move_callback` instead.
+
             return None
             
         elif self.output_type == "Rectangle":

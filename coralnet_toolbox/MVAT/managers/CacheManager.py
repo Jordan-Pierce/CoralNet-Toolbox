@@ -117,6 +117,16 @@ class CacheManager:
             else:
                 result['element_type'] = element_type
 
+            # CSR inverted index (new; absent in old cache files)
+            if 'inv_ids' in data and 'inv_offsets' in data and 'inv_pixels' in data:
+                result['inverted_index'] = {
+                    'inv_ids':     data['inv_ids'],
+                    'inv_offsets': data['inv_offsets'],
+                    'inv_pixels':  data['inv_pixels'],
+                }
+            else:
+                result['inverted_index'] = None  # backward compat: regenerated on next compute
+
             return result
         except Exception as e:
             print(f"Warning: Failed to load visibility cache from {cache_path}: {e}")
@@ -125,7 +135,8 @@ class CacheManager:
     def save_visibility(self, extrinsics: np.ndarray, point_cloud_path: str, 
                         index_map: np.ndarray, visible_indices: np.ndarray,
                         depth_map: Optional[np.ndarray] = None,
-                        element_type: str = 'point') -> str:
+                        element_type: str = 'point',
+                        inverted_index: Optional[Dict] = None) -> str:
         """
         Save visibility data to cache.
         
@@ -136,27 +147,42 @@ class CacheManager:
             visible_indices (np.ndarray): 1D array of visible element IDs
             depth_map (np.ndarray, optional): 2D depth map (H x W)
             element_type (str): Type of indexed elements ('point', 'face', or 'cell')
+            inverted_index (dict, optional): CSR inverted index with keys
+                'inv_ids', 'inv_offsets', 'inv_pixels'.
             
         Returns:
             str: Path to the saved cache file
         """
         cache_path = self.get_cache_path(extrinsics, point_cloud_path, element_type)
         
-        try:
-            # Build save dict with required and optional fields
-            save_dict = {
-                'index_map': index_map,
-                'visible_indices': visible_indices,
-                'element_type': element_type
-            }
-            if depth_map is not None:
-                save_dict['depth_map'] = depth_map
-            
-            # Save as compressed numpy archive
-            np.savez_compressed(cache_path, **save_dict)
+        # Build save dict with required and optional fields
+        save_dict = {
+            'index_map': index_map,
+            'visible_indices': visible_indices,
+            'element_type': element_type
+        }
+        if depth_map is not None:
+            save_dict['depth_map'] = depth_map
+        if inverted_index is not None:
+            save_dict['inv_ids']     = inverted_index['inv_ids']
+            save_dict['inv_offsets'] = inverted_index['inv_offsets']
+            save_dict['inv_pixels']  = inverted_index['inv_pixels']
 
+        # Write atomically: write to a temp file then rename into place to avoid
+        # consumers attempting to read a partially-written .npz (which yields
+        # "File is not a zip file" errors).
+        temp_path = cache_path + '.tmp'
+        try:
+            np.savez_compressed(temp_path, **save_dict)
+            # Atomic replace (works on Windows and POSIX)
+            os.replace(temp_path, cache_path)
             return cache_path
         except Exception as e:
+            try:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except Exception:
+                pass
             print(f"Warning: Failed to save visibility cache to {cache_path}: {e}")
             return None
     

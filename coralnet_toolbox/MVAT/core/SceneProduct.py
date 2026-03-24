@@ -138,7 +138,23 @@ class AbstractSceneProduct(ABC):
             Number of elements (points, faces, or cells).
         """
         pass
-    
+
+    @abstractmethod
+    def get_element_coordinate(self, element_id: int) -> Optional[np.ndarray]:
+        """
+        Return the 3D world coordinate [X, Y, Z] for the given element as a (3,) float64 array.
+
+        For point clouds: the point's XYZ.
+        For meshes / DEMs: the face / cell center.
+
+        Element IDs must match values stored in the visibility index_map.
+
+        Returns:
+            np.ndarray of shape (3,) or None if element_id is out of range or
+            geometry is not yet loaded.
+        """
+        pass
+
     # --------------------------------------------------------------------------
     # Optional Methods - Override in subclasses if needed
     # --------------------------------------------------------------------------

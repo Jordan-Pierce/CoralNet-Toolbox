@@ -54,7 +54,8 @@ class CameraRay:
                  terminal_point: np.ndarray,
                  has_accurate_depth: bool = False,
                  pixel_coord: Optional[Tuple[int, int]] = None,
-                 source_camera: Optional['Camera'] = None):
+                 source_camera: Optional['Camera'] = None,
+                 element_id: int = -1):
         """
         Initialize a CameraRay.
         
@@ -76,6 +77,7 @@ class CameraRay:
         self.has_accurate_depth = has_accurate_depth
         self.pixel_coord = pixel_coord
         self.source_camera = source_camera
+        self.element_id = element_id
         # Visualized start/end points (may be offset slightly to avoid
         # coincident geometry with the viewer camera and near-plane clipping).
         # These are computed by factory methods; default to the raw values.
@@ -84,7 +86,8 @@ class CameraRay:
         
     @classmethod
     def from_pixel_and_camera(cls, pixel_xy: Tuple[int, int], camera: 'Camera', 
-                              depth: Optional[float] = None, default_depth: float = 10.0) -> 'CameraRay':
+                              depth: Optional[float] = None, default_depth: float = 10.0,
+                              element_id: int = -1) -> 'CameraRay':
         
         # --- ORTHOGRAPHIC RAYS ---
         if getattr(camera, 'is_orthographic', False):
@@ -110,7 +113,8 @@ class CameraRay:
                 terminal_point=terminal_point,
                 has_accurate_depth=has_accurate_depth,
                 pixel_coord=pixel_xy,
-                source_camera=camera
+                source_camera=camera,
+                element_id=element_id
             )
             ray.visual_origin = origin.copy()
             ray.visual_terminal = terminal_point.copy()
@@ -155,7 +159,8 @@ class CameraRay:
             terminal_point=terminal_point,
             has_accurate_depth=has_accurate_depth,
             pixel_coord=pixel_xy,
-            source_camera=camera
+            source_camera=camera,
+            element_id=element_id
         )
 
         # Visual start/end default to the true geometry (no offset).
@@ -167,7 +172,8 @@ class CameraRay:
     @classmethod
     def from_world_point_and_camera(cls, 
                                     world_point: np.ndarray, 
-                                    camera: 'Camera') -> 'CameraRay':
+                                    camera: 'Camera',
+                                    element_id: int = -1) -> 'CameraRay':
         """
         Create a ray from a camera's origin to a known 3D world point.
         
@@ -197,7 +203,8 @@ class CameraRay:
                 terminal_point=world_point,
                 has_accurate_depth=True,
                 pixel_coord=None,
-                source_camera=camera
+                source_camera=camera,
+                element_id=element_id
             )
             ray.visual_origin = origin.copy()
             ray.visual_terminal = world_point.copy()
@@ -222,7 +229,8 @@ class CameraRay:
             terminal_point=world_point,
             has_accurate_depth=True,  # World point is known precisely
             pixel_coord=None,  # Not originating from a pixel
-            source_camera=camera
+            source_camera=camera,
+            element_id=element_id
         )
 
         # Visual start/end default to the true geometry (no offset).

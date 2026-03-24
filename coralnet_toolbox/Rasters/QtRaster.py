@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 
 import rasterio
+import zipfile
 from rasterio.crs import CRS
 from rasterio.warp import calculate_default_transform
 
@@ -122,6 +123,10 @@ class Raster(QObject):
         self.index_map_path: Optional[str] = None  # Path to index_map file if saved separately
         self.visible_indices: Optional[np.ndarray] = None  # 1D array of visible element IDs
         self.index_element_type: Optional[str] = None  # Element type: 'point', 'face', or 'cell'
+        # CSR inverted index (element_id -> flat pixel indices)
+        self.inv_ids: Optional[np.ndarray] = None      # int32: sorted unique element IDs
+        self.inv_offsets: Optional[np.ndarray] = None  # int64: offsets into inv_pixels
+        self.inv_pixels: Optional[np.ndarray] = None   # int32: flat pixel indices
         
         # Metadata
         self.metadata = {}  # Can store any additional metadata
@@ -354,7 +359,8 @@ class Raster(QObject):
     
     def add_index_map(self, index_map: np.ndarray, index_map_path: Optional[str] = None, 
                       visible_indices: Optional[np.ndarray] = None,
-                      element_type: Optional[str] = 'point'):
+                      element_type: Optional[str] = 'point',
+                      inverted_index: Optional[dict] = None):
         """
         Add or update index map and visible indices data.
         
@@ -389,6 +395,14 @@ class Raster(QObject):
         self.index_map = index_map.copy()
         self.index_map_path = index_map_path
         self.index_element_type = element_type
+        
+        # Store CSR inverted index
+        if inverted_index is not None:
+            self.inv_ids     = inverted_index['inv_ids']
+            self.inv_offsets = inverted_index['inv_offsets']
+            self.inv_pixels  = inverted_index['inv_pixels']
+        else:
+            self.inv_ids = self.inv_offsets = self.inv_pixels = None
         
         # Set visible_indices if provided
         if visible_indices is not None:
@@ -450,6 +464,7 @@ class Raster(QObject):
         self.index_map_path = None
         self.visible_indices = None
         self.index_element_type = None
+        self.inv_ids = self.inv_offsets = self.inv_pixels = None
         
     @property
     def index_map_lazy(self):
@@ -471,8 +486,24 @@ class Raster(QObject):
                 self.index_map = data['index_map']
                 if 'visible_indices' in data:
                     self.visible_indices = data['visible_indices']
+                # Restore CSR inverted index if present
+                if 'inv_ids' in data and 'inv_offsets' in data and 'inv_pixels' in data:
+                    self.inv_ids     = data['inv_ids']
+                    self.inv_offsets = data['inv_offsets']
+                    self.inv_pixels  = data['inv_pixels']
                 return self.index_map
             except Exception as e:
+                # If the cache file is still being written, numpy will raise a
+                # zipfile.BadZipFile / "File is not a zip file" error when trying
+                # to open the .npz. This is a transient race and noisy on the UI
+                # thread — treat it as 'not ready' and return None silently.
+                try:
+                    if isinstance(e, zipfile.BadZipFile) or 'File is not a zip file' in str(e):
+                        return None
+                except Exception:
+                    pass
+                # For other unexpected errors, fall back to a warning so we
+                # still surface real problems.
                 print(f"Warning: Failed to lazy-load index map from {self.index_map_path}: {e}")
         
         # Return None if no index map is available

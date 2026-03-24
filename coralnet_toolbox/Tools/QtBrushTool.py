@@ -2,10 +2,9 @@ import warnings
 
 import numpy as np
 
-from PyQt5.QtGui import QColor, QPen
+from PyQt5.QtGui import QColor, QPen, QBrush
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtWidgets import QGraphicsEllipseItem, QMessageBox, QGraphicsRectItem
-
 
 from coralnet_toolbox.Tools.QtTool import Tool
 
@@ -33,6 +32,10 @@ class BrushTool(Tool):
         self.shape = 'circle'  # 'circle' or 'square'
         self.brush_mask = self._create_brush_mask()
         self.painting = False  # Flag to track if painting mode is active
+
+        # Optional callback fired after each successful brush stroke:
+        # callback(scene_pos: QPointF, label_id: str, brush_mask: np.ndarray)
+        self.post_stroke_callback = None
 
     def _create_brush_mask(self):
         """Creates a boolean numpy array for the brush shape."""
@@ -82,9 +85,13 @@ class BrushTool(Tool):
         if (cursor_in_window and self.active and 
             self.annotation_window.selected_label):
             self.update_cursor_annotation(scene_pos)
+            if self.cursor_move_callback:
+                self.cursor_move_callback(scene_pos, self.create_cursor_preview_item)
         else:
             self.clear_cursor_annotation()
-        
+            if self.cursor_clear_callback:
+                self.cursor_clear_callback()
+
         # Apply brush if painting is active
         if self.painting:
             self._apply_brush(event)
@@ -121,6 +128,29 @@ class BrushTool(Tool):
             # Update the cursor annotation to reflect the new brush size
             scene_pos = self.annotation_window.mapToScene(event.pos())
             self.update_cursor_annotation(scene_pos)
+
+    def create_cursor_preview_item(self, u: float, v: float):
+        """Return a styled brush shape QGraphicsItem centred at image pixel (u, v)."""
+        if not self.annotation_window.selected_label:
+            return None
+        
+        label = self.annotation_window.selected_label
+        transparency = self.annotation_window.main_window.get_transparency_value()
+        radius = self.brush_size / 2.0
+        c = QColor(label.color)
+        fill = QColor(c)
+        fill.setAlpha(transparency)
+        pen = QPen(c.darker(150), 2)
+        pen.setCosmetic(True)
+        
+        if self.shape == 'circle':
+            item = QGraphicsEllipseItem(u - radius, v - radius, self.brush_size, self.brush_size)
+        else:
+            item = QGraphicsRectItem(u - radius, v - radius, self.brush_size, self.brush_size)
+        
+        item.setBrush(QBrush(fill))
+        item.setPen(pen)
+        return item
 
     def create_cursor_annotation(self, scene_pos: QPointF = None):
         """Create a circular cursor annotation representing the brush."""
@@ -214,3 +244,7 @@ class BrushTool(Tool):
 
         # Update the display to reflect changes
         self.annotation_window.update_scene()
+
+        # Notify any registered propagation callback (e.g., MVAT multi-annotate)
+        if self.post_stroke_callback:
+            self.post_stroke_callback(scene_pos, selected_label_id, self.brush_mask)

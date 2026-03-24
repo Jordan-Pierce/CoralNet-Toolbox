@@ -132,7 +132,8 @@ class VisibilityWorker(QObject):
                             result_dict.get('index_map'),
                             result_dict.get('visible_indices'),
                             result_dict.get('depth_map') if self.compute_depth_maps else None,
-                            element_type=result_dict.get('element_type', 'point')
+                            element_type=result_dict.get('element_type', 'point'),
+                            inverted_index=result_dict.get('inverted_index')                        
                         )
                         # Store the file path in the result so the main thread knows where it went
                         result_dict['cache_path'] = cache_path

@@ -13,7 +13,8 @@ from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QSize, QObject
 from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QGraphicsPixmapItem, 
                              QSlider, QLabel, QHBoxLayout, QWidget, QComboBox, QToolButton, QToolBar, QSizePolicy)
 
-from coralnet_toolbox.MVAT.core.Marker import Marker
+from coralnet_toolbox.QtBaseCanvas import BaseCanvas
+
 from coralnet_toolbox.MVAT.core.Ray import CameraRay
 
 from coralnet_toolbox.Annotations import (
@@ -24,7 +25,6 @@ from coralnet_toolbox.Annotations import (
 )
 
 from coralnet_toolbox.Tools import (
-    PanTool,
     PatchTool,
     RectangleTool,
     PolygonTool,
@@ -35,7 +35,6 @@ from coralnet_toolbox.Tools import (
     SAMTool,
     SeeAnythingTool,
     SelectTool,
-    ZoomTool,
     WorkAreaTool,
     ScaleTool,
     RugosityTool,
@@ -72,7 +71,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class AnnotationWindow(QGraphicsView):
+class AnnotationWindow(BaseCanvas):
     imageLoaded = pyqtSignal(int, int)  # Signal to emit when image is loaded
     viewChanged = pyqtSignal(int, int)  # Signal to emit when view is changed
     mouseMoved = pyqtSignal(int, int)  # Signal to emit when mouse is moved
@@ -98,86 +97,40 @@ class AnnotationWindow(QGraphicsView):
 
     def __init__(self, main_window, parent=None):
         """Initialize the annotation window with the main window and parent widget."""
-        super().__init__(parent)
+        super().__init__(parent)  # BaseCanvas initializes scene, pixmap_image, zoom_factor, etc.
         self.main_window = main_window
 
-        self.scene = QGraphicsScene(self)
-        self.setScene(self.scene)
-        # Default to a dark background for the annotation workspace
-        try:
-            from PyQt5.QtGui import QColor
-            self.scene.setBackgroundBrush(QBrush(QColor('#1e1e1e')))
-            self.setBackgroundBrush(QBrush(QColor('#1e1e1e')))
-            # also ensure the viewport widget background matches
-            self.viewport().setStyleSheet("background-color: #1e1e1e;")
-        except Exception:
-            # Fall back silently if the view isn't fully initialized yet
-            pass
-        
         # Reference to the global animation manager
         self.animation_manager = None
         self.set_animation_manager(main_window.animation_manager)
         
-        # Initialize the action stack for undo/redo
-        self.action_stack = ActionStack()
-        
-        # MVAT visisualization attributes
-        self.marker = Marker()  # Marker for focal point display from MVAT
+        # Central annotation data store (owned by MainWindow's AnnotationManager)
+        self.annotation_manager = self.main_window.annotation_manager
 
         self.annotation_size = 224
         self.transparency = 128
 
-        self.zoom_factor = 1.0
-        self.pan_active = False
-        self.pan_start = None
         self.drag_start_pos = None
         self.cursor_annotation = None
-
-        self.annotations_dict = {}  # Dictionary to store annotations by UUID
-        self.image_annotations_dict = {}  # Dictionary to store annotations by image path
-
-        self.selected_annotations = []  # Stores the selected annotations
         self.rasterized_annotations_cache = []  # Caches vector annotations during mask mode
         self.selected_label = None  # Flag to check if an active label is set
         self.selected_tool = None  # Store the current tool state
         self._syncing_selection = False  # Flag to prevent selection sync loops
-                
-        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
-        self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setDragMode(QGraphicsView.NoDrag)  # Disable default drag mode
-
-        self.pixmap_image = None
+        
+        # Image state (BaseCanvas has pixmap_image, active_image, current_image_path)
         self.rasterio_image = None
-        self.active_image = False
-        self.current_image_path = None
 
-        # Placeholder label shown when no image/annotations are loaded
-        self._placeholder_label = QLabel(
-            "No image loaded\nImport or drag and drop an image or Project file.", 
-            self.viewport()
+        # Update placeholder label text for AnnotationWindow's context
+        self._placeholder_label.setText(
+            "No image loaded\nImport or drag and drop an image or Project file."
         )
         self._placeholder_label.setStyleSheet("color: white; background-color: #1e1e1e; font-size: 14px; padding: 16px;")
-        self._placeholder_label.setAlignment(Qt.AlignCenter)
-        self._placeholder_label.setAutoFillBackground(True)
         self._placeholder_label.setWordWrap(True)
-        self._show_placeholder()  # Show placeholder initially
+        self._placeholder_label.setAutoFillBackground(True)
         
-        # Z-channel visualization attributes
-        self.z_item = None  # QGraphicsPixmapItem for Z-channel visualization
-        self.dynamic_z_scaling = False  # State flag for dynamic range scaling
-        self.z_data_raw = None  # Raw Z-channel data
-        self.z_data_normalized = None  # Normalized (0-255) Z-channel data
-        self.z_data_min = None  # Minimum value of raw Z-data
-        self.z_data_max = None  # Maximum value of raw Z-data
-        self.z_data_shape = None  # Shape of Z-data array
-        self.z_nodata_mask = None  # Boolean mask for NaN/nodata pixels
-        
-        # Debounce timer for dynamic range updates (prevents lag during zoom)
-        self.dynamic_range_timer = QTimer()
-        self.dynamic_range_timer.setSingleShot(True)
-        self.dynamic_range_timer.timeout.connect(self.update_dynamic_range)
+        # Z-channel visualization (BaseCanvas has z_item, z_data_raw, z_data_normalized, etc.)
+        # Just set up AnnotationWindow-specific debounce timer (BaseCanvas has generic one)
+        self.dynamic_range_timer = self._dynamic_range_timer  # Reference BaseCanvas timer
         self.dynamic_range_update_delay = 100  # milliseconds
 
         # Connect signals to slots
@@ -186,8 +139,39 @@ class AnnotationWindow(QGraphicsView):
         self.tools = {}
         self.mask_tools = {}
         
+        # Bridge AnnotationWindow lifecycle signals to the central AnnotationManager
+        self.annotationCreated.connect(self.annotation_manager.annotationAdded)
+        self.annotationsCreated.connect(self.annotation_manager.annotationsAdded)
+        self.annotationDeleted.connect(self.annotation_manager.annotationRemoved)
+        self.annotationsDeleted.connect(self.annotation_manager.annotationsRemoved)
+        self.annotationModified.connect(self.annotation_manager.annotationModified)
+        self.annotationLabelChanged.connect(self.annotation_manager.annotationLabelChanged)
+        self.annotationSelectionChanged.connect(self.annotation_manager.selectionChanged)
+        
         # Initialize toolbar and status bar widgets
         self._init_toolbar_widgets()  # Likely causes an error
+
+    # --- Property aliases delegating data to central AnnotationManager ---
+
+    @property
+    def annotations_dict(self):
+        return self.annotation_manager.annotations_dict
+
+    @property
+    def image_annotations_dict(self):
+        return self.annotation_manager.image_annotations_dict
+
+    @property
+    def selected_annotations(self):
+        return self.annotation_manager.selected_annotations
+
+    @selected_annotations.setter
+    def selected_annotations(self, value):
+        self.annotation_manager.selected_annotations = value
+
+    @property
+    def action_stack(self):
+        return self.annotation_manager.action_stack
         
     def _init_toolbar_widgets(self):
         """Instantiate all status and toolbar widgets previously held by MainWindow."""
@@ -666,9 +650,6 @@ class AnnotationWindow(QGraphicsView):
     def initialize_tools(self):
         """Initialize tools"""
         self.tools = {
-            # Constant tools
-            "pan": PanTool(self),
-            "zoom": ZoomTool(self),
             # Selectable annotation tools
             "select": SelectTool(self),
             "patch": PatchTool(self),
@@ -704,11 +685,6 @@ class AnnotationWindow(QGraphicsView):
         """Check if the annotation window is currently in mask editing mode."""
         return self.selected_tool and self.selected_tool in self.mask_tools
     
-    def set_incoming_marker(self, u, v, color):
-        """Set the incoming marker position and color from MVAT."""
-        self.marker.set_position(u, v, color)
-        self.scene.addItem(self.marker.marker_item)
-    
     def on_annotation_updated(self, updated_annotation):
         """
         Handle annotation update signal - refresh graphics if annotation is currently displayed.
@@ -719,6 +695,15 @@ class AnnotationWindow(QGraphicsView):
         if (updated_annotation.image_path == self.current_image_path and 
             updated_annotation.is_graphics_item_valid()):
             updated_annotation.update_graphics_item()
+            
+    def set_incoming_marker(self, u, v, color):
+        """Set the incoming marker (focal point) position and color from MVAT.
+        
+        Routes to the unified BaseCanvas static marker system so AnnotationWindow
+        displays the focal point using the same marker as all other viewports.
+        """
+        # Use BaseCanvas's unified static marker (crosshair) instead of a separate marker
+        self.update_static_marker(int(u), int(v), color=color)
             
     def showEvent(self, event):
         """Handle show events to fit the view to the image."""
@@ -762,11 +747,12 @@ class AnnotationWindow(QGraphicsView):
 
     def wheelEvent(self, event: QMouseEvent):
         """Handle mouse wheel events for zooming."""
-        # Handle zooming with the mouse wheel
+        # Handle zooming with the mouse wheel (pass to active tool if Ctrl+wheel)
         if self.selected_tool and event.modifiers() & Qt.ControlModifier:
             self.tools[self.selected_tool].wheelEvent(event)
-        elif self.active_image:
-            self.tools["zoom"].wheelEvent(event)
+        else:
+            # Let BaseCanvas handle native zoom via super()
+            super().wheelEvent(event)
 
         self.viewChanged.emit(*self.get_image_dimensions())
         
@@ -775,10 +761,6 @@ class AnnotationWindow(QGraphicsView):
 
     def mousePressEvent(self, event: QMouseEvent):
         """Handle mouse press events for the active tool."""        
-        # Panning should be active in both modes, so we call it first.
-        if self.active_image:
-            self.tools["pan"].mousePressEvent(event)
-
         # Check if a tool is selected before proceeding
         if self.selected_tool:
             # If the selected tool is a mask tool, delegate the event to it
@@ -788,14 +770,11 @@ class AnnotationWindow(QGraphicsView):
             else:
                 self.tools[self.selected_tool].mousePressEvent(event)
         
+        # Let BaseCanvas handle native pan/zoom via super()
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
         """Handle mouse movement events for the active tool."""
-        # Panning should be active in both modes
-        if self.active_image:
-            self.tools["pan"].mouseMoveEvent(event)
-
         # Check if a tool is selected before proceeding
         if self.selected_tool:
             # If the selected tool is a mask tool, delegate the event to it
@@ -811,14 +790,11 @@ class AnnotationWindow(QGraphicsView):
         if not self.cursorInWindow(event.pos()):
             self.toggle_cursor_annotation()
 
+        # Let BaseCanvas handle native pan/zoom via super()
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         """Handle mouse release events for the active tool."""
-        # Panning should be active in both modes
-        if self.active_image:
-            self.tools["pan"].mouseReleaseEvent(event)
-
         # Check if a tool is selected before proceeding
         if self.selected_tool:
             # If the selected tool is a mask tool, delegate the event to it
@@ -834,6 +810,7 @@ class AnnotationWindow(QGraphicsView):
         # Update dynamic Z-range after panning completes (debounced)
         self.schedule_dynamic_range_update()
         
+        # Let BaseCanvas handle native pan/zoom via super()
         super().mouseReleaseEvent(event)
 
     def mouseDoubleClickEvent(self, event: QMouseEvent):
@@ -843,18 +820,14 @@ class AnnotationWindow(QGraphicsView):
             super().mouseDoubleClickEvent(event)
             return
         
-        # Check if MVAT window exists and is accessible
-        if not hasattr(self.main_window, 'mvat_window'):
-            super().mouseDoubleClickEvent(event)
-            return
-        
-        mvat_window = self.main_window.mvat_window
-        if mvat_window is None:
+        # Check if MVAT manager exists and is accessible
+        mvat_manager = getattr(self.main_window, 'mvat_manager', None)
+        if mvat_manager is None:
             super().mouseDoubleClickEvent(event)
             return
         
         # Check if current image has camera data
-        if not self.current_image_path or self.current_image_path not in mvat_window.cameras:
+        if not self.current_image_path or self.current_image_path not in mvat_manager.cameras:
             super().mouseDoubleClickEvent(event)
             return
         
@@ -863,7 +836,7 @@ class AnnotationWindow(QGraphicsView):
         x, y = int(scene_pos.x()), int(scene_pos.y())
         
         # Check if position is within image bounds
-        camera = mvat_window.cameras[self.current_image_path]
+        camera = mvat_manager.cameras[self.current_image_path]
         if not (0 <= x < camera.width and 0 <= y < camera.height):
             super().mouseDoubleClickEvent(event)
             return
@@ -877,7 +850,7 @@ class AnnotationWindow(QGraphicsView):
         
         # Get default depth from scene if no depth available
         if depth is None or depth <= 0 or np.isnan(depth):
-            default_depth = mvat_window.viewer.get_scene_median_depth(camera.position)
+            default_depth = mvat_manager.viewer.get_scene_median_depth(camera.position)
         else:
             default_depth = depth
         
@@ -892,7 +865,7 @@ class AnnotationWindow(QGraphicsView):
             
             # Update MVATViewer focal point with the ray's terminal point
             # This will trigger the existing signal chain that projects back to all camera views
-            mvat_window.viewer.set_focal_point(ray.terminal_point)
+            mvat_manager.viewer.set_focal_point(ray.terminal_point)
             
         except Exception as e:
             # Silently handle any errors to allow AnnotationWindow to work independently
@@ -1328,31 +1301,21 @@ class AnnotationWindow(QGraphicsView):
             pass
             
     def clear_scene(self):
-        """Clear the graphics scene and reset related variables."""
-        # Clean up
+        """
+        Clear the scene with AnnotationWindow-specific cleanup.
+        Delegates to BaseCanvas.clear_scene() which will call _on_scene_cleared() at the end.
+        """
+        # AnnotationWindow-specific cleanup before base clear
         self.unselect_annotations()
-
-        # Nullify graphics_item references for all annotations to prevent stale references
+        
+        # Nullify graphics_item references for all annotations
         for annotation in self.annotations_dict.values():
             if hasattr(annotation, 'graphics_item'):
                 annotation.graphics_item = None
-
-        # Clear the previous scene and delete its items
-        if self.scene:
-            for item in self.scene.items():
-                if item.scene() == self.scene:
-                    self.scene.removeItem(item)
-                    del item
-            self.scene.deleteLater()
-        self.scene = QGraphicsScene(self)
-        self.setScene(self.scene)
         
-        # Reset item references
-        self.focal_marker = None
-        self.z_item = None
-        # Disconnect any zChannelChanged signal from previously displayed raster
+        # Disconnect z-channel signal from previously displayed raster
         try:
-            if hasattr(self, 'current_image_path') and self.current_image_path:
+            if self.current_image_path:
                 prev_raster = self.main_window.image_window.raster_manager.get_raster(self.current_image_path)
                 if prev_raster is not None:
                     try:
@@ -1361,17 +1324,23 @@ class AnnotationWindow(QGraphicsView):
                         pass
         except Exception:
             pass
-
-        # Show placeholder when scene is cleared
-        self._show_placeholder("No image loaded")
         
+        # Call BaseCanvas clear_scene which will handle scene cleanup and call _on_scene_cleared hook
+        super().clear_scene()
+    
+    def _on_scene_cleared(self):
+        """Hook called by BaseCanvas after scene is cleared. Handles AnnotationWindow-specific cleanup."""
+        # Allow BaseCanvas to re-create its markers and other scene-level items
+        try:
+            super()._on_scene_cleared()
+        except Exception:
+            pass
+    
+    
     def reset_scene_view(self):
         """Resets the scene view"""
-        # Update the zoom tool's state
-        self.tools["zoom"].reset_zoom()
-        self.tools["zoom"].calculate_min_zoom()
-        # Re-fit the view to the new, full-res pixmap
-        self.fitInView(self.get_image_rect(), Qt.KeepAspectRatio)
+        # Fit the image to the view and recalculate zoom constraints
+        self.fit_to_image()
         self.viewChanged.emit(*self.get_image_dimensions())
         # Process events
         QApplication.processEvents()
@@ -1458,23 +1427,22 @@ class AnnotationWindow(QGraphicsView):
             )
             QApplication.restoreOverrideCursor()
             return
-            
-        low_res_pixmap = QPixmap.fromImage(low_res_qimage)
         
-        # Add the base image pixmap and set its Z-value
+        # Display low-res thumbnail for quick preview
+        # (This step is before load_visuals to show preview immediately)
+        self._show_placeholder()  # Start with placeholder
+        low_res_pixmap = QPixmap.fromImage(low_res_qimage)
         base_image_item = QGraphicsPixmapItem(low_res_pixmap)
         base_image_item.setZValue(-10)
         self.scene.addItem(base_image_item)
-
-        # Fit the low-res image in view
         self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
-        
-        # Force Qt to process events and redraw the screen with the low-res image
+        self._hide_placeholder()
         QApplication.processEvents()
         
         # Update the rasterio image source for cropping annotations
         self.rasterio_image = raster.rasterio_src
-        # Get QImage and convert to QPixmap for display
+        
+        # Get full-resolution QImage
         q_image = raster.get_qimage()
         if q_image is None or q_image.isNull():
             self.main_window.image_window.show_error(
@@ -1483,33 +1451,31 @@ class AnnotationWindow(QGraphicsView):
             )
             QApplication.restoreOverrideCursor()
             return  # Failed to load full res, but preview is still visible
-
-        # Convert and set the QPixmap
-        self.pixmap_image = QPixmap.fromImage(q_image)
-        self.current_image_path = image_path
-        self.active_image = True
-
-        # Hide placeholder now that an image will be displayed
-        self._hide_placeholder()
-
-        # --- SWAP IN FULL-RES PIXMAP (NO SCENE CLEAR) ---
-        base_image_item.setPixmap(self.pixmap_image)
-
-        # Load and display Z-channel if available
-        self._load_z_channel_visualization(raster)
         
-        # Apply the current colormap selection to the newly loaded z_item
+        # Use BaseCanvas canonical loader for the full-resolution image (preserves base logic)
+        # Update the rasterio image reference used by annotation scaling/cropping
+        self.rasterio_image = raster.rasterio_src
+        # Load visuals into the BaseCanvas (this clears the preview and installs full-res image)
+        self.load_visuals(q_image, image_path, raster)
+
+        # Apply the current colormap selection and preserve UI opacity
         current_colormap = self.main_window.z_colormap_dropdown.currentText()
         if current_colormap != "None":
             self.update_z_colormap(current_colormap)
-        
+        if self.z_item is not None:
+            try:
+                current_opacity = self.main_window.z_transparency_widget.value() / 255.0
+                self.z_item.setOpacity(current_opacity)
+            except Exception:
+                pass
+
         # Automatically mark this image as checked when viewed
         raster.checkbox_state = True
         self.main_window.image_window.table_model.update_raster_data(image_path)
 
         # Toggle the cursor annotation
         self.toggle_cursor_annotation()
-        
+
         # Re-fit the view to the new, full-res pixmap
         self.reset_scene_view()
 
@@ -1526,14 +1492,6 @@ class AnnotationWindow(QGraphicsView):
         self.imageLoaded.emit(self.pixmap_image.width(), self.pixmap_image.height())
         self.viewChanged.emit(self.pixmap_image.width(), self.pixmap_image.height())
         
-        # Update focal marker visibility
-        if self.current_image_path == image_path:
-            # If this image is the selected camera, the marker should be shown if focal point exists
-            # But since the signal will be emitted again if needed, just ensure it's hidden for now
-            pass
-        else:
-            self._hide_focal_marker()
-        
         # Show loaded message in status bar (centralized here per MVAT convention)
         try:
             self.main_window.status_bar.showMessage(f"Loaded image: {os.path.basename(image_path)}", 2000)
@@ -1544,380 +1502,31 @@ class AnnotationWindow(QGraphicsView):
         QApplication.restoreOverrideCursor()
 
     def _load_z_channel_visualization(self, raster):
-        """
-        Load and initialize the Z-channel visualization using QGraphicsPixmapItem.
-        Uses native Qt rendering instead of PyQtGraph for compatibility.
+        """Override to set opacity from main_window widget after BaseCanvas loads."""
+        super()._load_z_channel_visualization(raster)
         
-        Args:
-            raster: The Raster object containing Z-channel data
-        """
-        # Clean up old z_item if it exists (it should already be removed by clear_scene, but be safe)
+        # Set opacity from current slider value (preserves user's transparency preference)
         if self.z_item is not None:
-            # Only try to remove if it's actually in this scene
-            if self.z_item.scene() == self.scene:
-                self.scene.removeItem(self.z_item)
-            self.z_item = None
-        
-        # Check if Z-channel data is available
-        if raster.z_channel_lazy is None:
-            return
-        
-        try:
-            z_data = raster.z_channel_lazy
-            
-            # Store raw Z-channel data for dynamic range calculations
-            self.z_data_raw = z_data.copy()
-            self.z_data_shape = z_data.shape
-            
-            # Create mask for NaN and nodata values
-            # This mask identifies pixels that should be transparent/invalid
-            nodata_mask = np.isnan(z_data)
-            if raster.z_nodata is not None:
-                # Also mask the nodata value from the raw data
-                nodata_mask |= (z_data == raster.z_nodata)
-            
-            # Normalize the Z-channel data to 0-255 range for colormap
-            if z_data.dtype == np.float32:
-                # For float32, normalize raw values to 0-255 range
-                # Exclude nodata values from min/max calculation to prevent range squishing
-                valid_data = z_data[~nodata_mask]
-                if len(valid_data) > 0:
-                    self.z_data_min = np.min(valid_data)
-                    self.z_data_max = np.max(valid_data)
-                else:
-                    self.z_data_min = 0.0
-                    self.z_data_max = 1.0
-                
-                if self.z_data_min == self.z_data_max:
-                    z_norm = np.zeros_like(z_data, dtype=np.uint8)
-                else:
-                    z_diff = self.z_data_max - self.z_data_min
-                    # Normalize, keeping NaN as NaN temporarily
-                    z_norm = (
-                        (z_data - self.z_data_min) / z_diff * 255
-                    )
-                    # Convert to uint8, NaN will become 0
-                    z_norm = z_norm.astype(np.uint8)
-                    # Set nodata pixels to 0 (will be made transparent in colormap)
-                    z_norm[nodata_mask] = 0
-            else:
-                # For uint8, normalize raw values
-                # Exclude nodata values from min/max calculation
-                valid_data = z_data[~nodata_mask]
-                if len(valid_data) > 0:
-                    self.z_data_min = np.min(valid_data)
-                    self.z_data_max = np.max(valid_data)
-                else:
-                    self.z_data_min = 0.0
-                    self.z_data_max = 1.0
-                    
-                if self.z_data_min == self.z_data_max:
-                    z_norm = np.zeros_like(z_data, dtype=np.uint8)
-                else:
-                    z_diff = self.z_data_max - self.z_data_min
-                    z_norm = (
-                        (z_data - self.z_data_min) / z_diff * 255
-                    ).astype(np.uint8)
-                    # Set nodata pixels to 0 (will be made transparent in colormap)
-                    z_norm[nodata_mask] = 0
-            
-            # Store the nodata mask for use in colormap application
-            self.z_nodata_mask = nodata_mask
-            
-            # Store normalized data for colormap application
-            self.z_data_normalized = z_norm
-            
-            # Create QImage from uint8 grayscale data
-            h, w = z_norm.shape
-            z_copy = np.ascontiguousarray(z_norm)
-            q_img = QImage(z_copy.data, w, h, w, QImage.Format_Grayscale8)
-            
-            # Convert QImage to QPixmap
-            pixmap = QPixmap.fromImage(q_img)
-            
-            # Create graphics item (native Qt, compatible)
-            self.z_item = QGraphicsPixmapItem(pixmap)
-            
-            # Force Nearest Neighbor scaling to prevent color bleeding at transparent edges
-            self.z_item.setTransformationMode(Qt.SmoothTransformation)
-            
-            # Position at origin to align with base image
-            self.z_item.setPos(0, 0)
-            
-            # Set Z-value between base image (-10) and annotations (0+)
-            # Layer order: base image (-10) < z-channel (-5) < annotations (0+)
-            self.z_item.setZValue(-5)
-            
-            # Set opacity from current slider value (not hardcoded default)
-            # This preserves user's transparency preference when switching images
-            current_opacity = self.main_window.z_transparency_widget.value() / 255.0
-            self.z_item.setOpacity(current_opacity)
-            
-            # Add to scene
-            self.scene.addItem(self.z_item)
-            
-            # Initially hide until a colormap is selected
-            self.z_item.hide()
-            
-        except Exception:
-            # Z-channel visualization failure is non-critical
-            traceback.print_exc()
-            self.z_item = None
+            try:
+                current_opacity = self.main_window.z_transparency_widget.value() / 255.0
+                self.z_item.setOpacity(current_opacity)
+            except Exception:
+                pass
 
     def update_z_colormap(self, colormap_name):
-        """
-        Update the Z-channel visualization colormap.
-        Properly handles NaN and nodata values by making them transparent.
-        
-        Args:
-            colormap_name (str): Name of the colormap
-                (e.g., 'Viridis', 'Plasma', or 'None')
-        """
-        if self.z_item is None or self.z_data_normalized is None:
-            return
-        
-        try:
-            if colormap_name == 'None':
-                # Hide the Z-channel visualization
-                self.z_item.hide()
-            else:
-                # Get the colormap from pyqtgraph
-                colormap = pg.colormap.get(colormap_name)
-                
-                # Get the lookup table (0-255 -> RGBA)
-                lut = colormap.getLookupTable(nPts=256, alpha=True)
-                
-                # Apply LUT to normalized data to get RGBA
-                z_colored = lut[self.z_data_normalized]
-                
-                # Apply nodata mask if available - set alpha to 0 (transparent)
-                if hasattr(self, 'z_nodata_mask') and self.z_nodata_mask is not None:
-                    z_colored[self.z_nodata_mask, 3] = 0  # Set alpha channel to 0 for nodata
-                
-                # Create QImage from RGBA data
-                h, w = z_colored.shape[:2]
-                z_copy = np.ascontiguousarray(z_colored)
-                q_img = QImage(z_copy.data, w, h, w * 4, QImage.Format_RGBA8888)
-                
-                # Convert to QPixmap and set in scene item
-                pixmap = QPixmap.fromImage(q_img)
-                self.z_item.setPixmap(pixmap)
-                
-                # Show the visualization
-                self.z_item.show()
-                
-                # Update dynamic range if enabled
-                if self.dynamic_z_scaling:
-                    self.update_dynamic_range()
-        except Exception:
-            # Colormap application failure is non-critical
-            traceback.print_exc()
-
-    def toggle_dynamic_z_scaling(self, enabled):
-        """
-        Toggle dynamic Z-range scaling based on visible area.
-        
-        Args:
-            enabled (bool): Whether to enable dynamic scaling
-        """
-        self.dynamic_z_scaling = enabled
-        
-        if enabled and self.z_item is not None:
-            # Immediately update to current view range
-            self.update_dynamic_range()
-        elif not enabled and self.z_item is not None:
-            # Reset to full range visualization when disabled
-            self._reset_z_channel_to_full_range()
-    
-    def set_z_opacity(self, opacity):
-        """
-        Set the opacity of the Z-channel visualization.
-        
-        Args:
-            opacity (float): Opacity value from 0.0 (transparent) to 1.0 (opaque)
-        """
-        # Validate opacity range
-        opacity = max(0.0, min(1.0, opacity))
-        
-        # Only update if z_item exists and is visible
+        # Delegate to BaseCanvas and keep opacity in sync with the UI widget
+        super().update_z_colormap(colormap_name)
         if self.z_item is not None:
-            self.z_item.setOpacity(opacity)
+            try:
+                self.z_item.setOpacity(self.main_window.z_transparency_widget.value() / 255.0)
+            except Exception:
+                pass
 
     def _reset_z_channel_to_full_range(self):
-        """
-        Reset the Z-channel visualization to show the full data range (0-255).
-        Used when dynamic scaling is disabled to restore the full-range view.
-        """
-        z_item_valid = self.z_item is not None
-        z_data_valid = self.z_data_normalized is not None
-        raw_data_valid = self.z_data_raw is not None
-        if not (z_item_valid and z_data_valid and raw_data_valid):
-            return
-        
-        try:
-            # Get current colormap name from main window
-            colormap_name = (
-                self.main_window.z_colormap_dropdown.currentText())
-            
-            if colormap_name != 'None':
-                # Apply the colormap to the normalized data (full range)
-                colormap = pg.colormap.get(colormap_name)
-                lut = colormap.getLookupTable(nPts=256, alpha=True)
-                
-                # Apply LUT directly to normalized data without rescaling to get RGBA
-                z_colored = lut[self.z_data_normalized]
-                
-                # Apply nodata mask if available - set alpha to 0 (transparent)
-                if hasattr(self, 'z_nodata_mask') and self.z_nodata_mask is not None:
-                    z_colored[self.z_nodata_mask, 3] = 0  # Set alpha channel to 0 for nodata
-                
-                # Create QImage from RGBA data
-                h, w = z_colored.shape[:2]
-                z_copy = np.ascontiguousarray(z_colored)
-                q_img = QImage(z_copy.data, w, h, w * 4,
-                               QImage.Format_RGBA8888)
-                
-                # Convert to QPixmap and update scene item
-                pixmap = QPixmap.fromImage(q_img)
-                self.z_item.setPixmap(pixmap)
-        except Exception:
-            # Reset failure is non-critical
-            import traceback
-            traceback.print_exc()
-
-    def clear_z_channel_visualization(self, image_path):
-        """
-        Clear the Z-channel visualization from the scene.
-        Only clears if the removed z-channel belongs to the currently displayed image.
-        
-        Args:
-            image_path (str): Path of the raster with removed z-channel
-        """
-        # Only clear if the removed z-channel belongs to the currently displayed image
-        if image_path != self.current_image_path:
-            return
-        
-        if self.z_item is not None:
-            # Only try to remove if it's actually in this scene
-            if self.z_item.scene() == self.scene:
-                self.scene.removeItem(self.z_item)
-            self.z_item = None
-        
-        # Clear all cached z-channel data
-        self.z_data_raw = None
-        self.z_data_normalized = None
-        self.z_data_min = None
-        self.z_data_max = None
-        self.z_data_shape = None
-        self.z_nodata_mask = None  # Clear nodata mask
-
-    def schedule_dynamic_range_update(self):
-        """
-        Schedule a dynamic range update with debouncing.
-        This prevents rapid updates during zoom/pan operations that would cause stuttering.
-        Multiple calls within the debounce window are consolidated into a single update.
-        """
-        if not self.dynamic_z_scaling:
-            return
-        
-        # Restart the timer (cancels any pending update and schedules a new one)
-        self.dynamic_range_timer.stop()
-        self.dynamic_range_timer.start(self.dynamic_range_update_delay)
-
-    def update_dynamic_range(self):
-        """
-        Calculate and apply min/max Z values based on visible pixels.
-        This reveals hidden detail by adjusting contrast dynamically.
-        """
-        z_item_valid = self.z_item is not None
-        z_data_valid = self.z_data_normalized is not None
-        if not (z_item_valid and self.dynamic_z_scaling and z_data_valid):
-            return
-        
-        try:
-            # Use normalized Z-channel data for dynamic range calculations
-            z_data = self.z_data_normalized
-            if z_data is None:
-                return
-            
-            # Get visible viewport area in scene coordinates
-            visible_rect = (self.mapToScene(self.viewport().rect()).boundingRect())
-            
-            # Convert scene rect to image coordinates
-            x1 = max(0, int(visible_rect.left()))
-            y1 = max(0, int(visible_rect.top()))
-            x2 = min(z_data.shape[1], int(visible_rect.right()))
-            y2 = min(z_data.shape[0], int(visible_rect.bottom()))
-            
-            # Ensure we have a valid region
-            if x1 >= x2 or y1 >= y2:
-                return
-            
-            # Extract visible region and calculate min/max on TRANSFORMED data
-            # Exclude nodata values from the calculation to prevent range squishing
-            visible_region = z_data[y1:y2, x1:x2]
-            visible_nodata_mask = (
-                self.z_nodata_mask[y1:y2, x1:x2] 
-                if hasattr(self, 'z_nodata_mask') and self.z_nodata_mask is not None 
-                else None
-            )
-            
-            if visible_nodata_mask is not None:
-                # Only consider valid (non-nodata) pixels in the visible region
-                valid_visible_data = visible_region[~visible_nodata_mask]
-                if len(valid_visible_data) > 0:
-                    z_vis_min = np.min(valid_visible_data)
-                    z_vis_max = np.max(valid_visible_data)
-                else:
-                    # Fallback to full range if no valid data in visible region
-                    z_vis_min = self.z_data_min
-                    z_vis_max = self.z_data_max
-            else:
-                # Fallback to old behavior if no nodata mask available
-                z_vis_min = np.nanmin(visible_region)
-                z_vis_max = np.nanmax(visible_region)
-            
-            # Avoid division by zero if all values are the same
-            if z_vis_min == z_vis_max:
-                z_vis_max = z_vis_min + 1
-            
-            # Get current colormap name from main window
-            colormap_name = (
-                self.main_window.z_colormap_dropdown.currentText())
-            
-            if colormap_name != 'None':
-                # Get the colormap and apply with adjusted range
-                colormap = pg.colormap.get(colormap_name)
-                lut = colormap.getLookupTable(nPts=256, alpha=True)
-                
-                # Create a rescaled version of the transformed data
-                # to span the full 0-255 range based on visible min/max
-                z_rescaled = (
-                    (z_data - z_vis_min) / (z_vis_max - z_vis_min) * 255
-                ).astype(np.uint8)
-                
-                # Apply LUT to rescaled data to get RGBA
-                z_colored = lut[z_rescaled]
-                
-                # Apply nodata mask if available - set alpha to 0 (transparent)
-                if hasattr(self, 'z_nodata_mask') and self.z_nodata_mask is not None:
-                    z_colored[self.z_nodata_mask, 3] = 0  # Set alpha channel to 0 for nodata
-                
-                # Create QImage from RGBA data
-                h, w = z_colored.shape[:2]
-                z_copy = np.ascontiguousarray(z_colored)
-                q_img = QImage(z_copy.data, w, h, w * 4,
-                               QImage.Format_RGBA8888)
-                
-                # Convert to QPixmap and update scene item
-                pixmap = QPixmap.fromImage(q_img)
-                self.z_item.setPixmap(pixmap)
-            
-        except Exception:
-            # Dynamic range update failure is non-critical
-            import traceback
-            traceback.print_exc()
-
+        """Override to fetch colormap from main_window and pass to BaseCanvas."""
+        colormap_name = self.main_window.z_colormap_dropdown.currentText()
+        super()._reset_z_channel_to_full_range(colormap_name)
+    
     def update_current_image_path(self, image_path):
         """Update the current image path being displayed."""
         self.current_image_path = image_path

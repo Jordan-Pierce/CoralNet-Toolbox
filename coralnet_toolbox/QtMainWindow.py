@@ -22,6 +22,7 @@ from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSize
 # Utilities
 from coralnet_toolbox.QtEventFilter import GlobalEventFilter
 from coralnet_toolbox.QtAnimationManager import AnimationManager
+from coralnet_toolbox.QtAnnotationManager import AnnotationManager
 from coralnet_toolbox.QtPerformanceWindow import PerformanceWindow
 from coralnet_toolbox.QtTimerWindow import TimerWindow
 from coralnet_toolbox.Layout import QtLayoutManager
@@ -39,8 +40,8 @@ from coralnet_toolbox.Explorer import SelectionManager
 
 # MVAT Windows
 from coralnet_toolbox.MVAT import MVATViewer
-from coralnet_toolbox.MVAT import CameraGrid
 from coralnet_toolbox.MVAT import MVATManager
+from coralnet_toolbox.MVAT import ContextMatrixWidget
 
 # Other Dialogs
 from coralnet_toolbox.QtBatchInference import BatchInferenceDialog
@@ -75,10 +76,7 @@ from coralnet_toolbox.IO import (
 
 # Machine learning dialogs
 from coralnet_toolbox.MachineLearning import (
-    TuneClassify as ClassifyTuneDialog,
-    TuneDetect as DetectTuneDialog,
-    TuneSegment as SegmentTuneDialog,
-    TuneSemantic as SemanticTuneDialog,
+    PreTrainModel as PreTrainModelDialog,
     TrainClassify as ClassifyTrainModelDialog,
     TrainDetect as DetectTrainModelDialog,
     TrainSegment as SegmentTrainModelDialog,
@@ -100,7 +98,7 @@ from coralnet_toolbox.MachineLearning import (
     EvalSegment as SegmentEvaluateModelDialog,
     EvalSemantic as SemanticEvaluateModelDialog,
     MergeClassify as ClassifyMergeDatasetsDialog,
-    Optimize as OptimizeModelDialog,
+    OptimizeModel as OptimizeModelDialog,
     TileClassifyDataset as ClassifyTileDatasetDialog,
     TileDetectDataset as DetectTileDatasetDialog,
     TileSegmentDataset as SegmentTileDatasetDialog,
@@ -225,6 +223,9 @@ class MainWindow(QMainWindow):
         self.area_thresh_min = 0.00
         self.area_thresh_max = 0.70
 
+        # Create the central annotation data store (before AnnotationWindow)
+        self.annotation_manager = AnnotationManager(self)
+
         # Create main windows
         self.annotation_window = AnnotationWindow(self)
         self.image_window = ImageWindow(self)
@@ -233,20 +234,15 @@ class MainWindow(QMainWindow):
         self.timer_window = TimerWindow(self)   
         self.performance_window = PerformanceWindow(self) 
          
+        # Create ContextMatrixWidget for multi-viewport context viewing
+        # (must be created BEFORE MVATManager so the manager can find it via getattr)
+        self.context_matrix = ContextMatrixWidget(parent=None)
+        self.context_matrix.set_raster_manager(self.image_window.raster_manager)
+        self.context_matrix.set_annotation_manager(self.annotation_manager)
+        
         # Create dock-based mvat windows
         self.mvat_viewer = MVATViewer(self)
-        self.camera_grid = CameraGrid(model=None, mvat_window=None)
-        self.mvat_manager = MVATManager(self, self.mvat_viewer, self.camera_grid)
-        self.camera_grid.model = self.mvat_manager.selection_model
-        # Wire a reference to the main window so CameraGrid can access the
-        # MVAT manager (used by the Load Cameras toolbar button).
-        try:
-            self.camera_grid.mvat_window = self
-            # Enable the load button if it exists
-            if hasattr(self.camera_grid, 'load_btn'):
-                self.camera_grid.load_btn.setEnabled(True)
-        except Exception:
-            pass
+        self.mvat_manager = MVATManager(self, self.mvat_viewer)
         
         # Create dock-based explorer windows
         self.annotation_viewer_window = AnnotationViewerWindow(self)
@@ -303,10 +299,7 @@ class MainWindow(QMainWindow):
         self.segment_export_dataset_dialog = SegmentExportDatasetDialog(self)
         self.semantic_export_dataset_dialog = SemanticExportDatasetDialog(self)
         self.classify_merge_datasets_dialog = ClassifyMergeDatasetsDialog(self)
-        self.classify_tune_model_dialog = ClassifyTuneDialog(self)
-        self.detect_tune_model_dialog = DetectTuneDialog(self)
-        self.segment_tune_model_dialog = SegmentTuneDialog(self)
-        self.semantic_tune_model_dialog = SemanticTuneDialog(self)
+        self.pretrain_model_dialog = PreTrainModelDialog(self)
         self.classify_train_model_dialog = ClassifyTrainModelDialog(self)
         self.detect_train_model_dialog = DetectTrainModelDialog(self)
         self.segment_train_model_dialog = SegmentTrainModelDialog(self)
@@ -605,24 +598,10 @@ class MainWindow(QMainWindow):
         self.semantic_tile_dataset_action.triggered.connect(self.open_semantic_tile_dataset_dialog)
         self.tile_dataset_menu.addAction(self.semantic_tile_dataset_action)
         
-        # Tune Model submenu
-        self.ml_tune_model_menu = self.ml_menu.addMenu("Tune Model")
-        # Tune Classification Model
-        self.ml_classify_tune_model_action = QAction("Classify", self)
-        self.ml_classify_tune_model_action.triggered.connect(self.open_classify_tune_model_dialog)
-        self.ml_tune_model_menu.addAction(self.ml_classify_tune_model_action)
-        # Tune Detection Model
-        self.ml_detect_tune_model_action = QAction("Detect", self)
-        self.ml_detect_tune_model_action.triggered.connect(self.open_detect_tune_model_dialog)
-        self.ml_tune_model_menu.addAction(self.ml_detect_tune_model_action)
-        # Tune Segmentation Model
-        self.ml_segment_tune_model_action = QAction("Segment", self)
-        self.ml_segment_tune_model_action.triggered.connect(self.open_segment_tune_model_dialog)
-        self.ml_tune_model_menu.addAction(self.ml_segment_tune_model_action)
-        # Tune Semantic Segmentation Model
-        self.ml_semantic_tune_model_action = QAction("Semantic", self)
-        self.ml_semantic_tune_model_action.triggered.connect(self.open_semantic_tune_model_dialog)
-        # self.ml_tune_model_menu.addAction(self.ml_semantic_tune_model_action)
+        # Pre-Train Model
+        self.ml_pretrain_model_action = QAction("Pre-Train Model", self)
+        self.ml_pretrain_model_action.triggered.connect(self.open_pretrain_model_dialog)
+        self.ml_menu.addAction(self.ml_pretrain_model_action)
         
         # Add a separator
         self.ml_menu.addSeparator()
@@ -1212,11 +1191,11 @@ class MainWindow(QMainWindow):
         # Setup MVAT Viewer Dock (Bottom-left) using DockWrapper
         self.mvat_dock = DockWrapper("3D Viewer", "3DViewerDock", self.mvat_viewer, self)
 
-        # Setup Camera Grid Dock (Bottom-right) using DockWrapper
-        self.grid_dock = DockWrapper("Grid", "GridDock", self.camera_grid, self)
+        # Setup Context Matrix Dock (bottom-right, replaces legacy Camera Grid)
+        self.context_dock = DockWrapper("Context", "ContextDock", self.context_matrix, self)
         
-        if hasattr(self.camera_grid, 'create_top_toolbar'):
-            self.grid_dock.add_toolbar(self.camera_grid.create_top_toolbar())
+        if hasattr(self.context_matrix, 'create_top_toolbar'):
+            self.context_dock.add_toolbar(self.context_matrix.create_top_toolbar())
 
         # --------------------------------------------------
         # 3. Explicitly arrange the docks using PyQtADS
@@ -1249,8 +1228,8 @@ class MainWindow(QMainWindow):
         # 8. Place the MVAT Viewer below the Annotation Gallery
         mvat_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.mvat_dock, gallery_area)
 
-        # 9. Place Camera Grid below Embedding Viewer
-        grid_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.grid_dock, embed_area)
+        # 9. Place Context Matrix below Embedding Viewer (replaces legacy Camera Grid)
+        context_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.context_dock, embed_area)
         
         # Populate the Windows menu with dock toggle actions
         dock_windows = [
@@ -1263,7 +1242,7 @@ class MainWindow(QMainWindow):
             ("Gallery", self.gallery_dock),
             ("Embeddings", self.embeddings_dock),
             ("3D Viewer", self.mvat_dock),
-            ("Grid", self.grid_dock),
+            ("Context", self.context_dock),
         ]
 
         for dock_name, dock_widget in dock_windows:
@@ -2677,35 +2656,11 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
             
-    def open_classify_tune_model_dialog(self):
-        """Open the Classify Tune Model dialog to tune a classification model."""
+    def open_pretrain_model_dialog(self):
+        """Open the Pre-Train Model dialog to prepare datasets for training."""
         try:
             self.untoggle_all_tools()
-            self.classify_tune_model_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-            
-    def open_detect_tune_model_dialog(self):
-        """Open the Detect Tune Model dialog to tune a detection model."""
-        try:
-            self.untoggle_all_tools()
-            self.detect_tune_model_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-            
-    def open_segment_tune_model_dialog(self):
-        """Open the Segment Tune Model dialog to tune a segmentation model."""
-        try:
-            self.untoggle_all_tools()
-            self.segment_tune_model_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-
-    def open_semantic_tune_model_dialog(self):
-        """Open the Semantic Tune Model dialog to tune a semantic segmentation model."""
-        try:
-            self.untoggle_all_tools()
-            self.semantic_tune_model_dialog.exec_()
+            self.pretrain_model_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

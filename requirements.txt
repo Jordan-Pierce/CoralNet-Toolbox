@@ -6,11 +6,10 @@ ujson
 rasterio
 pycocotools
 ultralytics>=8.4.8
-segmentation-models-pytorch
-albumentations
+lightly-train[ultralytics]
 lap>=0.5.12
 open-clip-torch>=2.20.0
-supervision>=0.24.0
+supervision>=0.25.1
 scikit-learn
 scikit-image
 umap-learn

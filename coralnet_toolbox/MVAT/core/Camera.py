@@ -135,6 +135,66 @@ class Camera:
         """
         return self._raster.index_map_lazy
 
+    def get_pixels_for_element(self, element_id: int) -> list:
+        """
+        Return all (u, v) pixel coordinates where element_id is visible.
+
+        Uses the CSR inverted index stored on the raster for O(log N) lookup.
+
+        Returns:
+            list of (u, v) tuples, or [] if the inverted index is unavailable
+            or element_id is not visible.
+        """
+        inv_ids     = self._raster.inv_ids
+        inv_offsets = self._raster.inv_offsets
+        inv_pixels  = self._raster.inv_pixels
+        if inv_ids is None or len(inv_ids) == 0:
+            return []
+        idx = int(np.searchsorted(inv_ids, element_id))
+        if idx >= len(inv_ids) or inv_ids[idx] != element_id:
+            return []
+        flat = inv_pixels[inv_offsets[idx] : inv_offsets[idx + 1]]
+        v_arr, u_arr = np.divmod(flat, self.width)
+        return list(zip(u_arr.tolist(), v_arr.tolist()))
+
+    def get_pixels_for_elements(self, element_ids: np.ndarray) -> np.ndarray:
+        """
+        Return a 1D array of flat (row-major) pixel indices for all elements
+        in ``element_ids`` that are visible in this camera.
+
+        Uses the CSR inverted index for an O(N log M) vectorised lookup where
+        N = len(element_ids) and M = number of unique elements in the index.
+
+        Args:
+            element_ids: 1D int array of element IDs to query (should already
+                         be unique and have -1 filtered out by the caller).
+
+        Returns:
+            np.ndarray (int64): flat pixel indices into a (height × width)
+            row-major image, or an empty array if the inverted index is
+            unavailable or no elements match.
+        """
+        inv_ids     = self._raster.inv_ids
+        inv_offsets = self._raster.inv_offsets
+        inv_pixels  = self._raster.inv_pixels
+        if inv_ids is None or len(inv_ids) == 0 or len(element_ids) == 0:
+            return np.empty(0, dtype=np.int64)
+
+        # Vectorised binary search: find the slot in inv_ids for each queried ID
+        idxs = np.searchsorted(inv_ids, element_ids)
+
+        # Mask out any positions where the ID wasn't actually found
+        safe_idxs = np.minimum(idxs, len(inv_ids) - 1)
+        valid_mask = inv_ids[safe_idxs] == element_ids
+        valid_idxs = idxs[valid_mask]
+
+        if len(valid_idxs) == 0:
+            return np.empty(0, dtype=np.int64)
+
+        # Gather all pixel slices for the matched IDs into one flat array
+        parts = [inv_pixels[inv_offsets[i]:inv_offsets[i + 1]] for i in valid_idxs]
+        return np.concatenate(parts).astype(np.int64)
+
     # --------------------------------------------------------------------------
     # Geometric Methods
     # --------------------------------------------------------------------------
@@ -333,7 +393,7 @@ class Camera:
             )
             
             if cached_data is not None:
-                # Store in Raster
+                # Store in Raster (restore inverted index if present)
                 cache_path = cache_manager.get_cache_path(
                     self._raster.extrinsics,
                     point_cloud.file_path
@@ -341,7 +401,8 @@ class Camera:
                 self._raster.add_index_map(
                     cached_data['index_map'],
                     cache_path,
-                    cached_data['visible_indices']
+                    cached_data['visible_indices'],
+                    inverted_index=cached_data.get('inverted_index')
                 )
                 # Merge or set depth map only if caller requested depth updates
                 if compute_depth_map and 'depth_map' in cached_data and cached_data['depth_map'] is not None:
@@ -386,14 +447,17 @@ class Camera:
                     point_cloud.file_path,
                     result['index_map'],
                     result['visible_indices'],
-                    result.get('depth_map') if (isinstance(result, dict) and compute_depth_map) else None
+                    result.get('depth_map') if (isinstance(result, dict) and compute_depth_map) else None,
+                    element_type=result.get('element_type', None) if isinstance(result, dict) else None,
+                    inverted_index=result.get('inverted_index') if isinstance(result, dict) else None,
                 )
             
-            # Store in Raster
+            # Store in Raster (attach inverted index so inv_* arrays are available)
             self._raster.add_index_map(
                 result['index_map'],
                 cache_path,
-                result['visible_indices']
+                result['visible_indices'],
+                inverted_index=result.get('inverted_index') if isinstance(result, dict) else None,
             )
             # Merge or set newly computed depth map only if requested
             if compute_depth_map and 'depth_map' in result and result['depth_map'] is not None:
@@ -812,9 +876,10 @@ class OrthographicCamera(Camera):
                 self._raster.add_index_map(
                     cached_data['index_map'],
                     cache_path,
-                    cached_data['visible_indices']
+                    cached_data['visible_indices'],
+                    inverted_index=cached_data.get('inverted_index')
                 )
-                return True
+            return True
             
         # Compute visibility using orthographic method
         try:
@@ -838,13 +903,16 @@ class OrthographicCamera(Camera):
                     point_cloud.file_path,
                     result['index_map'],
                     result['visible_indices'],
-                    None  # No depth map for orthographic
+                    None,  # No depth map for orthographic
+                    element_type=result.get('element_type', None) if isinstance(result, dict) else None,
+                    inverted_index=result.get('inverted_index') if isinstance(result, dict) else None,
                 )
-            # Store in Raster
+            # Store in Raster (attach inverted index when present)
             self._raster.add_index_map(
                 result['index_map'],
                 cache_path,
-                result['visible_indices']
+                result['visible_indices'],
+                inverted_index=result.get('inverted_index') if isinstance(result, dict) else None,
             )
             return True
 
