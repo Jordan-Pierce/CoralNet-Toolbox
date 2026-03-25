@@ -1541,11 +1541,28 @@ class MVATViewer(QFrame):
         """Add a single image-plane thumbnail for the given camera."""
         if scale is None:
             scale = self.frustum_scale
+        # Guard against cameras that do not have a Frustum (orthomosaics)
+        fr = getattr(camera, 'frustum', None)
+        if fr is None:
+            # No frustum for this camera (e.g., orthomosaic) — skip thumbnail
+            return
+
         try:
-            # Clear any cached image actors for this frustum
-            camera.frustum.image_actors.clear()
-            actor = camera.frustum.create_image_plane_actor(self.plotter, scale=scale, opacity=self.thumbnail_opacity)
-            self.thumbnail_actors.append(actor)
+            # Remove any existing image actors for this frustum from the plotter
+            try:
+                for a in list(fr.image_actors.values()):
+                    try:
+                        self.plotter.remove_actor(a)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            # Clear cached image actors mapping and create a new image plane actor
+            fr.image_actors.clear()
+            actor = fr.create_image_plane_actor(self.plotter, scale=scale, opacity=self.thumbnail_opacity)
+            if actor is not None:
+                self.thumbnail_actors.append(actor)
         except Exception as e:
             print(f"Failed to render thumbnail for {getattr(camera, 'image_path', '<unknown>')}: {e}")
 
@@ -1558,13 +1575,26 @@ class MVATViewer(QFrame):
                 pass
         self.thumbnail_actors.clear()
 
-        # Clear frustum image actor caches
+        # Clear frustum image actor caches (safe attempt). If the viewer's frustum
+        # manager exposes cameras, iterate and clear any image actors attached
+        # to their Frustum objects, removing actors from the plotter first.
         try:
-            # Cameras are not owned by viewer; safe to attempt if present on parent
-            parent = getattr(self, 'parent', None)
+            frust_cams = getattr(self._frustum_manager, 'cameras', {})
+            for _path, cam in frust_cams.items():
+                fr = getattr(cam, 'frustum', None)
+                if fr is None:
+                    continue
+                try:
+                    for a in list(fr.image_actors.values()):
+                        try:
+                            self.plotter.remove_actor(a)
+                        except Exception:
+                            pass
+                    fr.image_actors.clear()
+                except Exception:
+                    pass
         except Exception:
-            parent = None
-        # We cannot enumerate cameras here safely; callers should clear camera.frustum.image_actors if needed
+            pass
 
     def set_thumbnail_opacity(self, opacity: float):
         """Set opacity for any existing thumbnail image plane actors (0.0-1.0)."""
