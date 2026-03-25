@@ -40,10 +40,9 @@ class PretrainModelWorker(QThread):
     training_error = pyqtSignal(str)
     training_status = pyqtSignal(str)
 
-    def __init__(self, params, device):
+    def __init__(self, params):
         super().__init__()
         self.params = params
-        self.device = device
         self.output_dir = Path(self.params['project']) / self.params['name']
 
     def run(self):
@@ -65,7 +64,7 @@ class PretrainModelWorker(QThread):
                 model_name = f"ultralytics/{model_name}"
 
             # Map device string to LightlyTrain accelerator ('gpu', 'cpu', 'mps')
-            accelerator = "gpu" if self.device == "cuda" else self.device
+            accelerator = "auto"
 
             self.training_status.emit("Initializing LightlyTrain pre-training...")
 
@@ -275,7 +274,7 @@ class Base(QDialog):
         # SSL Method
         self.ssl_method_combo = QComboBox()
         self.ssl_method_combo.addItems(["DINOv2", "SimCLR", "MAE", "DINO", "BYOL", "MoCo", "Distillation"])
-        self.ssl_method_combo.setCurrentText("DINOv2")
+        self.ssl_method_combo.setCurrentText("SimCLR")
         layout.addRow("SSL Method:", self.ssl_method_combo)
 
         group_box.setLayout(layout)
@@ -537,7 +536,7 @@ class Base(QDialog):
     def pretrain_model(self):
         self.params = self.get_parameters()
         
-        self.worker = PretrainModelWorker(self.params, getattr(self.main_window, 'device', 'auto'))
+        self.worker = PretrainModelWorker(self.params)
         
         self.worker.training_started.connect(self.on_training_started)
         self.worker.training_completed.connect(self.on_training_completed)

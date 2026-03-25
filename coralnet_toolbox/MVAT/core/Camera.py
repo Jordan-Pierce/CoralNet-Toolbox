@@ -1,3 +1,4 @@
+import os
 import traceback
 
 import numpy as np
@@ -516,22 +517,15 @@ class OrthographicCamera(Camera):
     - Rays are parallel (no perspective distortion)
     """
     def __init__(self, raster):
-        """
-        Initialize orthographic camera from raster with DEM.
-        """        
-        # Core flag
         self.is_orthographic = True
         self._raster = raster
 
-        # 1. ORTHOMOSAIC IMAGE PROPERTIES
         self.width = raster.width
         self.height = raster.height
 
         if raster.transform_matrix is None:
             raise ValueError(f"Orthomosaic {raster.basename} missing transform_matrix")
 
-        # BULLETPROOF: Force the matrix to be a standard 3x3 float array. 
-        # This strips away any legacy np.matrix or object array wrappers.
         self.transform_matrix = np.array(raster.transform_matrix, dtype=np.float64).reshape(3, 3)
 
         try:
@@ -539,46 +533,53 @@ class OrthographicCamera(Camera):
         except np.linalg.LinAlgError:
             raise ValueError(f"Transform matrix for {raster.basename} is singular (non-invertible)")
 
-        # 2. DEM PROPERTIES
-        # Use the lazy loader so it pulls from disk if restoring from a project!
-        self.z_channel = raster.z_channel_lazy
+        # --- NATIVE DEM PROPERTIES ---
+        self.native_dem_data = None
+        self.native_dem_transform_inv = None
+        z_avg = 0.0
 
-        if self.z_channel is None:
-            print(f"WARNING: {raster.basename} has no DEM. Assuming flat terrain at Z=0")
-        else:
-            self.z_channel = self.z_channel.copy()
+        if raster.z_channel_path and os.path.exists(raster.z_channel_path):
+            try:
+                import rasterio
+                with rasterio.open(raster.z_channel_path) as dem_src:
+                    self.native_dem_data = dem_src.read(1).astype(np.float32)
+                    nodata = dem_src.nodata
+                    if nodata is not None:
+                        self.native_dem_data[self.native_dem_data == nodata] = np.nan
+                    
+                    t = dem_src.transform
+                    dem_transform = np.array([
+                        [t.a, t.b, t.c],
+                        [t.d, t.e, t.f],
+                        [0.0, 0.0, 1.0]
+                    ], dtype=np.float64)
+                    
+                    self.native_dem_transform_inv = np.linalg.inv(dem_transform)
+                    
+                    valid_dem = self.native_dem_data[~np.isnan(self.native_dem_data)]
+                    if valid_dem.size > 0:
+                        z_avg = float(np.mean(valid_dem))
+            except Exception as e:
+                print(f"WARNING: Could not load native DEM for {raster.basename}: {e}")
 
-        # 3. "CAMERA" POSITION (Conceptual - hovering directly above scene center)
+        # Position (Conceptual)
         center_x, center_y = self.width / 2.0, self.height / 2.0
-        
-        # Because transform_matrix is strictly an ndarray, this is guaranteed to yield a 1D (3,) array
         center_vec = np.array([center_x, center_y, 1.0], dtype=np.float64)
         world_center = (self.transform_matrix @ center_vec).flatten()
-        
-        # Safely calculate average Z for altitude placement
-        if self.z_channel is not None and self.z_channel.size > 0:
-            z_mean = np.nanmean(self.z_channel)
-            z_avg = float(np.ravel(z_mean))  # Safe scalar extraction
-            if np.isnan(z_avg): 
-                z_avg = 0.0
-        else:
-            z_avg = 0.0
-            
-        # Safely construct the 3D position using the explicit floats
-        # Extract X and Y components from the homogeneous world_center array
         self.position = np.array([float(world_center[0]), float(world_center[1]), z_avg + 1000.0], dtype=np.float64)
 
-        # 4. COMPATIBILITY STUBS
+        # Stubs
         self.K = np.eye(3)
         self.R = np.eye(3)
         self.t = np.array([0.0, 0.0, 0.0])
         self.K_inv = np.eye(3)
         self.extrinsics = np.eye(4)
         self.P = np.eye(3, 4)
-        
-        # No frustum for orthomosaics
         self.frustum = None
         self.selected = False
+
+        # Placeholder for injected matrix
+        self.chunk_transform_inv = None
 
     # --------------------------------------------------------------------------
     # Properties (Delegated to Raster)
@@ -618,153 +619,171 @@ class OrthographicCamera(Camera):
 
     def project(self, points_3d_world):
         """
-        Project 3D world points to 2D pixel coordinates (ignoring Z).
-        Uses affine transformation: [u, v, 1] = T_inv @ [X, Y, 1]
-
-        Args:
-            points_3d_world (np.ndarray): 3D point(s) [x, y, z] in world coordinates
-
-        Returns:
-            np.ndarray: 2D pixel coordinate(s) [u, v]
+        Project 3D world points to 2D pixel coordinates.
+        Math: Local XYZ -> chunk_transform -> World XYZ -> transform_matrix_inv -> Pixel UV
         """
         points = np.atleast_2d(points_3d_world)
         N = len(points)
-
-        # Homogeneous coordinates [X, Y, 1] (ignore Z for orthographic)
-        points_hom = np.column_stack([points[:, 0], points[:, 1], np.ones(N)])
-
-        # Transform to pixel space
-        pixels_hom = (self.transform_matrix_inv @ points_hom.T).T
         
-        # Return [u, v] (drop homogeneous coordinate)
+        # 1. Reverse the Bridge: Convert Local XYZ -> World XYZ
+        points_hom = np.column_stack([points[:, 0], points[:, 1], points[:, 2], np.ones(N)])
+        
+        if self.chunk_transform_inv is not None:
+            # We invert the inverse to get the forward transform
+            chunk_transform = np.linalg.inv(self.chunk_transform_inv)
+            world_hom = (chunk_transform @ points_hom.T).T
+        else:
+            world_hom = points_hom
+            
+        # 2. Convert World XY -> Pixel UV
+        world_xy_hom = np.column_stack([world_hom[:, 0], world_hom[:, 1], np.ones(N)])
+        pixels_hom = (self.transform_matrix_inv @ world_xy_hom.T).T
+        
         if N == 1:
             return pixels_hom[0, :2]
         return pixels_hom[:, :2]
 
     def unproject(self, pixel_coord):
         """
-        Unproject pixel to 3D world point using DEM.
-        Since QtRaster resizes the DEM to match the image 1:1, we can do a direct lookup.
+        Unproject Ortho pixel to 3D point.
+        Math: Ortho Pixel -> World XYZ (via Native DEM) -> Local XYZ (via chunk_transform)
         """        
-        # Clamp to Ortho bounds and explicitly unpack the tuple to avoid TypeError
-        u = int(np.clip(pixel_coord[0], 0, self.width - 1))
-        v = int(np.clip(pixel_coord[1], 0, self.height - 1))
-
         # 1. Transform Ortho pixel to world X, Y
-        pixel_hom = np.array([u, v, 1.0], dtype=np.float64)
-        
-        # Guaranteed to be a 1D array because of our strict matrix formatting in __init__
+        pixel_hom = np.array([pixel_coord[0], pixel_coord[1], 1.0], dtype=np.float64)
         world_hom = (self.transform_matrix @ pixel_hom).flatten()
         X, Y = float(world_hom[0]), float(world_hom[1])
 
-        # If there's no DEM loaded at all, fallback to Z=0.0
-        if self.z_channel is None:
-            return np.array([X, Y, 0.0], dtype=np.float64)
-
-        # 2. Query DEM for Z directly (1:1 pixel mapping)
-        Z = self.z_channel[v, u]
-        
-        # 3. Handle NaN or NoData values from the DEM
-        if np.isnan(Z) or (self._raster.z_nodata is not None and Z == self._raster.z_nodata):
-            Z = 0.0
-
-        return np.array([X, Y, float(Z)], dtype=np.float64)
-    
-    def is_point_occluded_depth_based(self, point_3d, depth_threshold=0.1):
-        """
-        Determine if a 3D point is occluded based on the depth map (z_channel) of the camera.
-        """    
-        uv = self.project(point_3d.reshape(1, 3))
-        if np.isnan(uv).any():
-            return True
-
-        u = int(np.clip(uv[0], 0, self.width - 1))
-        v = int(np.clip(uv[1], 0, self.height - 1))
-        
-        if self.z_channel is None:
-            return False
+        # 2. Get World Z from Native DEM
+        Z = 0.0
+        if self.native_dem_data is not None and self.native_dem_transform_inv is not None:
+            world_dem_hom = np.array([X, Y, 1.0], dtype=np.float64)
+            dem_pixel_hom = (self.native_dem_transform_inv @ world_dem_hom).flatten()
+            dem_u, dem_v = int(np.floor(dem_pixel_hom[0])), int(np.floor(dem_pixel_hom[1]))
             
-        Z_dem = self.z_channel[v, u]
-        if np.isnan(Z_dem):
-            return False 
+            h, w = self.native_dem_data.shape
+            if 0 <= dem_u < w and 0 <= dem_v < h:
+                Z_val = self.native_dem_data[dem_v, dem_u]
+                if not np.isnan(Z_val):
+                    Z = float(Z_val)
 
-        # FIX: Compare strictly the Z-component of the 3D point!
-        point_z = point_3d.flatten()[2]
-        return point_z < (Z_dem - depth_threshold)
+        # --- THE BRIDGE ---
+        # 3. Convert World XYZ to Local XYZ
+        world_xyz_hom = np.array([X, Y, Z, 1.0], dtype=np.float64)
+        
+        if self.chunk_transform_inv is not None:
+            local_xyz_hom = (self.chunk_transform_inv @ world_xyz_hom).flatten()
+            return np.array([local_xyz_hom[0], local_xyz_hom[1], local_xyz_hom[2]], dtype=np.float64)
+        
+        # Fallback if no transform was loaded
+        return np.array([X, Y, Z], dtype=np.float64)
+    
+    # def is_point_occluded_depth_based(self, point_3d, depth_threshold=0.1):
+    #     """
+    #     Determine if a 3D point is occluded using the NATIVE DEM.
+    #     """    
+    #     if self.native_dem_data is None or self.native_dem_transform_inv is None:
+    #         return False
+
+    #     point_z = point_3d.flatten()[2]
+    #     X, Y = point_3d.flatten()[0], point_3d.flatten()[1]
+
+    #     # Transform World X, Y to Native DEM pixel coordinates
+    #     world_dem_hom = np.array([X, Y, 1.0], dtype=np.float64)
+    #     dem_pixel_hom = (self.native_dem_transform_inv @ world_dem_hom).flatten()
+        
+    #     dem_u = int(np.floor(dem_pixel_hom[0]))
+    #     dem_v = int(np.floor(dem_pixel_hom[1]))
+        
+    #     h, w = self.native_dem_data.shape
+    #     if 0 <= dem_u < w and 0 <= dem_v < h:
+    #         Z_dem = self.native_dem_data[dem_v, dem_u]
+    #         if np.isnan(Z_dem):
+    #             return False 
+            
+    #         return point_z < (Z_dem - depth_threshold)
+
+    #     return False
+
+    def is_point_occluded_depth_based(self, point_3d, depth_threshold=0.1):
+        # We can implement this later if the math above proves correct!
+        return False
+
+    # def ensure_visibility_data(self, point_cloud, cache_manager, compute_depth_map=True, compute_index_maps=True):
+    #     """
+    #     Ensure visibility data is computed for this orthographic camera.
+    #     Delegates to VisibilityManager.compute_orthographic_visibility
+    #     """
+    #     if not compute_index_maps:
+    #         return True
+
+    #     # Check if already in memory
+    #     if self._raster.visible_indices is not None:
+    #         return True
+
+    #     # Try to load from cache
+    #     if cache_manager is not None:
+    #         # Use transform_matrix as unique identifier for orthomosaics
+    #         cached_data = cache_manager.load_visibility(
+    #             self.transform_matrix,
+    #             point_cloud.file_path,
+    #             point_cloud.get_element_type()
+    #         )
+    #         if cached_data is not None:
+    #             cache_path = cache_manager.get_cache_path(
+    #                 self.transform_matrix,
+    #                 point_cloud.file_path
+    #             )
+
+    #             self._raster.add_index_map(
+    #                 cached_data['index_map'],
+    #                 cache_path,
+    #                 cached_data['visible_indices'],
+    #                 inverted_index=cached_data.get('inverted_index')
+    #             )
+    #         return True
+            
+    #     # Compute visibility using orthographic method
+    #     try:
+    #         from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
+    #         points_world = point_cloud.get_points_array()
+    #         if points_world is None or len(points_world) == 0:
+    #             print(f"Warning: Point cloud is empty or invalid")
+    #             return False
+            
+    #         result = VisibilityManager.compute_orthographic_visibility(
+    #             points_world=points_world,
+    #             transform_matrix_inv=self.transform_matrix_inv,
+    #             width=self.width,
+    #             height=self.height
+    #         )
+    #         # Save to cache
+    #         cache_path = None
+    #         if cache_manager is not None:
+    #             cache_path = cache_manager.save_visibility(
+    #                 self.transform_matrix,
+    #                 point_cloud.file_path,
+    #                 result['index_map'],
+    #                 result['visible_indices'],
+    #                 None,  # No depth map for orthographic
+    #                 element_type=result.get('element_type', None) if isinstance(result, dict) else None,
+    #                 inverted_index=result.get('inverted_index') if isinstance(result, dict) else None,
+    #             )
+    #         # Store in Raster (attach inverted index when present)
+    #         self._raster.add_index_map(
+    #             result['index_map'],
+    #             cache_path,
+    #             result['visible_indices'],
+    #             inverted_index=result.get('inverted_index') if isinstance(result, dict) else None,
+    #         )
+    #         return True
+
+    #     except Exception as e:
+    #         print(f"Error computing orthographic visibility for {self.label}: {e}")
+    #         traceback.print_exc()
+    #         return False
 
     def ensure_visibility_data(self, point_cloud, cache_manager, compute_depth_map=True, compute_index_maps=True):
-        """
-        Ensure visibility data is computed for this orthographic camera.
-        Delegates to VisibilityManager.compute_orthographic_visibility
-        """
-        if not compute_index_maps:
-            return True
-
-        # Check if already in memory
-        if self._raster.visible_indices is not None:
-            return True
-
-        # Try to load from cache
-        if cache_manager is not None:
-            # Use transform_matrix as unique identifier for orthomosaics
-            cached_data = cache_manager.load_visibility(
-                self.transform_matrix,
-                point_cloud.file_path,
-                point_cloud.get_element_type()
-            )
-            if cached_data is not None:
-                cache_path = cache_manager.get_cache_path(
-                    self.transform_matrix,
-                    point_cloud.file_path
-                )
-
-                self._raster.add_index_map(
-                    cached_data['index_map'],
-                    cache_path,
-                    cached_data['visible_indices'],
-                    inverted_index=cached_data.get('inverted_index')
-                )
-            return True
-            
-        # Compute visibility using orthographic method
-        try:
-            from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
-            points_world = point_cloud.get_points_array()
-            if points_world is None or len(points_world) == 0:
-                print(f"Warning: Point cloud is empty or invalid")
-                return False
-            
-            result = VisibilityManager.compute_orthographic_visibility(
-                points_world=points_world,
-                transform_matrix_inv=self.transform_matrix_inv,
-                width=self.width,
-                height=self.height
-            )
-            # Save to cache
-            cache_path = None
-            if cache_manager is not None:
-                cache_path = cache_manager.save_visibility(
-                    self.transform_matrix,
-                    point_cloud.file_path,
-                    result['index_map'],
-                    result['visible_indices'],
-                    None,  # No depth map for orthographic
-                    element_type=result.get('element_type', None) if isinstance(result, dict) else None,
-                    inverted_index=result.get('inverted_index') if isinstance(result, dict) else None,
-                )
-            # Store in Raster (attach inverted index when present)
-            self._raster.add_index_map(
-                result['index_map'],
-                cache_path,
-                result['visible_indices'],
-                inverted_index=result.get('inverted_index') if isinstance(result, dict) else None,
-            )
-            return True
-
-        except Exception as e:
-            print(f"Error computing orthographic visibility for {self.label}: {e}")
-            traceback.print_exc()
-            return False
+        return True # Stub to allow loading without crashing
 
     # --------------------------------------------------------------------------
     # Visualization Stubs (No frustum for orthomosaics)

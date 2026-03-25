@@ -36,6 +36,61 @@ from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED
 # ----------------------------------------------------------------------------------------------------------------------
 
 
+from PyQt5.QtWidgets import QDialog, QGridLayout, QLineEdit, QPushButton, QVBoxLayout, QLabel
+
+class TransformInputDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Input Chunk Transform Matrix")
+        self.setMinimumWidth(500)
+        
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Enter the 4x4 chunk_transform matrix from Metashape:"))
+        
+        grid_layout = QGridLayout()
+        self.inputs = []
+        
+        # Create 4x4 grid of inputs
+        for i in range(4):
+            row_inputs = []
+            for j in range(4):
+                line_edit = QLineEdit()
+                # Default to Identity matrix
+                line_edit.setText("1.0" if i == j else "0.0")
+                grid_layout.addWidget(line_edit, i, j)
+                row_inputs.append(line_edit)
+            self.inputs.append(row_inputs)
+            
+        layout.addLayout(grid_layout)
+        
+        btn_layout = QHBoxLayout()
+        ok_btn = QPushButton("Apply")
+        cancel_btn = QPushButton("Cancel")
+        
+        ok_btn.clicked.connect(self.accept)
+        cancel_btn.clicked.connect(self.reject)
+        
+        btn_layout.addStretch()
+        btn_layout.addWidget(cancel_btn)
+        btn_layout.addWidget(ok_btn)
+        
+        layout.addLayout(btn_layout)
+        
+    def get_matrix(self):
+        import numpy as np
+        matrix = np.eye(4, dtype=np.float64)
+        for i in range(4):
+            for j in range(4):
+                try:
+                    # Strip any accidental brackets or commas if pasted loosely
+                    val_str = self.inputs[i][j].text().strip('[], ')
+                    matrix[i, j] = float(val_str)
+                except ValueError:
+                    print(f"Failed to parse value at {i},{j}. Defaulting to 0.0")
+                    matrix[i, j] = 0.0
+        return matrix
+
+
 class MVATViewer(QFrame):
     focalPointChanged = pyqtSignal(np.ndarray)  # Emits 3D point when focal point is set
     pointSizeChanged = pyqtSignal(int)
@@ -897,7 +952,6 @@ class MVATViewer(QFrame):
             file_path = event.mimeData().urls()[0].toLocalFile()
             file_ext = file_path.lower()
             
-            # Notify user via status bar if available
             try:
                 top = self.window()
                 if hasattr(top, 'status_bar'):
@@ -911,6 +965,30 @@ class MVATViewer(QFrame):
             if product is not None:
                 self.add_product(product)
                 self.render_scene()
+                
+                # --- QUICK EDIT: PROMPT FOR CHUNK TRANSFORM GRID ---
+                QApplication.restoreOverrideCursor() # Restore cursor so user can click
+                
+                dialog = TransformInputDialog(self)
+                if dialog.exec_() == QDialog.Accepted:
+                    import numpy as np
+                    matrix = dialog.get_matrix()
+                    try:
+                        inv_matrix = np.linalg.inv(matrix)
+                        # Inject into OrthographicCameras via MVATManager
+                        top = self.window()
+                        if hasattr(top, 'mvat_manager'):
+                            for cam in top.mvat_manager.cameras.values():
+                                if getattr(cam, 'is_orthographic', False):
+                                    cam.chunk_transform_inv = inv_matrix
+                            print("✅ Successfully injected chunk_transform_inv into OrthographicCameras")
+                            print("Injected Matrix:\n", matrix)
+                    except np.linalg.LinAlgError:
+                        print("⚠️ Matrix is singular and cannot be inverted!")
+                
+                QApplication.setOverrideCursor(Qt.WaitCursor) # Set back for remainder
+                # ---------------------------------------------------
+                
                 event.acceptProposedAction()
                 
                 # Trigger visibility filtering based on the model's current selections
