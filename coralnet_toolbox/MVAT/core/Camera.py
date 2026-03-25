@@ -677,6 +677,48 @@ class OrthographicCamera(Camera):
         # Fallback if no transform was loaded
         return np.array([X, Y, Z], dtype=np.float64)
     
+    def unproject_ray(self, pixel_coord):
+        """
+        Unproject Ortho pixel to a full 3D Ray (origin, direction, terminal_point).
+        Math: Ortho Pixel -> World XYZ (via Native DEM) -> Local XYZ (via chunk_transform)
+        """        
+        # 1. Transform Ortho pixel to world X, Y
+        pixel_hom = np.array([pixel_coord[0], pixel_coord[1], 1.0], dtype=np.float64)
+        world_hom = (self.transform_matrix @ pixel_hom).flatten()
+        X, Y = float(world_hom[0]), float(world_hom[1])
+
+        # 2. Get World Z from Native DEM
+        Z = 0.0
+        if self.native_dem_data is not None and self.native_dem_transform_inv is not None:
+            world_dem_hom = np.array([X, Y, 1.0], dtype=np.float64)
+            dem_pixel_hom = (self.native_dem_transform_inv @ world_dem_hom).flatten()
+            dem_u, dem_v = int(np.floor(dem_pixel_hom[0])), int(np.floor(dem_pixel_hom[1]))
+            
+            h, w = self.native_dem_data.shape
+            if 0 <= dem_u < w and 0 <= dem_v < h:
+                Z_val = self.native_dem_data[dem_v, dem_u]
+                if not np.isnan(Z_val):
+                    Z = float(Z_val)
+
+        # 3. Create Ray Points in World Space
+        # The sky is high up in World Z
+        terminal_world = np.array([X, Y, Z, 1.0], dtype=np.float64)
+        origin_world = np.array([X, Y, Z + 1000.0, 1.0], dtype=np.float64)
+
+        # 4. Bridge to Local Space
+        if getattr(self, 'chunk_transform_inv', None) is not None:
+            terminal_local = (self.chunk_transform_inv @ terminal_world)[:3]
+            origin_local = (self.chunk_transform_inv @ origin_world)[:3]
+        else:
+            terminal_local = terminal_world[:3]
+            origin_local = origin_world[:3]
+
+        # 5. Calculate Local Direction
+        direction_local = terminal_local - origin_local
+        direction_local = direction_local / np.linalg.norm(direction_local)
+
+        return origin_local, direction_local, terminal_local
+    
     # def is_point_occluded_depth_based(self, point_3d, depth_threshold=0.1):
     #     """
     #     Determine if a 3D point is occluded using the NATIVE DEM.

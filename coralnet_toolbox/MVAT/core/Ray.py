@@ -91,21 +91,15 @@ class CameraRay:
         
         # --- ORTHOGRAPHIC RAYS ---
         if getattr(camera, 'is_orthographic', False):
-            # ALWAYS use unproject to fetch actual DEM elevation natively,
-            # completely bypassing the 'depth' arg from the UI.
-            terminal_point = camera.unproject(pixel_xy)
-            has_accurate_depth = False
-            
-            if terminal_point is not None:
-                has_accurate_depth = True
+            if hasattr(camera, 'unproject_ray'):
+                origin, direction, terminal_point = camera.unproject_ray(pixel_xy)
+                has_accurate_depth = True if camera.native_dem_data is not None else False
             else:
-                # Extreme fallback if DEM yields NaN
-                pixel_hom = np.array([pixel_xy, pixel_xy, 1.0], dtype=np.float64)
-                world_xy = (camera.transform_matrix @ pixel_hom).flatten()
-                terminal_point = np.array([float(world_xy), float(world_xy), 0.0], dtype=np.float64)
-            
-            direction = np.array([0.0, 0.0, -1.0])
-            origin = terminal_point + np.array([0.0, 0.0, 1000.0]) 
+                # Fallback
+                terminal_point = camera.unproject(pixel_xy)
+                direction = np.array([0.0, 0.0, -1.0])
+                origin = terminal_point + np.array([0.0, 0.0, 1000.0])
+                has_accurate_depth = False
             
             ray = cls(
                 origin=origin,
@@ -119,83 +113,31 @@ class CameraRay:
             ray.visual_origin = origin.copy()
             ray.visual_terminal = terminal_point.copy()
             return ray
-        
-        # EXISTING: Perspective camera logic
-        # Camera origin is the optical center in world coordinates
-        origin = camera.position.copy()
-        
-        # Check if we have valid depth
-        has_accurate_depth = False
-        actual_depth = default_depth
-        
-        if depth is not None and depth > 0 and not np.isnan(depth):
-            actual_depth = depth
-            has_accurate_depth = True
-        
-        # Calculate the 3D point by unprojecting the pixel with known depth
-        # We need to manually unproject since camera.unproject() reads from raster
-        pixel_hom = np.array([pixel_xy[0], pixel_xy[1], 1.0])
-        
-        # Transform to Camera Coordinate System (Back-projection)
-        # X_cam = Z * K^{-1} * x_pix
-        point_cam = actual_depth * (camera.K_inv @ pixel_hom)
-        
-        # Transform to World Coordinate System
-        # X_world = R^T * (X_cam - t)
-        terminal_point = camera.R.T @ (point_cam - camera.t)
-        
-        # Calculate direction (from camera position to terminal point)
-        direction = terminal_point - origin
-        norm = np.linalg.norm(direction)
-        if norm > 0:
-            direction = direction / norm
-        else:
-            # Fallback to camera's forward direction
-            direction = camera.R.T @ np.array([0, 0, 1])
-            
-        ray = cls(
-            origin=origin,
-            direction=direction,
-            terminal_point=terminal_point,
-            has_accurate_depth=has_accurate_depth,
-            pixel_coord=pixel_xy,
-            source_camera=camera,
-            element_id=element_id
-        )
-
-        # Visual start/end default to the true geometry (no offset).
-        ray.visual_origin = ray.origin.copy()
-        ray.visual_terminal = ray.terminal_point.copy()
-
-        return ray
     
     @classmethod
     def from_world_point_and_camera(cls, 
                                     world_point: np.ndarray, 
                                     camera: 'Camera',
                                     element_id: int = -1) -> 'CameraRay':
-        """
-        Create a ray from a camera's origin to a known 3D world point.
-        
-        This is used to visualize rays from highlighted cameras to a point
-        determined by another camera's ray (e.g., the selected camera).
-        
-        Args:
-            world_point: 3D point in world coordinates (the target).
-            camera: Camera object from which to cast the ray.
-            
-        Returns:
-            CameraRay: A new ray from the camera to the world point.
-            
-        # TODO: When depth is fully incorporated, re-evaluate whether rays
-        # from highlighted cameras should use solid or dashed line styling
-        # based on depth accuracy at the projected point.
-        """
-        # BRANCH: Orthographic camera
+        # --- ORTHOGRAPHIC RAYS ---
         if getattr(camera, 'is_orthographic', False):
             world_point = np.asarray(world_point, dtype=np.float64)
-            direction = np.array([0.0, 0.0, -1.0])
-            origin = world_point + np.array([0.0, 0.0, 1000.0])
+            
+            # Bridge the target point back to World Space to find the sky directly above it
+            if getattr(camera, 'chunk_transform', None) is not None and getattr(camera, 'chunk_transform_inv', None) is not None:
+                point_hom = np.array([world_point[0], world_point[1], world_point[2], 1.0])
+                point_world = (camera.chunk_transform @ point_hom).flatten()
+                
+                origin_world = np.array([point_world[0], point_world[1], point_world[2] + 1000.0, 1.0])
+                origin_local = (camera.chunk_transform_inv @ origin_world)[:3]
+                
+                direction = world_point - origin_local
+                norm = np.linalg.norm(direction)
+                direction = direction / norm if norm > 0 else np.array([0.0, 0.0, -1.0])
+                origin = origin_local
+            else:
+                direction = np.array([0.0, 0.0, -1.0])
+                origin = world_point + np.array([0.0, 0.0, 1000.0])
             
             ray = cls(
                 origin=origin,
@@ -209,36 +151,7 @@ class CameraRay:
             ray.visual_origin = origin.copy()
             ray.visual_terminal = world_point.copy()
             return ray
-        
-        # EXISTING: Perspective camera logic
-        origin = camera.position.copy()
-        world_point = np.asarray(world_point, dtype=np.float64)
-        
-        # Calculate direction from camera to world point
-        direction = world_point - origin
-        norm = np.linalg.norm(direction)
-        if norm > 0:
-            direction = direction / norm
-        else:
-            # Fallback to camera's forward direction
-            direction = camera.R.T @ np.array([0, 0, 1])
-            
-        ray = cls(
-            origin=origin,
-            direction=direction,
-            terminal_point=world_point,
-            has_accurate_depth=True,  # World point is known precisely
-            pixel_coord=None,  # Not originating from a pixel
-            source_camera=camera,
-            element_id=element_id
-        )
-
-        # Visual start/end default to the true geometry (no offset).
-        ray.visual_origin = ray.origin.copy()
-        ray.visual_terminal = ray.terminal_point.copy()
-
-        return ray
-    
+                
     def cast_on_mesh(self, mesh) -> Optional[np.ndarray]:
         """
         Cast this ray onto a PyVista mesh to find intersection point.
