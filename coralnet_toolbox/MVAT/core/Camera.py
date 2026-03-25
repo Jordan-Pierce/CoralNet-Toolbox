@@ -678,20 +678,19 @@ class OrthographicCamera(Camera):
         if np.isnan(uv).any():
             return True
 
-        # Extract tuple properly
-        u = int(np.clip(uv, 0, self.width - 1))
-        v = int(np.clip(uv, 0, self.height - 1))
+        u = int(np.clip(uv[0], 0, self.width - 1))
+        v = int(np.clip(uv[1], 0, self.height - 1))
         
         if self.z_channel is None:
             return False
             
-        # Direct lookup (1:1 pixel mapping)
         Z_dem = self.z_channel[v, u]
         if np.isnan(Z_dem):
             return False 
 
-        # Compare the Z-component of the 3D point (index 2)
-        return point_3d < (Z_dem - depth_threshold)
+        # FIX: Compare strictly the Z-component of the 3D point!
+        point_z = point_3d.flatten()[2]
+        return point_z < (Z_dem - depth_threshold)
 
     def ensure_visibility_data(self, point_cloud, cache_manager, compute_depth_map=True, compute_index_maps=True):
         """

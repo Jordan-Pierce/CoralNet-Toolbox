@@ -1081,8 +1081,8 @@ class VisibilityManager:
         v = pixels_hom[:, 1]
 
         # 4. Bounds Check & Integer Cast
-        u_idx = u.round().long()
-        v_idx = v.round().long()
+        u_idx = u.floor().long()
+        v_idx = v.floor().long()
 
         valid_mask = (u_idx >= 0) & (u_idx < width) & (v_idx >= 0) & (v_idx < height)
 
@@ -1138,8 +1138,8 @@ class VisibilityManager:
         points_hom = np.column_stack([points[:, 0], points[:, 1], np.ones(N)])
         pixels_hom = (transform_inv @ points_hom.T).T
         
-        u = np.rint(pixels_hom[:, 0]).astype(np.int32)
-        v = np.rint(pixels_hom[:, 1]).astype(np.int32)
+        u = np.floor(pixels_hom[:, 0]).astype(np.int32)
+        v = np.floor(pixels_hom[:, 1]).astype(np.int32)
         z = points[:, 2]
 
         valid_mask = (u >= 0) & (u < width) & (v >= 0) & (v < height)

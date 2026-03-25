@@ -106,10 +106,18 @@ class MousePositionBridge(QObject):
         if candidate_id > -1 and primary_target is not None:
             coord = primary_target.get_element_coordinate(candidate_id)
             if coord is not None:
-                origin = camera.position.copy()
-                direction = coord - origin
-                norm = np.linalg.norm(direction)
-                direction = direction / norm if norm > 0 else camera.R.T @ np.array([0, 0, 1])
+                # FIX: Branch origin and direction based on camera type
+                if getattr(camera, 'is_orthographic', False):
+                    # Orthographic rays must cast straight down from directly above
+                    origin = coord + np.array([0.0, 0.0, 1000.0])
+                    direction = np.array([0.0, 0.0, -1.0])
+                else:
+                    # Perspective rays originate from the camera optical center
+                    origin = camera.position.copy()
+                    direction = coord - origin
+                    norm = np.linalg.norm(direction)
+                    direction = direction / norm if norm > 0 else camera.R.T @ np.array([0, 0, 1])
+                
                 ray = CameraRay(
                     origin=origin,
                     direction=direction,
