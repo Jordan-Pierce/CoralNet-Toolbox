@@ -418,6 +418,16 @@ class ContextMatrixWidget(QWidget):
         self.selection_label.setStyleSheet("color: #666;")
         layout.addWidget(self.selection_label)
 
+        # Rank indicator
+        self._rank_label = QLabel("\u2014")
+        self._rank_label.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(self._rank_label)
+
+        sep3 = QFrame()
+        sep3.setFrameShape(QFrame.VLine)
+        sep3.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(sep3)
+
         layout.addStretch(1)
 
         # Target-Lock Sync
@@ -436,15 +446,10 @@ class ContextMatrixWidget(QWidget):
         self._multi_annotate_btn.toggled.connect(self._on_multi_annotate_toggled)
         layout.addWidget(self._multi_annotate_btn)
 
-        # Rank indicator
-        self._rank_label = QLabel("\u2014")
-        self._rank_label.setStyleSheet("color: #888; font-size: 11px;")
-        layout.addWidget(self._rank_label)
-
-        sep3 = QFrame()
-        sep3.setFrameShape(QFrame.VLine)
-        sep3.setFrameShadow(QFrame.Sunken)
-        layout.addWidget(sep3)
+        sep4 = QFrame()
+        sep4.setFrameShape(QFrame.VLine)
+        sep4.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(sep4)
 
         # Load Cameras button
         self.load_btn = QToolButton()
