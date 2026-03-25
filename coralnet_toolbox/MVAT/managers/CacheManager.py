@@ -178,7 +178,9 @@ class CacheManager:
         # Write atomically: write to a temp file then rename into place to avoid
         # consumers attempting to read a partially-written .npz (which yields
         # "File is not a zip file" errors).
-        temp_path = cache_path + '.tmp'
+        # NOTE: numpy.savez_compressed appends '.npz' to any path not already
+        # ending in '.npz', so the temp name must end in '.npz' or the rename fails.
+        temp_path = os.path.splitext(cache_path)[0] + '_tmp.npz'
         try:
             np.savez_compressed(temp_path, **save_dict)
             # Atomic replace (works on Windows and POSIX)
