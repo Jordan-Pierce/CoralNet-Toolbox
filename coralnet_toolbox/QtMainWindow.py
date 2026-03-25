@@ -1184,12 +1184,13 @@ class MainWindow(QMainWindow):
         if hasattr(self.embedding_viewer_window, 'create_top_toolbar'):
             self.embeddings_dock.add_toolbar(self.embedding_viewer_window.create_top_toolbar())
         if hasattr(self.embedding_viewer_window, 'create_bottom_toolbar'):
-            self.embeddings_dock.add_toolbar(
-                self.embedding_viewer_window.create_bottom_toolbar(),
-                Qt.BottomToolBarArea)
+            self.embeddings_dock.add_toolbar(self.embedding_viewer_window.create_bottom_toolbar(), Qt.BottomToolBarArea)
 
         # Setup MVAT Viewer Dock (Bottom-left) using DockWrapper
         self.mvat_dock = DockWrapper("3D Viewer", "3DViewerDock", self.mvat_viewer, self)
+
+        if hasattr(self.mvat_viewer, 'create_top_toolbar'):
+            self.mvat_dock.add_toolbar(self.mvat_viewer.create_top_toolbar())
 
         # Setup Context Matrix Dock (bottom-right, replaces legacy Camera Grid)
         self.context_dock = DockWrapper("Context", "ContextDock", self.context_matrix, self)

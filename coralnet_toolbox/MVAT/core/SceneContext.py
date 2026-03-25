@@ -2,7 +2,7 @@
 Scene Context Container for MVAT
 
 The SceneContext is the single source of truth for the 3D scene.
-It holds a collection of scene products (point clouds, meshes, DEMs) and provides
+It holds a collection of scene products (point clouds, meshes) and provides
 capability queries for the visibility engine and rendering pipeline.
 """
 from typing import Dict, List, Optional, Tuple
@@ -25,7 +25,7 @@ class SceneContext:
     """
     Container for heterogeneous 3D scene products.
     
-    Manages multiple scene products (point clouds, meshes, DEMs) and provides:
+    Manages multiple scene products (point clouds, meshes) and provides:
     - Unified bounding box calculation
     - Best occluder selection for visibility computation
     - Primary target designation for annotation indexing
@@ -172,20 +172,14 @@ class SceneContext:
         
         Priority order:
         1. MeshProduct (solid, accurate ray-casting)
-        2. DEMProduct (solid, grid-based occlusion)
-        3. PointCloudProduct (fallback, requires splatting)
+        2. PointCloudProduct (fallback, requires splatting)
         
         Returns:
             Best available occluder, or None if scene is empty.
         """
-        # Priority 1: Find any solid occluder (mesh or DEM)
+        # Priority 1: Find any solid occluder (mesh)
         for product in self._products.values():
             if product.is_solid() and product.get_element_type() == 'face':
-                return product
-        
-        # Priority 2: DEM (cell-based solid)
-        for product in self._products.values():
-            if product.is_solid() and product.get_element_type() == 'cell':
                 return product
         
         # Priority 3: Point cloud (fallback)

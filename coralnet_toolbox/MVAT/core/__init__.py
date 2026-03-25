@@ -17,7 +17,6 @@ from coralnet_toolbox.MVAT.core.SceneContext import SceneContext
 from coralnet_toolbox.MVAT.core.Model import (
     PointCloudProduct,
     MeshProduct,
-    DEMProduct,
 )
 
 # Camera and Visualization
@@ -49,7 +48,6 @@ __all__ = [
     # Concrete Products
     'PointCloudProduct',
     'MeshProduct',
-    'DEMProduct',
     # Camera and Visualization
     'Camera',
     'Frustum',

@@ -4,7 +4,7 @@ import numpy as np
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
-from coralnet_toolbox.MVAT.core.Model import MeshProduct, PointCloudProduct, DEMProduct
+from coralnet_toolbox.MVAT.core.Model import MeshProduct, PointCloudProduct
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -58,9 +58,9 @@ class VisibilityWorker(QObject):
             element_type = self.primary_target.get_element_type()
 
             # ==========================================
-            # STRATEGY A: MESH / DEM PROCESSING
+            # STRATEGY A: MESH PROCESSING
             # ==========================================
-            if isinstance(self.primary_target, (MeshProduct, DEMProduct)):
+            if isinstance(self.primary_target, MeshProduct):
                 if perspective_params:
                     paths = list(perspective_params.keys())
                     params_list = list(perspective_params.values())
@@ -149,8 +149,8 @@ class VisibilityWorker(QObject):
         if isinstance(target, PointCloudProduct):
             return target.get_points_array(), None
             
-        # UNIFIED: Treat both standard Meshes and DEMs identically
-        if isinstance(target, (MeshProduct, DEMProduct)):
+        # Treat mesh products as solid surfaces for face extraction
+        if isinstance(target, MeshProduct):
             try:
                 mesh = target.get_render_mesh()
                 

@@ -29,7 +29,7 @@ from coralnet_toolbox.MVAT.core.constants import (
     MOUSE_THROTTLE_MS,
 )
 
-from coralnet_toolbox.MVAT.core.Model import DEMProduct
+# DEMProduct removed: orthomosaics/DEMs are no longer scene products
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -493,46 +493,12 @@ class MVATManager(QObject):
         
     def _populate_ortho_elevation(self):
         """
-        Scans loaded cameras for Orthomosaics with attached DEMs 
-        and adds them as 3D elevation meshes to the scene viewer.
+        Previously populated the 3D scene with elevation meshes generated
+        from orthomosaic DEMs. DEM-as-mesh support has been removed, so
+        this is now a no-op to preserve call sites.
         """
-        elevation_added = False
-        
-        for path, camera in self.cameras.items():
-            # Check if it is an OrthographicCamera and actually has DEM data
-            if camera.is_orthographic and camera.z_channel is not None:
-                # Generate the expected product ID to check for duplicates
-                expected_id = f"Elevation_{camera.label}"
-                
-                # Skip if this elevation product already exists in the scene
-                if expected_id in self.viewer.scene_context:
-                    print(f"⏭️ Skipping {camera.label}: elevation already in scene")
-                    continue
-                    
-                print(f"🏔️ Found DEM for {camera.label}, generating 3D elevation mesh...")
-                
-                try:
-                    # Create the wrapper using the camera
-                    elevation = DEMProduct(camera)
-                    
-                    # Add via viewer method to ensure placeholder is hidden
-                    self.viewer.add_product(elevation)
-                    elevation_added = True
-                    
-                    # Usually only one master orthomosaic per project, but we'll 
-                    # let it loop in case there are multiple.
-                except Exception as e:
-                    print(f"❌ Failed to generate 3D elevation mesh for {camera.label}: {e}")
-                
-        if elevation_added:
-            if hasattr(self.viewer, 'render_scene'):
-                self.viewer.render_scene()
-            elif hasattr(self.viewer, 'load_scene'):
-                self.viewer.load_scene()
-                
-            # Force the 3D camera to zoom to the newly added elevation bounds
-            if hasattr(self.viewer, 'fit_to_view'):
-                self.viewer.fit_to_view()
+        # No-op: elevation meshes are no longer generated or added to the scene.
+        return
 
     # --- Signal Handlers ---
 
@@ -1071,7 +1037,6 @@ class MVATManager(QObject):
         Handles different product types:
         - PointCloudProduct: Returns point coordinates directly
         - MeshProduct: Returns face center coordinates with face IDs
-        - DEMProduct: Returns grid cell center coordinates with cell IDs
         
         Args:
             primary_target: AbstractSceneProduct instance
@@ -1082,7 +1047,7 @@ class MVATManager(QObject):
                 - element_ids: (N,) array of element IDs or None for default indexing
                 - element_type: str ('point', 'face', or 'cell')
         """
-        from coralnet_toolbox.MVAT.core.Model import PointCloudProduct, MeshProduct, DEMProduct
+        from coralnet_toolbox.MVAT.core.Model import PointCloudProduct, MeshProduct
         
         element_type = primary_target.get_element_type()
         
@@ -1093,8 +1058,8 @@ class MVATManager(QObject):
                 return points, None, 'point'
             return None, None, 'point'
         
-        # Strategy B & C UNIFIED: Mesh and DEM - treat both as solid triangulated surfaces!
-        if isinstance(primary_target, (MeshProduct, DEMProduct)):
+        # Strategy B: Mesh products - treat as solid triangulated surfaces
+        if isinstance(primary_target, MeshProduct):
             try:
                 # Ensure GPU tensors are built for the Bounding Volume Hierarchy
                 if hasattr(primary_target, 'prepare_geometry'):
