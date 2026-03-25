@@ -418,15 +418,15 @@ class ContextMatrixWidget(QWidget):
         self.selection_label.setStyleSheet("color: #666;")
         layout.addWidget(self.selection_label)
 
-        # Rank indicator
-        self._rank_label = QLabel("\u2014")
-        self._rank_label.setStyleSheet("color: #888; font-size: 11px;")
-        layout.addWidget(self._rank_label)
-
         sep3 = QFrame()
         sep3.setFrameShape(QFrame.VLine)
         sep3.setFrameShadow(QFrame.Sunken)
         layout.addWidget(sep3)
+
+        # Rank indicator
+        self._rank_label = QLabel("\u2014")
+        self._rank_label.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(self._rank_label)
 
         layout.addStretch(1)
 
