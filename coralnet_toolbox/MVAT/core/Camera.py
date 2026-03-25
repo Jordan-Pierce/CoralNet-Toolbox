@@ -719,113 +719,106 @@ class OrthographicCamera(Camera):
 
         return origin_local, direction_local, terminal_local
     
-    # def is_point_occluded_depth_based(self, point_3d, depth_threshold=0.1):
-    #     """
-    #     Determine if a 3D point is occluded using the NATIVE DEM.
-    #     """    
-    #     if self.native_dem_data is None or self.native_dem_transform_inv is None:
-    #         return False
-
-    #     point_z = point_3d.flatten()[2]
-    #     X, Y = point_3d.flatten()[0], point_3d.flatten()[1]
-
-    #     # Transform World X, Y to Native DEM pixel coordinates
-    #     world_dem_hom = np.array([X, Y, 1.0], dtype=np.float64)
-    #     dem_pixel_hom = (self.native_dem_transform_inv @ world_dem_hom).flatten()
-        
-    #     dem_u = int(np.floor(dem_pixel_hom[0]))
-    #     dem_v = int(np.floor(dem_pixel_hom[1]))
-        
-    #     h, w = self.native_dem_data.shape
-    #     if 0 <= dem_u < w and 0 <= dem_v < h:
-    #         Z_dem = self.native_dem_data[dem_v, dem_u]
-    #         if np.isnan(Z_dem):
-    #             return False 
-            
-    #         return point_z < (Z_dem - depth_threshold)
-
-    #     return False
-
     def is_point_occluded_depth_based(self, point_3d, depth_threshold=0.1):
-        # We can implement this later if the math above proves correct!
+        """
+        Determine if a 3D point is occluded using the NATIVE DEM.
+        """    
+        if self.native_dem_data is None or self.native_dem_transform_inv is None:
+            return False
+
+        point_z = point_3d.flatten()[2]
+        X, Y = point_3d.flatten()[0], point_3d.flatten()[1]
+
+        # Transform World X, Y to Native DEM pixel coordinates
+        world_dem_hom = np.array([X, Y, 1.0], dtype=np.float64)
+        dem_pixel_hom = (self.native_dem_transform_inv @ world_dem_hom).flatten()
+        
+        dem_u = int(np.floor(dem_pixel_hom[0]))
+        dem_v = int(np.floor(dem_pixel_hom[1]))
+        
+        h, w = self.native_dem_data.shape
+        if 0 <= dem_u < w and 0 <= dem_v < h:
+            Z_dem = self.native_dem_data[dem_v, dem_u]
+            if np.isnan(Z_dem):
+                return False 
+            
+            return point_z < (Z_dem - depth_threshold)
+
         return False
 
-    # def ensure_visibility_data(self, point_cloud, cache_manager, compute_depth_map=True, compute_index_maps=True):
-    #     """
-    #     Ensure visibility data is computed for this orthographic camera.
-    #     Delegates to VisibilityManager.compute_orthographic_visibility
-    #     """
-    #     if not compute_index_maps:
-    #         return True
-
-    #     # Check if already in memory
-    #     if self._raster.visible_indices is not None:
-    #         return True
-
-    #     # Try to load from cache
-    #     if cache_manager is not None:
-    #         # Use transform_matrix as unique identifier for orthomosaics
-    #         cached_data = cache_manager.load_visibility(
-    #             self.transform_matrix,
-    #             point_cloud.file_path,
-    #             point_cloud.get_element_type()
-    #         )
-    #         if cached_data is not None:
-    #             cache_path = cache_manager.get_cache_path(
-    #                 self.transform_matrix,
-    #                 point_cloud.file_path
-    #             )
-
-    #             self._raster.add_index_map(
-    #                 cached_data['index_map'],
-    #                 cache_path,
-    #                 cached_data['visible_indices'],
-    #                 inverted_index=cached_data.get('inverted_index')
-    #             )
-    #         return True
-            
-    #     # Compute visibility using orthographic method
-    #     try:
-    #         from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
-    #         points_world = point_cloud.get_points_array()
-    #         if points_world is None or len(points_world) == 0:
-    #             print(f"Warning: Point cloud is empty or invalid")
-    #             return False
-            
-    #         result = VisibilityManager.compute_orthographic_visibility(
-    #             points_world=points_world,
-    #             transform_matrix_inv=self.transform_matrix_inv,
-    #             width=self.width,
-    #             height=self.height
-    #         )
-    #         # Save to cache
-    #         cache_path = None
-    #         if cache_manager is not None:
-    #             cache_path = cache_manager.save_visibility(
-    #                 self.transform_matrix,
-    #                 point_cloud.file_path,
-    #                 result['index_map'],
-    #                 result['visible_indices'],
-    #                 None,  # No depth map for orthographic
-    #                 element_type=result.get('element_type', None) if isinstance(result, dict) else None,
-    #                 inverted_index=result.get('inverted_index') if isinstance(result, dict) else None,
-    #             )
-    #         # Store in Raster (attach inverted index when present)
-    #         self._raster.add_index_map(
-    #             result['index_map'],
-    #             cache_path,
-    #             result['visible_indices'],
-    #             inverted_index=result.get('inverted_index') if isinstance(result, dict) else None,
-    #         )
-    #         return True
-
-    #     except Exception as e:
-    #         print(f"Error computing orthographic visibility for {self.label}: {e}")
-    #         traceback.print_exc()
-    #         return False
-
     def ensure_visibility_data(self, point_cloud, cache_manager, compute_depth_map=True, compute_index_maps=True):
-        return True # Stub to allow loading without crashing
+        """
+        Ensure visibility data is computed for this orthographic camera.
+        Delegates to VisibilityManager.compute_orthographic_visibility
+        """
+        if not compute_index_maps:
+            return True
+
+        # Check if already in memory
+        if self._raster.visible_indices is not None:
+            return True
+
+        # Try to load from cache
+        if cache_manager is not None:
+            # Use transform_matrix as unique identifier for orthomosaics
+            cached_data = cache_manager.load_visibility(
+                self.transform_matrix,
+                point_cloud.file_path,
+                point_cloud.get_element_type()
+            )
+            if cached_data is not None:
+                cache_path = cache_manager.get_cache_path(
+                    self.transform_matrix,
+                    point_cloud.file_path
+                )
+
+                self._raster.add_index_map(
+                    cached_data['index_map'],
+                    cache_path,
+                    cached_data['visible_indices'],
+                    inverted_index=cached_data.get('inverted_index')
+                )
+            return True
+            
+        # Compute visibility using orthographic method
+        try:
+            from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
+            points_world = point_cloud.get_points_array()
+            if points_world is None or len(points_world) == 0:
+                print(f"Warning: Point cloud is empty or invalid")
+                return False
+            
+            result = VisibilityManager.compute_orthographic_visibility(
+                points_world=points_world,
+                transform_matrix_inv=self.transform_matrix_inv,
+                width=self.width,
+                height=self.height
+            )
+            # Save to cache
+            cache_path = None
+            if cache_manager is not None:
+                cache_path = cache_manager.save_visibility(
+                    self.transform_matrix,
+                    point_cloud.file_path,
+                    result['index_map'],
+                    result['visible_indices'],
+                    None,  # No depth map for orthographic
+                    element_type=result.get('element_type', None) if isinstance(result, dict) else None,
+                    inverted_index=result.get('inverted_index') if isinstance(result, dict) else None,
+                )
+            # Store in Raster (attach inverted index when present)
+            self._raster.add_index_map(
+                result['index_map'],
+                cache_path,
+                result['visible_indices'],
+                inverted_index=result.get('inverted_index') if isinstance(result, dict) else None,
+            )
+            return True
+
+        except Exception as e:
+            print(f"Error computing orthographic visibility for {self.label}: {e}")
+            traceback.print_exc()
+            return False
 
     # --------------------------------------------------------------------------
     # Visualization Stubs (No frustum for orthomosaics)

@@ -106,27 +106,27 @@ class MousePositionBridge(QObject):
         if candidate_id > -1 and primary_target is not None:
             coord = primary_target.get_element_coordinate(candidate_id)
             if coord is not None:
-                # FIX: Branch origin and direction based on camera type
                 if getattr(camera, 'is_orthographic', False):
-                    # Orthographic rays must cast straight down from directly above
-                    origin = coord + np.array([0.0, 0.0, 1000.0])
-                    direction = np.array([0.0, 0.0, -1.0])
-                else:
-                    # Perspective rays originate from the camera optical center
-                    origin = camera.position.copy()
-                    direction = coord - origin
-                    norm = np.linalg.norm(direction)
-                    direction = direction / norm if norm > 0 else camera.R.T @ np.array([0, 0, 1])
+                    # Get the correct world-up direction in local space
+                    if getattr(camera, 'chunk_transform_inv', None) is not None:
+                        world_up_hom = np.array([0.0, 0.0, 1.0, 0.0])
+                        local_up = (camera.chunk_transform_inv @ world_up_hom)[:3]
+                        n = np.linalg.norm(local_up)
+                        local_up = local_up / n if n > 1e-12 else np.array([0.0, 0.0, 1.0])
+                    else:
+                        local_up = np.array([0.0, 0.0, 1.0])
+                    origin    = coord + local_up * 1000.0
+                    direction = -local_up
                 
-                ray = CameraRay(
-                    origin=origin,
-                    direction=direction,
-                    terminal_point=coord,
-                    has_accurate_depth=True,
-                    pixel_coord=(x, y),
-                    source_camera=camera,
-                    element_id=candidate_id,
-                )
+                    ray = CameraRay(
+                        origin=origin,
+                        direction=direction,
+                        terminal_point=coord,
+                        has_accurate_depth=True,
+                        pixel_coord=(x, y),
+                        source_camera=camera,
+                        element_id=candidate_id,
+                    )
 
         # --- Path B: Z-channel / depth fallback ---
         if ray is None:
@@ -1455,41 +1455,93 @@ class MVATManager(QObject):
 
         px = int(annotation.center_xy.x())
         py = int(annotation.center_xy.y())
-        projections = self._build_projection(px, py)
-        if not projections:
-            return
 
         visible_paths = self._get_visible_context_paths()
 
         from PyQt5.QtCore import QPointF
         self._propagating_annotation = True
         try:
-            for target_path, (u, v, is_valid) in projections.items():
+            # Try True 3D mapping: get the element id at source pixel (if index map present)
+            source_index_map = self.selected_camera.index_map
+            element_id = None
+            use_3d = False
+            if source_index_map is not None:
+                try:
+                    img_h, img_w = source_index_map.shape
+                    if 0 <= px < img_w and 0 <= py < img_h:
+                        eid = int(source_index_map[py, px])
+                        if eid > -1:
+                            element_id = eid
+                            use_3d = True
+                except Exception:
+                    pass
+
+            # Lazy projection cache for fallback
+            projections = None
+
+            for target_path in list(visible_paths):
                 if target_path == annotation.image_path:
-                    continue
-                if target_path not in visible_paths:
-                    continue
-                if not is_valid:
                     continue
 
                 target_camera = self.cameras.get(target_path)
                 if target_camera is None:
                     continue
-                if not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
-                    continue
 
-                new_annotation = PatchAnnotation(
-                    center_xy=QPointF(u, v),
-                    annotation_size=annotation.annotation_size,
-                    short_label_code=annotation.label.short_label_code,
-                    long_label_code=annotation.label.long_label_code,
-                    color=annotation.label.color,
-                    image_path=target_path,
-                    label_id=annotation.label.id,
-                    transparency=annotation.transparency,
-                )
                 try:
-                    self.annotation_window.add_annotation(new_annotation, record_action=True)
+                    # 3D centroid mapping if both source hit and target inverted index exist
+                    target_has_index = getattr(target_camera, '_raster', None) is not None and target_camera._raster.inv_ids is not None
+                    if use_3d and target_has_index and element_id is not None:
+                        flat = target_camera.get_pixels_for_elements(np.array([element_id], dtype=np.int64))
+                        if flat.size == 0:
+                            # occluded in this view
+                            continue
+                        v_arr, u_arr = np.divmod(flat, target_camera.width)
+                        u_centroid = float(np.mean(u_arr))
+                        v_centroid = float(np.mean(v_arr))
+                        if not (0 <= u_centroid < target_camera.width and 0 <= v_centroid < target_camera.height):
+                            continue
+
+                        new_annotation = PatchAnnotation(
+                            center_xy=QPointF(u_centroid, v_centroid),
+                            annotation_size=annotation.annotation_size,
+                            short_label_code=annotation.label.short_label_code,
+                            long_label_code=annotation.label.long_label_code,
+                            color=annotation.label.color,
+                            image_path=target_path,
+                            label_id=annotation.label.id,
+                            transparency=annotation.transparency,
+                        )
+                        try:
+                            self.annotation_window.add_annotation(new_annotation, record_action=True)
+                        except Exception:
+                            pass
+                    else:
+                        # 2D center-stamp fallback: per-target projection (lazy)
+                        if projections is None:
+                            projections = self._build_projection(px, py)
+                        proj = projections.get(target_path)
+                        if proj is None:
+                            continue
+                        u, v, is_valid = proj
+                        if not is_valid:
+                            continue
+                        if not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
+                            continue
+
+                        new_annotation = PatchAnnotation(
+                            center_xy=QPointF(u, v),
+                            annotation_size=annotation.annotation_size,
+                            short_label_code=annotation.label.short_label_code,
+                            long_label_code=annotation.label.long_label_code,
+                            color=annotation.label.color,
+                            image_path=target_path,
+                            label_id=annotation.label.id,
+                            transparency=annotation.transparency,
+                        )
+                        try:
+                            self.annotation_window.add_annotation(new_annotation, record_action=True)
+                        except Exception:
+                            pass
                 except Exception:
                     pass
         finally:
