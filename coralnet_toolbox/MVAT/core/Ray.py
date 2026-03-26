@@ -120,7 +120,13 @@ class CameraRay:
         has_accurate_depth = False
         actual_depth = default_depth
         
-        if depth is not None and depth > 0 and not np.isnan(depth):
+        # For elevation models, accept negative values; for depth models, only accept positive
+        z_data_type = getattr(camera._raster, 'z_data_type', None) if hasattr(camera, '_raster') else None
+        is_elevation = z_data_type == 'elevation'
+        
+        depth_valid = (depth is not None and not np.isnan(depth) and (is_elevation or depth > 0))
+        
+        if depth_valid:
             actual_depth = depth
             has_accurate_depth = True
         

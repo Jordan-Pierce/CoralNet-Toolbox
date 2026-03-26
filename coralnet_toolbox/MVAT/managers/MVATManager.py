@@ -132,12 +132,21 @@ class MousePositionBridge(QObject):
         if ray is None:
             raster = camera._raster
             depth = None
-            if raster.z_channel is not None and raster.z_data_type == 'depth':
-                depth = raster.get_z_value(x, y)
-            if depth is None or depth <= 0 or np.isnan(depth):
+            z_data_type = raster.z_data_type if hasattr(raster, 'z_data_type') else None
+            
+            if raster.z_channel is not None:
+                z_value = raster.get_z_value(x, y)
+                # For depth maps, only accept positive values
+                # For elevation maps, accept any value (including negative)
+                if z_value is not None:
+                    if z_data_type == 'elevation' or (z_data_type == 'depth' and z_value > 0) or z_data_type is None:
+                        depth = z_value
+            
+            if depth is None or np.isnan(depth):
                 default_depth = self.manager.viewer.get_scene_median_depth(camera.position)
             else:
-                default_depth = 10.0
+                default_depth = depth
+            
             ray = CameraRay.from_pixel_and_camera(
                 pixel_xy=(x, y),
                 camera=camera,
@@ -537,7 +546,11 @@ class MVATManager(QObject):
             if not np.isnan(pixel).any():
                 u, v = pixel[0], pixel[1]
                 depth = self.selected_camera._raster.get_z_value(int(u), int(v))
-                color = MARKER_COLOR_SELECTED if depth is not None and depth > 0 else MARKER_COLOR_INVALID
+                # For elevation models, accept negative values; for depth, only positive values indicate valid data
+                z_data_type = self.selected_camera._raster.z_data_type
+                is_elevation = z_data_type == 'elevation'
+                depth_valid = depth is not None and (is_elevation or depth > 0)
+                color = MARKER_COLOR_SELECTED if depth_valid else MARKER_COLOR_INVALID
                 self.annotation_window.set_incoming_marker(u, v, color)
             else:
                 self.annotation_window.clear_static_marker()
@@ -993,7 +1006,8 @@ class MVATManager(QObject):
         
         for cam in cameras:
             if cam.is_orthographic:
-                camera_params_dict[cam.image_path] = ('ortho', cam.transform_matrix_inv, cam.width, cam.height)
+                # Include chunk_transform_inv if available (for local->world bridge in visibility computation)
+                camera_params_dict[cam.image_path] = ('ortho', cam.transform_matrix_inv, cam.width, cam.height, cam.chunk_transform_inv)
                 cache_keys_dict[cam.image_path] = cam.transform_matrix
             else:
                 camera_params_dict[cam.image_path] = (cam.K, cam.R, cam.t, cam.width, cam.height)
@@ -1231,13 +1245,20 @@ class MVATManager(QObject):
         px = max(0, min(px, camera.width - 1))
         py = max(0, min(py, camera.height - 1))
 
-        # Try depth from Z-channel
+        # Try depth/elevation from Z-channel
         raster = camera._raster
         depth = None
-        if raster.z_channel is not None and raster.z_data_type == 'depth':
-            depth = raster.get_z_value(int(px), int(py))
+        z_data_type = raster.z_data_type if hasattr(raster, 'z_data_type') else None
+        
+        if raster.z_channel is not None:
+            z_value = raster.get_z_value(int(px), int(py))
+            # For depth maps, only accept positive values
+            # For elevation maps, accept any value (including negative)
+            if z_value is not None:
+                if z_data_type == 'elevation' or (z_data_type == 'depth' and z_value > 0) or z_data_type is None:
+                    depth = z_value
 
-        if depth is None or depth <= 0 or np.isnan(depth):
+        if depth is None or np.isnan(depth):
             # Fallback to scene median depth
             try:
                 default_depth = self.viewer.get_scene_median_depth(camera.position)

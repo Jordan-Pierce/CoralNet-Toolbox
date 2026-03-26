@@ -792,7 +792,8 @@ class OrthographicCamera(Camera):
                 points_world=points_world,
                 transform_matrix_inv=self.transform_matrix_inv,
                 width=self.width,
-                height=self.height
+                height=self.height,
+                chunk_transform_inv=self.chunk_transform_inv
             )
             # Save to cache
             cache_path = None

@@ -1032,10 +1032,21 @@ class VisibilityManager:
                                         transform_matrix_inv: np.ndarray,
                                         width: int,
                                         height: int,
-                                        point_ids: np.ndarray = None) -> dict:
+                                        point_ids: np.ndarray = None,
+                                        chunk_transform_inv: np.ndarray = None) -> dict:
         """
         Compute visibility for orthographic camera using affine transform.
         Groups points by [u,v] pixel, keeps highest Z per pixel.
+        
+        Args:
+            points_world: (N, 3) array of point coordinates (may be in local or world space)
+            transform_matrix_inv: (3, 3) inverse georeferencing matrix (world -> pixel)
+            width: Image width
+            height: Image height
+            point_ids: Optional (N,) array of point IDs
+            chunk_transform_inv: Optional (4, 4) inverse chunk transform (world -> local).
+                                If provided, points_world are assumed to be in local space,
+                                and this transform converts them to geo-world space before projection.
         """
         start_time = time.time()
         
@@ -1045,11 +1056,11 @@ class VisibilityManager:
         # 1. Prefer PyTorch (CUDA or CPU)
         if HAS_TORCH:
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
-            result = cls._compute_ortho_torch(points_world, point_ids, transform_matrix_inv, width, height, device)
+            result = cls._compute_ortho_torch(points_world, point_ids, transform_matrix_inv, width, height, device, chunk_transform_inv)
         else:
             # 2. Fallback to highly optimized Vectorized NumPy
             device = 'numpy'
-            result = cls._compute_ortho_numpy(points_world, point_ids, transform_matrix_inv, width, height)
+            result = cls._compute_ortho_numpy(points_world, point_ids, transform_matrix_inv, width, height, chunk_transform_inv)
 
         compute_time = time.time() - start_time
         visible_count = len(result['visible_indices'])
@@ -1061,20 +1072,29 @@ class VisibilityManager:
         return result
 
     @staticmethod
-    def _compute_ortho_torch(points_np, ids_np, transform_inv_np, width, height, device):
+    def _compute_ortho_torch(points_np, ids_np, transform_inv_np, width, height, device, chunk_transform_inv_np=None):
         """PyTorch-accelerated orthographic visibility computation."""
         # 1. Transfer to device
         points = torch.as_tensor(points_np, dtype=torch.float32, device=device)
         p_ids = torch.as_tensor(ids_np, dtype=torch.int32, device=device)
         T_inv = torch.as_tensor(transform_inv_np, dtype=torch.float32, device=device)
 
-        # 2. Extract X, Y, Z and make X, Y homogeneous
-        # points[:, :2] gets X, Y. We add a column of 1s for affine transform.
         N = points.shape[0]
-        points_xy_hom = torch.cat([points[:, :2], torch.ones((N, 1), dtype=torch.float32, device=device)], dim=1)
         z = points[:, 2]
 
-        # 3. Apply inverse affine transform: pixels_hom = T_inv @ points_hom.T
+        # 2. Apply chunk_transform if provided (local -> world)
+        if chunk_transform_inv_np is not None:
+            chunk_T_inv = torch.as_tensor(chunk_transform_inv_np, dtype=torch.float32, device=device)
+            # Convert local points to world: world_point = inv(chunk_T_inv) @ local_point
+            chunk_T = torch.linalg.inv(chunk_T_inv)  # local -> world transform
+            points_hom = torch.cat([points, torch.ones((N, 1), dtype=torch.float32, device=device)], dim=1)
+            world_hom = torch.matmul(chunk_T, points_hom.T).T  # (N, 4)
+            points_xy_hom = torch.cat([world_hom[:, :2], torch.ones((N, 1), dtype=torch.float32, device=device)], dim=1)
+        else:
+            # Assume points are already in world space: extract X, Y and make homogeneous
+            points_xy_hom = torch.cat([points[:, :2], torch.ones((N, 1), dtype=torch.float32, device=device)], dim=1)
+
+        # 3. Apply geospatial inverse affine transform: pixels_hom = T_inv @ world_xy_hom.T
         pixels_hom = torch.matmul(T_inv, points_xy_hom.T).T
         
         u = pixels_hom[:, 0]
@@ -1132,15 +1152,26 @@ class VisibilityManager:
         }
 
     @staticmethod
-    def _compute_ortho_numpy(points, ids, transform_inv, width, height):
+    def _compute_ortho_numpy(points, ids, transform_inv, width, height, chunk_transform_inv=None):
         """Vectorized NumPy fallback for orthographic visibility."""
         N = len(points)
-        points_hom = np.column_stack([points[:, 0], points[:, 1], np.ones(N)])
-        pixels_hom = (transform_inv @ points_hom.T).T
+        z = points[:, 2]
+        
+        # Apply chunk_transform if provided (local -> world)
+        if chunk_transform_inv is not None:
+            chunk_T = np.linalg.inv(chunk_transform_inv)  # local -> world transform
+            points_hom = np.column_stack([points[:, 0], points[:, 1], points[:, 2], np.ones(N)])
+            world_hom = (chunk_T @ points_hom.T).T  # (N, 4)
+            points_xy_hom = np.column_stack([world_hom[:, 0], world_hom[:, 1], np.ones(N)])
+        else:
+            # Assume points are already in world space
+            points_xy_hom = np.column_stack([points[:, 0], points[:, 1], np.ones(N)])
+        
+        # Apply geospatial inverse affine transform
+        pixels_hom = (transform_inv @ points_xy_hom.T).T
         
         u = np.floor(pixels_hom[:, 0]).astype(np.int32)
         v = np.floor(pixels_hom[:, 1]).astype(np.int32)
-        z = points[:, 2]
 
         valid_mask = (u >= 0) & (u < width) & (v >= 0) & (v < height)
         
