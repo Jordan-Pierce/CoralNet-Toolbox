@@ -273,8 +273,8 @@ class Base(QDialog):
 
         # SSL Method
         self.ssl_method_combo = QComboBox()
-        self.ssl_method_combo.addItems(["DINOv2", "SimCLR", "MAE", "DINO", "BYOL", "MoCo", "Distillation"])
-        self.ssl_method_combo.setCurrentText("SimCLR")
+        self.ssl_method_combo.addItems(["Distillation", "SimCLR", "MAE", "DINO", "DINOv2", "BYOL", "MoCo"])
+        self.ssl_method_combo.setCurrentText("Distillation")
         layout.addRow("SSL Method:", self.ssl_method_combo)
 
         group_box.setLayout(layout)
