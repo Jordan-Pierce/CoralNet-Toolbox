@@ -827,8 +827,37 @@ class MVATViewer(QFrame):
         # Set the selected array on the primary target product
         if hasattr(primary_target, 'set_selected_array'):
             primary_target.set_selected_array(array_name)
-            # Re-render the scene with the new array
-            self.render_scene()
+            
+            # Update the actor's mapper directly for immediate visual feedback
+            product_id = primary_target.product_id
+            actor = self._product_actors.get(product_id)
+            
+            if actor is not None:
+                try:
+                    mesh = primary_target.get_render_mesh()
+                    if mesh is not None:
+                        # Always update mapper for all array types
+                        if array_name in mesh.array_names:
+                            # Real array in mesh data
+                            actor.mapper.array_name = array_name
+                            actor.mapper.scalar_range = mesh.get_data_range(array_name)
+                            actor.mapper.dataset.active_scalars_name = array_name
+                        else:
+                            # Pseudo-array (RGB, Labels) - may not exist in data
+                            # Still try to update mapper for style consistency
+                            try:
+                                actor.mapper.array_name = array_name
+                                actor.mapper.scalar_range = mesh.get_data_range(array_name)
+                                actor.mapper.dataset.active_scalars_name = array_name
+                            except:
+                                # If pseudo-array doesn't exist, clear the mapper scalars
+                                actor.mapper.array_name = None
+                        
+                        self.plotter.render()
+                except Exception as e:
+                    print(f"⚠️ Error updating array '{array_name}': {e}")
+                    # Fallback: full re-render
+                    self.render_scene()
 
     # ------------------------------------------------------------------
     # Key event handling

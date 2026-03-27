@@ -62,16 +62,20 @@ class PointCloudProduct(AbstractSceneProduct):
         self.point_size = point_size
         self.mesh: Optional[pv.PolyData] = None
         self.array_names = []
-        self.available_arrays = ["Labels"]  # Always include Labels as default option
-        self.selected_array = "Labels"  # Default selection
+        self.available_arrays = []  # Will be built after loading
+        self.selected_array = "RGB"  # Default to RGB
         
         # Load from file with timing
         start_time = time.time()
         self.mesh = pv.read(file_path, progress_bar=True)
         self.array_names = self.mesh.array_names
         
-        # Build complete list of available arrays
-        self.available_arrays = ["Labels"] + list(self.array_names)
+        # Build available arrays in priority order:
+        # 1. RGB (first, created/synthesized if needed with Metashape purple as default)
+        # 2. Labels (always available, all white by default)
+        # 3. Everything else from the mesh
+        other_arrays = [arr for arr in self.array_names if arr.lower() not in ('rgb', 'labels')]
+        self.available_arrays = ["RGB", "Labels"] + other_arrays
         
         load_time = time.time() - start_time
         
@@ -110,23 +114,24 @@ class PointCloudProduct(AbstractSceneProduct):
         }
         
         # Apply rendering based on selected array
-        if self.selected_array == "Labels" or self.selected_array not in self.array_names:
-            # Default: use RGB if available, otherwise black
+        if self.selected_array == "RGB":
+            # RGB: use actual RGB if available, otherwise solid black as fallback
+            # (RGB itself is not a synthesized channel for point clouds; use black as default)
             if 'RGB' in self.array_names:
                 style['scalars'] = 'RGB'
                 style['rgb'] = True
             else:
-                style['color'] = 'black'
-        elif self.selected_array == "RGB" and 'RGB' in self.array_names:
-            # Explicit RGB selection
-            style['scalars'] = 'RGB'
-            style['rgb'] = True
+                # No RGB data - render as Metashape purple
+                style['color'] = '#8d8cc4'
+        elif self.selected_array == "Labels":
+            # Labels: render as white points (all same color)
+            style['color'] = 'white'
         elif self.selected_array in self.array_names:
             # Use selected array as scalars (applies colormap)
             style['scalars'] = self.selected_array
         else:
-            # Fallback to default
-            style['color'] = 'black'
+            # Fallback to Metashape purple
+            style['color'] = '#8d8cc4'
         
         return style
     
@@ -254,18 +259,23 @@ class MeshProduct(AbstractSceneProduct):
         self.opacity = opacity
         self.mesh: Optional[pv.PolyData] = None
         self.array_names = []
-        self.available_arrays = ["Labels"]  # Always include Labels as default option
-        self.selected_array = "Labels"  # Default selection
+        self.available_arrays = []  # Will be built after loading
+        self.selected_array = "RGB"  # Default to RGB
         
         # Load from file with timing
         start_time = time.time()
         self.mesh = pv.read(file_path, progress_bar=True)
         self.array_names = self.mesh.array_names
         
-        # Build complete list of available arrays
-        self.available_arrays = ["Labels"] + list(self.array_names)
+        # Build available arrays in priority order:
+        # 1. RGB (first, defaults to Metashape purple if not in data)
+        # 2. Labels (always available, all white by default)
+        # 3. Everything else from the mesh
+        other_arrays = [arr for arr in self.array_names if arr.lower() not in ('rgb', 'labels')]
+        self.available_arrays = ["RGB", "Labels"] + other_arrays
         
         print(f"Array names in mesh: {self.array_names}")
+        print(f"Available arrays for visualization (priority order): {self.available_arrays}")
         
         load_time = time.time() - start_time
         
@@ -342,23 +352,22 @@ class MeshProduct(AbstractSceneProduct):
         }
         
         # Apply rendering based on selected array
-        if self.selected_array == "Labels" or self.selected_array not in self.array_names:
-            # Default: use RGB if available, otherwise default purple
+        if self.selected_array == "RGB":
+            # RGB: use actual RGB if available, otherwise Metashape purple as default
             if 'RGB' in self.array_names:
                 style['scalars'] = 'RGB'
                 style['rgb'] = True
             else:
-                # Default Metashape purple color when no vertex colors
+                # Default Metashape purple color when no RGB vertex colors
                 style['color'] = '#8d8cc4'
-        elif self.selected_array == "RGB" and 'RGB' in self.array_names:
-            # Explicit RGB selection
-            style['scalars'] = 'RGB'
-            style['rgb'] = True
+        elif self.selected_array == "Labels":
+            # Labels: render as white meshes (all same color)
+            style['color'] = 'white'
         elif self.selected_array in self.array_names:
             # Use selected array as scalars (applies colormap)
             style['scalars'] = self.selected_array
         else:
-            # Fallback to default
+            # Fallback to Metashape purple
             style['color'] = '#8d8cc4'
         
         return style
