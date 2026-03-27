@@ -1941,20 +1941,29 @@ class MVATManager(QObject):
 
     def _on_erase_stroke_applied(self, scene_pos, label_id: str, brush_mask: np.ndarray):
         """Propagate an erase operation into all visible context cameras.
-        
-        Similar to brush strokes but with class_id 0 (background/erased).
+
+        Uses True 3D Mapping when the source camera's index map is available:
+        1. Extract the element IDs beneath the eraser brush using the source
+           camera's index_map.
+        2. Reset those elements on the 3D Scene Product to class_id=0 (white).
+        3. Query each target camera's inverted index for the same IDs.
+        4. Erase exactly those pixels with update_mask_at_indices(flat, 0).
+
+        Falls back to the legacy 2D center-stamp when the index map is absent.
         """
         if self._propagating_annotation:
             return
         if self.selected_camera is None or self.context_matrix is None:
             return
-        
+
         px, py = int(scene_pos.x()), int(scene_pos.y())
         visible_paths = self._get_visible_context_paths()
-        
+
         brush_h, brush_w = brush_mask.shape
-        
-        # Try True 3D mapping if index map is available
+
+        # ------------------------------------------------------------------
+        # Phase 1: Source ID Extraction (2D → 3D)
+        # ------------------------------------------------------------------
         painted_ids = None
         source_index_map = self.selected_camera.index_map
         if source_index_map is not None:
@@ -1983,6 +1992,23 @@ class MVATManager(QObject):
                 unique_ids = np.unique(raw_ids)
                 painted_ids = unique_ids[unique_ids > -1]
 
+        use_3d = painted_ids is not None and len(painted_ids) > 0
+
+        # ------------------------------------------------------------------
+        # Phase 2: Reset the 3D Model to default (white / class_id 0)
+        # ------------------------------------------------------------------
+        if use_3d:
+            primary_target = self.viewer.scene_context.get_primary_target()
+            if primary_target and hasattr(primary_target, 'apply_labels'):
+                primary_target.apply_labels(painted_ids, 0, (255, 255, 255))
+                try:
+                    self.viewer.update()
+                except Exception:
+                    pass
+
+        # Projections for 2D fallback — computed lazily inside the loop
+        projections = None
+
         self._propagating_annotation = True
         try:
             for target_path in list(visible_paths):
@@ -1994,46 +2020,44 @@ class MVATManager(QObject):
                     continue
 
                 try:
-                    # 3D mapping: use painted_ids to find pixel locations in target
-                    used_3d = False
-                    if painted_ids is not None and len(painted_ids) > 0:
-                        target_has_index = getattr(target_camera, '_raster', None) is not None and target_camera._raster.inv_ids is not None
-                        if target_has_index:
-                            try:
-                                flat = target_camera.get_pixels_for_elements(np.array(painted_ids, dtype=np.int64))
-                                if flat.size > 0:
-                                    # Erase at these locations with the same brush
-                                    for pixel_idx in np.unique(flat):
-                                        v_erased, u_erased = np.divmod(pixel_idx, target_camera.width)
-                                        if 0 <= u_erased < target_camera.width and 0 <= v_erased < target_camera.height:
-                                            target_raster = target_camera._raster
-                                            mask_annotation = target_raster.get_mask_annotation(self.main_window.label_window.labels)
-                                            if mask_annotation is not None:
-                                                from PyQt5.QtCore import QPointF
-                                                radius = brush_w / 2.0
-                                                brush_location = QPointF(u_erased - radius, v_erased - radius)
-                                                mask_annotation.update_mask(brush_location, brush_mask, 0)
-                                    used_3d = True
-                            except Exception:
-                                pass
+                    target_raster = self.raster_manager.get_raster(target_path)
+                    if target_raster is None:
+                        continue
+                    target_mask = target_raster.get_mask_annotation(self.main_window.label_window.labels)
+                    if target_mask is None:
+                        continue
 
-                    # Fallback: erase at projected center point
-                    if not used_3d:
-                        projection = self._build_projection(px, py)
-                        proj = projection.get(target_path)
-                        if proj is not None:
-                            u, v, is_valid = proj
-                            if is_valid and 0 <= u < target_camera.width and 0 <= v < target_camera.height:
-                                try:
-                                    target_raster = target_camera._raster
-                                    mask_annotation = target_raster.get_mask_annotation(self.main_window.label_window.labels)
-                                    if mask_annotation is not None:
-                                        from PyQt5.QtCore import QPointF
-                                        radius = brush_w / 2.0
-                                        brush_location = QPointF(u - radius, v - radius)
-                                        mask_annotation.update_mask(brush_location, brush_mask, 0)
-                                except Exception:
-                                    pass
+                    target_has_index = target_camera._raster.inv_ids is not None
+
+                    if use_3d and target_has_index:
+                        # ------------------------------------------------------
+                        # Phase 3: Target Pixel Injection (3D → 2D)
+                        # Erase exactly the pixels that map to the erased elements.
+                        # ------------------------------------------------------
+                        flat_indices = target_camera.get_pixels_for_elements(painted_ids)
+                        if len(flat_indices) == 0:
+                            continue
+                        target_mask.update_mask_at_indices(flat_indices, 0)
+                    else:
+                        # 2D center-stamp fallback
+                        if projections is None:
+                            projections = self._build_projection(px, py)
+                        proj = projections.get(target_path)
+                        if proj is None:
+                            continue
+                        u, v, is_valid = proj
+                        if not is_valid:
+                            continue
+                        if not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
+                            continue
+                        from PyQt5.QtCore import QPointF
+                        brush_location = QPointF(u - brush_w / 2.0, v - brush_h / 2.0)
+                        target_mask.update_mask(brush_location, brush_mask, 0)
+
+                    # Push the updated mask pixels into the context canvas overlay
+                    context_canvas = self._get_context_canvas_for_path(target_path)
+                    if context_canvas is not None:
+                        context_canvas.set_mask_overlay(target_mask)
 
                 except Exception:
                     pass
