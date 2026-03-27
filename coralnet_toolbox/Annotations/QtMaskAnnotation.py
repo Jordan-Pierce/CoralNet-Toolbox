@@ -64,7 +64,6 @@ class MaskAnnotation(Annotation):
         Initialize a full-image semantic segmentation annotation.
         There should only be one MaskAnnotation per image.
         """
-        # --- This block is for context ---
         if not initial_labels:
             raise ValueError("initial_labels cannot be empty.")
         placeholder_label = initial_labels[0]
@@ -86,40 +85,48 @@ class MaskAnnotation(Annotation):
         self.visible_label_ids = set()
         
         self.next_class_id = 1
+        
+        # NEW: Initialize the color map cache before syncing labels
+        self._cached_color_map = None
+        
         self.sync_label_map(initial_labels)
-        # Update visible labels to include all labels currently in the map
         self.visible_label_ids = set(self.label_id_to_class_id_map.keys())
 
         self.offset = QPointF(0, 0)
         self.rasterio_src = rasterio_src
         
-        # Initialize the colored canvas and QImage once at creation time.
-        # This moves the expensive, one-time image generation from the first
-        # brush stroke to the object's creation.
         self.colored_mask = None
         self.qimage = None
         self._initialize_canvas()
         
         self.set_centroid()
         self.set_cropped_bbox()
-        
-        # Cache for class statistics, initialized to None
         self._stats_cache = None
 
+    # --- COLOR MAP CACHING METHODS ---
+
+    def invalidate_color_map(self):
+        """Clears the cached color map so it rebuilds on the next stroke."""
+        self._cached_color_map = None
+
+    def _get_color_map(self):
+        """Returns the cached color map, building it only if necessary."""
+        if self._cached_color_map is None:
+            self._cached_color_map = self._build_color_map()
+        return self._cached_color_map
+    
     def sync_label_map(self, current_labels_in_project: list):
-        """Ensures the internal maps are synced with the project's labels,
-           assigning new, stable IDs to any new labels without changing existing ones."""
-        
-        # Add any new labels from the project list to our maps
+        """Ensures the internal maps are synced with the project's labels."""
         for label in current_labels_in_project:
             if label.id not in self.label_id_to_class_id_map:
                 new_id = self.next_class_id
                 self.class_id_to_label_map[new_id] = label
                 self.label_id_to_class_id_map[label.id] = new_id
                 self.next_class_id += 1
-                
-                # Also add the new label's ID to the set of visible labels.
                 self.visible_label_ids.add(label.id)
+                
+        # Invalidate cache since label definitions changed
+        self.invalidate_color_map()
                 
     def _build_color_map(self):
         """Builds a numpy array mapping class IDs to RGBA colors."""
@@ -147,7 +154,10 @@ class MaskAnnotation(Annotation):
         operation that happens when the mask is first loaded.
         """
         height, width = self.mask_data.shape
-        color_map = self._build_color_map()
+        
+        # Use the cached color map method so we initialize the cache 
+        # on the very first load, preventing lag on the first brush stroke.
+        color_map = self._get_color_map()
         
         # Create the full-size 4-channel RGBA numpy array
         self.colored_mask = color_map[self.mask_data]
@@ -157,28 +167,20 @@ class MaskAnnotation(Annotation):
         self.qimage = QImage(self.colored_mask.data, width, height, QImage.Format_RGBA8888)
 
     def _update_full_canvas(self):
-        """Regenerates the entire color canvas. Used for global changes like label color edits."""
-        color_map = self._build_color_map()
-        # Update the existing colored_mask array in-place
+        """Regenerates the entire color canvas."""
+        # Use the cached map instead of building a new one
+        color_map = self._get_color_map()
         np.copyto(self.colored_mask, color_map[self.mask_data])
 
     def _update_canvas_slice(self, update_rect):
-        """
-        Efficiently updates only a small rectangular slice of the color canvas.
-        Used for tools like the brush.
-        """
+        """Efficiently updates only a small rectangular slice of the color canvas."""
         x1, y1, x2, y2 = update_rect
-        
-        # Get the slice of the data that has changed
         data_slice = self.mask_data[y1:y2, x1:x2]
         
-        # Rebuild the color map in case label properties have changed
-        color_map = self._build_color_map()
+        # Use the cached map instead of building a new one
+        color_map = self._get_color_map()
         
-        # Perform the color lookup ONLY for the small data slice
         color_slice = color_map[data_slice]
-        
-        # Update the corresponding slice in our persistent color canvas
         self.colored_mask[y1:y2, x1:x2] = color_slice
 
     def set_centroid(self):
@@ -469,13 +471,10 @@ class MaskAnnotation(Annotation):
                 self.graphics_item.update()
             
     def update_visible_labels(self, visible_ids: set):
-        """
-        Updates the set of visible label IDs and triggers a redraw of the mask.
-
-        Args:
-            visible_ids (set): A set containing the UUIDs of labels that should be visible.
-        """
+        """Updates the set of visible label IDs and triggers a redraw of the mask."""
         self.visible_label_ids = visible_ids
+        # Invalidate cache since visibility dictates alpha channels in the map
+        self.invalidate_color_map()
         self.update_graphics_item()
             
     def remove_from_scene(self):
@@ -490,7 +489,8 @@ class MaskAnnotation(Annotation):
 
     def fill_region(self, point: QPointF, new_class_id: int):
         """
-        Fills a contiguous region with a new class ID, respecting pre-locked pixels.
+        Fills a contiguous region with a new class ID using optimized OpenCV floodFill, 
+        respecting pre-locked pixels.
         """
         x, y = int(point.x()), int(point.y())
         height, width = self.mask_data.shape
@@ -505,22 +505,47 @@ class MaskAnnotation(Annotation):
         if old_class_id == new_class_id:
             return
         
+        import cv2
+        from PyQt5.QtWidgets import QApplication
+        from PyQt5.QtCore import Qt
+        
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
-        # Find all contiguous pixels with the same starting class ID. This automatically respects
-        # locked areas because they will have a different ID (e.g., 3 vs 131) and act as a border.
-        labeled_array, num_features = ndimage_label(self.mask_data == old_class_id)
-        region_label = labeled_array[y, x]
-        fill_mask = labeled_array == region_label
+        # Create a mask padded by 1 pixel on all sides (required by OpenCV)
+        cv_mask = np.zeros((height + 2, width + 2), dtype=np.uint8)
+
+        # 4-way connectivity, fill the cv_mask with 255
+        flags = 4 | (255 << 8)
+
+        # We pass a copy of the mask_data to floodFill so we don't accidentally overwrite locked pixels.
+        # This extremely fast operation just generates the boolean fill shape for us.
+        _, _, _, rect = cv2.floodFill(
+            image=self.mask_data.copy(),
+            mask=cv_mask, 
+            seedPoint=(x, y), 
+            newVal=new_class_id, 
+            loDiff=0, 
+            upDiff=0, 
+            flags=flags
+        )
+
+        # Extract the unpadded boolean mask where pixels were successfully filled
+        fill_mask = cv_mask[1:-1, 1:-1] == 255
         
-        # Apply the fill. No further checks are needed because locked pixels were excluded by the ndimage_label step.
+        # Apply the fill to the actual data. Locked pixels inherently stopped the floodFill
+        # because they have a different class ID (e.g., old_class_id + 128), so they are safe.
         self.mask_data[fill_mask] = new_class_id
         
-        # Use localized update for efficiency
-        coords = np.where(fill_mask)
-        y_min, y_max = coords[0].min(), coords[0].max()
-        x_min, x_max = coords[1].min(), coords[1].max()
-        update_rect = (x_min, y_min, x_max + 1, y_max + 1)
+        # Use OpenCV's exact bounding box (x, y, w, h) for a lightning-fast localized update
+        x_min, y_min, fill_w, fill_h = rect
+        
+        # Add 1px padding to the slice bounds to ensure edge anti-aliasing renders cleanly
+        update_rect = (
+            max(0, x_min - 1), 
+            max(0, y_min - 1), 
+            min(width, x_min + fill_w + 1), 
+            min(height, y_min + fill_h + 1)
+        )
         self.update_graphics_item(update_rect=update_rect)
 
         self._invalidate_stats_cache()
@@ -725,8 +750,6 @@ class MaskAnnotation(Annotation):
             return
 
         # 2. Rasterize all shapes at once into a boolean mask.
-        # This creates a numpy array where 'True' indicates a pixel is covered
-        # by at least one of the vector annotations.
         height, width = self.mask_data.shape
         clear_mask = rasterize(
             geometries,
@@ -740,8 +763,20 @@ class MaskAnnotation(Annotation):
         self.mask_data[clear_mask] = 0
         self._invalidate_stats_cache()
 
-        # 4. Trigger a full repaint of the mask to show the changes.
-        self.update_graphics_item()
+        # 4. Trigger a localized repaint of the mask to show the changes efficiently.
+        coords = np.where(clear_mask)
+        if len(coords[0]) > 0:
+            y_min, y_max = int(coords[0].min()), int(coords[0].max())
+            x_min, x_max = int(coords[1].min()), int(coords[1].max())
+            
+            # Add a 1px padding to the slice bounds and clamp to image dimensions
+            update_rect = (
+                max(0, x_min - 1), 
+                max(0, y_min - 1), 
+                min(width, x_max + 2), 
+                min(height, y_max + 2)
+            )
+            self.update_graphics_item(update_rect=update_rect)
 
     # --- Analysis & Information Retrieval Methods ---
 
