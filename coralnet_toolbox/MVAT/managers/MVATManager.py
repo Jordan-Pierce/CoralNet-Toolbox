@@ -1924,22 +1924,33 @@ class MVATManager(QObject):
             return
         
         # ------------------------------------------------------------------
-        # Extract element IDs at source fill region (2D → 3D)
+        # Phase 1: Source ID Extraction (2D → 3D)
         # ------------------------------------------------------------------
         painted_ids = None
-        source_index_map = self.selected_camera.index_map
-        if source_index_map is not None and fill_mask is not None:
-            try:
-                img_h, img_w = source_index_map.shape
-                # Get all element IDs where fill_mask is True
-                if fill_mask.shape == (img_h, img_w):
-                    element_ids = source_index_map[fill_mask]
-                    # Get unique element IDs (excluding -1 which means background)
-                    painted_ids = np.unique(element_ids[element_ids > -1])
-                    painted_ids = np.array(painted_ids, dtype=np.int64)
-            except Exception:
-                pass
-        
+        _p1_target = self.viewer.scene_context.get_primary_target()
+        if fill_mask is not None and isinstance(_p1_target, MeshProduct) and not getattr(self.selected_camera, 'is_orthographic', False):
+            # Dense ray casting: fill_mask is full image-sized, so pass center coords
+            # that produce a zero offset (x0=0, y0=0) aligning the mask to image space.
+            mask_h_fill, mask_w_fill = fill_mask.shape
+            painted_ids = self._dense_mesh_hit_test(
+                self.selected_camera, fill_mask.astype(bool),
+                mask_w_fill // 2, mask_h_fill // 2, _p1_target
+            )
+        else:
+            # PointCloud (or non-mesh) target: use the pre-computed index_map.
+            source_index_map = self.selected_camera.index_map
+            if source_index_map is not None and fill_mask is not None:
+                try:
+                    img_h, img_w = source_index_map.shape
+                    # Get all element IDs where fill_mask is True
+                    if fill_mask.shape == (img_h, img_w):
+                        element_ids = source_index_map[fill_mask]
+                        # Get unique element IDs (excluding -1 which means background)
+                        painted_ids = np.unique(element_ids[element_ids > -1])
+                        painted_ids = np.array(painted_ids, dtype=np.int64)
+                except Exception:
+                    pass
+
         use_3d = painted_ids is not None and len(painted_ids) > 0
         
         # ------------------------------------------------------------------
@@ -2104,32 +2115,41 @@ class MVATManager(QObject):
         # Phase 1: Source ID Extraction (2D → 3D)
         # ------------------------------------------------------------------
         painted_ids = None
-        source_index_map = self.selected_camera.index_map
-        if source_index_map is not None:
-            x0 = px - brush_w // 2
-            y0 = py - brush_h // 2
-            x1 = x0 + brush_w
-            y1 = y0 + brush_h
+        _p1_target = self.viewer.scene_context.get_primary_target()
+        if isinstance(_p1_target, MeshProduct) and not getattr(self.selected_camera, 'is_orthographic', False):
+            # Dense ray casting: cast through every True pixel in the eraser mask
+            # to intersect the full triangle surface area, matching the brush approach.
+            painted_ids = self._dense_mesh_hit_test(
+                self.selected_camera, brush_mask, px, py, _p1_target
+            )
+        else:
+            # PointCloud (or non-mesh) target: use the pre-computed index_map.
+            source_index_map = self.selected_camera.index_map
+            if source_index_map is not None:
+                x0 = px - brush_w // 2
+                y0 = py - brush_h // 2
+                x1 = x0 + brush_w
+                y1 = y0 + brush_h
 
-            img_h, img_w = source_index_map.shape
+                img_h, img_w = source_index_map.shape
 
-            if x0 < img_w and y0 < img_h and x1 > 0 and y1 > 0:
-                cx0 = max(x0, 0)
-                cy0 = max(y0, 0)
-                cx1 = min(x1, img_w)
-                cy1 = min(y1, img_h)
+                if x0 < img_w and y0 < img_h and x1 > 0 and y1 > 0:
+                    cx0 = max(x0, 0)
+                    cy0 = max(y0, 0)
+                    cx1 = min(x1, img_w)
+                    cy1 = min(y1, img_h)
 
-                bx0 = cx0 - x0
-                by0 = cy0 - y0
-                bx1 = bx0 + (cx1 - cx0)
-                by1 = by0 + (cy1 - cy0)
+                    bx0 = cx0 - x0
+                    by0 = cy0 - y0
+                    bx1 = bx0 + (cx1 - cx0)
+                    by1 = by0 + (cy1 - cy0)
 
-                index_slice = source_index_map[cy0:cy1, cx0:cx1]
-                brush_clip = brush_mask[by0:by1, bx0:bx1]
+                    index_slice = source_index_map[cy0:cy1, cx0:cx1]
+                    brush_clip = brush_mask[by0:by1, bx0:bx1]
 
-                raw_ids = index_slice[brush_clip.astype(bool)]
-                unique_ids = np.unique(raw_ids)
-                painted_ids = unique_ids[unique_ids > -1]
+                    raw_ids = index_slice[brush_clip.astype(bool)]
+                    unique_ids = np.unique(raw_ids)
+                    painted_ids = unique_ids[unique_ids > -1]
 
         use_3d = painted_ids is not None and len(painted_ids) > 0
 
