@@ -2029,48 +2029,24 @@ class MVATManager(QObject):
                         # flood-fill the target image regardless of what was filled in source.
                         target_mask.update_mask_at_indices(flat_indices, target_class_id)
                     else:
-                        # 2D fallback: Directly apply filled pixels (don't re-fill)
-                        # This preserves the exact shape of what was filled in the source
-                        if fill_mask is not None:
-                            # Get pixel coordinates of all filled pixels
-                            filled_y, filled_x = np.where(fill_mask)
-                            if len(filled_x) > 0:
-                                if projections is None:
-                                    projections = self._build_projection(px, py)
-                                proj = projections.get(target_path)
-                                if proj is None:
-                                    continue
-                                u_ref, v_ref, is_valid = proj
-                                if not is_valid:
-                                    continue
-                                
-                                # Offset: where the fill happened relative to reference point
-                                dx = filled_x - px
-                                dy = filled_y - py
-                                
-                                # Project each filled pixel to target camera
-                                for offset_x, offset_y in zip(dx, dy):
-                                    target_u = u_ref + offset_x
-                                    target_v = v_ref + offset_y
-                                    
-                                    if 0 <= target_u < target_camera.width and 0 <= target_v < target_camera.height:
-                                        target_mask.set_label_at((int(target_u), int(target_v)), label_id)
-                        else:
-                            # Fallback: no fill_mask available, just fill from center point
-                            if projections is None:
-                                projections = self._build_projection(px, py)
-                            proj = projections.get(target_path)
-                            if proj is None:
-                                continue
-                            u, v, is_valid = proj
-                            if not is_valid:
-                                continue
-                            if not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
-                                continue
-                            
-                            from PyQt5.QtCore import QPointF
-                            fill_pos = QPointF(u, v)
-                            target_mask.fill_region(fill_pos, target_class_id)
+                        # 2D fallback: project the fill seed point to the target camera
+                        # and run flood-fill there. The pixel-by-pixel offset transfer
+                        # approach was removed because it relied on set_label_at which
+                        # does not exist on MaskAnnotation, causing a silent exception
+                        # that prevented set_mask_overlay from ever being called.
+                        if projections is None:
+                            projections = self._build_projection(px, py)
+                        proj = projections.get(target_path)
+                        if proj is None:
+                            continue
+                        u, v, is_valid = proj
+                        if not is_valid:
+                            continue
+                        if not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
+                            continue
+                        from PyQt5.QtCore import QPointF
+                        fill_pos = QPointF(u, v)
+                        target_mask.fill_region(fill_pos, target_class_id)
                     
                     # Ensure the label is visible in the target overlay
                     if label_id not in target_mask.visible_label_ids:
