@@ -74,11 +74,14 @@ class PointCloudProduct(AbstractSceneProduct):
         self._ensure_scalar_arrays()
         
         # Build available arrays in priority order:
-        # 1. RGB (first, use existing or Metashape purple default)
-        # 2. Labels (always available, all white)
-        # 3. Everything else from the mesh
-        other_arrays = [arr for arr in self.array_names if arr.lower() not in ('rgb', 'labels')]
-        self.available_arrays = ["RGB", "Labels"] + other_arrays
+        # Hide the raw float normals and expose our visualization-ready ones
+        other_arrays = [arr for arr in self.array_names if arr.lower() not in ('rgb', 'labels', 'normals', 'normals_rgb')]
+        self.available_arrays = ["RGB", "Labels"]
+        
+        if "Normals_RGB" in self.array_names:
+            self.available_arrays.append("Normals_RGB")
+            
+        self.available_arrays.extend(other_arrays)
         
         load_time = time.time() - start_time
         
@@ -120,12 +123,12 @@ class PointCloudProduct(AbstractSceneProduct):
         # Use them directly via the mapper
         if self.selected_array in self.array_names:
             style['scalars'] = self.selected_array
-            # RGB and Labels arrays are both Nx3 uint8, so they need direct RGB mode
-            if self.selected_array in ("RGB", "Labels"):
+            # RGB, Labels, and Normals_RGB are all Nx3 uint8, so they need direct RGB mode
+            if self.selected_array in ("RGB", "Labels", "Normals_RGB"):
                 style['rgb'] = True
         else:
-            # Fallback: render as white
-            style['color'] = 'white'
+            # Fallback: render as metashape purple
+            style['color'] = '#8d8cc4'  # Metashape purple
         
         return style
     
@@ -244,7 +247,6 @@ class PointCloudProduct(AbstractSceneProduct):
         if "Labels" not in self.mesh.array_names:
             labels_array = np.ones((n_points, 3), dtype=np.uint8) * 255  # White
             self.mesh.point_data["Labels"] = labels_array
-            print(f"   ✓ Created 'Labels' array (all white) for {self.label}")
         
         # Create "RGB" array if it doesn't exist - Metashape purple
         if "RGB" not in self.mesh.array_names:
@@ -254,7 +256,16 @@ class PointCloudProduct(AbstractSceneProduct):
             rgb_array[:, 1] = 140  # G
             rgb_array[:, 2] = 196  # B
             self.mesh.point_data["RGB"] = rgb_array
-            print(f"   ✓ Created 'RGB' array (Metashape purple) for {self.label}")
+
+        # Fix Normals visualization: Map [-1, 1] floats to [0, 255] RGB
+        norm_key = "Normals" if "Normals" in self.mesh.array_names else ("normals" if "normals" in self.mesh.array_names else None)
+        if norm_key and "Normals_RGB" not in self.mesh.array_names:
+            raw_normals = self.mesh.point_data[norm_key]
+            rgb_normals = np.clip((raw_normals + 1.0) / 2.0 * 255.0, 0, 255).astype(np.uint8)
+            self.mesh.point_data["Normals_RGB"] = rgb_normals
+
+        # Update array_names after potentially adding new arrays
+        self.array_names = self.mesh.array_names
         
         # Update array_names after potentially adding new arrays
         self.array_names = self.mesh.array_names
@@ -301,11 +312,14 @@ class MeshProduct(AbstractSceneProduct):
         self._ensure_scalar_arrays()
         
         # Build available arrays in priority order:
-        # 1. RGB (first, use existing or Metashape purple default)
-        # 2. Labels (always available, all white)
-        # 3. Everything else from the mesh
-        other_arrays = [arr for arr in self.array_names if arr.lower() not in ('rgb', 'labels')]
-        self.available_arrays = ["RGB", "Labels"] + other_arrays
+        # Hide the raw float normals and expose our visualization-ready ones
+        other_arrays = [arr for arr in self.array_names if arr.lower() not in ('rgb', 'labels', 'normals', 'normals_rgb')]
+        self.available_arrays = ["RGB", "Labels"]
+        
+        if "Normals_RGB" in self.array_names:
+            self.available_arrays.append("Normals_RGB")
+            
+        self.available_arrays.extend(other_arrays)
         
         print(f"Array names in mesh: {self.array_names}")
         print(f"Available arrays for visualization (priority order): {self.available_arrays}")
@@ -388,12 +402,12 @@ class MeshProduct(AbstractSceneProduct):
         # Use them directly via the mapper
         if self.selected_array in self.array_names:
             style['scalars'] = self.selected_array
-            # RGB and Labels arrays are both Nx3 uint8, so they need direct RGB mode
-            if self.selected_array in ("RGB", "Labels"):
+            # RGB, Labels, and Normals_RGB are all Nx3 uint8, so they need direct RGB mode
+            if self.selected_array in ("RGB", "Labels", "Normals_RGB"):
                 style['rgb'] = True
         else:
-            # Fallback: render as white
-            style['color'] = 'white'
+            # Fallback: render as metashape purple
+            style['color'] = '#8d8cc4'  # Metashape purple
         
         return style
     
@@ -505,7 +519,6 @@ class MeshProduct(AbstractSceneProduct):
         if "Labels" not in self.mesh.array_names:
             labels_array = np.ones((n_faces, 3), dtype=np.uint8) * 255  # White
             self.mesh.cell_data["Labels"] = labels_array
-            print(f"   ✓ Created 'Labels' array (all white) for {self.label}")
         
         # Create "RGB" array if it doesn't exist - Metashape purple
         if "RGB" not in self.mesh.array_names:
@@ -515,8 +528,23 @@ class MeshProduct(AbstractSceneProduct):
             rgb_array[:, 1] = 140  # G
             rgb_array[:, 2] = 196  # B
             self.mesh.cell_data["RGB"] = rgb_array
-            print(f"   ✓ Created 'RGB' array (Metashape purple) for {self.label}")
-        
+
+        # Ensure raw normals exist on the mesh (compute them if missing)
+        if "Normals" not in self.mesh.array_names and "normals" not in self.mesh.array_names:
+            self.mesh.compute_normals(cell_normals=True, point_normals=False, inplace=True)
+
+        # Map [-1, 1] floats to [0, 255] RGB
+        norm_key = "Normals" if "Normals" in self.mesh.array_names else ("normals" if "normals" in self.mesh.array_names else None)
+        if norm_key and "Normals_RGB" not in self.mesh.array_names:
+            if norm_key in self.mesh.cell_data:
+                raw_normals = self.mesh.cell_data[norm_key]
+                rgb_normals = np.clip((raw_normals + 1.0) / 2.0 * 255.0, 0, 255).astype(np.uint8)
+                self.mesh.cell_data["Normals_RGB"] = rgb_normals
+            elif norm_key in self.mesh.point_data:
+                raw_normals = self.mesh.point_data[norm_key]
+                rgb_normals = np.clip((raw_normals + 1.0) / 2.0 * 255.0, 0, 255).astype(np.uint8)
+                self.mesh.point_data["Normals_RGB"] = rgb_normals
+
         # Update array_names after potentially adding new arrays
         self.array_names = self.mesh.array_names
 
