@@ -4,7 +4,7 @@ import numpy as np
 
 from PyQt5.QtGui import QColor, QPen
 from PyQt5.QtCore import Qt, QPointF, QRectF
-from PyQt5.QtWidgets import QGraphicsEllipseItem, QApplication, QMessageBox
+from PyQt5.QtWidgets import QGraphicsEllipseItem, QGraphicsRectItem, QApplication, QMessageBox
 
 from coralnet_toolbox.Tools.QtTool import Tool
 
@@ -32,6 +32,10 @@ class EraseTool(Tool):
         self.shape = 'circle'  # 'circle' or 'square'
         self.brush_mask = self._create_brush_mask()
         self.erasing = False  # Flag to track if erasing mode is active
+        
+        # Optional callback fired after each successful erase stroke:
+        # callback(scene_pos: QPointF, label_id: str, brush_mask: np.ndarray)
+        self.post_stroke_callback = None
 
     def _create_brush_mask(self):
         """Creates a boolean numpy array for the brush shape."""
@@ -85,8 +89,12 @@ class EraseTool(Tool):
         
         if cursor_in_window and self.active and self.annotation_window.selected_label:
             self.update_cursor_annotation(scene_pos)
+            if self.cursor_move_callback:
+                self.cursor_move_callback(scene_pos, self.create_cursor_preview_item)
         else:
             self.clear_cursor_annotation()
+            if self.cursor_clear_callback:
+                self.cursor_clear_callback()
         
         # Apply eraser if erasing is active
         if self.erasing:
@@ -147,6 +155,29 @@ class EraseTool(Tool):
             # Update the cursor annotation to reflect the new eraser size
             scene_pos = self.annotation_window.mapToScene(event.pos())
             self.update_cursor_annotation(scene_pos)
+
+    def create_cursor_preview_item(self, u: float, v: float):
+        """Return a styled eraser shape QGraphicsItem centred at image pixel (u, v)."""
+        # For erase tool, show an empty/transparent item with a dashed border to indicate erasing
+        radius = self.brush_size / 2.0
+        
+        if self.shape == 'circle':
+            item = QGraphicsEllipseItem(u - radius, v - radius, self.brush_size, self.brush_size)
+        else:
+            from PyQt5.QtWidgets import QGraphicsRectItem
+            item = QGraphicsRectItem(u - radius, v - radius, self.brush_size, self.brush_size)
+        
+        # Transparent fill (erase indicator)
+        brush_color = QColor(0, 0, 0, 0)
+        item.setBrush(brush_color)
+        
+        # Dashed red border to indicate erasing
+        pen = QPen(QColor(255, 0, 0, 200), 2)
+        pen.setStyle(Qt.DashLine)
+        pen.setCosmetic(True)
+        item.setPen(pen)
+        
+        return item
 
     def create_cursor_annotation(self, scene_pos: QPointF = None):
         """Create a cursor annotation showing the eraser shape."""
@@ -220,3 +251,9 @@ class EraseTool(Tool):
         
         # Call the update_mask method on the MaskAnnotation object with class_id 0 (background)
         mask_annotation.update_mask(brush_location, self.brush_mask, 0)
+        
+        # Notify any registered propagation callback (e.g., MVAT multi-annotate)
+        # For erasing, we pass the selected_label_id as a reference to what was active
+        if self.post_stroke_callback:
+            selected_label_id = self.annotation_window.selected_label.id if self.annotation_window.selected_label else None
+            self.post_stroke_callback(scene_pos, selected_label_id, self.brush_mask)

@@ -515,21 +515,21 @@ class MainWindow(QMainWindow):
         # ========== UTILITIES MENU ==========
         # Utilities menu
         self.utilities_menu = self.menu_bar.addMenu("Utilities")
-        
-        # Sampling Annotations
-        self.annotation_sampling_action = QAction("Sample Patches", self)
-        self.annotation_sampling_action.triggered.connect(self.open_patch_sampling_dialog_dialog)
-        self.utilities_menu.addAction(self.annotation_sampling_action)
-        
-        # Rugosity
-        self.rugosity_action = QAction("Measure Rugosity", self)
-        self.rugosity_action.triggered.connect(self.open_rugosity_dialog)
-        self.utilities_menu.addAction(self.rugosity_action)
 
         # Scale
         self.scale_action = QAction("Set Scale", self)
         self.scale_action.triggered.connect(self.open_scale_dialog)
         self.utilities_menu.addAction(self.scale_action)
+
+        # Rugosity
+        self.rugosity_action = QAction("Measure Rugosity", self)
+        self.rugosity_action.triggered.connect(self.open_rugosity_dialog)
+        self.utilities_menu.addAction(self.rugosity_action)
+        
+        # Sampling Annotations
+        self.annotation_sampling_action = QAction("Sample Patches", self)
+        self.annotation_sampling_action.triggered.connect(self.open_patch_sampling_dialog_dialog)
+        self.utilities_menu.addAction(self.annotation_sampling_action)
 
         # Work Area Manager
         self.tile_manager_action = QAction("Work Areas", self)
