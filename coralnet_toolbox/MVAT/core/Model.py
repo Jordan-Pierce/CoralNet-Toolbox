@@ -234,6 +234,7 @@ class PointCloudProduct(AbstractSceneProduct):
         
         Creates:
         - "Labels": All white (255, 255, 255) for uniform labeling
+        - "Class_IDs": All zeros (0) for background/unannotated state
         - "RGB": Metashape purple if not present in the data
         
         This allows these arrays to be treated as real data arrays in the mapper.
@@ -247,6 +248,11 @@ class PointCloudProduct(AbstractSceneProduct):
         if "Labels" not in self.mesh.array_names:
             labels_array = np.ones((n_points, 3), dtype=np.uint8) * 255  # White
             self.mesh.point_data["Labels"] = labels_array
+            
+        # Create "Class_IDs" array if it doesn't exist - uniform zeros (background)
+        if "Class_IDs" not in self.mesh.array_names:
+            class_ids_array = np.zeros(n_points, dtype=np.int32)
+            self.mesh.point_data["Class_IDs"] = class_ids_array
         
         # Create "RGB" array if it doesn't exist - Metashape purple
         if "RGB" not in self.mesh.array_names:
@@ -263,12 +269,31 @@ class PointCloudProduct(AbstractSceneProduct):
             raw_normals = self.mesh.point_data[norm_key]
             rgb_normals = np.clip((raw_normals + 1.0) / 2.0 * 255.0, 0, 255).astype(np.uint8)
             self.mesh.point_data["Normals_RGB"] = rgb_normals
-
-        # Update array_names after potentially adding new arrays
-        self.array_names = self.mesh.array_names
         
         # Update array_names after potentially adding new arrays
         self.array_names = self.mesh.array_names
+
+    def apply_labels(self, element_ids: np.ndarray, class_id: int, color_rgb: tuple) -> None:
+        """
+        Update the class ID and visual color for specific points.
+        
+        Args:
+            element_ids: Array of point indices to update.
+            class_id: The semantic integer ID of the label.
+            color_rgb: Tuple of (R, G, B) values (0-255).
+        """
+        if self.mesh is None or len(element_ids) == 0:
+            return
+            
+        # 1. Update the semantic Ground Truth data
+        self.mesh.point_data["Class_IDs"][element_ids] = class_id
+        
+        # 2. Update the visual RGB data for the viewer
+        color_array = np.array(color_rgb[:3], dtype=np.uint8)
+        self.mesh.point_data["Labels"][element_ids] = color_array
+        
+        # 3. Mark the PyVista arrays as modified so the renderer knows to redraw
+        self.mesh.point_data.Modified()
 
 
 class MeshProduct(AbstractSceneProduct):
@@ -506,6 +531,7 @@ class MeshProduct(AbstractSceneProduct):
         
         Creates (as cell/face data):
         - "Labels": All white (255, 255, 255) for uniform labeling
+        - "Class_IDs": All zeros (0) for background/unannotated state
         - "RGB": Metashape purple if not present in the data
         
         This allows these arrays to be treated as real data arrays in the mapper.
@@ -519,6 +545,11 @@ class MeshProduct(AbstractSceneProduct):
         if "Labels" not in self.mesh.array_names:
             labels_array = np.ones((n_faces, 3), dtype=np.uint8) * 255  # White
             self.mesh.cell_data["Labels"] = labels_array
+
+        # Create "Class_IDs" array if it doesn't exist - uniform zeros (background)
+        if "Class_IDs" not in self.mesh.array_names:
+            class_ids_array = np.zeros(n_faces, dtype=np.int32)
+            self.mesh.cell_data["Class_IDs"] = class_ids_array
         
         # Create "RGB" array if it doesn't exist - Metashape purple
         if "RGB" not in self.mesh.array_names:
@@ -528,7 +559,7 @@ class MeshProduct(AbstractSceneProduct):
             rgb_array[:, 1] = 140  # G
             rgb_array[:, 2] = 196  # B
             self.mesh.cell_data["RGB"] = rgb_array
-
+        
         # Ensure raw normals exist on the mesh (compute them if missing)
         if "Normals" not in self.mesh.array_names and "normals" not in self.mesh.array_names:
             self.mesh.compute_normals(cell_normals=True, point_normals=False, inplace=True)
@@ -547,4 +578,26 @@ class MeshProduct(AbstractSceneProduct):
 
         # Update array_names after potentially adding new arrays
         self.array_names = self.mesh.array_names
+
+    def apply_labels(self, element_ids: np.ndarray, class_id: int, color_rgb: tuple) -> None:
+        """
+        Update the class ID and visual color for specific mesh faces.
+        
+        Args:
+            element_ids: Array of face (cell) indices to update.
+            class_id: The semantic integer ID of the label.
+            color_rgb: Tuple of (R, G, B) values (0-255).
+        """
+        if self.mesh is None or len(element_ids) == 0:
+            return
+            
+        # 1. Update the semantic Ground Truth data
+        self.mesh.cell_data["Class_IDs"][element_ids] = class_id
+        
+        # 2. Update the visual RGB data for the viewer
+        color_array = np.array(color_rgb[:3], dtype=np.uint8)
+        self.mesh.cell_data["Labels"][element_ids] = color_array
+        
+        # 3. Mark the PyVista arrays as modified
+        self.mesh.cell_data.Modified()
 

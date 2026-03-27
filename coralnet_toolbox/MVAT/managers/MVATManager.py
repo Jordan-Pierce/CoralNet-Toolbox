@@ -1574,8 +1574,9 @@ class MVATManager(QObject):
         Uses True 3D Mapping when the source camera's index map is available:
         1. Extract the element IDs painted under the brush using the source
            camera's index_map.
-        2. Query each target camera's inverted index for the same IDs.
-        3. Paint exactly those pixels with update_mask_at_indices().
+        2. Update the 3D Scene Product directly with the new Class ID and Color.
+        3. Query each target camera's inverted index for the same IDs.
+        4. Paint exactly those pixels with update_mask_at_indices().
 
         Falls back to the legacy 2D center-stamp when the index map is absent
         (e.g., visibility not yet computed) or when no scene geometry was hit.
@@ -1635,6 +1636,35 @@ class MVATManager(QObject):
         # Whether the source camera has valid 3D geometry hits to propagate
         use_3d = painted_ids is not None and len(painted_ids) > 0
 
+        # ------------------------------------------------------------------
+        # NEW Phase: Paint the 3D Model directly
+        # ------------------------------------------------------------------
+        if use_3d:
+            primary_target = self.viewer.scene_context.get_primary_target()
+            if primary_target and hasattr(primary_target, 'apply_labels'):
+                # 1. Convert QColor to RGB tuple
+                target_color = (source_label.color.red(), source_label.color.green(), source_label.color.blue())
+                
+                # 2. Get the integer class_id mapped to this label from the source mask
+                source_raster = self.raster_manager.get_raster(self.selected_camera.image_path)
+                source_mask = source_raster.get_mask_annotation(project_labels) if source_raster else None
+                
+                if source_mask:
+                    source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
+                    # Sync if it's a brand new label
+                    if source_class_id is None:
+                        source_mask.sync_label_map([source_label])
+                        source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
+                        
+                    # 3. Paint the 3D model arrays
+                    primary_target.apply_labels(painted_ids, source_class_id, target_color)
+                    
+                    # 4. Tell the 3D viewer to refresh to show the new colors instantly
+                    try:
+                        self.viewer.update()
+                    except Exception:
+                        pass
+
         # Projections for 2D fallback — computed lazily inside the loop
         projections = None
 
@@ -1666,9 +1696,6 @@ class MVATManager(QObject):
 
                     # Use 3D mapping only when BOTH source hit geometry AND
                     # the target camera's inverted index has been computed.
-                    # If the target has no index yet (visibility not computed),
-                    # fall through to the 2D stamp so the user always gets
-                    # some propagation regardless of load state.
                     target_has_index = target_camera._raster.inv_ids is not None
 
                     if use_3d and target_has_index:
@@ -1718,8 +1745,9 @@ class MVATManager(QObject):
         Uses True 3D Mapping when the source camera's index map is available:
         1. Extract the element IDs beneath the predicted binary_mask using the
            source camera's index_map (the mask is a crop centred at scene_pos).
-        2. Query each target camera's inverted index for the same IDs.
-        3. Paint exactly those pixels with update_mask_at_indices().
+        2. Update the 3D Scene Product directly with the new Class ID and Color.
+        3. Query each target camera's inverted index for the same IDs.
+        4. Paint exactly those pixels with update_mask_at_indices().
 
         Falls back to the legacy 2D stamp when the index map is absent or when
         no scene geometry was hit (e.g., sky prediction).
@@ -1780,6 +1808,34 @@ class MVATManager(QObject):
                 painted_ids = unique_ids[unique_ids > -1]
 
         use_3d = painted_ids is not None and len(painted_ids) > 0
+
+        # ------------------------------------------------------------------
+        # NEW Phase: Paint the 3D Model directly
+        # ------------------------------------------------------------------
+        if use_3d:
+            primary_target = self.viewer.scene_context.get_primary_target()
+            if primary_target and hasattr(primary_target, 'apply_labels'):
+                # 1. Convert QColor to RGB tuple
+                target_color = (source_label.color.red(), source_label.color.green(), source_label.color.blue())
+                
+                # 2. Get the integer class_id mapped to this label from the source mask
+                source_raster = self.raster_manager.get_raster(self.selected_camera.image_path)
+                source_mask = source_raster.get_mask_annotation(project_labels) if source_raster else None
+                
+                if source_mask:
+                    source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
+                    if source_class_id is None:
+                        source_mask.sync_label_map([source_label])
+                        source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
+                        
+                    # 3. Paint the 3D model arrays
+                    primary_target.apply_labels(painted_ids, source_class_id, target_color)
+                    
+                    # 4. Tell the 3D viewer to refresh
+                    try:
+                        self.viewer.update()
+                    except Exception:
+                        pass
 
         # Projections for 2D fallback — computed lazily inside the loop
         projections = None
