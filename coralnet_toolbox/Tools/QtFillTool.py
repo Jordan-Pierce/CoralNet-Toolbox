@@ -24,6 +24,14 @@ class FillTool(Tool):
         
         # You can set a specific cursor for this tool
         self.cursor = Qt.CrossCursor
+        
+        # Optional callback fired after each successful fill operation:
+        # callback(scene_pos: QPointF, label_id: str)
+        self.post_stroke_callback = None
+        
+        # Optional callbacks for Multi-Annotate cursor preview propagation
+        self.cursor_move_callback = None
+        self.cursor_clear_callback = None
 
     def mousePressEvent(self, event):
         """Handles left-click to fill the region under the cursor."""
@@ -38,13 +46,29 @@ class FillTool(Tool):
         
         if not self.annotation_window.cursorInWindow(event.pos()):
             return
-        
+
+        # Check if the label is hidden when the user clicks to fill.
+        # If it is, check the box in the LabelWindow UI automatically.
+        if not self.annotation_window.selected_label.is_visible:
+            self.annotation_window.selected_label.visibility_checkbox.setChecked(True)
+
         self._apply_fill(event)
 
     def mouseMoveEvent(self, event):
-        """Handles mouse movement, shows crosshair if enabled."""
+        """Handles mouse movement, shows crosshair and propagates cursor preview for Multi-Annotate."""
         # Call the parent method to handle crosshair
         super().mouseMoveEvent(event)
+        
+        # Handle cursor preview propagation for Multi-Annotate
+        scene_pos = self.annotation_window.mapToScene(event.pos())
+        cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
+        
+        if cursor_in_window and self.active and self.annotation_window.selected_label:
+            if self.cursor_move_callback:
+                self.cursor_move_callback(scene_pos, self.create_cursor_preview_item)
+        else:
+            if self.cursor_clear_callback:
+                self.cursor_clear_callback()
     
     def mouseReleaseEvent(self, event):
         """Called when the mouse is released."""
@@ -65,6 +89,27 @@ class FillTool(Tool):
     def clear_cursor_annotation(self):
         """No cursor annotation to clear."""
         pass
+    
+    def create_cursor_preview_item(self, u: float, v: float):
+        """Return a styled cursor indicator for the fill tool (simple crosshair preview)."""
+        if not self.annotation_window.selected_label:
+            return None
+        
+        from PyQt5.QtGui import QColor, QPen
+        from PyQt5.QtWidgets import QGraphicsEllipseItem
+        
+        label = self.annotation_window.selected_label
+        
+        # Create a small circle indicator to show the fill point
+        c = QColor(label.color)
+        pen = QPen(c.darker(150), 2)
+        pen.setCosmetic(True)
+        
+        size = 8  # Small circle for fill tool cursor
+        item = QGraphicsEllipseItem(u - size/2, v - size/2, size, size)
+        item.setPen(pen)
+        item.setBrush(QColor(c))
+        return item
 
     def stop_current_drawing(self):
         """No drawing to stop."""
@@ -92,19 +137,18 @@ class FillTool(Tool):
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
-        # Call the fill_region method on the MaskAnnotation object
-        mask_annotation.fill_region(scene_pos, new_class_id)
-        
-        # Call the fill_region method on the MaskAnnotation object
-        mask_annotation.fill_region(scene_pos, new_class_id)
+        # Call the fill_region method on the MaskAnnotation object and get the fill mask
+        fill_mask = mask_annotation.fill_region(scene_pos, new_class_id)
 
         # Ensure the label is visible in the mask (even if checkbox is unchecked)
         if selected_label_id not in mask_annotation.visible_label_ids:
             mask_annotation.visible_label_ids.add(selected_label_id)
             mask_annotation.update_graphics_item()
-
-        # Update the display to reflect changes
-        self.annotation_window.update_scene()
+        
+        # Notify any registered propagation callback (e.g., MVAT multi-annotate)
+        # Pass all the filled pixels (like BrushTool does) instead of just the single point
+        if self.post_stroke_callback and fill_mask is not None:
+            self.post_stroke_callback(scene_pos, selected_label_id, fill_mask)
         
         # Restore the cursor
         QApplication.restoreOverrideCursor()

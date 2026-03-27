@@ -510,6 +510,10 @@ class AnnotationWindow(BaseCanvas):
         """Handle z-colormap dropdown changes by updating the annotation window."""
         self.update_z_colormap(colormap_name)
         
+        # Sync to all context matrix canvases
+        if hasattr(self.main_window, 'context_matrix') and self.main_window.context_matrix:
+            self.main_window.context_matrix.sync_z_colormap_to_all_canvases(colormap_name)
+        
         # Enable/disable z_transparency_widget based on colormap selection
         if colormap_name == "None":
             self.z_transparency_widget.setEnabled(False)
@@ -533,10 +537,18 @@ class AnnotationWindow(BaseCanvas):
         
         # Update the annotation window's z-channel opacity
         self.set_z_opacity(opacity)
+        
+        # Sync to all context matrix canvases
+        if hasattr(self.main_window, 'context_matrix') and self.main_window.context_matrix:
+            self.main_window.context_matrix.sync_z_opacity_to_all_canvases(opacity)
 
     def on_z_dynamic_toggled(self, checked):
         """Handle z-dynamic scaling button toggle."""
         self.toggle_dynamic_z_scaling(checked)
+        
+        # Sync to all context matrix canvases
+        if hasattr(self.main_window, 'context_matrix') and self.main_window.context_matrix:
+            self.main_window.context_matrix.sync_z_dynamic_scaling_to_all_canvases(checked)
 
     def update_label_transparency(self, value):
         """Update the transparency for all annotations in the current image."""
@@ -565,6 +577,10 @@ class AnnotationWindow(BaseCanvas):
                 self.main_window.label_window.set_mask_transparency(transparency)
         except Exception as e:
             pass
+
+        # Sync transparency to all context matrix canvases
+        if hasattr(self.main_window, 'context_matrix') and self.main_window.context_matrix:
+            self.main_window.context_matrix.sync_annotations_to_all_canvases()
 
         # Restore cursor
         QApplication.restoreOverrideCursor()
@@ -1468,6 +1484,20 @@ class AnnotationWindow(BaseCanvas):
                 self.z_item.setOpacity(current_opacity)
             except Exception:
                 pass
+        
+        # Sync z-channel state to all ContextMatrix BaseCanvases when image changes
+        try:
+            context_matrix = getattr(self.main_window, 'context_matrix', None)
+            if context_matrix:
+                if current_colormap != "None":
+                    context_matrix.sync_z_colormap_to_all_canvases(current_colormap)
+                    current_opacity = self.main_window.z_transparency_widget.value() / 255.0
+                    context_matrix.sync_z_opacity_to_all_canvases(current_opacity)
+                # Also sync dynamic scaling state
+                is_dynamic_enabled = self.main_window.z_dynamic_scaling_checkbox.isChecked()
+                context_matrix.sync_z_dynamic_scaling_to_all_canvases(is_dynamic_enabled)
+        except Exception:
+            pass
 
         # Automatically mark this image as checked when viewed
         raster.checkbox_state = True
@@ -1522,9 +1552,10 @@ class AnnotationWindow(BaseCanvas):
             except Exception:
                 pass
 
-    def _reset_z_channel_to_full_range(self):
+    def _reset_z_channel_to_full_range(self, colormap_name=None):
         """Override to fetch colormap from main_window and pass to BaseCanvas."""
-        colormap_name = self.main_window.z_colormap_dropdown.currentText()
+        if colormap_name is None:
+            colormap_name = self.main_window.z_colormap_dropdown.currentText()
         super()._reset_z_channel_to_full_range(colormap_name)
     
     def update_current_image_path(self, image_path):

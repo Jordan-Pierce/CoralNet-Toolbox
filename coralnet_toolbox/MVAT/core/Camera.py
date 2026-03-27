@@ -1,3 +1,4 @@
+import os
 import traceback
 
 import numpy as np
@@ -359,8 +360,7 @@ class Camera:
     # Visibility Computation (Index Maps)
     # --------------------------------------------------------------------------
     
-    def ensure_visibility_data(self, point_cloud, cache_manager, compute_depth_map: bool = True, 
-                               compute_index_maps: bool = True):
+    def ensure_visibility_data(self, point_cloud, cache_manager, compute_depth_map: bool = True, compute_index_maps: bool = True):
         """
         Ensure visibility data (index_map and visible_indices) is computed and cached.
         
@@ -517,22 +517,15 @@ class OrthographicCamera(Camera):
     - Rays are parallel (no perspective distortion)
     """
     def __init__(self, raster):
-        """
-        Initialize orthographic camera from raster with DEM.
-        """        
-        # Core flag
         self.is_orthographic = True
         self._raster = raster
 
-        # 1. ORTHOMOSAIC IMAGE PROPERTIES
         self.width = raster.width
         self.height = raster.height
 
         if raster.transform_matrix is None:
             raise ValueError(f"Orthomosaic {raster.basename} missing transform_matrix")
 
-        # BULLETPROOF: Force the matrix to be a standard 3x3 float array. 
-        # This strips away any legacy np.matrix or object array wrappers.
         self.transform_matrix = np.array(raster.transform_matrix, dtype=np.float64).reshape(3, 3)
 
         try:
@@ -540,46 +533,53 @@ class OrthographicCamera(Camera):
         except np.linalg.LinAlgError:
             raise ValueError(f"Transform matrix for {raster.basename} is singular (non-invertible)")
 
-        # 2. DEM PROPERTIES
-        # Use the lazy loader so it pulls from disk if restoring from a project!
-        self.z_channel = raster.z_channel_lazy
+        # --- NATIVE DEM PROPERTIES ---
+        self.native_dem_data = None
+        self.native_dem_transform_inv = None
+        z_avg = 0.0
 
-        if self.z_channel is None:
-            print(f"WARNING: {raster.basename} has no DEM. Assuming flat terrain at Z=0")
-        else:
-            self.z_channel = self.z_channel.copy()
+        if raster.z_channel_path and os.path.exists(raster.z_channel_path):
+            try:
+                import rasterio
+                with rasterio.open(raster.z_channel_path) as dem_src:
+                    self.native_dem_data = dem_src.read(1).astype(np.float32)
+                    nodata = dem_src.nodata
+                    if nodata is not None:
+                        self.native_dem_data[self.native_dem_data == nodata] = np.nan
+                    
+                    t = dem_src.transform
+                    dem_transform = np.array([
+                        [t.a, t.b, t.c],
+                        [t.d, t.e, t.f],
+                        [0.0, 0.0, 1.0]
+                    ], dtype=np.float64)
+                    
+                    self.native_dem_transform_inv = np.linalg.inv(dem_transform)
+                    
+                    valid_dem = self.native_dem_data[~np.isnan(self.native_dem_data)]
+                    if valid_dem.size > 0:
+                        z_avg = float(np.mean(valid_dem))
+            except Exception as e:
+                print(f"WARNING: Could not load native DEM for {raster.basename}: {e}")
 
-        # 3. "CAMERA" POSITION (Conceptual - hovering directly above scene center)
+        # Position (Conceptual)
         center_x, center_y = self.width / 2.0, self.height / 2.0
-        
-        # Because transform_matrix is strictly an ndarray, this is guaranteed to yield a 1D (3,) array
         center_vec = np.array([center_x, center_y, 1.0], dtype=np.float64)
         world_center = (self.transform_matrix @ center_vec).flatten()
-        
-        # Safely calculate average Z for altitude placement
-        if self.z_channel is not None and self.z_channel.size > 0:
-            z_mean = np.nanmean(self.z_channel)
-            z_avg = float(np.ravel(z_mean))  # Safe scalar extraction
-            if np.isnan(z_avg): 
-                z_avg = 0.0
-        else:
-            z_avg = 0.0
-            
-        # Safely construct the 3D position using the explicit floats
-        # Extract X and Y components from the homogeneous world_center array
         self.position = np.array([float(world_center[0]), float(world_center[1]), z_avg + 1000.0], dtype=np.float64)
 
-        # 4. COMPATIBILITY STUBS
+        # Stubs
         self.K = np.eye(3)
         self.R = np.eye(3)
         self.t = np.array([0.0, 0.0, 0.0])
         self.K_inv = np.eye(3)
         self.extrinsics = np.eye(4)
         self.P = np.eye(3, 4)
-        
-        # No frustum for orthomosaics
         self.frustum = None
         self.selected = False
+
+        # Placeholder for injected matrix
+        self.chunk_transform_inv = None
 
     # --------------------------------------------------------------------------
     # Properties (Delegated to Raster)
@@ -611,160 +611,7 @@ class OrthographicCamera(Camera):
     @property
     def index_map(self):
         """Get the index map for this camera."""
-        return self._raster.index_map_lazy
-    
-    # --------------------------------------------------------------------------
-    # DEM Association
-    # --------------------------------------------------------------------------
-    
-    def get_elevation_mesh(self, max_resolution=10000):
-        """
-        Generate a 3D elevation mesh from the DEM z_channel with proper texture coordinates.
-        
-        This method creates a triangulated surface mesh from the DEM that can be textured
-        with the orthomosaic imagery. Key considerations:
-        
-        1. PyVista StructuredGrid requires 'ij' indexing for meshgrid (matrix indexing)
-           to avoid 90-degree rotation of the mesh.
-           
-        2. UV coordinates must be flipped vertically (V = 1 - v) because OpenGL/VTK
-           texture coordinates have origin at bottom-left, while image pixels have
-           origin at top-left.
-           
-        3. Cell removal must use Fortran (column-major) ordering to match PyVista's
-           internal cell indexing for StructuredGrids.
-        
-        Args:
-            max_resolution: Maximum dimension for the downsampled mesh grid.
-            
-        Returns:
-            pv.PolyData: Triangulated mesh with texture coordinates, or None if no DEM.
-        """
-        import pyvista as pv
-        import cv2
-        import numpy as np
-        
-        if self.z_channel is None:
-            print(f"Cannot generate elevation: {self.label} has no DEM (z_channel).")
-            return None
-            
-        # Calculate smooth scaling factor
-        scale = min(1.0, max_resolution / max(self.width, self.height))
-        target_w = max(1, int(self.width * scale))
-        target_h = max(1, int(self.height * scale))
-        
-        print(f"🔍 DEM mesh generation: image={self.width}x{self.height}, target={target_w}x{target_h}")
-        
-        # 1. Mask NoData properly
-        temp_z = self.z_channel.copy()
-        valid_mask = ~np.isnan(temp_z)
-        if self._raster.z_nodata is not None:
-            valid_mask &= (temp_z != self._raster.z_nodata)
-        valid_mask &= (temp_z > -10000.0)
-        
-        baseline_z = float(np.nanmin(temp_z[valid_mask])) if np.any(valid_mask) else 0.0
-        temp_z[~valid_mask] = baseline_z
-        
-        # 2. Smoothly downsample elevation and mask
-        z_smooth = cv2.resize(temp_z, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
-        mask_smooth = cv2.resize(valid_mask.astype(np.uint8), (target_w, target_h), interpolation=cv2.INTER_NEAREST)
-        
-        # 3. Generate spatial grids in pixel space
-        # CRITICAL: Use indexing='ij' for PyVista compatibility (matrix indexing)
-        # x corresponds to columns (width), y corresponds to rows (height)
-        col_coords = np.linspace(0, self.width - 1, target_w)   # pixel x (columns)
-        row_coords = np.linspace(0, self.height - 1, target_h)  # pixel y (rows)
-        
-        # With indexing='ij': output[i,j] corresponds to (col_coords[i], row_coords[j])
-        # Shape will be (target_w, target_h) - note the order!
-        pixel_x, pixel_y = np.meshgrid(col_coords, row_coords, indexing='ij')
-        
-        # Transform pixel coordinates to world coordinates
-        pixels_hom = np.column_stack((pixel_x.flatten(), pixel_y.flatten(), np.ones(pixel_x.size)))
-        world_hom = (self.transform_matrix @ pixels_hom.T).T
-        
-        # Reshape to match meshgrid output shape (target_w, target_h)
-        x_world = world_hom[:, 0].reshape(target_w, target_h)
-        y_world = world_hom[:, 1].reshape(target_w, target_h)
-        
-        # z_smooth is (target_h, target_w) from cv2.resize, need to transpose for 'ij' indexing
-        z_grid = z_smooth.T  # Now shape is (target_w, target_h)
-        
-        # Also transpose the mask
-        mask_grid = mask_smooth.T  # Now shape is (target_w, target_h)
-        
-        # 4. Create the StructuredGrid
-        grid = pv.StructuredGrid(x_world, y_world, z_grid)
-        print(f"📐 StructuredGrid dimensions: {grid.dimensions}")
-        
-        # 5. Compute cell validity mask
-        # StructuredGrid cells are indexed in Fortran (column-major) order
-        # Cell [i,j] connects points [i,j], [i+1,j], [i,j+1], [i+1,j+1]
-        # Grid dimensions are (ni, nj, 1), so we have (ni-1) * (nj-1) cells
-        ni, nj = target_w, target_h
-        
-        # Check all 4 corners of each cell
-        # For 'ij' indexed arrays of shape (ni, nj):
-        corner_00 = mask_grid[:-1, :-1]    # [i, j]
-        corner_10 = mask_grid[1:, :-1]     # [i+1, j]
-        corner_01 = mask_grid[:-1, 1:]     # [i, j+1]
-        corner_11 = mask_grid[1:, 1:]      # [i+1, j+1]
-        
-        # Cell is valid only if ALL 4 corners are valid
-        cell_valid_2d = (corner_00 & corner_10 & corner_01 & corner_11).astype(np.uint8)
-        
-        # Flatten in Fortran order to match PyVista's cell indexing
-        cell_valid = cell_valid_2d.flatten(order='F')
-        
-        print(f"📊 Valid cells: {np.sum(cell_valid)} / {len(cell_valid)}")
-        
-        # 6. Extract valid cells and triangulate
-        valid_cell_ids = np.where(cell_valid == 1)[0]
-        
-        if len(valid_cell_ids) == 0:
-            print(f"⚠️ Warning: No valid cells in DEM for {self.label}")
-            mesh = grid.extract_surface().triangulate()
-        else:
-            filtered_grid = grid.extract_cells(valid_cell_ids)
-            mesh = filtered_grid.extract_surface().triangulate()
-        
-        # 7. Recompute texture coordinates from world positions
-        world_points = np.asarray(mesh.points)
-        n_points = len(world_points)
-        
-        # Project world XY back to pixel coordinates
-        world_xy_hom = np.column_stack([world_points[:, 0], world_points[:, 1], np.ones(n_points)])
-        pixel_coords = (self.transform_matrix_inv @ world_xy_hom.T).T
-        
-        # Normalize to [0, 1] UV range
-        u = pixel_coords[:, 0] / (self.width - 1)
-        # Flip V coordinate for OpenGL texture convention (origin at bottom-left)
-        v = 1.0 - (pixel_coords[:, 1] / (self.height - 1))
-        
-        # Clamp UV coordinates to valid range
-        u = np.clip(u, 0.0, 1.0)
-        v = np.clip(v, 0.0, 1.0)
-        
-        # Set texture coordinates
-        texture_coords = np.column_stack((u, v)).astype(np.float32)
-        mesh.point_data['TCoords'] = texture_coords
-        mesh.active_texture_coordinates = texture_coords
-        
-        # Verify texture coordinates were set
-        if mesh.active_texture_coordinates is None:
-            print(f"⚠️ Warning: Failed to set texture coordinates for {self.label}")
-        else:
-            print(f"✅ Texture coordinates set: {mesh.active_texture_coordinates.shape}")
-        
-        # Clean up leftover data arrays
-        for key in list(mesh.point_data.keys()):
-            if key not in ['TCoords', 'Texture Coordinates']:
-                del mesh.point_data[key]
-        for key in list(mesh.cell_data.keys()):
-            del mesh.cell_data[key]
-        
-        print(f"🌍 Generated smooth 3D elevation mesh for {self.label} ({mesh.n_cells} faces)")
-        return mesh
+        return self._raster.index_map_lazy   
     
     # --------------------------------------------------------------------------
     # Geometric Methods
@@ -772,80 +619,132 @@ class OrthographicCamera(Camera):
 
     def project(self, points_3d_world):
         """
-        Project 3D world points to 2D pixel coordinates (ignoring Z).
-        Uses affine transformation: [u, v, 1] = T_inv @ [X, Y, 1]
-
-        Args:
-            points_3d_world (np.ndarray): 3D point(s) [x, y, z] in world coordinates
-
-        Returns:
-            np.ndarray: 2D pixel coordinate(s) [u, v]
+        Project 3D world points to 2D pixel coordinates.
+        Math: Local XYZ -> chunk_transform -> World XYZ -> transform_matrix_inv -> Pixel UV
         """
         points = np.atleast_2d(points_3d_world)
         N = len(points)
-
-        # Homogeneous coordinates [X, Y, 1] (ignore Z for orthographic)
-        points_hom = np.column_stack([points[:, 0], points[:, 1], np.ones(N)])
-
-        # Transform to pixel space
-        pixels_hom = (self.transform_matrix_inv @ points_hom.T).T
         
-        # Return [u, v] (drop homogeneous coordinate)
+        # 1. Reverse the Bridge: Convert Local XYZ -> World XYZ
+        points_hom = np.column_stack([points[:, 0], points[:, 1], points[:, 2], np.ones(N)])
+        
+        if self.chunk_transform_inv is not None:
+            # We invert the inverse to get the forward transform
+            chunk_transform = np.linalg.inv(self.chunk_transform_inv)
+            world_hom = (chunk_transform @ points_hom.T).T
+        else:
+            world_hom = points_hom
+            
+        # 2. Convert World XY -> Pixel UV
+        world_xy_hom = np.column_stack([world_hom[:, 0], world_hom[:, 1], np.ones(N)])
+        pixels_hom = (self.transform_matrix_inv @ world_xy_hom.T).T
+        
         if N == 1:
             return pixels_hom[0, :2]
         return pixels_hom[:, :2]
 
     def unproject(self, pixel_coord):
         """
-        Unproject pixel to 3D world point using DEM.
-        Since QtRaster resizes the DEM to match the image 1:1, we can do a direct lookup.
+        Unproject Ortho pixel to 3D point.
+        Math: Ortho Pixel -> World XYZ (via Native DEM) -> Local XYZ (via chunk_transform)
         """        
-        # Clamp to Ortho bounds and explicitly unpack the tuple to avoid TypeError
-        u = int(np.clip(pixel_coord[0], 0, self.width - 1))
-        v = int(np.clip(pixel_coord[1], 0, self.height - 1))
-
         # 1. Transform Ortho pixel to world X, Y
-        pixel_hom = np.array([u, v, 1.0], dtype=np.float64)
-        
-        # Guaranteed to be a 1D array because of our strict matrix formatting in __init__
+        pixel_hom = np.array([pixel_coord[0], pixel_coord[1], 1.0], dtype=np.float64)
         world_hom = (self.transform_matrix @ pixel_hom).flatten()
         X, Y = float(world_hom[0]), float(world_hom[1])
 
-        # If there's no DEM loaded at all, fallback to Z=0.0
-        if self.z_channel is None:
-            return np.array([X, Y, 0.0], dtype=np.float64)
+        # 2. Get World Z from Native DEM
+        Z = 0.0
+        if self.native_dem_data is not None and self.native_dem_transform_inv is not None:
+            world_dem_hom = np.array([X, Y, 1.0], dtype=np.float64)
+            dem_pixel_hom = (self.native_dem_transform_inv @ world_dem_hom).flatten()
+            dem_u, dem_v = int(np.floor(dem_pixel_hom[0])), int(np.floor(dem_pixel_hom[1]))
+            
+            h, w = self.native_dem_data.shape
+            if 0 <= dem_u < w and 0 <= dem_v < h:
+                Z_val = self.native_dem_data[dem_v, dem_u]
+                if not np.isnan(Z_val):
+                    Z = float(Z_val)
 
-        # 2. Query DEM for Z directly (1:1 pixel mapping)
-        Z = self.z_channel[v, u]
+        # --- THE BRIDGE ---
+        # 3. Convert World XYZ to Local XYZ
+        world_xyz_hom = np.array([X, Y, Z, 1.0], dtype=np.float64)
         
-        # 3. Handle NaN or NoData values from the DEM
-        if np.isnan(Z) or (self._raster.z_nodata is not None and Z == self._raster.z_nodata):
-            Z = 0.0
+        if self.chunk_transform_inv is not None:
+            local_xyz_hom = (self.chunk_transform_inv @ world_xyz_hom).flatten()
+            return np.array([local_xyz_hom[0], local_xyz_hom[1], local_xyz_hom[2]], dtype=np.float64)
+        
+        # Fallback if no transform was loaded
+        return np.array([X, Y, Z], dtype=np.float64)
+    
+    def unproject_ray(self, pixel_coord):
+        """
+        Unproject Ortho pixel to a full 3D Ray (origin, direction, terminal_point).
+        Math: Ortho Pixel -> World XYZ (via Native DEM) -> Local XYZ (via chunk_transform)
+        """        
+        # 1. Transform Ortho pixel to world X, Y
+        pixel_hom = np.array([pixel_coord[0], pixel_coord[1], 1.0], dtype=np.float64)
+        world_hom = (self.transform_matrix @ pixel_hom).flatten()
+        X, Y = float(world_hom[0]), float(world_hom[1])
 
-        return np.array([X, Y, float(Z)], dtype=np.float64)
+        # 2. Get World Z from Native DEM
+        Z = 0.0
+        if self.native_dem_data is not None and self.native_dem_transform_inv is not None:
+            world_dem_hom = np.array([X, Y, 1.0], dtype=np.float64)
+            dem_pixel_hom = (self.native_dem_transform_inv @ world_dem_hom).flatten()
+            dem_u, dem_v = int(np.floor(dem_pixel_hom[0])), int(np.floor(dem_pixel_hom[1]))
+            
+            h, w = self.native_dem_data.shape
+            if 0 <= dem_u < w and 0 <= dem_v < h:
+                Z_val = self.native_dem_data[dem_v, dem_u]
+                if not np.isnan(Z_val):
+                    Z = float(Z_val)
+
+        # 3. Create Ray Points in World Space
+        # The sky is high up in World Z
+        terminal_world = np.array([X, Y, Z, 1.0], dtype=np.float64)
+        origin_world = np.array([X, Y, Z + 1000.0, 1.0], dtype=np.float64)
+
+        # 4. Bridge to Local Space
+        if getattr(self, 'chunk_transform_inv', None) is not None:
+            terminal_local = (self.chunk_transform_inv @ terminal_world)[:3]
+            origin_local = (self.chunk_transform_inv @ origin_world)[:3]
+        else:
+            terminal_local = terminal_world[:3]
+            origin_local = origin_world[:3]
+
+        # 5. Calculate Local Direction
+        direction_local = terminal_local - origin_local
+        direction_local = direction_local / np.linalg.norm(direction_local)
+
+        return origin_local, direction_local, terminal_local
     
     def is_point_occluded_depth_based(self, point_3d, depth_threshold=0.1):
         """
-        Determine if a 3D point is occluded based on the depth map (z_channel) of the camera.
+        Determine if a 3D point is occluded using the NATIVE DEM.
         """    
-        uv = self.project(point_3d.reshape(1, 3))
-        if np.isnan(uv).any():
-            return True
-
-        # Extract tuple properly
-        u = int(np.clip(uv, 0, self.width - 1))
-        v = int(np.clip(uv, 0, self.height - 1))
-        
-        if self.z_channel is None:
+        if self.native_dem_data is None or self.native_dem_transform_inv is None:
             return False
-            
-        # Direct lookup (1:1 pixel mapping)
-        Z_dem = self.z_channel[v, u]
-        if np.isnan(Z_dem):
-            return False 
 
-        # Compare the Z-component of the 3D point (index 2)
-        return point_3d < (Z_dem - depth_threshold)
+        point_z = point_3d.flatten()[2]
+        X, Y = point_3d.flatten()[0], point_3d.flatten()[1]
+
+        # Transform World X, Y to Native DEM pixel coordinates
+        world_dem_hom = np.array([X, Y, 1.0], dtype=np.float64)
+        dem_pixel_hom = (self.native_dem_transform_inv @ world_dem_hom).flatten()
+        
+        dem_u = int(np.floor(dem_pixel_hom[0]))
+        dem_v = int(np.floor(dem_pixel_hom[1]))
+        
+        h, w = self.native_dem_data.shape
+        if 0 <= dem_u < w and 0 <= dem_v < h:
+            Z_dem = self.native_dem_data[dem_v, dem_u]
+            if np.isnan(Z_dem):
+                return False 
+            
+            return point_z < (Z_dem - depth_threshold)
+
+        return False
 
     def ensure_visibility_data(self, point_cloud, cache_manager, compute_depth_map=True, compute_index_maps=True):
         """
@@ -893,7 +792,8 @@ class OrthographicCamera(Camera):
                 points_world=points_world,
                 transform_matrix_inv=self.transform_matrix_inv,
                 width=self.width,
-                height=self.height
+                height=self.height,
+                chunk_transform_inv=self.chunk_transform_inv
             )
             # Save to cache
             cache_path = None

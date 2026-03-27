@@ -29,7 +29,7 @@ from coralnet_toolbox.MVAT.core.constants import (
     MOUSE_THROTTLE_MS,
 )
 
-from coralnet_toolbox.MVAT.core.Model import DEMProduct
+# DEMProduct removed: orthomosaics/DEMs are no longer scene products
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -106,30 +106,47 @@ class MousePositionBridge(QObject):
         if candidate_id > -1 and primary_target is not None:
             coord = primary_target.get_element_coordinate(candidate_id)
             if coord is not None:
-                origin = camera.position.copy()
-                direction = coord - origin
-                norm = np.linalg.norm(direction)
-                direction = direction / norm if norm > 0 else camera.R.T @ np.array([0, 0, 1])
-                ray = CameraRay(
-                    origin=origin,
-                    direction=direction,
-                    terminal_point=coord,
-                    has_accurate_depth=True,
-                    pixel_coord=(x, y),
-                    source_camera=camera,
-                    element_id=candidate_id,
-                )
+                if getattr(camera, 'is_orthographic', False):
+                    # Get the correct world-up direction in local space
+                    if getattr(camera, 'chunk_transform_inv', None) is not None:
+                        world_up_hom = np.array([0.0, 0.0, 1.0, 0.0])
+                        local_up = (camera.chunk_transform_inv @ world_up_hom)[:3]
+                        n = np.linalg.norm(local_up)
+                        local_up = local_up / n if n > 1e-12 else np.array([0.0, 0.0, 1.0])
+                    else:
+                        local_up = np.array([0.0, 0.0, 1.0])
+                    origin    = coord + local_up * 1000.0
+                    direction = -local_up
+                
+                    ray = CameraRay(
+                        origin=origin,
+                        direction=direction,
+                        terminal_point=coord,
+                        has_accurate_depth=True,
+                        pixel_coord=(x, y),
+                        source_camera=camera,
+                        element_id=candidate_id,
+                    )
 
         # --- Path B: Z-channel / depth fallback ---
         if ray is None:
             raster = camera._raster
             depth = None
-            if raster.z_channel is not None and raster.z_data_type == 'depth':
-                depth = raster.get_z_value(x, y)
-            if depth is None or depth <= 0 or np.isnan(depth):
+            z_data_type = raster.z_data_type if hasattr(raster, 'z_data_type') else None
+            
+            if raster.z_channel is not None:
+                z_value = raster.get_z_value(x, y)
+                # For depth maps, only accept positive values
+                # For elevation maps, accept any value (including negative)
+                if z_value is not None:
+                    if z_data_type == 'elevation' or (z_data_type == 'depth' and z_value > 0) or z_data_type is None:
+                        depth = z_value
+            
+            if depth is None or np.isnan(depth):
                 default_depth = self.manager.viewer.get_scene_median_depth(camera.position)
             else:
-                default_depth = 10.0
+                default_depth = depth
+            
             ray = CameraRay.from_pixel_and_camera(
                 pixel_xy=(x, y),
                 camera=camera,
@@ -493,46 +510,12 @@ class MVATManager(QObject):
         
     def _populate_ortho_elevation(self):
         """
-        Scans loaded cameras for Orthomosaics with attached DEMs 
-        and adds them as 3D elevation meshes to the scene viewer.
+        Previously populated the 3D scene with elevation meshes generated
+        from orthomosaic DEMs. DEM-as-mesh support has been removed, so
+        this is now a no-op to preserve call sites.
         """
-        elevation_added = False
-        
-        for path, camera in self.cameras.items():
-            # Check if it is an OrthographicCamera and actually has DEM data
-            if camera.is_orthographic and camera.z_channel is not None:
-                # Generate the expected product ID to check for duplicates
-                expected_id = f"Elevation_{camera.label}"
-                
-                # Skip if this elevation product already exists in the scene
-                if expected_id in self.viewer.scene_context:
-                    print(f"⏭️ Skipping {camera.label}: elevation already in scene")
-                    continue
-                    
-                print(f"🏔️ Found DEM for {camera.label}, generating 3D elevation mesh...")
-                
-                try:
-                    # Create the wrapper using the camera
-                    elevation = DEMProduct(camera)
-                    
-                    # Add via viewer method to ensure placeholder is hidden
-                    self.viewer.add_product(elevation)
-                    elevation_added = True
-                    
-                    # Usually only one master orthomosaic per project, but we'll 
-                    # let it loop in case there are multiple.
-                except Exception as e:
-                    print(f"❌ Failed to generate 3D elevation mesh for {camera.label}: {e}")
-                
-        if elevation_added:
-            if hasattr(self.viewer, 'render_scene'):
-                self.viewer.render_scene()
-            elif hasattr(self.viewer, 'load_scene'):
-                self.viewer.load_scene()
-                
-            # Force the 3D camera to zoom to the newly added elevation bounds
-            if hasattr(self.viewer, 'fit_to_view'):
-                self.viewer.fit_to_view()
+        # No-op: elevation meshes are no longer generated or added to the scene.
+        return
 
     # --- Signal Handlers ---
 
@@ -563,7 +546,11 @@ class MVATManager(QObject):
             if not np.isnan(pixel).any():
                 u, v = pixel[0], pixel[1]
                 depth = self.selected_camera._raster.get_z_value(int(u), int(v))
-                color = MARKER_COLOR_SELECTED if depth is not None and depth > 0 else MARKER_COLOR_INVALID
+                # For elevation models, accept negative values; for depth, only positive values indicate valid data
+                z_data_type = self.selected_camera._raster.z_data_type
+                is_elevation = z_data_type == 'elevation'
+                depth_valid = depth is not None and (is_elevation or depth > 0)
+                color = MARKER_COLOR_SELECTED if depth_valid else MARKER_COLOR_INVALID
                 self.annotation_window.set_incoming_marker(u, v, color)
             else:
                 self.annotation_window.clear_static_marker()
@@ -1019,7 +1006,8 @@ class MVATManager(QObject):
         
         for cam in cameras:
             if cam.is_orthographic:
-                camera_params_dict[cam.image_path] = ('ortho', cam.transform_matrix_inv, cam.width, cam.height)
+                # Include chunk_transform_inv if available (for local->world bridge in visibility computation)
+                camera_params_dict[cam.image_path] = ('ortho', cam.transform_matrix_inv, cam.width, cam.height, cam.chunk_transform_inv)
                 cache_keys_dict[cam.image_path] = cam.transform_matrix
             else:
                 camera_params_dict[cam.image_path] = (cam.K, cam.R, cam.t, cam.width, cam.height)
@@ -1071,7 +1059,6 @@ class MVATManager(QObject):
         Handles different product types:
         - PointCloudProduct: Returns point coordinates directly
         - MeshProduct: Returns face center coordinates with face IDs
-        - DEMProduct: Returns grid cell center coordinates with cell IDs
         
         Args:
             primary_target: AbstractSceneProduct instance
@@ -1082,7 +1069,7 @@ class MVATManager(QObject):
                 - element_ids: (N,) array of element IDs or None for default indexing
                 - element_type: str ('point', 'face', or 'cell')
         """
-        from coralnet_toolbox.MVAT.core.Model import PointCloudProduct, MeshProduct, DEMProduct
+        from coralnet_toolbox.MVAT.core.Model import PointCloudProduct, MeshProduct
         
         element_type = primary_target.get_element_type()
         
@@ -1093,8 +1080,8 @@ class MVATManager(QObject):
                 return points, None, 'point'
             return None, None, 'point'
         
-        # Strategy B & C UNIFIED: Mesh and DEM - treat both as solid triangulated surfaces!
-        if isinstance(primary_target, (MeshProduct, DEMProduct)):
+        # Strategy B: Mesh products - treat as solid triangulated surfaces
+        if isinstance(primary_target, MeshProduct):
             try:
                 # Ensure GPU tensors are built for the Bounding Volume Hierarchy
                 if hasattr(primary_target, 'prepare_geometry'):
@@ -1258,13 +1245,20 @@ class MVATManager(QObject):
         px = max(0, min(px, camera.width - 1))
         py = max(0, min(py, camera.height - 1))
 
-        # Try depth from Z-channel
+        # Try depth/elevation from Z-channel
         raster = camera._raster
         depth = None
-        if raster.z_channel is not None and raster.z_data_type == 'depth':
-            depth = raster.get_z_value(int(px), int(py))
+        z_data_type = raster.z_data_type if hasattr(raster, 'z_data_type') else None
+        
+        if raster.z_channel is not None:
+            z_value = raster.get_z_value(int(px), int(py))
+            # For depth maps, only accept positive values
+            # For elevation maps, accept any value (including negative)
+            if z_value is not None:
+                if z_data_type == 'elevation' or (z_data_type == 'depth' and z_value > 0) or z_data_type is None:
+                    depth = z_value
 
-        if depth is None or depth <= 0 or np.isnan(depth):
+        if depth is None or np.isnan(depth):
             # Fallback to scene median depth
             try:
                 default_depth = self.viewer.get_scene_median_depth(camera.position)
@@ -1292,6 +1286,8 @@ class MVATManager(QObject):
         brush_tool = self.annotation_window.tools.get('brush')
         patch_tool = self.annotation_window.tools.get('patch')
         sam_tool = self.annotation_window.tools.get('sam')
+        fill_tool = self.annotation_window.tools.get('fill')
+        erase_tool = self.annotation_window.tools.get('erase')
 
         if enabled:
             self.annotation_window.annotationCreated.connect(self._on_patch_annotation_created)
@@ -1302,6 +1298,14 @@ class MVATManager(QObject):
             if patch_tool is not None:
                 patch_tool.cursor_move_callback = self._on_cursor_preview_moved
                 patch_tool.cursor_clear_callback = self._on_cursor_preview_cleared
+            if fill_tool is not None:
+                fill_tool.post_stroke_callback = self._on_fill_stroke_applied
+                fill_tool.cursor_move_callback = self._on_cursor_preview_moved
+                fill_tool.cursor_clear_callback = self._on_cursor_preview_cleared
+            if erase_tool is not None:
+                erase_tool.post_stroke_callback = self._on_erase_stroke_applied
+                erase_tool.cursor_move_callback = self._on_cursor_preview_moved
+                erase_tool.cursor_clear_callback = self._on_cursor_preview_cleared
             if sam_tool is not None:
                 # Final-mask propagation callback (no live-hover propagation for now)
                 sam_tool.post_prediction_callback = self._on_sam_prediction_applied
@@ -1328,6 +1332,14 @@ class MVATManager(QObject):
             if patch_tool is not None:
                 patch_tool.cursor_move_callback = None
                 patch_tool.cursor_clear_callback = None
+            if fill_tool is not None:
+                fill_tool.post_stroke_callback = None
+                fill_tool.cursor_move_callback = None
+                fill_tool.cursor_clear_callback = None
+            if erase_tool is not None:
+                erase_tool.post_stroke_callback = None
+                erase_tool.cursor_move_callback = None
+                erase_tool.cursor_clear_callback = None
             if sam_tool is not None:
                 sam_tool.post_prediction_callback = None
             self._on_cursor_preview_cleared()
@@ -1482,41 +1494,93 @@ class MVATManager(QObject):
 
         px = int(annotation.center_xy.x())
         py = int(annotation.center_xy.y())
-        projections = self._build_projection(px, py)
-        if not projections:
-            return
 
         visible_paths = self._get_visible_context_paths()
 
         from PyQt5.QtCore import QPointF
         self._propagating_annotation = True
         try:
-            for target_path, (u, v, is_valid) in projections.items():
+            # Try True 3D mapping: get the element id at source pixel (if index map present)
+            source_index_map = self.selected_camera.index_map
+            element_id = None
+            use_3d = False
+            if source_index_map is not None:
+                try:
+                    img_h, img_w = source_index_map.shape
+                    if 0 <= px < img_w and 0 <= py < img_h:
+                        eid = int(source_index_map[py, px])
+                        if eid > -1:
+                            element_id = eid
+                            use_3d = True
+                except Exception:
+                    pass
+
+            # Lazy projection cache for fallback
+            projections = None
+
+            for target_path in list(visible_paths):
                 if target_path == annotation.image_path:
-                    continue
-                if target_path not in visible_paths:
-                    continue
-                if not is_valid:
                     continue
 
                 target_camera = self.cameras.get(target_path)
                 if target_camera is None:
                     continue
-                if not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
-                    continue
 
-                new_annotation = PatchAnnotation(
-                    center_xy=QPointF(u, v),
-                    annotation_size=annotation.annotation_size,
-                    short_label_code=annotation.label.short_label_code,
-                    long_label_code=annotation.label.long_label_code,
-                    color=annotation.label.color,
-                    image_path=target_path,
-                    label_id=annotation.label.id,
-                    transparency=annotation.transparency,
-                )
                 try:
-                    self.annotation_window.add_annotation(new_annotation, record_action=True)
+                    # 3D centroid mapping if both source hit and target inverted index exist
+                    target_has_index = getattr(target_camera, '_raster', None) is not None and target_camera._raster.inv_ids is not None
+                    if use_3d and target_has_index and element_id is not None:
+                        flat = target_camera.get_pixels_for_elements(np.array([element_id], dtype=np.int64))
+                        if flat.size == 0:
+                            # occluded in this view
+                            continue
+                        v_arr, u_arr = np.divmod(flat, target_camera.width)
+                        u_centroid = float(np.mean(u_arr))
+                        v_centroid = float(np.mean(v_arr))
+                        if not (0 <= u_centroid < target_camera.width and 0 <= v_centroid < target_camera.height):
+                            continue
+
+                        new_annotation = PatchAnnotation(
+                            center_xy=QPointF(u_centroid, v_centroid),
+                            annotation_size=annotation.annotation_size,
+                            short_label_code=annotation.label.short_label_code,
+                            long_label_code=annotation.label.long_label_code,
+                            color=annotation.label.color,
+                            image_path=target_path,
+                            label_id=annotation.label.id,
+                            transparency=annotation.transparency,
+                        )
+                        try:
+                            self.annotation_window.add_annotation(new_annotation, record_action=True)
+                        except Exception:
+                            pass
+                    else:
+                        # 2D center-stamp fallback: per-target projection (lazy)
+                        if projections is None:
+                            projections = self._build_projection(px, py)
+                        proj = projections.get(target_path)
+                        if proj is None:
+                            continue
+                        u, v, is_valid = proj
+                        if not is_valid:
+                            continue
+                        if not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
+                            continue
+
+                        new_annotation = PatchAnnotation(
+                            center_xy=QPointF(u, v),
+                            annotation_size=annotation.annotation_size,
+                            short_label_code=annotation.label.short_label_code,
+                            long_label_code=annotation.label.long_label_code,
+                            color=annotation.label.color,
+                            image_path=target_path,
+                            label_id=annotation.label.id,
+                            transparency=annotation.transparency,
+                        )
+                        try:
+                            self.annotation_window.add_annotation(new_annotation, record_action=True)
+                        except Exception:
+                            pass
                 except Exception:
                     pass
         finally:
@@ -1528,8 +1592,9 @@ class MVATManager(QObject):
         Uses True 3D Mapping when the source camera's index map is available:
         1. Extract the element IDs painted under the brush using the source
            camera's index_map.
-        2. Query each target camera's inverted index for the same IDs.
-        3. Paint exactly those pixels with update_mask_at_indices().
+        2. Update the 3D Scene Product directly with the new Class ID and Color.
+        3. Query each target camera's inverted index for the same IDs.
+        4. Paint exactly those pixels with update_mask_at_indices().
 
         Falls back to the legacy 2D center-stamp when the index map is absent
         (e.g., visibility not yet computed) or when no scene geometry was hit.
@@ -1589,6 +1654,35 @@ class MVATManager(QObject):
         # Whether the source camera has valid 3D geometry hits to propagate
         use_3d = painted_ids is not None and len(painted_ids) > 0
 
+        # ------------------------------------------------------------------
+        # NEW Phase: Paint the 3D Model directly
+        # ------------------------------------------------------------------
+        if use_3d:
+            primary_target = self.viewer.scene_context.get_primary_target()
+            if primary_target and hasattr(primary_target, 'apply_labels'):
+                # 1. Convert QColor to RGB tuple
+                target_color = (source_label.color.red(), source_label.color.green(), source_label.color.blue())
+                
+                # 2. Get the integer class_id mapped to this label from the source mask
+                source_raster = self.raster_manager.get_raster(self.selected_camera.image_path)
+                source_mask = source_raster.get_mask_annotation(project_labels) if source_raster else None
+                
+                if source_mask:
+                    source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
+                    # Sync if it's a brand new label
+                    if source_class_id is None:
+                        source_mask.sync_label_map([source_label])
+                        source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
+                        
+                    # 3. Paint the 3D model arrays
+                    primary_target.apply_labels(painted_ids, source_class_id, target_color)
+                    
+                    # 4. Tell the 3D viewer to refresh to show the new colors instantly
+                    try:
+                        self.viewer.update()
+                    except Exception:
+                        pass
+
         # Projections for 2D fallback — computed lazily inside the loop
         projections = None
 
@@ -1620,9 +1714,6 @@ class MVATManager(QObject):
 
                     # Use 3D mapping only when BOTH source hit geometry AND
                     # the target camera's inverted index has been computed.
-                    # If the target has no index yet (visibility not computed),
-                    # fall through to the 2D stamp so the user always gets
-                    # some propagation regardless of load state.
                     target_has_index = target_camera._raster.inv_ids is not None
 
                     if use_3d and target_has_index:
@@ -1666,14 +1757,322 @@ class MVATManager(QObject):
         finally:
             self._propagating_annotation = False
 
+    def _on_fill_stroke_applied(self, scene_pos, label_id: str, fill_mask=None):
+        """Propagate a fill operation into all visible context cameras.
+        
+        Uses True 3D Mapping when the source camera's index map is available:
+        1. Extract all element IDs under the filled region using the source
+           camera's index_map and the fill_mask.
+        2. Update the 3D Scene Product directly with the new Class ID and Color.
+        3. Query each target camera's inverted index for the same IDs.
+        4. Fill the connected regions in the target masks.
+        
+        Falls back to the legacy 2D center-point projection when the index map is absent.
+        """
+        if self._propagating_annotation:
+            return
+        if self.selected_camera is None:
+            return
+        
+        px = int(scene_pos.x())
+        py = int(scene_pos.y())
+        
+        visible_paths = self._get_visible_context_paths()
+        project_labels = list(self.main_window.label_window.labels)
+        
+        source_label = next((lbl for lbl in project_labels if lbl.id == label_id), None)
+        if source_label is None:
+            return
+        
+        # ------------------------------------------------------------------
+        # Extract element IDs at source fill region (2D → 3D)
+        # ------------------------------------------------------------------
+        painted_ids = None
+        source_index_map = self.selected_camera.index_map
+        if source_index_map is not None and fill_mask is not None:
+            try:
+                img_h, img_w = source_index_map.shape
+                # Get all element IDs where fill_mask is True
+                if fill_mask.shape == (img_h, img_w):
+                    element_ids = source_index_map[fill_mask]
+                    # Get unique element IDs (excluding -1 which means background)
+                    painted_ids = np.unique(element_ids[element_ids > -1])
+                    painted_ids = np.array(painted_ids, dtype=np.int64)
+            except Exception:
+                pass
+        
+        use_3d = painted_ids is not None and len(painted_ids) > 0
+        
+        # ------------------------------------------------------------------
+        # NEW Phase: Paint the 3D Model directly
+        # ------------------------------------------------------------------
+        if use_3d:
+            primary_target = self.viewer.scene_context.get_primary_target()
+            if primary_target and hasattr(primary_target, 'apply_labels'):
+                # 1. Convert QColor to RGB tuple
+                target_color = (source_label.color.red(), source_label.color.green(), source_label.color.blue())
+                
+                # 2. Get the integer class_id mapped to this label from the source mask
+                source_raster = self.raster_manager.get_raster(self.selected_camera.image_path)
+                source_mask = source_raster.get_mask_annotation(project_labels) if source_raster else None
+                
+                if source_mask:
+                    source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
+                    # Sync if it's a brand new label
+                    if source_class_id is None:
+                        source_mask.sync_label_map([source_label])
+                        source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
+                    
+                    # 3. Paint the 3D model arrays
+                    primary_target.apply_labels(painted_ids, source_class_id, target_color)
+                    
+                    # 4. Tell the 3D viewer to refresh to show the new colors instantly
+                    try:
+                        self.viewer.update()
+                    except Exception:
+                        pass
+        
+        # Projections for 2D fallback — computed lazily
+        projections = None
+        
+        self._propagating_annotation = True
+        try:
+            for target_path in list(visible_paths):
+                if target_path == self.selected_camera.image_path:
+                    continue
+                
+                target_camera = self.cameras.get(target_path)
+                if target_camera is None:
+                    continue
+                
+                try:
+                    target_raster = self.raster_manager.get_raster(target_path)
+                    if target_raster is None:
+                        continue
+                    target_mask = target_raster.get_mask_annotation(project_labels)
+                    if target_mask is None:
+                        continue
+                    
+                    # Resolve target class_id via stable label_id
+                    target_class_id = target_mask.label_id_to_class_id_map.get(label_id)
+                    if target_class_id is None:
+                        target_mask.sync_label_map([source_label])
+                        target_class_id = target_mask.label_id_to_class_id_map.get(label_id)
+                    if target_class_id is None:
+                        continue
+                    
+                    # Use 3D mapping only when BOTH source hit geometry AND
+                    # the target camera's inverted index has been computed.
+                    target_has_index = target_camera._raster is not None and target_camera._raster.inv_ids is not None
+                    
+                    if use_3d and target_has_index:
+                        # --------------------------------------------------
+                        # Phase 2: Target Fill via 3D Mapping (3D → 2D)
+                        # --------------------------------------------------
+                        flat_indices = target_camera.get_pixels_for_elements(painted_ids)
+                        if len(flat_indices) == 0:
+                            # Element is genuinely occluded in this view — skip
+                            continue
+                        
+                        # Paint exactly the pixels that correspond to the filled 3D elements —
+                        # do NOT re-run flood-fill from a centroid, which would incorrectly
+                        # flood-fill the target image regardless of what was filled in source.
+                        target_mask.update_mask_at_indices(flat_indices, target_class_id)
+                    else:
+                        # 2D fallback: Directly apply filled pixels (don't re-fill)
+                        # This preserves the exact shape of what was filled in the source
+                        if fill_mask is not None:
+                            # Get pixel coordinates of all filled pixels
+                            filled_y, filled_x = np.where(fill_mask)
+                            if len(filled_x) > 0:
+                                if projections is None:
+                                    projections = self._build_projection(px, py)
+                                proj = projections.get(target_path)
+                                if proj is None:
+                                    continue
+                                u_ref, v_ref, is_valid = proj
+                                if not is_valid:
+                                    continue
+                                
+                                # Offset: where the fill happened relative to reference point
+                                dx = filled_x - px
+                                dy = filled_y - py
+                                
+                                # Project each filled pixel to target camera
+                                for offset_x, offset_y in zip(dx, dy):
+                                    target_u = u_ref + offset_x
+                                    target_v = v_ref + offset_y
+                                    
+                                    if 0 <= target_u < target_camera.width and 0 <= target_v < target_camera.height:
+                                        target_mask.set_label_at((int(target_u), int(target_v)), label_id)
+                        else:
+                            # Fallback: no fill_mask available, just fill from center point
+                            if projections is None:
+                                projections = self._build_projection(px, py)
+                            proj = projections.get(target_path)
+                            if proj is None:
+                                continue
+                            u, v, is_valid = proj
+                            if not is_valid:
+                                continue
+                            if not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
+                                continue
+                            
+                            from PyQt5.QtCore import QPointF
+                            fill_pos = QPointF(u, v)
+                            target_mask.fill_region(fill_pos, target_class_id)
+                    
+                    # Ensure the label is visible in the target overlay
+                    if label_id not in target_mask.visible_label_ids:
+                        target_mask.visible_label_ids.add(label_id)
+                        target_mask.update_graphics_item()
+                    
+                    # Sync label map after applying pixels
+                    target_mask.sync_label_map()
+                    
+                    # Push the updated mask pixels into the context canvas overlay
+                    context_canvas = self._get_context_canvas_for_path(target_path)
+                    if context_canvas is not None:
+                        context_canvas.set_mask_overlay(target_mask)
+                except Exception:
+                    pass
+        finally:
+            self._propagating_annotation = False
+
+    def _on_erase_stroke_applied(self, scene_pos, label_id: str, brush_mask: np.ndarray):
+        """Propagate an erase operation into all visible context cameras.
+
+        Uses True 3D Mapping when the source camera's index map is available:
+        1. Extract the element IDs beneath the eraser brush using the source
+           camera's index_map.
+        2. Reset those elements on the 3D Scene Product to class_id=0 (white).
+        3. Query each target camera's inverted index for the same IDs.
+        4. Erase exactly those pixels with update_mask_at_indices(flat, 0).
+
+        Falls back to the legacy 2D center-stamp when the index map is absent.
+        """
+        if self._propagating_annotation:
+            return
+        if self.selected_camera is None or self.context_matrix is None:
+            return
+
+        px, py = int(scene_pos.x()), int(scene_pos.y())
+        visible_paths = self._get_visible_context_paths()
+
+        brush_h, brush_w = brush_mask.shape
+
+        # ------------------------------------------------------------------
+        # Phase 1: Source ID Extraction (2D → 3D)
+        # ------------------------------------------------------------------
+        painted_ids = None
+        source_index_map = self.selected_camera.index_map
+        if source_index_map is not None:
+            x0 = px - brush_w // 2
+            y0 = py - brush_h // 2
+            x1 = x0 + brush_w
+            y1 = y0 + brush_h
+
+            img_h, img_w = source_index_map.shape
+
+            if x0 < img_w and y0 < img_h and x1 > 0 and y1 > 0:
+                cx0 = max(x0, 0)
+                cy0 = max(y0, 0)
+                cx1 = min(x1, img_w)
+                cy1 = min(y1, img_h)
+
+                bx0 = cx0 - x0
+                by0 = cy0 - y0
+                bx1 = bx0 + (cx1 - cx0)
+                by1 = by0 + (cy1 - cy0)
+
+                index_slice = source_index_map[cy0:cy1, cx0:cx1]
+                brush_clip = brush_mask[by0:by1, bx0:bx1]
+
+                raw_ids = index_slice[brush_clip.astype(bool)]
+                unique_ids = np.unique(raw_ids)
+                painted_ids = unique_ids[unique_ids > -1]
+
+        use_3d = painted_ids is not None and len(painted_ids) > 0
+
+        # ------------------------------------------------------------------
+        # Phase 2: Reset the 3D Model to default (white / class_id 0)
+        # ------------------------------------------------------------------
+        if use_3d:
+            primary_target = self.viewer.scene_context.get_primary_target()
+            if primary_target and hasattr(primary_target, 'apply_labels'):
+                primary_target.apply_labels(painted_ids, 0, (255, 255, 255))
+                try:
+                    self.viewer.update()
+                except Exception:
+                    pass
+
+        # Projections for 2D fallback — computed lazily inside the loop
+        projections = None
+
+        self._propagating_annotation = True
+        try:
+            for target_path in list(visible_paths):
+                if target_path == self.selected_camera.image_path:
+                    continue
+
+                target_camera = self.cameras.get(target_path)
+                if target_camera is None:
+                    continue
+
+                try:
+                    target_raster = self.raster_manager.get_raster(target_path)
+                    if target_raster is None:
+                        continue
+                    target_mask = target_raster.get_mask_annotation(self.main_window.label_window.labels)
+                    if target_mask is None:
+                        continue
+
+                    target_has_index = target_camera._raster.inv_ids is not None
+
+                    if use_3d and target_has_index:
+                        # ------------------------------------------------------
+                        # Phase 3: Target Pixel Injection (3D → 2D)
+                        # Erase exactly the pixels that map to the erased elements.
+                        # ------------------------------------------------------
+                        flat_indices = target_camera.get_pixels_for_elements(painted_ids)
+                        if len(flat_indices) == 0:
+                            continue
+                        target_mask.update_mask_at_indices(flat_indices, 0)
+                    else:
+                        # 2D center-stamp fallback
+                        if projections is None:
+                            projections = self._build_projection(px, py)
+                        proj = projections.get(target_path)
+                        if proj is None:
+                            continue
+                        u, v, is_valid = proj
+                        if not is_valid:
+                            continue
+                        if not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
+                            continue
+                        from PyQt5.QtCore import QPointF
+                        brush_location = QPointF(u - brush_w / 2.0, v - brush_h / 2.0)
+                        target_mask.update_mask(brush_location, brush_mask, 0)
+
+                    # Push the updated mask pixels into the context canvas overlay
+                    context_canvas = self._get_context_canvas_for_path(target_path)
+                    if context_canvas is not None:
+                        context_canvas.set_mask_overlay(target_mask)
+
+                except Exception:
+                    pass
+        finally:
+            self._propagating_annotation = False
+
     def _on_sam_prediction_applied(self, scene_pos, label_id: str, binary_mask: np.ndarray):
         """Propagate a final SAM mask prediction into all visible context cameras.
 
         Uses True 3D Mapping when the source camera's index map is available:
         1. Extract the element IDs beneath the predicted binary_mask using the
            source camera's index_map (the mask is a crop centred at scene_pos).
-        2. Query each target camera's inverted index for the same IDs.
-        3. Paint exactly those pixels with update_mask_at_indices().
+        2. Update the 3D Scene Product directly with the new Class ID and Color.
+        3. Query each target camera's inverted index for the same IDs.
+        4. Paint exactly those pixels with update_mask_at_indices().
 
         Falls back to the legacy 2D stamp when the index map is absent or when
         no scene geometry was hit (e.g., sky prediction).
@@ -1734,6 +2133,34 @@ class MVATManager(QObject):
                 painted_ids = unique_ids[unique_ids > -1]
 
         use_3d = painted_ids is not None and len(painted_ids) > 0
+
+        # ------------------------------------------------------------------
+        # NEW Phase: Paint the 3D Model directly
+        # ------------------------------------------------------------------
+        if use_3d:
+            primary_target = self.viewer.scene_context.get_primary_target()
+            if primary_target and hasattr(primary_target, 'apply_labels'):
+                # 1. Convert QColor to RGB tuple
+                target_color = (source_label.color.red(), source_label.color.green(), source_label.color.blue())
+                
+                # 2. Get the integer class_id mapped to this label from the source mask
+                source_raster = self.raster_manager.get_raster(self.selected_camera.image_path)
+                source_mask = source_raster.get_mask_annotation(project_labels) if source_raster else None
+                
+                if source_mask:
+                    source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
+                    if source_class_id is None:
+                        source_mask.sync_label_map([source_label])
+                        source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
+                        
+                    # 3. Paint the 3D model arrays
+                    primary_target.apply_labels(painted_ids, source_class_id, target_color)
+                    
+                    # 4. Tell the 3D viewer to refresh
+                    try:
+                        self.viewer.update()
+                    except Exception:
+                        pass
 
         # Projections for 2D fallback — computed lazily inside the loop
         projections = None

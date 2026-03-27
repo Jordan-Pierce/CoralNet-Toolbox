@@ -19,13 +19,13 @@ from pyvistaqt import QtInteractor
 from PyQt5.QtCore import Qt, QEvent, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication, QFrame, QVBoxLayout,
-    QWidget, QHBoxLayout, QLabel, QSpinBox,
+    QWidget, QHBoxLayout, QLabel, QSpinBox, QComboBox,
     QToolBar, QToolButton, QMenu, QAction, QActionGroup, QStackedLayout
 )
 
 from coralnet_toolbox.MVAT.core.Ray import CameraRay, BatchedRayManager
 from coralnet_toolbox.MVAT.core.Frustum import BatchedFrustumManager
-from coralnet_toolbox.MVAT.core.Model import PointCloudProduct, MeshProduct, DEMProduct
+from coralnet_toolbox.MVAT.core.Model import PointCloudProduct, MeshProduct
 from coralnet_toolbox.MVAT.core.SceneContext import SceneContext
 from coralnet_toolbox.MVAT.core.SceneProduct import AbstractSceneProduct
 from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED
@@ -34,6 +34,98 @@ from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
+
+
+import re
+from PyQt5.QtWidgets import QDialog, QGridLayout, QLineEdit, QPushButton, QVBoxLayout, QLabel, QHBoxLayout
+
+class TransformInputDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Input Chunk Transform Matrix")
+        self.setMinimumWidth(600)
+        
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Enter the 4x4 chunk_transform matrix:\n(You can paste the entire terminal log block directly into the top-left box)"))
+        
+        grid_layout = QGridLayout()
+        self.inputs = []
+        
+        # Create 4x4 grid of inputs
+        for i in range(4):
+            row_inputs = []
+            for j in range(4):
+                line_edit = QLineEdit()
+                # Default to Identity matrix
+                line_edit.setText("1.0" if i == j else "0.0")
+                grid_layout.addWidget(line_edit, i, j)
+                row_inputs.append(line_edit)
+            self.inputs.append(row_inputs)
+            
+        # Hook up the smart paste listener to the very first box
+        self.inputs[0][0].textChanged.connect(self._try_smart_paste)
+            
+        layout.addLayout(grid_layout)
+        
+        btn_layout = QHBoxLayout()
+        ok_btn = QPushButton("Apply")
+        cancel_btn = QPushButton("Cancel")
+        
+        ok_btn.clicked.connect(self.accept)
+        cancel_btn.clicked.connect(self.reject)
+        
+        btn_layout.addStretch()
+        btn_layout.addWidget(cancel_btn)
+        btn_layout.addWidget(ok_btn)
+        
+        layout.addLayout(btn_layout)
+
+    def _try_smart_paste(self, text):
+        """
+        Detects if a matrix string was pasted, strips out log prefixes (like dates/times),
+        extracts exactly 16 floats from inside the brackets, and auto-fills the grid.
+        """
+        if '[' not in text or ']' not in text:
+            return
+            
+        # Extract contents strictly within brackets to avoid matching dates/times in the log prefix
+        floats = []
+        blocks = re.findall(r'\[(.*?)\]', text)
+        for block in blocks:
+            for val in block.split(','):
+                val = val.strip()
+                if val:
+                    try:
+                        floats.append(float(val))
+                    except ValueError:
+                        pass
+        
+        # If we successfully parsed exactly a 4x4 matrix
+        if len(floats) == 16:
+            # Disconnect temporarily to avoid infinite recursive triggering
+            self.inputs[0][0].textChanged.disconnect(self._try_smart_paste)
+            
+            for i in range(4):
+                for j in range(4):
+                    # Inject the parsed floats into their respective boxes
+                    self.inputs[i][j].setText(str(floats[i * 4 + j]))
+                    
+            # Reconnect the listener
+            self.inputs[0][0].textChanged.connect(self._try_smart_paste)
+        
+    def get_matrix(self):
+        import numpy as np
+        matrix = np.eye(4, dtype=np.float64)
+        for i in range(4):
+            for j in range(4):
+                try:
+                    # Strip any accidental brackets or commas if someone pastes a single value
+                    val_str = self.inputs[i][j].text().strip('[], ')
+                    matrix[i, j] = float(val_str)
+                except ValueError:
+                    print(f"Failed to parse value at {i},{j}. Defaulting to 0.0")
+                    matrix[i, j] = 0.0
+        return matrix
 
 
 class MVATViewer(QFrame):
@@ -93,16 +185,15 @@ class MVATViewer(QFrame):
         # Scene product visibility by type
         self._show_point_clouds = True
         self._show_meshes = True
-        self._show_dems = True
+        
+        # Array selector widgets (created in create_top_toolbar)
+        self.array_selector_combo = None
 
         # Top and bottom toolbar widgets (previously exposed for host composition)
         # Refactor: toolbars are owned by the viewer and inserted into its layout
         # to improve encapsulation while keeping attributes for backward compat.
-        self.top_toolbar_widget = QWidget()
-        self.top_toolbar_layout = QHBoxLayout(self.top_toolbar_widget)
-        self.top_toolbar_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Bottom toolbar widget (point-size and opacity controls)
+        # Bottom toolbar widget
         self.bottom_toolbar_widget = QWidget()
         bottom_layout = QHBoxLayout(self.bottom_toolbar_widget)
         bottom_layout.setContentsMargins(6, 2, 6, 2)
@@ -266,11 +357,18 @@ class MVATViewer(QFrame):
     # --------------------------------------------------------------------------
     
     def create_top_toolbar(self) -> QToolBar:
-        """Create the top toolbar with the categorized View dropdown menu."""       
+        """Create the top toolbar with array selector."""       
         toolbar = QToolBar("3D Viewer Tools")
         toolbar.setMovable(False)
-        # The View menu has been moved to the application's menubar / dock menu.
-        # Keep the toolbar present for other controls (bottom toolbar mounts widgets).
+        
+        # Array selection dropdown
+        self.array_selector_combo = QComboBox()
+        self.array_selector_combo.addItem("Labels")
+        self.array_selector_combo.setMinimumWidth(150)
+        self.array_selector_combo.currentTextChanged.connect(self._on_array_selected)
+        
+        toolbar.addWidget(self.array_selector_combo)
+        
         return toolbar
 
     def create_view_menu(self) -> QMenu:
@@ -346,13 +444,6 @@ class MVATViewer(QFrame):
         action_meshes.toggled.connect(self.set_meshes_visible)
         products_menu.addAction(action_meshes)
         
-        action_dems = QAction("Show DEMs", self)
-        action_dems.setCheckable(True)
-        action_dems.setChecked(self._show_dems)
-        action_dems.setToolTip("Toggle visibility of DEM products")
-        action_dems.toggled.connect(self.set_dems_visible)
-        products_menu.addAction(action_dems)
-        
         products_menu.addSeparator()
         
         action_show_all = QAction("Show All Products", self)
@@ -367,7 +458,6 @@ class MVATViewer(QFrame):
         self._product_visibility_actions = {
             'point_clouds': action_point_clouds,
             'meshes': action_meshes,
-            'dems': action_dems,
         }
         
         # Primary Target submenu - for selecting annotation target
@@ -721,6 +811,29 @@ class MVATViewer(QFrame):
         self._update_clipping_range()
 
     # ------------------------------------------------------------------
+    # Array Selection
+    # ------------------------------------------------------------------
+    def _on_array_selected(self, array_name: str):
+        """Handle array selection from the dropdown."""
+        if self.array_selector_combo is None:
+            return
+            
+        # FIX: Apply the selected array to ALL products in the scene, 
+        # not just the primary target.
+        needs_render = False
+        
+        for product in self.scene_context:
+            if hasattr(product, 'set_selected_array'):
+                # Only set it if the product actually has this array available
+                if hasattr(product, 'get_available_arrays') and array_name in product.get_available_arrays():
+                    product.set_selected_array(array_name)
+                    needs_render = True
+                    
+        # Re-render the whole scene once all products are updated
+        if needs_render:
+            self.render_scene()
+
+    # ------------------------------------------------------------------
     # Key event handling
     # ------------------------------------------------------------------
     def keyPressEvent(self, event):
@@ -879,7 +992,6 @@ class MVATViewer(QFrame):
             file_path = event.mimeData().urls()[0].toLocalFile()
             file_ext = file_path.lower()
             
-            # Notify user via status bar if available
             try:
                 top = self.window()
                 if hasattr(top, 'status_bar'):
@@ -893,6 +1005,30 @@ class MVATViewer(QFrame):
             if product is not None:
                 self.add_product(product)
                 self.render_scene()
+                
+                # --- QUICK EDIT: PROMPT FOR CHUNK TRANSFORM GRID ---
+                QApplication.restoreOverrideCursor() # Restore cursor so user can click
+                
+                dialog = TransformInputDialog(self)
+                if dialog.exec_() == QDialog.Accepted:
+                    import numpy as np
+                    matrix = dialog.get_matrix()
+                    try:
+                        inv_matrix = np.linalg.inv(matrix)
+                        # Inject into OrthographicCameras via MVATManager
+                        top = self.window()
+                        if hasattr(top, 'mvat_manager'):
+                            for cam in top.mvat_manager.cameras.values():
+                                if getattr(cam, 'is_orthographic', False):
+                                    cam.chunk_transform_inv = inv_matrix
+                            print("✅ Successfully injected chunk_transform_inv into OrthographicCameras")
+                            print("Injected Matrix:\n", matrix)
+                    except np.linalg.LinAlgError:
+                        print("⚠️ Matrix is singular and cannot be inverted!")
+                
+                QApplication.setOverrideCursor(Qt.WaitCursor) # Set back for remainder
+                # ---------------------------------------------------
+                
                 event.acceptProposedAction()
                 
                 # Trigger visibility filtering based on the model's current selections
@@ -987,6 +1123,15 @@ class MVATViewer(QFrame):
         Args:
             product: Scene product to add.
         """
+        # If the scene already has products, make the new product inherit 
+        # the currently active visualization style from the dropdown. 
+        # (If the scene is empty, let it keep its default RGB and the UI will sync to it).
+        if self.scene_context.has_any_product() and self.array_selector_combo is not None:
+            current_array = self.array_selector_combo.currentText()
+            if current_array and hasattr(product, 'set_selected_array'):
+                if hasattr(product, 'get_available_arrays') and current_array in product.get_available_arrays():
+                    product.set_selected_array(current_array)
+
         self.scene_context.add_product(product)
         
         # Hide placeholder once we have data
@@ -998,6 +1143,12 @@ class MVATViewer(QFrame):
         # Update primary target menu
         try:
             self._update_primary_target_menu()
+        except Exception:
+            pass
+        
+        # Update array selector based on new product
+        try:
+            self._update_array_selector()
         except Exception:
             pass
 
@@ -1027,6 +1178,12 @@ class MVATViewer(QFrame):
             self._update_primary_target_menu()
         except Exception:
             pass
+        
+        # Update array selector based on remaining products
+        try:
+            self._update_array_selector()
+        except Exception:
+            pass
 
     def render_scene(self) -> None:
         """
@@ -1052,45 +1209,27 @@ class MVATViewer(QFrame):
                 if mesh is None:
                     continue
                 
-                # Determine visibility based on product type
                 should_be_visible = self._get_visibility_for_product(product)
-                
-                # Get or create actor
                 actor = self._product_actors.get(product_id)
                 
-                if actor is None:
-                    actor = self.plotter.add_mesh(
-                        mesh,
-                        render=False,
-                        **style
-                    )
-                    # Ensure actor opacity matches style (some PyVista versions ignore opacity in add_mesh)
-                    try:
-                        actor.GetProperty().SetOpacity(style.get('opacity', 1.0))
-                    except Exception:
-                        pass
-                    self._product_actors[product_id] = actor
-                else:
-                    # Update existing actor's mesh
-                    try:
-                        actor.GetMapper().SetInputData(mesh)
-                        # Update actor opacity from style in case persisted value changed
-                        try:
-                            actor.GetProperty().SetOpacity(style.get('opacity', 1.0))
-                        except Exception:
-                            pass
-                    except Exception:
-                        # Fallback: recreate actor
-                        try:
-                            self.plotter.remove_actor(actor)
-                        except Exception:
-                            pass
-                        actor = self.plotter.add_mesh(mesh, render=False, **style)
-                        try:
-                            actor.GetProperty().SetOpacity(style.get('opacity', 1.0))
-                        except Exception:
-                            pass
-                        self._product_actors[product_id] = actor
+                # FIX: If the actor exists, remove it so we can re-apply the fresh style
+                if actor is not None:
+                    self.plotter.remove_actor(actor)
+                
+                # Add mesh with the new style dictionary
+                actor = self.plotter.add_mesh(
+                    mesh,
+                    render=False,
+                    **style
+                )
+                
+                # Ensure actor opacity matches style
+                try:
+                    actor.GetProperty().SetOpacity(style.get('opacity', 1.0))
+                except Exception:
+                    pass
+                    
+                self._product_actors[product_id] = actor
                 
                 # Apply visibility setting
                 try:
@@ -1118,8 +1257,6 @@ class MVATViewer(QFrame):
             return self._show_point_clouds
         elif isinstance(product, MeshProduct):
             return self._show_meshes
-        elif isinstance(product, DEMProduct):
-            return self._show_dems
         return True  # Default to visible for unknown types
 
     # --------------------------------------------------------------------------
@@ -1210,7 +1347,39 @@ class MVATViewer(QFrame):
         target_id = target.product_id if target else ""
         self.primaryTargetChanged.emit(target_id)
         
+        # Update the array selector dropdown to show available arrays for this product
+        self._update_array_selector()
+        
         print(f"🎯 Primary target changed to: {target_id or 'None'}")
+
+    def _update_array_selector(self):
+        """Update the array selector dropdown based on the current primary target."""
+        # Check if combo has been created yet
+        if self.array_selector_combo is None:
+            return
+            
+        target = self.scene_context.get_primary_target()
+        
+        # Clear and ignore signals while updating
+        self.array_selector_combo.blockSignals(True)
+        self.array_selector_combo.clear()
+        
+        if target is None or not hasattr(target, 'get_available_arrays'):
+            # No valid target or doesn't support arrays
+            self.array_selector_combo.addItem("Labels")
+        else:
+            # Add all available arrays from the target product
+            available = target.get_available_arrays()
+            for array_name in available:
+                self.array_selector_combo.addItem(array_name)
+            
+            # Select the currently selected array
+            selected = target.get_selected_array()
+            index = self.array_selector_combo.findText(selected)
+            if index >= 0:
+                self.array_selector_combo.setCurrentIndex(index)
+        
+        self.array_selector_combo.blockSignals(False)
 
     def add_point_cloud(self):
         """
@@ -1481,11 +1650,28 @@ class MVATViewer(QFrame):
         """Add a single image-plane thumbnail for the given camera."""
         if scale is None:
             scale = self.frustum_scale
+        # Guard against cameras that do not have a Frustum (orthomosaics)
+        fr = getattr(camera, 'frustum', None)
+        if fr is None:
+            # No frustum for this camera (e.g., orthomosaic) — skip thumbnail
+            return
+
         try:
-            # Clear any cached image actors for this frustum
-            camera.frustum.image_actors.clear()
-            actor = camera.frustum.create_image_plane_actor(self.plotter, scale=scale, opacity=self.thumbnail_opacity)
-            self.thumbnail_actors.append(actor)
+            # Remove any existing image actors for this frustum from the plotter
+            try:
+                for a in list(fr.image_actors.values()):
+                    try:
+                        self.plotter.remove_actor(a)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            # Clear cached image actors mapping and create a new image plane actor
+            fr.image_actors.clear()
+            actor = fr.create_image_plane_actor(self.plotter, scale=scale, opacity=self.thumbnail_opacity)
+            if actor is not None:
+                self.thumbnail_actors.append(actor)
         except Exception as e:
             print(f"Failed to render thumbnail for {getattr(camera, 'image_path', '<unknown>')}: {e}")
 
@@ -1498,13 +1684,26 @@ class MVATViewer(QFrame):
                 pass
         self.thumbnail_actors.clear()
 
-        # Clear frustum image actor caches
+        # Clear frustum image actor caches (safe attempt). If the viewer's frustum
+        # manager exposes cameras, iterate and clear any image actors attached
+        # to their Frustum objects, removing actors from the plotter first.
         try:
-            # Cameras are not owned by viewer; safe to attempt if present on parent
-            parent = getattr(self, 'parent', None)
+            frust_cams = getattr(self._frustum_manager, 'cameras', {})
+            for _path, cam in frust_cams.items():
+                fr = getattr(cam, 'frustum', None)
+                if fr is None:
+                    continue
+                try:
+                    for a in list(fr.image_actors.values()):
+                        try:
+                            self.plotter.remove_actor(a)
+                        except Exception:
+                            pass
+                    fr.image_actors.clear()
+                except Exception:
+                    pass
         except Exception:
-            parent = None
-        # We cannot enumerate cameras here safely; callers should clear camera.frustum.image_actors if needed
+            pass
 
     def set_thumbnail_opacity(self, opacity: float):
         """Set opacity for any existing thumbnail image plane actors (0.0-1.0)."""
@@ -1700,16 +1899,13 @@ class MVATViewer(QFrame):
         self._show_meshes = bool(visible)
         self._update_product_visibility_by_type(MeshProduct, visible)
     
-    def set_dems_visible(self, visible: bool):
-        """Toggle visibility of all DEM products."""
-        self._show_dems = bool(visible)
-        self._update_product_visibility_by_type(DEMProduct, visible)
+
     
     def show_all_products(self):
         """Show all scene products."""
         self._show_point_clouds = True
         self._show_meshes = True
-        self._show_dems = True
+        
         
         # Update menu checkboxes if they exist
         if hasattr(self, '_product_visibility_actions'):
@@ -1734,7 +1930,7 @@ class MVATViewer(QFrame):
         """Hide all scene products."""
         self._show_point_clouds = False
         self._show_meshes = False
-        self._show_dems = False
+        
         
         # Update menu checkboxes if they exist
         if hasattr(self, '_product_visibility_actions'):

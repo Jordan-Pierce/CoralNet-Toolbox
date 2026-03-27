@@ -43,7 +43,7 @@ class SaveLayoutDialog(QDialog):
         # Input field
         self.name_input = QLineEdit()
         self.name_input.setPlaceholderText("e.g., 'annotation-focus' or 'analysis'")
-        self.name_input.returnPressed.connect(self.accept)
+        self.name_input.returnPressed.connect(self.on_save)
         layout.addWidget(self.name_input)
         
         # Buttons

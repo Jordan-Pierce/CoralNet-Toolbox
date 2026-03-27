@@ -40,10 +40,9 @@ class PretrainModelWorker(QThread):
     training_error = pyqtSignal(str)
     training_status = pyqtSignal(str)
 
-    def __init__(self, params, device):
+    def __init__(self, params):
         super().__init__()
         self.params = params
-        self.device = device
         self.output_dir = Path(self.params['project']) / self.params['name']
 
     def run(self):
@@ -65,7 +64,7 @@ class PretrainModelWorker(QThread):
                 model_name = f"ultralytics/{model_name}"
 
             # Map device string to LightlyTrain accelerator ('gpu', 'cpu', 'mps')
-            accelerator = "gpu" if self.device == "cuda" else self.device
+            accelerator = "auto"
 
             self.training_status.emit("Initializing LightlyTrain pre-training...")
 
@@ -82,6 +81,11 @@ class PretrainModelWorker(QThread):
                 'num_workers': self.params.get('workers', 4),
                 'overwrite': True,
             }
+            
+            # Add teacher model for distillation method
+            teacher_model = self.params.get('teacher_model')
+            if teacher_model:
+                pretrain_kwargs['method_args'] = {'teacher': teacher_model}
             
             # Handle resume/checkpoint logic
             resume_path = self.params.get('resume')
@@ -202,7 +206,10 @@ class Base(QDialog):
         layout = QVBoxLayout()
         info_label = QLabel(
             "Pre-train an Ultralytics encoder using self-supervised learning (SSL) on unlabeled data. "
-            "Add one or more directories containing raw images to build your dataset."
+            "Add one or more directories containing raw images to build your dataset. "
+            "\n\nFor Distillation: Applies MSE loss between student and teacher networks on the same image. "
+            "By default uses ViT-B/14 backbone from DINOv2 as teacher. Strong, identical augmentations are applied to both networks "
+            "to ensure consistency. Inspired by 'Knowledge Distillation: A Good Teacher is Patient and Consistent'."
         )
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
@@ -261,7 +268,9 @@ class Base(QDialog):
         self.model_combo = QComboBox()
         standard_models = [
             'yolov8n', 'yolov8s', 'yolov8m', 'yolov8l', 'yolov8x',
-            'yolo11n', 'yolo11s', 'yolo11m', 'yolo11l', 'yolo11x'
+            'yolo11n', 'yolo11s', 'yolo11m', 'yolo11l', 'yolo11x',
+            'yolo26n', 'yolo26s', 'yolo26m', 'yolo26l', 'yolo26x',
+            'rtdetr-l', 'rtdetr-x'
         ]
         self.model_combo.addItems(standard_models)
         self.model_combo.setCurrentText('yolo11n')
@@ -269,14 +278,39 @@ class Base(QDialog):
 
         # Initialization
         self.weights_combo = QComboBox()
-        self.weights_combo.addItems(["Initialize from Scratch (.yaml)", "Use Pre-trained Weights (.pt)"])
+        self.weights_combo.addItems(["Use Pre-trained Weights (.pt)", "Initialize from Scratch (.yaml)"])
         layout.addRow("Initialization:", self.weights_combo)
 
         # SSL Method
         self.ssl_method_combo = QComboBox()
-        self.ssl_method_combo.addItems(["DINOv2", "SimCLR", "MAE", "DINO", "BYOL", "MoCo", "Distillation"])
-        self.ssl_method_combo.setCurrentText("DINOv2")
+        self.ssl_method_combo.addItems(["Distillation", "SimCLR", "MAE", "DINO", "DINOv2", "BYOL", "MoCo"])
+        self.ssl_method_combo.setCurrentText("Distillation")
+        self.ssl_method_combo.currentTextChanged.connect(self.on_ssl_method_changed)
         layout.addRow("SSL Method:", self.ssl_method_combo)
+
+        # Teacher Model (only for Distillation)
+        self.teacher_model_combo = QComboBox()
+        dinov3_models = [
+            'dinov3/vits16', 'dinov3/vits16plus', 'dinov3/vitb16', 'dinov3/vitl16',
+            'dinov3/vitl16-sat493m', 'dinov3/vitl16plus', 'dinov3/vith16plus',
+            'dinov3/vit7b16', 'dinov3/vit7b16-sat493m'
+        ]
+        dinov2_models = [
+            'dinov2/vits14', 'dinov2/vitb14', 'dinov2/vitl14', 'dinov2/vitg14'
+        ]
+        teacher_models = ['dinov2/vitb14'] + dinov2_models + dinov3_models 
+        self.teacher_model_combo.addItems(teacher_models)
+        self.teacher_model_combo.setCurrentText('dinov2/vitb14')
+        self.teacher_model_label = QLabel("Teacher Model:")
+        layout.addRow(self.teacher_model_label, self.teacher_model_combo)
+        
+        # Set tooltip for teacher model
+        teacher_tooltip = (
+            "Teacher model for knowledge distillation. We use a ViT-B/14 backbone from DINOv2 by default. "
+            "Supported models: DINOv3 variants and DINOv2 variants."
+        )
+        self.teacher_model_combo.setToolTip(teacher_tooltip)
+        self.teacher_model_label.setToolTip(teacher_tooltip)
 
         group_box.setLayout(layout)
         return group_box
@@ -319,24 +353,36 @@ class Base(QDialog):
         scroll_area.setWidget(form_widget)
         group_layout.addWidget(scroll_area)
 
-        # Epochs
+        # Epochs with recommendation tooltip
         self.epochs_spinbox = QSpinBox()
         self.epochs_spinbox.setMinimum(1)
-        self.epochs_spinbox.setMaximum(2000)
-        self.epochs_spinbox.setValue(300)
+        self.epochs_spinbox.setMaximum(10000)
+        self.epochs_spinbox.setValue(500)
+        epochs_tooltip = (
+            "Number of training epochs. Recommended: 100-3000 for standard datasets. "
+            "Distillation benefits from longer schedules; can extend to 10000 epochs for small datasets (<100k images)."
+        )
+        self.epochs_spinbox.setToolTip(epochs_tooltip)
         form_layout.addRow("Epochs:", self.epochs_spinbox)
 
-        # Batch Size
+        # Batch Size with recommendation tooltip
         self.batch_spinbox = QSpinBox()
         self.batch_spinbox.setMinimum(1)
-        self.batch_spinbox.setMaximum(1024)
-        self.batch_spinbox.setValue(32)
+        self.batch_spinbox.setMaximum(2048)
+        self.batch_spinbox.setValue(256)
+        batch_tooltip = (
+            "Batch size for training. Recommended: 128-2048 for knowledge distillation. "
+            "Knowledge distillation is agnostic to the choice of student backbone networks."
+        )
+        self.batch_spinbox.setToolTip(batch_tooltip)
         form_layout.addRow("Batch Size:", self.batch_spinbox)
 
-        # Precision
+        # Precision with updated default and tooltip
         self.precision_combo = QComboBox()
-        self.precision_combo.addItems(["16-mixed", "32-true", "bf16-mixed"])
-        self.precision_combo.setCurrentText("16-mixed")
+        self.precision_combo.addItems(["bf16-mixed", "16-mixed", "32-true", "bf16-true"])
+        self.precision_combo.setCurrentText("bf16-mixed")
+        precision_tooltip = "Numeric precision mode for training. bf16-mixed offers a good balance between speed and accuracy."
+        self.precision_combo.setToolTip(precision_tooltip)
         form_layout.addRow("Precision:", self.precision_combo)
 
         # Workers
@@ -441,6 +487,12 @@ class Base(QDialog):
     def on_table_selection_changed(self):
         self.remove_folder_btn.setEnabled(len(self.data_table.selectedItems()) > 0)
 
+    def on_ssl_method_changed(self, method):
+        """Show/hide teacher model based on SSL method selection."""
+        is_distillation = method == "Distillation"
+        self.teacher_model_label.setVisible(is_distillation)
+        self.teacher_model_combo.setVisible(is_distillation)
+
     def update_total_image_count(self):
         total = sum(int(self.data_table.item(r, 1).text().replace(',', '')) for r in range(self.data_table.rowCount()))
         self.total_images_label.setText(f"<b>Total Images for Pre-training: {total:,}</b>")
@@ -498,6 +550,7 @@ class Base(QDialog):
             'data_dirs': self.data_dirs,
             'model': model_name,
             'ssl_method': self.ssl_method_combo.currentText(),
+            'teacher_model': self.teacher_model_combo.currentText() if self.ssl_method_combo.currentText() == "Distillation" else None,
             'project': self.project_edit.text() or 'Data/Pretraining',
             'name': self.name_edit.text() or datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
             'epochs': self.epochs_spinbox.value(),
@@ -537,7 +590,7 @@ class Base(QDialog):
     def pretrain_model(self):
         self.params = self.get_parameters()
         
-        self.worker = PretrainModelWorker(self.params, getattr(self.main_window, 'device', 'auto'))
+        self.worker = PretrainModelWorker(self.params)
         
         self.worker.training_started.connect(self.on_training_started)
         self.worker.training_completed.connect(self.on_training_completed)

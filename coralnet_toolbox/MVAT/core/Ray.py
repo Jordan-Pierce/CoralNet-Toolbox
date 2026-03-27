@@ -91,22 +91,14 @@ class CameraRay:
         
         # --- ORTHOGRAPHIC RAYS ---
         if getattr(camera, 'is_orthographic', False):
-            # ALWAYS use unproject to fetch actual DEM elevation natively,
-            # completely bypassing the 'depth' arg from the UI.
-            terminal_point = camera.unproject(pixel_xy)
-            has_accurate_depth = False
-            
-            if terminal_point is not None:
-                has_accurate_depth = True
-            else:
-                # Extreme fallback if DEM yields NaN
-                pixel_hom = np.array([pixel_xy, pixel_xy, 1.0], dtype=np.float64)
-                world_xy = (camera.transform_matrix @ pixel_hom).flatten()
-                terminal_point = np.array([float(world_xy), float(world_xy), 0.0], dtype=np.float64)
-            
-            direction = np.array([0.0, 0.0, -1.0])
-            origin = terminal_point + np.array([0.0, 0.0, 1000.0]) 
-            
+            # unproject_ray offsets in WORLD Z before transforming to local space,
+            # so the direction is correct regardless of local-axis orientation.
+            origin, direction, terminal_point = camera.unproject_ray(pixel_xy)
+            has_accurate_depth = terminal_point is not None
+
+            if terminal_point is None:          # pure fallback, no DEM
+                terminal_point = np.array([0.0, 0.0, 0.0])
+
             ray = cls(
                 origin=origin,
                 direction=direction,
@@ -114,9 +106,9 @@ class CameraRay:
                 has_accurate_depth=has_accurate_depth,
                 pixel_coord=pixel_xy,
                 source_camera=camera,
-                element_id=element_id
+                element_id=element_id,
             )
-            ray.visual_origin = origin.copy()
+            ray.visual_origin   = origin.copy()
             ray.visual_terminal = terminal_point.copy()
             return ray
         
@@ -128,7 +120,13 @@ class CameraRay:
         has_accurate_depth = False
         actual_depth = default_depth
         
-        if depth is not None and depth > 0 and not np.isnan(depth):
+        # For elevation models, accept negative values; for depth models, only accept positive
+        z_data_type = getattr(camera._raster, 'z_data_type', None) if hasattr(camera, '_raster') else None
+        is_elevation = z_data_type == 'elevation'
+        
+        depth_valid = (depth is not None and not np.isnan(depth) and (is_elevation or depth > 0))
+        
+        if depth_valid:
             actual_depth = depth
             has_accurate_depth = True
         
@@ -194,8 +192,18 @@ class CameraRay:
         # BRANCH: Orthographic camera
         if getattr(camera, 'is_orthographic', False):
             world_point = np.asarray(world_point, dtype=np.float64)
-            direction = np.array([0.0, 0.0, -1.0])
-            origin = world_point + np.array([0.0, 0.0, 1000.0])
+
+            # Derive the world-Z direction expressed in local space
+            if getattr(camera, 'chunk_transform_inv', None) is not None:
+                world_up_hom = np.array([0.0, 0.0, 1.0, 0.0])   # direction (w=0)
+                local_up = (camera.chunk_transform_inv @ world_up_hom)[:3]
+                n = np.linalg.norm(local_up)
+                local_up = local_up / n if n > 1e-12 else np.array([0.0, 0.0, 1.0])
+            else:
+                local_up = np.array([0.0, 0.0, 1.0])
+
+            origin    = world_point + local_up * 1000.0
+            direction = -local_up
             
             ray = cls(
                 origin=origin,

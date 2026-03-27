@@ -162,8 +162,8 @@ class ContextMatrixWidget(QWidget):
                             pass
 
                     else:
-                        # Plain click: exclusive highlight + 3D view jump
-                        self.selection_requested.emit([path])
+                        # Plain click: only update the 3D view (no selection/highlight changes)
+                        # User must use Ctrl or Ctrl+Shift or the Clear button to modify selections
                         self.camera_highlighted_single.emit(path)
 
                     self._last_clicked_path = path
@@ -209,16 +209,23 @@ class ContextMatrixWidget(QWidget):
 
     def _evaluate_auto_layout(self):
         """Automatically choose grid dimensions based on aspect ratio and target count."""
+        # Cap N to the number of available camera paths so we don't show blank canvases
+        available = len(self._camera_paths)
+        if available > 0:
+            effective_target = min(self.target_camera_count, available)
+        else:
+            effective_target = self.target_camera_count
+
         if not self.isVisible() or self.width() <= 0 or self.height() <= 0:
             rows = 1
             cols = 1
-            N = self.target_camera_count
+            N = effective_target
             if N != self._last_rebuilt_count:
                 self._rebuild_layout(rows, cols, N)
             return
 
         aspect = self.width() / self.height()
-        N = self.target_camera_count
+        N = effective_target
 
         if N == 1:
             rows, cols = 1, 1
@@ -303,6 +310,7 @@ class ContextMatrixWidget(QWidget):
     def set_camera_data(self, camera_objects: List, ordered_paths: List[str]):
         self._camera_paths = ordered_paths
         self._current_offset = 0
+        self._evaluate_auto_layout()
         self._refresh_visible_canvases()
 
     def set_camera_order(self, ordered_paths: List[str], active_path: str = None):
@@ -311,6 +319,7 @@ class ContextMatrixWidget(QWidget):
         else:
             self._camera_paths = list(ordered_paths)
         self._current_offset = 0
+        self._evaluate_auto_layout()
         self._refresh_visible_canvases()
         self._update_rank_label()
 
@@ -367,6 +376,9 @@ class ContextMatrixWidget(QWidget):
                         canvas._render_annotations_readonly(annotations)
                 if raster.mask_annotation is not None:
                     canvas.set_mask_overlay(raster.mask_annotation)
+                
+                # Apply z-channel state from AnnotationWindow after loading image
+                self._apply_z_channel_state_to_canvas(canvas)
             else:
                 canvas._show_placeholder("Failed to load image")
         except Exception as e:
@@ -395,6 +407,18 @@ class ContextMatrixWidget(QWidget):
         layout.setContentsMargins(5, 5, 5, 5)
         layout.setSpacing(5)
 
+        # Load Cameras button (moved to far left)
+        self.load_btn = QToolButton()
+        self.load_btn.setText("Load Cameras")
+        self.load_btn.clicked.connect(self.loadCamerasRequested.emit)
+        layout.addWidget(self.load_btn)
+
+        # Separator after Load Cameras
+        sep0 = QFrame()
+        sep0.setFrameShape(QFrame.VLine)
+        sep0.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(sep0)
+
         # Camera count stats (migrated from CameraGrid)
         self.stats_label = QLabel("Cameras: 0")
         self.stats_label.setStyleSheet("color: #333;")
@@ -418,6 +442,16 @@ class ContextMatrixWidget(QWidget):
         self.selection_label.setStyleSheet("color: #666;")
         layout.addWidget(self.selection_label)
 
+        sep3 = QFrame()
+        sep3.setFrameShape(QFrame.VLine)
+        sep3.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(sep3)
+
+        # Rank indicator
+        self._rank_label = QLabel("\u2014")
+        self._rank_label.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(self._rank_label)
+
         layout.addStretch(1)
 
         # Target-Lock Sync
@@ -436,21 +470,10 @@ class ContextMatrixWidget(QWidget):
         self._multi_annotate_btn.toggled.connect(self._on_multi_annotate_toggled)
         layout.addWidget(self._multi_annotate_btn)
 
-        # Rank indicator
-        self._rank_label = QLabel("\u2014")
-        self._rank_label.setStyleSheet("color: #888; font-size: 11px;")
-        layout.addWidget(self._rank_label)
-
-        sep3 = QFrame()
-        sep3.setFrameShape(QFrame.VLine)
-        sep3.setFrameShadow(QFrame.Sunken)
-        layout.addWidget(sep3)
-
-        # Load Cameras button
-        self.load_btn = QToolButton()
-        self.load_btn.setText("Load Cameras")
-        self.load_btn.clicked.connect(self.loadCamerasRequested.emit)
-        layout.addWidget(self.load_btn)
+        sep4 = QFrame()
+        sep4.setFrameShape(QFrame.VLine)
+        sep4.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(sep4)
 
         # Clear button
         self.clear_btn = QToolButton()
@@ -723,3 +746,60 @@ class ContextMatrixWidget(QWidget):
         """Hide cursor previews on all canvases in the pool."""
         for canvas in self._canvas_pool:
             canvas.clear_cursor_preview()
+
+    # ==================== Z-Channel Synchronization ====================
+
+    def _apply_z_channel_state_to_canvas(self, canvas: BaseCanvas):
+        """
+        Apply the current z-channel state from AnnotationWindow to a specific canvas.
+        Called after a canvas loads a new image to ensure z-channel visualization matches.
+        """
+        try:
+            # Get the main annotation window to fetch current z-channel state
+            annotation_window = getattr(self._mvat_manager.main_window, 'annotation_window', None) if self._mvat_manager else None
+            if not annotation_window:
+                return
+            
+            # Only apply if z-channel is displayed in the main window
+            current_colormap = getattr(annotation_window.main_window, 'z_colormap_dropdown', None)
+            if not current_colormap:
+                return
+                
+            colormap_name = current_colormap.currentText()
+            if colormap_name != "None":
+                # Apply colormap
+                canvas.update_z_colormap(colormap_name)
+                
+                # Apply opacity
+                z_transparency = getattr(annotation_window.main_window, 'z_transparency_widget', None)
+                if z_transparency:
+                    opacity = z_transparency.value() / 255.0
+                    canvas.set_z_opacity(opacity)
+                
+                # Apply dynamic scaling state
+                z_dynamic = getattr(annotation_window.main_window, 'z_dynamic_scaling_checkbox', None)
+                if z_dynamic:
+                    is_dynamic = z_dynamic.isChecked()
+                    canvas.toggle_dynamic_z_scaling(is_dynamic)
+        except Exception:
+            pass  # Silently ignore any errors applying z-channel state
+
+    def sync_z_colormap_to_all_canvases(self, colormap_name: str):
+        """Broadcast z-channel colormap changes to all visible canvases."""
+        for canvas in self._canvas_pool:
+            canvas.update_z_colormap(colormap_name)
+
+    def sync_z_opacity_to_all_canvases(self, opacity: float):
+        """Broadcast z-channel opacity changes to all visible canvases."""
+        opacity = max(0.0, min(1.0, opacity))
+        for canvas in self._canvas_pool:
+            canvas.set_z_opacity(opacity)
+
+    def sync_annotations_to_all_canvases(self):
+        """Re-render readonly annotation overlays on all visible canvases (e.g., after transparency change)."""
+        self._refresh_annotations_for_path(None)
+
+    def sync_z_dynamic_scaling_to_all_canvases(self, enabled: bool):
+        """Broadcast z-channel dynamic scaling toggle to all visible canvases."""
+        for canvas in self._canvas_pool:
+            canvas.toggle_dynamic_z_scaling(enabled)

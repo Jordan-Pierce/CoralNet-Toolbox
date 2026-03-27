@@ -155,6 +155,18 @@ class AbstractSceneProduct(ABC):
         """
         pass
 
+    @abstractmethod
+    def apply_labels(self, element_ids: np.ndarray, class_id: int, color_rgb: tuple) -> None:
+        """
+        Update the class ID and visual color for specific elements.
+        
+        Args:
+            element_ids: 1D array of element indices (points, faces, or cells) to update.
+            class_id: The semantic integer ID of the label.
+            color_rgb: Tuple of (R, G, B) values (0-255) for visualization.
+        """
+        pass
+
     # --------------------------------------------------------------------------
     # Optional Methods - Override in subclasses if needed
     # --------------------------------------------------------------------------

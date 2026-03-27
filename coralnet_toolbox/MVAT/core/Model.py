@@ -4,7 +4,6 @@
 Provides concrete implementations of AbstractSceneProduct for:
 - PointCloudProduct: Point cloud data (.ply, .pcd, etc.)
 - MeshProduct: Surface meshes with faces (.obj, .stl, .ply with faces)
-- DEMProduct: Digital Elevation Models (GeoTIFF rasters)
 
 Backward Compatibility:
 - PointCloud class is preserved as an alias for PointCloudProduct
@@ -41,6 +40,8 @@ class PointCloudProduct(AbstractSceneProduct):
         mesh (pv.PolyData): The underlying PyVista point cloud mesh.
         point_size (int): Rendering point size.
         array_names (list): Names of point data arrays (RGB, normals, etc.)
+        available_arrays (list): All selectable arrays including built-in "Labels"
+        selected_array (str): Currently selected array for visualization
     """
     
     def __init__(self, file_path: str, point_size: int = 1, product_id: Optional[str] = None):
@@ -61,14 +62,31 @@ class PointCloudProduct(AbstractSceneProduct):
         self.point_size = point_size
         self.mesh: Optional[pv.PolyData] = None
         self.array_names = []
+        self.available_arrays = []  # Will be built after loading
+        self.selected_array = "RGB"  # Default to RGB
         
         # Load from file with timing
         start_time = time.time()
         self.mesh = pv.read(file_path, progress_bar=True)
         self.array_names = self.mesh.array_names
+        
+        # Synthesize missing scalar arrays for consistent visualization
+        self._ensure_scalar_arrays()
+        
+        # Build available arrays in priority order:
+        # Hide the raw float normals and expose our visualization-ready ones
+        other_arrays = [arr for arr in self.array_names if arr.lower() not in ('rgb', 'labels', 'normals', 'normals_rgb')]
+        self.available_arrays = ["RGB", "Labels"]
+        
+        if "Normals_RGB" in self.array_names:
+            self.available_arrays.append("Normals_RGB")
+            
+        self.available_arrays.extend(other_arrays)
+        
         load_time = time.time() - start_time
         
         print(f"⏱️ Loaded PointCloudProduct: {self.label} with {self.mesh.n_points:,} points in {load_time:.3f}s")
+        print(f"   Available arrays for visualization: {self.available_arrays}")
     
     @classmethod
     def from_file(cls, file_path: str, point_size: int = 1) -> 'PointCloudProduct':
@@ -93,19 +111,25 @@ class PointCloudProduct(AbstractSceneProduct):
         return self.mesh
     
     def get_render_style(self) -> RenderStyle:
-        """Get preferred rendering style."""
+        """Get preferred rendering style based on selected array."""
         style = {
             'style': 'points',
             'point_size': self.point_size,
             'render_points_as_spheres': False,
             'lighting': False,
         }
-        # Use RGB scalars if available
-        if 'RGB' in self.array_names:
-            style['scalars'] = 'RGB'
-            style['rgb'] = True
+        
+        # All arrays (RGB, Labels, and data arrays) are now real scalars in the mesh
+        # Use them directly via the mapper
+        if self.selected_array in self.array_names:
+            style['scalars'] = self.selected_array
+            # RGB, Labels, and Normals_RGB are all Nx3 uint8, so they need direct RGB mode
+            if self.selected_array in ("RGB", "Labels", "Normals_RGB"):
+                style['rgb'] = True
         else:
-            style['color'] = 'black'
+            # Fallback: render as metashape purple
+            style['color'] = '#8d8cc4'  # Metashape purple
+        
         return style
     
     def get_bounds(self) -> BoundsType:
@@ -172,6 +196,105 @@ class PointCloudProduct(AbstractSceneProduct):
             return None
         return pts[element_id].astype(np.float64)
 
+    # --------------------------------------------------------------------------
+    # Array Management for Visualization
+    # --------------------------------------------------------------------------
+
+    def get_available_arrays(self) -> list:
+        """Get all available arrays for visualization (including 'Labels')."""
+        return self.available_arrays
+    
+    def get_selected_array(self) -> str:
+        """Get the currently selected array for visualization."""
+        return self.selected_array
+    
+    def set_selected_array(self, array_name: str) -> bool:
+        """
+        Set the array to use for visualization.
+        """
+        if array_name not in self.available_arrays:
+            print(f"⚠️ Array '{array_name}' not available in {self.label}")
+            return False
+        
+        self.selected_array = array_name
+        
+        # FIX: Explicitly force the underlying PyVista mesh to switch active scalars
+        if self.mesh is not None and array_name in self.array_names:
+            try:
+                # Point clouds use point_data, so we set the preference to point
+                self.mesh.set_active_scalars(array_name, preference='point')
+            except Exception:
+                pass
+                
+        return True
+    
+    def _ensure_scalar_arrays(self):
+        """
+        Ensure required scalar arrays exist in the mesh.
+        
+        Creates:
+        - "Labels": All white (255, 255, 255) for uniform labeling
+        - "Class_IDs": All zeros (0) for background/unannotated state
+        - "RGB": Metashape purple if not present in the data
+        
+        This allows these arrays to be treated as real data arrays in the mapper.
+        """
+        if self.mesh is None:
+            return
+        
+        n_points = self.mesh.n_points
+        
+        # Create "Labels" array if it doesn't exist - uniform white
+        if "Labels" not in self.mesh.array_names:
+            labels_array = np.ones((n_points, 3), dtype=np.uint8) * 255  # White
+            self.mesh.point_data["Labels"] = labels_array
+            
+        # Create "Class_IDs" array if it doesn't exist - uniform zeros (background)
+        if "Class_IDs" not in self.mesh.array_names:
+            class_ids_array = np.zeros(n_points, dtype=np.int32)
+            self.mesh.point_data["Class_IDs"] = class_ids_array
+        
+        # Create "RGB" array if it doesn't exist - Metashape purple
+        if "RGB" not in self.mesh.array_names:
+            # Metashape purple: #8d8cc4 -> RGB (141, 140, 196)
+            rgb_array = np.ones((n_points, 3), dtype=np.uint8)
+            rgb_array[:, 0] = 141  # R
+            rgb_array[:, 1] = 140  # G
+            rgb_array[:, 2] = 196  # B
+            self.mesh.point_data["RGB"] = rgb_array
+
+        # Fix Normals visualization: Map [-1, 1] floats to [0, 255] RGB
+        norm_key = "Normals" if "Normals" in self.mesh.array_names else ("normals" if "normals" in self.mesh.array_names else None)
+        if norm_key and "Normals_RGB" not in self.mesh.array_names:
+            raw_normals = self.mesh.point_data[norm_key]
+            rgb_normals = np.clip((raw_normals + 1.0) / 2.0 * 255.0, 0, 255).astype(np.uint8)
+            self.mesh.point_data["Normals_RGB"] = rgb_normals
+        
+        # Update array_names after potentially adding new arrays
+        self.array_names = self.mesh.array_names
+
+    def apply_labels(self, element_ids: np.ndarray, class_id: int, color_rgb: tuple) -> None:
+        """
+        Update the class ID and visual color for specific points.
+        
+        Args:
+            element_ids: Array of point indices to update.
+            class_id: The semantic integer ID of the label.
+            color_rgb: Tuple of (R, G, B) values (0-255).
+        """
+        if self.mesh is None or len(element_ids) == 0:
+            return
+            
+        # 1. Update the semantic Ground Truth data
+        self.mesh.point_data["Class_IDs"][element_ids] = class_id
+        
+        # 2. Update the visual RGB data for the viewer
+        color_array = np.array(color_rgb[:3], dtype=np.uint8)
+        self.mesh.point_data["Labels"][element_ids] = color_array
+        
+        # 3. Mark the PyVista arrays as modified so the renderer knows to redraw
+        self.mesh.point_data.Modified()
+
 
 class MeshProduct(AbstractSceneProduct):
     """
@@ -202,12 +325,29 @@ class MeshProduct(AbstractSceneProduct):
         self.opacity = opacity
         self.mesh: Optional[pv.PolyData] = None
         self.array_names = []
+        self.available_arrays = []  # Will be built after loading
+        self.selected_array = "RGB"  # Default to RGB
         
         # Load from file with timing
         start_time = time.time()
         self.mesh = pv.read(file_path, progress_bar=True)
         self.array_names = self.mesh.array_names
+        
+        # Synthesize missing scalar arrays for consistent visualization
+        self._ensure_scalar_arrays()
+        
+        # Build available arrays in priority order:
+        # Hide the raw float normals and expose our visualization-ready ones
+        other_arrays = [arr for arr in self.array_names if arr.lower() not in ('rgb', 'labels', 'normals', 'normals_rgb')]
+        self.available_arrays = ["RGB", "Labels"]
+        
+        if "Normals_RGB" in self.array_names:
+            self.available_arrays.append("Normals_RGB")
+            
+        self.available_arrays.extend(other_arrays)
+        
         print(f"Array names in mesh: {self.array_names}")
+        print(f"Available arrays for visualization (priority order): {self.available_arrays}")
         
         load_time = time.time() - start_time
         
@@ -275,19 +415,25 @@ class MeshProduct(AbstractSceneProduct):
         return self.mesh
     
     def get_render_style(self) -> RenderStyle:
-        """Get preferred rendering style."""
+        """Get preferred rendering style based on selected array."""
         style = {
             'style': 'surface',
             'opacity': self.opacity,
             'show_edges': False,
             'lighting': True,
         }
-        if 'RGB' in self.array_names:
-            style['scalars'] = 'RGB'
-            style['rgb'] = True
+        
+        # All arrays (RGB, Labels, and data arrays) are now real scalars in the mesh
+        # Use them directly via the mapper
+        if self.selected_array in self.array_names:
+            style['scalars'] = self.selected_array
+            # RGB, Labels, and Normals_RGB are all Nx3 uint8, so they need direct RGB mode
+            if self.selected_array in ("RGB", "Labels", "Normals_RGB"):
+                style['rgb'] = True
         else:
-            # Default Metashape purple color when no vertex colors
-            style['color'] = '#8d8cc4'
+            # Fallback: render as metashape purple
+            style['color'] = '#8d8cc4'  # Metashape purple
+        
         return style
     
     def get_bounds(self) -> BoundsType:
@@ -350,223 +496,108 @@ class MeshProduct(AbstractSceneProduct):
             return None
         return centers[element_id].astype(np.float64)
 
-
-class DEMProduct(AbstractSceneProduct):
-    """
-    Scene product for Digital Elevation Model (DEM) data.
-    
-    Acts as a 3D wrapper around the OrthographicCamera. It has been upgraded 
-    to behave exactly like a MeshProduct, outputting explicit triangles and faces 
-    for dense, watertight visibility raycasting, and natively supports orthomosaic draping.
-    """
-    
-    def __init__(self, ortho_camera, opacity: float = 1.0, product_id: Optional[str] = None):
-        """
-        Initialize DEMProduct from an OrthographicCamera.
-        """
-        self.camera = ortho_camera
-        
-        if product_id is None:
-            product_id = f"Elevation_{self.camera.label}"
-            
-        # Use the z_channel_path as the file_path for cache keys, fallback to image path
-        file_path = self.camera._raster.z_channel_path or self.camera.image_path
-        
-        super().__init__(product_id=product_id, file_path=file_path)
-        
-        self.opacity = opacity
-        self._mesh: Optional[pv.PolyData] = None
-        self._texture: Optional[pv.Texture] = None  # Cache for the draped imagery
-        
-        print(f"🎬 Initialized dynamic DEMProduct from camera: {self.camera.label}")
-
-    @classmethod
-    def from_file(cls, file_path: str, opacity: float = 1.0):
-        """
-        Overrides the legacy file loader. DEMs must now be loaded via an OrthographicCamera
-        to ensure perfect coordinate alignment. 
-        """
-        raise NotImplementedError(
-            "Standalone DEM loading is deprecated. Please attach the DEM to an "
-            "orthomosaic raster to ensure perfect 3D alignment."
-        )
-
     # --------------------------------------------------------------------------
-    # AbstractSceneProduct Implementation
+    # Array Management for Visualization
     # --------------------------------------------------------------------------
+
+    def get_available_arrays(self) -> list:
+        """Get all available arrays for visualization (including 'Labels')."""
+        return self.available_arrays
     
-    def get_render_mesh(self) -> pv.PolyData:
-        """
-        Get PyVista PolyData for rendering.
-        Lazily asks the camera to generate the smooth elevation mesh on first access.
-        """
-        if self._mesh is None:
-            self._mesh = self.camera.get_elevation_mesh()
-        return self._mesh
+    def get_selected_array(self) -> str:
+        """Get the currently selected array for visualization."""
+        return self.selected_array
     
-    def prepare_geometry(self):
+    def set_selected_array(self, array_name: str) -> bool:
         """
-        Extracts raw geometry into PyTorch tensors for the GPU visibility engine.
-        This makes the DEM physically identical to a loaded MeshProduct!
-        """
-        if hasattr(self, '_cached_triangles_pt'):
-            return
-
-        print(f"📐 Extracting DEM faces into GPU tensors for {self.label}...")
-        import time
-        import numpy as np
-        import torch
+        Set the array to use for visualization.
         
-        start_time = time.time()
-        
-        mesh = self.get_render_mesh()
-        if mesh is None:
-            return
-
-        # Keep vertices in numpy for Open3D
-        self._cached_vertices = np.asarray(mesh.points, dtype=np.float32)
-        
-        # Extract faces (PyVista pads faces with the number of points, so we slice [:, 1:])
-        triangles_np = np.asarray(mesh.faces.reshape(-1, 4)[:, 1:], dtype=np.uint32)
-        centers_np = np.asarray(mesh.cell_centers().points, dtype=np.float32)
-        centers_sq_norm_np = np.sum(centers_np**2, axis=1)
-        
-        # Cache geometry arrays in PyTorch tensors for fast GPU processing
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'        
-        self._cached_face_centers_pt = torch.tensor(centers_np, device=self.device)
-        self._cached_centers_sq_norm_pt = torch.tensor(centers_sq_norm_np, device=self.device)
-        self._cached_triangles_pt = torch.tensor(triangles_np.astype(np.int64), device=self.device)
-        self._element_centers_np = centers_np.copy()
-        
-        # Fulfills the PyTorch GPU raycaster contract
-        self._original_cell_ids = None 
-        self._original_cell_ids_pt = None 
-        
-        print(f"✅ DEM Geometry cached in {time.time() - start_time:.3f}s")
-
-    def get_render_style(self) -> RenderStyle:
-        """Get preferred rendering style with the safely draped orthomosaic texture."""
-        style = {
-            'style': 'surface',
-            'opacity': self.opacity,
-            'show_edges': False,
-            'lighting': True,
-            'scalars': None, # CRITICAL: Force PyVista to ignore any lingering data arrays
-        }
-        
-        # Check if the mesh has texture coordinates before attempting to apply texture
-        mesh = self.get_render_mesh()
-        
-        # Robustly check for texture coordinates
-        has_tcoords = False
-        if mesh is not None:
-            try:
-                tcoords = mesh.active_texture_coordinates
-                has_tcoords = (tcoords is not None and len(tcoords) > 0)
-            except Exception as e:
-                print(f"⚠️ Error checking texture coordinates for {self.label}: {e}")
-                has_tcoords = False
-        
-        if not has_tcoords:
-            # No texture coordinates - use fallback color
-            print(f"⚠️ DEM {self.label} has no texture coordinates, using fallback color")
-            style['color'] = '#8d8cc4'
-            return style
-        
-        if self._texture is None:
-            try:
-                import pyvista as pv
-                from coralnet_toolbox.utilities import pixmap_to_numpy
-                
-                # Cap the texture size to 4096 to prevent GPU crashes
-                pixmap = self.camera._raster.get_pixmap(longest_edge=4096)
-                
-                if pixmap is not None and not pixmap.isNull():
-                    img_data = pixmap_to_numpy(pixmap)
-                    
-                    # CRITICAL: Flip the texture vertically to match UV coordinate convention
-                    # OpenGL textures have origin at bottom-left, but images have origin at top-left
-                    # Our UV coordinates are computed with v = 1.0 - (pixel_y / height)
-                    # so the texture must be flipped to align properly
-                    img_data = np.flipud(img_data).copy()
-                    
-                    self._texture = pv.Texture(img_data)
-                    
-            except Exception as e:
-                print(f"⚠️ Warning: Could not create texture for DEM {self.label}: {e}")
-        
-        if self._texture is not None:
-            style['texture'] = self._texture
-            style['color'] = 'white' # Prevents the texture from being tinted by a default color
-        else:
-            style['color'] = '#8d8cc4'  # Fallback to standard mesh purple
+        Args:
+            array_name: Name of the array to select (must be in available_arrays)
             
-        return style
-    
-    def get_bounds(self) -> BoundsType:
-        """Get 3D bounding box directly from the generated mesh."""
-        mesh = self.get_render_mesh()
-        if mesh is None:
-            return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-        return mesh.bounds
-    
-    def is_solid(self) -> bool:
-        """DEMs are solid triangulated surfaces."""
+        Returns:
+            True if successful, False if array not found
+        """
+        if array_name not in self.available_arrays:
+            print(f"⚠️ Array '{array_name}' not available in {self.label}")
+            return False
+        
+        self.selected_array = array_name
         return True
     
-    def supports_index_mapping(self) -> bool:
-        """DEMs support face-based index mapping."""
-        return True
-    
-    def get_element_type(self) -> ElementType:
-        """Element type is 'face' (tells the engine to treat this as a solid mesh!)."""
-        return 'face'
-    
-    def get_element_count(self) -> int:
-        """Number of faces."""
-        mesh = self.get_render_mesh()
-        if mesh is None:
-            return 0
-        return mesh.n_cells
-
-    # --------------------------------------------------------------------------
-    # Backward Compatibility & Legacy Interfaces
-    # --------------------------------------------------------------------------
-    
-    def get_points_array(self) -> Optional[np.ndarray]:
-        """Return raw vertices to satisfy legacy point-based interfaces."""
-        mesh = self.get_render_mesh()
-        return np.asarray(mesh.points) if mesh else None
+    def _ensure_scalar_arrays(self):
+        """
+        Ensure required scalar arrays exist in the mesh.
         
-    def get_face_centers(self) -> Optional[np.ndarray]:
-        """Return physical triangle centers."""
-        mesh = self.get_render_mesh()
-        return np.asarray(mesh.cell_centers().points) if mesh else None
+        Creates (as cell/face data):
+        - "Labels": All white (255, 255, 255) for uniform labeling
+        - "Class_IDs": All zeros (0) for background/unannotated state
+        - "RGB": Metashape purple if not present in the data
         
-    def get_face_normals(self) -> Optional[np.ndarray]:
-        """Calculate and return surface normals for the terrain."""
-        mesh = self.get_render_mesh()
-        if mesh is None: 
-            return None
-        mesh.compute_normals(cell_normals=True, point_normals=False, inplace=True)
-        return mesh.cell_data['Normals']
-
-    def get_element_coordinate(self, element_id: int):
-        """Return the 3D center coordinate of a DEM face by its ID."""
-        if not hasattr(self, '_element_centers_np') or self._element_centers_np is None:
-            self.prepare_geometry()
-        centers = self._element_centers_np
-        if centers is None or element_id < 0 or element_id >= len(centers):
-            return None
-        return centers[element_id].astype(np.float64)
-
-    @property
-    def elevation(self):
-        """Backward compatibility for legacy code looking for the raw DEM array."""
-        return self.camera.z_channel
+        This allows these arrays to be treated as real data arrays in the mapper.
+        """
+        if self.mesh is None:
+            return
         
-    @property
-    def transform(self):
-        """Backward compatibility for legacy code looking for the matrix."""
-        return self.camera.transform_matrix
-    
+        n_faces = self.mesh.n_cells
+        
+        # Create "Labels" array if it doesn't exist - uniform white
+        if "Labels" not in self.mesh.array_names:
+            labels_array = np.ones((n_faces, 3), dtype=np.uint8) * 255  # White
+            self.mesh.cell_data["Labels"] = labels_array
+
+        # Create "Class_IDs" array if it doesn't exist - uniform zeros (background)
+        if "Class_IDs" not in self.mesh.array_names:
+            class_ids_array = np.zeros(n_faces, dtype=np.int32)
+            self.mesh.cell_data["Class_IDs"] = class_ids_array
+        
+        # Create "RGB" array if it doesn't exist - Metashape purple
+        if "RGB" not in self.mesh.array_names:
+            # Metashape purple: #8d8cc4 -> RGB (141, 140, 196)
+            rgb_array = np.ones((n_faces, 3), dtype=np.uint8)
+            rgb_array[:, 0] = 141  # R
+            rgb_array[:, 1] = 140  # G
+            rgb_array[:, 2] = 196  # B
+            self.mesh.cell_data["RGB"] = rgb_array
+        
+        # Ensure raw normals exist on the mesh (compute them if missing)
+        if "Normals" not in self.mesh.array_names and "normals" not in self.mesh.array_names:
+            self.mesh.compute_normals(cell_normals=True, point_normals=False, inplace=True)
+
+        # Map [-1, 1] floats to [0, 255] RGB
+        norm_key = "Normals" if "Normals" in self.mesh.array_names else ("normals" if "normals" in self.mesh.array_names else None)
+        if norm_key and "Normals_RGB" not in self.mesh.array_names:
+            if norm_key in self.mesh.cell_data:
+                raw_normals = self.mesh.cell_data[norm_key]
+                rgb_normals = np.clip((raw_normals + 1.0) / 2.0 * 255.0, 0, 255).astype(np.uint8)
+                self.mesh.cell_data["Normals_RGB"] = rgb_normals
+            elif norm_key in self.mesh.point_data:
+                raw_normals = self.mesh.point_data[norm_key]
+                rgb_normals = np.clip((raw_normals + 1.0) / 2.0 * 255.0, 0, 255).astype(np.uint8)
+                self.mesh.point_data["Normals_RGB"] = rgb_normals
+
+        # Update array_names after potentially adding new arrays
+        self.array_names = self.mesh.array_names
+
+    def apply_labels(self, element_ids: np.ndarray, class_id: int, color_rgb: tuple) -> None:
+        """
+        Update the class ID and visual color for specific mesh faces.
+        
+        Args:
+            element_ids: Array of face (cell) indices to update.
+            class_id: The semantic integer ID of the label.
+            color_rgb: Tuple of (R, G, B) values (0-255).
+        """
+        if self.mesh is None or len(element_ids) == 0:
+            return
+            
+        # 1. Update the semantic Ground Truth data
+        self.mesh.cell_data["Class_IDs"][element_ids] = class_id
+        
+        # 2. Update the visual RGB data for the viewer
+        color_array = np.array(color_rgb[:3], dtype=np.uint8)
+        self.mesh.cell_data["Labels"][element_ids] = color_array
+        
+        # 3. Mark the PyVista arrays as modified
+        self.mesh.cell_data.Modified()
+

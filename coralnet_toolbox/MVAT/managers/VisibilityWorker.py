@@ -4,7 +4,7 @@ import numpy as np
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
-from coralnet_toolbox.MVAT.core.Model import MeshProduct, PointCloudProduct, DEMProduct
+from coralnet_toolbox.MVAT.core.Model import MeshProduct, PointCloudProduct
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -49,8 +49,12 @@ class VisibilityWorker(QObject):
                     continue
 
                 if isinstance(first, str) and first == 'ortho':
-                    _, transform_inv, width, height = params
-                    ortho_params[path] = (transform_inv, width, height)
+                    if len(params) == 5:
+                        _, transform_inv, width, height, chunk_transform_inv = params
+                    else:
+                        _, transform_inv, width, height = params
+                        chunk_transform_inv = None
+                    ortho_params[path] = (transform_inv, width, height, chunk_transform_inv)
                 else:
                     perspective_params[path] = params
             
@@ -58,9 +62,9 @@ class VisibilityWorker(QObject):
             element_type = self.primary_target.get_element_type()
 
             # ==========================================
-            # STRATEGY A: MESH / DEM PROCESSING
+            # STRATEGY A: MESH PROCESSING
             # ==========================================
-            if isinstance(self.primary_target, (MeshProduct, DEMProduct)):
+            if isinstance(self.primary_target, MeshProduct):
                 if perspective_params:
                     paths = list(perspective_params.keys())
                     params_list = list(perspective_params.values())
@@ -110,13 +114,20 @@ class VisibilityWorker(QObject):
                     
                     # ORTHOGRAPHIC CAMERAS
                     if ortho_params:
-                        for path, (transform_inv, width, height) in ortho_params.items():
+                        for path, ortho_param_tuple in ortho_params.items():
+                            if len(ortho_param_tuple) == 4:
+                                transform_inv, width, height, chunk_transform_inv = ortho_param_tuple
+                            else:
+                                transform_inv, width, height = ortho_param_tuple
+                                chunk_transform_inv = None
+                            
                             result = VisibilityManager.compute_orthographic_visibility(
                                 points_world=points_world,
                                 transform_matrix_inv=transform_inv,
                                 width=width,
                                 height=height,
-                                point_ids=element_ids
+                                point_ids=element_ids,
+                                chunk_transform_inv=chunk_transform_inv
                             )
                             result['element_type'] = element_type
                             results[path] = result
@@ -149,8 +160,8 @@ class VisibilityWorker(QObject):
         if isinstance(target, PointCloudProduct):
             return target.get_points_array(), None
             
-        # UNIFIED: Treat both standard Meshes and DEMs identically
-        if isinstance(target, (MeshProduct, DEMProduct)):
+        # Treat mesh products as solid surfaces for face extraction
+        if isinstance(target, MeshProduct):
             try:
                 mesh = target.get_render_mesh()
                 

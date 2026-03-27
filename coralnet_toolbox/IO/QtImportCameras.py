@@ -790,21 +790,11 @@ class ImportCameras(QDialog):
         # If set by caller, this should be a list of image paths to restrict import to
         self.highlighted_images = None
         self.setWindowTitle("Import Camera Parameters")
-        self.resize(800, 180)
+        self.resize(800, 150)
 
         tabs = QTabWidget()
         self.colmap_tab = ColmapTab(self)
-        self.metashape_tab = MetashapeTab(self)
         tabs.addTab(self.colmap_tab, "COLMAP")
-        # Metashape tab is disabled for now
-        tabs.addTab(self.metashape_tab, "Metashape")
-        try:
-            idx = tabs.indexOf(self.metashape_tab)
-            tabs.setTabEnabled(idx, False)
-            tabs.setTabToolTip(idx, "Disabled for now")
-        except Exception:
-            # safety: if something goes wrong, leave tab as-is
-            pass
 
         layout = QVBoxLayout()
         layout.addWidget(tabs)
