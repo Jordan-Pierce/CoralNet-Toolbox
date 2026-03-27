@@ -491,19 +491,22 @@ class MaskAnnotation(Annotation):
         """
         Fills a contiguous region with a new class ID using optimized OpenCV floodFill, 
         respecting pre-locked pixels.
+        
+        Returns:
+            numpy.ndarray or None: Boolean mask of pixels that were filled, or None if fill failed
         """
         x, y = int(point.x()), int(point.y())
         height, width = self.mask_data.shape
         if not (0 <= y < height and 0 <= x < width):
-            return
+            return None
 
         # Check if the starting pixel is locked. If so, we cannot fill from it.
         if self.mask_data[y, x] >= self.LOCK_BIT:
-            return
+            return None
 
         old_class_id = self.mask_data[y, x]
         if old_class_id == new_class_id:
-            return
+            return None
         
         import cv2
         from PyQt5.QtWidgets import QApplication
@@ -551,6 +554,9 @@ class MaskAnnotation(Annotation):
         self._invalidate_stats_cache()
         QApplication.restoreOverrideCursor()
         self.annotationUpdated.emit(self)
+        
+        # Return the fill_mask so callers can know which pixels were filled
+        return fill_mask
 
     def _fast_rasterize(self, geometries, width, height, mode="rasterio"):
         """

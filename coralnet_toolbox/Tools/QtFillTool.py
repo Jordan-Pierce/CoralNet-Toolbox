@@ -137,8 +137,8 @@ class FillTool(Tool):
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
-        # Call the fill_region method on the MaskAnnotation object
-        mask_annotation.fill_region(scene_pos, new_class_id)
+        # Call the fill_region method on the MaskAnnotation object and get the fill mask
+        fill_mask = mask_annotation.fill_region(scene_pos, new_class_id)
 
         # Ensure the label is visible in the mask (even if checkbox is unchecked)
         if selected_label_id not in mask_annotation.visible_label_ids:
@@ -146,8 +146,9 @@ class FillTool(Tool):
             mask_annotation.update_graphics_item()
         
         # Notify any registered propagation callback (e.g., MVAT multi-annotate)
-        if self.post_stroke_callback:
-            self.post_stroke_callback(scene_pos, selected_label_id)
+        # Pass all the filled pixels (like BrushTool does) instead of just the single point
+        if self.post_stroke_callback and fill_mask is not None:
+            self.post_stroke_callback(scene_pos, selected_label_id, fill_mask)
         
         # Restore the cursor
         QApplication.restoreOverrideCursor()

@@ -1757,97 +1757,183 @@ class MVATManager(QObject):
         finally:
             self._propagating_annotation = False
 
-    def _on_fill_stroke_applied(self, scene_pos, label_id: str):
+    def _on_fill_stroke_applied(self, scene_pos, label_id: str, fill_mask=None):
         """Propagate a fill operation into all visible context cameras.
         
-        Uses 3D geometry mapping when the source camera's index map is available,
-        or falls back to 2D center-point projection.
+        Uses True 3D Mapping when the source camera's index map is available:
+        1. Extract all element IDs under the filled region using the source
+           camera's index_map and the fill_mask.
+        2. Update the 3D Scene Product directly with the new Class ID and Color.
+        3. Query each target camera's inverted index for the same IDs.
+        4. Fill the connected regions in the target masks.
+        
+        Falls back to the legacy 2D center-point projection when the index map is absent.
         """
         if self._propagating_annotation:
             return
-        if self.selected_camera is None or self.context_matrix is None:
+        if self.selected_camera is None:
             return
         
-        px, py = int(scene_pos.x()), int(scene_pos.y())
-        visible_paths = self._get_visible_context_paths()
+        px = int(scene_pos.x())
+        py = int(scene_pos.y())
         
-        projection = self._build_projection(px, py)
+        visible_paths = self._get_visible_context_paths()
+        project_labels = list(self.main_window.label_window.labels)
+        
+        source_label = next((lbl for lbl in project_labels if lbl.id == label_id), None)
+        if source_label is None:
+            return
+        
+        # ------------------------------------------------------------------
+        # Extract element IDs at source fill region (2D → 3D)
+        # ------------------------------------------------------------------
+        painted_ids = None
+        source_index_map = self.selected_camera.index_map
+        if source_index_map is not None and fill_mask is not None:
+            try:
+                img_h, img_w = source_index_map.shape
+                # Get all element IDs where fill_mask is True
+                if fill_mask.shape == (img_h, img_w):
+                    element_ids = source_index_map[fill_mask]
+                    # Get unique element IDs (excluding -1 which means background)
+                    painted_ids = np.unique(element_ids[element_ids > -1])
+                    painted_ids = np.array(painted_ids, dtype=np.int64)
+            except Exception:
+                pass
+        
+        use_3d = painted_ids is not None and len(painted_ids) > 0
+        
+        # ------------------------------------------------------------------
+        # NEW Phase: Paint the 3D Model directly
+        # ------------------------------------------------------------------
+        if use_3d:
+            primary_target = self.viewer.scene_context.get_primary_target()
+            if primary_target and hasattr(primary_target, 'apply_labels'):
+                # 1. Convert QColor to RGB tuple
+                target_color = (source_label.color.red(), source_label.color.green(), source_label.color.blue())
+                
+                # 2. Get the integer class_id mapped to this label from the source mask
+                source_raster = self.raster_manager.get_raster(self.selected_camera.image_path)
+                source_mask = source_raster.get_mask_annotation(project_labels) if source_raster else None
+                
+                if source_mask:
+                    source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
+                    # Sync if it's a brand new label
+                    if source_class_id is None:
+                        source_mask.sync_label_map([source_label])
+                        source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
+                    
+                    # 3. Paint the 3D model arrays
+                    primary_target.apply_labels(painted_ids, source_class_id, target_color)
+                    
+                    # 4. Tell the 3D viewer to refresh to show the new colors instantly
+                    try:
+                        self.viewer.update()
+                    except Exception:
+                        pass
+        
+        # Projections for 2D fallback — computed lazily
+        projections = None
         
         self._propagating_annotation = True
         try:
-            # Try True 3D mapping: get the element id at source pixel (if index map present)
-            source_index_map = self.selected_camera.index_map
-            element_id = None
-            use_3d = False
-            if source_index_map is not None:
-                try:
-                    img_h, img_w = source_index_map.shape
-                    if 0 <= px < img_w and 0 <= py < img_h:
-                        eid = int(source_index_map[py, px])
-                        if eid > -1:
-                            element_id = eid
-                            use_3d = True
-                except Exception:
-                    pass
-
             for target_path in list(visible_paths):
                 if target_path == self.selected_camera.image_path:
                     continue
-
+                
                 target_camera = self.cameras.get(target_path)
                 if target_camera is None:
                     continue
-
+                
                 try:
-                    # 3D centroid mapping if both source hit and target inverted index exist
-                    target_has_index = getattr(target_camera, '_raster', None) is not None and target_camera._raster.inv_ids is not None
-                    if use_3d and target_has_index and element_id is not None:
-                        flat = target_camera.get_pixels_for_elements(np.array([element_id], dtype=np.int64))
-                        if flat.size == 0:
-                            continue
-                        v_arr, u_arr = np.divmod(flat, target_camera.width)
-                        u_centroid = float(np.mean(u_arr))
-                        v_centroid = float(np.mean(v_arr))
-                        if not (0 <= u_centroid < target_camera.width and 0 <= v_centroid < target_camera.height):
+                    target_raster = self.raster_manager.get_raster(target_path)
+                    if target_raster is None:
+                        continue
+                    target_mask = target_raster.get_mask_annotation(project_labels)
+                    if target_mask is None:
+                        continue
+                    
+                    # Resolve target class_id via stable label_id
+                    target_class_id = target_mask.label_id_to_class_id_map.get(label_id)
+                    if target_class_id is None:
+                        target_mask.sync_label_map([source_label])
+                        target_class_id = target_mask.label_id_to_class_id_map.get(label_id)
+                    if target_class_id is None:
+                        continue
+                    
+                    # Use 3D mapping only when BOTH source hit geometry AND
+                    # the target camera's inverted index has been computed.
+                    target_has_index = target_camera._raster is not None and target_camera._raster.inv_ids is not None
+                    
+                    if use_3d and target_has_index:
+                        # --------------------------------------------------
+                        # Phase 2: Target Fill via 3D Mapping (3D → 2D)
+                        # --------------------------------------------------
+                        flat_indices = target_camera.get_pixels_for_elements(painted_ids)
+                        if len(flat_indices) == 0:
+                            # Element is genuinely occluded in this view — skip
                             continue
                         
-                        # Apply fill at the projected location
-                        try:
-                            target_canvas = self._get_context_canvas_for_path(target_path)
-                            if target_canvas is not None and target_canvas.scene is not None:
-                                target_raster = target_camera._raster
-                                mask_annotation = target_raster.get_mask_annotation(self.main_window.label_window.labels)
-                                if mask_annotation is not None and label_id in [l.id for l in self.main_window.label_window.labels]:
-                                    new_class_id = mask_annotation.label_id_to_class_id_map.get(label_id)
-                                    if new_class_id is not None:
-                                        from PyQt5.QtCore import QPointF
-                                        fill_pos = QPointF(u_centroid, v_centroid)
-                                        mask_annotation.fill_region(fill_pos, new_class_id)
-                        except Exception:
-                            pass
+                        # Paint exactly the pixels that correspond to the filled 3D elements —
+                        # do NOT re-run flood-fill from a centroid, which would incorrectly
+                        # flood-fill the target image regardless of what was filled in source.
+                        target_mask.update_mask_at_indices(flat_indices, target_class_id)
                     else:
-                        # 2D center-point fall back
-                        proj = projection.get(target_path)
-                        if proj is None:
-                            continue
-                        u, v, is_valid = proj
-                        if not is_valid:
-                            continue
-                        if not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
-                            continue
-                        
-                        try:
-                            target_raster = target_camera._raster
-                            mask_annotation = target_raster.get_mask_annotation(self.main_window.label_window.labels)
-                            if mask_annotation is not None and label_id in [l.id for l in self.main_window.label_window.labels]:
-                                new_class_id = mask_annotation.label_id_to_class_id_map.get(label_id)
-                                if new_class_id is not None:
-                                    from PyQt5.QtCore import QPointF
-                                    fill_pos = QPointF(u, v)
-                                    mask_annotation.fill_region(fill_pos, new_class_id)
-                        except Exception:
-                            pass
-
+                        # 2D fallback: Directly apply filled pixels (don't re-fill)
+                        # This preserves the exact shape of what was filled in the source
+                        if fill_mask is not None:
+                            # Get pixel coordinates of all filled pixels
+                            filled_y, filled_x = np.where(fill_mask)
+                            if len(filled_x) > 0:
+                                if projections is None:
+                                    projections = self._build_projection(px, py)
+                                proj = projections.get(target_path)
+                                if proj is None:
+                                    continue
+                                u_ref, v_ref, is_valid = proj
+                                if not is_valid:
+                                    continue
+                                
+                                # Offset: where the fill happened relative to reference point
+                                dx = filled_x - px
+                                dy = filled_y - py
+                                
+                                # Project each filled pixel to target camera
+                                for offset_x, offset_y in zip(dx, dy):
+                                    target_u = u_ref + offset_x
+                                    target_v = v_ref + offset_y
+                                    
+                                    if 0 <= target_u < target_camera.width and 0 <= target_v < target_camera.height:
+                                        target_mask.set_label_at((int(target_u), int(target_v)), label_id)
+                        else:
+                            # Fallback: no fill_mask available, just fill from center point
+                            if projections is None:
+                                projections = self._build_projection(px, py)
+                            proj = projections.get(target_path)
+                            if proj is None:
+                                continue
+                            u, v, is_valid = proj
+                            if not is_valid:
+                                continue
+                            if not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
+                                continue
+                            
+                            from PyQt5.QtCore import QPointF
+                            fill_pos = QPointF(u, v)
+                            target_mask.fill_region(fill_pos, target_class_id)
+                    
+                    # Ensure the label is visible in the target overlay
+                    if label_id not in target_mask.visible_label_ids:
+                        target_mask.visible_label_ids.add(label_id)
+                        target_mask.update_graphics_item()
+                    
+                    # Sync label map after applying pixels
+                    target_mask.sync_label_map()
+                    
+                    # Push the updated mask pixels into the context canvas overlay
+                    context_canvas = self._get_context_canvas_for_path(target_path)
+                    if context_canvas is not None:
+                        context_canvas.set_mask_overlay(target_mask)
                 except Exception:
                     pass
         finally:
