@@ -68,7 +68,12 @@ class BrushTool(Tool):
         
         if not self.annotation_window.cursorInWindow(event.pos()):
             return
-        
+
+        # Check if the label is hidden when the user starts painting.
+        # If it is, check the box in the LabelWindow UI automatically.
+        if not self.annotation_window.selected_label.is_visible:
+            self.annotation_window.selected_label.visibility_checkbox.setChecked(True)
+
         self.painting = not self.painting
         if self.painting:
             self._apply_brush(event)
@@ -236,14 +241,6 @@ class BrushTool(Tool):
         
         # Call the update_mask method
         mask_annotation.update_mask(brush_location, self.brush_mask, class_id)
-
-        # Ensure the label is visible in the mask (even if checkbox is unchecked)
-        if selected_label_id not in mask_annotation.visible_label_ids:
-            mask_annotation.visible_label_ids.add(selected_label_id)
-            mask_annotation.update_graphics_item()
-
-        # Update the display to reflect changes
-        self.annotation_window.update_scene()
 
         # Notify any registered propagation callback (e.g., MVAT multi-annotate)
         if self.post_stroke_callback:

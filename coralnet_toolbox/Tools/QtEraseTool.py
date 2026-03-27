@@ -64,7 +64,12 @@ class EraseTool(Tool):
         
         if not self.annotation_window.cursorInWindow(event.pos()):
             return
-        
+
+        # Check if the label is hidden when the user starts erasing.
+        # If it is, check the box in the LabelWindow UI automatically.
+        if not self.annotation_window.selected_label.is_visible:
+            self.annotation_window.selected_label.visibility_checkbox.setChecked(True)
+
         self.erasing = not self.erasing
         if self.erasing:
             self._apply_eraser(event)
@@ -215,6 +220,3 @@ class EraseTool(Tool):
         
         # Call the update_mask method on the MaskAnnotation object with class_id 0 (background)
         mask_annotation.update_mask(brush_location, self.brush_mask, 0)
-        
-        # Update the display to reflect changes
-        self.annotation_window.update_scene()

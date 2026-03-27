@@ -38,7 +38,12 @@ class FillTool(Tool):
         
         if not self.annotation_window.cursorInWindow(event.pos()):
             return
-        
+
+        # Check if the label is hidden when the user clicks to fill.
+        # If it is, check the box in the LabelWindow UI automatically.
+        if not self.annotation_window.selected_label.is_visible:
+            self.annotation_window.selected_label.visibility_checkbox.setChecked(True)
+
         self._apply_fill(event)
 
     def mouseMoveEvent(self, event):
@@ -99,9 +104,6 @@ class FillTool(Tool):
         if selected_label_id not in mask_annotation.visible_label_ids:
             mask_annotation.visible_label_ids.add(selected_label_id)
             mask_annotation.update_graphics_item()
-
-        # Update the display to reflect changes
-        self.annotation_window.update_scene()
         
         # Restore the cursor
         QApplication.restoreOverrideCursor()
