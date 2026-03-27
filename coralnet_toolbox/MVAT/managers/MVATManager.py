@@ -698,7 +698,8 @@ class MVATManager(QObject):
             self.viewer.clear_ray()
             self._select_camera(path, camera)
             if hasattr(self.viewer, 'match_camera_perspective'):
-                self.viewer.match_camera_perspective(camera)
+                # Double-click to set active: animate
+                self.viewer.match_camera_perspective(camera, animate=True)
             self._reorder_cameras(path)
 
             if self.context_matrix is not None:
@@ -742,13 +743,13 @@ class MVATManager(QObject):
     def _on_camera_highlighted_single(self, path: str):
         """Handle single-camera highlight intent (e.g., plain click).
 
-        This updates the viewer perspective to match the clicked camera when
-        supported.
+        This updates the viewer perspective to match the clicked camera with
+        smooth animation when supported.
         """
         try:
             cam = self.cameras.get(path)
             if cam and hasattr(self.viewer, 'match_camera_perspective'):
-                self.viewer.match_camera_perspective(cam)
+                self.viewer.match_camera_perspective(cam, animate=True)
         except Exception:
             pass
 

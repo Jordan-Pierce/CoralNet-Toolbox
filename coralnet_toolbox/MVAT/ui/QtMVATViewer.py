@@ -29,6 +29,7 @@ from coralnet_toolbox.MVAT.core.Model import PointCloudProduct, MeshProduct
 from coralnet_toolbox.MVAT.core.SceneContext import SceneContext
 from coralnet_toolbox.MVAT.core.SceneProduct import AbstractSceneProduct
 from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED
+from coralnet_toolbox.MVAT.ui.CameraAnimator import CameraAnimator
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -176,6 +177,7 @@ class MVATViewer(QFrame):
         self._ray_manager = BatchedRayManager()
         # Frustum and thumbnail management
         self._frustum_manager = BatchedFrustumManager()
+        self._camera_animator = CameraAnimator(self.plotter, duration_ms=400)
         self.thumbnail_actors = []
         self.thumbnail_opacity = 0.50
         self.frustum_scale = 0.1
@@ -1220,6 +1222,7 @@ class MVATViewer(QFrame):
                 actor = self.plotter.add_mesh(
                     mesh,
                     render=False,
+                    reset_camera=False,
                     **style
                 )
                 
@@ -1746,12 +1749,13 @@ class MVATViewer(QFrame):
         except Exception:
             pass
 
-    def match_camera_perspective(self, camera, focal_distance_ratio: float = 0.2):
-        """Match the 3D viewer perspective to a camera's viewpoint.
+    def match_camera_perspective(self, camera, focal_distance_ratio: float = 0.2, animate: bool = False):
+        """Match the 3D viewer perspective to a camera's viewpoint with optional animation.
 
         Args:
             camera: Camera object with position, R, K, width/height
             focal_distance_ratio: Fraction of scene diagonal to use as focal distance
+            animate: If True, smoothly animate the camera transition (default False)
         """
         try:
             # BRANCH: Orthographic camera
@@ -1761,9 +1765,13 @@ class MVATViewer(QFrame):
                 self.plotter.enable_parallel_projection()
                 return
             
-            # RESTORE: Perspective projection for normal cameras
+            # RESTORE: Perspective projection for normal cameras, but ONLY if currently
+            # in parallel projection. PyVista's disable_parallel_projection() unconditionally
+            # overwrites camera.position using stale parallel_scale, which would snap the
+            # viewport to Reset View before the animation start state is captured.
             try:
-                self.plotter.disable_parallel_projection()
+                if self.plotter.camera.GetParallelProjection():
+                    self.plotter.disable_parallel_projection()
             except Exception:
                 pass
             
@@ -1800,11 +1808,8 @@ class MVATViewer(QFrame):
             viewer_pos = (position - view_direction * eps)
             viewer_focal = viewer_pos + view_direction * focal_distance
 
-            self.plotter.camera.position = viewer_pos.tolist()
-            self.plotter.camera.focal_point = viewer_focal.tolist()
-            self.plotter.camera.up = up_vector.tolist()
-
             # Match vertical FOV from intrinsics if available
+            fov_deg = 50.0  # default
             try:
                 if getattr(camera, 'K', None) is not None:
                     fy = camera.K[1, 1]
@@ -1812,9 +1817,25 @@ class MVATViewer(QFrame):
                     fov_rad = 2 * np.arctan(height / (2 * fy))
                     fov_deg = np.degrees(fov_rad)
                     fov_deg = np.clip(fov_deg, 10, 120)
-                    self.plotter.camera.view_angle = fov_deg
             except Exception:
                 pass
+
+            # ANIMATION: If requested, use the animator
+            if animate and self._camera_animator is not None:
+                try:
+                    self._camera_animator.animate_to_camera_state(
+                        viewer_pos, viewer_focal, up_vector, fov_deg
+                    )
+                    return
+                except Exception:
+                    # Fall through to instant update on failure
+                    pass
+            
+            # INSTANT UPDATE: Apply camera state immediately
+            self.plotter.camera.position = viewer_pos.tolist()
+            self.plotter.camera.focal_point = viewer_focal.tolist()
+            self.plotter.camera.up = up_vector.tolist()
+            self.plotter.camera.view_angle = fov_deg
 
             try:
                 self.plotter.render()

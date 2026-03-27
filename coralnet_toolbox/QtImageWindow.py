@@ -1135,6 +1135,23 @@ class ImageWindow(QWidget):
         
         context_menu.addSeparator()
 
+        # Cameras submenu (Import / Remove)
+        cameras_menu = context_menu.addMenu("Cameras...")
+
+        # Add import cameras action
+        import_cameras_action = cameras_menu.addAction(
+            f"Import Cameras for {count} Highlighted Image{'s' if count > 1 else ''}"
+        )
+        import_cameras_action.triggered.connect(lambda: self._open_import_cameras_for_highlighted(highlighted_paths))
+
+        cameras_menu.addSeparator()
+
+        # Add remove cameras action
+        remove_cameras_action = cameras_menu.addAction(
+            f"Remove Cameras from {count} Highlighted Image{'s' if count > 1 else ''}"
+        )
+        remove_cameras_action.triggered.connect(lambda: self.remove_cameras_highlighted_images())
+
         # Create Z-Channel sub-menu
         z_channel_menu = context_menu.addMenu("Z-Channel...")
 
@@ -1164,23 +1181,6 @@ class ImageWindow(QWidget):
             lambda: self.remove_z_channel_highlighted_images()
         )
 
-        # Cameras submenu (Import / Remove)
-        cameras_menu = context_menu.addMenu("Cameras...")
-
-        # Add import cameras action
-        import_cameras_action = cameras_menu.addAction(
-            f"Import Cameras for {count} Highlighted Image{'s' if count > 1 else ''}"
-        )
-        import_cameras_action.triggered.connect(lambda: self._open_import_cameras_for_highlighted(highlighted_paths))
-
-        cameras_menu.addSeparator()
-
-        # Add remove cameras action
-        remove_cameras_action = cameras_menu.addAction(
-            f"Remove Cameras from {count} Highlighted Image{'s' if count > 1 else ''}"
-        )
-        remove_cameras_action.triggered.connect(lambda: self.remove_cameras_highlighted_images())
-
         context_menu.addSeparator()
 
         # Add delete actions
@@ -1194,28 +1194,6 @@ class ImageWindow(QWidget):
         )
         context_menu.exec_(self.tableView.viewport().mapToGlobal(position))
 
-    def _open_import_cameras_for_highlighted(self, highlighted_paths: list):
-        """
-        Open the Import Cameras dialog and set it to operate on the highlighted images.
-        """
-        if not highlighted_paths:
-            QMessageBox.warning(self, "No Images Selected", "Please highlight one or more images before importing cameras.")
-            return
-
-        # Use the main window's ImportCameras dialog instance if available
-        try:
-            dialog = self.main_window.import_cameras_dialog
-        except Exception:
-            dialog = None
-
-        if dialog is None:
-            # Fallback - instantiate a temporary dialog
-            dialog = ImportCameras(self.main_window)
-
-        # Provide the highlighted images to the dialog so it restricts matching
-        dialog.highlighted_images = highlighted_paths
-        dialog.exec_()
-        
     def open_batch_inference_dialog(self, highlighted_image_paths):
         """
         Open the batch inference dialog with the highlighted images.
@@ -1248,6 +1226,28 @@ class ImageWindow(QWidget):
         batch_dialog.highlighted_images = highlighted_image_paths
         # Show the dialog
         batch_dialog.exec_()
+
+    def _open_import_cameras_for_highlighted(self, highlighted_paths: list):
+        """
+        Open the Import Cameras dialog and set it to operate on the highlighted images.
+        """
+        if not highlighted_paths:
+            QMessageBox.warning(self, "No Images Selected", "Please highlight one or more images before importing cameras.")
+            return
+
+        # Use the main window's ImportCameras dialog instance if available
+        try:
+            dialog = self.main_window.import_cameras_dialog
+        except Exception:
+            dialog = None
+
+        if dialog is None:
+            # Fallback - instantiate a temporary dialog
+            dialog = ImportCameras(self.main_window)
+
+        # Provide the highlighted images to the dialog so it restricts matching
+        dialog.highlighted_images = highlighted_paths
+        dialog.exec_()
     
     def import_z_channel_highlighted_images(self):
         """Open file dialog and ZImportDialog to import z-channel files for highlighted images."""

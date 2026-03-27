@@ -516,16 +516,6 @@ class MainWindow(QMainWindow):
         # Utilities menu
         self.utilities_menu = self.menu_bar.addMenu("Utilities")
 
-        # Scale
-        self.scale_action = QAction("Set Scale", self)
-        self.scale_action.triggered.connect(self.open_scale_dialog)
-        self.utilities_menu.addAction(self.scale_action)
-
-        # Rugosity
-        self.rugosity_action = QAction("Measure Rugosity", self)
-        self.rugosity_action.triggered.connect(self.open_rugosity_dialog)
-        self.utilities_menu.addAction(self.rugosity_action)
-        
         # Sampling Annotations
         self.annotation_sampling_action = QAction("Sample Patches", self)
         self.annotation_sampling_action.triggered.connect(self.open_patch_sampling_dialog_dialog)
@@ -535,6 +525,19 @@ class MainWindow(QMainWindow):
         self.tile_manager_action = QAction("Work Areas", self)
         self.tile_manager_action.triggered.connect(self.open_tile_manager_dialog)
         self.utilities_menu.addAction(self.tile_manager_action)
+
+        # Separator
+        self.utilities_menu.addSeparator()
+
+        # Scale
+        self.scale_action = QAction("Set Scale", self)
+        self.scale_action.triggered.connect(self.open_scale_dialog)
+        self.utilities_menu.addAction(self.scale_action)
+
+        # Rugosity
+        self.rugosity_action = QAction("Measure Rugosity", self)
+        self.rugosity_action.triggered.connect(self.open_rugosity_dialog)
+        self.utilities_menu.addAction(self.rugosity_action)
         
         # ========== AI-ASSIST MENU ==========
         # AI-Assist menu
