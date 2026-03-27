@@ -455,6 +455,8 @@ class BaseCanvas(QGraphicsView):
                     self._readonly_annotation_items.append(item)
             except Exception:
                 traceback.print_exc()
+
+        self.viewport().update()
     
     def _clear_readonly_annotations(self):
         """Remove all read-only annotation items from the scene."""
@@ -485,10 +487,10 @@ class BaseCanvas(QGraphicsView):
         
         item = QGraphicsPathItem(path)
         
-        # Style: label color at 50% alpha fill, 1px pen at full color
+        # Style: label color at annotation transparency fill, 1px pen at full color
         color = QColor(annotation.label.color)
         fill_color = QColor(color)
-        fill_color.setAlpha(80)
+        fill_color.setAlpha(annotation.transparency)
         
         pen = QPen(color, 1)
         pen.setCosmetic(True)  # Constant width regardless of zoom

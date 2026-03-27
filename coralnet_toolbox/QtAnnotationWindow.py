@@ -578,6 +578,10 @@ class AnnotationWindow(BaseCanvas):
         except Exception as e:
             pass
 
+        # Sync transparency to all context matrix canvases
+        if hasattr(self.main_window, 'context_matrix') and self.main_window.context_matrix:
+            self.main_window.context_matrix.sync_annotations_to_all_canvases()
+
         # Restore cursor
         QApplication.restoreOverrideCursor()
         

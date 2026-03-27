@@ -209,16 +209,23 @@ class ContextMatrixWidget(QWidget):
 
     def _evaluate_auto_layout(self):
         """Automatically choose grid dimensions based on aspect ratio and target count."""
+        # Cap N to the number of available camera paths so we don't show blank canvases
+        available = len(self._camera_paths)
+        if available > 0:
+            effective_target = min(self.target_camera_count, available)
+        else:
+            effective_target = self.target_camera_count
+
         if not self.isVisible() or self.width() <= 0 or self.height() <= 0:
             rows = 1
             cols = 1
-            N = self.target_camera_count
+            N = effective_target
             if N != self._last_rebuilt_count:
                 self._rebuild_layout(rows, cols, N)
             return
 
         aspect = self.width() / self.height()
-        N = self.target_camera_count
+        N = effective_target
 
         if N == 1:
             rows, cols = 1, 1
@@ -303,6 +310,7 @@ class ContextMatrixWidget(QWidget):
     def set_camera_data(self, camera_objects: List, ordered_paths: List[str]):
         self._camera_paths = ordered_paths
         self._current_offset = 0
+        self._evaluate_auto_layout()
         self._refresh_visible_canvases()
 
     def set_camera_order(self, ordered_paths: List[str], active_path: str = None):
@@ -311,6 +319,7 @@ class ContextMatrixWidget(QWidget):
         else:
             self._camera_paths = list(ordered_paths)
         self._current_offset = 0
+        self._evaluate_auto_layout()
         self._refresh_visible_canvases()
         self._update_rank_label()
 
@@ -785,6 +794,10 @@ class ContextMatrixWidget(QWidget):
         opacity = max(0.0, min(1.0, opacity))
         for canvas in self._canvas_pool:
             canvas.set_z_opacity(opacity)
+
+    def sync_annotations_to_all_canvases(self):
+        """Re-render readonly annotation overlays on all visible canvases (e.g., after transparency change)."""
+        self._refresh_annotations_for_path(None)
 
     def sync_z_dynamic_scaling_to_all_canvases(self, enabled: bool):
         """Broadcast z-channel dynamic scaling toggle to all visible canvases."""
