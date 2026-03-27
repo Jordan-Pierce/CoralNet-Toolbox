@@ -182,7 +182,7 @@ class MVATViewer(QFrame):
         self.thumbnail_opacity = 0.50
         self.frustum_scale = 0.1
         self._show_wireframes_enabled = True
-        self._show_thumbnails_enabled = True
+        self._show_thumbnails_enabled = False
         
         # Scene product visibility by type
         self._show_point_clouds = True
@@ -409,6 +409,12 @@ class MVATViewer(QFrame):
         view_menu.addSeparator()
 
         # Visibility toggles
+        action_rays = QAction("Show Rays", self)
+        action_rays.setCheckable(True)
+        action_rays.setChecked(self._show_rays_enabled)
+        action_rays.toggled.connect(self.set_ray_visible)
+        view_menu.addAction(action_rays)
+
         action_wireframes = QAction("Show Wireframes", self)
         action_wireframes.setCheckable(True)
         action_wireframes.setChecked(self._show_wireframes_enabled)
@@ -420,12 +426,6 @@ class MVATViewer(QFrame):
         action_thumbnails.setChecked(self._show_thumbnails_enabled)
         action_thumbnails.toggled.connect(self.enable_thumbnails)
         view_menu.addAction(action_thumbnails)
-
-        action_rays = QAction("Show Rays", self)
-        action_rays.setCheckable(True)
-        action_rays.setChecked(self._show_rays_enabled)
-        action_rays.toggled.connect(self.set_ray_visible)
-        view_menu.addAction(action_rays)
 
         view_menu.addSeparator()
         
