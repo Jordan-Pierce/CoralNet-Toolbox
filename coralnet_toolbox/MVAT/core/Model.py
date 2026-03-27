@@ -120,8 +120,8 @@ class PointCloudProduct(AbstractSceneProduct):
         # Use them directly via the mapper
         if self.selected_array in self.array_names:
             style['scalars'] = self.selected_array
-            # RGB arrays should use direct RGB mode, not colormap
-            if self.selected_array == "RGB":
+            # RGB and Labels arrays are both Nx3 uint8, so they need direct RGB mode
+            if self.selected_array in ("RGB", "Labels"):
                 style['rgb'] = True
         else:
             # Fallback: render as white
@@ -208,19 +208,21 @@ class PointCloudProduct(AbstractSceneProduct):
     def set_selected_array(self, array_name: str) -> bool:
         """
         Set the array to use for visualization.
-        
-        Args:
-            array_name: Name of the array to select (must be in available_arrays)
-            
-        Returns:
-            True if successful, False if array not found
         """
         if array_name not in self.available_arrays:
             print(f"⚠️ Array '{array_name}' not available in {self.label}")
             return False
         
         self.selected_array = array_name
-        print(f"✓ Selected array '{array_name}' for {self.label}")
+        
+        # FIX: Explicitly force the underlying PyVista mesh to switch active scalars
+        if self.mesh is not None and array_name in self.array_names:
+            try:
+                # Point clouds use point_data, so we set the preference to point
+                self.mesh.set_active_scalars(array_name, preference='point')
+            except Exception:
+                pass
+                
         return True
     
     def _ensure_scalar_arrays(self):
@@ -386,8 +388,8 @@ class MeshProduct(AbstractSceneProduct):
         # Use them directly via the mapper
         if self.selected_array in self.array_names:
             style['scalars'] = self.selected_array
-            # RGB arrays should use direct RGB mode, not colormap
-            if self.selected_array == "RGB":
+            # RGB and Labels arrays are both Nx3 uint8, so they need direct RGB mode
+            if self.selected_array in ("RGB", "Labels"):
                 style['rgb'] = True
         else:
             # Fallback: render as white
@@ -482,7 +484,6 @@ class MeshProduct(AbstractSceneProduct):
             return False
         
         self.selected_array = array_name
-        print(f"✓ Selected array '{array_name}' for {self.label}")
         return True
     
     def _ensure_scalar_arrays(self):

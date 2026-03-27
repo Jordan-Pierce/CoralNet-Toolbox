@@ -815,39 +815,23 @@ class MVATViewer(QFrame):
     # ------------------------------------------------------------------
     def _on_array_selected(self, array_name: str):
         """Handle array selection from the dropdown."""
-        # Check if combo has been created yet
         if self.array_selector_combo is None:
             return
             
-        # Get the currently selected product (primary target)
-        primary_target = self.scene_context.get_primary_target()
-        if primary_target is None:
-            return
+        # FIX: Apply the selected array to ALL products in the scene, 
+        # not just the primary target.
+        needs_render = False
         
-        # Set the selected array on the primary target product
-        if hasattr(primary_target, 'set_selected_array'):
-            primary_target.set_selected_array(array_name)
-            
-            # Update the actor's mapper directly for immediate visual feedback
-            product_id = primary_target.product_id
-            actor = self._product_actors.get(product_id)
-            
-            if actor is not None:
-                try:
-                    mesh = primary_target.get_render_mesh()
-                    if mesh is not None and array_name in mesh.array_names:
-                        # RGB, Labels, and data arrays are all real scalars now
-                        actor.mapper.array_name = array_name
-                        actor.mapper.scalar_range = mesh.get_data_range(array_name)
-                        actor.mapper.dataset.active_scalars_name = array_name
-                        self.plotter.render()
-                    else:
-                        # Array not found - fallback to re-render
-                        self.render_scene()
-                except Exception as e:
-                    print(f"⚠️ Error updating array '{array_name}': {e}")
-                    # Fallback: full re-render
-                    self.render_scene()
+        for product in self.scene_context:
+            if hasattr(product, 'set_selected_array'):
+                # Only set it if the product actually has this array available
+                if hasattr(product, 'get_available_arrays') and array_name in product.get_available_arrays():
+                    product.set_selected_array(array_name)
+                    needs_render = True
+                    
+        # Re-render the whole scene once all products are updated
+        if needs_render:
+            self.render_scene()
 
     # ------------------------------------------------------------------
     # Key event handling
@@ -1139,6 +1123,15 @@ class MVATViewer(QFrame):
         Args:
             product: Scene product to add.
         """
+        # If the scene already has products, make the new product inherit 
+        # the currently active visualization style from the dropdown. 
+        # (If the scene is empty, let it keep its default RGB and the UI will sync to it).
+        if self.scene_context.has_any_product() and self.array_selector_combo is not None:
+            current_array = self.array_selector_combo.currentText()
+            if current_array and hasattr(product, 'set_selected_array'):
+                if hasattr(product, 'get_available_arrays') and current_array in product.get_available_arrays():
+                    product.set_selected_array(current_array)
+
         self.scene_context.add_product(product)
         
         # Hide placeholder once we have data
@@ -1216,45 +1209,27 @@ class MVATViewer(QFrame):
                 if mesh is None:
                     continue
                 
-                # Determine visibility based on product type
                 should_be_visible = self._get_visibility_for_product(product)
-                
-                # Get or create actor
                 actor = self._product_actors.get(product_id)
                 
-                if actor is None:
-                    actor = self.plotter.add_mesh(
-                        mesh,
-                        render=False,
-                        **style
-                    )
-                    # Ensure actor opacity matches style (some PyVista versions ignore opacity in add_mesh)
-                    try:
-                        actor.GetProperty().SetOpacity(style.get('opacity', 1.0))
-                    except Exception:
-                        pass
-                    self._product_actors[product_id] = actor
-                else:
-                    # Update existing actor's mesh
-                    try:
-                        actor.GetMapper().SetInputData(mesh)
-                        # Update actor opacity from style in case persisted value changed
-                        try:
-                            actor.GetProperty().SetOpacity(style.get('opacity', 1.0))
-                        except Exception:
-                            pass
-                    except Exception:
-                        # Fallback: recreate actor
-                        try:
-                            self.plotter.remove_actor(actor)
-                        except Exception:
-                            pass
-                        actor = self.plotter.add_mesh(mesh, render=False, **style)
-                        try:
-                            actor.GetProperty().SetOpacity(style.get('opacity', 1.0))
-                        except Exception:
-                            pass
-                        self._product_actors[product_id] = actor
+                # FIX: If the actor exists, remove it so we can re-apply the fresh style
+                if actor is not None:
+                    self.plotter.remove_actor(actor)
+                
+                # Add mesh with the new style dictionary
+                actor = self.plotter.add_mesh(
+                    mesh,
+                    render=False,
+                    **style
+                )
+                
+                # Ensure actor opacity matches style
+                try:
+                    actor.GetProperty().SetOpacity(style.get('opacity', 1.0))
+                except Exception:
+                    pass
+                    
+                self._product_actors[product_id] = actor
                 
                 # Apply visibility setting
                 try:
