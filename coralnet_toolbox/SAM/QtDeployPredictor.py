@@ -119,6 +119,10 @@ class DeployPredictorDialog(QDialog):
         if os.path.exists(os.path.join(os.getcwd(), "sam3.pt")):
             self.models["SAM 3"] = "sam3.pt"
 
+        # Check for SAM 3 weights in the current directory and add to models if found
+        if os.path.exists(os.path.join(os.getcwd(), "sam3.1_multiplex.pt")):
+            self.models["SAM 3.1 Multiplex"] = "sam3.1_multiplex.pt"
+
         # Add all models to combo box
         for model_name in self.models.keys():
             self.model_combo.addItem(model_name)

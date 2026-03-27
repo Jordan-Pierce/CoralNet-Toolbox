@@ -37,6 +37,7 @@ from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtMaskAnnotation import MaskAnnotation
 
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
+from coralnet_toolbox.MVAT.core.Model import MeshProduct
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -1586,6 +1587,133 @@ class MVATManager(QObject):
         finally:
             self._propagating_annotation = False
 
+    def _dense_mesh_hit_test(self, source_camera, pixel_mask: np.ndarray, px: int, py: int, mesh_product) -> np.ndarray:
+        """Cast rays through every True pixel in pixel_mask against the mesh surface.
+
+        Unlike the index_map approach (which captures face IDs from a downsampled
+        raycasting pass), this method casts a ray through every individual painted
+        pixel at full resolution, intersecting the actual triangle surface area of
+        the mesh.  This guarantees that every triangle touched by the brush or SAM
+        mask contributes its face ID to the output set, regardless of its projected
+        pixel size.
+
+        The Open3D RaycastingScene BVH is built once per mesh product and cached on
+        the product object to amortise the cost across many brush strokes.
+
+        Args:
+            source_camera: Perspective Camera for the selected image.
+            pixel_mask: (H, W) bool/uint8 array; True pixels are ray-cast targets.
+            px: X coordinate of the mask centre in source image space.
+            py: Y coordinate of the mask centre in source image space.
+            mesh_product: MeshProduct whose cached geometry is used.
+
+        Returns:
+            np.ndarray[int32]: Unique face IDs that were hit, or empty array on
+            failure, missing Open3D, or orthographic source camera.
+        """
+        # Orthographic cameras use an affine projection model without K / R —
+        # pinhole ray casting is not applicable; let the caller fall back to
+        # the index_map path instead.
+        if getattr(source_camera, 'is_orthographic', False):
+            return np.array([], dtype=np.int32)
+
+        try:
+            import open3d as o3d
+        except ImportError:
+            return np.array([], dtype=np.int32)
+
+        try:
+            # 1. Ensure the GPU tensor geometry cache exists (idempotent call).
+            mesh_product.prepare_geometry()
+            vertices  = mesh_product._cached_vertices                                      # (V, 3) float32
+            triangles = mesh_product._cached_triangles_pt.cpu().numpy().astype(np.uint32)  # (T, 3) uint32
+
+            if len(triangles) == 0:
+                return np.array([], dtype=np.int32)
+
+            # 2. Build (or reuse) the Open3D RaycastingScene BVH.
+            #    Mesh vertex/face topology never changes during annotation, so the
+            #    cached scene remains valid for the entire session.
+            if not getattr(mesh_product, '_o3d_raycasting_scene', None):
+                scene = o3d.t.geometry.RaycastingScene()
+                scene.add_triangles(
+                    o3d.core.Tensor(vertices,   dtype=o3d.core.Dtype.Float32),
+                    o3d.core.Tensor(triangles,  dtype=o3d.core.Dtype.UInt32),
+                )
+                mesh_product._o3d_raycasting_scene = scene
+            scene = mesh_product._o3d_raycasting_scene
+
+            # 3. Map the True pixels in pixel_mask to source image coordinates.
+            mask_h, mask_w = pixel_mask.shape
+            x0 = px - mask_w // 2
+            y0 = py - mask_h // 2
+
+            ys, xs = np.where(pixel_mask.astype(bool))
+            if len(xs) == 0:
+                return np.array([], dtype=np.int32)
+
+            u_img = (xs + x0).astype(np.float32)
+            v_img = (ys + y0).astype(np.float32)
+
+            # Discard pixels that fall outside the image frame.
+            valid = (
+                (u_img >= 0) & (u_img < source_camera.width) &
+                (v_img >= 0) & (v_img < source_camera.height)
+            )
+            u_img = u_img[valid]
+            v_img = v_img[valid]
+
+            if len(u_img) == 0:
+                return np.array([], dtype=np.int32)
+
+            # 4. Unproject pixels to world-space ray directions.
+            #    Pinhole camera model (row-vector convention):
+            #      d_cam   = K_inv @ [u, v, 1]^T   →   d_cam_row   = [u,v,1] @ K_inv.T
+            #      d_world = R.T   @ d_cam          →   d_world_row = d_cam_row  @ R
+            ones        = np.ones(len(u_img), dtype=np.float32)
+            pixel_homog = np.stack([u_img, v_img, ones], axis=1)     # (N, 3)
+            K_inv       = source_camera.K_inv.astype(np.float32)     # (3, 3)
+            R           = source_camera.R.astype(np.float32)         # (3, 3)
+
+            dirs_cam   = pixel_homog @ K_inv.T    # (N, 3) camera-space directions
+            dirs_world = dirs_cam   @ R            # (N, 3) world-space directions
+
+            norms = np.linalg.norm(dirs_world, axis=1, keepdims=True)
+            norms[norms < 1e-8] = 1.0
+            dirs_world /= norms
+
+            # 5. Build and cast the ray batch against the BVH.
+            cam_origin = source_camera.position.astype(np.float32)          # (3,)
+            origins    = np.tile(cam_origin, (len(u_img), 1))               # (N, 3)
+            rays_np    = np.concatenate([origins, dirs_world], axis=1)      # (N, 6)
+
+            ans = scene.cast_rays(o3d.core.Tensor(rays_np, dtype=o3d.core.Dtype.Float32))
+
+            # 6. Extract hit triangle indices (Open3D uses uint32 max = miss).
+            INVALID_O3D = np.uint32(4294967295)
+            prim_ids     = ans['primitive_ids'].numpy()
+            hit_prim_ids = prim_ids[prim_ids != INVALID_O3D].astype(np.int64)
+
+            if len(hit_prim_ids) == 0:
+                return np.array([], dtype=np.int32)
+
+            # 7. Remap sub-triangle primitive IDs to original PyVista cell IDs
+            #    when the mesh was triangulated from non-triangular faces during
+            #    prepare_geometry().
+            original_cell_ids = getattr(mesh_product, '_original_cell_ids', None)
+            if original_cell_ids is not None:
+                in_range     = hit_prim_ids < len(original_cell_ids)
+                hit_prim_ids = hit_prim_ids[in_range]
+                face_ids     = original_cell_ids[hit_prim_ids].astype(np.int32)
+            else:
+                face_ids = hit_prim_ids.astype(np.int32)
+
+            return np.unique(face_ids)
+
+        except Exception as e:
+            print(f"⚠️ Dense mesh hit test failed: {e}")
+            return np.array([], dtype=np.int32)
+
     def _on_brush_stroke_applied(self, scene_pos, label_id: str, brush_mask):
         """Propagate a brush stroke into all visible context cameras.
 
@@ -1620,36 +1748,47 @@ class MVATManager(QObject):
         # Phase 1: Source ID Extraction (2D → 3D)
         # ------------------------------------------------------------------
         painted_ids = None
-        source_index_map = self.selected_camera.index_map
-        if source_index_map is not None:
-            # Bounding box of the brush in source image coordinates
-            x0 = px - brush_w // 2
-            y0 = py - brush_h // 2
-            x1 = x0 + brush_w
-            y1 = y0 + brush_h
+        _p1_target = self.viewer.scene_context.get_primary_target()
+        if isinstance(_p1_target, MeshProduct) and not getattr(self.selected_camera, 'is_orthographic', False):
+            # Dense ray casting: cast through every True pixel in the brush mask
+            # to intersect the full triangle surface area rather than relying on
+            # the downsampled index_map (which only captures face centres at reduced
+            # resolution, missing small or oblique triangles).
+            painted_ids = self._dense_mesh_hit_test(
+                self.selected_camera, brush_mask, px, py, _p1_target
+            )
+        else:
+            # PointCloud (or non-mesh) target: use the pre-computed index_map.
+            source_index_map = self.selected_camera.index_map
+            if source_index_map is not None:
+                # Bounding box of the brush in source image coordinates
+                x0 = px - brush_w // 2
+                y0 = py - brush_h // 2
+                x1 = x0 + brush_w
+                y1 = y0 + brush_h
 
-            img_h, img_w = source_index_map.shape
+                img_h, img_w = source_index_map.shape
 
-            # Only proceed if the brush overlaps the image at all
-            if x0 < img_w and y0 < img_h and x1 > 0 and y1 > 0:
-                # Clip to image bounds
-                cx0 = max(x0, 0)
-                cy0 = max(y0, 0)
-                cx1 = min(x1, img_w)
-                cy1 = min(y1, img_h)
+                # Only proceed if the brush overlaps the image at all
+                if x0 < img_w and y0 < img_h and x1 > 0 and y1 > 0:
+                    # Clip to image bounds
+                    cx0 = max(x0, 0)
+                    cy0 = max(y0, 0)
+                    cx1 = min(x1, img_w)
+                    cy1 = min(y1, img_h)
 
-                # Corresponding slice of the brush mask
-                bx0 = cx0 - x0
-                by0 = cy0 - y0
-                bx1 = bx0 + (cx1 - cx0)
-                by1 = by0 + (cy1 - cy0)
+                    # Corresponding slice of the brush mask
+                    bx0 = cx0 - x0
+                    by0 = cy0 - y0
+                    bx1 = bx0 + (cx1 - cx0)
+                    by1 = by0 + (cy1 - cy0)
 
-                index_slice = source_index_map[cy0:cy1, cx0:cx1]
-                brush_clip  = brush_mask[by0:by1, bx0:bx1]
+                    index_slice = source_index_map[cy0:cy1, cx0:cx1]
+                    brush_clip  = brush_mask[by0:by1, bx0:bx1]
 
-                raw_ids = index_slice[brush_clip.astype(bool)]
-                unique_ids = np.unique(raw_ids)
-                painted_ids = unique_ids[unique_ids > -1]  # filter background
+                    raw_ids = index_slice[brush_clip.astype(bool)]
+                    unique_ids = np.unique(raw_ids)
+                    painted_ids = unique_ids[unique_ids > -1]  # filter background
 
         # Whether the source camera has valid 3D geometry hits to propagate
         use_3d = painted_ids is not None and len(painted_ids) > 0
@@ -2103,34 +2242,45 @@ class MVATManager(QObject):
         # Phase 1: Source ID Extraction (2D → 3D)
         # ------------------------------------------------------------------
         painted_ids = None
-        source_index_map = self.selected_camera.index_map
-        if source_index_map is not None:
-            # The binary_mask is a crop centred at (px, py)
-            x0 = px - mask_w // 2
-            y0 = py - mask_h // 2
-            x1 = x0 + mask_w
-            y1 = y0 + mask_h
+        _p1_target = self.viewer.scene_context.get_primary_target()
+        if isinstance(_p1_target, MeshProduct) and not getattr(self.selected_camera, 'is_orthographic', False):
+            # Dense ray casting: cast through every True pixel in the SAM binary_mask
+            # to intersect the full triangle surface area rather than relying on
+            # the downsampled index_map (which only captures face centres at reduced
+            # resolution, missing small or oblique triangles).
+            painted_ids = self._dense_mesh_hit_test(
+                self.selected_camera, binary_mask.astype(bool), px, py, _p1_target
+            )
+        else:
+            # PointCloud (or non-mesh) target: use the pre-computed index_map.
+            source_index_map = self.selected_camera.index_map
+            if source_index_map is not None:
+                # The binary_mask is a crop centred at (px, py)
+                x0 = px - mask_w // 2
+                y0 = py - mask_h // 2
+                x1 = x0 + mask_w
+                y1 = y0 + mask_h
 
-            img_h, img_w = source_index_map.shape
+                img_h, img_w = source_index_map.shape
 
-            if x0 < img_w and y0 < img_h and x1 > 0 and y1 > 0:
-                cx0 = max(x0, 0)
-                cy0 = max(y0, 0)
-                cx1 = min(x1, img_w)
-                cy1 = min(y1, img_h)
+                if x0 < img_w and y0 < img_h and x1 > 0 and y1 > 0:
+                    cx0 = max(x0, 0)
+                    cy0 = max(y0, 0)
+                    cx1 = min(x1, img_w)
+                    cy1 = min(y1, img_h)
 
-                # Corresponding slice of the binary_mask
-                bx0 = cx0 - x0
-                by0 = cy0 - y0
-                bx1 = bx0 + (cx1 - cx0)
-                by1 = by0 + (cy1 - cy0)
+                    # Corresponding slice of the binary_mask
+                    bx0 = cx0 - x0
+                    by0 = cy0 - y0
+                    bx1 = bx0 + (cx1 - cx0)
+                    by1 = by0 + (cy1 - cy0)
 
-                index_slice = source_index_map[cy0:cy1, cx0:cx1]
-                mask_clip   = binary_mask[by0:by1, bx0:bx1]
+                    index_slice = source_index_map[cy0:cy1, cx0:cx1]
+                    mask_clip   = binary_mask[by0:by1, bx0:bx1]
 
-                raw_ids = index_slice[mask_clip.astype(bool)]
-                unique_ids = np.unique(raw_ids)
-                painted_ids = unique_ids[unique_ids > -1]
+                    raw_ids = index_slice[mask_clip.astype(bool)]
+                    unique_ids = np.unique(raw_ids)
+                    painted_ids = unique_ids[unique_ids > -1]
 
         use_3d = painted_ids is not None and len(painted_ids) > 0
 
