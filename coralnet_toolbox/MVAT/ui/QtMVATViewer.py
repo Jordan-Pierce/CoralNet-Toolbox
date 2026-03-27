@@ -835,25 +835,15 @@ class MVATViewer(QFrame):
             if actor is not None:
                 try:
                     mesh = primary_target.get_render_mesh()
-                    if mesh is not None:
-                        # Always update mapper for all array types
-                        if array_name in mesh.array_names:
-                            # Real array in mesh data
-                            actor.mapper.array_name = array_name
-                            actor.mapper.scalar_range = mesh.get_data_range(array_name)
-                            actor.mapper.dataset.active_scalars_name = array_name
-                        else:
-                            # Pseudo-array (RGB, Labels) - may not exist in data
-                            # Still try to update mapper for style consistency
-                            try:
-                                actor.mapper.array_name = array_name
-                                actor.mapper.scalar_range = mesh.get_data_range(array_name)
-                                actor.mapper.dataset.active_scalars_name = array_name
-                            except:
-                                # If pseudo-array doesn't exist, clear the mapper scalars
-                                actor.mapper.array_name = None
-                        
+                    if mesh is not None and array_name in mesh.array_names:
+                        # RGB, Labels, and data arrays are all real scalars now
+                        actor.mapper.array_name = array_name
+                        actor.mapper.scalar_range = mesh.get_data_range(array_name)
+                        actor.mapper.dataset.active_scalars_name = array_name
                         self.plotter.render()
+                    else:
+                        # Array not found - fallback to re-render
+                        self.render_scene()
                 except Exception as e:
                     print(f"⚠️ Error updating array '{array_name}': {e}")
                     # Fallback: full re-render

@@ -70,9 +70,12 @@ class PointCloudProduct(AbstractSceneProduct):
         self.mesh = pv.read(file_path, progress_bar=True)
         self.array_names = self.mesh.array_names
         
+        # Synthesize missing scalar arrays for consistent visualization
+        self._ensure_scalar_arrays()
+        
         # Build available arrays in priority order:
-        # 1. RGB (first, created/synthesized if needed with Metashape purple as default)
-        # 2. Labels (always available, all white by default)
+        # 1. RGB (first, use existing or Metashape purple default)
+        # 2. Labels (always available, all white)
         # 3. Everything else from the mesh
         other_arrays = [arr for arr in self.array_names if arr.lower() not in ('rgb', 'labels')]
         self.available_arrays = ["RGB", "Labels"] + other_arrays
@@ -113,25 +116,16 @@ class PointCloudProduct(AbstractSceneProduct):
             'lighting': False,
         }
         
-        # Apply rendering based on selected array
-        if self.selected_array == "RGB":
-            # RGB: use actual RGB if available, otherwise solid black as fallback
-            # (RGB itself is not a synthesized channel for point clouds; use black as default)
-            if 'RGB' in self.array_names:
-                style['scalars'] = 'RGB'
-                style['rgb'] = True
-            else:
-                # No RGB data - render as Metashape purple
-                style['color'] = '#8d8cc4'
-        elif self.selected_array == "Labels":
-            # Labels: render as white points (all same color)
-            style['color'] = 'white'
-        elif self.selected_array in self.array_names:
-            # Use selected array as scalars (applies colormap)
+        # All arrays (RGB, Labels, and data arrays) are now real scalars in the mesh
+        # Use them directly via the mapper
+        if self.selected_array in self.array_names:
             style['scalars'] = self.selected_array
+            # RGB arrays should use direct RGB mode, not colormap
+            if self.selected_array == "RGB":
+                style['rgb'] = True
         else:
-            # Fallback to Metashape purple
-            style['color'] = '#8d8cc4'
+            # Fallback: render as white
+            style['color'] = 'white'
         
         return style
     
@@ -228,6 +222,40 @@ class PointCloudProduct(AbstractSceneProduct):
         self.selected_array = array_name
         print(f"✓ Selected array '{array_name}' for {self.label}")
         return True
+    
+    def _ensure_scalar_arrays(self):
+        """
+        Ensure required scalar arrays exist in the mesh.
+        
+        Creates:
+        - "Labels": All white (255, 255, 255) for uniform labeling
+        - "RGB": Metashape purple if not present in the data
+        
+        This allows these arrays to be treated as real data arrays in the mapper.
+        """
+        if self.mesh is None:
+            return
+        
+        n_points = self.mesh.n_points
+        
+        # Create "Labels" array if it doesn't exist - uniform white
+        if "Labels" not in self.mesh.array_names:
+            labels_array = np.ones((n_points, 3), dtype=np.uint8) * 255  # White
+            self.mesh.point_data["Labels"] = labels_array
+            print(f"   ✓ Created 'Labels' array (all white) for {self.label}")
+        
+        # Create "RGB" array if it doesn't exist - Metashape purple
+        if "RGB" not in self.mesh.array_names:
+            # Metashape purple: #8d8cc4 -> RGB (141, 140, 196)
+            rgb_array = np.ones((n_points, 3), dtype=np.uint8)
+            rgb_array[:, 0] = 141  # R
+            rgb_array[:, 1] = 140  # G
+            rgb_array[:, 2] = 196  # B
+            self.mesh.point_data["RGB"] = rgb_array
+            print(f"   ✓ Created 'RGB' array (Metashape purple) for {self.label}")
+        
+        # Update array_names after potentially adding new arrays
+        self.array_names = self.mesh.array_names
 
 
 class MeshProduct(AbstractSceneProduct):
@@ -267,9 +295,12 @@ class MeshProduct(AbstractSceneProduct):
         self.mesh = pv.read(file_path, progress_bar=True)
         self.array_names = self.mesh.array_names
         
+        # Synthesize missing scalar arrays for consistent visualization
+        self._ensure_scalar_arrays()
+        
         # Build available arrays in priority order:
-        # 1. RGB (first, defaults to Metashape purple if not in data)
-        # 2. Labels (always available, all white by default)
+        # 1. RGB (first, use existing or Metashape purple default)
+        # 2. Labels (always available, all white)
         # 3. Everything else from the mesh
         other_arrays = [arr for arr in self.array_names if arr.lower() not in ('rgb', 'labels')]
         self.available_arrays = ["RGB", "Labels"] + other_arrays
@@ -351,24 +382,16 @@ class MeshProduct(AbstractSceneProduct):
             'lighting': True,
         }
         
-        # Apply rendering based on selected array
-        if self.selected_array == "RGB":
-            # RGB: use actual RGB if available, otherwise Metashape purple as default
-            if 'RGB' in self.array_names:
-                style['scalars'] = 'RGB'
-                style['rgb'] = True
-            else:
-                # Default Metashape purple color when no RGB vertex colors
-                style['color'] = '#8d8cc4'
-        elif self.selected_array == "Labels":
-            # Labels: render as white meshes (all same color)
-            style['color'] = 'white'
-        elif self.selected_array in self.array_names:
-            # Use selected array as scalars (applies colormap)
+        # All arrays (RGB, Labels, and data arrays) are now real scalars in the mesh
+        # Use them directly via the mapper
+        if self.selected_array in self.array_names:
             style['scalars'] = self.selected_array
+            # RGB arrays should use direct RGB mode, not colormap
+            if self.selected_array == "RGB":
+                style['rgb'] = True
         else:
-            # Fallback to Metashape purple
-            style['color'] = '#8d8cc4'
+            # Fallback: render as white
+            style['color'] = 'white'
         
         return style
     
@@ -461,5 +484,38 @@ class MeshProduct(AbstractSceneProduct):
         self.selected_array = array_name
         print(f"✓ Selected array '{array_name}' for {self.label}")
         return True
-
     
+    def _ensure_scalar_arrays(self):
+        """
+        Ensure required scalar arrays exist in the mesh.
+        
+        Creates (as cell/face data):
+        - "Labels": All white (255, 255, 255) for uniform labeling
+        - "RGB": Metashape purple if not present in the data
+        
+        This allows these arrays to be treated as real data arrays in the mapper.
+        """
+        if self.mesh is None:
+            return
+        
+        n_faces = self.mesh.n_cells
+        
+        # Create "Labels" array if it doesn't exist - uniform white
+        if "Labels" not in self.mesh.array_names:
+            labels_array = np.ones((n_faces, 3), dtype=np.uint8) * 255  # White
+            self.mesh.cell_data["Labels"] = labels_array
+            print(f"   ✓ Created 'Labels' array (all white) for {self.label}")
+        
+        # Create "RGB" array if it doesn't exist - Metashape purple
+        if "RGB" not in self.mesh.array_names:
+            # Metashape purple: #8d8cc4 -> RGB (141, 140, 196)
+            rgb_array = np.ones((n_faces, 3), dtype=np.uint8)
+            rgb_array[:, 0] = 141  # R
+            rgb_array[:, 1] = 140  # G
+            rgb_array[:, 2] = 196  # B
+            self.mesh.cell_data["RGB"] = rgb_array
+            print(f"   ✓ Created 'RGB' array (Metashape purple) for {self.label}")
+        
+        # Update array_names after potentially adding new arrays
+        self.array_names = self.mesh.array_names
+
