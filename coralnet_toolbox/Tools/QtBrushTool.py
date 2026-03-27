@@ -3,7 +3,7 @@ import warnings
 import numpy as np
 
 from PyQt5.QtGui import QColor, QPen, QBrush
-from PyQt5.QtCore import Qt, QPointF, QRectF
+from PyQt5.QtCore import Qt, QPointF, QRectF, QTimer
 from PyQt5.QtWidgets import QGraphicsEllipseItem, QMessageBox, QGraphicsRectItem
 
 from coralnet_toolbox.Tools.QtTool import Tool
@@ -36,6 +36,12 @@ class BrushTool(Tool):
         # Optional callback fired after each successful brush stroke:
         # callback(scene_pos: QPointF, label_id: str, brush_mask: np.ndarray)
         self.post_stroke_callback = None
+        
+        # Throttling setup for 3D propagation
+        self._sync_timer = QTimer()
+        self._sync_timer.setSingleShot(True)
+        self._sync_timer.timeout.connect(self._flush_stroke)
+        self._accumulated_points = []
 
     def _create_brush_mask(self):
         """Creates a boolean numpy array for the brush shape."""
@@ -210,6 +216,9 @@ class BrushTool(Tool):
     def deactivate(self):
         """Deactivate the brush tool and stop any current operations."""
         self.painting = False
+        self._sync_timer.stop()
+        if self._accumulated_points:
+            self._flush_stroke()
         super().deactivate()
         
     def stop_current_drawing(self):
@@ -217,7 +226,7 @@ class BrushTool(Tool):
         self.painting = False
 
     def _apply_brush(self, event):
-        """Applies the brush mask to the main mask_annotation."""
+        """Applies the brush locally and queues it for 3D sync."""
         # Get the current mask annotation from the annotation window
         mask_annotation = self.annotation_window.current_mask_annotation
         
@@ -239,9 +248,61 @@ class BrushTool(Tool):
         radius = self.brush_size / 2.0
         brush_location = QPointF(scene_pos.x() - radius, scene_pos.y() - radius)
         
-        # Call the update_mask method
+        # 1. Apply locally immediately for smooth 60Hz UX
         mask_annotation.update_mask(brush_location, self.brush_mask, class_id)
 
-        # Notify any registered propagation callback (e.g., MVAT multi-annotate)
-        if self.post_stroke_callback:
-            self.post_stroke_callback(scene_pos, selected_label_id, self.brush_mask)
+        # 2. Accumulate for 3D sync
+        self._accumulated_points.append(scene_pos)
+        
+        # 3. Start throttle timer if not running (~15 FPS = 66ms)
+        if not self._sync_timer.isActive():
+            self._sync_timer.start(66)
+
+    def _flush_stroke(self):
+        """Builds a combined mask of recent strokes and sends to MVATManager."""
+        if not self.post_stroke_callback or not self._accumulated_points:
+            return
+
+        selected_label_id = self.annotation_window.selected_label.id
+        
+        # Calculate bounding box of all accumulated points
+        xs = [p.x() for p in self._accumulated_points]
+        ys = [p.y() for p in self._accumulated_points]
+        
+        min_x = int(min(xs) - self.brush_size / 2.0)
+        max_x = int(max(xs) + self.brush_size / 2.0)
+        min_y = int(min(ys) - self.brush_size / 2.0)
+        max_y = int(max(ys) + self.brush_size / 2.0)
+        
+        # Create a combined mask for the flushed batch
+        w, h = max_x - min_x, max_y - min_y
+        combined_mask = np.zeros((h, w), dtype=bool)
+        
+        for p in self._accumulated_points:
+            px_local = int(p.x() - self.brush_size / 2.0) - min_x
+            py_local = int(p.y() - self.brush_size / 2.0) - min_y
+            
+            # Stamp the brush mask into the combined mask
+            bh, bw = self.brush_mask.shape
+            if (0 <= px_local < w and 0 <= py_local < h and
+                px_local + bw > 0 and py_local + bh > 0):
+                ystart = max(0, py_local)
+                yend = min(h, py_local + bh)
+                xstart = max(0, px_local)
+                xend = min(w, px_local + bw)
+                
+                brush_ystart = ystart - py_local
+                brush_yend = brush_ystart + (yend - ystart)
+                brush_xstart = xstart - px_local
+                brush_xend = brush_xstart + (xend - xstart)
+                
+                combined_mask[ystart:yend, xstart:xend] |= self.brush_mask[brush_ystart:brush_yend, brush_xstart:brush_xend]
+        
+        # The new center of this combined mask
+        center_pos = QPointF(min_x + w / 2.0, min_y + h / 2.0)
+        
+        # Send to MVATManager
+        self.post_stroke_callback(center_pos, selected_label_id, combined_mask)
+        
+        # Clear accumulation buffer
+        self._accumulated_points.clear()

@@ -284,6 +284,11 @@ class PointCloudProduct(AbstractSceneProduct):
         """
         if self.mesh is None or len(element_ids) == 0:
             return
+        
+        # Optimization: Check if data actually needs changing
+        current_classes = self.mesh.point_data["Class_IDs"][element_ids]
+        if np.all(current_classes == class_id):
+            return  # No change required, skip GPU upload!
             
         # 1. Update the semantic Ground Truth data
         self.mesh.point_data["Class_IDs"][element_ids] = class_id
@@ -590,6 +595,11 @@ class MeshProduct(AbstractSceneProduct):
         """
         if self.mesh is None or len(element_ids) == 0:
             return
+        
+        # Optimization: Check if data actually needs changing
+        current_classes = self.mesh.cell_data["Class_IDs"][element_ids]
+        if np.all(current_classes == class_id):
+            return  # No change required, skip GPU upload!
             
         # 1. Update the semantic Ground Truth data
         self.mesh.cell_data["Class_IDs"][element_ids] = class_id

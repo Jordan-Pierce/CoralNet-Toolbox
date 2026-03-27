@@ -238,7 +238,7 @@ class MaskAnnotation(Annotation):
             self._update_full_canvas()
             self.graphics_item.update()
 
-    def update_mask(self, brush_location: QPointF, brush_mask: np.ndarray, new_class_id: int):
+    def update_mask(self, brush_location: QPointF, brush_mask: np.ndarray, new_class_id: int, silent: bool = False):
         """
         Modify the mask data based on a brush stroke, respecting pre-locked pixels.
         """
@@ -278,9 +278,10 @@ class MaskAnnotation(Annotation):
         self.update_graphics_item(update_rect=changed_rect_coords)
         
         self._invalidate_stats_cache()
-        self.annotationUpdated.emit(self)
+        if not silent:
+            self.annotationUpdated.emit(self)
         
-    def update_mask_at_indices(self, flat_indices: np.ndarray, class_id: int):
+    def update_mask_at_indices(self, flat_indices: np.ndarray, class_id: int, silent: bool = False):
         """
         Paint ``class_id`` at the exact pixel positions given by ``flat_indices``
         (row-major flat indices into a (height × width) image array).
@@ -292,6 +293,7 @@ class MaskAnnotation(Annotation):
         Args:
             flat_indices: 1D int64 array of flat pixel positions.
             class_id:     Target class ID to paint (must be < LOCK_BIT).
+            silent:       If True, do not emit annotationUpdated signal.
         """
         if flat_indices is None or len(flat_indices) == 0:
             return
@@ -343,15 +345,17 @@ class MaskAnnotation(Annotation):
             self.graphics_item.update(qt_rect)
 
         self._invalidate_stats_cache()
-        self.annotationUpdated.emit(self)
+        if not silent:
+            self.annotationUpdated.emit(self)
 
-    def update_mask_with_mask(self, subset_mask: np.ndarray, top_left: tuple[int, int]):
+    def update_mask_with_mask(self, subset_mask: np.ndarray, top_left: tuple[int, int], silent: bool = False):
         """
         Updates a subset area of the mask with a provided mask containing multiple labels.
         
         Args:
             subset_mask: A 2D numpy array with class IDs for the subset area.
             top_left: A tuple (x, y) specifying the top-left corner where to apply the subset.
+            silent: If True, do not emit annotationUpdated signal.
         """
         x, y = top_left
         h, w = subset_mask.shape
@@ -383,7 +387,8 @@ class MaskAnnotation(Annotation):
         self.update_graphics_item(update_rect=update_rect)
         
         self._invalidate_stats_cache()
-        self.annotationUpdated.emit(self)
+        if not silent:
+            self.annotationUpdated.emit(self)
         
     def update_mask_with_prediction_mask(self, prediction_mask, top_left=(0, 0)):
         """

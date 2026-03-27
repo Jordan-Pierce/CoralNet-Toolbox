@@ -1349,14 +1349,9 @@ class MVATManager(QObject):
     def _on_cursor_preview_moved(self, scene_pos, item_factory):
         """Project the cursor position into visible context cameras and show previews.
 
-        For the Brush tool: attempts a True 3D hover preview by extracting the
-        element IDs beneath the brush circle, finding their positions in each
-        target camera via the inverted index, then calling item_factory at the
-        centroid of those projected pixels.
-
-        Falls back to the legacy center-point projection when the source index
-        map is unavailable (visibility not yet computed) or when no geometry
-        was hit (background stroke).
+        Uses the blazingly fast center-point projection to display brush previews
+        in all visible context cameras. The tool factory already draws the correct
+        brush size visually; we just need to tell it where the center is.
         """
         if self.selected_camera is None or self.context_matrix is None:
             return
@@ -1364,61 +1359,9 @@ class MVATManager(QObject):
         px, py = int(scene_pos.x()), int(scene_pos.y())
         visible_paths = self._get_visible_context_paths()
 
-        # ------------------------------------------------------------------
-        # Attempt True 3D hover preview
-        # ------------------------------------------------------------------
-        use_3d = False
-        per_camera_uv: dict = {}   # target_path -> (u_centroid, v_centroid, True)
-
-        source_index_map = self.selected_camera.index_map
-        if source_index_map is not None:
-            # Derive brush dimensions from item_factory by probing it once at
-            # the source pixel — but we don't want to create a graphics item
-            # mid-hover.  Instead, infer the brush radius from the tool directly.
-            brush_tool = self.annotation_window.tools.get('brush')
-            if brush_tool is not None and hasattr(brush_tool, 'brush_mask'):
-                bm = brush_tool.brush_mask
-                bh, bw = bm.shape
-                x0 = px - bw // 2
-                y0 = py - bh // 2
-                x1 = x0 + bw
-                y1 = y0 + bh
-
-                img_h, img_w = source_index_map.shape
-                if x0 < img_w and y0 < img_h and x1 > 0 and y1 > 0:
-                    cx0 = max(x0, 0); cy0 = max(y0, 0)
-                    cx1 = min(x1, img_w); cy1 = min(y1, img_h)
-                    bx0 = cx0 - x0; by0 = cy0 - y0
-                    bx1 = bx0 + (cx1 - cx0); by1 = by0 + (cy1 - cy0)
-
-                    index_slice = source_index_map[cy0:cy1, cx0:cx1]
-                    brush_clip  = bm[by0:by1, bx0:bx1]
-                    raw_ids = index_slice[brush_clip.astype(bool)]
-                    unique_ids = np.unique(raw_ids)
-                    painted_ids = unique_ids[unique_ids > -1]
-
-                    if len(painted_ids) > 0:
-                        for target_path in visible_paths:
-                            if target_path == self.selected_camera.image_path:
-                                continue
-                            target_camera = self.cameras.get(target_path)
-                            if target_camera is None:
-                                continue
-                            flat = target_camera.get_pixels_for_elements(painted_ids)
-                            if len(flat) == 0:
-                                continue
-                            v_arr, u_arr = np.divmod(flat, target_camera.width)
-                            u_c = float(np.mean(u_arr))
-                            v_c = float(np.mean(v_arr))
-                            per_camera_uv[target_path] = (u_c, v_c, True)
-                        use_3d = len(per_camera_uv) > 0
-
-        if use_3d:
-            self.context_matrix.update_cursor_previews(per_camera_uv, visible_paths, item_factory)
-        else:
-            # Legacy fallback: single center-point projection
-            projections = self._build_projection(px, py)
-            self.context_matrix.update_cursor_previews(projections, visible_paths, item_factory)
+        # Use the blazingly fast center-point projection
+        projections = self._build_projection(px, py)
+        self.context_matrix.update_cursor_previews(projections, visible_paths, item_factory)
 
     def _on_cursor_preview_cleared(self):
         """Clear cursor previews from all context canvases."""
@@ -1864,7 +1807,7 @@ class MVATManager(QObject):
                         if len(flat_indices) == 0:
                             # Element is genuinely occluded in this view — skip
                             continue
-                        target_mask.update_mask_at_indices(flat_indices, target_class_id)
+                        target_mask.update_mask_at_indices(flat_indices, target_class_id, silent=True)
                     else:
                         # 2D center-stamp fallback:
                         # Either source hit background, OR target's index isn't
@@ -1881,7 +1824,7 @@ class MVATManager(QObject):
                             continue
                         from PyQt5.QtCore import QPointF
                         brush_location = QPointF(u - brush_w / 2.0, v - brush_h / 2.0)
-                        target_mask.update_mask(brush_location, brush_mask, target_class_id)
+                        target_mask.update_mask(brush_location, brush_mask, target_class_id, silent=True)
 
                     # Ensure the label is visible in the target overlay
                     if label_id not in target_mask.visible_label_ids:
@@ -2028,7 +1971,7 @@ class MVATManager(QObject):
                         # Paint exactly the pixels that correspond to the filled 3D elements —
                         # do NOT re-run flood-fill from a centroid, which would incorrectly
                         # flood-fill the target image regardless of what was filled in source.
-                        target_mask.update_mask_at_indices(flat_indices, target_class_id)
+                        target_mask.update_mask_at_indices(flat_indices, target_class_id, silent=True)
                     else:
                         # 2D fallback: project the fill seed point to the target camera
                         # and run flood-fill there. The pixel-by-pixel offset transfer
@@ -2173,7 +2116,7 @@ class MVATManager(QObject):
                         flat_indices = target_camera.get_pixels_for_elements(painted_ids)
                         if len(flat_indices) == 0:
                             continue
-                        target_mask.update_mask_at_indices(flat_indices, 0)
+                        target_mask.update_mask_at_indices(flat_indices, 0, silent=True)
                     else:
                         # 2D center-stamp fallback
                         if projections is None:
@@ -2188,7 +2131,7 @@ class MVATManager(QObject):
                             continue
                         from PyQt5.QtCore import QPointF
                         brush_location = QPointF(u - brush_w / 2.0, v - brush_h / 2.0)
-                        target_mask.update_mask(brush_location, brush_mask, 0)
+                        target_mask.update_mask(brush_location, brush_mask, 0, silent=True)
 
                     # Push the updated mask pixels into the context canvas overlay
                     context_canvas = self._get_context_canvas_for_path(target_path)
@@ -2348,7 +2291,7 @@ class MVATManager(QObject):
                         if len(flat_indices) == 0:
                             # Genuinely occluded in this view — skip
                             continue
-                        target_mask.update_mask_at_indices(flat_indices, target_class_id)
+                        target_mask.update_mask_at_indices(flat_indices, target_class_id, silent=True)
                     else:
                         # 2D center-stamp fallback:
                         # Either source hit background, OR target's index isn't
@@ -2366,7 +2309,7 @@ class MVATManager(QObject):
                         subset_class_mask = binary_mask.astype(np.uint8) * int(target_class_id)
                         top_left_x = int(u - mask_w / 2.0)
                         top_left_y = int(v - mask_h / 2.0)
-                        target_mask.update_mask_with_mask(subset_class_mask, (top_left_x, top_left_y))
+                        target_mask.update_mask_with_mask(subset_class_mask, (top_left_x, top_left_y), silent=True)
 
                     # Ensure the label is visible in the target overlay
                     if label_id not in target_mask.visible_label_ids:
