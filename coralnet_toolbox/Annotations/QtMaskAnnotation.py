@@ -281,20 +281,14 @@ class MaskAnnotation(Annotation):
         if not silent:
             self.annotationUpdated.emit(self)
         
-    def update_mask_at_indices(self, flat_indices: np.ndarray, class_id: int, silent: bool = False):
+    def update_mask_at_indices(self, flat_indices: np.ndarray, class_id: int, silent: bool = False, use_flat_injection: bool = True):
         """
-        Paint ``class_id`` at the exact pixel positions given by ``flat_indices``
-        (row-major flat indices into a (height × width) image array).
-
+        Paint ``class_id`` at the exact pixel positions given by ``flat_indices``.
         Respects the LOCK_BIT: locked pixels are never overwritten.
-        Calculates a bounding box around the scattered pixels to perform a much 
-        faster localized canvas repaint instead of a full canvas update.
-
-        Args:
-            flat_indices: 1D int64 array of flat pixel positions.
-            class_id:     Target class ID to paint (must be < LOCK_BIT).
-            silent:       If True, do not emit annotationUpdated signal.
+        Includes a toggle and print statements for benchmarking visual update methods.
         """
+        import time  # Imported locally for the benchmark
+
         if flat_indices is None or len(flat_indices) == 0:
             return
 
@@ -314,36 +308,53 @@ class MaskAnnotation(Annotation):
         if len(unlocked) == 0:
             return
 
+        # 1. Update the semantic mask data
         flat_view[unlocked] = class_id
 
-        # --- Efficient Localized Canvas Repaint ---
-        # Convert flat indices back to 2D coordinates to find the bounding box
-        y_coords, x_coords = np.divmod(unlocked, width)
-        
-        # Calculate the bounding box of the changed pixels
-        x_min, x_max = int(x_coords.min()), int(x_coords.max())
-        y_min, y_max = int(y_coords.min()), int(y_coords.max())
-        
-        # Add a 1px padding to the slice bounds and clamp to image dimensions
-        # Note: x_max and y_max need +2 (+1 for padding, +1 because slicing is exclusive)
-        update_rect = (
-            max(0, x_min - 1), 
-            max(0, y_min - 1), 
-            min(width, x_max + 2), 
-            min(height, y_max + 2)
-        )
-        
-        # Update only the color slice that actually changed
-        self._update_canvas_slice(update_rect)
-        
-        if self.graphics_item is not None:
-            # Tell Qt to only repaint the specific rectangle
-            qt_rect = QRectF(update_rect[0], 
-                             update_rect[1], 
-                             update_rect[2] - update_rect[0], 
-                             update_rect[3] - update_rect[1])
-            self.graphics_item.update(qt_rect)
+        # --- START BENCHMARK TIMER ---
+        start_time = time.perf_counter()
 
+        # 2. Update the visual canvas
+        if use_flat_injection:
+            # --- Direct 1D Canvas Repaint ---
+            color_map = self._get_color_map()
+            colored_flat = self.colored_mask.reshape(-1, 4)
+            colored_flat[unlocked] = color_map[class_id]
+
+            if self.graphics_item is not None:
+                self.graphics_item.update()
+                
+            method_name = "Flat 1D Injection"
+        else:
+            # --- Localized Canvas Repaint ---
+            y_coords, x_coords = np.divmod(unlocked, width)
+            
+            x_min, x_max = int(x_coords.min()), int(x_coords.max())
+            y_min, y_max = int(y_coords.min()), int(y_coords.max())
+            
+            update_rect = (
+                max(0, x_min - 1), 
+                max(0, y_min - 1), 
+                min(width, x_max + 2), 
+                min(height, y_max + 2)
+            )
+            
+            self._update_canvas_slice(update_rect)
+            
+            if self.graphics_item is not None:
+                qt_rect = QRectF(update_rect[0], 
+                                 update_rect[1], 
+                                 update_rect[2] - update_rect[0], 
+                                 update_rect[3] - update_rect[1])
+                self.graphics_item.update(qt_rect)
+                
+            method_name = "2D Bounding Box"
+
+        # --- STOP BENCHMARK TIMER & PRINT ---
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        print(f"[Benchmark] {method_name} took: {elapsed_ms:.3f} ms (Pixels updated: {len(unlocked)})")
+
+        # 3. Post-update cleanup
         self._invalidate_stats_cache()
         if not silent:
             self.annotationUpdated.emit(self)

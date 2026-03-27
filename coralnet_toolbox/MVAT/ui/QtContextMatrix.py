@@ -28,6 +28,8 @@ from coralnet_toolbox.MVAT.core.constants import (
     MARKER_COLOR_SELECTED,
     MARKER_COLOR_HIGHLIGHTED,
     MARKER_COLOR_INVALID,
+    SELECT_COLOR,
+    HIGHLIGHT_COLOR,
 )
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -173,11 +175,17 @@ class ContextMatrixWidget(QWidget):
         return handler
 
     def _make_canvas_double_click_handler(self, canvas: BaseCanvas):
-        """Double-click promotes a context camera to the main active camera."""
+        """Double-click loads a context camera image without clearing selections.
+        
+        Emits both active_requested (to set the active camera) and contextImagePromoted
+        (to load the image). Selections/highlights are preserved—users must use
+        Ctrl+Click or the Clear button to modify them.
+        """
         def handler(event):
             if event.button() == Qt.LeftButton:
                 path = canvas.current_image_path
                 if path:
+                    # Set as active and load the image without clearing selections
                     self.active_requested.emit(path)
                     self.contextImagePromoted.emit(path)
             BaseCanvas.mouseDoubleClickEvent(canvas, event)
@@ -521,16 +529,20 @@ class ContextMatrixWidget(QWidget):
             active_path: Image path of the currently active (green-bordered) camera.
             selected_paths: Set of image paths that are highlighted (cyan-bordered).
         """
+        # Convert QColor objects to hex for CSS
+        active_color = SELECT_COLOR.name()
+        highlight_color = HIGHLIGHT_COLOR.name()
+        
         for canvas in self._canvas_pool:
             if not canvas.isVisible() or not canvas.current_image_path:
                 continue
             path = canvas.current_image_path
             if path == active_path:
-                canvas.setStyleSheet("border: 4px solid #32CD32;")   # Lime Green
+                canvas.setStyleSheet(f"border: 6px dashed {active_color};")   # Active camera (SELECT_COLOR), dashed
             elif path in selected_paths:
-                canvas.setStyleSheet("border: 2px solid #00FFFF;")   # Cyan
+                canvas.setStyleSheet(f"border: 5px dashed {highlight_color};")   # Highlighted cameras (HIGHLIGHT_COLOR), dashed
             else:
-                canvas.setStyleSheet("border: 1px solid #444444;")   # Default
+                canvas.setStyleSheet("border: 3px solid #000000;")   # Default, solid black
 
     # ==================== Marker Routing (Phase 4) ====================
 
