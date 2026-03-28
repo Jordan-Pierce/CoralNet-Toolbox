@@ -136,7 +136,8 @@ class CacheManager:
                         index_map: np.ndarray, visible_indices: np.ndarray,
                         depth_map: Optional[np.ndarray] = None,
                         element_type: str = 'point',
-                        inverted_index: Optional[Dict] = None) -> str:
+                        inverted_index: Optional[Dict] = None,
+                        compressed: bool = True) -> str:
         """
         Save visibility data to cache.
         
@@ -149,6 +150,7 @@ class CacheManager:
             element_type (str): Type of indexed elements ('point', 'face', or 'cell')
             inverted_index (dict, optional): CSR inverted index with keys
                 'inv_ids', 'inv_offsets', 'inv_pixels'.
+                compressed (bool): Whether to use compressed .npz format (default: True)
             
         Returns:
             str: Path to the saved cache file
@@ -183,7 +185,10 @@ class CacheManager:
         temp_path = os.path.splitext(cache_path)[0] + '_tmp.npz'
         try:
             # Changed this from np.savez_compressed to np.savez; switch back if needed
-            np.savez(temp_path, **save_dict)
+            if compressed:
+                np.savez_compressed(temp_path, **save_dict)
+            else:
+                np.savez(temp_path, **save_dict)
             # Atomic replace (works on Windows and POSIX)
             os.replace(temp_path, cache_path)
             return cache_path

@@ -25,11 +25,12 @@ class VisibilityWorker(QObject):
     Now safely handles Meshes (via Open3D), PointClouds, and DEMs.
     """
     def __init__(self, primary_target, camera_params_dict, compute_depth_maps=True, 
-                 cache_manager=None, cache_keys_dict=None, target_file_path=""):
+                 cache_manager=None, cache_keys_dict=None, target_file_path="", scale_factor=1.0):
         super().__init__()
         self.primary_target = primary_target
         self.camera_params_dict = camera_params_dict
         self.compute_depth_maps = compute_depth_maps
+        self.scale_factor = scale_factor
         
         # Store cache dependencies
         self.cache_manager = cache_manager
@@ -73,8 +74,24 @@ class VisibilityWorker(QObject):
                     
                     try:
                         # Primary: Batched VTK rasterization
+                        def update_status(current, total):
+                            try:
+                                from PyQt5.QtCore import QMetaObject, Qt, Q_ARG
+                                from PyQt5.QtWidgets import QApplication
+                                main_win = QApplication.instance().activeWindow()
+                                if main_win and hasattr(main_win, 'status_bar'):
+                                    QMetaObject.invokeMethod(
+                                        main_win.status_bar, "showMessage",
+                                        Qt.QueuedConnection,
+                                        Q_ARG(str, f"Computing 3D maps... ({current}/{total} cameras at {self.scale_factor}x)")
+                                    )
+                            except Exception:
+                                pass
+
                         batch_results = VisibilityManager.compute_batch_mesh_visibility_vtk(
-                            self.primary_target, params_list, self.compute_depth_maps
+                            self.primary_target, params_list, self.compute_depth_maps,
+                            scale_factor=self.scale_factor,
+                            progress_callback=update_status
                         )
                         for p, r in zip(paths, batch_results):
                             r['element_type'] = element_type

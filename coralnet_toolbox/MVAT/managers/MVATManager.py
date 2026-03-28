@@ -332,6 +332,8 @@ class MVATManager(QObject):
         self.compute_depth_maps_enabled = True
         # New toggle: whether to compute index maps in background
         self.compute_index_maps_enabled = True
+        # Scale factor for visibility map resolution (1.0 = native, 0.1 = lowest)
+        self.visibility_scale_factor = 0.50
         # Safety flag to prevent concurrent visibility computations
         self._is_computing_visibility = False
         # Track active worker threads to prevent GC
@@ -387,6 +389,7 @@ class MVATManager(QObject):
         self.viewer.focalPointChanged.connect(self._on_focal_point_changed)
         self.viewer.computeIndexMapsToggled.connect(self._on_compute_index_maps_toggled)
         self.viewer.computeDepthMapsToggled.connect(self._on_compute_depth_maps_toggled)
+        self.viewer.visibilityQualityChanged.connect(self._on_visibility_quality_changed)
         
         # 5. Main Window Sync
         if hasattr(self.annotation_window, 'mouseMoved'):
@@ -507,7 +510,34 @@ class MVATManager(QObject):
                 )
                 
                 if reply == QMessageBox.Yes:
-                    self._compute_visibility_async(primary_target, uncached_cameras)
+                    # Prompt for quality level
+                    from PyQt5.QtWidgets import QInputDialog
+                    qualities = ["Highest (100%)", "High (75%)", "Medium (50%)", "Low (25%)", "Lowest (10%)"]
+                    quality_map = dict(zip(qualities, [1.0, 0.75, 0.50, 0.25, 0.10]))
+
+                    current_idx = 0
+                    for i, s in enumerate([1.0, 0.75, 0.50, 0.25, 0.10]):
+                        if self.visibility_scale_factor == s:
+                            current_idx = i
+                            break
+
+                    choice, ok = QInputDialog.getItem(
+                        self.main_window,
+                        "Select Quality",
+                        "Choose the resolution scale for the maps:\n(Lower is faster but less accurate)",
+                        qualities,
+                        current_idx,
+                        False
+                    )
+
+                    if ok and choice:
+                        self.visibility_scale_factor = quality_map[choice]
+                        # Sync the View menu checkmark
+                        for action in self.viewer._quality_action_group.actions():
+                            if action.text() == choice:
+                                action.setChecked(True)
+                                break
+                        self._compute_visibility_async(primary_target, uncached_cameras)
         
         # FILTER: Only pass perspective cameras to grid UI
         perspective_cameras = {p: c for p, c in self.cameras.items() if not c.is_orthographic}    
@@ -652,6 +682,11 @@ class MVATManager(QObject):
         """Enable/disable background computation of index maps."""
         self.compute_index_maps_enabled = state
         self.main_window.status_bar.showMessage("Compute Index Maps: ON" if state else "Compute Index Maps: OFF", 2000)
+
+    def _on_visibility_quality_changed(self, scale_factor: float):
+        """Store the user-selected visibility resolution scale factor."""
+        self.visibility_scale_factor = scale_factor
+        print(f"Visibility quality scale set to {scale_factor}")
 
     def _on_visibility_computed(self, results: dict):
         """Handle results emitted from VisibilityWorker (runs on main thread)."""
@@ -1075,14 +1110,15 @@ class MVATManager(QObject):
             )
             QApplication.setOverrideCursor(Qt.WaitCursor)
 
-            # Pass the cache data to the worker
+            # Pass the cache data and scale factor to the worker
             worker = VisibilityWorker(
                 primary_target=primary_target, 
                 camera_params_dict=camera_params_dict, 
                 compute_depth_maps=self.compute_depth_maps_enabled,
                 cache_manager=self.cache_manager,
                 cache_keys_dict=cache_keys_dict,
-                target_file_path=primary_target.file_path if primary_target else ""
+                target_file_path=primary_target.file_path if primary_target else "",
+                scale_factor=self.visibility_scale_factor
             )
             
             thread = QThread()

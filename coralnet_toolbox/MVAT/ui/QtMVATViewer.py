@@ -135,6 +135,7 @@ class MVATViewer(QFrame):
     computeIndexMapsToggled = pyqtSignal(bool)
     computeDepthMapsToggled = pyqtSignal(bool)
     primaryTargetChanged = pyqtSignal(str)      # Emits product_id when primary target changes
+    visibilityQualityChanged = pyqtSignal(float)  # Emits scale factor (0.1 - 1.0) when quality changes
 
     def __init__(self, parent=None, point_size=1, show_rays=True):
         super().__init__(parent)
@@ -472,7 +473,33 @@ class MVATViewer(QFrame):
         self._update_primary_target_menu()  # Populate initially
 
         view_menu.addSeparator()
+
+        # Visibility Quality submenu
+        quality_menu = view_menu.addMenu("Visibility Quality")
+        quality_menu.setToolTip("Set the resolution scale for computing occlusion maps")
+
+        self._quality_action_group = QActionGroup(self)
+        self._quality_action_group.setExclusive(True)
+
+        quality_levels = [
+            ("Highest (100%)", 1.0),
+            ("High (75%)", 0.75),
+            ("Medium (50%)", 0.50),
+            ("Low (25%)", 0.25),
+            ("Lowest (10%)", 0.10),
+        ]
+
+        for label, scale in quality_levels:
+            action = QAction(label, self)
+            action.setCheckable(True)
+            if scale == 0.50:  # default to Medium
+                action.setChecked(True)
+            action.triggered.connect(lambda checked, s=scale: self.visibilityQualityChanged.emit(s))
+            self._quality_action_group.addAction(action)
+            quality_menu.addAction(action)
         
+        view_menu.addSeparator()
+
         # Background computation toggles
         action_index_maps = QAction("Compute Index Maps", self)
         action_index_maps.setCheckable(True)

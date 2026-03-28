@@ -610,7 +610,9 @@ class VisibilityManager:
     def compute_batch_mesh_visibility_vtk(cls,
                                           mesh_product: 'AbstractSceneProduct',
                                           camera_params_list: list,
-                                          compute_depth_map: bool = True) -> list:
+                                          compute_depth_map: bool = True,
+                                          scale_factor: float = 1.0,
+                                          progress_callback=None) -> list:
         """
         Batched VTK-based mesh rasterization.
         Performs RGB encoding and Plotter setup ONCE, then iterates through cameras.
@@ -621,7 +623,7 @@ class VisibilityManager:
         
         start_time = time.time()
         print(f"\n{'='*50}")
-        print(f"🎨 STARTING BATCH VTK RASTERIZATION FOR {len(camera_params_list)} CAMERAS")
+        print(f"🎨 STARTING BATCH VTK RASTERIZATION FOR {len(camera_params_list)} CAMERAS AT {scale_factor}x SCALE")
         print(f"{'='*50}")
         
         mesh = mesh_product.get_mesh()
@@ -654,8 +656,9 @@ class VisibilityManager:
         
         print("   -> Creating off-screen plotter...")
         
-        # FIX: Grab dimensions from the first camera to prevent expensive resizing
-        first_w, first_h = camera_params_list[0][3], camera_params_list[0][4]
+        # FIX: Grab scaled dimensions from the first camera to set initial plotter size
+        first_w = max(1, int(camera_params_list[0][3] * scale_factor))
+        first_h = max(1, int(camera_params_list[0][4] * scale_factor))
         plotter = pv.Plotter(off_screen=True, window_size=(first_w, first_h))
         plotter.set_background('black') 
         
@@ -672,21 +675,34 @@ class VisibilityManager:
         print(f"   ✅ Setup completed in {encode_time + plotter_setup_time:.4f}s")
         
         # --- 2. RENDER LOOP ---
-        print(f"\n   -> Rendering {len(camera_params_list)} cameras...")
+        print(f"\n   -> Rendering {len(camera_params_list)} cameras at {scale_factor}x scale...")
         render_start_time = time.time()
         results = []
         
         for i, (K, R, t, width, height) in enumerate(camera_params_list):
             cam_start = time.time()
-            
-            # 1. Resize check
+
+            # Progress callback (thread-safe status bar update)
+            if progress_callback is not None:
+                progress_callback(i + 1, len(camera_params_list))
+
+            # Calculate scaled render dimensions
+            render_w = max(1, int(width * scale_factor))
+            render_h = max(1, int(height * scale_factor))
+
+            # 1. Resize check (to scaled dimensions)
             current_size = plotter.window_size
-            if current_size[0] != width or current_size[1] != height:
-                plotter.window_size = (width, height)
-            
-            # 2. Config & Render
+            if current_size[0] != render_w or current_size[1] != render_h:
+                plotter.window_size = (render_w, render_h)
+
+            # Scale the intrinsic matrix
+            K_scaled = K.copy()
+            K_scaled[0, :3] *= scale_factor
+            K_scaled[1, :3] *= scale_factor
+
+            # 2. Config & Render using scaled parameters
             t0 = time.time()
-            cls._configure_vtk_camera(plotter, K, R, t, width, height, mesh.bounds)
+            cls._configure_vtk_camera(plotter, K_scaled, R, t, render_w, render_h, mesh.bounds)
             plotter.render()
             t_render = time.time() - t0
             
@@ -702,7 +718,14 @@ class VisibilityManager:
             decoded = (screenshot[:, :, 0].astype(np.int32) +
                        screenshot[:, :, 1].astype(np.int32) * 256 +
                        screenshot[:, :, 2].astype(np.int32) * 65536)
-            index_map = decoded - 1
+            small_index_map = decoded - 1
+
+            # Upsample to native resolution using nearest-neighbour interpolation
+            if scale_factor != 1.0:
+                import cv2
+                index_map = cv2.resize(small_index_map, (width, height), interpolation=cv2.INTER_NEAREST)
+            else:
+                index_map = small_index_map
             t_decode = time.time() - t0
             
             # 5. Depth Extraction
@@ -711,8 +734,15 @@ class VisibilityManager:
             if compute_depth_map:
                 try:
                     vtk_depth = plotter.get_image_depth(fill_value=np.nan)
-                    depth_map = -vtk_depth.astype(np.float32)
+                    small_depth = -vtk_depth.astype(np.float32)
+
+                    if scale_factor != 1.0:
+                        import cv2
+                        depth_map = cv2.resize(small_depth, (width, height), interpolation=cv2.INTER_NEAREST)
+                    else:
+                        depth_map = small_depth
                 except Exception as e:
+                    print(f"   ⚠️ Failed to extract depth for camera {i}: {e}")
                     depth_map = np.full((height, width), np.nan, dtype=np.float32)
             t_depth = time.time() - t0
             
