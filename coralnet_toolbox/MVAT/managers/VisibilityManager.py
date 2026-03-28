@@ -264,6 +264,41 @@ class VisibilityManager:
             print(f"🎯 Built Sub-BVH in {time.time() - build_start:.3f}s")
             
         return scene, subset_cell_ids, len(subset_triangles)
+    
+    @classmethod
+    def _compute_mesh_visibility_open3d(cls,
+                                        mesh_product: 'AbstractSceneProduct',
+                                        K: np.ndarray,
+                                        R: np.ndarray,
+                                        t: np.ndarray,
+                                        width: int,
+                                        height: int,
+                                        compute_depth_map: bool = True) -> dict:
+        """
+        Single-camera wrapper for Open3D mesh visibility computation.
+        Delegates to the optimized batched method.
+        """
+        # Package the single camera parameters into the expected list format
+        camera_params_list = [(K, R, t, width, height)]
+        
+        # Call the existing batched Open3D method
+        results = cls.compute_batch_mesh_visibility_open3d(
+            mesh_product, 
+            camera_params_list, 
+            compute_depth_maps=compute_depth_map
+        )
+        
+        # Return the single result dictionary
+        if results and len(results) > 0:
+            return results[0]
+            
+        # Fallback empty dictionary if something goes wrong
+        return {
+            'index_map': np.full((height, width), -1, dtype=np.int32),
+            'visible_indices': np.array([], dtype=np.int32),
+            'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
+            'inverted_index': None,
+        }
             
     @classmethod
     def compute_batch_mesh_visibility_open3d(cls, 

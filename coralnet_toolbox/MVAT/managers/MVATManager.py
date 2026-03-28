@@ -6,6 +6,7 @@ Handles the business logic, data synchronization, and signal routing between
 the MainWindow, RasterManager, MVATViewer (3D), and ContextMatrix (2D).
 """
 
+import os
 import time
 import numpy as np
 
@@ -475,9 +476,42 @@ class MVATManager(QObject):
             QMessageBox.information(self.main_window, "No Camera Data", "No valid camera parameters found.")
             return
         
-        # FILTER: Only pass perspective cameras to grid UI
-        perspective_cameras = {p: c for p, c in self.cameras.items() if not c.is_orthographic}
+        # =====================================================================
+        # Pre-computation Cache Check and Dialog
+        # =====================================================================
+        primary_target = self.viewer.scene_context.get_primary_target()
         
+        # We can only pre-compute if a 3D model is loaded FIRST.
+        if primary_target is not None and self.cache_manager is not None and self.compute_index_maps_enabled:
+            target_path = primary_target.file_path
+            element_type = primary_target.get_element_type()
+            uncached_cameras = []
+            
+            for path, cam in self.cameras.items():
+                cache_key = cam.transform_matrix if cam.is_orthographic else cam._raster.extrinsics
+                cache_path = self.cache_manager.get_cache_path(cache_key, target_path, element_type)
+                
+                # Check if the cache file exists on disk
+                if not os.path.exists(cache_path):
+                    uncached_cameras.append(cam)
+            
+            if uncached_cameras:
+                reply = QMessageBox.question(
+                    self.main_window,
+                    "Pre-compute Visibility?",
+                    f"Found {len(uncached_cameras)} cameras without cached visibility maps.\n\n"
+                    "Would you like to compute them all now? (This will take time upfront, but makes navigating the scene instantly responsive.)\n\n"
+                    "Select 'No' to compute them in the background as you click them.",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+                
+                if reply == QMessageBox.Yes:
+                    self._compute_visibility_async(primary_target, uncached_cameras)
+        
+        # FILTER: Only pass perspective cameras to grid UI
+        perspective_cameras = {p: c for p, c in self.cameras.items() if not c.is_orthographic}    
+
         if self.context_matrix is not None:
             try:
                 self.context_matrix.update_stats(len(perspective_cameras), ortho_count)

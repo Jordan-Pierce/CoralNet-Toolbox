@@ -371,6 +371,7 @@ class Raster(QObject):
             element_type (str, optional): Type of element IDs in the index map.
                 One of 'point' (point cloud), 'face' (mesh faces), or 'cell' (DEM grid).
                 Defaults to 'point' for backward compatibility.
+            inverted_index (dict, optional): CSR inverted index with keys
         """
         if not isinstance(index_map, np.ndarray):
             raise ValueError("Index map must be a numpy array")
