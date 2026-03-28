@@ -304,23 +304,66 @@ class VisibilityManager:
     def compute_batch_mesh_visibility_open3d(cls, 
                                              mesh_product, 
                                              camera_params_list, 
-                                             compute_depth_maps=True) -> list:
+                                             compute_depth_maps=True,
+                                             use_global_bvh=False) -> list:
         """
-        Batched Open3D raycasting with Dynamic Frustum Culling and Downsampling.
+        Batched Open3D raycasting with dynamic options for Frustum Culling or Global BVH.
+        Includes detailed timing metrics for performance comparison.
         """
         import open3d as o3d
         import time
         import cv2
         
         start_time = time.time()
+        print(f"\n{'='*50}")
+        print(f"🚀 STARTING BATCH VISIBILITY FOR {len(camera_params_list)} CAMERAS")
+        print(f"{'='*50}")
         
-        # 1. Dynamically build the culled BVH
-        scene, original_cell_ids, num_faces = cls._build_subset_bvh(mesh_product, camera_params_list)
+        if use_global_bvh:
+            # ---------------------------------------------------------
+            # STRATEGY 1: Global BVH (Build once, cast deeper tree)
+            # ---------------------------------------------------------
+            print("🌐 STRATEGY: Global BVH")
+            mesh_product.prepare_geometry()
+            
+            # If the persistent BVH hasn't been built yet, build it now
+            if not getattr(mesh_product, '_o3d_raycasting_scene', None):
+                print("   -> Building Global BVH from scratch...")
+                build_start = time.time()
+                scene = o3d.t.geometry.RaycastingScene()
+                v_tensor = o3d.core.Tensor(mesh_product._cached_vertices, dtype=o3d.core.Dtype.Float32)
+                
+                # Get the full list of triangles (not culled)
+                triangles = mesh_product._cached_triangles_pt.cpu().numpy().astype(np.uint32)
+                t_tensor = o3d.core.Tensor(triangles, dtype=o3d.core.Dtype.UInt32)
+                
+                scene.add_triangles(v_tensor, t_tensor)
+                mesh_product._o3d_raycasting_scene = scene
+                bvh_build_time = time.time() - build_start
+                print(f"   ✅ Global BVH built in {bvh_build_time:.4f}s (Faces: {len(triangles):,})")
+            else:
+                print("   ✅ Using cached Global BVH")
+                bvh_build_time = 0.0
+            
+            scene = mesh_product._o3d_raycasting_scene
+            original_cell_ids = getattr(mesh_product, '_original_cell_ids', None)
+            num_faces = len(mesh_product._cached_triangles_pt)
+            
+        else:
+            # ---------------------------------------------------------
+            # STRATEGY 2: Dynamic Sub-BVH (Cull on GPU, build shallow tree)
+            # ---------------------------------------------------------
+            print("✂️ STRATEGY: Culled Sub-BVH")
+            bvh_build_start = time.time()
+            scene, original_cell_ids, num_faces = cls._build_subset_bvh(mesh_product, camera_params_list)
+            bvh_build_time = time.time() - bvh_build_start
+            print(f"   ✅ Sub-BVH prep & build completed in {bvh_build_time:.4f}s")
 
         results = []
         
-        # If the culler removed everything, return empty maps
+        # If the culler removed everything (or empty mesh), return empty maps
         if num_faces == 0:
+            print("   ⚠️ No faces visible. Returning empty maps.")
             return [{
                 'index_map': np.full((h, w), -1, dtype=np.int32),
                 'visible_indices': np.array([], dtype=np.int32),
@@ -330,6 +373,9 @@ class VisibilityManager:
 
         # 2. Fast Downsampled Raycasting
         SCALE_FACTOR = 0.25  # 1/4 resolution raycasting
+        print(f"\n   -> Starting Raycasting (Scale: {SCALE_FACTOR}x)...")
+        
+        raycast_start_time = time.time()
         
         for K, R, t, width, height in camera_params_list:
             E = np.eye(4, dtype=np.float64)
@@ -385,7 +431,16 @@ class VisibilityManager:
                 'inverted_index': cls._build_inverted_index(index_map),
             })
             
-        print(f"✅ Full Open3D cycle for {len(camera_params_list)} cameras completed in {time.time() - start_time:.3f}s")
+        raycast_time = time.time() - raycast_start_time
+        total_time = time.time() - start_time
+        
+        print(f"   ✅ Raycasting finished in {raycast_time:.4f}s (Avg: {raycast_time/len(camera_params_list):.4f}s per camera)")
+        print(f"\n📊 SUMMARY: {'Global BVH' if use_global_bvh else 'Sub-BVH'}")
+        print(f"   - BVH Build/Prep : {bvh_build_time:.4f}s")
+        print(f"   - Raycast Loop   : {raycast_time:.4f}s")
+        print(f"   - Total Time     : {total_time:.4f}s")
+        print(f"{'='*50}\n")
+        
         return results
 
     @classmethod
