@@ -1005,6 +1005,10 @@ class MVATViewer(QFrame):
             product = self._create_product_from_file(file_path)
             
             if product is not None:
+                # Force the GPU extraction now while the cursor is still a spinning wheel!
+                if hasattr(product, 'prepare_geometry'):
+                    product.prepare_geometry()
+                    
                 self.add_product(product)
                 self.render_scene()
                 

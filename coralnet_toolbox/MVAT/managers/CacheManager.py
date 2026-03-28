@@ -182,7 +182,8 @@ class CacheManager:
         # ending in '.npz', so the temp name must end in '.npz' or the rename fails.
         temp_path = os.path.splitext(cache_path)[0] + '_tmp.npz'
         try:
-            np.savez_compressed(temp_path, **save_dict)
+            # Changed this from np.savez_compressed to np.savez; switch back if needed
+            np.savez(temp_path, **save_dict)
             # Atomic replace (works on Windows and POSIX)
             os.replace(temp_path, cache_path)
             return cache_path

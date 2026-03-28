@@ -1,6 +1,8 @@
 import traceback
+import threading
 
 import numpy as np
+
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
@@ -70,24 +72,35 @@ class VisibilityWorker(QObject):
                     params_list = list(perspective_params.values())
                     
                     try:
-                        # Fast Path: Batched Open3D
-                        batch_results = VisibilityManager.compute_batch_mesh_visibility_open3d(
+                        # Primary: Batched VTK rasterization
+                        batch_results = VisibilityManager.compute_batch_mesh_visibility_vtk(
                             self.primary_target, params_list, self.compute_depth_maps
                         )
                         for p, r in zip(paths, batch_results):
                             r['element_type'] = element_type
                             results[p] = r
                             
-                    except ImportError:
-                        # Slow Fallback: Sequential VTK/Point Sampling
-                        print("⚠️ Open3D not found. Falling back to sequential mesh processing.")
-                        for path, params in perspective_params.items():
-                            K, R, t, width, height = params
-                            result = VisibilityManager._compute_mesh_visibility(
-                                self.primary_target, K, R, t, width, height, self.compute_depth_maps
+                    except Exception as vtk_err:
+                        print(f"⚠️ Batch VTK rasterization failed: {vtk_err}. Trying Open3D fallback...")
+                        try:
+                            # Fallback: Batched Open3D raycasting
+                            batch_results = VisibilityManager.compute_batch_mesh_visibility_open3d(
+                                self.primary_target, params_list, self.compute_depth_maps
                             )
-                            result['element_type'] = element_type
-                            results[path] = result
+                            for p, r in zip(paths, batch_results):
+                                r['element_type'] = element_type
+                                results[p] = r
+                                
+                        except Exception as o3d_err:
+                            print(f"⚠️ Open3D fallback failed: {o3d_err}. Falling back to sequential processing...")
+                            # Last Resort: Sequential processing per-camera
+                            for path, params in perspective_params.items():
+                                K, R, t, width, height = params
+                                result = VisibilityManager._compute_mesh_visibility(
+                                    self.primary_target, K, R, t, width, height, self.compute_depth_maps
+                                )
+                                result['element_type'] = element_type
+                                results[path] = result
 
             # ==========================================
             # STRATEGY B: POINT CLOUD
@@ -132,24 +145,50 @@ class VisibilityWorker(QObject):
                             result['element_type'] = element_type
                             results[path] = result
 
-            # Save to disk on the background thread before emitting!
+            # =================================================================
+            # 1. Pre-fill cache paths so the main thread knows not to save them
+            # =================================================================
             if self.cache_manager is not None and self.target_file_path and self.cache_keys_dict:
                 for path, result_dict in results.items():
                     cache_key = self.cache_keys_dict.get(path)
                     if cache_key is not None:
-                        cache_path = self.cache_manager.save_visibility(
+                        element_type = result_dict.get('element_type', 'point')
+                        expected_cache_path = self.cache_manager.get_cache_path(
+                            cache_key, self.target_file_path, element_type
+                        )
+                        result_dict['cache_path'] = expected_cache_path
+
+            # =================================================================
+            # 2. Define the background saving task
+            # =================================================================
+            def save_to_disk_task(save_results, cache_mgr, target_path, keys_dict):
+                for path, result_dict in save_results.items():
+                    cache_key = keys_dict.get(path)
+                    if cache_key is not None:
+                        cache_mgr.save_visibility(
                             cache_key,
-                            self.target_file_path,
+                            target_path,
                             result_dict.get('index_map'),
                             result_dict.get('visible_indices'),
                             result_dict.get('depth_map') if self.compute_depth_maps else None,
                             element_type=result_dict.get('element_type', 'point'),
                             inverted_index=result_dict.get('inverted_index')                        
                         )
-                        # Store the file path in the result so the main thread knows where it went
-                        result_dict['cache_path'] = cache_path
 
-            # Emit final results back to the main thread
+            # =================================================================
+            # 3. Fire and forget the disk writing on a separate daemon thread
+            # =================================================================
+            if self.cache_manager is not None and self.target_file_path and self.cache_keys_dict:
+                io_thread = threading.Thread(
+                    target=save_to_disk_task, 
+                    args=(results, self.cache_manager, self.target_file_path, self.cache_keys_dict),
+                    daemon=True
+                )
+                io_thread.start()
+
+            # =================================================================
+            # 4. Emit final results back to the main thread IMMEDIATELY
+            # =================================================================
             self.signals.finished.emit(results)
 
         except Exception as e:
