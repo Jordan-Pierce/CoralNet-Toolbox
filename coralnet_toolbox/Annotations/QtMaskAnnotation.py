@@ -238,10 +238,12 @@ class MaskAnnotation(Annotation):
             self._update_full_canvas()
             self.graphics_item.update()
 
-    def update_mask(self, brush_location: QPointF, brush_mask: np.ndarray, new_class_id: int, silent: bool = False):
+    def update_mask(self, brush_location: QPointF, brush_mask: np.ndarray, new_class_id: int, silent: bool = False, use_new_method: bool = True):
         """
         Modify the mask data based on a brush stroke, respecting pre-locked pixels.
+        Includes A/B testing for Diff-Filtering to skip redundant GPU/Qt updates.
         """
+
         x_start, y_start = int(brush_location.x()), int(brush_location.y())
         brush_h, brush_w = brush_mask.shape
         mask_h, mask_w = self.mask_data.shape
@@ -264,30 +266,50 @@ class MaskAnnotation(Annotation):
         clipped_brush_mask = brush_mask[brush_y_offset:brush_y_offset + target_slice.shape[0],
                                         brush_x_offset:brush_x_offset + target_slice.shape[1]]
         
-        # Identify pixels within the target slice that are NOT locked
         unlocked_pixels_mask = target_slice < self.LOCK_BIT
-        
-        # The final brush can only be applied where the brush shape is true AND the target pixel is not locked
-        final_brush_mask = clipped_brush_mask & unlocked_pixels_mask
 
-        # Apply the final, protected brush mask to the data
-        target_slice[final_brush_mask] = new_class_id
-        
-        # Trigger a visual update for the changed rectangle
-        changed_rect_coords = (clipped_x_start, clipped_y_start, x_end, y_end)
-        self.update_graphics_item(update_rect=changed_rect_coords)
-        
+        if use_new_method:
+            # --- NEW: DIFF FILTER & DIRECT CANVAS INJECTION ---
+            pixels_to_change = clipped_brush_mask & unlocked_pixels_mask & (target_slice != new_class_id)
+            pixels_updated = np.count_nonzero(pixels_to_change)
+
+            # FAST EXIT: If nothing actually changed, don't trigger a Qt redraw!
+            if pixels_updated == 0:
+                return
+
+            # 1. Apply to semantic data
+            target_slice[pixels_to_change] = new_class_id
+            
+            # 2. Update visual canvas directly (bypassing _update_canvas_slice memory allocation)
+            color_map = self._get_color_map()
+            target_colored_slice = self.colored_mask[clipped_y_start:y_end, clipped_x_start:x_end]
+            target_colored_slice[pixels_to_change] = color_map[new_class_id]
+            
+            # 3. Trigger localized Qt repaint
+            if self.graphics_item is not None:
+                qt_rect = QRectF(clipped_x_start, clipped_y_start, x_end - clipped_x_start, y_end - clipped_y_start)
+                self.graphics_item.update(qt_rect)
+            
+        else:
+            # --- OLD: RAW APPLY & CANVAS SLICE REBUILD ---
+            final_brush_mask = clipped_brush_mask & unlocked_pixels_mask
+            pixels_updated = np.count_nonzero(final_brush_mask)
+            
+            target_slice[final_brush_mask] = new_class_id
+            
+            changed_rect_coords = (clipped_x_start, clipped_y_start, x_end, y_end)
+            self.update_graphics_item(update_rect=changed_rect_coords)
+            
         self._invalidate_stats_cache()
         if not silent:
             self.annotationUpdated.emit(self)
         
-    def update_mask_at_indices(self, flat_indices: np.ndarray, class_id: int, silent: bool = False, use_flat_injection: bool = True):
+    def update_mask_at_indices(self, flat_indices: np.ndarray, class_id: int, silent: bool = False, method: str = "hybrid_diff"):
         """
         Paint ``class_id`` at the exact pixel positions given by ``flat_indices``.
         Respects the LOCK_BIT: locked pixels are never overwritten.
-        Includes a toggle and print statements for benchmarking visual update methods.
+        Includes a multi-method router and benchmark timers to test memory injection speeds.
         """
-        import time  # Imported locally for the benchmark
 
         if flat_indices is None or len(flat_indices) == 0:
             return
@@ -303,31 +325,48 @@ class MaskAnnotation(Annotation):
         # ravel() returns a C-contiguous view so mutations write through to mask_data
         flat_view = self.mask_data.ravel()
 
-        # Respect locks: only paint unlocked pixels
-        unlocked = valid[flat_view[valid] < self.LOCK_BIT]
-        if len(unlocked) == 0:
-            return
+        if method in ["flat_raw", "bbox_raw"]:
+            # --- OLD: Raw Lock Check Only ---
+            unlocked = valid[flat_view[valid] < self.LOCK_BIT]
+            if len(unlocked) == 0:
+                return
+            target_indices = unlocked
+        else:
+            # --- NEW: Diff-Only Write Filter ---
+            current_vals = flat_view[valid]
+            # Only target pixels that are unlocked AND actually need to change color
+            mask_to_update = (current_vals < self.LOCK_BIT) & (current_vals != class_id)
+            target_indices = valid[mask_to_update]
+            
+            if len(target_indices) == 0:
+                return
+
+        pixels_updated = len(target_indices)
 
         # 1. Update the semantic mask data
-        flat_view[unlocked] = class_id
+        flat_view[target_indices] = class_id
 
-        # --- START BENCHMARK TIMER ---
-        start_time = time.perf_counter()
+        # Determine the actual rendering path for the hybrid method
+        render_path = method
+        if render_path == "hybrid_diff":
+            if pixels_updated < 250000:
+                render_path = "bbox_diff"
+            else:
+                render_path = "flat_diff"
 
         # 2. Update the visual canvas
-        if use_flat_injection:
+        if "flat" in render_path:
             # --- Direct 1D Canvas Repaint ---
             color_map = self._get_color_map()
             colored_flat = self.colored_mask.reshape(-1, 4)
-            colored_flat[unlocked] = color_map[class_id]
+            colored_flat[target_indices] = color_map[class_id]
 
             if self.graphics_item is not None:
                 self.graphics_item.update()
                 
-            method_name = "Flat 1D Injection"
-        else:
+        elif "bbox" in render_path:
             # --- Localized Canvas Repaint ---
-            y_coords, x_coords = np.divmod(unlocked, width)
+            y_coords, x_coords = np.divmod(target_indices, width)
             
             x_min, x_max = int(x_coords.min()), int(x_coords.max())
             y_min, y_max = int(y_coords.min()), int(y_coords.max())
@@ -347,27 +386,18 @@ class MaskAnnotation(Annotation):
                                  update_rect[2] - update_rect[0], 
                                  update_rect[3] - update_rect[1])
                 self.graphics_item.update(qt_rect)
-                
-            method_name = "2D Bounding Box"
-
-        # --- STOP BENCHMARK TIMER & PRINT ---
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-        print(f"[Benchmark] {method_name} took: {elapsed_ms:.3f} ms (Pixels updated: {len(unlocked)})")
 
         # 3. Post-update cleanup
         self._invalidate_stats_cache()
         if not silent:
             self.annotationUpdated.emit(self)
 
-    def update_mask_with_mask(self, subset_mask: np.ndarray, top_left: tuple[int, int], silent: bool = False):
+    def update_mask_with_mask(self, subset_mask: np.ndarray, top_left: tuple[int, int], silent: bool = False, use_new_method: bool = True):
         """
         Updates a subset area of the mask with a provided mask containing multiple labels.
-        
-        Args:
-            subset_mask: A 2D numpy array with class IDs for the subset area.
-            top_left: A tuple (x, y) specifying the top-left corner where to apply the subset.
-            silent: If True, do not emit annotationUpdated signal.
+        Includes A/B testing for Diff-Filtering to skip redundant GPU/Qt updates.
         """
+
         x, y = top_left
         h, w = subset_mask.shape
         
@@ -383,20 +413,44 @@ class MaskAnnotation(Annotation):
         sx_end = sx_start + (x_end - x_start)
         sy_end = sy_start + (y_end - y_start)
         
-        # Get the target slice
+        # Get the target slices
         target_slice = self.mask_data[y_start:y_end, x_start:x_end]
         subset_slice = subset_mask[sy_start:sy_end, sx_start:sx_end]
         
-        # Identify pixels within the target slice that are NOT locked
         unlocked_pixels_mask = target_slice < self.LOCK_BIT
-        
-        # Apply the subset mask only to unlocked pixels
-        target_slice[unlocked_pixels_mask] = subset_slice[unlocked_pixels_mask]
-        
-        # Trigger a visual update for the changed rectangle
-        update_rect = (x_start, y_start, x_end, y_end)
-        self.update_graphics_item(update_rect=update_rect)
-        
+
+        if use_new_method:
+            # --- NEW: DIFF FILTER & DIRECT CANVAS INJECTION ---
+            # Only update pixels that are unlocked AND actually differ from the subset mask
+            pixels_to_change = unlocked_pixels_mask & (target_slice != subset_slice)
+            pixels_updated = np.count_nonzero(pixels_to_change)
+            
+            # FAST EXIT: If the predicted mask matches what is already there, skip redraw!
+            if pixels_updated == 0:
+                return
+                
+            # 1. Apply the subset mask only to pixels that need changing
+            target_slice[pixels_to_change] = subset_slice[pixels_to_change]
+            
+            # 2. Update visual canvas directly
+            color_map = self._get_color_map()
+            target_colored_slice = self.colored_mask[y_start:y_end, x_start:x_end]
+            new_class_ids = subset_slice[pixels_to_change]
+            target_colored_slice[pixels_to_change] = color_map[new_class_ids]
+            
+            # 3. Trigger localized Qt repaint
+            if self.graphics_item is not None:
+                qt_rect = QRectF(x_start, y_start, x_end - x_start, y_end - y_start)
+                self.graphics_item.update(qt_rect)
+                
+        else:
+            # --- OLD: RAW APPLY & CANVAS SLICE REBUILD ---
+            pixels_updated = np.count_nonzero(unlocked_pixels_mask)
+            target_slice[unlocked_pixels_mask] = subset_slice[unlocked_pixels_mask]
+            
+            update_rect = (x_start, y_start, x_end, y_end)
+            self.update_graphics_item(update_rect=update_rect)
+            
         self._invalidate_stats_cache()
         if not silent:
             self.annotationUpdated.emit(self)

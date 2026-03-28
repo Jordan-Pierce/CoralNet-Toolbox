@@ -344,8 +344,27 @@ class MVATManager(QObject):
         self.selection_model = SelectionManager(self)
         self.cache_manager = CacheManager("")
         self.mouse_bridge = MousePositionBridge(self)
-        
+
+        # --- 3D Viewer Render Throttle ---
+        self._viewer_update_timer = QTimer()
+        self._viewer_update_timer.setSingleShot(True)
+        self._viewer_update_timer.setInterval(50)  # ~20 FPS for the 3D viewport
+        self._viewer_update_timer.timeout.connect(self._do_viewer_update)
+
         self._setup_connections()
+
+    def _request_viewer_update(self):
+        """Requests a 3D redraw without spamming the GPU."""
+        if not self._viewer_update_timer.isActive():
+            self._viewer_update_timer.start()
+
+    def _do_viewer_update(self):
+        """Performs the actual synchronous PyVista render."""
+        if self.viewer:
+            try:
+                self.viewer.update()
+            except Exception:
+                pass
 
     def _setup_connections(self):
         """
@@ -1761,10 +1780,7 @@ class MVATManager(QObject):
                     primary_target.apply_labels(painted_ids, source_class_id, target_color)
                     
                     # 4. Tell the 3D viewer to refresh to show the new colors instantly
-                    try:
-                        self.viewer.update()
-                    except Exception:
-                        pass
+                    self._request_viewer_update()
 
         # Projections for 2D fallback — computed lazily inside the loop
         projections = None
@@ -1831,9 +1847,9 @@ class MVATManager(QObject):
                         target_mask.visible_label_ids.add(label_id)
                         target_mask.update_graphics_item()
 
-                    # Push the updated mask pixels into the context canvas overlay
+                    # Only mount the overlay if it isn't already attached to the canvas
                     context_canvas = self._get_context_canvas_for_path(target_path)
-                    if context_canvas is not None:
+                    if context_canvas is not None and context_canvas._mask_overlay_item is None:
                         context_canvas.set_mask_overlay(target_mask)
                 except Exception:
                     pass
@@ -1921,10 +1937,7 @@ class MVATManager(QObject):
                     primary_target.apply_labels(painted_ids, source_class_id, target_color)
                     
                     # 4. Tell the 3D viewer to refresh to show the new colors instantly
-                    try:
-                        self.viewer.update()
-                    except Exception:
-                        pass
+                    self._request_viewer_update()
         
         # Projections for 2D fallback — computed lazily
         projections = None
@@ -2000,9 +2013,9 @@ class MVATManager(QObject):
                     # Sync label map after applying pixels
                     target_mask.sync_label_map()
                     
-                    # Push the updated mask pixels into the context canvas overlay
+                    # Only mount the overlay if it isn't already attached to the canvas
                     context_canvas = self._get_context_canvas_for_path(target_path)
-                    if context_canvas is not None:
+                    if context_canvas is not None and context_canvas._mask_overlay_item is None:
                         context_canvas.set_mask_overlay(target_mask)
                 except Exception:
                     pass
@@ -2247,10 +2260,7 @@ class MVATManager(QObject):
                     primary_target.apply_labels(painted_ids, source_class_id, target_color)
                     
                     # 4. Tell the 3D viewer to refresh
-                    try:
-                        self.viewer.update()
-                    except Exception:
-                        pass
+                    self._request_viewer_update()
 
         # Projections for 2D fallback — computed lazily inside the loop
         projections = None
@@ -2316,9 +2326,9 @@ class MVATManager(QObject):
                         target_mask.visible_label_ids.add(label_id)
                         target_mask.update_graphics_item()
 
-                    # Refresh the overlay
+                    # Only mount the overlay if it isn't already attached to the canvas
                     context_canvas = self._get_context_canvas_for_path(target_path)
-                    if context_canvas is not None:
+                    if context_canvas is not None and context_canvas._mask_overlay_item is None:
                         context_canvas.set_mask_overlay(target_mask)
                 except Exception:
                     pass
