@@ -177,20 +177,32 @@ class Camera:
             if element_ids is None or not isinstance(element_ids, np.ndarray) or len(element_ids) == 0:
                 return np.empty(0, dtype=np.int64)
 
-            # --- LUT Setup ---
+            # --- LUT Setup (cached to avoid per-call allocation) ---
             current_map_id = id(self._raster.index_map)
             if getattr(self, '_cached_map_id', None) != current_map_id:
                 self._cached_max_id = int(np.max(self._raster.index_map))
                 self._cached_map_id = current_map_id
+                # Invalidate the cached LUT so it gets rebuilt at the new size
+                self._cached_lut = None
+                self._cached_lut_dirty_ids = None
                 
             max_id = self._cached_max_id
             
             valid_query_ids = element_ids[element_ids <= max_id]
             if len(valid_query_ids) == 0:
                 return np.empty(0, dtype=np.int64)
-                
-            lut = np.zeros(max_id + 2, dtype=bool)
+
+            # Reuse a persistent LUT, only zeroing the indices we set last time
+            lut = getattr(self, '_cached_lut', None)
+            dirty = getattr(self, '_cached_lut_dirty_ids', None)
+            if lut is None or len(lut) < max_id + 2:
+                lut = np.zeros(max_id + 2, dtype=bool)
+                self._cached_lut = lut
+            elif dirty is not None and len(dirty) > 0:
+                lut[dirty] = False
+            
             lut[valid_query_ids] = True
+            self._cached_lut_dirty_ids = valid_query_ids
             
             # --- Localized Sub-grid Search ---
             if bbox is not None:

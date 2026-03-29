@@ -42,6 +42,11 @@ class BrushTool(Tool):
         self._sync_timer.setSingleShot(True)
         self._sync_timer.timeout.connect(self._flush_stroke)
         self._accumulated_points = []
+        
+        # Callbacks fired when painting starts/stops (used by MVATManager
+        # to suppress expensive hover processing during active brush strokes)
+        self.paint_start_callback = None
+        self.paint_stop_callback = None
 
     def _create_brush_mask(self):
         """Creates a boolean numpy array for the brush shape."""
@@ -82,7 +87,12 @@ class BrushTool(Tool):
 
         self.painting = not self.painting
         if self.painting:
+            if self.paint_start_callback:
+                self.paint_start_callback()
             self._apply_brush(event)
+        else:
+            if self.paint_stop_callback:
+                self.paint_stop_callback()
 
     def mouseMoveEvent(self, event):
         """Handles mouse dragging, shows the brush circle, and applies brush if painting is active."""
@@ -215,15 +225,21 @@ class BrushTool(Tool):
 
     def deactivate(self):
         """Deactivate the brush tool and stop any current operations."""
+        was_painting = self.painting
         self.painting = False
         self._sync_timer.stop()
+        if was_painting and self.paint_stop_callback:
+            self.paint_stop_callback()
         if self._accumulated_points:
             self._flush_stroke()
         super().deactivate()
         
     def stop_current_drawing(self):
         """Force stop of current drawing by stopping painting mode."""
+        was_painting = self.painting
         self.painting = False
+        if was_painting and self.paint_stop_callback:
+            self.paint_stop_callback()
 
     def _apply_brush(self, event):
         """Applies the brush locally and queues it for 3D sync."""
