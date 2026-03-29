@@ -285,8 +285,8 @@ class MaskAnnotation(Annotation):
             target_colored_slice = self.colored_mask[clipped_y_start:y_end, clipped_x_start:x_end]
             target_colored_slice[pixels_to_change] = color_map[new_class_id]
             
-            # 3. Trigger localized Qt repaint
-            if self.graphics_item is not None:
+            # 3. Trigger localized Qt repaint (respect `silent`)
+            if self.graphics_item is not None and not silent:
                 qt_rect = QRectF(clipped_x_start, clipped_y_start, x_end - clipped_x_start, y_end - clipped_y_start)
                 self.graphics_item.update(qt_rect)
             
@@ -298,7 +298,8 @@ class MaskAnnotation(Annotation):
             target_slice[final_brush_mask] = new_class_id
             
             changed_rect_coords = (clipped_x_start, clipped_y_start, x_end, y_end)
-            self.update_graphics_item(update_rect=changed_rect_coords)
+            if not silent:
+                self.update_graphics_item(update_rect=changed_rect_coords)
             
         self._invalidate_stats_cache()
         if not silent:
@@ -361,7 +362,7 @@ class MaskAnnotation(Annotation):
             colored_flat = self.colored_mask.reshape(-1, 4)
             colored_flat[target_indices] = color_map[class_id]
 
-            if self.graphics_item is not None:
+            if self.graphics_item is not None and not silent:
                 self.graphics_item.update()
                 
         elif "bbox" in render_path:
@@ -380,7 +381,7 @@ class MaskAnnotation(Annotation):
             
             self._update_canvas_slice(update_rect)
             
-            if self.graphics_item is not None:
+            if self.graphics_item is not None and not silent:
                 qt_rect = QRectF(update_rect[0], 
                                  update_rect[1], 
                                  update_rect[2] - update_rect[0], 
@@ -438,8 +439,8 @@ class MaskAnnotation(Annotation):
             new_class_ids = subset_slice[pixels_to_change]
             target_colored_slice[pixels_to_change] = color_map[new_class_ids]
             
-            # 3. Trigger localized Qt repaint
-            if self.graphics_item is not None:
+            # 3. Trigger localized Qt repaint (respect `silent`)
+            if self.graphics_item is not None and not silent:
                 qt_rect = QRectF(x_start, y_start, x_end - x_start, y_end - y_start)
                 self.graphics_item.update(qt_rect)
                 
@@ -449,7 +450,8 @@ class MaskAnnotation(Annotation):
             target_slice[unlocked_pixels_mask] = subset_slice[unlocked_pixels_mask]
             
             update_rect = (x_start, y_start, x_end, y_end)
-            self.update_graphics_item(update_rect=update_rect)
+            if not silent:
+                self.update_graphics_item(update_rect=update_rect)
             
         self._invalidate_stats_cache()
         if not silent:
