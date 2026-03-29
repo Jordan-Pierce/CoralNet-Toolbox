@@ -27,7 +27,6 @@ from coralnet_toolbox.MVAT.core.constants import (
     RAY_COLOR_SELECTED,
     RAY_COLOR_HIGHLIGHTED,
     RAY_COLOR_INVALID,
-    MOUSE_THROTTLE_MS,
 )
 
 # DEMProduct removed: orthomosaics/DEMs are no longer scene products
@@ -52,7 +51,6 @@ class MousePositionBridge(QObject):
     controller.
 
     Responsibilities:
-    - Throttle rapid mouse-move events to avoid UI/compute thrashing.
     - Build a 3D ray from a selected camera and a 2D image pixel (uses depth
         from a z-channel when available, otherwise falls back to a scene
         median/default depth).
@@ -70,26 +68,13 @@ class MousePositionBridge(QObject):
         self.manager = manager
         self.enabled = True
         self._last_update_time = 0
-        self._pending_position = None
-
-        self._throttle_timer = QTimer()
-        self._throttle_timer.setSingleShot(True)
-        self._throttle_timer.timeout.connect(self._process_pending_position)
         
     def on_mouse_moved(self, x: int, y: int):
         if not self.enabled:
             return
-        self._pending_position = (x, y)
-        if not self._throttle_timer.isActive():
-            self._throttle_timer.start(MOUSE_THROTTLE_MS)
+        self._process_pending_position(x, y)
             
-    def _process_pending_position(self):
-        if self._pending_position is None:
-            return
-            
-        x, y = self._pending_position
-        self._pending_position = None
-        
+    def _process_pending_position(self, x: int, y: int):
         camera = self.manager.selected_camera
         if camera is None or not (0 <= x < camera.width and 0 <= y < camera.height):
             self.clear_all_markers()
@@ -101,7 +86,9 @@ class MousePositionBridge(QObject):
         # --- Path A: Index Map (preferred) ---
         ray = None
         candidate_id = -1
-        index_map = camera.index_map
+        # Use the in-memory raster index_map to avoid triggering lazy disk loads
+        # on frequent UI events (mouse move).
+        index_map = camera._raster.index_map
         if index_map is not None:
             candidate_id = int(index_map[y, x])
 
@@ -206,8 +193,8 @@ class MousePositionBridge(QObject):
             is_occluded = True
             found_id = -1
 
-            if target_cam.index_map is not None and ray.element_id > -1:
-                found_id = int(target_cam.index_map[v_proj, u_proj])
+            if getattr(target_cam, '_raster', None) is not None and target_cam._raster.index_map is not None and ray.element_id > -1:
+                found_id = int(target_cam._raster.index_map[v_proj, u_proj])
 
                 # Determine visibility with spatial tolerance.
                 # METHOD A: 3D Distance Threshold (ACTIVE)
@@ -300,7 +287,6 @@ class MousePositionBridge(QObject):
                 pass
             
     def cleanup(self):
-        self._throttle_timer.stop()
         self.clear_all_markers()
 
 
@@ -348,18 +334,11 @@ class MVATManager(QObject):
         self.cache_manager = CacheManager("")
         self.mouse_bridge = MousePositionBridge(self)
 
-        # --- 3D Viewer Render Throttle ---
-        self._viewer_update_timer = QTimer()
-        self._viewer_update_timer.setSingleShot(True)
-        self._viewer_update_timer.setInterval(50)  # ~20 FPS for the 3D viewport
-        self._viewer_update_timer.timeout.connect(self._do_viewer_update)
-
         self._setup_connections()
 
     def _request_viewer_update(self):
-        """Requests a 3D redraw without spamming the GPU."""
-        if not self._viewer_update_timer.isActive():
-            self._viewer_update_timer.start()
+        """Requests a 3D redraw."""
+        self._do_viewer_update()
 
     def _do_viewer_update(self):
         """Performs the actual synchronous PyVista render."""
@@ -1316,7 +1295,7 @@ class MVATManager(QObject):
         else:
             relative_zoom = 1.0
 
-        # Step 4: Command the context matrix to sync (throttled)
+        # Step 4: Command the context matrix to sync
         self.context_matrix.request_sync(targets, relative_zoom)
 
     def _get_world_point_at_pixel(self, camera, px, py):
@@ -1545,13 +1524,20 @@ class MVATManager(QObject):
         px = int(annotation.center_xy.x())
         py = int(annotation.center_xy.y())
 
-        visible_paths = self._get_visible_context_paths()
+        selected_paths = set(self.selection_model.selected_paths)
+        if self.selected_camera and self.selected_camera.image_path in selected_paths:
+            selected_paths.discard(self.selected_camera.image_path)
+
+        # Quick exit: nothing to propagate to
+        if not selected_paths:
+            return
 
         from PyQt5.QtCore import QPointF
         self._propagating_annotation = True
         try:
             # Try True 3D mapping: get the element id at source pixel (if index map present)
-            source_index_map = self.selected_camera.index_map
+            # Use the in-memory raster index_map to avoid triggering lazy disk loads.
+            source_index_map = self.selected_camera._raster.index_map
             element_id = None
             use_3d = False
             if source_index_map is not None:
@@ -1568,9 +1554,7 @@ class MVATManager(QObject):
             # Lazy projection cache for fallback
             projections = None
 
-            for target_path in list(visible_paths):
-                if target_path == annotation.image_path:
-                    continue
+            for target_path in selected_paths:
 
                 target_camera = self.cameras.get(target_path)
                 if target_camera is None:
@@ -1788,8 +1772,14 @@ class MVATManager(QObject):
         px = int(scene_pos.x())
         py = int(scene_pos.y())
 
-        visible_paths = self._get_visible_context_paths()
+        selected_paths = set(self.selection_model.selected_paths)
+        if self.selected_camera and self.selected_camera.image_path in selected_paths:
+            selected_paths.discard(self.selected_camera.image_path)
         project_labels = list(self.main_window.label_window.labels)
+
+        # Quick exit: nothing to propagate to
+        if not selected_paths:
+            return
 
         source_label = next((lbl for lbl in project_labels if lbl.id == label_id), None)
         if source_label is None:
@@ -1820,7 +1810,8 @@ class MVATManager(QObject):
         # If mesh hit test didn't work, try index_map fallback
         if painted_ids is None:
             # PointCloud (or non-mesh) target: use the pre-computed index_map.
-            source_index_map = self.selected_camera.index_map
+            # Use the in-memory raster index_map to avoid triggering lazy disk loads.
+            source_index_map = self.selected_camera._raster.index_map
             if source_index_map is not None:
                 # Bounding box of the brush in source image coordinates
                 x0 = px - brush_w // 2
@@ -1853,12 +1844,12 @@ class MVATManager(QObject):
                     painted_ids = unique_ids[unique_ids > -1]  # filter background
 
         # Whether the source camera has valid 3D geometry hits to propagate
-        use_3d = painted_ids is not None and len(painted_ids) > 0
+        use_3d = painted_ids is not None and len(painted_ids) > 0 
 
         # ------------------------------------------------------------------
         # Paint the 3D Model directly
         # ------------------------------------------------------------------
-        if use_3d:
+        if use_3d:  # Slow
             primary_target = self.viewer.scene_context.get_primary_target()
             if primary_target and hasattr(primary_target, 'apply_labels'):
                 # 1. Convert QColor to RGB tuple
@@ -1879,7 +1870,7 @@ class MVATManager(QObject):
                     primary_target.apply_labels(painted_ids, source_class_id, target_color)
                     
                     # 4. Tell the 3D viewer to refresh to show the new colors instantly
-                    self._request_viewer_update()
+                    # self._request_viewer_update()  # Still slow with commeneted out
 
         # Projections for 2D fallback — computed lazily inside the loop
         projections = None
@@ -1887,9 +1878,7 @@ class MVATManager(QObject):
         self._propagating_annotation = True
         try:
             loop_start = time.time()
-            for target_path in list(visible_paths):
-                if target_path == self.selected_camera.image_path:
-                    continue
+            for target_path in selected_paths:
 
                 target_camera = self.cameras.get(target_path)
                 if target_camera is None:
@@ -1917,7 +1906,7 @@ class MVATManager(QObject):
 
                     target_has_index = target_camera._raster.index_map is not None
 
-                    if use_3d and target_has_index:
+                    if use_3d and target_has_index:  # Not slow
                         # --------------------------------------------------
                         # Phase 2: Target Pixel Injection (3D → 2D)
                         # --------------------------------------------------
@@ -2023,7 +2012,9 @@ class MVATManager(QObject):
         px = int(scene_pos.x())
         py = int(scene_pos.y())
         
-        visible_paths = self._get_visible_context_paths()
+        selected_paths = set(self.selection_model.selected_paths)
+        if self.selected_camera and self.selected_camera.image_path in selected_paths:
+            selected_paths.discard(self.selected_camera.image_path)
         project_labels = list(self.main_window.label_window.labels)
         
         source_label = next((lbl for lbl in project_labels if lbl.id == label_id), None)
@@ -2045,7 +2036,8 @@ class MVATManager(QObject):
             )
         else:
             # PointCloud (or non-mesh) target: use the pre-computed index_map.
-            source_index_map = self.selected_camera.index_map
+            # Use the in-memory raster index_map to avoid triggering lazy disk loads.
+            source_index_map = self.selected_camera._raster.index_map
             if source_index_map is not None and fill_mask is not None:
                 try:
                     img_h, img_w = source_index_map.shape
@@ -2091,9 +2083,7 @@ class MVATManager(QObject):
         
         self._propagating_annotation = True
         try:
-            for target_path in list(visible_paths):
-                if target_path == self.selected_camera.image_path:
-                    continue
+            for target_path in selected_paths:
                 
                 target_camera = self.cameras.get(target_path)
                 if target_camera is None:
@@ -2192,7 +2182,13 @@ class MVATManager(QObject):
             return
 
         px, py = int(scene_pos.x()), int(scene_pos.y())
-        visible_paths = self._get_visible_context_paths()
+        selected_paths = set(self.selection_model.selected_paths)
+        if self.selected_camera and self.selected_camera.image_path in selected_paths:
+            selected_paths.discard(self.selected_camera.image_path)
+
+        # Quick exit: nothing to propagate to
+        if not selected_paths:
+            return
 
         brush_h, brush_w = brush_mask.shape
 
@@ -2209,7 +2205,8 @@ class MVATManager(QObject):
             )
         else:
             # PointCloud (or non-mesh) target: use the pre-computed index_map.
-            source_index_map = self.selected_camera.index_map
+            # Use the in-memory raster index_map to avoid triggering lazy disk loads.
+            source_index_map = self.selected_camera._raster.index_map
             if source_index_map is not None:
                 x0 = px - brush_w // 2
                 y0 = py - brush_h // 2
@@ -2255,9 +2252,7 @@ class MVATManager(QObject):
 
         self._propagating_annotation = True
         try:
-            for target_path in list(visible_paths):
-                if target_path == self.selected_camera.image_path:
-                    continue
+            for target_path in selected_paths:
 
                 target_camera = self.cameras.get(target_path)
                 if target_camera is None:
@@ -2364,7 +2359,9 @@ class MVATManager(QObject):
         px = int(scene_pos.x())
         py = int(scene_pos.y())
 
-        visible_paths = self._get_visible_context_paths()
+        selected_paths = set(self.selection_model.selected_paths)
+        if self.selected_camera and self.selected_camera.image_path in selected_paths:
+            selected_paths.discard(self.selected_camera.image_path)
         project_labels = list(self.main_window.label_window.labels)
 
         source_label = next((lbl for lbl in project_labels if lbl.id == label_id), None)
@@ -2388,7 +2385,8 @@ class MVATManager(QObject):
             )
         else:
             # PointCloud (or non-mesh) target: use the pre-computed index_map.
-            source_index_map = self.selected_camera.index_map
+            # Use the in-memory raster index_map to avoid triggering lazy disk loads.
+            source_index_map = self.selected_camera._raster.index_map
             if source_index_map is not None:
                 # The binary_mask is a crop centred at (px, py)
                 x0 = px - mask_w // 2
@@ -2449,9 +2447,7 @@ class MVATManager(QObject):
 
         self._propagating_annotation = True
         try:
-            for target_path in list(visible_paths):
-                if target_path == self.selected_camera.image_path:
-                    continue
+            for target_path in selected_paths:
 
                 target_camera = self.cameras.get(target_path)
                 if target_camera is None:

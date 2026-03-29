@@ -37,10 +37,6 @@ class BrushTool(Tool):
         # callback(scene_pos: QPointF, label_id: str, brush_mask: np.ndarray)
         self.post_stroke_callback = None
         
-        # Throttling setup for 3D propagation
-        self._sync_timer = QTimer()
-        self._sync_timer.setSingleShot(True)
-        self._sync_timer.timeout.connect(self._flush_stroke)
         self._accumulated_points = []
 
     def _create_brush_mask(self):
@@ -216,7 +212,6 @@ class BrushTool(Tool):
     def deactivate(self):
         """Deactivate the brush tool and stop any current operations."""
         self.painting = False
-        self._sync_timer.stop()
         if self._accumulated_points:
             self._flush_stroke()
         super().deactivate()
@@ -251,12 +246,9 @@ class BrushTool(Tool):
         # 1. Apply locally immediately for smooth 60Hz UX
         mask_annotation.update_mask(brush_location, self.brush_mask, class_id)
 
-        # 2. Accumulate for 3D sync
+        # 2. Sync to 3D immediately
         self._accumulated_points.append(scene_pos)
-        
-        # 3. Start throttle timer if not running (~15 FPS = 66ms)
-        if not self._sync_timer.isActive():
-            self._sync_timer.start(66)
+        self._flush_stroke()
 
     def _flush_stroke(self):
         """Builds a combined mask of recent strokes and sends to MVATManager."""

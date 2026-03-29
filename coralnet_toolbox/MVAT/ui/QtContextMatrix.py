@@ -93,11 +93,7 @@ class ContextMatrixWidget(QWidget):
 
         # Multi-camera annotation state
         self.multi_annotate_enabled = False
-        self._sync_timer = QTimer()
-        self._sync_timer.setSingleShot(True)
-        self._sync_timer.timeout.connect(self._process_pending_sync)
         self._pending_sync = None
-        self._sync_throttle_ms = 30  # ~33 fps
 
         # Annotation visualization state (Phase 6)
         self._annotation_manager = None
@@ -108,11 +104,6 @@ class ContextMatrixWidget(QWidget):
         # Canvas pool
         self._canvas_pool: List[BaseCanvas] = []
         self._visible_canvases: List[List[Optional[BaseCanvas]]] = []
-
-        # Timers
-        self._resize_debounce_timer = QTimer()
-        self._resize_debounce_timer.setSingleShot(True)
-        self._resize_debounce_timer.timeout.connect(self._evaluate_auto_layout)
 
         # UI Setup
         self._main_layout = QVBoxLayout(self)
@@ -307,8 +298,7 @@ class ContextMatrixWidget(QWidget):
     def resizeEvent(self, event):
         """Auto-adjust layout on resize without changing camera count."""
         super().resizeEvent(event)
-        self._resize_debounce_timer.stop()
-        self._resize_debounce_timer.start(200)
+        self._evaluate_auto_layout()
 
     # ==================== Data Feed ====================
 
@@ -643,15 +633,7 @@ class ContextMatrixWidget(QWidget):
         self._mvat_manager = manager
 
     def request_sync(self, targets: dict, zoom_factor: float):
-        self._pending_sync = (targets, zoom_factor)
-        if not self._sync_timer.isActive():
-            self._sync_timer.start(self._sync_throttle_ms)
-
-    def _process_pending_sync(self):
-        if self._pending_sync:
-            targets, zoom_factor = self._pending_sync
-            self._pending_sync = None
-            self.sync_to_targets(targets, zoom_factor)
+        self.sync_to_targets(targets, zoom_factor)
 
     def sync_to_targets(self, targets: dict, zoom_factor: float):
         if not self.target_lock_enabled:
