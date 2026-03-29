@@ -353,30 +353,11 @@ class MVATManager(QObject):
         self._viewer_update_timer.setSingleShot(True)
         self._viewer_update_timer.setInterval(50)  # ~20 FPS for the 3D viewport
         self._viewer_update_timer.timeout.connect(self._do_viewer_update)
-        self._viewer_update_pending = False  # Deferred render flag for active painting
-        self._painting_active = False  # True while the brush is held down; suppresses ALL VTK renders
-
-        # --- Cursor Preview Throttle ---
-        self._cursor_preview_timer = QTimer()
-        self._cursor_preview_timer.setSingleShot(True)
-        self._cursor_preview_timer.setInterval(50)  # ~20 FPS for cursor previews
-        self._cursor_preview_timer.timeout.connect(self._flush_cursor_preview)
-        self._pending_cursor_preview = None  # (scene_pos, item_factory)
 
         self._setup_connections()
 
     def _request_viewer_update(self):
-        """Requests a 3D redraw without spamming the GPU.
-
-        During active painting (``_painting_active`` or
-        ``_propagating_annotation`` is True) the synchronous VTK render is
-        deferred entirely — only a flag is set.  The render is flushed once
-        painting stops (``_on_paint_stopped``) or the propagation loop
-        finishes, keeping the Qt event loop responsive for mouse events.
-        """
-        if self._painting_active or self._propagating_annotation:
-            self._viewer_update_pending = True
-            return
+        """Requests a 3D redraw without spamming the GPU."""
         if not self._viewer_update_timer.isActive():
             self._viewer_update_timer.start()
 
@@ -387,20 +368,6 @@ class MVATManager(QObject):
                 self.viewer.update()
             except Exception:
                 pass
-
-    def _on_paint_started(self):
-        """Suppress expensive hover processing and VTK renders while painting."""
-        self.mouse_bridge.enabled = False
-        self._painting_active = True
-
-    def _on_paint_stopped(self):
-        """Re-enable hover processing and flush one deferred VTK render."""
-        self._painting_active = False
-        self.mouse_bridge.enabled = True
-        # Flush a single VTK render for all label changes accumulated during painting
-        if self._viewer_update_pending:
-            self._viewer_update_pending = False
-            self._request_viewer_update()
 
     def _setup_connections(self):
         """
@@ -1422,8 +1389,6 @@ class MVATManager(QObject):
                 brush_tool.post_stroke_callback = self._on_brush_stroke_applied
                 brush_tool.cursor_move_callback = self._on_cursor_preview_moved
                 brush_tool.cursor_clear_callback = self._on_cursor_preview_cleared
-                brush_tool.paint_start_callback = self._on_paint_started
-                brush_tool.paint_stop_callback = self._on_paint_stopped
             if patch_tool is not None:
                 patch_tool.cursor_move_callback = self._on_cursor_preview_moved
                 patch_tool.cursor_clear_callback = self._on_cursor_preview_cleared
@@ -1468,8 +1433,6 @@ class MVATManager(QObject):
                 brush_tool.post_stroke_callback = None
                 brush_tool.cursor_move_callback = None
                 brush_tool.cursor_clear_callback = None
-                brush_tool.paint_start_callback = None
-                brush_tool.paint_stop_callback = None
             if patch_tool is not None:
                 patch_tool.cursor_move_callback = None
                 patch_tool.cursor_clear_callback = None
@@ -1489,23 +1452,12 @@ class MVATManager(QObject):
         QApplication.restoreOverrideCursor()
 
     def _on_cursor_preview_moved(self, scene_pos, item_factory):
-        """Throttled projection of cursor position into visible context cameras.
+        """Project the cursor position into visible context cameras and show previews.
 
-        Stores the latest position and schedules processing at ~20 FPS to
-        avoid blocking the Qt event loop with per-mouse-move projections.
+        Uses the blazingly fast center-point projection to display brush previews
+        in all visible context cameras. The tool factory already draws the correct
+        brush size visually; we just need to tell it where the center is.
         """
-        self._pending_cursor_preview = (scene_pos, item_factory)
-        if not self._cursor_preview_timer.isActive():
-            self._cursor_preview_timer.start()
-
-    def _flush_cursor_preview(self):
-        """Process the most recent cursor preview request."""
-        pending = self._pending_cursor_preview
-        self._pending_cursor_preview = None
-        if pending is None:
-            return
-        scene_pos, item_factory = pending
-
         if self.selected_camera is None or self.context_matrix is None:
             return
 
@@ -1725,17 +1677,16 @@ class MVATManager(QObject):
         try:
             # 1. Ensure the GPU tensor geometry cache exists (idempotent call).
             mesh_product.prepare_geometry()
+            vertices  = mesh_product._cached_vertices                                      # (V, 3) float32
+            triangles = mesh_product._cached_triangles_pt.cpu().numpy().astype(np.uint32)  # (T, 3) uint32
+
+            if len(triangles) == 0:
+                return np.array([], dtype=np.int32)
 
             # 2. Build (or reuse) the Open3D RaycastingScene BVH.
             #    Mesh vertex/face topology never changes during annotation, so the
             #    cached scene remains valid for the entire session.
-            #    Only fetch vertices/triangles when we actually need to build the BVH
-            #    — the GPU→CPU copy of the triangle tensor is expensive for large meshes.
             if not getattr(mesh_product, '_o3d_raycasting_scene', None):
-                vertices  = mesh_product._cached_vertices                                      # (V, 3) float32
-                triangles = mesh_product._cached_triangles_pt.cpu().numpy().astype(np.uint32)  # (T, 3) uint32
-                if len(triangles) == 0:
-                    return np.array([], dtype=np.int32)
                 scene = o3d.t.geometry.RaycastingScene()
                 scene.add_triangles(
                     o3d.core.Tensor(vertices,   dtype=o3d.core.Dtype.Float32),
@@ -1851,7 +1802,7 @@ class MVATManager(QObject):
         # ------------------------------------------------------------------
         painted_ids = None
         _p1_target = self.viewer.scene_context.get_primary_target()
-        if isinstance(_p1_target, MeshProduct) and not getattr(self.selected_camera, 'is_orthographic', False):
+        if isinstance(_p1_target, MeshProduct) and not getattr(self.selected_camera, 'is_orthographic', False) and False:
             try:
                 # Dense ray casting: cast through every True pixel in the brush mask
                 # to intersect the full triangle surface area rather than relying on
@@ -2051,9 +2002,6 @@ class MVATManager(QObject):
                     pass
         finally:
             self._propagating_annotation = False
-            if self._viewer_update_pending:
-                self._viewer_update_pending = False
-                self._request_viewer_update()
 
     def _on_fill_stroke_applied(self, scene_pos, label_id: str, fill_mask=None):
         """Propagate a fill operation into all visible context cameras.
@@ -2225,9 +2173,6 @@ class MVATManager(QObject):
                     pass
         finally:
             self._propagating_annotation = False
-            if self._viewer_update_pending:
-                self._viewer_update_pending = False
-                self._request_viewer_update()
 
     def _on_erase_stroke_applied(self, scene_pos, label_id: str, brush_mask: np.ndarray):
         """Propagate an erase operation into all visible context cameras.
@@ -2392,9 +2337,6 @@ class MVATManager(QObject):
                     pass
         finally:
             self._propagating_annotation = False
-            if self._viewer_update_pending:
-                self._viewer_update_pending = False
-                self._request_viewer_update()
 
     def _on_sam_prediction_applied(self, scene_pos, label_id: str, binary_mask: np.ndarray):
         """Propagate a final SAM mask prediction into all visible context cameras.
@@ -2600,9 +2542,6 @@ class MVATManager(QObject):
                     pass
         finally:
             self._propagating_annotation = False
-            if self._viewer_update_pending:
-                self._viewer_update_pending = False
-                self._request_viewer_update()
 
     def cleanup(self):
         """Clean up resources before closing."""
