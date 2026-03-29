@@ -1629,8 +1629,23 @@ class MainWindow(QMainWindow):
             file_names = [url.toLocalFile() for url in urls if url.isLocalFile()]
 
             # Accept if any of the files is a project file (.json or .bin)
-            if any(file_name.lower().endswith(('.json', '.bin')) for file_name in file_names):
+            # Route MVAT-compatible files to the MVAT viewer so they are
+            # not treated as images by ImageWindow/AnnotationWindow.
+            try:
+                mvat_exts = set(getattr(self.mvat_viewer, '_POINT_CLOUD_EXTENSIONS', []) +
+                                getattr(self.mvat_viewer, '_MESH_EXTENSIONS', []))
+            except Exception:
+                mvat_exts = set()
+
+            lower_names = [fn.lower() for fn in file_names]
+            if any(fn.endswith(('.json', '.bin')) for fn in lower_names):
                 event.acceptProposedAction()
+            elif any(any(fn.endswith(ext) for ext in mvat_exts) for fn in lower_names):
+                # Let MVAT viewer handle this drag
+                if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
+                    self.mvat_viewer.dragEnterEvent(event)
+                else:
+                    event.ignore()
             else:
                 self.import_images.dragEnterEvent(event)
 
@@ -1643,7 +1658,9 @@ class MainWindow(QMainWindow):
 
         if file_names:
             # Check if a single project file (.json or .bin) was dropped
-            if len(file_names) == 1 and file_names[0].lower().endswith(('.json', '.bin')):
+            lower_names = [fn.lower() for fn in file_names]
+
+            if len(file_names) == 1 and lower_names[0].endswith(('.json', '.bin')):
                 # Open as a project file
                 path = file_names[0]
                 self.open_project_dialog.file_path_edit.setText(path)
@@ -1651,8 +1668,21 @@ class MainWindow(QMainWindow):
                 self.current_project_path = self.open_project_dialog.current_project_path
                 self.update_project_label()
             else:
-                # Handle as image imports
-                self.import_images.dropEvent(event)
+                # If any file matches MVAT-supported extensions, route to MVAT viewer
+                try:
+                    mvat_exts = set(getattr(self.mvat_viewer, '_POINT_CLOUD_EXTENSIONS', []) +
+                                    getattr(self.mvat_viewer, '_MESH_EXTENSIONS', []))
+                except Exception:
+                    mvat_exts = set()
+
+                if any(any(fn.endswith(ext) for ext in mvat_exts) for fn in lower_names):
+                    if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
+                        self.mvat_viewer.dropEvent(event)
+                    else:
+                        event.ignore()
+                else:
+                    # Handle as image imports
+                    self.import_images.dropEvent(event)
 
     def dragMoveEvent(self, event):
         """Handle drag move event for drag-and-drop."""
@@ -1663,8 +1693,21 @@ class MainWindow(QMainWindow):
             file_names = [url.toLocalFile() for url in urls if url.isLocalFile()]
 
             # Accept if any of the files is a project file (.json or .bin)
-            if any(file_name.lower().endswith(('.json', '.bin')) for file_name in file_names):
+            lower_names = [fn.lower() for fn in file_names]
+
+            try:
+                mvat_exts = set(getattr(self.mvat_viewer, '_POINT_CLOUD_EXTENSIONS', []) +
+                                getattr(self.mvat_viewer, '_MESH_EXTENSIONS', []))
+            except Exception:
+                mvat_exts = set()
+
+            if any(fn.endswith(('.json', '.bin')) for fn in lower_names):
                 event.acceptProposedAction()
+            elif any(any(fn.endswith(ext) for ext in mvat_exts) for fn in lower_names):
+                if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
+                    self.mvat_viewer.dragMoveEvent(event)
+                else:
+                    event.ignore()
             else:
                 self.import_images.dragMoveEvent(event)
                 
