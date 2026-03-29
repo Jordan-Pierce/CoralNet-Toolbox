@@ -577,13 +577,13 @@ class VisibilityManager:
                 vtk_depth = plotter.get_image_depth(fill_value=np.nan)
                 
                 # Negate to convert from VTK (-Z forward) to OpenCV (+Z forward) convention
-                depth_map = -vtk_depth.astype(np.float32)
+                depth_map = -vtk_depth.astype(np.float16)
                 depth_time = time.time() - depth_start
                 print(f"   ✅ Depth buffer extracted in {depth_time:.4f}s")
                 
             except Exception as e:
                 print(f"   ⚠️ Failed to extract depth buffer: {e}")
-                depth_map = np.full((height, width), np.nan, dtype=np.float32)
+                depth_map = np.full((height, width), np.nan, dtype=np.float16)
         
         # --- 6. Extract visible face IDs ---
         visible_indices = np.unique(index_map[index_map >= 0]).astype(np.int32)

@@ -483,6 +483,13 @@ class ContextMatrixWidget(QWidget):
         sep4.setFrameShadow(QFrame.Sunken)
         layout.addWidget(sep4)
 
+        # Select All button
+        self.select_all_btn = QToolButton()
+        self.select_all_btn.setText("Select All")
+        self.select_all_btn.setToolTip("Highlight all cameras (even if not visible in grid)")
+        self.select_all_btn.clicked.connect(self._on_select_all)
+        layout.addWidget(self.select_all_btn)
+
         # Clear button
         self.clear_btn = QToolButton()
         self.clear_btn.setText("Clear")
@@ -515,6 +522,11 @@ class ContextMatrixWidget(QWidget):
         self._sync_btn.setToolTip("Target-Lock Sync (enabled)" if checked else "Target-Lock Sync (disabled)")
         if checked:
             self._request_sync_from_main_view()
+
+    def _on_select_all(self):
+        """Highlight all cameras (including those not currently visible in the grid)."""
+        if self._camera_paths:
+            self.selection_requested.emit(self._camera_paths)
 
     def _on_multi_annotate_toggled(self, checked: bool):
         self.multi_annotate_enabled = checked
