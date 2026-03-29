@@ -1637,6 +1637,8 @@ class MVATManager(QObject):
             self._propagating_annotation = False
 
     # TODO Note: dense mesh hit fills in the face IDs when the quality of index map < Highest; otherwise VTK does this fine.
+    # If we can find a way to not use Open3D always, then we don't need to calculate a BVH, which takes times to build.
+    # Figure out how we can allow the user to use lower quality index maps, but still fill in the gaps.
     def _dense_mesh_hit_test(self, source_camera, pixel_mask: np.ndarray, px: int, py: int, mesh_product) -> np.ndarray:
         """Cast rays through every True pixel in pixel_mask against the mesh surface.
 
@@ -1800,7 +1802,7 @@ class MVATManager(QObject):
         # ------------------------------------------------------------------
         painted_ids = None
         _p1_target = self.viewer.scene_context.get_primary_target()
-        if isinstance(_p1_target, MeshProduct) and not getattr(self.selected_camera, 'is_orthographic', False):
+        if isinstance(_p1_target, MeshProduct) and not getattr(self.selected_camera, 'is_orthographic', False) and False:
             try:
                 # Dense ray casting: cast through every True pixel in the brush mask
                 # to intersect the full triangle surface area rather than relying on
@@ -1845,6 +1847,7 @@ class MVATManager(QObject):
                     index_slice = source_index_map[cy0:cy1, cx0:cx1]
                     brush_clip  = brush_mask[by0:by1, bx0:bx1]
 
+                    # Extract the 3D Face IDs perfectly using the VTK raster
                     raw_ids = index_slice[brush_clip.astype(bool)]
                     unique_ids = np.unique(raw_ids)
                     painted_ids = unique_ids[unique_ids > -1]  # filter background
@@ -1853,7 +1856,7 @@ class MVATManager(QObject):
         use_3d = painted_ids is not None and len(painted_ids) > 0
 
         # ------------------------------------------------------------------
-        # NEW Phase: Paint the 3D Model directly
+        # Paint the 3D Model directly
         # ------------------------------------------------------------------
         if use_3d:
             primary_target = self.viewer.scene_context.get_primary_target()
@@ -1949,7 +1952,6 @@ class MVATManager(QObject):
                             
                             # Pass the bbox to the camera to slice the index map
                             flat_indices = target_camera.get_pixels_for_elements(painted_ids, bbox=bbox)
-                            lookup_time = time.time() - lookup_start
                             
                             if len(flat_indices) == 0:
                                 continue
@@ -1962,9 +1964,7 @@ class MVATManager(QObject):
                                 
                                 if len(flat_indices) == 0:
                                     continue
-                            
-                            paint_start = time.time()
-                            
+                                                        
                             # Revert to 1D index updating. Pixel-diffing (above) already 
                             # ensures this list is small enough to not choke the system, 
                             # and guarantees no square bounding-box artifacts.
