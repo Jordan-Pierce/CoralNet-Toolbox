@@ -524,6 +524,13 @@ class VisibilityManager:
             show_edges=False,
             style='surface'
         )
+
+        # Force Python to garbage collect the copy immediately!
+        # VTK already has what it needs in its internal C++ pipeline.
+        del mesh_with_ids
+        import gc
+        gc.collect()
+
         plotter_time = time.time() - plotter_start
         print(f"   ✅ Plotter setup completed in {plotter_time:.4f}s")
         
@@ -671,6 +678,12 @@ class VisibilityManager:
             show_edges=False,
             style='surface'
         )
+
+        # Delete the Python-side copy immediately
+        del mesh_with_ids
+        import gc
+        gc.collect()
+
         plotter_setup_time = time.time() - setup_start - encode_time
         print(f"   ✅ Setup completed in {encode_time + plotter_setup_time:.4f}s")
         
