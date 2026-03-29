@@ -428,7 +428,7 @@ class VisibilityManager:
                 'index_map': index_map,
                 'visible_indices': visible_indices,
                 'depth_map': depth_map,
-                'inverted_index': cls._build_inverted_index(index_map),
+                'inverted_index': None,
             })
             
         raycast_time = time.time() - raycast_start_time
@@ -610,7 +610,7 @@ class VisibilityManager:
             'index_map': index_map,
             'visible_indices': visible_indices,
             'depth_map': depth_map,
-            'inverted_index': cls._build_inverted_index(index_map),
+            'inverted_index': None,
         }
     
     @classmethod
@@ -759,82 +759,17 @@ class VisibilityManager:
                     depth_map = np.full((height, width), np.nan, dtype=np.float32)
             t_depth = time.time() - t0
             
-            # 6. Unique IDs & Inverted Index (PyTorch GPU Accelerated)
+            # 6. Extract unique visible IDs (No CSR index stored, will use on-the-fly np.where() if needed)
             t0 = time.time()
-            
-            # Check if PyTorch is available globally in the file
-            if HAS_TORCH and torch.cuda.is_available():
-                device = 'cuda'
-                # Send the 2D numpy array to the GPU and flatten it
-                t_idx = torch.from_numpy(index_map).to(device)
-                t_flat = t_idx.view(-1)
-                
-                # Find valid pixels
-                valid_mask = t_flat >= 0
-                flat_pixel_positions = torch.nonzero(valid_mask).squeeze().to(torch.int32)
-                
-                if flat_pixel_positions.numel() == 0:
-                    visible_indices = np.array([], dtype=np.int32)
-                    inv_idx = None
-                else:
-                    valid_ids = t_flat[valid_mask]
-                    
-                    # Massively parallel GPU sort
-                    sorted_ids, sort_order = torch.sort(valid_ids)
-                    sorted_pixels = flat_pixel_positions[sort_order]
-                    
-                    # Find unique IDs and their start positions
-                    # A change occurs where the current element != previous element
-                    change_mask = torch.cat([torch.tensor([True], device=device), sorted_ids[1:] != sorted_ids[:-1]])
-                    start_positions = torch.nonzero(change_mask).squeeze()
-                    unique_ids = sorted_ids[change_mask]
-                    
-                    # Build the offsets array
-                    offsets = torch.empty(len(unique_ids) + 1, dtype=torch.int64, device=device)
-                    offsets[:-1] = start_positions
-                    offsets[-1] = len(sorted_pixels)
-                    
-                    # Pull the finished, much smaller arrays back to the CPU
-                    visible_indices = unique_ids.cpu().numpy().astype(np.int32)
-                    inv_idx = {
-                        'inv_ids': visible_indices,
-                        'inv_offsets': offsets.cpu().numpy(),
-                        'inv_pixels': sorted_pixels.cpu().numpy()
-                    }
-            else:
-                # Fallback to standard NumPy if PyTorch/CUDA is missing
-                flat_map = index_map.ravel()
-                valid_mask = flat_map >= 0
-                flat_pixel_positions = np.nonzero(valid_mask)[0].astype(np.int32)
-                
-                if len(flat_pixel_positions) == 0:
-                    visible_indices = np.array([], dtype=np.int32)
-                    inv_idx = None
-                else:
-                    valid_ids = flat_map[valid_mask]
-                    sort_order = np.argsort(valid_ids, kind='quicksort')
-                    sorted_ids = valid_ids[sort_order]
-                    sorted_pixels = flat_pixel_positions[sort_order]
-                    
-                    unique_ids, start_positions = np.unique(sorted_ids, return_index=True)
-                    offsets = np.empty(len(unique_ids) + 1, dtype=np.int64)
-                    offsets[:-1] = start_positions
-                    offsets[-1] = len(sorted_pixels)
-                    
-                    visible_indices = unique_ids.astype(np.int32)
-                    inv_idx = {
-                        'inv_ids': visible_indices,
-                        'inv_offsets': offsets,
-                        'inv_pixels': sorted_pixels
-                    }
-                
+            valid_mask = index_map >= 0
+            visible_indices = np.unique(index_map[valid_mask]).astype(np.int32)
             t_unique = time.time() - t0
             
             results.append({
                 'index_map': index_map,
                 'visible_indices': visible_indices,
                 'depth_map': depth_map,
-                'inverted_index': inv_idx,
+                'inverted_index': None,
             })
             
             # 7. UI Yielding
@@ -1405,7 +1340,7 @@ class VisibilityManager:
             'index_map': index_map_np,
             'visible_indices': visible_indices.cpu().numpy(),
             'depth_map': depth_map_np,
-            'inverted_index': VisibilityManager._build_inverted_index(index_map_np),
+            'inverted_index': None,
         }
 
     @staticmethod
@@ -1489,7 +1424,7 @@ class VisibilityManager:
             'index_map': index_map,
             'visible_indices': visible_indices,
             'depth_map': depth_map,
-            'inverted_index': VisibilityManager._build_inverted_index(index_map),
+            'inverted_index': None,
         }
         
     @classmethod
@@ -1614,7 +1549,7 @@ class VisibilityManager:
         return {
             'index_map': index_map_np,
             'visible_indices': visible_indices.cpu().numpy(),
-            'inverted_index': VisibilityManager._build_inverted_index(index_map_np),
+            'inverted_index': None,
         }
 
     @staticmethod

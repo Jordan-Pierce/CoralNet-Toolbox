@@ -20,7 +20,7 @@ from typing import List, Optional, Dict
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QSize, QEvent
 from PyQt5.QtWidgets import (
     QWidget, QGridLayout, QVBoxLayout, QHBoxLayout,
-    QLabel, QToolBar, QPushButton, QToolButton, QSizePolicy, QFrame
+    QLabel, QToolBar, QPushButton, QToolButton, QSizePolicy, QFrame, QApplication
 )
 
 from coralnet_toolbox.QtBaseCanvas import BaseCanvas
@@ -524,9 +524,23 @@ class ContextMatrixWidget(QWidget):
             self._request_sync_from_main_view()
 
     def _on_select_all(self):
-        """Highlight all cameras (including those not currently visible in the grid)."""
-        if self._camera_paths:
-            self.selection_requested.emit(self._camera_paths)
+        """Highlight only cameras currently visible in the grid."""
+        # Set busy cursor
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
+        try:
+            # Collect only visible camera paths from the currently displayed grid
+            visible_paths = []
+            for row in self._visible_canvases:
+                for canvas in row:
+                    if canvas and canvas.current_image_path:
+                        visible_paths.append(canvas.current_image_path)
+            
+            if visible_paths:
+                self.selection_requested.emit(visible_paths)
+        finally:
+            # Always restore cursor
+            QApplication.restoreOverrideCursor()
 
     def _on_multi_annotate_toggled(self, checked: bool):
         self.multi_annotate_enabled = checked

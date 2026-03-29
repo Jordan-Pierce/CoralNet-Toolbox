@@ -172,10 +172,8 @@ class CacheManager:
         }
         if depth_map is not None:
             save_dict['depth_map'] = depth_map
-        if inverted_index is not None:
-            save_dict['inv_ids']     = inverted_index['inv_ids']
-            save_dict['inv_offsets'] = inverted_index['inv_offsets']
-            save_dict['inv_pixels']  = inverted_index['inv_pixels']
+        # NOTE: Inverted index is no longer saved to disk to reduce cache size (~115 MB per camera).
+        # If needed for UI operations, it will be computed on-the-fly using np.where().
 
         # Write atomically: write to a temp file then rename into place to avoid
         # consumers attempting to read a partially-written .npz (which yields

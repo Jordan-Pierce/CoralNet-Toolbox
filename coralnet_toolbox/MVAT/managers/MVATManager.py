@@ -1561,8 +1561,8 @@ class MVATManager(QObject):
                     continue
 
                 try:
-                    # 3D centroid mapping if both source hit and target inverted index exist
-                    target_has_index = getattr(target_camera, '_raster', None) is not None and target_camera._raster.inv_ids is not None
+                    # 3D centroid mapping if both source hit and target index map exist
+                    target_has_index = getattr(target_camera, '_raster', None) is not None and target_camera._raster.index_map is not None
                     if use_3d and target_has_index and element_id is not None:
                         flat = target_camera.get_pixels_for_elements(np.array([element_id], dtype=np.int64))
                         if flat.size == 0:
@@ -1760,6 +1760,7 @@ class MVATManager(QObject):
         Falls back to the legacy 2D center-stamp when the index map is absent
         (e.g., visibility not yet computed) or when no scene geometry was hit.
         """
+        
         if self._propagating_annotation:
             return
         if self.selected_camera is None:
@@ -1783,14 +1784,22 @@ class MVATManager(QObject):
         painted_ids = None
         _p1_target = self.viewer.scene_context.get_primary_target()
         if isinstance(_p1_target, MeshProduct) and not getattr(self.selected_camera, 'is_orthographic', False):
-            # Dense ray casting: cast through every True pixel in the brush mask
-            # to intersect the full triangle surface area rather than relying on
-            # the downsampled index_map (which only captures face centres at reduced
-            # resolution, missing small or oblique triangles).
-            painted_ids = self._dense_mesh_hit_test(
-                self.selected_camera, brush_mask, px, py, _p1_target
-            )
-        else:
+            try:
+                # Dense ray casting: cast through every True pixel in the brush mask
+                # to intersect the full triangle surface area rather than relying on
+                # the downsampled index_map (which only captures face centres at reduced
+                # resolution, missing small or oblique triangles).
+                painted_ids = self._dense_mesh_hit_test(
+                    self.selected_camera, brush_mask, px, py, _p1_target
+                )
+                if painted_ids is None:
+                    painted_ids = np.array([], dtype=np.int32)
+            except Exception as e:
+                print(f"⚠️ Dense mesh hit test failed: {e}. Falling back to index_map.")
+                painted_ids = None
+        
+        # If mesh hit test didn't work, try index_map fallback
+        if painted_ids is None:
             # PointCloud (or non-mesh) target: use the pre-computed index_map.
             source_index_map = self.selected_camera.index_map
             if source_index_map is not None:
@@ -1857,6 +1866,7 @@ class MVATManager(QObject):
 
         self._propagating_annotation = True
         try:
+            loop_start = time.time()
             for target_path in list(visible_paths):
                 if target_path == self.selected_camera.image_path:
                     continue
@@ -1869,7 +1879,11 @@ class MVATManager(QObject):
                     target_raster = self.raster_manager.get_raster(target_path)
                     if target_raster is None:
                         continue
-                    target_mask = target_raster.get_mask_annotation(project_labels)
+                    
+                    # Access the mask directly to bypass forced UI syncing overhead
+                    target_mask = target_raster.mask_annotation
+                    if target_mask is None:
+                        target_mask = target_raster.get_mask_annotation(project_labels)
                     if target_mask is None:
                         continue
 
@@ -1881,23 +1895,69 @@ class MVATManager(QObject):
                     if target_class_id is None:
                         continue
 
-                    # Use 3D mapping only when BOTH source hit geometry AND
-                    # the target camera's inverted index has been computed.
-                    target_has_index = target_camera._raster.inv_ids is not None
+                    target_has_index = target_camera._raster.index_map is not None
 
                     if use_3d and target_has_index:
                         # --------------------------------------------------
                         # Phase 2: Target Pixel Injection (3D → 2D)
                         # --------------------------------------------------
-                        flat_indices = target_camera.get_pixels_for_elements(painted_ids)
-                        if len(flat_indices) == 0:
-                            # Element is genuinely occluded in this view — skip
+                        try:
+                            if not isinstance(painted_ids, np.ndarray) or len(painted_ids) == 0:
+                                continue
+                           
+                            lookup_start = time.time()
+                            
+                            # --- OPTIMIZATION 3: Localized Search Window ---
+                            # Project the center of the brush to the target camera
+                            if projections is None:
+                                projections = self._build_projection(px, py)
+                                
+                            proj = projections.get(target_path)
+                            bbox = None
+                            
+                            # If the center of the brush successfully projected into this camera,
+                            # restrict the search to a local window to prevent scanning 16M pixels.
+                            if proj is not None and proj[2]: # is_valid
+                                target_u, target_v = proj[0], proj[1]
+                                
+                                # Use a generous radius (2.5x the brush size) to safely capture
+                                # the painted area even under extreme perspective distortion.
+                                search_radius = max(brush_w, brush_h) * 2.5
+                                bbox = (
+                                    target_u - search_radius, 
+                                    target_u + search_radius, 
+                                    target_v - search_radius, 
+                                    target_v + search_radius
+                                )
+                            
+                            # Pass the bbox to the camera to slice the index map
+                            flat_indices = target_camera.get_pixels_for_elements(painted_ids, bbox=bbox)
+                            lookup_time = time.time() - lookup_start
+                            
+                            if len(flat_indices) == 0:
+                                continue
+                            
+                            # --- OPTIMIZATION 2: Pixel Diffing ---
+                            if hasattr(target_mask, 'mask_data'):
+                                current_vals = target_mask.mask_data.ravel()[flat_indices]
+                                changed_mask = current_vals != target_class_id
+                                flat_indices = flat_indices[changed_mask]
+                                
+                                if len(flat_indices) == 0:
+                                    continue
+                            
+                            paint_start = time.time()
+                            
+                            # Revert to 1D index updating. Pixel-diffing (above) already 
+                            # ensures this list is small enough to not choke the system, 
+                            # and guarantees no square bounding-box artifacts.
+                            target_mask.update_mask_at_indices(flat_indices, target_class_id, silent=True)
+                            
+                        except Exception as e:
+                            print(f"⚠️ Failed to propagate stroke to {target_path}: {e}")
                             continue
-                        target_mask.update_mask_at_indices(flat_indices, target_class_id, silent=True)
                     else:
-                        # 2D center-stamp fallback:
-                        # Either source hit background, OR target's index isn't
-                        # computed yet.  Build projections lazily (once per stroke).
+                        # 2D center-stamp fallback
                         if projections is None:
                             projections = self._build_projection(px, py)
                         proj = projections.get(target_path)
@@ -2026,11 +2086,14 @@ class MVATManager(QObject):
                     target_raster = self.raster_manager.get_raster(target_path)
                     if target_raster is None:
                         continue
-                    target_mask = target_raster.get_mask_annotation(project_labels)
+                        
+                    # --- OPTIMIZATION 1: Bypass forced sync_label_map ---
+                    target_mask = target_raster.mask_annotation
+                    if target_mask is None:
+                        target_mask = target_raster.get_mask_annotation(project_labels)
                     if target_mask is None:
                         continue
                     
-                    # Resolve target class_id via stable label_id
                     target_class_id = target_mask.label_id_to_class_id_map.get(label_id)
                     if target_class_id is None:
                         target_mask.sync_label_map([source_label])
@@ -2038,29 +2101,34 @@ class MVATManager(QObject):
                     if target_class_id is None:
                         continue
                     
-                    # Use 3D mapping only when BOTH source hit geometry AND
-                    # the target camera's inverted index has been computed.
-                    target_has_index = target_camera._raster is not None and target_camera._raster.inv_ids is not None
+                    target_has_index = target_camera._raster is not None and target_camera._raster.index_map is not None
                     
                     if use_3d and target_has_index:
-                        # --------------------------------------------------
-                        # Phase 2: Target Fill via 3D Mapping (3D → 2D)
-                        # --------------------------------------------------
-                        flat_indices = target_camera.get_pixels_for_elements(painted_ids)
-                        if len(flat_indices) == 0:
-                            # Element is genuinely occluded in this view — skip
+                        try:
+                            if not isinstance(painted_ids, np.ndarray) or len(painted_ids) == 0:
+                                continue
+                                
+                            # Fill can span the whole image, so we don't pass a bbox. 
+                            # The Strided Pre-Search in Camera.py will handle bounds dynamically!
+                            flat_indices = target_camera.get_pixels_for_elements(painted_ids)
+                            if len(flat_indices) == 0:
+                                continue
+                            
+                            # --- OPTIMIZATION 2: Pixel Diffing ---
+                            if hasattr(target_mask, 'mask_data'):
+                                current_vals = target_mask.mask_data.ravel()[flat_indices]
+                                changed_mask = current_vals != target_class_id
+                                flat_indices = flat_indices[changed_mask]
+                                
+                                if len(flat_indices) == 0:
+                                    continue
+                            
+                            target_mask.update_mask_at_indices(flat_indices, target_class_id, silent=True)
+                        except Exception as e:
+                            print(f"⚠️ Failed to propagate fill to {target_path}: {e}")
                             continue
-                        
-                        # Paint exactly the pixels that correspond to the filled 3D elements —
-                        # do NOT re-run flood-fill from a centroid, which would incorrectly
-                        # flood-fill the target image regardless of what was filled in source.
-                        target_mask.update_mask_at_indices(flat_indices, target_class_id, silent=True)
                     else:
-                        # 2D fallback: project the fill seed point to the target camera
-                        # and run flood-fill there. The pixel-by-pixel offset transfer
-                        # approach was removed because it relied on set_label_at which
-                        # does not exist on MaskAnnotation, causing a silent exception
-                        # that prevented set_mask_overlay from ever being called.
+                        # 2D fallback
                         if projections is None:
                             projections = self._build_projection(px, py)
                         proj = projections.get(target_path)
@@ -2075,15 +2143,12 @@ class MVATManager(QObject):
                         fill_pos = QPointF(u, v)
                         target_mask.fill_region(fill_pos, target_class_id)
                     
-                    # Ensure the label is visible in the target overlay
                     if label_id not in target_mask.visible_label_ids:
                         target_mask.visible_label_ids.add(label_id)
                         target_mask.update_graphics_item()
                     
-                    # Sync label map after applying pixels
                     target_mask.sync_label_map()
                     
-                    # Only mount the overlay if it isn't already attached to the canvas
                     context_canvas = self._get_context_canvas_for_path(target_path)
                     if context_canvas is not None and context_canvas._mask_overlay_item is None:
                         context_canvas.set_mask_overlay(target_mask)
@@ -2185,21 +2250,52 @@ class MVATManager(QObject):
                     target_raster = self.raster_manager.get_raster(target_path)
                     if target_raster is None:
                         continue
-                    target_mask = target_raster.get_mask_annotation(self.main_window.label_window.labels)
+                        
+                    # --- OPTIMIZATION 1: Bypass forced sync_label_map ---
+                    target_mask = target_raster.mask_annotation
+                    if target_mask is None:
+                        target_mask = target_raster.get_mask_annotation(self.main_window.label_window.labels)
                     if target_mask is None:
                         continue
 
-                    target_has_index = target_camera._raster.inv_ids is not None
+                    target_has_index = target_camera._raster.index_map is not None
 
                     if use_3d and target_has_index:
-                        # ------------------------------------------------------
-                        # Phase 3: Target Pixel Injection (3D → 2D)
-                        # Erase exactly the pixels that map to the erased elements.
-                        # ------------------------------------------------------
-                        flat_indices = target_camera.get_pixels_for_elements(painted_ids)
-                        if len(flat_indices) == 0:
+                        try:
+                            if not isinstance(painted_ids, np.ndarray) or len(painted_ids) == 0:
+                                continue
+                                
+                            # --- OPTIMIZATION 3: Localized Search Window ---
+                            if projections is None:
+                                projections = self._build_projection(px, py)
+                            proj = projections.get(target_path)
+                            bbox = None
+                            
+                            if proj is not None and proj[2]:
+                                target_u, target_v = proj[0], proj[1]
+                                search_radius = max(brush_w, brush_h) * 2.5
+                                bbox = (
+                                    target_u - search_radius, target_u + search_radius, 
+                                    target_v - search_radius, target_v + search_radius
+                                )
+                                
+                            flat_indices = target_camera.get_pixels_for_elements(painted_ids, bbox=bbox)
+                            if len(flat_indices) == 0:
+                                continue
+                                
+                            # --- OPTIMIZATION 2: Pixel Diffing (Compare to 0 for erase) ---
+                            if hasattr(target_mask, 'mask_data'):
+                                current_vals = target_mask.mask_data.ravel()[flat_indices]
+                                changed_mask = current_vals != 0
+                                flat_indices = flat_indices[changed_mask]
+                                
+                                if len(flat_indices) == 0:
+                                    continue
+                                    
+                            target_mask.update_mask_at_indices(flat_indices, 0, silent=True)
+                        except Exception as e:
+                            print(f"⚠️ Failed to propagate erase to {target_path}: {e}")
                             continue
-                        target_mask.update_mask_at_indices(flat_indices, 0, silent=True)
                     else:
                         # 2D center-stamp fallback
                         if projections is None:
@@ -2216,9 +2312,8 @@ class MVATManager(QObject):
                         brush_location = QPointF(u - brush_w / 2.0, v - brush_h / 2.0)
                         target_mask.update_mask(brush_location, brush_mask, 0, silent=True)
 
-                    # Push the updated mask pixels into the context canvas overlay
                     context_canvas = self._get_context_canvas_for_path(target_path)
-                    if context_canvas is not None:
+                    if context_canvas is not None and context_canvas._mask_overlay_item is None:
                         context_canvas.set_mask_overlay(target_mask)
 
                 except Exception:
@@ -2349,11 +2444,14 @@ class MVATManager(QObject):
                     target_raster = self.raster_manager.get_raster(target_path)
                     if target_raster is None:
                         continue
-                    target_mask = target_raster.get_mask_annotation(project_labels)
+                        
+                    # --- OPTIMIZATION 1: Bypass forced sync_label_map ---
+                    target_mask = target_raster.mask_annotation
+                    if target_mask is None:
+                        target_mask = target_raster.get_mask_annotation(project_labels)
                     if target_mask is None:
                         continue
 
-                    # Resolve target class_id via stable label_id
                     target_class_id = target_mask.label_id_to_class_id_map.get(label_id)
                     if target_class_id is None:
                         target_mask.sync_label_map([source_label])
@@ -2361,21 +2459,46 @@ class MVATManager(QObject):
                     if target_class_id is None:
                         continue
 
-                    target_has_index = target_camera._raster.inv_ids is not None
+                    target_has_index = target_camera._raster.index_map is not None
 
                     if use_3d and target_has_index:
-                        # --------------------------------------------------
-                        # Phase 2: Target Pixel Injection (3D → 2D)
-                        # --------------------------------------------------
-                        flat_indices = target_camera.get_pixels_for_elements(painted_ids)
-                        if len(flat_indices) == 0:
-                            # Genuinely occluded in this view — skip
+                        try:
+                            if not isinstance(painted_ids, np.ndarray) or len(painted_ids) == 0:
+                                continue
+                                
+                            # --- OPTIMIZATION 3: Localized Search Window ---
+                            if projections is None:
+                                projections = self._build_projection(px, py)
+                            proj = projections.get(target_path)
+                            bbox = None
+                            
+                            if proj is not None and proj[2]:
+                                target_u, target_v = proj[0], proj[1]
+                                search_radius = max(mask_w, mask_h) * 2.5
+                                bbox = (
+                                    target_u - search_radius, target_u + search_radius, 
+                                    target_v - search_radius, target_v + search_radius
+                                )
+                                
+                            flat_indices = target_camera.get_pixels_for_elements(painted_ids, bbox=bbox)
+                            if len(flat_indices) == 0:
+                                continue
+                                
+                            # --- OPTIMIZATION 2: Pixel Diffing ---
+                            if hasattr(target_mask, 'mask_data'):
+                                current_vals = target_mask.mask_data.ravel()[flat_indices]
+                                changed_mask = current_vals != target_class_id
+                                flat_indices = flat_indices[changed_mask]
+                                
+                                if len(flat_indices) == 0:
+                                    continue
+                                    
+                            target_mask.update_mask_at_indices(flat_indices, target_class_id, silent=True)
+                        except Exception as e:
+                            print(f"⚠️ Failed to propagate SAM mask to {target_path}: {e}")
                             continue
-                        target_mask.update_mask_at_indices(flat_indices, target_class_id, silent=True)
                     else:
-                        # 2D center-stamp fallback:
-                        # Either source hit background, OR target's index isn't
-                        # computed yet.  Build projections lazily (once per prediction).
+                        # 2D center-stamp fallback
                         if projections is None:
                             projections = self._build_projection(px, py)
                         proj = projections.get(target_path)
@@ -2391,12 +2514,10 @@ class MVATManager(QObject):
                         top_left_y = int(v - mask_h / 2.0)
                         target_mask.update_mask_with_mask(subset_class_mask, (top_left_x, top_left_y), silent=True)
 
-                    # Ensure the label is visible in the target overlay
                     if label_id not in target_mask.visible_label_ids:
                         target_mask.visible_label_ids.add(label_id)
                         target_mask.update_graphics_item()
 
-                    # Only mount the overlay if it isn't already attached to the canvas
                     context_canvas = self._get_context_canvas_for_path(target_path)
                     if context_canvas is not None and context_canvas._mask_overlay_item is None:
                         context_canvas.set_mask_overlay(target_mask)

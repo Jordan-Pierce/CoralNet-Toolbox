@@ -189,7 +189,7 @@ class VisibilityWorker(QObject):
                             result_dict.get('visible_indices'),
                             result_dict.get('depth_map') if self.compute_depth_maps else None,
                             element_type=result_dict.get('element_type', 'point'),
-                            inverted_index=result_dict.get('inverted_index')                        
+                            inverted_index=None  # No longer storing inverted_index to save RAM
                         )
 
             # =================================================================
