@@ -1636,6 +1636,7 @@ class MVATManager(QObject):
         finally:
             self._propagating_annotation = False
 
+    # TODO Note: dense mesh hit fills in the face IDs when the quality of index map < Highest; otherwise VTK does this fine.
     def _dense_mesh_hit_test(self, source_camera, pixel_mask: np.ndarray, px: int, py: int, mesh_product) -> np.ndarray:
         """Cast rays through every True pixel in pixel_mask against the mesh surface.
 
