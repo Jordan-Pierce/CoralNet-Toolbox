@@ -403,11 +403,29 @@ class MeshProduct(AbstractSceneProduct):
         
         if self._original_cell_ids is not None:
             self._original_cell_ids_pt = torch.tensor(self._original_cell_ids.astype(np.int64), device=self.device)
-            # Index map stores original (pre-triangulation) cell IDs; use original mesh cell centers
             self._element_centers_np = np.asarray(self.mesh.cell_centers().points, dtype=np.float32)
         else:
-            # Index map stores triangulated face IDs
             self._element_centers_np = centers_np.copy()
+            
+        # --- Build Open3D BVH during load time! ---
+        try:
+            import open3d as o3d
+            print(f"🌲 Building Open3D BVH for {self.label}...")
+            bvh_start = time.time()
+            scene = o3d.t.geometry.RaycastingScene()
+            v_tensor = o3d.core.Tensor(self._cached_vertices, dtype=o3d.core.Dtype.Float32)
+            t_tensor = o3d.core.Tensor(triangles_np, dtype=o3d.core.Dtype.UInt32)
+            scene.add_triangles(v_tensor, t_tensor)
+            
+            # --- THE FIX: Force Embree to compile the tree NOW ---
+            dummy_ray = o3d.core.Tensor([[0.0, 0.0, 0.0, 0.0, 0.0, 1.0]], dtype=o3d.core.Dtype.Float32)
+            scene.cast_rays(dummy_ray)
+            
+            self._o3d_raycasting_scene = scene
+            print(f"✅ BVH built and compiled successfully in {time.time() - bvh_start:.3f}s")
+        except ImportError:
+            print("⚠️ Open3D not installed. BVH will fall back to point sampling.")
+            pass
         
         print(f"✅ Geometry extracted and cached in {time.time() - start_time:.3f}s")
     

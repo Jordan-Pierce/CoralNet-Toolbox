@@ -1380,6 +1380,9 @@ class MVATManager(QObject):
         fill_tool = self.annotation_window.tools.get('fill')
         erase_tool = self.annotation_window.tools.get('erase')
 
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
         if enabled:
             self.annotation_window.annotationCreated.connect(self._on_patch_annotation_created)
             if brush_tool is not None:
@@ -1409,6 +1412,15 @@ class MVATManager(QObject):
                     # Ask the visibility system to compute index maps for these visible cameras
                     # _update_visibility_filter handles cache checks and async worker dispatch.
                     self._update_visibility_filter(visible)
+
+                # --- Force Mask Canvas Allocation NOW ---
+                # Don't wait for the first brush stroke to allocate canvases!
+                project_labels = list(self.main_window.label_window.labels)
+                for path in visible:
+                    raster = self.raster_manager.get_raster(path)
+                    if raster and raster.mask_annotation is None:
+                        raster.get_mask_annotation(project_labels)
+
             except Exception:
                 pass
         else:
@@ -1416,6 +1428,7 @@ class MVATManager(QObject):
                 self.annotation_window.annotationCreated.disconnect(self._on_patch_annotation_created)
             except TypeError:
                 pass
+
             if brush_tool is not None:
                 brush_tool.post_stroke_callback = None
                 brush_tool.cursor_move_callback = None
@@ -1434,6 +1447,9 @@ class MVATManager(QObject):
             if sam_tool is not None:
                 sam_tool.post_prediction_callback = None
             self._on_cursor_preview_cleared()
+
+        # Restore cursor
+        QApplication.restoreOverrideCursor()
 
     def _on_cursor_preview_moved(self, scene_pos, item_factory):
         """Project the cursor position into visible context cameras and show previews.
