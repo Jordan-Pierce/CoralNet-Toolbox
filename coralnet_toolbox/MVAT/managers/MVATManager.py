@@ -338,7 +338,10 @@ class MVATManager(QObject):
 
     def _request_viewer_update(self):
         """Requests a 3D redraw."""
+        import time
+        t0 = time.time()
         self._do_viewer_update()
+        print(f"Viewer update took {time.time() - t0:.2f} seconds")
 
     def _do_viewer_update(self):
         """Performs the actual synchronous PyVista render."""
@@ -1792,7 +1795,7 @@ class MVATManager(QObject):
         # ------------------------------------------------------------------
         painted_ids = None
         _p1_target = self.viewer.scene_context.get_primary_target()
-        if isinstance(_p1_target, MeshProduct) and not getattr(self.selected_camera, 'is_orthographic', False):
+        if isinstance(_p1_target, MeshProduct) and not getattr(self.selected_camera, 'is_orthographic', False) and False:
             try:
                 # Dense ray casting: cast through every True pixel in the brush mask
                 # to intersect the full triangle surface area rather than relying on
@@ -1849,7 +1852,7 @@ class MVATManager(QObject):
         # ------------------------------------------------------------------
         # Paint the 3D Model directly
         # ------------------------------------------------------------------
-        if use_3d:  # Slow
+        if use_3d:  # Slow?
             primary_target = self.viewer.scene_context.get_primary_target()
             if primary_target and hasattr(primary_target, 'apply_labels'):
                 # 1. Convert QColor to RGB tuple
@@ -1866,8 +1869,12 @@ class MVATManager(QObject):
                         source_mask.sync_label_map([source_label])
                         source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
                         
+                    import time
+                    t0 = time.time()
                     # 3. Paint the 3D model arrays
-                    primary_target.apply_labels(painted_ids, source_class_id, target_color)
+                    primary_target.apply_labels(painted_ids, source_class_id, target_color)  # FAST when commented out (for small scenes)
+                    print(f"Applied labels to 3D model in {time.time() - t0:.2f} seconds")
+                    # Always 0 seconds, but being commented out makes the operation fast. What's happening?
                     
                     # 4. Tell the 3D viewer to refresh to show the new colors instantly
                     # self._request_viewer_update()  # Still slow with commeneted out
@@ -1906,7 +1913,7 @@ class MVATManager(QObject):
 
                     target_has_index = target_camera._raster.index_map is not None
 
-                    if use_3d and target_has_index:  # Not slow
+                    if use_3d and target_has_index:  # This and below is fast (w/ dense disabled)
                         # --------------------------------------------------
                         # Phase 2: Target Pixel Injection (3D → 2D)
                         # --------------------------------------------------
@@ -1963,7 +1970,7 @@ class MVATManager(QObject):
                             print(f"⚠️ Failed to propagate stroke to {target_path}: {e}")
                             continue
                     else:
-                        # 2D center-stamp fallback
+                        # 2D center-stamp fallback  # This and below is fast (w/ dense disabled)
                         if projections is None:
                             projections = self._build_projection(px, py)
                         proj = projections.get(target_path)
@@ -2055,7 +2062,7 @@ class MVATManager(QObject):
         # ------------------------------------------------------------------
         # NEW Phase: Paint the 3D Model directly
         # ------------------------------------------------------------------
-        if use_3d:
+        if use_3d and False:
             primary_target = self.viewer.scene_context.get_primary_target()
             if primary_target and hasattr(primary_target, 'apply_labels'):
                 # 1. Convert QColor to RGB tuple
@@ -2238,7 +2245,7 @@ class MVATManager(QObject):
         # ------------------------------------------------------------------
         # Phase 2: Reset the 3D Model to default (white / class_id 0)
         # ------------------------------------------------------------------
-        if use_3d:
+        if use_3d and False:
             primary_target = self.viewer.scene_context.get_primary_target()
             if primary_target and hasattr(primary_target, 'apply_labels'):
                 primary_target.apply_labels(painted_ids, 0, (255, 255, 255))
@@ -2420,7 +2427,7 @@ class MVATManager(QObject):
         # ------------------------------------------------------------------
         # NEW Phase: Paint the 3D Model directly
         # ------------------------------------------------------------------
-        if use_3d:
+        if use_3d and False:
             primary_target = self.viewer.scene_context.get_primary_target()
             if primary_target and hasattr(primary_target, 'apply_labels'):
                 # 1. Convert QColor to RGB tuple
