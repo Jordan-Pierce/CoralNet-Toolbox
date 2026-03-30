@@ -767,6 +767,32 @@ class ContextMatrixWidget(QWidget):
         for canvas in self._canvas_pool:
             canvas.clear_cursor_preview()
 
+    # --- NEW METHODS ---
+    def update_live_scratchpads(self, projections, size, shape, color):
+        """Draws a live vector trail on all visible context cameras."""
+        canvas_map = self._get_canvas_camera_map()
+
+        for path, canvas in canvas_map.items():
+            proj = projections.get(path)
+            if not proj:
+                continue
+
+            u, v, is_valid = proj
+            # Only draw if the 3D point is actually visible to this camera
+            if is_valid:
+                try:
+                    canvas.add_to_scratchpad(u, v, size, shape, color)
+                except Exception:
+                    pass
+
+    def clear_all_scratchpads(self):
+        """Clears the fake vector trails across all cameras."""
+        for canvas in self._canvas_pool:
+            try:
+                canvas.clear_scratchpad()
+            except Exception:
+                pass
+
     # ==================== Z-Channel Synchronization ====================
 
     def _apply_z_channel_state_to_canvas(self, canvas: BaseCanvas):

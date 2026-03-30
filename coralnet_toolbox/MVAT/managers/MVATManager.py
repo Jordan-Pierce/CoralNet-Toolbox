@@ -1476,6 +1476,8 @@ class MVATManager(QObject):
                 brush_tool.post_stroke_callback = self._on_brush_stroke_applied
                 brush_tool.cursor_move_callback = self._on_cursor_preview_moved
                 brush_tool.cursor_clear_callback = self._on_cursor_preview_cleared
+                # NEW: Attach the live stroke hook
+                brush_tool.live_stroke_callback = self._on_live_stroke_applied 
             if patch_tool is not None:
                 patch_tool.cursor_move_callback = self._on_cursor_preview_moved
                 patch_tool.cursor_clear_callback = self._on_cursor_preview_cleared
@@ -1520,6 +1522,7 @@ class MVATManager(QObject):
                 brush_tool.post_stroke_callback = None
                 brush_tool.cursor_move_callback = None
                 brush_tool.cursor_clear_callback = None
+                brush_tool.live_stroke_callback = None
             if patch_tool is not None:
                 patch_tool.cursor_move_callback = None
                 patch_tool.cursor_clear_callback = None
@@ -1559,6 +1562,20 @@ class MVATManager(QObject):
         """Clear cursor previews from all context canvases."""
         if self.context_matrix is not None:
             self.context_matrix.clear_all_cursor_previews()
+
+    def _on_live_stroke_applied(self, scene_pos, size, shape, color):
+        """Instantly projects the center of the brush to context cameras for a live trail."""
+        if self.selected_camera is None or self.context_matrix is None:
+            return
+
+        px, py = int(scene_pos.x()), int(scene_pos.y())
+        
+        # We already have a blazingly fast center-point projector!
+        projections = self._build_projection(px, py)
+        try:
+            self.context_matrix.update_live_scratchpads(projections, size, shape, color)
+        except Exception:
+            pass
 
     def _get_context_canvas_for_path(self, image_path: str):
         """Return the context canvas currently displaying image_path, or None."""
@@ -1733,6 +1750,12 @@ class MVATManager(QObject):
                     pass
         finally:
             self._propagating_annotation = False
+            # Clean up the fake vector trails!
+            if self.context_matrix is not None:
+                try:
+                    self.context_matrix.clear_all_scratchpads()
+                except Exception:
+                    pass
 
     # TODO Note: dense mesh hit fills in the face IDs when the quality of index map < Highest; otherwise VTK does this fine.
     # If we can find a way to not use Open3D always, then we don't need to calculate a BVH, which takes times to build.

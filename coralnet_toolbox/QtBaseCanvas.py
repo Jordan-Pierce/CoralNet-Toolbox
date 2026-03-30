@@ -11,7 +11,7 @@ import traceback
 import numpy as np
 
 import pyqtgraph as pg
-from PyQt5.QtGui import QMouseEvent, QPixmap, QImage, QBrush, QColor, QPen
+from PyQt5.QtGui import QMouseEvent, QPixmap, QImage, QBrush, QColor, QPen, QPainterPath
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QSize, QObject
 from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, 
                              QGraphicsItemGroup, QGraphicsEllipseItem, QGraphicsLineItem,
@@ -87,6 +87,9 @@ class BaseCanvas(QGraphicsView):
         self._dynamic_range_timer.timeout.connect(self.update_dynamic_range)
         # default debounce delay (ms) — AnnotationWindow can override
         self.dynamic_range_update_delay = 500
+        # Scratchpad for live vector trails from context canvases
+        self.scratchpad_item = None
+        self.scratchpad_path = QPainterPath()
         
         # Marker slots (containers; Phase 4 will populate these)
         self._static_marker = None
@@ -277,6 +280,10 @@ class BaseCanvas(QGraphicsView):
         self.z_data_max = None
         self.z_data_shape = None
         self.z_nodata_mask = None
+
+        # Reset scratchpad state
+        self.scratchpad_item = None
+        self.scratchpad_path = QPainterPath()
         
         # Allow subclasses to clean up their scene-dependent items
         self._on_scene_cleared()
@@ -1018,3 +1025,30 @@ class BaseCanvas(QGraphicsView):
             except Exception:
                 pass
             self._mask_overlay_item = None
+
+    # --- NEW SCRATCHPAD METHODS ---
+    def add_to_scratchpad(self, u, v, size, shape, color):
+        """Adds a vector shape to the canvas's live scratchpad."""
+        if not self.scratchpad_item:
+            self.scratchpad_item = QGraphicsPathItem()
+            self.scratchpad_item.setZValue(3) # Hover above mask, below markers
+            self.scratchpad_item.setPen(QPen(Qt.NoPen))
+            self.scratchpad_item.setBrush(QBrush(color))
+            self.scene.addItem(self.scratchpad_item)
+
+        radius = size / 2.0
+        if shape == 'circle':
+            self.scratchpad_path.addEllipse(u - radius, v - radius, size, size)
+        else:
+            self.scratchpad_path.addRect(u - radius, v - radius, size, size)
+            
+        # WindingFill prevents the "striation/checkerboard" overlap bug
+        self.scratchpad_path.setFillRule(Qt.WindingFill)
+        self.scratchpad_item.setPath(self.scratchpad_path)
+
+    def clear_scratchpad(self):
+        """Removes the scratchpad overlay when the real NumPy mask is ready."""
+        if self.scratchpad_item and self.scratchpad_item.scene():
+            self.scene.removeItem(self.scratchpad_item)
+        self.scratchpad_item = None
+        self.scratchpad_path = QPainterPath()

@@ -2,8 +2,9 @@ import warnings
 import numpy as np
 
 from PyQt5.QtGui import QColor, QPen, QBrush, QPainterPath
-from PyQt5.QtCore import Qt, QPointF, QRectF
+from PyQt5.QtCore import Qt, QPointF, QRectF, QObject, pyqtSignal, QRunnable, QThreadPool
 from PyQt5.QtWidgets import QGraphicsEllipseItem, QMessageBox, QGraphicsRectItem, QGraphicsPathItem
+
 
 from coralnet_toolbox.Tools.QtTool import Tool
 
@@ -12,6 +13,71 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
+
+
+class StrokeMathSignals(QObject):
+    # Emits: flat_indices, center_pos, combined_mask
+    finished = pyqtSignal(object, object, object)
+
+
+class StrokeMathWorker(QRunnable):
+    """Runs the heavy boolean masking and index math on a background thread."""
+    def __init__(self, points, brush_size, brush_mask, img_w, img_h):
+        super().__init__()
+        self.points = points
+        self.brush_size = brush_size
+        self.brush_mask = brush_mask
+        self.img_w = img_w
+        self.img_h = img_h
+        self.signals = StrokeMathSignals()
+
+    def run(self):
+        # Calculate bounding box
+        xs = [p.x() for p in self.points]
+        ys = [p.y() for p in self.points]
+        
+        min_x = int(min(xs) - self.brush_size / 2.0)
+        max_x = int(max(xs) + self.brush_size / 2.0)
+        min_y = int(min(ys) - self.brush_size / 2.0)
+        max_y = int(max(ys) + self.brush_size / 2.0)
+        
+        w, h = max_x - min_x, max_y - min_y
+        combined_mask = np.zeros((h, w), dtype=bool)
+        
+        # Build the combined boolean footprint
+        for p in self.points:
+            px_local = int(p.x() - self.brush_size / 2.0) - min_x
+            py_local = int(p.y() - self.brush_size / 2.0) - min_y
+            
+            bh, bw = self.brush_mask.shape
+            if (0 <= px_local < w and 0 <= py_local < h and
+                px_local + bw > 0 and py_local + bh > 0):
+                
+                ystart = max(0, py_local)
+                yend = min(h, py_local + bh)
+                xstart = max(0, px_local)
+                xend = min(w, px_local + bw)
+                
+                brush_ystart = ystart - py_local
+                brush_yend = brush_ystart + (yend - ystart)
+                brush_xstart = xstart - px_local
+                brush_xend = brush_xstart + (xend - xstart)
+                
+                combined_mask[ystart:yend, xstart:xend] |= self.brush_mask[brush_ystart:brush_yend, brush_xstart:brush_xend]
+
+        # Convert footprint to flat global indices
+        local_ys, local_xs = np.where(combined_mask)
+        global_xs = local_xs + min_x
+        global_ys = local_ys + min_y
+        
+        valid = (global_xs >= 0) & (global_xs < self.img_w) & (global_ys >= 0) & (global_ys < self.img_h)
+        flat_indices = (global_ys[valid] * self.img_w + global_xs[valid]).astype(np.int64)
+
+        center_pos = QPointF(min_x + w / 2.0, min_y + h / 2.0)
+        
+        # Send data back to the main thread
+        self.signals.finished.emit(flat_indices, center_pos, combined_mask)
+
 
 class BrushTool(Tool):
     """A tool for painting on a MaskAnnotation layer."""
@@ -27,6 +93,7 @@ class BrushTool(Tool):
         self.painting = False
 
         self.post_stroke_callback = None
+        self.live_stroke_callback = None  # NEW
         self._accumulated_points = []
         
         # NEW: The Qt Scratchpad elements for smooth UI rendering
@@ -232,8 +299,19 @@ class BrushTool(Tool):
         # 2. Accumulate the point for the eventual NumPy flush
         self._accumulated_points.append(scene_pos)
 
+        # 3. NEW: Fire the live proxy hook to draw on the other cameras!
+        if getattr(self, 'live_stroke_callback', None):
+            try:
+                label = self.annotation_window.selected_label
+                transparency = self.annotation_window.main_window.get_transparency_value()
+                color = QColor(label.color)
+                color.setAlpha(transparency)
+                self.live_stroke_callback(scene_pos, self.brush_size, self.shape, color)
+            except Exception:
+                pass
+
     def _flush_stroke(self):
-        """Bakes the accumulated stroke into the NumPy array and triggers 3D sync."""
+        """Dispatches the accumulated stroke to a background thread for math processing."""
         if not self._accumulated_points:
             self._cleanup_scratchpad()
             return
@@ -243,65 +321,45 @@ class BrushTool(Tool):
             self._cleanup_scratchpad()
             return
 
-        selected_label_id = self.annotation_window.selected_label.id
+        # Grab the points and CLEAR the buffer immediately so the user 
+        # can start their next brush stroke without waiting!
+        points_to_process = list(self._accumulated_points)
+        self._accumulated_points.clear()
+
+        img_h, img_w = mask_annotation.mask_data.shape
+
+        # Spawn the background worker
+        worker = StrokeMathWorker(
+            points=points_to_process, 
+            brush_size=self.brush_size, 
+            brush_mask=self.brush_mask, 
+            img_w=img_w, 
+            img_h=img_h
+        )
+        
+        # Connect the finished signal to our main-thread apply method
+        worker.signals.finished.connect(
+            lambda flat_idx, center, comb_mask: self._on_math_finished(
+                flat_idx, center, comb_mask, mask_annotation, self.annotation_window.selected_label.id
+            )
+        )
+        
+        # Start the thread!
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_math_finished(self, flat_indices, center_pos, combined_mask, mask_annotation, selected_label_id):
+        """Executes on the Main Thread: Writes the arrays and triggers 3D sync."""
         class_id = mask_annotation.label_id_to_class_id_map.get(selected_label_id)
         
-        if class_id is None:
-            self._cleanup_scratchpad()
-            return
-
-        # 1. Calculate the boolean footprint of the entire stroke
-        xs = [p.x() for p in self._accumulated_points]
-        ys = [p.y() for p in self._accumulated_points]
-        
-        min_x = int(min(xs) - self.brush_size / 2.0)
-        max_x = int(max(xs) + self.brush_size / 2.0)
-        min_y = int(min(ys) - self.brush_size / 2.0)
-        max_y = int(max(ys) + self.brush_size / 2.0)
-        
-        w, h = max_x - min_x, max_y - min_y
-        combined_mask = np.zeros((h, w), dtype=bool)
-        
-        for p in self._accumulated_points:
-            px_local = int(p.x() - self.brush_size / 2.0) - min_x
-            py_local = int(p.y() - self.brush_size / 2.0) - min_y
-            
-            bh, bw = self.brush_mask.shape
-            if (0 <= px_local < w and 0 <= py_local < h and
-                px_local + bw > 0 and py_local + bh > 0):
-                
-                ystart = max(0, py_local)
-                yend = min(h, py_local + bh)
-                xstart = max(0, px_local)
-                xend = min(w, px_local + bw)
-                
-                brush_ystart = ystart - py_local
-                brush_yend = brush_ystart + (yend - ystart)
-                brush_xstart = xstart - px_local
-                brush_xend = brush_xstart + (xend - xstart)
-                
-                combined_mask[ystart:yend, xstart:xend] |= self.brush_mask[brush_ystart:brush_yend, brush_xstart:brush_xend]
-
-        # 2. Convert the boolean footprint to flat global indices
-        local_ys, local_xs = np.where(combined_mask)
-        global_xs = local_xs + min_x
-        global_ys = local_ys + min_y
-        
-        img_h, img_w = mask_annotation.mask_data.shape
-        valid = (global_xs >= 0) & (global_xs < img_w) & (global_ys >= 0) & (global_ys < img_h)
-        
-        flat_indices = (global_ys[valid] * img_w + global_xs[valid]).astype(np.int64)
-
-        # 3. Write to the NumPy Array exactly ONCE using the highly optimized index injection
-        if len(flat_indices) > 0:
+        if class_id is not None and len(flat_indices) > 0:
+            # 1. Instantaneous array write (Safe on Main Thread)
             mask_annotation.update_mask_at_indices(flat_indices, class_id, silent=False)
 
-        # 4. Trigger the Multi-Camera 3D Sync
+        # 2. Trigger the Multi-Camera 3D Sync (Also safe to thread later in MVATManager!)
         if self.post_stroke_callback:
-            center_pos = QPointF(min_x + w / 2.0, min_y + h / 2.0)
             self.post_stroke_callback(center_pos, selected_label_id, combined_mask)
         
-        # 5. Destroy the visual Scratchpad (the pixels are now safely in the Mask)
+        # 3. Destroy the visual Scratchpad
         self._cleanup_scratchpad()
 
     def _cleanup_scratchpad(self):
