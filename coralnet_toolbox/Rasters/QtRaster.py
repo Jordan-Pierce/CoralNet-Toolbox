@@ -390,7 +390,7 @@ class Raster(QObject):
             index_map = cv2.resize(
                 index_map,
                 (self.width, self.height),
-                interpolation=cv2.INTER_LINEAR
+                interpolation=cv2.INTER_NEAREST
             )
         
         self.index_map = index_map.copy()
@@ -542,7 +542,7 @@ class Raster(QObject):
             temp_z = cv2.resize(
                 temp_z,
                 (self.width, self.height),
-                interpolation=cv2.INTER_LINEAR
+                interpolation=cv2.INTER_NEAREST
             )
             
             # Restore the NoData values safely to the newly interpolated pixels
@@ -625,7 +625,7 @@ class Raster(QObject):
             temp_z = cv2.resize(
                 temp_z,
                 (self.width, self.height),
-                interpolation=cv2.INTER_LINEAR
+                interpolation=cv2.INTER_NEAREST
             )
             
             # Restore the NoData values safely to the newly interpolated pixels
