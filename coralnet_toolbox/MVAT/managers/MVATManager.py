@@ -2374,86 +2374,48 @@ class MVATManager(QObject):
 
         self._propagating_annotation = True
         try:
-            for target_path in selected_paths:
+            # ERASER FIX: Map all target cameras to Class ID 0 (background)
+            target_class_id_map = {target_path: 0 for target_path in selected_paths}
 
-                target_camera = self.cameras.get(target_path)
-                if target_camera is None:
-                    continue
+            if projections is None:
+                projections = self._build_projection(px, py)
 
-                try:
+            # Spawn the background workers using the exact same logic as BrushTool
+            from concurrent.futures import as_completed
+            futures = {
+                self._propagation_executor.submit(
+                    self._propagate_to_camera,
+                    target_path, painted_ids, target_class_id_map,
+                    projections, brush_w, brush_h, brush_mask, use_3d
+                ): target_path
+                for target_path in selected_paths
+            }
+            
+            # Catch the results on the Main Thread and repaint
+            for future in as_completed(futures):
+                target_path, did_update = future.result()
+                
+                if did_update:
                     target_raster = self.raster_manager.get_raster(target_path)
-                    if target_raster is None:
-                        continue
+                    if target_raster and target_raster.mask_annotation:
+                        target_mask = target_raster.mask_annotation
                         
-                    # --- OPTIMIZATION 1: Bypass forced sync_label_map ---
-                    target_mask = target_raster.mask_annotation
-                    if target_mask is None:
-                        target_mask = target_raster.get_mask_annotation(self.main_window.label_window.labels)
-                    if target_mask is None:
-                        continue
-
-                    target_has_index = target_camera._raster.index_map is not None
-
-                    if use_3d and target_has_index:
-                        try:
-                            if not isinstance(painted_ids, np.ndarray) or len(painted_ids) == 0:
-                                continue
-                                
-                            # --- OPTIMIZATION 3: Localized Search Window ---
-                            if projections is None:
-                                projections = self._build_projection(px, py)
-                            proj = projections.get(target_path)
-                            bbox = None
+                        # Trigger the Qt repaint on the Main Thread
+                        target_mask.update_graphics_item()
+                        
+                        # Mount the overlay if it isn't already attached
+                        context_canvas = self._get_context_canvas_for_path(target_path)
+                        if context_canvas is not None and context_canvas._mask_overlay_item is None:
+                            context_canvas.set_mask_overlay(target_mask)
                             
-                            if proj is not None and proj[2]:
-                                target_u, target_v = proj[0], proj[1]
-                                search_radius = max(brush_w, brush_h) * 2.5
-                                bbox = (
-                                    target_u - search_radius, target_u + search_radius, 
-                                    target_v - search_radius, target_v + search_radius
-                                )
-                                
-                            flat_indices = target_camera.get_pixels_for_elements(painted_ids, bbox=bbox)
-                            if len(flat_indices) == 0:
-                                continue
-                                
-                            # --- OPTIMIZATION 2: Pixel Diffing (Compare to 0 for erase) ---
-                            if hasattr(target_mask, 'mask_data'):
-                                current_vals = target_mask.mask_data.ravel()[flat_indices]
-                                changed_mask = current_vals != 0
-                                flat_indices = flat_indices[changed_mask]
-                                
-                                if len(flat_indices) == 0:
-                                    continue
-                                    
-                            target_mask.update_mask_at_indices(flat_indices, 0, silent=True)
-                        except Exception as e:
-                            print(f"⚠️ Failed to propagate erase to {target_path}: {e}")
-                            continue
-                    else:
-                        # 2D center-stamp fallback
-                        if projections is None:
-                            projections = self._build_projection(px, py)
-                        proj = projections.get(target_path)
-                        if proj is None:
-                            continue
-                        u, v, is_valid = proj
-                        if not is_valid:
-                            continue
-                        if not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
-                            continue
-                        from PyQt5.QtCore import QPointF
-                        brush_location = QPointF(u - brush_w / 2.0, v - brush_h / 2.0)
-                        target_mask.update_mask(brush_location, brush_mask, 0, silent=True)
-
-                    context_canvas = self._get_context_canvas_for_path(target_path)
-                    if context_canvas is not None and context_canvas._mask_overlay_item is None:
-                        context_canvas.set_mask_overlay(target_mask)
-
-                except Exception:
-                    pass
+        except Exception as e:
+            print(f"Error in multi-annotate erase: {e}")
         finally:
             self._propagating_annotation = False
+            
+            # Clean up the live vector scratchpads across all cameras
+            if self.context_matrix is not None:
+                self.context_matrix.clear_all_scratchpads()
 
     def _on_sam_prediction_applied(self, scene_pos, label_id: str, binary_mask: np.ndarray):
         """Propagate a final SAM mask prediction into all visible context cameras.
