@@ -1884,7 +1884,6 @@ class MVATManager(QObject):
 
         self._propagating_annotation = True
         try:
-            loop_start = time.time()
             for target_path in selected_paths:
 
                 target_camera = self.cameras.get(target_path)
@@ -1920,9 +1919,7 @@ class MVATManager(QObject):
                         try:
                             if not isinstance(painted_ids, np.ndarray) or len(painted_ids) == 0:
                                 continue
-                           
-                            lookup_start = time.time()
-                            
+                                                       
                             # --- OPTIMIZATION 3: Localized Search Window ---
                             # Project the center of the brush to the target camera
                             if projections is None:
