@@ -2545,102 +2545,129 @@ class MVATManager(QObject):
                     self._ensure_label_painter(primary_target)
                     self._label_painter_thread.submit(painted_ids, target_color, source_class_id)
 
-        # Projections for 2D fallback — computed lazily inside the loop
+        # Projections for 2D fallback — computed lazily
         projections = None
 
         self._propagating_annotation = True
         try:
+            # 1. Pre-resolve class IDs and sort cameras into 3D/2D buckets
+            target_class_id_map = {}
+            target_cameras_3d = []
+            target_cameras_2d = []
+
             for target_path in selected_paths:
-
                 target_camera = self.cameras.get(target_path)
-                if target_camera is None:
-                    continue
-
-                try:
-                    target_raster = self.raster_manager.get_raster(target_path)
-                    if target_raster is None:
-                        continue
-                        
-                    # --- OPTIMIZATION 1: Bypass forced sync_label_map ---
-                    target_mask = target_raster.mask_annotation
-                    if target_mask is None:
-                        target_mask = target_raster.get_mask_annotation(project_labels)
-                    if target_mask is None:
-                        continue
-
+                if not target_camera: continue
+                
+                target_raster = self.raster_manager.get_raster(target_path)
+                if not target_raster: continue
+                
+                # --- OPTIMIZATION 1: Bypass forced sync_label_map ---
+                target_mask = target_raster.mask_annotation
+                if target_mask is None:
+                    target_mask = target_raster.get_mask_annotation(project_labels)
+                if target_mask is None: continue
+                
+                target_class_id = target_mask.label_id_to_class_id_map.get(label_id)
+                if target_class_id is None:
+                    target_mask.sync_label_map([source_label])
                     target_class_id = target_mask.label_id_to_class_id_map.get(label_id)
-                    if target_class_id is None:
-                        target_mask.sync_label_map([source_label])
-                        target_class_id = target_mask.label_id_to_class_id_map.get(label_id)
-                    if target_class_id is None:
-                        continue
+                if target_class_id is None: continue
+                
+                target_class_id_map[target_path] = target_class_id
+                
+                target_has_index = target_camera._raster is not None and target_camera._raster.index_map is not None
+                if use_3d and target_has_index:
+                    target_cameras_3d.append((target_path, target_camera))
+                else:
+                    target_cameras_2d.append((target_path, target_camera))
 
-                    target_has_index = target_camera._raster.index_map is not None
+            # 2. THREADED 3D INDEX SEARCH
+            from concurrent.futures import as_completed
+            futures = {}
+            
+            if use_3d and isinstance(painted_ids, np.ndarray) and len(painted_ids) > 0:
+                if projections is None:
+                    projections = self._build_projection(px, py)
+                    
+                for target_path, target_camera in target_cameras_3d:
+                    proj = projections.get(target_path)
+                    bbox = None
+                    if proj is not None and proj[2]:
+                        target_u, target_v = proj[0], proj[1]
+                        search_radius = max(mask_w, mask_h) * 2.5
+                        bbox = (
+                            target_u - search_radius, target_u + search_radius, 
+                            target_v - search_radius, target_v + search_radius
+                        )
+                        
+                    future = self._propagation_executor.submit(
+                        target_camera.get_pixels_for_elements, painted_ids, bbox=bbox
+                    )
+                    futures[future] = target_path
 
-                    if use_3d and target_has_index:
-                        try:
-                            if not isinstance(painted_ids, np.ndarray) or len(painted_ids) == 0:
-                                continue
-                                
-                            # --- OPTIMIZATION 3: Localized Search Window ---
-                            if projections is None:
-                                projections = self._build_projection(px, py)
-                            proj = projections.get(target_path)
-                            bbox = None
-                            
-                            if proj is not None and proj[2]:
-                                target_u, target_v = proj[0], proj[1]
-                                search_radius = max(mask_w, mask_h) * 2.5
-                                bbox = (
-                                    target_u - search_radius, target_u + search_radius, 
-                                    target_v - search_radius, target_v + search_radius
-                                )
-                                
-                            flat_indices = target_camera.get_pixels_for_elements(painted_ids, bbox=bbox)
-                            if len(flat_indices) == 0:
-                                continue
-                                
-                            # --- OPTIMIZATION 2: Pixel Diffing ---
-                            if hasattr(target_mask, 'mask_data'):
-                                current_vals = target_mask.mask_data.ravel()[flat_indices]
-                                changed_mask = current_vals != target_class_id
-                                flat_indices = flat_indices[changed_mask]
-                                
-                                if len(flat_indices) == 0:
-                                    continue
-                                    
-                            target_mask.update_mask_at_indices(flat_indices, target_class_id, silent=True)
-                        except Exception as e:
-                            print(f"⚠️ Failed to propagate SAM mask to {target_path}: {e}")
-                            continue
-                    else:
-                        # 2D center-stamp fallback
-                        if projections is None:
-                            projections = self._build_projection(px, py)
-                        proj = projections.get(target_path)
-                        if proj is None:
-                            continue
-                        u, v, is_valid = proj
-                        if not is_valid:
-                            continue
-                        if not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
-                            continue
+            # 3. Process 2D Fallbacks immediately on the Main Thread
+            if target_cameras_2d:
+                if projections is None:
+                    projections = self._build_projection(px, py)
+                for target_path, target_camera in target_cameras_2d:
+                    proj = projections.get(target_path)
+                    if proj is None or not proj[2]: continue
+                    u, v, is_valid = proj
+                    
+                    if 0 <= u < target_camera.width and 0 <= v < target_camera.height:
+                        target_class_id = target_class_id_map[target_path]
+                        target_raster = self.raster_manager.get_raster(target_path)
+                        target_mask = target_raster.mask_annotation
+                        
                         subset_class_mask = binary_mask.astype(np.uint8) * int(target_class_id)
                         top_left_x = int(u - mask_w / 2.0)
                         top_left_y = int(v - mask_h / 2.0)
                         target_mask.update_mask_with_mask(subset_class_mask, (top_left_x, top_left_y), silent=True)
+                        
+                        if label_id not in target_mask.visible_label_ids:
+                            target_mask.visible_label_ids.add(label_id)
+                            target_mask.update_graphics_item()
+                            
+                        context_canvas = self._get_context_canvas_for_path(target_path)
+                        if context_canvas is not None and context_canvas._mask_overlay_item is None:
+                            context_canvas.set_mask_overlay(target_mask)
 
-                    if label_id not in target_mask.visible_label_ids:
-                        target_mask.visible_label_ids.add(label_id)
-                        target_mask.update_graphics_item()
+            # 4. Catch 3D Thread results and repaint
+            for future in as_completed(futures):
+                target_path = futures[future]
+                flat_indices = future.result()
+                target_class_id = target_class_id_map[target_path]
+                
+                if len(flat_indices) > 0:
+                    target_raster = self.raster_manager.get_raster(target_path)
+                    target_mask = target_raster.mask_annotation
+                    
+                    # --- OPTIMIZATION 2: Pixel Diffing ---
+                    if hasattr(target_mask, 'mask_data'):
+                        current_vals = target_mask.mask_data.ravel()[flat_indices]
+                        changed_mask = current_vals != target_class_id
+                        flat_indices = flat_indices[changed_mask]
+                        
+                        if len(flat_indices) > 0:
+                            target_mask.update_mask_at_indices(flat_indices, target_class_id, silent=True)
+                            
+                            if label_id not in target_mask.visible_label_ids:
+                                target_mask.visible_label_ids.add(label_id)
+                            target_mask.update_graphics_item()
+                            
+                            context_canvas = self._get_context_canvas_for_path(target_path)
+                            if context_canvas is not None and context_canvas._mask_overlay_item is None:
+                                context_canvas.set_mask_overlay(target_mask)
 
-                    context_canvas = self._get_context_canvas_for_path(target_path)
-                    if context_canvas is not None and context_canvas._mask_overlay_item is None:
-                        context_canvas.set_mask_overlay(target_mask)
-                except Exception:
-                    pass
+        except Exception as e:
+            print(f"Error in multi-annotate SAM propagation: {e}")
         finally:
             self._propagating_annotation = False
+            
+            # Clean up the live vector scratchpads across all cameras
+            if self.context_matrix is not None:
+                self.context_matrix.clear_all_scratchpads()
 
     def cleanup(self):
         """Clean up resources before closing."""
