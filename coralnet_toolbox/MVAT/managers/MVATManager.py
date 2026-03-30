@@ -1801,7 +1801,7 @@ class MVATManager(QObject):
         # ------------------------------------------------------------------
         painted_ids = None
         _p1_target = self.viewer.scene_context.get_primary_target()
-        if isinstance(_p1_target, MeshProduct) and not getattr(self.selected_camera, 'is_orthographic', False) and False:
+        if isinstance(_p1_target, MeshProduct) and not getattr(self.selected_camera, 'is_orthographic', False) and False: # now fast
             try:
                 # Dense ray casting: cast through every True pixel in the brush mask
                 # to intersect the full triangle surface area rather than relying on
@@ -1878,8 +1878,8 @@ class MVATManager(QObject):
                     import time
                     t0 = time.time()
                     # 3. Paint the 3D model arrays
-                    primary_target.apply_labels(painted_ids, source_class_id, target_color)  # FAST when commented out (for small scenes)
-                    print(f"Applied labels to 3D model in {time.time() - t0:.2f} seconds")
+                    # primary_target.apply_labels(painted_ids, source_class_id, target_color)  # FAST when commented out (for small scenes)
+                    # print(f"Applied labels to 3D model in {time.time() - t0:.2f} seconds")
                     # Always 0 seconds, but being commented out makes the operation fast. What's happening?
                     
                     # 4. Tell the 3D viewer to refresh to show the new colors instantly
