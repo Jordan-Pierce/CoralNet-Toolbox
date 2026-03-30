@@ -9,6 +9,7 @@ the MainWindow, RasterManager, MVATViewer (3D), and ContextMatrix (2D).
 import os
 import time
 import numpy as np
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from PyQt5.QtCore import QObject, QTimer, pyqtSignal, Qt, QThread
 from PyQt5.QtWidgets import QApplication, QMessageBox
@@ -334,6 +335,12 @@ class MVATManager(QObject):
         self.selection_model = SelectionManager(self)
         self.cache_manager = CacheManager("")
         self.mouse_bridge = MousePositionBridge(self)
+
+        # Propagation thread pool for parallel camera updates
+        self._propagation_executor = ThreadPoolExecutor(
+            max_workers=min(8, os.cpu_count() or 4),
+            thread_name_prefix='mvat_propagate'
+        )
 
         # --- Label Painter Thread ---
         self._label_painter_thread = None
@@ -875,6 +882,8 @@ class MVATManager(QObject):
                 self.viewer.update_camera_appearance(self.selected_camera)
         
         self.selected_camera = camera
+        # Invalidate median depth cache when camera changes
+        self._median_depth_cache_key = None
         camera.select()
         
         if hasattr(self.viewer, 'update_camera_appearance'):
@@ -1589,12 +1598,18 @@ class MVATManager(QObject):
         except Exception:
             pass
 
-        try:
-            default_depth = self.viewer.get_scene_median_depth(self.selected_camera.position)
-        except Exception:
-            default_depth = 10.0
-        if not default_depth or default_depth <= 0:
-            default_depth = 10.0
+        # Cache median depth per camera — only recompute when active camera changes
+        cache_key = id(self.selected_camera)
+        if getattr(self, '_median_depth_cache_key', None) != cache_key:
+            try:
+                self._cached_median_depth = self.viewer.get_scene_median_depth(
+                    self.selected_camera.position
+                )
+            except Exception:
+                self._cached_median_depth = 10.0
+            self._median_depth_cache_key = cache_key
+
+        default_depth = self._cached_median_depth or 10.0
 
         try:
             ray = CameraRay.from_pixel_and_camera(
@@ -1855,6 +1870,60 @@ class MVATManager(QObject):
             print(f"⚠️ Dense mesh hit test failed: {e}")
             return np.array([], dtype=np.int32)
 
+    def _propagate_to_camera(self, target_path, painted_ids, target_class_id_map,
+                              projections, brush_w, brush_h, brush_mask, use_3d):
+        """Single-camera propagation — runs in thread pool, no Qt calls."""
+        target_camera = self.cameras.get(target_path)
+        if target_camera is None:
+            return target_path, False
+
+        target_raster = self.raster_manager.get_raster(target_path)
+        if target_raster is None:
+            return target_path, False
+
+        target_mask = target_raster.mask_annotation
+        if target_mask is None:
+            return target_path, False
+
+        target_class_id = target_class_id_map.get(target_path)
+        if target_class_id is None:
+            return target_path, False
+
+        target_has_index = target_camera._raster.index_map is not None
+
+        if use_3d and target_has_index:
+            proj = projections.get(target_path)
+            bbox = None
+            if proj is not None and proj[2]:
+                target_u, target_v = proj[0], proj[1]
+                search_radius = max(brush_w, brush_h) * 2.5
+                bbox = (target_u - search_radius, target_u + search_radius,
+                        target_v - search_radius, target_v + search_radius)
+
+            flat_indices = target_camera.get_pixels_for_elements(painted_ids, bbox=bbox)
+            if len(flat_indices) == 0:
+                return target_path, False
+
+            if hasattr(target_mask, 'mask_data'):
+                current_vals = target_mask.mask_data.ravel()[flat_indices]
+                flat_indices = flat_indices[(current_vals < target_mask.LOCK_BIT) & 
+                                            (current_vals != target_class_id)]
+            if len(flat_indices) == 0:
+                return target_path, False
+
+            target_mask.update_mask_at_indices(flat_indices, target_class_id, silent=True)
+        else:
+            proj = projections.get(target_path)
+            if proj is None:
+                return target_path, False
+            u, v, is_valid = proj
+            if not is_valid or not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
+                return target_path, False
+            brush_location = QPointF(u - brush_w / 2.0, v - brush_h / 2.0)
+            target_mask.update_mask(brush_location, brush_mask, target_class_id, silent=True)
+
+        return target_path, True
+
     def _on_brush_stroke_applied(self, scene_pos, label_id: str, brush_mask):
         """Propagate a brush stroke into all visible context cameras.
 
@@ -1979,115 +2048,51 @@ class MVATManager(QObject):
 
         self._propagating_annotation = True
         try:
+            # Pre-resolve class IDs for ALL cameras before entering threads
+            # (avoids repeated dict lookups and sync_label_map calls inside threads)
+            target_class_id_map = {}
             for target_path in selected_paths:
-
-                target_camera = self.cameras.get(target_path)
-                if target_camera is None:
+                target_raster = self.raster_manager.get_raster(target_path)
+                if target_raster is None:
                     continue
+                target_mask = target_raster.mask_annotation
+                if target_mask is None:
+                    target_mask = target_raster.get_mask_annotation(project_labels)
+                if target_mask is None:
+                    continue
+                class_id = target_mask.label_id_to_class_id_map.get(label_id)
+                if class_id is None:
+                    target_mask.sync_label_map([source_label])
+                    class_id = target_mask.label_id_to_class_id_map.get(label_id)
+                if class_id is not None:
+                    target_class_id_map[target_path] = class_id
+                    # Pre-warm color map cache to avoid cold cache hit in threads
+                    target_mask._get_color_map()
 
-                try:
+            if projections is None:
+                projections = self._build_projection(px, py)
+
+            futures = {
+                self._propagation_executor.submit(
+                    self._propagate_to_camera,
+                    target_path, painted_ids, target_class_id_map,
+                    projections, brush_w, brush_h, brush_mask, use_3d
+                ): target_path
+                for target_path in target_class_id_map
+            }
+            for future in as_completed(futures):
+                target_path, did_update = future.result()
+                if did_update:
                     target_raster = self.raster_manager.get_raster(target_path)
-                    if target_raster is None:
-                        continue
-                    
-                    # Access the mask directly to bypass forced UI syncing overhead
-                    target_mask = target_raster.mask_annotation
-                    if target_mask is None:
-                        target_mask = target_raster.get_mask_annotation(project_labels)
-                    if target_mask is None:
-                        continue
-
-                    # Resolve target class_id via stable label_id
-                    target_class_id = target_mask.label_id_to_class_id_map.get(label_id)
-                    if target_class_id is None:
-                        target_mask.sync_label_map([source_label])
-                        target_class_id = target_mask.label_id_to_class_id_map.get(label_id)
-                    if target_class_id is None:
-                        continue
-
-                    target_has_index = target_camera._raster.index_map is not None
-
-                    if use_3d and target_has_index:  # This and below is fast (w/ dense disabled)
-                        # --------------------------------------------------
-                        # Phase 2: Target Pixel Injection (3D → 2D)
-                        # --------------------------------------------------
-                        try:
-                            if not isinstance(painted_ids, np.ndarray) or len(painted_ids) == 0:
-                                continue
-                                                       
-                            # --- OPTIMIZATION 3: Localized Search Window ---
-                            # Project the center of the brush to the target camera
-                            if projections is None:
-                                projections = self._build_projection(px, py)
-                                
-                            proj = projections.get(target_path)
-                            bbox = None
-                            
-                            # If the center of the brush successfully projected into this camera,
-                            # restrict the search to a local window to prevent scanning 16M pixels.
-                            if proj is not None and proj[2]: # is_valid
-                                target_u, target_v = proj[0], proj[1]
-                                
-                                # Use a generous radius (2.5x the brush size) to safely capture
-                                # the painted area even under extreme perspective distortion.
-                                search_radius = max(brush_w, brush_h) * 2.5
-                                bbox = (
-                                    target_u - search_radius, 
-                                    target_u + search_radius, 
-                                    target_v - search_radius, 
-                                    target_v + search_radius
-                                )
-                            
-                            # Pass the bbox to the camera to slice the index map
-                            flat_indices = target_camera.get_pixels_for_elements(painted_ids, bbox=bbox)
-                            
-                            if len(flat_indices) == 0:
-                                continue
-                            
-                            # --- OPTIMIZATION 2: Pixel Diffing ---
-                            if hasattr(target_mask, 'mask_data'):
-                                current_vals = target_mask.mask_data.ravel()[flat_indices]
-                                changed_mask = current_vals != target_class_id
-                                flat_indices = flat_indices[changed_mask]
-                                
-                                if len(flat_indices) == 0:
-                                    continue
-                                                        
-                            # Revert to 1D index updating. Pixel-diffing (above) already 
-                            # ensures this list is small enough to not choke the system, 
-                            # and guarantees no square bounding-box artifacts.
-                            target_mask.update_mask_at_indices(flat_indices, target_class_id, silent=True)
-                            
-                        except Exception as e:
-                            print(f"⚠️ Failed to propagate stroke to {target_path}: {e}")
-                            continue
-                    else:
-                        # 2D center-stamp fallback  # This and below is fast (w/ dense disabled)
-                        if projections is None:
-                            projections = self._build_projection(px, py)
-                        proj = projections.get(target_path)
-                        if proj is None:
-                            continue
-                        u, v, is_valid = proj
-                        if not is_valid:
-                            continue
-                        if not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
-                            continue
-                        from PyQt5.QtCore import QPointF
-                        brush_location = QPointF(u - brush_w / 2.0, v - brush_h / 2.0)
-                        target_mask.update_mask(brush_location, brush_mask, target_class_id, silent=True)
-
-                    # Ensure the label is visible in the target overlay
-                    if label_id not in target_mask.visible_label_ids:
-                        target_mask.visible_label_ids.add(label_id)
-                        target_mask.update_graphics_item()
-
-                    # Only mount the overlay if it isn't already attached to the canvas
-                    context_canvas = self._get_context_canvas_for_path(target_path)
-                    if context_canvas is not None and context_canvas._mask_overlay_item is None:
-                        context_canvas.set_mask_overlay(target_mask)
-                except Exception:
-                    pass
+                    if target_raster and target_raster.mask_annotation:
+                        target_mask = target_raster.mask_annotation
+                        if label_id not in target_mask.visible_label_ids:
+                            target_mask.visible_label_ids.add(label_id)
+                            target_mask.update_graphics_item()  # Qt call back on main thread
+                        # Only mount the overlay if it isn't already attached to the canvas
+                        context_canvas = self._get_context_canvas_for_path(target_path)
+                        if context_canvas is not None and context_canvas._mask_overlay_item is None:
+                            context_canvas.set_mask_overlay(target_mask)
         finally:
             self._propagating_annotation = False
 
@@ -2645,6 +2650,13 @@ class MVATManager(QObject):
                 except Exception:
                     pass
                 self._label_painter_thread = None
+        except Exception:
+            pass
+
+        # Shutdown propagation thread pool
+        try:
+            if hasattr(self, '_propagation_executor'):
+                self._propagation_executor.shutdown(wait=False)
         except Exception:
             pass
 

@@ -173,7 +173,6 @@ class Camera:
         try:
             if self._raster.index_map is None:
                 return np.empty(0, dtype=np.int64)
-            
             if element_ids is None or not isinstance(element_ids, np.ndarray) or len(element_ids) == 0:
                 return np.empty(0, dtype=np.int64)
 
@@ -182,14 +181,17 @@ class Camera:
             if getattr(self, '_cached_map_id', None) != current_map_id:
                 self._cached_max_id = int(np.max(self._raster.index_map))
                 self._cached_map_id = current_map_id
-                
+                self._lut_buf = None  # Invalidate buffer when index map changes
+
             max_id = self._cached_max_id
-            
             valid_query_ids = element_ids[element_ids <= max_id]
             if len(valid_query_ids) == 0:
                 return np.empty(0, dtype=np.int64)
-                
-            lut = np.zeros(max_id + 2, dtype=bool)
+
+            # Reuse pre-allocated buffer — zero-allocation fast path
+            if getattr(self, '_lut_buf', None) is None or len(self._lut_buf) < max_id + 2:
+                self._lut_buf = np.zeros(max_id + 2, dtype=bool)
+            lut = self._lut_buf
             lut[valid_query_ids] = True
             
             # --- Localized Sub-grid Search ---
@@ -216,6 +218,8 @@ class Camera:
                 local_v, local_u = np.divmod(local_flat_indices, box_width)
                 
                 global_flat_indices = (local_v + v_min) * self.width + (local_u + u_min)
+                # CRITICAL: Reset only the bits we set before returning
+                lut[valid_query_ids] = False
                 return global_flat_indices
                 
             # --- STRIDED PRE-SEARCH OPTIMIZATION (Fallback) ---
@@ -227,6 +231,7 @@ class Camera:
                 valid_mask_sub = lut[sub_map]
                 
                 if not valid_mask_sub.any():
+                    lut[valid_query_ids] = False
                     return np.empty(0, dtype=np.int64)
                     
                 sub_flat_indices = np.where(valid_mask_sub)[0]
@@ -245,19 +250,25 @@ class Camera:
                 local_flat_indices = np.where(valid_mask)[0].astype(np.int64)
                 
                 if len(local_flat_indices) == 0:
+                    lut[valid_query_ids] = False
                     return np.empty(0, dtype=np.int64)
                     
                 box_width = u_max - u_min
                 local_v, local_u = np.divmod(local_flat_indices, box_width)
                 
                 global_flat_indices = (local_v + v_min) * self.width + (local_u + u_min)
+                # CRITICAL: Reset only the bits we set before returning
+                lut[valid_query_ids] = False
                 return global_flat_indices
                 
         except Exception as e:
-            print(f"⚠️ get_pixels_for_elements failed: {e}")
-            return np.empty(0, dtype=np.int64)
-                
-        except Exception as e:
+            # Safety: ensure LUT is reset even on error
+            if hasattr(self, '_lut_buf') and getattr(self, '_lut_buf') is not None:
+                try:
+                    if 'valid_query_ids' in dir():
+                        self._lut_buf[valid_query_ids] = False
+                except Exception:
+                    self._lut_buf = None  # Force reallocation next call
             print(f"⚠️ get_pixels_for_elements failed: {e}")
             return np.empty(0, dtype=np.int64)
 

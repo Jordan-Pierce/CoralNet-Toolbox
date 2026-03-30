@@ -212,11 +212,27 @@ class EraseTool(Tool):
         self.cursor_annotation.setPen(pen)
         
         self.annotation_window.scene.addItem(self.cursor_annotation)
+        
+        # Track current size and shape for optimization
+        self._last_brush_size = self.brush_size
+        self._last_shape = self.shape
 
     def update_cursor_annotation(self, scene_pos: QPointF = None):
         """Update the cursor annotation position."""
-        self.clear_cursor_annotation()
-        self.create_cursor_annotation(scene_pos)
+        if scene_pos is None:
+            self.clear_cursor_annotation()
+            return
+        
+        # If cursor annotation exists and size/shape haven't changed, just update position
+        if (self.cursor_annotation and 
+            hasattr(self, '_last_brush_size') and self._last_brush_size == self.brush_size and
+            hasattr(self, '_last_shape') and self._last_shape == self.shape):
+            radius = self.brush_size / 2.0
+            rect = QRectF(scene_pos.x() - radius, scene_pos.y() - radius, self.brush_size, self.brush_size)
+            self.cursor_annotation.setRect(rect)
+        else:
+            self.clear_cursor_annotation()
+            self.create_cursor_annotation(scene_pos)
 
     def clear_cursor_annotation(self):
         """Clear the current cursor annotation if it exists."""
