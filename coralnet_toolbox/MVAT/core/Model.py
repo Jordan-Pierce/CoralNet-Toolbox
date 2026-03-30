@@ -398,7 +398,9 @@ class MeshProduct(AbstractSceneProduct):
         # --- Build Open3D BVH during load time! ---
         # try:
         #     import open3d as o3d
+
         #     print(f"🌲 Building Open3D BVH for {self.label}...")
+
         #     bvh_start = time.time()
         #     scene = o3d.t.geometry.RaycastingScene()
         #     v_tensor = o3d.core.Tensor(self._cached_vertices, dtype=o3d.core.Dtype.Float32)
@@ -411,6 +413,7 @@ class MeshProduct(AbstractSceneProduct):
             
         #     self._o3d_raycasting_scene = scene
         #     print(f"✅ BVH built and compiled successfully in {time.time() - bvh_start:.3f}s")
+
         # except ImportError:
         #     print("⚠️ Open3D not installed. BVH will fall back to point sampling.")
         #     pass

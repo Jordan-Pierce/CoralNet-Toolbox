@@ -1151,7 +1151,7 @@ class MVATManager(QObject):
                 return
 
             mesh_points = np.asarray(mesh.points, dtype=np.float32)
-            mesh_faces_flat = np.asarray(mesh.faces.reshape(-1, 4), dtype=np.int64)
+            mesh_faces_flat = np.asarray(mesh.faces.reshape(-1, 4), dtype=np.int32)
 
             # Use the product's python-owned label cache if available, otherwise materialize one now
             labels_cache = getattr(primary_target, '_labels_cache', None)
@@ -1188,16 +1188,34 @@ class MVATManager(QObject):
                 except Exception:
                     pass
                 self._label_overlay_actor = None
+            # Add the new tiny overlay actor. The worker emits numpy arrays
+            # (points, faces_flat, colors) to avoid VTK work off the GUI thread.
+            try:
+                # If overlay is a tuple/list from the worker: assemble PolyData here
+                if isinstance(overlay, (list, tuple)) and len(overlay) == 3:
+                    pts, faces_flat, colors = overlay
+                    import pyvista as pv
+                    pts_arr = np.asarray(pts, dtype=np.float32)
+                    faces_arr = np.asarray(faces_flat, dtype=np.int32)
+                    colors_arr = np.asarray(colors, dtype=np.uint8)
 
-            # Add the new tiny overlay actor
-            self._label_overlay_actor = self.viewer.plotter.add_mesh(
-                overlay,
-                scalars='OverlayColors',
-                rgb=True,
-                copy_mesh=False,
-                lighting=False,
-                show_scalar_bar=False,
-            )
+                    tiny = pv.PolyData(pts_arr, faces_arr)
+                    tiny.cell_data['OverlayColors'] = colors_arr
+                    mesh_to_add = tiny
+                else:
+                    # Backwards-compat: already a pv.PolyData
+                    mesh_to_add = overlay
+
+                self._label_overlay_actor = self.viewer.plotter.add_mesh(
+                    mesh_to_add,
+                    scalars='OverlayColors',
+                    rgb=True,
+                    copy_mesh=False,
+                    lighting=False,
+                    show_scalar_bar=False,
+                )
+            except Exception as e:
+                print(f"⚠️ Failed to assemble overlay on main thread: {e}")
             try:
                 self.viewer.plotter.render()
             except Exception:

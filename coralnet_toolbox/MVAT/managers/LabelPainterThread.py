@@ -1,13 +1,12 @@
 """
-Background thread for building overlay PolyData from painted face IDs.
+Background thread for building overlay geometry from painted face IDs.
 
-Runs entirely in numpy (O(M) per stroke), emits a tiny PolyData to the
-main thread for a cheap actor swap. This thread never touches OpenGL
-contexts directly — it only constructs small `pyvista.PolyData` objects
-and sends them via Qt signals to the GUI thread.
+Runs entirely in numpy (O(M) per stroke) and emits small numpy payloads
+to the main thread for assembly into a `pyvista.PolyData`. This keeps
+all VTK/PyVista work on the GUI thread (safer) while the worker only
+touches plain CPU memory.
 """
 import numpy as np
-import pyvista as pv
 from queue import Queue, Empty
 from PyQt5.QtCore import QThread, pyqtSignal
 
@@ -21,11 +20,12 @@ class LabelPainterThread(QThread):
     """
     Consumes (face_ids, color_rgb, class_id) work items from an internal queue.
 
-    For each item:
-      1. Updates the python-side `class_ids` and `labels_cache` (O(M)).
-      2. Builds a tiny `pv.PolyData` containing only the painted faces (O(M)).
-      3. Emits `overlay_ready` with the tiny PolyData so the main thread can
-         perform a cheap actor swap.
+     For each item:
+        1. Updates the python-side `class_ids` and `labels_cache` (O(M)).
+        2. Builds small numpy arrays (points, faces, colors) describing only
+            the painted faces (O(M)).
+        3. Emits `overlay_ready` with the numpy payload. The main thread
+            will assemble a `pyvista.PolyData` from those arrays.
 
     The queue is coalesced on `submit()` so the worker never falls behind.
     """
@@ -39,7 +39,7 @@ class LabelPainterThread(QThread):
 
         # Read-only geometry references (numpy)
         self._points = mesh_points          # (V, 3) float32
-        self._faces4 = mesh_faces_flat      # (N_cells, 4) int64: [3, v0, v1, v2]
+        self._faces4 = mesh_faces_flat      # (N_cells, 4) int32: [3, v0, v1, v2]
 
         # Writable python-owned buffers
         # `labels_view` is expected to be a numpy array owned by Python (uint8, (N,3))
@@ -96,19 +96,21 @@ class LabelPainterThread(QThread):
                 print(f"⚠️ LabelPainterThread: failed to update caches: {e}")
                 continue
 
-            # 2. Build a tiny PolyData containing only the painted faces
+            # 2. Build a tiny numpy overlay payload containing only the painted faces
             overlay = self._build_overlay(face_ids, color_np)
             if overlay is not None:
                 try:
-                    self.overlay_ready.emit(overlay)
+                    pts, faces, colors = overlay
+                    # Emit copies to ensure stable ownership across threads
+                    self.overlay_ready.emit((pts.copy(), faces.copy(), colors.copy()))
                 except Exception as e:
                     print(f"⚠️ LabelPainterThread: failed to emit overlay: {e}")
-
-    def _build_overlay(self, face_ids: np.ndarray, color_rgb: np.ndarray) -> pv.PolyData | None:
+    def _build_overlay(self, face_ids: np.ndarray, color_rgb: np.ndarray) -> tuple | None:
         """
-        Construct a small PolyData containing only the supplied face IDs.
+        Build numpy arrays describing only the painted faces.
 
-        Complexity: O(M) where M = len(face_ids). Does NOT traverse the full mesh.
+        Returns a tuple: (points, vtk_faces_flat, colors) where `vtk_faces_flat`
+        uses the VTK face layout ([3,v0,v1,v2,...]). Complexity is O(M).
         """
         try:
             # selected: (M, 3) vertex indices per triangle
@@ -118,23 +120,21 @@ class LabelPainterThread(QThread):
             unique_vids, inverse = np.unique(selected, return_inverse=True)
 
             # Local vertex positions
-            overlay_points = self._points[unique_vids]
+            overlay_points = self._points[unique_vids].astype(np.float32)
 
             # Remap global vertex ids -> local ids
             remapped = inverse.reshape(selected.shape)
 
             # VTK face layout: [3, v0, v1, v2, 3, v0, v1, v2, ...]
             vtk_faces = np.hstack([
-                np.full((len(face_ids), 1), 3, dtype=np.int64),
-                remapped.astype(np.int64)
-            ]).ravel()
-
-            overlay = pv.PolyData(overlay_points.astype(np.float32), vtk_faces)
+                np.full((len(face_ids), 1), 3, dtype=np.int32),
+                remapped.astype(np.int32)
+            ]).ravel().astype(np.int32)
 
             # Uniform colour per cell for this stroke
-            colors = np.tile(np.array(color_rgb, dtype=np.uint8), (len(face_ids), 1))
-            overlay.cell_data['OverlayColors'] = colors
-            return overlay
+            colors = np.tile(np.array(color_rgb, dtype=np.uint8), (len(face_ids), 1)).astype(np.uint8)
+
+            return overlay_points, vtk_faces, colors
 
         except Exception as e:
             print(f"⚠️ LabelPainterThread._build_overlay failed: {e}")
