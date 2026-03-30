@@ -2,37 +2,34 @@ import warnings
 import numpy as np
 
 from PyQt5.QtGui import QColor, QPen, QBrush, QPainterPath
-from PyQt5.QtCore import Qt, QPointF, QRectF, QObject, pyqtSignal, QRunnable, QThreadPool
+from PyQt5.QtCore import Qt, QPointF, QRectF, QTimer, QObject, pyqtSignal, QRunnable, QThreadPool
 from PyQt5.QtWidgets import QGraphicsEllipseItem, QMessageBox, QGraphicsRectItem, QGraphicsPathItem
-
 
 from coralnet_toolbox.Tools.QtTool import Tool
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Classes
+# Background Threading
 # ----------------------------------------------------------------------------------------------------------------------
 
-
 class StrokeMathSignals(QObject):
-    # Emits: flat_indices, center_pos, combined_mask
-    finished = pyqtSignal(object, object, object)
-
+    # Emits: flat_indices, center_pos, combined_mask, mask_annotation_ref, label_id_str
+    finished = pyqtSignal(object, object, object, object, str)
 
 class StrokeMathWorker(QRunnable):
-    """Runs the heavy boolean masking and index math on a background thread."""
-    def __init__(self, points, brush_size, brush_mask, img_w, img_h):
+    def __init__(self, points, brush_size, brush_mask, img_w, img_h, mask_annotation, label_id):
         super().__init__()
         self.points = points
         self.brush_size = brush_size
         self.brush_mask = brush_mask
         self.img_w = img_w
         self.img_h = img_h
+        self.mask_annotation = mask_annotation
+        self.label_id = label_id
         self.signals = StrokeMathSignals()
 
     def run(self):
-        # Calculate bounding box
         xs = [p.x() for p in self.points]
         ys = [p.y() for p in self.points]
         
@@ -44,7 +41,6 @@ class StrokeMathWorker(QRunnable):
         w, h = max_x - min_x, max_y - min_y
         combined_mask = np.zeros((h, w), dtype=bool)
         
-        # Build the combined boolean footprint
         for p in self.points:
             px_local = int(p.x() - self.brush_size / 2.0) - min_x
             py_local = int(p.y() - self.brush_size / 2.0) - min_y
@@ -65,7 +61,6 @@ class StrokeMathWorker(QRunnable):
                 
                 combined_mask[ystart:yend, xstart:xend] |= self.brush_mask[brush_ystart:brush_yend, brush_xstart:brush_xend]
 
-        # Convert footprint to flat global indices
         local_ys, local_xs = np.where(combined_mask)
         global_xs = local_xs + min_x
         global_ys = local_ys + min_y
@@ -75,9 +70,11 @@ class StrokeMathWorker(QRunnable):
 
         center_pos = QPointF(min_x + w / 2.0, min_y + h / 2.0)
         
-        # Send data back to the main thread
-        self.signals.finished.emit(flat_indices, center_pos, combined_mask)
+        self.signals.finished.emit(flat_indices, center_pos, combined_mask, self.mask_annotation, self.label_id)
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Tool Class
+# ----------------------------------------------------------------------------------------------------------------------
 
 class BrushTool(Tool):
     """A tool for painting on a MaskAnnotation layer."""
@@ -88,20 +85,23 @@ class BrushTool(Tool):
         self.cursor = Qt.CrossCursor 
         
         self.brush_size = 90
-        self.shape = 'circle'  # 'circle' or 'square'
+        self.shape = 'circle'
         self.brush_mask = self._create_brush_mask()
         self.painting = False
 
         self.post_stroke_callback = None
-        self.live_stroke_callback = None  # NEW
         self._accumulated_points = []
         
-        # NEW: The Qt Scratchpad elements for smooth UI rendering
         self.scratchpad_item = None
         self.scratchpad_path = QPainterPath()
+        
+        # LIVE STREAMING ENGINE
+        self._sync_timer = QTimer()
+        self._sync_timer.timeout.connect(self._stream_stroke_chunk)
+        self._is_finishing_stroke = False
+        self._active_workers = 0
 
     def _create_brush_mask(self):
-        """Creates a boolean numpy array for the brush shape."""
         if self.shape == 'circle':
             radius = self.brush_size // 2
             y, x = np.ogrid[-radius: radius + 1, -radius: radius + 1]
@@ -111,7 +111,6 @@ class BrushTool(Tool):
             return np.ones((size, size), dtype=bool)
 
     def mousePressEvent(self, event):
-        """Handles left-click to toggle painting mode and apply brush if starting."""
         if event.button() != Qt.LeftButton:
             return
             
@@ -130,9 +129,10 @@ class BrushTool(Tool):
         self.painting = not self.painting
         
         if self.painting:
-            # --- START OF STROKE: Initialize the Scratchpad ---
+            # 1. Setup the Qt Scratchpad
+            self._is_finishing_stroke = False
             self.scratchpad_path = QPainterPath()
-            self.scratchpad_path.setFillRule(Qt.WindingFill)  # Ensure proper filling of complex shapes
+            self.scratchpad_path.setFillRule(Qt.WindingFill)
             self.scratchpad_item = QGraphicsPathItem()
             
             label = self.annotation_window.selected_label
@@ -144,17 +144,18 @@ class BrushTool(Tool):
             
             self.scratchpad_item.setBrush(QBrush(fill))
             self.scratchpad_item.setPen(QPen(Qt.NoPen))
-            self.scratchpad_item.setZValue(3)  # Hover above the existing mask layer
+            self.scratchpad_item.setZValue(3)
             
             self.annotation_window.scene.addItem(self.scratchpad_item)
             
+            # 2. Start streaming chunks at 25 FPS
+            self._sync_timer.start(40)
+            
             self._apply_brush(event)
         else:
-            # --- END OF STROKE: Bake to NumPy ---
-            self._flush_stroke()
+            self._finish_stroke()
 
     def mouseMoveEvent(self, event):
-        """Handles mouse dragging, shows the brush circle, and applies brush if painting is active."""
         super().mouseMoveEvent(event)
         
         scene_pos = self.annotation_window.mapToScene(event.pos())
@@ -272,22 +273,19 @@ class BrushTool(Tool):
             self.cursor_annotation = None
 
     def deactivate(self):
-        self.painting = False
-        if self._accumulated_points:
-            self._flush_stroke()
+        if self.painting:
+            self._finish_stroke()
         super().deactivate()
         
     def stop_current_drawing(self):
-        self.painting = False
-        if self._accumulated_points:
-            self._flush_stroke()
+        if self.painting:
+            self._finish_stroke()
 
     def _apply_brush(self, event):
         """Draws visually on the Qt Scratchpad and accumulates points (Zero NumPy)."""
         scene_pos = self.annotation_window.mapToScene(event.pos())
         radius = self.brush_size / 2.0
         
-        # 1. Update the C++ Vector visual layer instantly
         if self.scratchpad_item:
             if self.shape == 'circle':
                 self.scratchpad_path.addEllipse(scene_pos.x() - radius, scene_pos.y() - radius, self.brush_size, self.brush_size)
@@ -296,71 +294,66 @@ class BrushTool(Tool):
                 
             self.scratchpad_item.setPath(self.scratchpad_path)
 
-        # 2. Accumulate the point for the eventual NumPy flush
         self._accumulated_points.append(scene_pos)
 
-        # 3. NEW: Fire the live proxy hook to draw on the other cameras!
-        if getattr(self, 'live_stroke_callback', None):
-            try:
-                label = self.annotation_window.selected_label
-                transparency = self.annotation_window.main_window.get_transparency_value()
-                color = QColor(label.color)
-                color.setAlpha(transparency)
-                self.live_stroke_callback(scene_pos, self.brush_size, self.shape, color)
-            except Exception:
-                pass
-
-    def _flush_stroke(self):
-        """Dispatches the accumulated stroke to a background thread for math processing."""
+    def _stream_stroke_chunk(self):
+        """Grabs the recent points and sends them to the background worker."""
         if not self._accumulated_points:
-            self._cleanup_scratchpad()
+            # Safely cleanup if we are waiting to finish and no workers are running
+            if self._is_finishing_stroke and self._active_workers == 0:
+                self._cleanup_scratchpad()
+                self.annotation_window.viewport().update()
             return
-
-        mask_annotation = self.annotation_window.current_mask_annotation
-        if not mask_annotation or not self.annotation_window.selected_label:
-            self._cleanup_scratchpad()
-            return
-
-        # Grab the points and CLEAR the buffer immediately so the user 
-        # can start their next brush stroke without waiting!
+            
         points_to_process = list(self._accumulated_points)
         self._accumulated_points.clear()
+        
+        mask_annotation = self.annotation_window.current_mask_annotation
+        if not mask_annotation or not self.annotation_window.selected_label:
+            return
 
         img_h, img_w = mask_annotation.mask_data.shape
-
-        # Spawn the background worker
+        
+        self._active_workers += 1
         worker = StrokeMathWorker(
             points=points_to_process, 
             brush_size=self.brush_size, 
             brush_mask=self.brush_mask, 
             img_w=img_w, 
-            img_h=img_h
+            img_h=img_h,
+            mask_annotation=mask_annotation,
+            label_id=self.annotation_window.selected_label.id
         )
-        
-        # Connect the finished signal to our main-thread apply method
-        worker.signals.finished.connect(
-            lambda flat_idx, center, comb_mask: self._on_math_finished(
-                flat_idx, center, comb_mask, mask_annotation, self.annotation_window.selected_label.id
-            )
-        )
-        
-        # Start the thread!
+        worker.signals.finished.connect(self._on_math_finished)
         QThreadPool.globalInstance().start(worker)
+
+    def _finish_stroke(self):
+        """Called when the user lets go of the mouse to finalize the stroke."""
+        self.painting = False
+        self._sync_timer.stop()
+        self._is_finishing_stroke = True
+        
+        # Flush any remaining points immediately
+        self._stream_stroke_chunk()
 
     def _on_math_finished(self, flat_indices, center_pos, combined_mask, mask_annotation, selected_label_id):
         """Executes on the Main Thread: Writes the arrays and triggers 3D sync."""
-        class_id = mask_annotation.label_id_to_class_id_map.get(selected_label_id)
+        self._active_workers -= 1
         
+        class_id = mask_annotation.label_id_to_class_id_map.get(selected_label_id)
         if class_id is not None and len(flat_indices) > 0:
-            # 1. Instantaneous array write (Safe on Main Thread)
-            mask_annotation.update_mask_at_indices(flat_indices, class_id, silent=False)
+            # silent=True locally so we don't double-draw under the opaque Qt scratchpad
+            mask_annotation.update_mask_at_indices(flat_indices, class_id, silent=True)
 
-        # 2. Trigger the Multi-Camera 3D Sync (Also safe to thread later in MVATManager!)
+        # Trigger Multi-Annotate (Projects this 40ms chunk instantly to context cameras)
         if self.post_stroke_callback:
             self.post_stroke_callback(center_pos, selected_label_id, combined_mask)
         
-        # 3. Destroy the visual Scratchpad
-        self._cleanup_scratchpad()
+        # Clean up the Scratchpad if the user has released the mouse AND all threads are done
+        if self._is_finishing_stroke and self._active_workers == 0 and not self._accumulated_points:
+            self._cleanup_scratchpad()
+            # Final local repaint so the baked pixels show up
+            self.annotation_window.viewport().update()
 
     def _cleanup_scratchpad(self):
         """Safely removes the temporary vector stroke from the UI."""
