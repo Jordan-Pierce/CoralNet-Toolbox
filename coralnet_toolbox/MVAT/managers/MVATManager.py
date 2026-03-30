@@ -336,21 +336,6 @@ class MVATManager(QObject):
 
         self._setup_connections()
 
-    def _request_viewer_update(self):
-        """Requests a 3D redraw."""
-        import time
-        t0 = time.time()
-        self._do_viewer_update()
-        print(f"Viewer update took {time.time() - t0:.2f} seconds")
-
-    def _do_viewer_update(self):
-        """Performs the actual synchronous PyVista render."""
-        if self.viewer:
-            try:
-                self.viewer.update()
-            except Exception:
-                pass
-
     def _setup_connections(self):
         """
         Bind all signals between UI views and this controller.
@@ -1874,16 +1859,9 @@ class MVATManager(QObject):
                     if source_class_id is None:
                         source_mask.sync_label_map([source_label])
                         source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
-                        
-                    import time
-                    t0 = time.time()
+
                     # 3. Paint the 3D model arrays
                     # primary_target.apply_labels(painted_ids, source_class_id, target_color)  # FAST when commented out (for small scenes)
-                    # print(f"Applied labels to 3D model in {time.time() - t0:.2f} seconds")
-                    # Always 0 seconds, but being commented out makes the operation fast. What's happening?
-                    
-                    # 4. Tell the 3D viewer to refresh to show the new colors instantly
-                    # self._request_viewer_update()  # Still slow with commeneted out
 
         # Projections for 2D fallback — computed lazily inside the loop
         projections = None
@@ -2036,7 +2014,7 @@ class MVATManager(QObject):
         # ------------------------------------------------------------------
         painted_ids = None
         _p1_target = self.viewer.scene_context.get_primary_target()
-        if fill_mask is not None and isinstance(_p1_target, MeshProduct) and not getattr(self.selected_camera, 'is_orthographic', False):
+        if fill_mask is not None and isinstance(_p1_target, MeshProduct) and not getattr(self.selected_camera, 'is_orthographic', False) and False:
             # Dense ray casting: fill_mask is full image-sized, so pass center coords
             # that produce a zero offset (x0=0, y0=0) aligning the mask to image space.
             mask_h_fill, mask_w_fill = fill_mask.shape
@@ -2065,7 +2043,7 @@ class MVATManager(QObject):
         # ------------------------------------------------------------------
         # NEW Phase: Paint the 3D Model directly
         # ------------------------------------------------------------------
-        if use_3d and False:
+        if use_3d:
             primary_target = self.viewer.scene_context.get_primary_target()
             if primary_target and hasattr(primary_target, 'apply_labels'):
                 # 1. Convert QColor to RGB tuple
@@ -2083,10 +2061,7 @@ class MVATManager(QObject):
                         source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
                     
                     # 3. Paint the 3D model arrays
-                    primary_target.apply_labels(painted_ids, source_class_id, target_color)
-                    
-                    # 4. Tell the 3D viewer to refresh to show the new colors instantly
-                    self._request_viewer_update()
+                    # primary_target.apply_labels(painted_ids, source_class_id, target_color)
         
         # Projections for 2D fallback — computed lazily
         projections = None
@@ -2207,7 +2182,7 @@ class MVATManager(QObject):
         # ------------------------------------------------------------------
         painted_ids = None
         _p1_target = self.viewer.scene_context.get_primary_target()
-        if isinstance(_p1_target, MeshProduct) and not getattr(self.selected_camera, 'is_orthographic', False):
+        if isinstance(_p1_target, MeshProduct) and not getattr(self.selected_camera, 'is_orthographic', False) and False:
             # Dense ray casting: cast through every True pixel in the eraser mask
             # to intersect the full triangle surface area, matching the brush approach.
             painted_ids = self._dense_mesh_hit_test(
@@ -2385,7 +2360,7 @@ class MVATManager(QObject):
         # ------------------------------------------------------------------
         painted_ids = None
         _p1_target = self.viewer.scene_context.get_primary_target()
-        if isinstance(_p1_target, MeshProduct) and not getattr(self.selected_camera, 'is_orthographic', False):
+        if isinstance(_p1_target, MeshProduct) and not getattr(self.selected_camera, 'is_orthographic', False) and False:
             # Dense ray casting: cast through every True pixel in the SAM binary_mask
             # to intersect the full triangle surface area rather than relying on
             # the downsampled index_map (which only captures face centres at reduced
@@ -2430,7 +2405,7 @@ class MVATManager(QObject):
         # ------------------------------------------------------------------
         # NEW Phase: Paint the 3D Model directly
         # ------------------------------------------------------------------
-        if use_3d and False:
+        if use_3d:
             primary_target = self.viewer.scene_context.get_primary_target()
             if primary_target and hasattr(primary_target, 'apply_labels'):
                 # 1. Convert QColor to RGB tuple
@@ -2447,10 +2422,7 @@ class MVATManager(QObject):
                         source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
                         
                     # 3. Paint the 3D model arrays
-                    primary_target.apply_labels(painted_ids, source_class_id, target_color)
-                    
-                    # 4. Tell the 3D viewer to refresh
-                    self._request_viewer_update()
+                    # primary_target.apply_labels(painted_ids, source_class_id, target_color)
 
         # Projections for 2D fallback — computed lazily inside the loop
         projections = None
