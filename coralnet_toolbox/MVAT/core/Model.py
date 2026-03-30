@@ -235,8 +235,12 @@ class PointCloudProduct(AbstractSceneProduct):
         if "Labels" not in self.mesh.array_names:
             labels_array = np.ones((n_points, 3), dtype=np.uint8) * 255  # White
             self.mesh.point_data["Labels"] = labels_array
-            
-        # --- THE FIX: Cache the direct memory view of the VTK array! ---
+        # Create a Python-owned cache detached from the VTK array for background painting
+        # This avoids writing into VTK memory from worker threads.
+        self._labels_cache = np.asarray(self.mesh.point_data["Labels"]).copy()
+
+        # Keep a readonly reference to the PyVista view for eventual flush, but
+        # do NOT write to it directly during painting.
         self._labels_view = self.mesh.point_data["Labels"]
 
         # --- THE FIX: Decouple Class_IDs from the GPU ---
@@ -264,12 +268,27 @@ class PointCloudProduct(AbstractSceneProduct):
         # 1. Update the semantic data in pure Python RAM
         self.class_ids[element_ids] = class_id
 
-        # 2. Directly inject colors into the C++ memory buffer via our cached view
-        self._labels_view[element_ids] = color_rgb
+        # 2. Update the Python-owned labels cache (no VTK/GL work here)
+        if not hasattr(self, '_labels_cache'):
+            # Fallback: materialize cache if missing
+            self._labels_cache = np.asarray(self.mesh.point_data["Labels"]).copy()
+        self._labels_cache[element_ids] = color_rgb
 
-        # 3. Surgically flag ONLY the Labels array to update the screen
-        # For point clouds, we target PointData instead of CellData
-        self.mesh.GetPointData().GetArray("Labels").Modified()
+        # NOTE: Do NOT call Modified() here. The expensive GPU upload is deferred
+        # and performed once by `flush_labels_to_gpu()` on the main thread.
+
+    def flush_labels_to_gpu(self) -> None:
+        """One full GPU upload. Call only on the GUI/main thread when painting pauses."""
+        if self.mesh is None or not hasattr(self, '_labels_cache'):
+            return
+        try:
+            # Overwrite the PyVista/VTK array from our python cache, then mark modified
+            self.mesh.point_data["Labels"] = self._labels_cache
+            v_arr = self.mesh.GetPointData().GetArray("Labels")
+            if v_arr:
+                v_arr.Modified()
+        except Exception as e:
+            print(f"⚠️ flush_labels_to_gpu (PointCloud) failed: {e}")
 
 
 class MeshProduct(AbstractSceneProduct):
@@ -531,12 +550,13 @@ class MeshProduct(AbstractSceneProduct):
             labels_array = np.ones((n_faces, 3), dtype=np.uint8) * 255  # White
             self.mesh.cell_data["Labels"] = labels_array
 
-        # --- THE FIX: Cache the direct memory view of the VTK array! ---
-        # This bypasses PyVista's dictionary lookup overhead during painting
+        # Create a Python-owned labels cache detached from VTK for background painting
+        self._labels_cache = np.asarray(self.mesh.cell_data["Labels"]).copy()
+
+        # Keep a readonly reference to the PyVista view for flush operations only
         self._labels_view = self.mesh.cell_data["Labels"]
 
-        # --- THE FIX: Decouple Class_IDs from the GPU ---
-        # Keep this entirely in Python RAM. Do NOT attach it to self.mesh!
+        # Keep this entirely in Python RAM. Do NOT attach class_ids to self.mesh!
         if not hasattr(self, 'class_ids'):
             self.class_ids = np.zeros(n_faces, dtype=np.int32)
         
@@ -561,18 +581,26 @@ class MeshProduct(AbstractSceneProduct):
         """
         if self.mesh is None or len(element_ids) == 0:
             return
-
-        # 1. Update semantic data in-place
-        # (Assuming self.class_ids is also a view or kept in sync)
+        # 1. Update semantic data in Python RAM
         self.class_ids[element_ids] = class_id
 
-        # 2. Inject colors into the C++ buffer via the numpy view
-        # This is O(N_changed) rather than O(N_total_mesh)
-        self._labels_view[element_ids] = color_rgb
+        # 2. Update the python-owned labels cache (no VTK writes here)
+        if not hasattr(self, '_labels_cache'):
+            self._labels_cache = np.asarray(self.mesh.cell_data["Labels"]).copy()
+        self._labels_cache[element_ids] = color_rgb
 
-        # 3. Flag the specific array as changed
-        # Get the VTK object directly to bypass PyVista wrapper overhead for this call
-        labels_array = self.mesh.GetCellData().GetArray("Labels")
-        if labels_array:
-            labels_array.Modified()
+        # NOTE: No immediate VTK Modified() here. The GUI thread should call
+        # `flush_labels_to_gpu()` once painting activity settles.
+
+    def flush_labels_to_gpu(self) -> None:
+        """One full GPU upload. Call only when painting pauses (main thread)."""
+        if self.mesh is None or not hasattr(self, '_labels_cache'):
+            return
+        try:
+            self.mesh.cell_data["Labels"] = self._labels_cache
+            labels_array = self.mesh.GetCellData().GetArray("Labels")
+            if labels_array:
+                labels_array.Modified()
+        except Exception as e:
+            print(f"⚠️ flush_labels_to_gpu (Mesh) failed: {e}")
 
