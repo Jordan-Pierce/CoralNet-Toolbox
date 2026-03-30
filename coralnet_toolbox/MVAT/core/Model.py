@@ -358,6 +358,9 @@ class MeshProduct(AbstractSceneProduct):
         
         # Extract the rest to numpy temporarily
         triangles_np = np.asarray(tri_mesh.faces.reshape(-1, 4)[:, 1:], dtype=np.uint32)
+        # Cache a CPU-side copy of the triangle indices to avoid costly
+        # GPU->CPU transfers during repeated hit-tests.
+        self._cached_triangles_np = triangles_np
         centers_np = np.asarray(tri_mesh.cell_centers().points, dtype=np.float32)
         centers_sq_norm_np = np.sum(centers_np**2, axis=1)
         

@@ -1665,7 +1665,13 @@ class MVATManager(QObject):
             # 1. Ensure the GPU tensor geometry cache exists (idempotent call).
             mesh_product.prepare_geometry()
             vertices  = mesh_product._cached_vertices                                      # (V, 3) float32
-            triangles = mesh_product._cached_triangles_pt.cpu().numpy().astype(np.uint32)  # (T, 3) uint32
+            # Use the CPU-cached triangle array to avoid GPU->CPU transfers
+            # on every brush tick. The tensor copy was created for fast GPU ops
+            # but we keep a numpy copy for fast CPU-side BVH/path queries.
+            triangles = getattr(mesh_product, '_cached_triangles_np', None)
+            if triangles is None:
+                # Fallback: materialize from the tensor once
+                triangles = mesh_product._cached_triangles_pt.cpu().numpy().astype(np.uint32)
 
             if len(triangles) == 0:
                 return np.array([], dtype=np.int32)
