@@ -377,26 +377,26 @@ class MeshProduct(AbstractSceneProduct):
             self._element_centers_np = centers_np.copy()
             
         # --- Build Open3D BVH during load time! ---
-        try:
-            import open3d as o3d
-            print(f"🌲 Building Open3D BVH for {self.label}...")
-            bvh_start = time.time()
-            scene = o3d.t.geometry.RaycastingScene()
-            v_tensor = o3d.core.Tensor(self._cached_vertices, dtype=o3d.core.Dtype.Float32)
-            t_tensor = o3d.core.Tensor(triangles_np, dtype=o3d.core.Dtype.UInt32)
-            scene.add_triangles(v_tensor, t_tensor)
+        # try:
+        #     import open3d as o3d
+        #     print(f"🌲 Building Open3D BVH for {self.label}...")
+        #     bvh_start = time.time()
+        #     scene = o3d.t.geometry.RaycastingScene()
+        #     v_tensor = o3d.core.Tensor(self._cached_vertices, dtype=o3d.core.Dtype.Float32)
+        #     t_tensor = o3d.core.Tensor(triangles_np, dtype=o3d.core.Dtype.UInt32)
+        #     scene.add_triangles(v_tensor, t_tensor)
             
-            # --- Force Embree to compile the tree NOW ---
-            dummy_ray = o3d.core.Tensor([[0.0, 0.0, 0.0, 0.0, 0.0, 1.0]], dtype=o3d.core.Dtype.Float32)
-            scene.cast_rays(dummy_ray)
+        #     # --- Force Embree to compile the tree NOW ---
+        #     dummy_ray = o3d.core.Tensor([[0.0, 0.0, 0.0, 0.0, 0.0, 1.0]], dtype=o3d.core.Dtype.Float32)
+        #     scene.cast_rays(dummy_ray)
             
-            self._o3d_raycasting_scene = scene
-            print(f"✅ BVH built and compiled successfully in {time.time() - bvh_start:.3f}s")
-        except ImportError:
-            print("⚠️ Open3D not installed. BVH will fall back to point sampling.")
-            pass
+        #     self._o3d_raycasting_scene = scene
+        #     print(f"✅ BVH built and compiled successfully in {time.time() - bvh_start:.3f}s")
+        # except ImportError:
+        #     print("⚠️ Open3D not installed. BVH will fall back to point sampling.")
+        #     pass
         
-        print(f"✅ Geometry extracted and cached in {time.time() - start_time:.3f}s")
+        # print(f"✅ Geometry extracted and cached in {time.time() - start_time:.3f}s")
     
     # --------------------------------------------------------------------------
     # AbstractSceneProduct Implementation
