@@ -338,12 +338,9 @@ class MVATManager(QObject):
         # --- Label Painter Thread ---
         self._label_painter_thread = None
 
-        # Debounce: full GPU flush fires 400ms after last brush tick
-        self._labels_dirty = False
-        self._render_debounce_timer = QTimer(self)
-        self._render_debounce_timer.setInterval(400)
-        self._render_debounce_timer.setSingleShot(True)
-        self._render_debounce_timer.timeout.connect(self._flush_3d_label_render)
+        # Overlay actor handle (tiny actor swapped during painting)
+        # Note: overlay is treated as the authoritative visualization; we
+        # no longer use a debounce flush to upload labels into the main mesh GPU buffers.
 
         # Overlay actor handle (tiny actor swapped during painting)
         self._label_overlay_actor = None
@@ -1126,10 +1123,7 @@ class MVATManager(QObject):
 
     # --- Label painter management ------------------------------------------------
     def _ensure_label_painter(self, primary_target):
-        """Start the painter thread lazily for the active mesh product.
-
-        Only MeshProducts (face-based) are supported by the overlay builder.
-        """
+        """Start the painter thread the first time a mesh is annotated."""
         try:
             if primary_target is None or not isinstance(primary_target, MeshProduct):
                 return
@@ -1178,8 +1172,8 @@ class MVATManager(QObject):
         except Exception as e:
             print(f"⚠️ _ensure_label_painter failed: {e}")
 
-    def _on_overlay_ready(self, overlay: object):
-        """Main thread: swap a tiny overlay actor produced by the painter thread."""
+    def _on_overlay_ready(self, overlay):
+        """Main thread: swap the overlay actor. Only tiny PolyData hits the GPU."""
         try:
             if self._label_overlay_actor is not None:
                 try:
@@ -1223,32 +1217,9 @@ class MVATManager(QObject):
         except Exception as e:
             print(f"⚠️ Overlay swap failed: {e}")
 
-    def _flush_3d_label_render(self):
-        """Debounced: perform one full GPU upload and remove the overlay actor."""
-        if not self._labels_dirty:
-            return
-        self._labels_dirty = False
-
-        # Remove overlay actor (if any)
-        if self._label_overlay_actor is not None:
-            try:
-                self.viewer.plotter.remove_actor(self._label_overlay_actor, render=False)
-            except Exception:
-                pass
-            self._label_overlay_actor = None
-
-        # Flush python cache into the VTK arrays on the main thread
-        primary_target = self.viewer.scene_context.get_primary_target()
-        if primary_target and hasattr(primary_target, 'flush_labels_to_gpu'):
-            try:
-                primary_target.flush_labels_to_gpu()
-            except Exception as e:
-                print(f"⚠️ flush_labels_to_gpu failed: {e}")
-
-        try:
-            self.viewer.plotter.render()
-        except Exception:
-            pass
+    # Note: full-GPU flush is intentionally removed. The overlay actor
+    # is treated as the authoritative visualization for painted faces
+    # during the session; persistent GPU uploads are unnecessary.
 
     def _extract_visibility_geometry(self, primary_target):
         """
@@ -2000,14 +1971,8 @@ class MVATManager(QObject):
                         source_mask.sync_label_map([source_label])
                         source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
                     # 3. Paint the 3D model arrays — offload to background painter thread
-                    try:
-                        self._ensure_label_painter(primary_target)
-                        if self._label_painter_thread is not None:
-                            self._label_painter_thread.submit(painted_ids, target_color, source_class_id)
-                            self._labels_dirty = True
-                            self._render_debounce_timer.start()
-                    except Exception as e:
-                        print(f"⚠️ Failed to submit painting job: {e}")
+                    self._ensure_label_painter(primary_target)
+                    self._label_painter_thread.submit(painted_ids, target_color, source_class_id)
 
         # Projections for 2D fallback — computed lazily inside the loop
         projections = None
@@ -2207,14 +2172,8 @@ class MVATManager(QObject):
                         source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
                     
                     # 3. Paint the 3D model arrays — offload to background painter thread
-                    try:
-                        self._ensure_label_painter(primary_target)
-                        if self._label_painter_thread is not None:
-                            self._label_painter_thread.submit(painted_ids, target_color, source_class_id)
-                            self._labels_dirty = True
-                            self._render_debounce_timer.start()
-                    except Exception as e:
-                        print(f"⚠️ Failed to submit fill painting job: {e}")
+                    self._ensure_label_painter(primary_target)
+                    self._label_painter_thread.submit(painted_ids, target_color, source_class_id)
         
         # Projections for 2D fallback — computed lazily
         projections = None
@@ -2379,14 +2338,8 @@ class MVATManager(QObject):
         if use_3d:
             primary_target = self.viewer.scene_context.get_primary_target()
             if primary_target and hasattr(primary_target, 'apply_labels'):
-                try:
-                    self._ensure_label_painter(primary_target)
-                    if self._label_painter_thread is not None:
-                        self._label_painter_thread.submit(painted_ids, (255, 255, 255), 0)
-                        self._labels_dirty = True
-                        self._render_debounce_timer.start()
-                except Exception as e:
-                    print(f"⚠️ Failed to submit erase job: {e}")
+                self._ensure_label_painter(primary_target)
+                self._label_painter_thread.submit(painted_ids, (255, 255, 255), 0)
 
         # Projections for 2D fallback — computed lazily inside the loop
         projections = None
@@ -2578,14 +2531,8 @@ class MVATManager(QObject):
                         source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
                         
                     # 3. Paint the 3D model arrays — offload to background painter thread
-                    try:
-                        self._ensure_label_painter(primary_target)
-                        if self._label_painter_thread is not None:
-                            self._label_painter_thread.submit(painted_ids, target_color, source_class_id)
-                            self._labels_dirty = True
-                            self._render_debounce_timer.start()
-                    except Exception as e:
-                        print(f"⚠️ Failed to submit SAM painting job: {e}")
+                    self._ensure_label_painter(primary_target)
+                    self._label_painter_thread.submit(painted_ids, target_color, source_class_id)
 
         # Projections for 2D fallback — computed lazily inside the loop
         projections = None

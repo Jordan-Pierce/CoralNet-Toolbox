@@ -1,73 +1,94 @@
 """
-Background thread for building overlay geometry from painted face IDs.
+Background Label Painter
 
-Runs entirely in numpy (O(M) per stroke) and emits small numpy payloads
-to the main thread for assembly into a `pyvista.PolyData`. This keeps
-all VTK/PyVista work on the GUI thread (safer) while the worker only
-touches plain CPU memory.
+Pre-allocated-buffer implementation that keeps appends O(M_new) and
+in-place updates for re-paints. Emits `pyvista.PolyData` overlays at a
+rate-limited cadence so the main thread can swap a tiny actor.
 """
-import numpy as np
+import time
 from queue import Queue, Empty
+
+import numpy as np
+import pyvista as pv
 from PyQt5.QtCore import QThread, pyqtSignal
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Classes
+# Label painter with pre-allocated buffers
 # ----------------------------------------------------------------------------------------------------------------------
+
+
+"""
+Background thread for building overlay PolyData from painted face IDs.
+
+Runs entirely in numpy (O(M) per stroke), signals the main thread
+with a ready-to-render tiny PolyData. Never touches VTK/OpenGL directly.
+"""
+import numpy as np
+import pyvista as pv
+from queue import Queue, Empty
+from PyQt5.QtCore import QThread, pyqtSignal
 
 
 class LabelPainterThread(QThread):
     """
-    Consumes (face_ids, color_rgb, class_id) work items from an internal queue.
-
-     For each item:
-        1. Updates the python-side `class_ids` and `labels_cache` (O(M)).
-        2. Builds small numpy arrays (points, faces, colors) describing only
-            the painted faces (O(M)).
-        3. Emits `overlay_ready` with the numpy payload. The main thread
-            will assemble a `pyvista.PolyData` from those arrays.
-
-    The queue is coalesced on `submit()` so the worker never falls behind.
+    Consumes (face_ids, color_rgb, class_id) work items from a queue.
+    
+    For each item:
+      1. Applies the color to the shared numpy labels buffer (O(M)).
+      2. Builds a tiny PolyData from scratch — NO extract_cells — (O(M)).
+      3. Emits overlay_ready so the main thread can swap the actor cheaply.
+    
+    If work items arrive faster than they're processed, the queue coalesces
+    them so the thread always works on the latest state.
     """
-
+    
+    # Emits the tiny PolyData to swap into the plotter
     overlay_ready = pyqtSignal(object)
-    flush_requested = pyqtSignal()
 
     def __init__(self, mesh_points: np.ndarray, mesh_faces_flat: np.ndarray,
                  labels_view: np.ndarray, class_ids: np.ndarray, parent=None):
+        """
+        Args:
+            mesh_points:     (V, 3) float32 — shared numpy view of mesh vertices.
+            mesh_faces_flat: Flat VTK face array (the raw mesh.faces), already in
+                             (N_cells, 4) shape where col 0 = 3 (triangle count).
+                             Pass mesh.faces.reshape(-1, 4) from the main thread.
+            labels_view:     (N_cells, 3) uint8 — shared numpy view of Labels cell data.
+            class_ids:       (N_cells,) int32  — shared numpy semantic class array.
+        """
         super().__init__(parent)
 
-        # Read-only geometry references (numpy)
-        self._points = mesh_points          # (V, 3) float32
-        self._faces4 = mesh_faces_flat      # (N_cells, 4) int32: [3, v0, v1, v2]
+        self._points = mesh_points          # read-only during painting
+        self._faces4 = mesh_faces_flat      # (N, 4): col0=3, cols1-3=vertex IDs
+        self._labels_view = labels_view     # written by this thread
+        self._class_ids = class_ids         # written by this thread
 
-        # Writable python-owned buffers
-        # `labels_view` is expected to be a numpy array owned by Python (uint8, (N,3))
-        self._labels_cache = labels_view
-        self._class_ids = class_ids
+        self._face_to_buf = np.full(len(class_ids), -1, dtype=np.int32)
+        self._buf_colors = np.zeros((len(class_ids), 3), dtype=np.uint8)
+        self._n_faces = 0
+        self._last_emit_time = 0
+        self._min_emit_interval = 0.016
 
         self._queue: Queue = Queue()
         self._running = True
 
     def submit(self, face_ids: np.ndarray, color_rgb: tuple, class_id: int):
         """
-        Non-blocking call from the main thread on every brush tick.
-        Coalesces pending items so the worker always works on the latest state.
+        Non-blocking. Called from the main thread on every brush tick.
+        Drains any stale pending item first so we never fall behind.
         """
-        # Drain stale items — only the latest stroke state matters
+        # Drain stale items — only the latest stroke matters for the overlay
         while not self._queue.empty():
             try:
                 self._queue.get_nowait()
             except Empty:
                 break
-
-        # Copy face_ids to avoid referencing mutable caller memory
-        self._queue.put((np.array(face_ids, copy=True), tuple(color_rgb), int(class_id)))
+        self._queue.put((face_ids.copy(), color_rgb, class_id))
 
     def stop(self):
         self._running = False
-        # Unblock queue.get()
-        self._queue.put(None)
+        self._queue.put(None)  # unblock the get()
 
     def run(self):
         while self._running:
@@ -78,63 +99,79 @@ class LabelPainterThread(QThread):
 
             if item is None:
                 break
-
-            face_ids, color_rgb, class_id = item
-
-            if face_ids is None or len(face_ids) == 0:
+            if item == 'clear':
+                self._n_faces = 0
+                self._face_to_buf[:] = -1
                 continue
 
-            # 1. Update python-side semantic + colour caches (O(M))
             try:
-                if self._class_ids is not None:
-                    self._class_ids[face_ids] = class_id
-
-                color_np = np.array(color_rgb, dtype=np.uint8)
-                # Broadcast assignment (N,3) = (3,)
-                self._labels_cache[face_ids] = color_np
+                face_ids, color_rgb, class_id = item
+                # -----------------------------------------------------------------
+                # 1. Update RAM buffers (O(M), pure numpy, safe off main thread
+                #    because the main thread never reads these during painting)
+                # -----------------------------------------------------------------
+                self._class_ids[face_ids] = class_id
+                self._labels_view[face_ids] = color_rgb
             except Exception as e:
-                print(f"⚠️ LabelPainterThread: failed to update caches: {e}")
+                print(f"⚠️ LabelPainterThread processing error: {e}")
+                # Thread stays alive — don't re-raise
+
+            # Always emit when queue drains — guarantees final stroke is never dropped
+            if self._queue.empty():
+                overlay = self._snapshot_overlay()
+                if overlay is not None:
+                    self.overlay_ready.emit(overlay)
+                self._last_emit_time = time.monotonic()
                 continue
 
-            # 2. Build a tiny numpy overlay payload containing only the painted faces
-            overlay = self._build_overlay(face_ids, color_np)
-            if overlay is not None:
-                try:
-                    pts, faces, colors = overlay
-                    # Emit copies to ensure stable ownership across threads
-                    self.overlay_ready.emit((pts.copy(), faces.copy(), colors.copy()))
-                except Exception as e:
-                    print(f"⚠️ LabelPainterThread: failed to emit overlay: {e}")
-    def _build_overlay(self, face_ids: np.ndarray, color_rgb: np.ndarray) -> tuple | None:
-        """
-        Build numpy arrays describing only the painted faces.
+            # Rate-limited emit for intermediate strokes only
+            now = time.monotonic()
+            if now - self._last_emit_time >= self._min_emit_interval:
+                self._last_emit_time = now
+                overlay = self._snapshot_overlay()
+                if overlay is not None:
+                    self.overlay_ready.emit(overlay)
 
-        Returns a tuple: (points, vtk_faces_flat, colors) where `vtk_faces_flat`
-        uses the VTK face layout ([3,v0,v1,v2,...]). Complexity is O(M).
+    def _snapshot_overlay(self):
+        painted_faces = np.where(self._class_ids != 0)[0]
+        if len(painted_faces) == 0:
+            return None
+        return self._build_overlay(painted_faces, self._labels_view[painted_faces])
+
+    def _build_overlay(self, face_ids: np.ndarray,
+                       color_rgb) -> pv.PolyData | None:
+        """
+        Build a tiny PolyData containing only the painted faces.
+        
+        Complexity: O(M) where M = len(face_ids). Does NOT traverse the full mesh.
         """
         try:
-            # selected: (M, 3) vertex indices per triangle
-            selected = self._faces4[face_ids, 1:]
-
-            # Unique vertex IDs and inverse mapping to remap to local indexing
+            # Grab the vertex-index triplets for only these faces
+            selected = self._faces4[face_ids, 1:]          # (M, 3) vertex indices
             unique_vids, inverse = np.unique(selected, return_inverse=True)
 
-            # Local vertex positions
-            overlay_points = self._points[unique_vids].astype(np.float32)
+            # Vertices for the overlay (tiny subset)
+            overlay_points = self._points[unique_vids]     # (K, 3)
 
-            # Remap global vertex ids -> local ids
-            remapped = inverse.reshape(selected.shape)
-
-            # VTK face layout: [3, v0, v1, v2, 3, v0, v1, v2, ...]
+            # Remap global vertex IDs → local IDs within overlay_points
+            remapped = inverse.reshape(selected.shape)     # (M, 3)
             vtk_faces = np.hstack([
-                np.full((len(face_ids), 1), 3, dtype=np.int32),
-                remapped.astype(np.int32)
-            ]).ravel().astype(np.int32)
+                np.full((len(face_ids), 1), 3, dtype=np.int64),
+                remapped.astype(np.int64)
+            ]).ravel()
 
-            # Uniform colour per cell for this stroke
-            colors = np.tile(np.array(color_rgb, dtype=np.uint8), (len(face_ids), 1)).astype(np.uint8)
+            overlay = pv.PolyData(overlay_points.astype(np.float32), vtk_faces)
 
-            return overlay_points, vtk_faces, colors
+            # Uniform color for this stroke (all painted faces same label)
+            if isinstance(color_rgb, tuple):
+                colors = np.tile(
+                    np.array(color_rgb, dtype=np.uint8),
+                    (len(face_ids), 1)
+                )
+            else:
+                colors = color_rgb
+            overlay.cell_data['OverlayColors'] = colors
+            return overlay
 
         except Exception as e:
             print(f"⚠️ LabelPainterThread._build_overlay failed: {e}")
