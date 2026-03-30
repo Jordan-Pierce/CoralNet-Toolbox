@@ -12,6 +12,11 @@ from queue import Queue, Empty
 from PyQt5.QtCore import QThread, pyqtSignal
 
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Classes
+# ----------------------------------------------------------------------------------------------------------------------
+
+
 class LabelPainterThread(QThread):
     """
     Consumes (face_ids, color_rgb, class_id) work items from an internal queue.
