@@ -76,6 +76,16 @@ class Camera:
         # This 3x4 matrix directly maps 3D homogeneous world points to 2D homogeneous image points
         self.P = self.K @ self.extrinsics[:3, :]
 
+        # --- Distortion ---
+        # K_linear: undistorted camera matrix used by 3D rendering engines.
+        # When the raster is distorted, this is K_new from getOptimalNewCameraMatrix (wider FOV).
+        # Falls back to K when undistorted or when cv2 is unavailable.
+        self.dist_coeffs = getattr(raster, 'dist_coeffs', None)
+        self.is_distorted = getattr(raster, 'is_distorted', False)
+        # Avoid using numpy arrays in boolean context (ambiguous truth value).
+        intr_undist = getattr(raster, 'intrinsics_undistorted', None)
+        self.K_linear = intr_undist if intr_undist is not None else self.K
+
         # --- Visualization ---
         self.selected = False
         self.is_orthographic = False  # Flag for orthographic vs perspective camera
@@ -279,60 +289,92 @@ class Camera:
     def project(self, points_3d_world):
         """
         Project a 3D world point into a 2D pixel coordinate.
-        
-        Math: 
-        $x_{pix} = P \cdot X_{world}$
-        
+
+        When the source image has lens distortion, uses cv2.projectPoints so the
+        result lands on the correct *distorted* pixel. Falls back to linear matrix
+        multiplication otherwise.
+
         Args:
             points_3d_world (np.ndarray): 3D point [x, y, z] in world coordinates.
 
         Returns:
             np.ndarray: 2D pixel coordinate [u, v] or [nan, nan] if invalid.
         """
-        # Add homogeneous coordinate (append 1.0)
-        points_hom = np.hstack((points_3d_world, 1.0))
-        
-        # Project using the P matrix
+        if self.is_distorted and self.dist_coeffs is not None:
+            try:
+                import cv2
+                pts = np.asarray(points_3d_world, dtype=np.float64).reshape(1, 1, 3)
+                rvec, _ = cv2.Rodrigues(self.R.astype(np.float64))
+                projected, _ = cv2.projectPoints(
+                    pts,
+                    rvec,
+                    self.t.astype(np.float64),
+                    self.K.astype(np.float64),
+                    self.dist_coeffs,
+                )
+                u, v = float(projected[0, 0, 0]), float(projected[0, 0, 1])
+                # Check if the point is in front of the camera
+                pt_cam = self.R @ np.asarray(points_3d_world, dtype=np.float64) + self.t
+                if pt_cam[2] <= 0:
+                    return np.array([np.nan, np.nan])
+                return np.array([u, v])
+            except ImportError:
+                pass  # Fall through to linear path
+            except Exception:
+                return np.array([np.nan, np.nan])
+
+        # Linear (undistorted) path
+        points_hom = np.hstack((np.asarray(points_3d_world, dtype=np.float64), 1.0))
         points_cam_hom = (self.P @ points_hom.T).T
-        
-        # Normalize by dividing by the 3rd component (depth Z in camera frame)
         points_pixel = np.full(2, np.nan)
-        
-        # Check if point is in front of the camera (Z > 0)
         if points_cam_hom[2] > 0:
             points_pixel = points_cam_hom[:2] / points_cam_hom[2]
-            
         return points_pixel
 
     def unproject(self, pixel_coord):
         """
         Unproject a 2D pixel coordinate to a 3D world point.
-        
+
         Requires valid depth data in the associated Raster (Z-channel).
-        
+        When the image is distorted, the raw pixel is first undistorted to its
+        linear position in K_linear space before back-projection.
+
         Args:
-            pixel_coord (tuple/list): 2D pixel [u, v].
+            pixel_coord (tuple/list): 2D pixel [u, v] in distorted image space.
 
         Returns:
             np.ndarray: 3D world point [x, y, z] or None if depth is missing.
         """
-        # 1. Get the depth value at this pixel
         depth = self._get_depth_from_raster(int(pixel_coord[0]), int(pixel_coord[1]))
-        
         if depth is None or depth <= 0 or np.isnan(depth):
             return None
-            
-        # 2. Create homogeneous pixel coordinate
-        pixel_hom = np.array([pixel_coord[0], pixel_coord[1], 1])
-        
-        # 3. Transform to Camera Coordinate System (Back-projection)
-        # $X_{cam} = Z \cdot K^{-1} \cdot x_{pix}$
+
+        if self.is_distorted and self.dist_coeffs is not None and self.K_linear is not None:
+            try:
+                import cv2
+                # Map the distorted pixel to its undistorted (linear) equivalent
+                pts_in = np.array([[[float(pixel_coord[0]), float(pixel_coord[1])]]], dtype=np.float32)
+                pts_out = cv2.undistortPoints(
+                    pts_in,
+                    self.K.astype(np.float64),
+                    self.dist_coeffs,
+                    P=self.K_linear.astype(np.float64),
+                )
+                u_lin, v_lin = float(pts_out[0, 0, 0]), float(pts_out[0, 0, 1])
+                K_linear_inv = np.linalg.inv(self.K_linear)
+                pixel_hom = np.array([u_lin, v_lin, 1.0])
+                point_cam = depth * (K_linear_inv @ pixel_hom)
+                point_world = self.R.T @ (point_cam - self.t)
+                return point_world
+            except ImportError:
+                pass  # Fall through to linear path
+            except Exception:
+                return None
+
+        # Linear (undistorted) path
+        pixel_hom = np.array([pixel_coord[0], pixel_coord[1], 1.0])
         point_cam = depth * (self.K_inv @ pixel_hom)
-        
-        # 4. Transform to World Coordinate System
-        # $X_{world} = R^T \cdot (X_{cam} - t)$
         point_world = self.R.T @ (point_cam - self.t)
-        
         return point_world
 
     def _get_depth_from_raster(self, x, y):

@@ -10,6 +10,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QFileDialog,
     QApplication,
+    QCheckBox,
     QMessageBox,
     QDialog,
     QFormLayout,
@@ -215,12 +216,14 @@ def qvec2rotmat(qvec):
 
 
 def extract_intrinsics_extrinsics_from_colmap(cameras, images):
-    """Extract intrinsics (K) and extrinsics (w2c) arrays from COLMAP data.
+    """Extract intrinsics (K), extrinsics (w2c), labels, and distortion coefficients from COLMAP data.
 
-    Returns (intrinsics, extrinsics, labels).
+    Returns (intrinsics, extrinsics, labels, dist_coeffs) where dist_coeffs is shape (N, 8)
+    in OpenCV layout [k1, k2, p1, p2, k3, k4, k5, k6], zero-padded.
     """
     intrinsics_list = []
     extrinsics_list = []
+    dist_coeffs_list = []
     labels = []
 
     for img_id, img in images.items():
@@ -228,33 +231,53 @@ def extract_intrinsics_extrinsics_from_colmap(cameras, images):
         if cam is None:
             continue
 
-        # Parse parameters based on the specific COLMAP camera model
+        # Parse focal length / principal point and distortion per COLMAP camera model.
+        # OpenCV distortion layout: [k1, k2, p1, p2, k3, k4, k5, k6]
+        dist = np.zeros(8, dtype=np.float64)
+
         if cam.model == "PINHOLE":
             fx, fy, cx, cy = cam.params[:4]
+
         elif cam.model == "SIMPLE_PINHOLE":
             f, cx, cy = cam.params[:3]
             fx = fy = f
-            
-        # FIX: OpenCV models use two distinct focal lengths (fx, fy) followed by the principal point (cx, cy)
-        elif cam.model in ["OPENCV", "OPENCV_FISHEYE", "FULL_OPENCV"]:
-            fx = cam.params[0]
-            fy = cam.params[1]
-            cx = cam.params[2]
-            cy = cam.params[3]
-            
-        # FIX: Radial models use a single focal length (f) followed by the principal point (cx, cy)
-        elif cam.model in ["RADIAL", "SIMPLE_RADIAL", "RADIAL_FISHEYE", "SIMPLE_RADIAL_FISHEYE"]:
-            f = cam.params[0]
-            cx = cam.params[1]
-            cy = cam.params[2]
+
+        elif cam.model == "OPENCV":
+            # params: fx, fy, cx, cy, k1, k2, p1, p2
+            fx, fy, cx, cy = cam.params[:4]
+            dist[:4] = cam.params[4:8]  # k1, k2, p1, p2
+
+        elif cam.model == "FULL_OPENCV":
+            # params: fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, k5, k6
+            fx, fy, cx, cy = cam.params[:4]
+            dist[:] = cam.params[4:12]  # full 8-param
+
+        elif cam.model == "OPENCV_FISHEYE":
+            # Fisheye uses cv2.fisheye.* API — not compatible with standard undistortPoints.
+            # Store K only; treat as undistorted for now.
+            fx, fy, cx, cy = cam.params[:4]
+            print(f"⚠️ OPENCV_FISHEYE distortion warping is not yet supported; treating as undistorted.")
+
+        elif cam.model in ["RADIAL", "RADIAL_FISHEYE"]:
+            # params: f, cx, cy, k1, k2
+            f, cx, cy = cam.params[:3]
             fx = fy = f
-            
+            dist[0] = cam.params[3]  # k1
+            dist[1] = cam.params[4]  # k2
+
+        elif cam.model in ["SIMPLE_RADIAL", "SIMPLE_RADIAL_FISHEYE"]:
+            # params: f, cx, cy, k1
+            f, cx, cy = cam.params[:3]
+            fx = fy = f
+            dist[0] = cam.params[3]  # k1
+
         else:
             raise ValueError(f"Unsupported camera model: {cam.model}")
 
         # Construct the Intrinsic Matrix (K)
         K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
         intrinsics_list.append(K)
+        dist_coeffs_list.append(dist)
 
         # Construct the Extrinsic Matrix (World-to-Camera, 4x4)
         R = qvec2rotmat(img.qvec)
@@ -263,14 +286,14 @@ def extract_intrinsics_extrinsics_from_colmap(cameras, images):
         w2c[:3, :3] = R
         w2c[:3, 3] = t
         extrinsics_list.append(w2c)
-        
+
         # Store image label for matching (lowercased without extension)
         labels.append(os.path.splitext(os.path.basename(img.name))[0].lower())
 
     if len(intrinsics_list) == 0:
-        return np.array([]), np.array([]), []
+        return np.array([]), np.array([]), [], np.array([])
 
-    return np.array(intrinsics_list), np.array(extrinsics_list), labels
+    return np.array(intrinsics_list), np.array(extrinsics_list), labels, np.array(dist_coeffs_list)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -279,7 +302,7 @@ def extract_intrinsics_extrinsics_from_colmap(cameras, images):
 
 Sensor = collections.namedtuple("Sensor", ["id", "label", "width", "height", "calibration"])
 M_Camera = collections.namedtuple("Camera", ["id", "sensor_id", "label", "transform"])
-Calibration = collections.namedtuple("Calibration", ["f", "cx", "cy", "fx", "fy"])
+Calibration = collections.namedtuple("Calibration", ["f", "cx", "cy", "fx", "fy", "k1", "k2", "k3", "p1", "p2"])
 
 
 def read_metashape_xml(xml_path):
@@ -314,7 +337,17 @@ def read_metashape_xml(xml_path):
                 cy = float(cy_elem.text) if cy_elem is not None else None
                 fx = float(fx_elem.text) if fx_elem is not None else None
                 fy = float(fy_elem.text) if fy_elem is not None else None
-                calibration = Calibration(f=f, cx=cx, cy=cy, fx=fx, fy=fy)
+                k1_elem = calibration_elem.find('k1')
+                k2_elem = calibration_elem.find('k2')
+                k3_elem = calibration_elem.find('k3')
+                p1_elem = calibration_elem.find('p1')
+                p2_elem = calibration_elem.find('p2')
+                k1 = float(k1_elem.text) if k1_elem is not None else 0.0
+                k2 = float(k2_elem.text) if k2_elem is not None else 0.0
+                k3 = float(k3_elem.text) if k3_elem is not None else 0.0
+                p1 = float(p1_elem.text) if p1_elem is not None else 0.0
+                p2 = float(p2_elem.text) if p2_elem is not None else 0.0
+                calibration = Calibration(f=f, cx=cx, cy=cy, fx=fx, fy=fy, k1=k1, k2=k2, k3=k3, p1=p1, p2=p2)
             sensors[sensor_id] = Sensor(id=sensor_id, label=label, width=width, height=height, calibration=calibration)
 
     cameras_element = root.find('.//cameras')
@@ -338,9 +371,14 @@ def read_metashape_xml(xml_path):
 
 
 def extract_intrinsics_extrinsics_from_metashape(sensors, cameras):
-    """Extract intrinsics and world-to-camera extrinsics from Metashape data."""
+    """Extract intrinsics, extrinsics, labels, and distortion coefficients from Metashape data.
+
+    Returns (intrinsics, extrinsics, labels, dist_coeffs) where dist_coeffs is shape (N, 8)
+    in OpenCV layout [k1, k2, p1, p2, k3, 0, 0, 0].
+    """
     intrinsics_list = []
     extrinsics_list = []
+    dist_coeffs_list = []
     camera_labels = []
 
     T_metashape_to_opencv = np.array([
@@ -374,6 +412,16 @@ def extract_intrinsics_extrinsics_from_metashape(sensors, cameras):
             cy = image_center_y
         K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
         intrinsics_list.append(K)
+        # Build OpenCV-layout distortion vector [k1, k2, p1, p2, k3, 0, 0, 0]
+        dist = np.array([
+            calib.k1 if calib.k1 is not None else 0.0,
+            calib.k2 if calib.k2 is not None else 0.0,
+            calib.p1 if calib.p1 is not None else 0.0,
+            calib.p2 if calib.p2 is not None else 0.0,
+            calib.k3 if calib.k3 is not None else 0.0,
+            0.0, 0.0, 0.0,
+        ], dtype=np.float64)
+        dist_coeffs_list.append(dist)
         try:
             c2w_metashape = cam.transform
             c2w_opencv = c2w_metashape @ T_metashape_to_opencv
@@ -381,14 +429,15 @@ def extract_intrinsics_extrinsics_from_metashape(sensors, cameras):
             extrinsics_list.append(w2c)
         except np.linalg.LinAlgError:
             intrinsics_list.pop()
+            dist_coeffs_list.pop()
             continue
         # store label as basename without extension, lowercased for matching
         camera_labels.append(os.path.splitext(cam.label)[0].lower())
 
     if len(intrinsics_list) == 0:
-        return np.array([]), np.array([]), []
+        return np.array([]), np.array([]), [], np.array([])
 
-    return np.array(intrinsics_list), np.array(extrinsics_list), camera_labels
+    return np.array(intrinsics_list), np.array(extrinsics_list), camera_labels, np.array(dist_coeffs_list)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -421,6 +470,15 @@ class ColmapTab(QWidget):
         images_layout.addWidget(self.images_file_edit)
         images_layout.addWidget(self.images_browse_button)
         layout.addRow("Images File:", images_layout)
+
+        self.distorted_checkbox = QCheckBox("Images are original / distorted (Apply map warping)")
+        self.distorted_checkbox.setToolTip(
+            "If checked, the imported camera parameters will be treated as corresponding to the original distorted images.\n"
+            "This means that when projecting points or undistorting, the lens distortion will be applied according to the imported parameters.\n\n"
+            "If unchecked, the imported camera parameters will be treated as already undistorted, and no lens distortion will be applied during projection."
+        )
+        self.distorted_checkbox.setChecked(True)
+        layout.addRow("Lens Distortion:", self.distorted_checkbox)
 
         self.import_button = QPushButton("Import COLMAP")
         self.import_button.clicked.connect(self.import_cameras)
@@ -553,8 +611,9 @@ class ColmapTab(QWidget):
         updated_count = 0
         skipped_count = 0
 
+        is_distorted = self.distorted_checkbox.isChecked()
         try:
-            intrinsics_all, extrinsics_all, labels = extract_intrinsics_extrinsics_from_colmap(cameras, matched_images)
+            intrinsics_all, extrinsics_all, labels, dist_coeffs_all = extract_intrinsics_extrinsics_from_colmap(cameras, matched_images)
             label_to_idx = {label: idx for idx, label in enumerate(labels)}
 
             for img_id, img in matched_images.items():
@@ -566,6 +625,7 @@ class ColmapTab(QWidget):
                 idx = label_to_idx[image_basename]
                 intrinsics = intrinsics_all[idx]
                 extrinsics = extrinsics_all[idx]
+                dist_coeffs = dist_coeffs_all[idx] if len(dist_coeffs_all) > 0 else np.zeros(8)
                 image_path = image_path_map[image_basename]
                 raster = self.image_window.raster_manager.get_raster(image_path)
                 if raster is None:
@@ -579,6 +639,7 @@ class ColmapTab(QWidget):
                     else:
                         raster.add_intrinsics(intrinsics)
                         raster.add_extrinsics(extrinsics)
+                    raster.add_distortion(dist_coeffs, is_distorted=is_distorted)
                     updated_count += 1
                 except Exception:
                     skipped_count += 1
@@ -616,6 +677,15 @@ class MetashapeTab(QWidget):
         xml_layout.addWidget(self.xml_file_edit)
         xml_layout.addWidget(self.xml_browse_button)
         layout.addRow("Cameras XML File:", xml_layout)
+
+        self.distorted_checkbox = QCheckBox("Images are original / distorted (Apply map warping)")
+        self.distorted_checkbox.setToolTip(
+            "If checked, the imported camera parameters will be treated as corresponding to the original distorted images.\n"
+            "This means that when projecting points or undistorting, the lens distortion will be applied according to the imported parameters.\n\n"
+            "If unchecked, the imported camera parameters will be treated as already undistorted, and no lens distortion will be applied during projection."
+        )
+        self.distorted_checkbox.setChecked(True)
+        layout.addRow("Lens Distortion:", self.distorted_checkbox)
 
         self.import_button = QPushButton("Import Metashape")
         self.import_button.clicked.connect(self.import_cameras)
@@ -723,11 +793,13 @@ class MetashapeTab(QWidget):
         updated_count = 0
         skipped_count = 0
 
+        is_distorted = self.distorted_checkbox.isChecked()
         try:
             (
                 intrinsics_all,
                 extrinsics_all,
                 camera_labels,
+                dist_coeffs_all,
             ) = extract_intrinsics_extrinsics_from_metashape(sensors, cameras)
             if len(intrinsics_all) == 0:
                 progress_bar.stop_progress()
@@ -749,6 +821,7 @@ class MetashapeTab(QWidget):
                 idx = label_to_idx[image_basename]
                 intrinsics = intrinsics_all[idx]
                 extrinsics = extrinsics_all[idx]
+                dist_coeffs = dist_coeffs_all[idx] if len(dist_coeffs_all) > 0 else np.zeros(8)
                 image_path = image_path_map[image_basename]
                 raster = self.image_window.raster_manager.get_raster(image_path)
                 if raster is None:
@@ -762,6 +835,7 @@ class MetashapeTab(QWidget):
                     else:
                         raster.add_intrinsics(intrinsics)
                         raster.add_extrinsics(extrinsics)
+                    raster.add_distortion(dist_coeffs, is_distorted=is_distorted)
                     updated_count += 1
                 except Exception as e:
                     print(f"Error setting camera parameters for {image_basename}: {e}")

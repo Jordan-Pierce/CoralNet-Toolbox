@@ -113,6 +113,10 @@ class Raster(QObject):
         # Camera calibration information
         self.intrinsics: Optional[np.ndarray] = None  # Camera intrinsic parameters as numpy array
         self.extrinsics: Optional[np.ndarray] = None  # Camera extrinsic parameters as numpy array
+        # Lens distortion information
+        self.is_distorted: bool = False  # True if the source image has uncorrected lens distortion
+        self.dist_coeffs: Optional[np.ndarray] = None  # OpenCV layout [k1,k2,p1,p2,k3,k4,k5,k6] float64
+        self.intrinsics_undistorted: Optional[np.ndarray] = None  # K_new: linear camera matrix (wider FOV)
         
         # Spatial transformation for orthomosaics
         self.is_orthomosaic: bool = False
@@ -356,7 +360,96 @@ class Raster(QObject):
     def remove_extrinsics(self):
         """Remove all camera extrinsic parameters."""
         self.extrinsics = None
-    
+
+    def add_distortion(self, dist_coeffs: np.ndarray, is_distorted: bool = True):
+        """
+        Store lens distortion coefficients and optionally compute the linear camera
+        matrix (K_new) via cv2.getOptimalNewCameraMatrix.
+
+        Args:
+            dist_coeffs: OpenCV distortion array, shape (4,), (5,), or (8,).
+                         Layout: [k1, k2, p1, p2, k3, k4, k5, k6] (zero-padded).
+            is_distorted: True if the source image is raw / has uncorrected distortion.
+        """
+        if not isinstance(dist_coeffs, np.ndarray):
+            dist_coeffs = np.asarray(dist_coeffs, dtype=np.float64)
+        self.dist_coeffs = dist_coeffs.astype(np.float64)
+        self.is_distorted = is_distorted
+        if is_distorted:
+            self.compute_undistorted_intrinsics()
+        else:
+            self.intrinsics_undistorted = None
+
+    def compute_undistorted_intrinsics(self):
+        """
+        Compute the linear camera matrix K_new.
+        """
+        if self.intrinsics is None or self.dist_coeffs is None:
+            return
+        try:
+            import cv2
+            # OpenCV automatically shifts cx, cy and scales fx, fy to fit all 
+            # original pixels into the same (width, height) grid.
+            K_new, roi = cv2.getOptimalNewCameraMatrix(
+                self.intrinsics.astype(np.float64),
+                self.dist_coeffs,
+                (self.width, self.height),
+                alpha=1,
+                newImgSize=(self.width, self.height)
+            )
+
+            self.intrinsics_undistorted = K_new
+            self._undistorted_roi = roi
+            
+            # Because we force newImgSize to match the original dimensions,
+            # the render size is identical. No manual offsets needed.
+            self._undistorted_offset = (0, 0)
+            self._undistorted_size = (self.width, self.height)
+            
+        except Exception as e:
+            print(f"Warning: compute_undistorted_intrinsics failed for {self.basename}: {e}")
+            self.intrinsics_undistorted = self.intrinsics
+            self._undistorted_offset = (0, 0)
+            self._undistorted_size = (self.width, self.height)
+
+    def warp_linear_map_to_distorted(self, linear_map, border_value=-1):
+        """
+        Warp a perfectly linear VTK/Open3D render back into the distorted photo space.
+        """
+        import cv2
+        import numpy as np
+
+        h, w = self.height, self.width
+
+        # 1. Create a grid of every pixel coordinate in the DISTORTED image space
+        grid_y, grid_x = np.mgrid[0:h, 0:w].astype(np.float32)
+        distorted_pixels = np.stack([grid_x, grid_y], axis=-1)
+
+        # 2. Find where each distorted pixel came from in the LINEAR render.
+        # cv2.undistortPoints does exactly this: Distorted -> Normalized -> Linear (via P)
+        linear_coords = cv2.undistortPoints(
+            distorted_pixels.reshape(-1, 1, 2),
+            self.intrinsics.astype(np.float64),
+            self.dist_coeffs,
+            P=self.intrinsics_undistorted.astype(np.float64)
+        )
+
+        map_x = linear_coords[:, 0, 0].reshape(h, w)
+        map_y = linear_coords[:, 0, 1].reshape(h, w)
+
+        # 3. Pull the pixels from the linear render back into the distorted shape.
+        # CRITICAL: Use INTER_NEAREST so we don't invent fake element IDs.
+        distorted_map = cv2.remap(
+            linear_map,
+            map_x,
+            map_y,
+            interpolation=cv2.INTER_NEAREST,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=border_value
+        )
+
+        return distorted_map
+
     def add_index_map(self, index_map: np.ndarray, index_map_path: Optional[str] = None, 
                       visible_indices: Optional[np.ndarray] = None,
                       element_type: Optional[str] = 'point',
@@ -1306,6 +1399,11 @@ class Raster(QObject):
             
         if self.extrinsics is not None:
             raster_data['extrinsics'] = self.extrinsics.tolist()  # Convert numpy array to list for JSON
+
+        # Include lens distortion information if available
+        if self.dist_coeffs is not None:
+            raster_data['dist_coeffs'] = self.dist_coeffs.tolist()
+        raster_data['is_distorted'] = self.is_distorted
             
         # --- NEW ORTHOMOSAIC LOGIC ---
         if self.transform_matrix is not None:
@@ -1399,8 +1497,17 @@ class Raster(QObject):
                 raster.add_extrinsics(extrinsics_array)
             except Exception as e:
                 print(f"Error loading extrinsics for {image_path}: {str(e)}")
-                
-        # --- ORTHOMOSAIC LOGIC ---
+
+        # Load lens distortion information
+        dist_data = raster_dict.get('dist_coeffs')
+        is_distorted = raster_dict.get('is_distorted', False)
+        if dist_data is not None:
+            try:
+                raster.add_distortion(np.array(dist_data, dtype=np.float64), is_distorted=is_distorted)
+            except Exception as e:
+                print(f"Error loading distortion for {image_path}: {str(e)}")
+        else:
+            raster.is_distorted = is_distorted
         raster.is_orthomosaic = raster_dict.get('is_orthomosaic', False)
         transform_data = raster_dict.get('transform_matrix')
         if transform_data:
@@ -1477,7 +1584,18 @@ class Raster(QObject):
                 self.add_extrinsics(extrinsics_array)
             except Exception as e:
                 print(f"Error loading extrinsics for {self.image_path}: {str(e)}")
-                
+
+        # Load lens distortion information
+        dist_data = raster_dict.get('dist_coeffs')
+        is_distorted = raster_dict.get('is_distorted', False)
+        if dist_data is not None:
+            try:
+                self.add_distortion(np.array(dist_data, dtype=np.float64), is_distorted=is_distorted)
+            except Exception as e:
+                print(f"Error loading distortion for {self.image_path}: {str(e)}")
+        else:
+            self.is_distorted = is_distorted
+
         # --- ORTHOMOSAIC LOGIC ---
         self.is_orthomosaic = raster_dict.get('is_orthomosaic', self.is_orthomosaic)
         transform_data = raster_dict.get('transform_matrix')

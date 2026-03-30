@@ -9,6 +9,7 @@ the MainWindow, RasterManager, MVATViewer (3D), and ContextMatrix (2D).
 import os
 import time
 import numpy as np
+import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from PyQt5.QtCore import QObject, QTimer, pyqtSignal, Qt, QThread
@@ -321,7 +322,7 @@ class MVATManager(QObject):
         # New toggle: whether to compute index maps in background
         self.compute_index_maps_enabled = True
         # Scale factor for visibility map resolution (1.0 = native, 0.1 = lowest)
-        self.visibility_scale_factor = 0.50
+        self.visibility_scale_factor = 1.0
         # Safety flag to prevent concurrent visibility computations
         self._is_computing_visibility = False
         # Track active worker threads to prevent GC
@@ -445,8 +446,10 @@ class MVATManager(QObject):
                     try:
                         self.cameras[path] = Camera(raster)
                         valid_count += 1
-                    except Exception:
-                        print(f"❌ Failed to load perspective camera {raster.basename}")
+                    except Exception as e:
+                        # Log full exception and traceback to aid diagnosis
+                        print(f"❌ Failed to load perspective camera {raster.basename}: {e}")
+                        print(traceback.format_exc())
                         pass
         finally:
             try:
@@ -477,7 +480,10 @@ class MVATManager(QObject):
             
             for path, cam in self.cameras.items():
                 cache_key = cam.transform_matrix if cam.is_orthographic else cam._raster.extrinsics
-                cache_path = self.cache_manager.get_cache_path(cache_key, target_path, element_type)
+                extra = (cam._raster.dist_coeffs.tobytes()
+                         if not cam.is_orthographic and cam.is_distorted
+                         and cam._raster.dist_coeffs is not None else None)
+                cache_path = self.cache_manager.get_cache_path(cache_key, target_path, element_type, extra)
                 
                 # Check if the cache file exists on disk
                 if not os.path.exists(cache_path):
@@ -714,14 +720,17 @@ class MVATManager(QObject):
                 try:
                     # Use transform_matrix for orthomosaic, extrinsics for perspective
                     cache_key = camera.transform_matrix if camera.is_orthographic else camera._raster.extrinsics
-                    
+                    extra = (camera._raster.dist_coeffs.tobytes()
+                             if not camera.is_orthographic and camera.is_distorted
+                             and camera._raster.dist_coeffs is not None else None)
                     cache_path = self.cache_manager.save_visibility(
                         cache_key,
                         target_file_path,
                         result.get('index_map'),
                         result.get('visible_indices'),
                         result.get('depth_map') if self.compute_depth_maps_enabled else None,
-                        element_type=element_type
+                        element_type=element_type,
+                        extra_hash_data=extra,
                     )
                 except Exception:
                     cache_path = None
@@ -981,11 +990,14 @@ class MVATManager(QObject):
                 self.main_window.status_bar.showMessage(f"Checking cache for {camera.label}...", 1000)
                 # Use transform_matrix for orthomosaics, extrinsics for perspective
                 cache_key = camera.transform_matrix if camera.is_orthographic else camera._raster.extrinsics
-                cached_data = self.cache_manager.load_visibility(cache_key, target_file_path, element_type)
+                extra = (camera._raster.dist_coeffs.tobytes()
+                         if not camera.is_orthographic and camera.is_distorted
+                         and camera._raster.dist_coeffs is not None else None)
+                cached_data = self.cache_manager.load_visibility(cache_key, target_file_path, element_type, extra)
                 
                 if cached_data is not None:
                     self.main_window.status_bar.showMessage(f"Loaded visibility from cache for {camera.label}", 2000)
-                    cache_path = self.cache_manager.get_cache_path(cache_key, target_file_path, element_type)
+                    cache_path = self.cache_manager.get_cache_path(cache_key, target_file_path, element_type, extra)
                     
                     # Store results in the camera's raster object
                     camera._raster.add_index_map(
@@ -1048,13 +1060,22 @@ class MVATManager(QObject):
                     continue
                 
                 try:
+                    # Use K_linear so the 3D engine renders a linear (undistorted) map
+                    K_for_render = camera.K_linear
                     result = VisibilityManager._compute_mesh_visibility(
                         mesh_product,
-                        camera.K, camera.R, camera.t,
+                        K_for_render, camera.R, camera.t,
                         camera.width, camera.height,
                         compute_depth_map=self.compute_depth_maps_enabled
                     )
                     result['element_type'] = 'face'
+                    # Warp result back to distorted-pixel space if needed
+                    if camera.is_distorted and camera._raster.intrinsics_undistorted is not None:
+                        warp_fn = camera._raster.warp_linear_map_to_distorted
+                        if result.get('index_map') is not None:
+                            result['index_map'] = warp_fn(result['index_map'], nodata=-1)
+                        if result.get('depth_map') is not None:
+                            result['depth_map'] = warp_fn(result['depth_map'], nodata=0.0)
                     results[camera.image_path] = result
                 except Exception as e:
                     print(f"⚠️ Failed to compute mesh visibility for {camera.label}: {e}")
@@ -1079,16 +1100,23 @@ class MVATManager(QObject):
         """
         # Prepare camera parameters and cache keys for asynchronous visibility computation.
         camera_params_dict = {}
-        cache_keys_dict = {} 
-        
+        cache_keys_dict = {}
+        warp_callables_dict = {}
+        dist_coeffs_bytes_dict = {}
+
         for cam in cameras:
             if cam.is_orthographic:
                 # Include chunk_transform_inv if available (for local->world bridge in visibility computation)
                 camera_params_dict[cam.image_path] = ('ortho', cam.transform_matrix_inv, cam.width, cam.height, cam.chunk_transform_inv)
                 cache_keys_dict[cam.image_path] = cam.transform_matrix
             else:
-                camera_params_dict[cam.image_path] = (cam.K, cam.R, cam.t, cam.width, cam.height)
+                # Use K_linear so the 3D rendering engine operates in linear (undistorted) space
+                camera_params_dict[cam.image_path] = (cam.K_linear, cam.R, cam.t, cam.width, cam.height)
                 cache_keys_dict[cam.image_path] = cam._raster.extrinsics
+                # Register a warp callable for cameras whose source image has lens distortion
+                if cam.is_distorted and cam._raster.intrinsics_undistorted is not None:
+                    warp_callables_dict[cam.image_path] = cam._raster.warp_linear_map_to_distorted
+                    dist_coeffs_bytes_dict[cam.image_path] = cam._raster.dist_coeffs.tobytes()
 
         try:
             self._is_computing_visibility = True
@@ -1105,7 +1133,9 @@ class MVATManager(QObject):
                 cache_manager=self.cache_manager,
                 cache_keys_dict=cache_keys_dict,
                 target_file_path=primary_target.file_path if primary_target else "",
-                scale_factor=self.visibility_scale_factor
+                scale_factor=self.visibility_scale_factor,
+                warp_callables_dict=warp_callables_dict,
+                dist_coeffs_bytes_dict=dist_coeffs_bytes_dict,
             )
             
             thread = QThread()

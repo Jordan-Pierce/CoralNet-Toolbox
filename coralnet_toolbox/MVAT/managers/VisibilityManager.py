@@ -887,12 +887,9 @@ class VisibilityManager:
         dx = cx - width / 2
         dy = cy - height / 2
         
-        # Convert to normalized coordinates (relative to half-width/height)
-        # VTK window_center is fraction of half-window
-        if abs(dx) > 1 or abs(dy) > 1:
-            wx = -2.0 * dx / width  # Negate because VTK uses opposite sign
-            wy = 2.0 * dy / height  # Y is already flipped
-            camera.SetWindowCenter(wx, wy)
+        wx = -2.0 * dx / width  # Negate because VTK uses opposite sign
+        wy = -2.0 * dy / height  # Y is already flipped
+        camera.SetWindowCenter(wx, wy)
 
     @classmethod
     def _compute_mesh_visibility_fallback(cls,

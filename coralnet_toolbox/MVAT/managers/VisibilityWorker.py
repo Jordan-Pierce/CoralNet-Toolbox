@@ -25,12 +25,16 @@ class VisibilityWorker(QObject):
     Now safely handles Meshes (via Open3D), PointClouds, and DEMs.
     """
     def __init__(self, primary_target, camera_params_dict, compute_depth_maps=True, 
-                 cache_manager=None, cache_keys_dict=None, target_file_path="", scale_factor=1.0):
+                 cache_manager=None, cache_keys_dict=None, target_file_path="", scale_factor=1.0,
+                 warp_callables_dict=None, dist_coeffs_bytes_dict=None):
         super().__init__()
         self.primary_target = primary_target
         self.camera_params_dict = camera_params_dict
         self.compute_depth_maps = compute_depth_maps
         self.scale_factor = scale_factor
+        self.warp_callables_dict = warp_callables_dict or {}
+        # path -> dist_coeffs.tobytes() for distorted cameras; used for cache-key disambiguation
+        self.dist_coeffs_bytes_dict = dist_coeffs_bytes_dict or {}
         
         # Store cache dependencies
         self.cache_manager = cache_manager
@@ -163,6 +167,32 @@ class VisibilityWorker(QObject):
                             results[path] = result
 
             # =================================================================
+            # 0. Apply distortion warp to maps generated with K_linear
+            # =================================================================
+            for path, result in results.items():
+                warp_fn = self.warp_callables_dict.get(path)
+                if warp_fn is None:
+                    continue
+                
+                idx_map = result.get('index_map')
+                depth_map = result.get('depth_map')
+                
+                if idx_map is not None:
+                    # MUST use INTER_NEAREST: interpolation would invent fake element IDs
+                    result['index_map'] = warp_fn(idx_map, border_value=-1)
+                    
+                    # UPDATE: Re-extract visible indices because the warp may have culled edges
+                    valid_mask = result['index_map'] >= 0
+                    result['visible_indices'] = np.unique(result['index_map'][valid_mask]).astype(np.int32)
+                    
+                    # UPDATE: Rebuild the inverted index for immediate RAM usage
+                    result['inverted_index'] = VisibilityManager._build_inverted_index(result['index_map'])
+                    
+                if depth_map is not None:
+                    # UPDATE: Use np.nan so the 3D occlusion logic ignores the curved borders
+                    result['depth_map'] = warp_fn(depth_map, border_value=np.nan)
+
+            # =================================================================
             # 1. Pre-fill cache paths so the main thread knows not to save them
             # =================================================================
             if self.cache_manager is not None and self.target_file_path and self.cache_keys_dict:
@@ -170,18 +200,20 @@ class VisibilityWorker(QObject):
                     cache_key = self.cache_keys_dict.get(path)
                     if cache_key is not None:
                         element_type = result_dict.get('element_type', 'point')
+                        extra = self.dist_coeffs_bytes_dict.get(path)
                         expected_cache_path = self.cache_manager.get_cache_path(
-                            cache_key, self.target_file_path, element_type
+                            cache_key, self.target_file_path, element_type, extra
                         )
                         result_dict['cache_path'] = expected_cache_path
 
             # =================================================================
             # 2. Define the background saving task
             # =================================================================
-            def save_to_disk_task(save_results, cache_mgr, target_path, keys_dict):
+            def save_to_disk_task(save_results, cache_mgr, target_path, keys_dict, extra_bytes_dict):
                 for path, result_dict in save_results.items():
                     cache_key = keys_dict.get(path)
                     if cache_key is not None:
+                        extra = extra_bytes_dict.get(path)
                         cache_mgr.save_visibility(
                             cache_key,
                             target_path,
@@ -189,7 +221,8 @@ class VisibilityWorker(QObject):
                             result_dict.get('visible_indices'),
                             result_dict.get('depth_map') if self.compute_depth_maps else None,
                             element_type=result_dict.get('element_type', 'point'),
-                            inverted_index=None  # No longer storing inverted_index to save RAM
+                            inverted_index=None,  # No longer storing inverted_index to save RAM
+                            extra_hash_data=extra,
                         )
 
             # =================================================================
@@ -198,7 +231,7 @@ class VisibilityWorker(QObject):
             if self.cache_manager is not None and self.target_file_path and self.cache_keys_dict:
                 io_thread = threading.Thread(
                     target=save_to_disk_task, 
-                    args=(results, self.cache_manager, self.target_file_path, self.cache_keys_dict),
+                    args=(results, self.cache_manager, self.target_file_path, self.cache_keys_dict, self.dist_coeffs_bytes_dict),
                     daemon=True
                 )
                 io_thread.start()
