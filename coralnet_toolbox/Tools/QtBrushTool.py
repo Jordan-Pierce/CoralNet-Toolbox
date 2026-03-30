@@ -38,6 +38,11 @@ class BrushTool(Tool):
         self.post_stroke_callback = None
         
         self._accumulated_points = []
+        
+        # NEW: Timer for 3D sync throttling
+        self._flush_timer = QTimer()
+        self._flush_timer.setSingleShot(True)
+        self._flush_timer.timeout.connect(self._flush_stroke)
 
     def _create_brush_mask(self):
         """Creates a boolean numpy array for the brush shape."""
@@ -228,13 +233,21 @@ class BrushTool(Tool):
     def deactivate(self):
         """Deactivate the brush tool and stop any current operations."""
         self.painting = False
+        
+        # Stop timer and force a final flush if we switch tools mid-stroke
+        if self._flush_timer.isActive():
+            self._flush_timer.stop()
         if self._accumulated_points:
             self._flush_stroke()
+            
         super().deactivate()
         
     def stop_current_drawing(self):
         """Force stop of current drawing by stopping painting mode."""
         self.painting = False
+        if self._flush_timer.isActive():
+            self._flush_timer.stop()
+            self._flush_stroke()
 
     def _apply_brush(self, event):
         """Applies the brush locally and queues it for 3D sync."""
@@ -262,9 +275,13 @@ class BrushTool(Tool):
         # 1. Apply locally immediately for smooth 60Hz UX
         mask_annotation.update_mask(brush_location, self.brush_mask, class_id)
 
-        # 2. Sync to 3D immediately
+        # 2. Accumulate points for 3D sync
         self._accumulated_points.append(scene_pos)
-        self._flush_stroke()
+        
+        # NEW: Only start the timer if it isn't already running. 
+        # This batches all mouse events that happen within a 33ms window (~30 FPS)
+        if not self._flush_timer.isActive():
+            self._flush_timer.start(33)
 
     def _flush_stroke(self):
         """Builds a combined mask of recent strokes and sends to MVATManager."""
