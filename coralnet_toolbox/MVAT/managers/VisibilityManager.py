@@ -12,7 +12,9 @@ Supports heterogeneous scene products:
 Hardware Acceleration:
 - Uses PyTorch (CUDA or CPU) as the primary compute engine.
 - Falls back to NumPy if PyTorch is unavailable.
+
 """
+
 from __future__ import annotations
 
 import time
@@ -887,8 +889,9 @@ class VisibilityManager:
         dx = cx - width / 2
         dy = cy - height / 2
         
-        wx = -2.0 * dx / width  # Negate because VTK uses opposite sign
-        wy = -2.0 * dy / height  # Y is already flipped
+        # X is not flipped between OpenCV and VTK, only Y is!
+        wx = 2.0 * dx / width    # Positive X
+        wy = -2.0 * dy / height  # Negative Y
         camera.SetWindowCenter(wx, wy)
 
     @classmethod

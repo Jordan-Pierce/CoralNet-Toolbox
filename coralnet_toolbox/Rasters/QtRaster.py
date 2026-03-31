@@ -382,30 +382,16 @@ class Raster(QObject):
 
     def compute_undistorted_intrinsics(self):
         """
-        Compute the linear camera matrix K_new and cache the inverse distortion maps.
+        Set the linear camera matrix. By keeping it identical to the original 
+        intrinsics, we prevent OpenCV from artificially shifting or scaling the 
+        focal length/principal point, eliminating alignment mismatches.
         """
         if self.intrinsics is None or self.dist_coeffs is None:
             return
-        try:
-            import cv2
-            K_new, roi = cv2.getOptimalNewCameraMatrix(
-                self.intrinsics.astype(np.float64),
-                self.dist_coeffs,
-                (self.width, self.height),
-                alpha=1,
-                newImgSize=(self.width, self.height)
-            )
-
-            self.intrinsics_undistorted = K_new
-            self._undistorted_roi = roi
-            self._undistorted_offset = (0, 0)
-            self._undistorted_size = (self.width, self.height)
             
-        except Exception as e:
-            print(f"Warning: compute_undistorted_intrinsics failed for {self.basename}: {e}")
-            self.intrinsics_undistorted = self.intrinsics
-            self._undistorted_offset = (0, 0)
-            self._undistorted_size = (self.width, self.height)
+        self.intrinsics_undistorted = self.intrinsics.copy()
+        self._undistorted_offset = (0, 0)
+        self._undistorted_size = (self.width, self.height)
 
     def _cache_warp_maps(self):
         """Pre-computes the pixel flow maps for blazing fast remapping later."""

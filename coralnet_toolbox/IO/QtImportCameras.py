@@ -226,6 +226,8 @@ def extract_intrinsics_extrinsics_from_colmap(cameras, images):
     extrinsics_list = []
     dist_coeffs_list = []
     labels = []
+    widths = []
+    heights = []
 
     for img_id, img in images.items():
         cam = cameras.get(img.camera_id)
@@ -279,6 +281,8 @@ def extract_intrinsics_extrinsics_from_colmap(cameras, images):
         K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
         intrinsics_list.append(K)
         dist_coeffs_list.append(dist)
+        widths.append(cam.width)    
+        heights.append(cam.height)   
 
         # Construct the Extrinsic Matrix (World-to-Camera, 4x4)
         R = qvec2rotmat(img.qvec)
@@ -292,9 +296,10 @@ def extract_intrinsics_extrinsics_from_colmap(cameras, images):
         labels.append(os.path.splitext(os.path.basename(img.name))[0].lower())
 
     if len(intrinsics_list) == 0:
-        return np.array([]), np.array([]), [], np.array([])
+        # Update the empty return to include the two new lists
+        return np.array([]), np.array([]), [], np.array([]), [], []
 
-    return np.array(intrinsics_list), np.array(extrinsics_list), labels, np.array(dist_coeffs_list)
+    return np.array(intrinsics_list), np.array(extrinsics_list), labels, np.array(dist_coeffs_list), widths, heights
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -650,7 +655,7 @@ class ColmapTab(QWidget):
 
         is_distorted = self.parent_dialog.distorted_checkbox.isChecked()
         try:
-            intrinsics_all, extrinsics_all, labels, dist_coeffs_all = extract_intrinsics_extrinsics_from_colmap(cameras, matched_images)
+            intrinsics_all, extrinsics_all, labels, dist_coeffs_all, cam_widths, cam_heights = extract_intrinsics_extrinsics_from_colmap(cameras, matched_images)
             label_to_idx = {label: idx for idx, label in enumerate(labels)}
 
             # Warn the user if all distortion coefficients are zero, which may indicate that the COLMAP model was exported with undistorted parameters.
@@ -682,14 +687,11 @@ class ColmapTab(QWidget):
                     skipped_count += 1
                     progress_bar.update_progress()
                     continue
+                
                 idx = label_to_idx[image_basename]
-                intrinsics = intrinsics_all[idx]
+                intrinsics = intrinsics_all[idx].copy() # Copy to avoid mutating original
                 extrinsics = extrinsics_all[idx]
                 dist_coeffs = dist_coeffs_all[idx] if len(dist_coeffs_all) > 0 else np.zeros(8)
-
-                # Prints all zero if the data were exported undistorted.
-                # Should have values if exported with distortion.
-                # print(f"[{image_basename}] Dist Coeffs: {dist_coeffs}")
 
                 image_path = image_path_map[image_basename]
                 raster = self.image_window.raster_manager.get_raster(image_path)
@@ -697,13 +699,28 @@ class ColmapTab(QWidget):
                     skipped_count += 1
                     progress_bar.update_progress()
                     continue
+                    
                 try:
+                    # ---> Dynamically Scale the K Matrix <---
+                    scale_x = raster.width / float(cam_widths[idx])
+                    scale_y = raster.height / float(cam_heights[idx])
+                    
+                    if scale_x != 1.0 or scale_y != 1.0:
+                        S = np.array([
+                            [scale_x, 0, 0],
+                            [0, scale_y, 0],
+                            [0, 0, 1]
+                        ])
+                        intrinsics = S @ intrinsics
+                    # ---------------------------------------------
+
                     if raster.intrinsics is not None or raster.extrinsics is not None:
                         raster.update_intrinsics(intrinsics)
                         raster.update_extrinsics(extrinsics)
                     else:
                         raster.add_intrinsics(intrinsics)
                         raster.add_extrinsics(extrinsics)
+                        
                     raster.add_distortion(dist_coeffs, is_distorted=is_distorted)
                     updated_count += 1
                 except Exception:
