@@ -147,7 +147,7 @@ class CacheManager:
                         depth_map: Optional[np.ndarray] = None,
                         element_type: str = 'point',
                         inverted_index: Optional[Dict] = None,
-                        compressed: bool = True,
+                        compressed: bool = False,
                         extra_hash_data: Optional[bytes] = None) -> str:
         """
         Save visibility data to cache.
@@ -161,7 +161,7 @@ class CacheManager:
             element_type (str): Type of indexed elements ('point', 'face', or 'cell')
             inverted_index (dict, optional): CSR inverted index with keys
                 'inv_ids', 'inv_offsets', 'inv_pixels'.
-            compressed (bool): Whether to use compressed .npz format (default: True)
+            compressed (bool): Whether to use compressed .npz format (default: False)
             extra_hash_data (bytes, optional): Additional bytes mixed into the hash
                 (see _generate_cache_key).
 

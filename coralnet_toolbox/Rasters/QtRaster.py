@@ -401,9 +401,6 @@ class Raster(QObject):
             self._undistorted_offset = (0, 0)
             self._undistorted_size = (self.width, self.height)
             
-            # --- Cache the distortion lookup tables ---
-            self._cache_warp_maps()
-            
         except Exception as e:
             print(f"Warning: compute_undistorted_intrinsics failed for {self.basename}: {e}")
             self.intrinsics_undistorted = self.intrinsics
@@ -423,6 +420,16 @@ class Raster(QObject):
         R_eye = np.eye(3, dtype=np.float64)
 
         try:
+            # Less accurate, but much faster method for computing the undistorted pixel coordinates.
+            linear_coords = cv2.undistortPoints(
+                distorted_pixels.reshape(-1, 1, 2),
+                self.intrinsics.astype(np.float64),
+                self.dist_coeffs,
+                P=self.intrinsics_undistorted.astype(np.float64)
+            )
+
+        except AttributeError:
+            # More accurate, but slower
             linear_coords = cv2.undistortPointsIter(
                 distorted_pixels.reshape(-1, 1, 2),
                 self.intrinsics.astype(np.float64),
@@ -430,14 +437,6 @@ class Raster(QObject):
                 R_eye,
                 self.intrinsics_undistorted.astype(np.float64),
                 strict_criteria
-            )
-        except AttributeError:
-            # Fallback for older OpenCV versions
-            linear_coords = cv2.undistortPoints(
-                distorted_pixels.reshape(-1, 1, 2),
-                self.intrinsics.astype(np.float64),
-                self.dist_coeffs,
-                P=self.intrinsics_undistorted.astype(np.float64)
             )
 
         self._map_x = linear_coords[:, 0, 0].reshape(h, w)
@@ -455,11 +454,13 @@ class Raster(QObject):
         import torch
         if torch.cuda.is_available():
             try:
+                print("Attempting to warp using CUDA...")
                 return self._warp_pytorch_cuda(linear_map, border_value)
             except Exception as e:
                 print(f"CUDA warp failed, falling back to CPU: {e}")
 
         # Fallback to CPU cv2.remap (already 100x faster than before due to caching)
+        print("Warping using CPU fallback...")
         import cv2
         return cv2.remap(
             linear_map,

@@ -12,7 +12,7 @@ import numpy as np
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from PyQt5.QtCore import QObject, QTimer, pyqtSignal, Qt, QThread
+from PyQt5.QtCore import QObject, QTimer, pyqtSignal, Qt, QThread, QPointF
 from PyQt5.QtWidgets import QApplication, QMessageBox
 
 from coralnet_toolbox.MVAT.core.Camera import Camera
@@ -32,15 +32,9 @@ from coralnet_toolbox.MVAT.core.constants import (
     RAY_COLOR_INVALID,
 )
 
-# DEMProduct removed: orthomosaics/DEMs are no longer scene products
-
-from coralnet_toolbox.QtProgressBar import ProgressBar
-
-from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
-from coralnet_toolbox.Annotations.QtMaskAnnotation import MaskAnnotation
-
-from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.MVAT.core.Model import MeshProduct
+
+from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 
 
 # ----------------------------------------------------------------------------------------------------------------------

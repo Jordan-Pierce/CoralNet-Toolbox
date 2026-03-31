@@ -16,6 +16,7 @@ from PyQt5.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QVBoxLayout,
+    QGroupBox,
     QLineEdit,
     QPushButton,
     QWidget,
@@ -521,13 +522,6 @@ class ColmapTab(QWidget):
         images_layout.addWidget(self.images_file_edit)
         images_layout.addWidget(self.images_browse_button)
         layout.addRow("Images File:", images_layout)
-        # Lens distortion checkbox moved to the parent dialog to apply for all tabs.
-
-        self.import_button = QPushButton("Import COLMAP")
-        self.import_button.clicked.connect(self.import_cameras)
-        btns = QHBoxLayout()
-        btns.addWidget(self.import_button)
-        layout.addRow(btns)
 
         self.setLayout(layout)
 
@@ -748,13 +742,6 @@ class MetashapeTab(QWidget):
         xml_layout.addWidget(self.xml_file_edit)
         xml_layout.addWidget(self.xml_browse_button)
         layout.addRow("Cameras XML File:", xml_layout)
-        # Lens distortion checkbox moved to the parent dialog to apply for all tabs.
-
-        self.import_button = QPushButton("Import Metashape")
-        self.import_button.clicked.connect(self.import_cameras)
-        btns = QHBoxLayout()
-        btns.addWidget(self.import_button)
-        layout.addRow(btns)
 
         self.setLayout(layout)
 
@@ -970,15 +957,20 @@ class ImportCameras(QDialog):
         self.setWindowTitle("Import Camera Parameters")
         self.resize(800, 150)
 
-        tabs = QTabWidget()
+        # Tab widget containing the import tabs
+        self.tabs = QTabWidget()
 
         self.colmap_tab = ColmapTab(self)
-        tabs.addTab(self.colmap_tab, "COLMAP")
+        self.tabs.addTab(self.colmap_tab, "COLMAP")
+
         self.metashape_tab = MetashapeTab(self)
-        tabs.addTab(self.metashape_tab, "Metashape")
+        self.tabs.addTab(self.metashape_tab, "Metashape")
+        self.tabs.setTabEnabled(1, False)
 
         # Shared lens distortion checkbox for both tabs
-        self.distorted_checkbox = QCheckBox("Images are original / distorted (Apply map warping)")
+        self.distorted_checkbox = QCheckBox(
+            "Images are original / distorted (Apply map warping)"
+        )
         self.distorted_checkbox.setToolTip(
             "If checked, the imported camera parameters will be treated as corresponding to the original distorted images.\n"
             "This means that when projecting points or undistorting, the lens distortion will be applied according to the imported parameters.\n\n"
@@ -986,7 +978,32 @@ class ImportCameras(QDialog):
         )
         self.distorted_checkbox.setChecked(True)
 
+        # Options groupbox placed below the tabs
+        self.options_groupbox = QGroupBox("Options")
+        opts_layout = QHBoxLayout()
+        opts_layout.addWidget(self.distorted_checkbox)
+        self.options_groupbox.setLayout(opts_layout)
+
+        # Unified Import button at the bottom of the dialog
+        self.import_button = QPushButton("Import")
+        self.import_button.clicked.connect(self._on_import_clicked)
+
         layout = QVBoxLayout()
-        layout.addWidget(self.distorted_checkbox)
-        layout.addWidget(tabs)
+        layout.addWidget(self.tabs)
+        layout.addWidget(self.options_groupbox)
+        btns = QHBoxLayout()
+        btns.addStretch()
+        btns.addWidget(self.import_button)
+        layout.addLayout(btns)
         self.setLayout(layout)
+
+    def _on_import_clicked(self):
+        """Call the active tab's import routine when the unified Import button is clicked."""
+        current_widget = self.tabs.currentWidget()
+        if hasattr(current_widget, "import_cameras"):
+            try:
+                current_widget.import_cameras()
+            except Exception as e:
+                QMessageBox.critical(self, "Import Error", f"An error occurred: {str(e)}")
+        else:
+            QMessageBox.warning(self, "Import", "Selected tab has no import action.")
