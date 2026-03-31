@@ -301,19 +301,30 @@ def extract_intrinsics_extrinsics_from_colmap(cameras, images):
 # ----------------------------------------------------------------------------------------------------------------------
 
 Sensor = collections.namedtuple("Sensor", ["id", "label", "width", "height", "calibration"])
-M_Camera = collections.namedtuple("Camera", ["id", "sensor_id", "label", "transform"])
+# Add component_id so we can apply component transforms when present
+M_Camera = collections.namedtuple("Camera", ["id", "sensor_id", "label", "transform", "component_id"])
 Calibration = collections.namedtuple("Calibration", ["f", "cx", "cy", "fx", "fy", "k1", "k2", "k3", "k4", "p1", "p2"])
 
 
 def read_metashape_xml(xml_path):
-    """Read Metashape cameras XML and return sensors and cameras dictionaries."""
+    """Read Metashape cameras XML and return sensors, cameras and components dictionaries.
+
+    Returns:
+        sensors: dict mapping sensor_id -> Sensor
+        cameras: dict mapping camera_id -> M_Camera (includes component_id)
+        components: dict mapping component_id -> 4x4 np.array transform
+    """
     tree = ET.parse(xml_path)
     root = tree.getroot()
 
+    # Metashape stores data under the first child 'chunk'
+    chunk = root[0]
+
     sensors = {}
     cameras = {}
+    components = {}
 
-    sensors_element = root.find('.//sensors')
+    sensors_element = chunk.find('sensors')
     if sensors_element is not None:
         for sensor_elem in sensors_element.findall('sensor'):
             sensor_id = int(sensor_elem.get('id'))
@@ -324,7 +335,7 @@ def read_metashape_xml(xml_path):
                 height = int(resolution.get('height'))
             else:
                 width = height = 0
-                
+
             calibration_elem = sensor_elem.find('calibration')
             calibration = None
             if calibration_elem is not None:
@@ -333,31 +344,45 @@ def read_metashape_xml(xml_path):
                 cy_elem = calibration_elem.find('cy')
                 fx_elem = calibration_elem.find('fx')
                 fy_elem = calibration_elem.find('fy')
-                
+
                 f = float(f_elem.text) if f_elem is not None else None
                 cx = float(cx_elem.text) if cx_elem is not None else None
                 cy = float(cy_elem.text) if cy_elem is not None else None
                 fx = float(fx_elem.text) if fx_elem is not None else None
                 fy = float(fy_elem.text) if fy_elem is not None else None
-                
+
                 k1_elem = calibration_elem.find('k1')
                 k2_elem = calibration_elem.find('k2')
                 k3_elem = calibration_elem.find('k3')
                 k4_elem = calibration_elem.find('k4')
                 p1_elem = calibration_elem.find('p1')
                 p2_elem = calibration_elem.find('p2')
-                
+
                 k1 = float(k1_elem.text) if k1_elem is not None else 0.0
                 k2 = float(k2_elem.text) if k2_elem is not None else 0.0
                 k3 = float(k3_elem.text) if k3_elem is not None else 0.0
                 k4 = float(k4_elem.text) if k4_elem is not None else 0.0
                 p1 = float(p1_elem.text) if p1_elem is not None else 0.0
                 p2 = float(p2_elem.text) if p2_elem is not None else 0.0
-                
+
                 calibration = Calibration(f=f, cx=cx, cy=cy, fx=fx, fy=fy, k1=k1, k2=k2, k3=k3, k4=k4, p1=p1, p2=p2)
             sensors[sensor_id] = Sensor(id=sensor_id, label=label, width=width, height=height, calibration=calibration)
 
-    cameras_element = root.find('.//cameras')
+    components_element = chunk.find('components')
+    if components_element is not None:
+        for component_elem in components_element.findall('component'):
+            comp_id = component_elem.get('id')
+            transform_elem = component_elem.find('transform')
+            if transform_elem is not None and transform_elem.text:
+                try:
+                    values = [float(v) for v in transform_elem.text.split()]
+                    if len(values) == 16:
+                        m = np.array(values).reshape(4, 4)
+                        components[comp_id] = m
+                except (ValueError, AttributeError):
+                    pass
+
+    cameras_element = chunk.find('cameras')
     if cameras_element is not None:
         for camera_elem in cameras_element.findall('camera'):
             camera_id = int(camera_elem.get('id'))
@@ -372,71 +397,84 @@ def read_metashape_xml(xml_path):
                         transform = np.array(values).reshape(4, 4)
                 except (ValueError, AttributeError):
                     pass
-            cameras[camera_id] = M_Camera(id=camera_id, sensor_id=sensor_id, label=label, transform=transform)
+            component_id = camera_elem.get('component_id')
+            cameras[camera_id] = M_Camera(id=camera_id, sensor_id=sensor_id, label=label, transform=transform, component_id=component_id)
 
-    return sensors, cameras
+    return sensors, cameras, components
 
 
-def extract_intrinsics_extrinsics_from_metashape(sensors, cameras):
-    """Extract intrinsics, extrinsics, labels, and distortion coefficients from Metashape data."""
+def extract_intrinsics_extrinsics_from_metashape(sensors, cameras, components=None):
+    """Extract intrinsics, extrinsics, labels, and distortion coefficients from Metashape data.
+
+    Returns (intrinsics_all, extrinsics_all, camera_labels, dist_coeffs_all, widths, heights)
+    """
     intrinsics_list = []
     extrinsics_list = []
     dist_coeffs_list = []
     camera_labels = []
-    widths = []   
-    heights = []  
+    widths = []
+    heights = []
 
-    # ---> FIX: Removed the Y and Z axis flips! Metashape is already in OpenCV format. <---
-    T_metashape_to_opencv = np.eye(4, dtype=np.float64)
+    if components is None:
+        components = {}
 
     for cam_id, cam in cameras.items():
         if cam.transform is None:
             continue
         sensor = sensors.get(cam.sensor_id)
-        if sensor is None or sensor.calibration is None:
+        if sensor is None:
             continue
-            
+
         calib = sensor.calibration
-        if calib.fx is not None and calib.fy is not None:
-            fx = calib.fx
-            fy = calib.fy
-        elif calib.f is not None:
-            fx = fy = calib.f
+
+        # Handle spherical sensors without calibration: provide sane defaults
+        if calib is None:
+            # default intrinsics for equirectangular/spherical
+            fx = sensor.width / 2.0
+            fy = sensor.height
+            cx = sensor.width / 2.0
+            cy = sensor.height / 2.0
+            dist = np.zeros(8, dtype=np.float64)
         else:
-            continue
-            
-        image_center_x = sensor.width / 2.0
-        image_center_y = sensor.height / 2.0
-        
-        if calib.cx is not None and calib.cy is not None:
-            cx = image_center_x + calib.cx
-            cy = image_center_y - calib.cy  # Keep this Metashape Y-axis offset fix
-        else:
-            cx = image_center_x
-            cy = image_center_y
-            
+            fx = calib.fx if getattr(calib, 'fx', None) is not None else (calib.f if getattr(calib, 'f', None) is not None else None)
+            fy = calib.fy if getattr(calib, 'fy', None) is not None else (calib.f if getattr(calib, 'f', None) is not None else None)
+            if fx is None or fy is None:
+                continue
+
+            image_center_x = sensor.width / 2.0
+            image_center_y = sensor.height / 2.0
+
+            cx = (image_center_x + calib.cx) if getattr(calib, 'cx', None) is not None else image_center_x
+            cy = (image_center_y + calib.cy) if getattr(calib, 'cy', None) is not None else image_center_y
+
+            dist = np.array([
+                getattr(calib, 'k1', 0.0) if getattr(calib, 'k1', None) is not None else 0.0,
+                getattr(calib, 'k2', 0.0) if getattr(calib, 'k2', None) is not None else 0.0,
+                getattr(calib, 'p1', 0.0) if getattr(calib, 'p1', None) is not None else 0.0,
+                getattr(calib, 'p2', 0.0) if getattr(calib, 'p2', None) is not None else 0.0,
+                getattr(calib, 'k3', 0.0) if getattr(calib, 'k3', None) is not None else 0.0,
+                getattr(calib, 'k4', 0.0) if getattr(calib, 'k4', None) is not None else 0.0,
+                0.0,
+                0.0,
+            ], dtype=np.float64)
+
         K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
         intrinsics_list.append(K)
-        
-        dist = np.array([
-            calib.k1 if calib.k1 is not None else 0.0,
-            calib.k2 if calib.k2 is not None else 0.0,
-            calib.p1 if calib.p1 is not None else 0.0,
-            calib.p2 if calib.p2 is not None else 0.0,
-            calib.k3 if calib.k3 is not None else 0.0,
-            calib.k4 if calib.k4 is not None else 0.0,  
-            0.0, 0.0,
-        ], dtype=np.float64)
         dist_coeffs_list.append(dist)
-        
-        widths.append(sensor.width)    
-        heights.append(sensor.height)  
-        
+        widths.append(sensor.width)
+        heights.append(sensor.height)
+
         try:
-            c2w_metashape = cam.transform
-            # Now this safely passes the matrix through without spinning it around
-            c2w_opencv = c2w_metashape @ T_metashape_to_opencv
-            w2c = np.linalg.inv(c2w_opencv)
+            c2w = cam.transform
+            # apply component transform if present
+            if getattr(cam, 'component_id', None) is not None and cam.component_id in components:
+                c2w = components[cam.component_id] @ c2w
+
+            # Nerfstudio reordering: rotate rows and flip Y/Z per their convention
+            transform = c2w[[2, 0, 1, 3], :]
+            transform[:, 1:3] *= -1
+
+            w2c = np.linalg.inv(transform)
             extrinsics_list.append(w2c)
         except np.linalg.LinAlgError:
             intrinsics_list.pop()
@@ -444,7 +482,7 @@ def extract_intrinsics_extrinsics_from_metashape(sensors, cameras):
             widths.pop()
             heights.pop()
             continue
-            
+
         camera_labels.append(os.path.splitext(cam.label)[0].lower())
 
     if len(intrinsics_list) == 0:
@@ -748,7 +786,7 @@ class MetashapeTab(QWidget):
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            sensors, cameras = read_metashape_xml(xml_file)
+            sensors, cameras, components = read_metashape_xml(xml_file)
             if not sensors:
                 QApplication.restoreOverrideCursor()
                 QMessageBox.warning(self, "No Sensors Found", "No sensor calibration data found in the XML file.")
@@ -827,7 +865,7 @@ class MetashapeTab(QWidget):
                 dist_coeffs_all,
                 cam_widths,   
                 cam_heights,  
-            ) = extract_intrinsics_extrinsics_from_metashape(sensors, cameras)
+            ) = extract_intrinsics_extrinsics_from_metashape(sensors, cameras, components)
             if len(intrinsics_all) == 0:
                 progress_bar.stop_progress()
                 progress_bar.close()
