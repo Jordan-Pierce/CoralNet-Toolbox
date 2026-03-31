@@ -425,14 +425,30 @@ class Raster(QObject):
         grid_y, grid_x = np.mgrid[0:h, 0:w].astype(np.float32)
         distorted_pixels = np.stack([grid_x, grid_y], axis=-1)
 
+        # Define strict criteria to force the iterative solver to converge accurately
+        strict_criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_MAX_ITER, 100, 1e-5)
+        R_eye = np.eye(3, dtype=np.float64)
+
         # 2. Find where each distorted pixel came from in the LINEAR render.
-        # cv2.undistortPoints does exactly this: Distorted -> Normalized -> Linear (via P)
-        linear_coords = cv2.undistortPoints(
-            distorted_pixels.reshape(-1, 1, 2),
-            self.intrinsics.astype(np.float64),
-            self.dist_coeffs,
-            P=self.intrinsics_undistorted.astype(np.float64)
-        )
+        try:
+            # Use undistortPointsIter to explicitly pass the strict convergence criteria
+            linear_coords = cv2.undistortPointsIter(
+                distorted_pixels.reshape(-1, 1, 2),
+                self.intrinsics.astype(np.float64),
+                self.dist_coeffs,
+                R_eye,
+                self.intrinsics_undistorted.astype(np.float64),
+                strict_criteria
+            )
+        except AttributeError:
+            print("Warning: cv2.undistortPointsIter not found. Falling back to cv2.undistortPoints, which may be less accurate for strong distortion.")
+            # Fallback if undistortPointsIter isn't exposed in this specific OpenCV build
+            linear_coords = cv2.undistortPoints(
+                distorted_pixels.reshape(-1, 1, 2),
+                self.intrinsics.astype(np.float64),
+                self.dist_coeffs,
+                P=self.intrinsics_undistorted.astype(np.float64)
+            )
 
         map_x = linear_coords[:, 0, 0].reshape(h, w)
         map_y = linear_coords[:, 0, 1].reshape(h, w)
