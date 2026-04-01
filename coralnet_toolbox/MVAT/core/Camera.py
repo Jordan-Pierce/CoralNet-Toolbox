@@ -82,6 +82,7 @@ class Camera:
         # Falls back to K when undistorted or when cv2 is unavailable.
         self.dist_coeffs = getattr(raster, 'dist_coeffs', None)
         self.is_distorted = getattr(raster, 'is_distorted', False)
+        self.is_fisheye = getattr(raster, 'is_fisheye', False)
         # Avoid using numpy arrays in boolean context (ambiguous truth value).
         intr_undist = getattr(raster, 'intrinsics_undistorted', None)
         self.K_linear = intr_undist if intr_undist is not None else self.K
@@ -305,13 +306,17 @@ class Camera:
                 import cv2
                 pts = np.asarray(points_3d_world, dtype=np.float64).reshape(1, 1, 3)
                 rvec, _ = cv2.Rodrigues(self.R.astype(np.float64))
-                projected, _ = cv2.projectPoints(
-                    pts,
-                    rvec,
-                    self.t.astype(np.float64),
-                    self.K.astype(np.float64),
-                    self.dist_coeffs,
-                )
+                # ---> FISHEYE BRANCH <---
+                if getattr(self, 'is_fisheye', False):
+                    D = self.dist_coeffs[:4]
+                    projected, _ = cv2.fisheye.projectPoints(
+                        pts, rvec, self.t.astype(np.float64), self.K.astype(np.float64), D
+                    )
+                else:
+                    projected, _ = cv2.projectPoints(
+                        pts, rvec, self.t.astype(np.float64), self.K.astype(np.float64), self.dist_coeffs
+                    )
+
                 u, v = float(projected[0, 0, 0]), float(projected[0, 0, 1])
                 # Check if the point is in front of the camera
                 pt_cam = self.R @ np.asarray(points_3d_world, dtype=np.float64) + self.t
@@ -354,12 +359,17 @@ class Camera:
                 import cv2
                 # Map the distorted pixel to its undistorted (linear) equivalent
                 pts_in = np.array([[[float(pixel_coord[0]), float(pixel_coord[1])]]], dtype=np.float32)
-                pts_out = cv2.undistortPoints(
-                    pts_in,
-                    self.K.astype(np.float64),
-                    self.dist_coeffs,
-                    P=self.K_linear.astype(np.float64),
-                )
+                # ---> FISHEYE BRANCH <---
+                if getattr(self, 'is_fisheye', False):
+                    D = self.dist_coeffs[:4]
+                    pts_out = cv2.fisheye.undistortPoints(
+                        pts_in, self.K.astype(np.float64), D, P=self.K_linear.astype(np.float64)
+                    )
+                else:
+                    pts_out = cv2.undistortPoints(
+                        pts_in, self.K.astype(np.float64), self.dist_coeffs, P=self.K_linear.astype(np.float64)
+                    )
+
                 u_lin, v_lin = float(pts_out[0, 0, 0]), float(pts_out[0, 0, 1])
                 K_linear_inv = np.linalg.inv(self.K_linear)
                 pixel_hom = np.array([u_lin, v_lin, 1.0])

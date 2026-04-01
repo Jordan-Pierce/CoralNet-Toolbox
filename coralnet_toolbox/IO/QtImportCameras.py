@@ -228,6 +228,7 @@ def extract_intrinsics_extrinsics_from_colmap(cameras, images):
     labels = []
     widths = []
     heights = []
+    is_fisheye_list = []
 
     for img_id, img in images.items():
         cam = cameras.get(img.camera_id)
@@ -237,6 +238,7 @@ def extract_intrinsics_extrinsics_from_colmap(cameras, images):
         # Parse focal length / principal point and distortion per COLMAP camera model.
         # OpenCV distortion layout: [k1, k2, p1, p2, k3, k4, k5, k6]
         dist = np.zeros(8, dtype=np.float64)
+        is_fisheye = False
 
         if cam.model == "PINHOLE":
             fx, fy, cx, cy = cam.params[:4]
@@ -256,23 +258,47 @@ def extract_intrinsics_extrinsics_from_colmap(cameras, images):
             dist[:] = cam.params[4:12]  # full 8-param
 
         elif cam.model == "OPENCV_FISHEYE":
-            # Fisheye uses cv2.fisheye.* API — not compatible with standard undistortPoints.
-            # Store K only; treat as undistorted for now.
+            # params: fx, fy, cx, cy, k1, k2, k3, k4
             fx, fy, cx, cy = cam.params[:4]
-            print(f"⚠️ OPENCV_FISHEYE distortion warping is not yet supported; treating as undistorted.")
+            dist[:4] = cam.params[4:8]
+            is_fisheye = True
 
-        elif cam.model in ["RADIAL", "RADIAL_FISHEYE"]:
+        elif cam.model == "RADIAL":
             # params: f, cx, cy, k1, k2
             f, cx, cy = cam.params[:3]
             fx = fy = f
             dist[0] = cam.params[3]  # k1
             dist[1] = cam.params[4]  # k2
 
-        elif cam.model in ["SIMPLE_RADIAL", "SIMPLE_RADIAL_FISHEYE"]:
+        elif cam.model == "THIN_PRISM_FISHEYE":
+            # PARAMS: fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, sx1, sy1
+            fx, fy, cx, cy = cam.params[:4]
+            dist[0] = cam.params[4]  # k1
+            dist[1] = cam.params[5]  # k2
+            dist[2] = cam.params[8]  # k3
+            dist[3] = cam.params[9]  # k4
+            is_fisheye = True
+
+        elif cam.model == "RADIAL_FISHEYE":
+            # params: f, cx, cy, k1, k2
+            f, cx, cy = cam.params[:3]
+            fx = fy = f
+            dist[0] = cam.params[3]  # k1
+            dist[1] = cam.params[4]  # k2
+            is_fisheye = True
+
+        elif cam.model == "SIMPLE_RADIAL":
             # params: f, cx, cy, k1
             f, cx, cy = cam.params[:3]
             fx = fy = f
             dist[0] = cam.params[3]  # k1
+
+        elif cam.model == "SIMPLE_RADIAL_FISHEYE":
+            # params: f, cx, cy, k1
+            f, cx, cy = cam.params[:3]
+            fx = fy = f
+            dist[0] = cam.params[3]  # k1
+            is_fisheye = True
 
         else:
             raise ValueError(f"Unsupported camera model: {cam.model}")
@@ -281,8 +307,9 @@ def extract_intrinsics_extrinsics_from_colmap(cameras, images):
         K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
         intrinsics_list.append(K)
         dist_coeffs_list.append(dist)
-        widths.append(cam.width)    
-        heights.append(cam.height)   
+        widths.append(cam.width)
+        heights.append(cam.height)
+        is_fisheye_list.append(is_fisheye)
 
         # Construct the Extrinsic Matrix (World-to-Camera, 4x4)
         R = qvec2rotmat(img.qvec)
@@ -297,9 +324,9 @@ def extract_intrinsics_extrinsics_from_colmap(cameras, images):
 
     if len(intrinsics_list) == 0:
         # Update the empty return to include the two new lists
-        return np.array([]), np.array([]), [], np.array([]), [], []
+        return np.array([]), np.array([]), [], np.array([]), [], [], []
 
-    return np.array(intrinsics_list), np.array(extrinsics_list), labels, np.array(dist_coeffs_list), widths, heights
+    return np.array(intrinsics_list), np.array(extrinsics_list), labels, np.array(dist_coeffs_list), widths, heights, is_fisheye_list
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -655,7 +682,7 @@ class ColmapTab(QWidget):
 
         is_distorted = self.parent_dialog.distorted_checkbox.isChecked()
         try:
-            intrinsics_all, extrinsics_all, labels, dist_coeffs_all, cam_widths, cam_heights = extract_intrinsics_extrinsics_from_colmap(cameras, matched_images)
+            intrinsics_all, extrinsics_all, labels, dist_coeffs_all, cam_widths, cam_heights, is_fisheye_all = extract_intrinsics_extrinsics_from_colmap(cameras, matched_images)
             label_to_idx = {label: idx for idx, label in enumerate(labels)}
 
             # Warn the user if all distortion coefficients are zero, which may indicate that the COLMAP model was exported with undistorted parameters.
@@ -692,6 +719,7 @@ class ColmapTab(QWidget):
                 intrinsics = intrinsics_all[idx].copy() # Copy to avoid mutating original
                 extrinsics = extrinsics_all[idx]
                 dist_coeffs = dist_coeffs_all[idx] if len(dist_coeffs_all) > 0 else np.zeros(8)
+                is_fisheye = is_fisheye_all[idx] if is_fisheye_all is not None and len(is_fisheye_all) > idx else False
 
                 image_path = image_path_map[image_basename]
                 raster = self.image_window.raster_manager.get_raster(image_path)
@@ -721,7 +749,7 @@ class ColmapTab(QWidget):
                         raster.add_intrinsics(intrinsics)
                         raster.add_extrinsics(extrinsics)
                         
-                    raster.add_distortion(dist_coeffs, is_distorted=is_distorted)
+                    raster.add_distortion(dist_coeffs, is_distorted=is_distorted, is_fisheye=is_fisheye)
                     updated_count += 1
                 except Exception:
                     skipped_count += 1

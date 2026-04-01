@@ -361,7 +361,7 @@ class Raster(QObject):
         """Remove all camera extrinsic parameters."""
         self.extrinsics = None
 
-    def add_distortion(self, dist_coeffs: np.ndarray, is_distorted: bool = True):
+    def add_distortion(self, dist_coeffs: np.ndarray, is_distorted: bool = True, is_fisheye: bool = False):
         """
         Store lens distortion coefficients and optionally compute the linear camera
         matrix (K_new) via cv2.getOptimalNewCameraMatrix.
@@ -375,8 +375,13 @@ class Raster(QObject):
             dist_coeffs = np.asarray(dist_coeffs, dtype=np.float64)
         self.dist_coeffs = dist_coeffs.astype(np.float64)
         self.is_distorted = is_distorted
+        # Save fisheye flag for downstream projection/warping decisions
+        self.is_fisheye = bool(is_fisheye)
+
         if is_distorted:
-            self.compute_undistorted_intrinsics()
+            # Keep linear intrinsics identical to original intrinsics to avoid
+            # unintended focal length / principal point shifts.
+            self.intrinsics_undistorted = self.intrinsics.copy() if self.intrinsics is not None else None
         else:
             self.intrinsics_undistorted = None
 
@@ -400,30 +405,47 @@ class Raster(QObject):
 
         h, w = self.height, self.width
         grid_y, grid_x = np.mgrid[0:h, 0:w].astype(np.float32)
-        distorted_pixels = np.stack([grid_x, grid_y], axis=-1)
+        distorted_pixels = np.stack([grid_x, grid_y], axis=-1).reshape(-1, 1, 2)
 
-        strict_criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_MAX_ITER, 100, 1e-5)
-        R_eye = np.eye(3, dtype=np.float64)
-
-        try:
-            # Less accurate, but much faster method for computing the undistorted pixel coordinates.
-            linear_coords = cv2.undistortPoints(
-                distorted_pixels.reshape(-1, 1, 2),
-                self.intrinsics.astype(np.float64),
-                self.dist_coeffs,
-                P=self.intrinsics_undistorted.astype(np.float64)
-            )
-
-        except AttributeError:
-            # More accurate, but slower
-            linear_coords = cv2.undistortPointsIter(
-                distorted_pixels.reshape(-1, 1, 2),
-                self.intrinsics.astype(np.float64),
-                self.dist_coeffs,
-                R_eye,
-                self.intrinsics_undistorted.astype(np.float64),
-                strict_criteria
-            )
+        # Fisheye branch uses cv2.fisheye API which expects 4 distortion params
+        if getattr(self, 'is_fisheye', False):
+            try:
+                D = self.dist_coeffs[:4]
+                linear_coords = cv2.fisheye.undistortPoints(
+                    distorted_pixels,
+                    self.intrinsics.astype(np.float64),
+                    D,
+                    P=self.intrinsics_undistorted.astype(np.float64),
+                )
+            except Exception:
+                # Fallback to non-fisheye undistort if fisheye module is unavailable
+                linear_coords = cv2.undistortPoints(
+                    distorted_pixels,
+                    self.intrinsics.astype(np.float64),
+                    self.dist_coeffs,
+                    P=self.intrinsics_undistorted.astype(np.float64),
+                )
+        else:
+            strict_criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_MAX_ITER, 100, 1e-5)
+            R_eye = np.eye(3, dtype=np.float64)
+            try:
+                # Try the more accurate iterative API first when available
+                linear_coords = cv2.undistortPointsIter(
+                    distorted_pixels,
+                    self.intrinsics.astype(np.float64),
+                    self.dist_coeffs,
+                    R_eye,
+                    self.intrinsics_undistorted.astype(np.float64),
+                    strict_criteria,
+                )
+            except AttributeError:
+                # Fallback to standard undistortPoints
+                linear_coords = cv2.undistortPoints(
+                    distorted_pixels,
+                    self.intrinsics.astype(np.float64),
+                    self.dist_coeffs,
+                    P=self.intrinsics_undistorted.astype(np.float64),
+                )
 
         self._map_x = linear_coords[:, 0, 0].reshape(h, w)
         self._map_y = linear_coords[:, 0, 1].reshape(h, w)
