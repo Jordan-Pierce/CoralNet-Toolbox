@@ -462,13 +462,11 @@ class Raster(QObject):
         import torch
         if torch.cuda.is_available():
             try:
-                print("Attempting to warp using CUDA...")
                 return self._warp_pytorch_cuda(linear_map, border_value)
             except Exception as e:
                 print(f"CUDA warp failed, falling back to CPU: {e}")
 
         # Fallback to CPU cv2.remap (already 100x faster than before due to caching)
-        print("Warping using CPU fallback...")
         import cv2
         return cv2.remap(
             linear_map,

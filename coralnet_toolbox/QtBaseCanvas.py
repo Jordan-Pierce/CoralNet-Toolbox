@@ -369,28 +369,35 @@ class BaseCanvas(QGraphicsView):
         width_ratio = view_rect.width() / scene_rect.width()
         height_ratio = view_rect.height() / scene_rect.height()
         
-        self._min_zoom = max(min(width_ratio, height_ratio), 0.1)
+        # ---> Allow the view to scale down as far as needed to fit huge images! <---
+        self._min_zoom = max(min(width_ratio, height_ratio), 0.0001)
     
     # ==================== Viewport Control API ====================
     
     def center_on_pixel(self, x, y):
         """Center the view on the given image pixel coordinate."""
+        # ---> Prevent anchor fighting during panning <---
+        old_anchor = self.transformationAnchor()
+        self.setTransformationAnchor(QGraphicsView.AnchorViewCenter)
+        
         self.centerOn(QPointF(x, y))
+        
+        self.setTransformationAnchor(old_anchor)
     
     def set_zoom_level(self, factor):
-        """
-        Set the absolute view transform scale.
-        
-        Args:
-            factor (float): Absolute zoom factor (e.g. 0.1 = fit-to-view on a large image).
-        """
+        """Set the absolute view transform scale."""
         if factor <= 0:
             return
         
-        # Reset transform and apply the absolute scale
+        # ---> Prevent anchor fighting by forcing a center anchor temporarily <---
+        old_anchor = self.transformationAnchor()
+        self.setTransformationAnchor(QGraphicsView.AnchorViewCenter)
+        
         self.resetTransform()
         self.scale(factor, factor)
         self.zoom_factor = factor
+        
+        self.setTransformationAnchor(old_anchor)
     
     def snap_to_target(self, target_x, target_y, relative_zoom):
         """
@@ -825,7 +832,7 @@ class BaseCanvas(QGraphicsView):
         
         Args:
             x, y: Pixel coordinates in image space.
-            color: QColor for the marker. Default: keeps current color.
+            color: QColor for the marker. Default: QColor(0, 255, 0) (green).
         """
         if self._static_marker is None:
             return
@@ -837,13 +844,13 @@ class BaseCanvas(QGraphicsView):
                 return
 
             self._static_marker.setPos(x, y)
-            if color:
-                pen = QPen(color, 2)
-                for child in self._static_marker.childItems():
-                    try:
-                        child.setPen(pen)
-                    except Exception:
-                        pass
+            color = color or QColor(0, 255, 0)
+            pen = QPen(color, 2)
+            for child in self._static_marker.childItems():
+                try:
+                    child.setPen(pen)
+                except Exception:
+                    pass
             self._static_marker.show()
         except Exception:
             traceback.print_exc()
@@ -861,7 +868,7 @@ class BaseCanvas(QGraphicsView):
         
         Args:
             x, y: Pixel coordinates in image space.
-            color: QColor for the marker.
+            color: QColor for the marker. Default: keeps current color.
             is_valid: If False, use dashed pen (occluded/estimated).
         """
         if self._dynamic_marker is None:

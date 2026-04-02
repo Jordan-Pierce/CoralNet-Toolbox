@@ -248,6 +248,11 @@ class VisibilityManager:
         subset_cell_ids = None
         if getattr(mesh_product, '_original_cell_ids_pt', None) is not None:
             subset_cell_ids = mesh_product._original_cell_ids_pt[global_mask].cpu().numpy()
+        else:
+            # If the mesh was already triangles, we must still map the subset back 
+            # to the global face IDs so the painter thread hits the right targets!
+            global_indices = torch.arange(len(global_mask), device=device)
+            subset_cell_ids = global_indices[global_mask].cpu().numpy().astype(np.int32)
             
         cull_time = time.time() - start_time
         print(f"✂️ {device.upper()} Frustum Cull: Kept {len(subset_triangles):,} faces in {cull_time:.3f}s")
@@ -515,6 +520,7 @@ class VisibilityManager:
         plotter_start = time.time()
         plotter = pv.Plotter(off_screen=True, window_size=(width, height))
         plotter.set_background('black')  # Background = RGB(0,0,0) = "no face"
+        plotter.disable_anti_aliasing()
         
         # Add mesh with RGB scalars, no lighting/interpolation
         plotter.add_mesh(
@@ -670,6 +676,7 @@ class VisibilityManager:
         first_h = max(1, int(camera_params_list[0][4] * scale_factor))
         plotter = pv.Plotter(off_screen=True, window_size=(first_w, first_h))
         plotter.set_background('black') 
+        plotter.disable_anti_aliasing()
         
         plotter.add_mesh(
             mesh_with_ids,

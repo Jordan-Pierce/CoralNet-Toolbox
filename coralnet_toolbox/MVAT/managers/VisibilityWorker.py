@@ -192,6 +192,20 @@ class VisibilityWorker(QObject):
                     # UPDATE: Use np.nan so the 3D occlusion logic ignores the curved borders
                     result['depth_map'] = warp_fn(depth_map, border_value=np.nan)
 
+            # Update status for distortion corrections
+            try:
+                from PyQt5.QtCore import QMetaObject, Qt, Q_ARG
+                from PyQt5.QtWidgets import QApplication
+                main_win = QApplication.instance().activeWindow()
+                if main_win and hasattr(main_win, 'status_bar'):
+                    QMetaObject.invokeMethod(
+                        main_win.status_bar, "showMessage",
+                        Qt.QueuedConnection,
+                        Q_ARG(str, "Applying distortion corrections to visibility maps...")
+                    )
+            except Exception:
+                pass
+
             # =================================================================
             # 1. Pre-fill cache paths so the main thread knows not to save them
             # =================================================================
@@ -234,6 +248,19 @@ class VisibilityWorker(QObject):
                     args=(results, self.cache_manager, self.target_file_path, self.cache_keys_dict, self.dist_coeffs_bytes_dict),
                     daemon=True
                 )
+                # Update status for saving
+                try:
+                    from PyQt5.QtCore import QMetaObject, Qt, Q_ARG
+                    from PyQt5.QtWidgets import QApplication
+                    main_win = QApplication.instance().activeWindow()
+                    if main_win and hasattr(main_win, 'status_bar'):
+                        QMetaObject.invokeMethod(
+                            main_win.status_bar, "showMessage",
+                            Qt.QueuedConnection,
+                            Q_ARG(str, "Saving visibility maps to cache...")
+                        )
+                except Exception:
+                    pass
                 io_thread.start()
 
             # =================================================================

@@ -857,35 +857,60 @@ class AnnotationWindow(BaseCanvas):
             super().mouseDoubleClickEvent(event)
             return
         
-        # Get depth from z-channel if available
-        raster = camera._raster
-        depth = None
-        
-        if raster.z_channel is not None and raster.z_data_type == 'depth':
-            depth = raster.get_z_value(x, y)
-        
-        # Get default depth from scene if no depth available
-        if depth is None or depth <= 0 or np.isnan(depth):
-            default_depth = mvat_manager.viewer.get_scene_median_depth(camera.position)
-        else:
-            default_depth = depth
-        
-        # Create ray from pixel position to get 3D world point
+        terminal_point = None
+
+        # --- PLAN A: Index Map (Flawless 3D Coordinate) ---
         try:
-            ray = CameraRay.from_pixel_and_camera(
-                pixel_xy=(x, y),
-                camera=camera,
-                depth=depth,
-                default_depth=default_depth
-            )
+            index_map = camera._raster.index_map
+            primary_target = mvat_manager.viewer.scene_context.get_primary_target()
+            if index_map is not None and primary_target is not None:
+                candidate_id = int(index_map[y, x])
+                if candidate_id > -1:
+                    raw_coord = primary_target.get_element_coordinate(candidate_id)
+                    if raw_coord is not None:
+                        # ---> Safely cast PyTorch Tensor to NumPy! <---
+                        if hasattr(raw_coord, 'cpu'):
+                            terminal_point = raw_coord.cpu().numpy().astype(np.float64)
+                        else:
+                            terminal_point = np.asarray(raw_coord, dtype=np.float64)
+        except Exception:
+            pass
+
+        # --- PLAN B: Depth Map / Scene Median Fallback ---
+        if terminal_point is None:
+            raster = camera._raster
+            depth = None
             
-            # Update MVATViewer focal point with the ray's terminal point
-            # This will trigger the existing signal chain that projects back to all camera views
-            mvat_manager.viewer.set_focal_point(ray.terminal_point)
+            if raster.z_channel is not None and raster.z_data_type == 'depth':
+                try:
+                    depth = raster.get_z_value(x, y)
+                except Exception:
+                    pass
             
-        except Exception as e:
-            # Silently handle any errors to allow AnnotationWindow to work independently
-            print(f"Warning: Could not set focal point from double-click: {e}")
+            # Get default depth from scene if no depth available
+            if depth is None or depth <= 0 or np.isnan(depth):
+                try:
+                    default_depth = mvat_manager.viewer.get_scene_median_depth(camera.position)
+                except Exception:
+                    default_depth = 10.0
+            else:
+                default_depth = depth
+            
+            # Create ray from pixel position to get 3D world point
+            try:
+                ray = CameraRay.from_pixel_and_camera(
+                    pixel_xy=(x, y),
+                    camera=camera,
+                    depth=depth,
+                    default_depth=default_depth
+                )
+                terminal_point = ray.terminal_point
+            except Exception as e:
+                print(f"Warning: Could not set focal point from double-click: {e}")
+        
+        # Trigger projection to all context cameras
+        if terminal_point is not None:
+            mvat_manager.viewer.set_focal_point(terminal_point)
         
         super().mouseDoubleClickEvent(event)
         
