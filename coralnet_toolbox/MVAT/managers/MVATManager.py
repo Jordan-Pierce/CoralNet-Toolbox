@@ -83,8 +83,6 @@ class MousePositionBridge(QObject):
         # --- Path A: Index Map (preferred) ---
         ray = None
         candidate_id = -1
-        # Use the in-memory raster index_map to avoid triggering lazy disk loads
-        # on frequent UI events (mouse move).
         index_map = camera._raster.index_map
         if index_map is not None:
             candidate_id = int(index_map[y, x])
@@ -93,7 +91,6 @@ class MousePositionBridge(QObject):
             coord = primary_target.get_element_coordinate(candidate_id)
             if coord is not None:
                 if getattr(camera, 'is_orthographic', False):
-                    # Get the correct world-up direction in local space
                     if getattr(camera, 'chunk_transform_inv', None) is not None:
                         world_up_hom = np.array([0.0, 0.0, 1.0, 0.0])
                         local_up = (camera.chunk_transform_inv @ world_up_hom)[:3]
@@ -112,6 +109,22 @@ class MousePositionBridge(QObject):
                         pixel_coord=(x, y),
                         source_camera=camera,
                         element_id=candidate_id,
+                    )
+                else:
+                    # ---> Perspective logic <---
+                    origin = camera.position.copy()
+                    direction = coord - origin
+                    norm = np.linalg.norm(direction)
+                    direction = direction / norm if norm > 0 else camera.R.T @ np.array([0, 0, 1])
+                    
+                    ray = CameraRay(
+                        origin=origin,
+                        direction=direction,
+                        terminal_point=coord,
+                        has_accurate_depth=True,
+                        pixel_coord=(x, y),
+                        source_camera=camera,
+                        element_id=candidate_id
                     )
 
         # --- Path B: Z-channel / depth fallback ---
@@ -1631,37 +1644,80 @@ class MVATManager(QObject):
         if self.selected_camera is None:
             return {}
 
-        depth = None
-        try:
-            raster = self.selected_camera._raster
-            if raster.z_channel is not None and raster.z_data_type == 'depth':
-                depth = raster.get_z_value(px, py)
-        except Exception:
-            pass
+        camera = self.selected_camera
+        primary_target = self.viewer.scene_context.get_primary_target()
+        ray = None
 
-        # Cache median depth per camera — only recompute when active camera changes
-        cache_key = id(self.selected_camera)
-        if getattr(self, '_median_depth_cache_key', None) != cache_key:
+        # --- PLAN A: Index Map (Flawless 3D Coordinate) ---
+        index_map = camera._raster.index_map
+        if index_map is not None and primary_target is not None:
             try:
-                self._cached_median_depth = self.viewer.get_scene_median_depth(
-                    self.selected_camera.position
+                # Ensure we are inside the image bounds
+                if 0 <= px < camera.width and 0 <= py < camera.height:
+                    candidate_id = int(index_map[py, px])
+                    if candidate_id > -1:
+                        coord = primary_target.get_element_coordinate(candidate_id)
+                        if coord is not None:
+                            if getattr(camera, 'is_orthographic', False):
+                                if getattr(camera, 'chunk_transform_inv', None) is not None:
+                                    world_up_hom = np.array([0.0, 0.0, 1.0, 0.0])
+                                    local_up = (camera.chunk_transform_inv @ world_up_hom)[:3]
+                                    n = np.linalg.norm(local_up)
+                                    local_up = local_up / n if n > 1e-12 else np.array([0.0, 0.0, 1.0])
+                                else:
+                                    local_up = np.array([0.0, 0.0, 1.0])
+                                origin    = coord + local_up * 1000.0
+                                direction = -local_up
+                            else:
+                                origin = camera.position.copy()
+                                direction = coord - origin
+                                norm = np.linalg.norm(direction)
+                                direction = direction / norm if norm > 0 else camera.R.T @ np.array([0, 0, 1])
+
+                            ray = CameraRay(
+                                origin=origin,
+                                direction=direction,
+                                terminal_point=coord,
+                                has_accurate_depth=True,
+                                pixel_coord=(px, py),
+                                source_camera=camera,
+                                element_id=candidate_id
+                            )
+            except Exception:
+                pass
+
+        # --- PLAN B: Depth Map / Scene Median Fallback ---
+        if ray is None:
+            depth = None
+            try:
+                raster = camera._raster
+                if raster.z_channel is not None and raster.z_data_type == 'depth':
+                    depth = raster.get_z_value(px, py)
+            except Exception:
+                pass
+
+            # Cache median depth per camera — only recompute when active camera changes
+            cache_key = id(camera)
+            if getattr(self, '_median_depth_cache_key', None) != cache_key:
+                try:
+                    self._cached_median_depth = self.viewer.get_scene_median_depth(camera.position)
+                except Exception:
+                    self._cached_median_depth = 10.0
+                self._median_depth_cache_key = cache_key
+
+            default_depth = self._cached_median_depth or 10.0
+
+            try:
+                ray = CameraRay.from_pixel_and_camera(
+                    pixel_xy=(px, py),
+                    camera=camera,
+                    depth=depth,
+                    default_depth=default_depth,
                 )
             except Exception:
-                self._cached_median_depth = 10.0
-            self._median_depth_cache_key = cache_key
+                return {}
 
-        default_depth = self._cached_median_depth or 10.0
-
-        try:
-            ray = CameraRay.from_pixel_and_camera(
-                pixel_xy=(px, py),
-                camera=self.selected_camera,
-                depth=depth,
-                default_depth=default_depth,
-            )
-            return ray.project_to_cameras(self.cameras)
-        except Exception:
-            return {}
+        return ray.project_to_cameras(self.cameras)
 
     def _on_patch_annotation_created(self, annotation_id: str):
         """Propagate a newly created PatchAnnotation into all visible context cameras."""
