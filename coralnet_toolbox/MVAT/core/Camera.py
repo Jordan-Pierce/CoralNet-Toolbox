@@ -336,7 +336,7 @@ class Camera:
             points_pixel = points_cam_hom[:2] / points_cam_hom[2]
         return points_pixel
 
-    def unproject(self, pixel_coord):
+    def unproject(self, pixel_coord, depth=None):
         """
         Unproject a 2D pixel coordinate to a 3D world point.
 
@@ -346,11 +346,14 @@ class Camera:
 
         Args:
             pixel_coord (tuple/list): 2D pixel [u, v] in distorted image space.
+            depth (float, optional): Depth value at the pixel. If None, it will be fetched from the raster's Z-channel.
 
         Returns:
             np.ndarray: 3D world point [x, y, z] or None if depth is missing.
         """
-        depth = self._get_depth_from_raster(int(pixel_coord[0]), int(pixel_coord[1]))
+        if depth is None:
+            depth = self._get_depth_from_raster(int(pixel_coord[0]), int(pixel_coord[1]))
+            
         if depth is None or depth <= 0 or np.isnan(depth):
             return None
 

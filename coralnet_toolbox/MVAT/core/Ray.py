@@ -130,17 +130,14 @@ class CameraRay:
             actual_depth = depth
             has_accurate_depth = True
         
-        # Calculate the 3D point by unprojecting the pixel with known depth
-        # We need to manually unproject since camera.unproject() reads from raster
-        pixel_hom = np.array([pixel_xy[0], pixel_xy[1], 1.0])
+        # ---> THE UPDATE: Try proper camera unprojection first (handles distortion/fisheye) <---
+        terminal_point = camera.unproject(pixel_xy, depth=actual_depth)
         
-        # Transform to Camera Coordinate System (Back-projection)
-        # X_cam = Z * K^{-1} * x_pix
-        point_cam = actual_depth * (camera.K_inv @ pixel_hom)
-        
-        # Transform to World Coordinate System
-        # X_world = R^T * (X_cam - t)
-        terminal_point = camera.R.T @ (point_cam - camera.t)
+        # Fallback to linear math if the camera unprojection fails or isn't supported
+        if terminal_point is None:
+            pixel_hom = np.array([pixel_xy[0], pixel_xy[1], 1.0])
+            point_cam = actual_depth * (camera.K_inv @ pixel_hom)
+            terminal_point = camera.R.T @ (point_cam - camera.t)
         
         # Calculate direction (from camera position to terminal point)
         direction = terminal_point - origin
