@@ -614,13 +614,19 @@ class ContextMatrixWidget(QWidget):
                 continue
 
             u, v = float(pixel[0]), float(pixel[1])
-            try:
-                is_occluded = camera.is_point_occluded_depth_based(point_3d, depth_threshold=0.15)
-            except Exception:
-                is_occluded = False
 
-            color = MARKER_COLOR_INVALID if is_occluded else MARKER_COLOR_SELECTED
-            canvas.update_static_marker(u, v, color=color)
+            # Explicit bounds check: hide if projected outside this camera's image
+            cam_w = getattr(camera, 'width', 0)
+            cam_h = getattr(camera, 'height', 0)
+            if cam_w and cam_h and not (0 <= u < cam_w and 0 <= v < cam_h):
+                canvas.clear_static_marker()
+                continue
+
+            # Static focal-point markers are always valid surface picks — always green.
+            # Occlusion testing (is_point_occluded_depth_based) produces false-positives
+            # for MVATViewer picks due to depth-buffer floating-point imprecision and is
+            # only appropriate for dynamic hover markers, not for static focal-point marks.
+            canvas.update_static_marker(u, v, color=MARKER_COLOR_SELECTED)
 
     def clear_all_static_markers(self):
         self._last_focal_point = None
@@ -634,6 +640,22 @@ class ContextMatrixWidget(QWidget):
 
     def request_sync(self, targets: dict, zoom_factor: float):
         self.sync_to_targets(targets, zoom_factor)
+
+    def request_zoom_only(self, canvas_indices: set, zoom_factor: float):
+        """Apply zoom synchronisation without changing the viewport center.
+
+        Used for canvases where the 3D world point falls outside the image FOV.
+        All visible canvases will share the same relative zoom level even when
+        their center pixel cannot be determined from the shared world point.
+        """
+        if not self.target_lock_enabled:
+            return
+        for i in canvas_indices:
+            if i < len(self._canvas_pool):
+                canvas = self._canvas_pool[i]
+                if canvas.isVisible() and canvas.active_image:
+                    absolute_zoom = canvas._min_zoom * zoom_factor
+                    canvas.set_zoom_level(absolute_zoom)
 
     def sync_to_targets(self, targets: dict, zoom_factor: float):
         if not self.target_lock_enabled:

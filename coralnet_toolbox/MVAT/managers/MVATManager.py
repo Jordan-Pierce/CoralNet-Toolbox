@@ -627,12 +627,15 @@ class MVATManager(QObject):
             pixel = self.selected_camera.project(point_3d)
             if not np.isnan(pixel).any():
                 u, v = pixel[0], pixel[1]
-                depth = self.selected_camera._raster.get_z_value(int(u), int(v))
-                # For elevation models, accept negative values; for depth, only positive values indicate valid data
-                z_data_type = self.selected_camera._raster.z_data_type
-                is_elevation = z_data_type == 'elevation'
-                depth_valid = depth is not None and (is_elevation or depth > 0)
-                color = MARKER_COLOR_SELECTED if depth_valid else MARKER_COLOR_INVALID
+                # Show green whenever the point projects within the camera's FOV.
+                # A depth-validity check caused false reds for MVATViewer double-clicks
+                # whose picked 3D coordinates are accurate but lack a matching depth map entry.
+                cam_w = getattr(self.selected_camera, 'width', 0)
+                cam_h = getattr(self.selected_camera, 'height', 0)
+                if cam_w and cam_h and (0 <= u < cam_w and 0 <= v < cam_h):
+                    color = MARKER_COLOR_SELECTED
+                else:
+                    color = MARKER_COLOR_INVALID
                 self.annotation_window.set_incoming_marker(u, v, color)
             else:
                 self.annotation_window.clear_static_marker()
@@ -1403,8 +1406,11 @@ class MVATManager(QObject):
         if world_point is None:
             return
 
-        # Step 2: Project into each visible context camera
-        targets = {}
+        # Step 2: Project into each visible context camera.
+        # targets_with_center: canvases where the world point falls inside the image
+        # zoom_only: canvases that are visible but the world point falls outside their FOV
+        targets_with_center = {}
+        zoom_only = set()
         capacity = self.context_matrix._get_visible_capacity()
 
         for i in range(capacity):
@@ -1419,16 +1425,20 @@ class MVATManager(QObject):
             try:
                 pixel = camera.project(world_point)
             except Exception:
+                zoom_only.add(i)
                 continue
 
             if np.isnan(pixel).any():
+                zoom_only.add(i)
                 continue
 
             target_u, target_v = float(pixel[0]), float(pixel[1])
 
-            # Bounds check: only sync if the point is within the image
             if 0 <= target_u < camera.width and 0 <= target_v < camera.height:
-                targets[i] = (target_u, target_v)
+                targets_with_center[i] = (target_u, target_v)
+            else:
+                # World point outside this camera's FOV — still sync zoom level
+                zoom_only.add(i)
 
         # Step 3: Compute relative zoom ratio (how far beyond fit-to-view)
         if self.selected_camera and hasattr(self.annotation_window, '_min_zoom'):
@@ -1440,14 +1450,19 @@ class MVATManager(QObject):
         else:
             relative_zoom = 1.0
 
-        # Step 4: Command the context matrix to sync
-        self.context_matrix.request_sync(targets, relative_zoom)
+        # Step 4a: Full snap (zoom + center) for cameras where the world point is in bounds
+        self.context_matrix.request_sync(targets_with_center, relative_zoom)
+
+        # Step 4b: Zoom-only for cameras where the world point falls outside their image —
+        # this keeps all canvases at a consistent zoom level even when positions differ.
+        self.context_matrix.request_zoom_only(zoom_only, relative_zoom)
 
     def _get_world_point_at_pixel(self, camera, px, py):
         """Get the 3D world point at a specific pixel coordinate.
 
-        Attempts depth-based unprojection first, falls back to scene
-        median depth for a rough estimate.
+        Plan A: Index-map lookup (exact element coordinate — most accurate).
+        Plan B: Z-channel depth/elevation unprojection.
+        Plan C: Scene median depth fallback (rough estimate).
 
         Args:
             camera: Camera object for the active image.
@@ -1460,11 +1475,29 @@ class MVATManager(QObject):
         px = max(0, min(px, camera.width - 1))
         py = max(0, min(py, camera.height - 1))
 
-        # Try depth/elevation from Z-channel
+        # Plan A: Index-map lookup — exact element coordinate, same approach used by
+        # AnnotationWindow double-click.  Provides the most accurate world point and
+        # avoids the depth-buffer imprecision that plagues median-depth fallbacks.
+        try:
+            index_map = camera._raster.index_map
+            primary_target = self.viewer.scene_context.get_primary_target()
+            if index_map is not None and primary_target is not None:
+                candidate_id = int(index_map[int(py), int(px)])
+                if candidate_id > -1:
+                    raw_coord = primary_target.get_element_coordinate(candidate_id)
+                    if raw_coord is not None:
+                        if hasattr(raw_coord, 'cpu'):
+                            return raw_coord.cpu().numpy().astype(np.float64)
+                        else:
+                            return np.asarray(raw_coord, dtype=np.float64)
+        except Exception:
+            pass
+
+        # Plan B: Z-channel depth/elevation unprojection
         raster = camera._raster
         depth = None
         z_data_type = raster.z_data_type if hasattr(raster, 'z_data_type') else None
-        
+
         if raster.z_channel is not None:
             z_value = raster.get_z_value(int(px), int(py))
             # For depth maps, only accept positive values
@@ -1474,7 +1507,7 @@ class MVATManager(QObject):
                     depth = z_value
 
         if depth is None or np.isnan(depth):
-            # Fallback to scene median depth
+            # Plan C: Fallback to scene median depth
             try:
                 default_depth = self.viewer.get_scene_median_depth(camera.position)
             except Exception:
