@@ -499,16 +499,14 @@ def extract_intrinsics_extrinsics_from_metashape(sensors, cameras, components=No
 
         try:
             c2w = cam.transform
-            # apply component transform if present
+            # 1. Apply component transform if present (Local Chunk -> Global Space)
             if getattr(cam, 'component_id', None) is not None and cam.component_id in components:
                 c2w = components[cam.component_id] @ c2w
 
-            # Nerfstudio reordering: rotate rows and flip Y/Z per their convention
-            transform = c2w[[2, 0, 1, 3], :]
-            transform[:, 1:3] *= -1
-
-            w2c = np.linalg.inv(transform)
+            # 2. Invert Camera-to-World into World-to-Camera for OpenCV
+            w2c = np.linalg.inv(c2w)
             extrinsics_list.append(w2c)
+            
         except np.linalg.LinAlgError:
             intrinsics_list.pop()
             dist_coeffs_list.pop()
@@ -1010,7 +1008,7 @@ class ImportCameras(QDialog):
 
         self.metashape_tab = MetashapeTab(self)
         self.tabs.addTab(self.metashape_tab, "Metashape")
-        self.tabs.setTabEnabled(1, False)
+        # self.tabs.setTabEnabled(1, False)
 
         # Shared lens distortion checkbox for both tabs
         self.distorted_checkbox = QCheckBox(

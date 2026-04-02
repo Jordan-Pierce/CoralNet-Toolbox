@@ -804,63 +804,21 @@ class VisibilityManager:
     @classmethod
     def _configure_vtk_camera(cls, plotter, K: np.ndarray, R: np.ndarray, t: np.ndarray,
                               width: int, height: int, bounds: tuple) -> None:
-        """
-        Configure VTK camera from OpenCV-style intrinsics and extrinsics.
         
-        OpenCV conventions:
-        - Camera looks down +Z axis
-        - +X is right, +Y is down
-        - R, t transform world points to camera space: X_cam = R @ X_world + t
-        
-        VTK conventions:
-        - Camera looks down -Z axis (toward focal point)
-        - +X is right, +Y is up
-        - Position/FocalPoint/ViewUp define camera pose
-        
-        Args:
-            plotter: PyVista plotter instance
-            K: 3x3 intrinsic matrix [[fx, 0, cx], [0, fy, cy], [0, 0, 1]]
-            R: 3x3 rotation matrix (world to camera)
-            t: 3x1 translation vector (world to camera)
-            width, height: Image dimensions
-            bounds: Scene bounding box for clipping plane estimation
-        """
-        # --- Camera position in world coordinates ---
-        # X_world = R^T @ (X_cam - t)
-        # Camera origin in camera space is (0, 0, 0)
-        # So camera position in world space is: -R^T @ t
         position = -R.T @ t
-        
-        # --- Focal point: a point along the camera's viewing direction ---
-        # In camera space, the camera looks toward +Z (OpenCV convention)
-        # So a point at (0, 0, 1) in camera space, transformed to world space:
         forward_cam = np.array([0.0, 0.0, 1.0])
         forward_world = R.T @ forward_cam
         focal_point = position + forward_world
         
-        # --- View up vector ---
-        # In OpenCV, +Y is down in the image
-        # In VTK, +Y is up
-        # So view_up in world space is -R^T @ (0, 1, 0)
-        up_cam = np.array([0.0, -1.0, 0.0])  # Flip Y for VTK
+        up_cam = np.array([0.0, -1.0, 0.0])  
         view_up = R.T @ up_cam
         
-        # --- Set camera pose ---
         camera = plotter.camera
         camera.position = position.tolist()
         camera.focal_point = focal_point.tolist()
         camera.up = view_up.tolist()
         
-        # --- Compute view angle from intrinsics ---
-        # For a pinhole camera: tan(view_angle/2) = (height/2) / fy
-        # VTK uses vertical view angle in degrees
-        fy = K[1, 1]
-        view_angle_rad = 2.0 * np.arctan(height / (2.0 * fy))
-        view_angle_deg = np.degrees(view_angle_rad)
-        camera.view_angle = view_angle_deg
-        
         # --- Set clipping range based on scene bounds ---
-        # Compute distance from camera to scene center
         scene_center = np.array([
             (bounds[0] + bounds[1]) / 2,
             (bounds[2] + bounds[3]) / 2,
@@ -873,26 +831,41 @@ class VisibilityManager:
         ]) / 2
         
         dist_to_center = np.linalg.norm(scene_center - position)
-        
-        # Set conservative clipping range
         near_clip = max(0.01, dist_to_center - scene_radius * 2)
         far_clip = dist_to_center + scene_radius * 2
         camera.clipping_range = (near_clip, far_clip)
         
-        # --- Handle principal point offset ---
-        # If cx, cy are not at image center, we need window center offset
-        # VTK uses normalized window center: (0, 0) = center, (-1, -1) = bottom-left
-        cx, cy = K[0, 2], K[1, 2]
+        # ---> EXPLICIT PROJECTION MATRIX <---
+        # Bypasses VTK's aspect ratio assumptions by explicitly mapping
+        # the true horizontal (fx) and vertical (fy) OpenCV focal lengths.
+        
         fx = K[0, 0]
+        fy = K[1, 1]
+        cx = K[0, 2]
+        cy = K[1, 2]
         
-        # Offset from image center in pixels
-        dx = cx - width / 2
-        dy = cy - height / 2
+        import vtk
+        mat = vtk.vtkMatrix4x4()
+        mat.Zero()
         
-        # X is not flipped between OpenCV and VTK, only Y is!
-        wx = 2.0 * dx / width    # Positive X
-        wy = -2.0 * dy / height  # Negative Y
-        camera.SetWindowCenter(wx, wy)
+        # Map X
+        mat.SetElement(0, 0, 2.0 * fx / width)
+        mat.SetElement(0, 2, (width - 2.0 * cx) / width)
+        
+        # Map Y (Y is flipped between OpenCV and OpenGL)
+        mat.SetElement(1, 1, 2.0 * fy / height)
+        mat.SetElement(1, 2, (2.0 * cy - height) / height)
+        
+        # Map Z (Clipping Range)
+        mat.SetElement(2, 2, -(far_clip + near_clip) / (far_clip - near_clip))
+        mat.SetElement(2, 3, -2.0 * far_clip * near_clip / (far_clip - near_clip))
+        
+        # W (Perspective divide)
+        mat.SetElement(3, 2, -1.0)
+        
+        # Force VTK to use our raw matrix
+        camera.SetUseExplicitProjectionTransformMatrix(True)
+        camera.SetExplicitProjectionTransformMatrix(mat)
 
     @classmethod
     def _compute_mesh_visibility_fallback(cls,
