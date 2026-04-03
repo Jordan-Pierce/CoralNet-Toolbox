@@ -163,7 +163,7 @@ class PatchTool(Tool):
         if (self.cursor_annotation and 
             hasattr(self, '_last_annotation_size') and self._last_annotation_size == self.annotation_window.annotation_size):
             # Move the existing annotation to new position
-            self.cursor_annotation.setPos(scene_pos)
+            self.cursor_annotation.update_location(scene_pos)
         else:
             self.clear_cursor_annotation()
             self.create_cursor_annotation(scene_pos)

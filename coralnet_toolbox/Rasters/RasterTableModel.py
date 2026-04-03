@@ -92,6 +92,34 @@ class RasterTableModel(QAbstractTableModel):
             elif index.column() == self.FILENAME_COL:
                 return raster.display_name
             elif index.column() == self.ANNOTATION_COUNT_COL:
+                # For VideoRaster: sum annotations across all virtual frame paths
+                try:
+                    from coralnet_toolbox.Rasters.VideoRaster import VideoRaster as _VR
+                    if isinstance(raster, _VR):
+                        prefix = raster.image_path + '::frame_'
+                        ann_dict = self.raster_manager.rasters  # just a hint; use annotation_manager
+                        # Sum via annotation_manager on the MainWindow if available
+                        try:
+                            import gc
+                            import weakref
+                            ann_manager = None
+                            # Walk parent chain to find annotation_manager
+                            for obj in gc.get_objects():
+                                if (hasattr(obj, 'image_annotations_dict') and
+                                        hasattr(obj, 'annotations_dict')):
+                                    ann_manager = obj
+                                    break
+                            if ann_manager is not None:
+                                total = sum(
+                                    len(v) for k, v in ann_manager.image_annotations_dict.items()
+                                    if k.startswith(prefix)
+                                )
+                                return str(total)
+                        except Exception:
+                            pass
+                        return str(raster.annotation_count)
+                except ImportError:
+                    pass
                 return str(raster.annotation_count)
                 
         elif role == Qt.TextAlignmentRole:
@@ -113,6 +141,22 @@ class RasterTableModel(QAbstractTableModel):
                 
         elif role == Qt.ToolTipRole:
             if index.column() == self.FILENAME_COL:
+                # VideoRaster: show video-specific info
+                try:
+                    from coralnet_toolbox.Rasters.VideoRaster import VideoRaster as _VR
+                    if isinstance(raster, _VR):
+                        duration_s = raster.frame_count / raster.fps if raster.fps > 0 else 0
+                        tooltip_parts = [
+                            f"<b>Path:</b> {path}",
+                            f"<b>Dimensions:</b> {raster.width}x{raster.height}",
+                            f"<b>FPS:</b> {raster.fps:.2f}",
+                            f"<b>Frames:</b> {raster.frame_count}",
+                            f"<b>Duration:</b> {duration_s:.1f}s",
+                        ]
+                        return "<br>".join(tooltip_parts)
+                except ImportError:
+                    pass
+
                 dimensions = raster.metadata.get('dimensions', f"{raster.width}x{raster.height}")
                 
                 tooltip_parts = [

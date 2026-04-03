@@ -1,5 +1,6 @@
 from .QtImportImages import ImportImages
 from .QtImportFrames import ImportFrames
+from .QtImportVideo import ImportVideo
 from .QtImportLabels import ImportLabels
 from .QtImportCoralNetLabels import ImportCoralNetLabels
 from .QtImportTagLabLabels import ImportTagLabLabels
@@ -25,6 +26,7 @@ from .QtSaveProject import SaveProject
 __all__ = [
     'ImportImages',
     'ImportFrames',
+    'ImportVideo',
     'ImportLabels',
     'ImportCoralNetLabels',
     'ImportTagLabLabels',
