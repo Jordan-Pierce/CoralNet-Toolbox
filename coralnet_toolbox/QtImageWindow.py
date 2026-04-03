@@ -431,10 +431,53 @@ class ImageWindow(QWidget):
         # Connect annotation signals
         self.annotation_window.annotationCreated.connect(self.update_annotation_count)
         self.annotation_window.annotationDeleted.connect(self.update_annotation_count)
+        # Update raster table and counts when annotation labels change
+        self.annotation_window.annotationLabelChanged.connect(self.on_annotation_label_changed)
+        self.annotation_window.annotationsLabelsChanged.connect(self.on_annotations_labels_changed)
         
         # Connect our own signals
         self.imageLoaded.connect(self.on_image_loaded)
         self.filterChanged.connect(self.update_image_count_label)
+
+    def on_annotation_label_changed(self, ann_id, new_label=None):
+        """Handler called when a single annotation's label changes.
+
+        Looks up the annotation's image path and refreshes annotation info
+        for that raster so the table and tooltips update immediately.
+        """
+        try:
+            # ann_id may be None or invalid; guard defensively
+            if not ann_id:
+                return
+            annotation = self.annotation_window.annotations_dict.get(ann_id)
+            if annotation and getattr(annotation, 'image_path', None):
+                self.update_image_annotations(annotation.image_path)
+        except Exception:
+            pass
+
+    def on_annotations_labels_changed(self, changes):
+        """Handler for multiple label changes.
+
+        `changes` is expected to be a list of tuples: (annotation_id, old_label, new_label)
+        We aggregate affected image paths and update them once each.
+        """
+        try:
+            if not changes:
+                return
+            images_to_update = set()
+            for item in changes:
+                try:
+                    ann_id = item[0]
+                    annotation = self.annotation_window.annotations_dict.get(ann_id)
+                    if annotation and getattr(annotation, 'image_path', None):
+                        images_to_update.add(annotation.image_path)
+                except Exception:
+                    continue
+
+            for image_path in images_to_update:
+                self.update_image_annotations(image_path)
+        except Exception:
+            pass
         
     def schedule_filter(self):
         """Schedule filtering after a short delay to avoid excessive updates."""

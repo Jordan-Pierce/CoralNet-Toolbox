@@ -1327,6 +1327,9 @@ class MainWindow(QMainWindow):
         # ---------------------------------------------------------------------
         self.annotation_window.annotationCreated.connect(self.label_window.update_tooltips)
         self.annotation_window.annotationDeleted.connect(self.label_window.update_tooltips)
+        # Also refresh label tooltips when an annotation's label changes
+        self.annotation_window.annotationLabelChanged.connect(lambda *args: self.label_window.update_tooltips())
+        self.annotation_window.annotationsLabelsChanged.connect(lambda *args: self.label_window.update_tooltips())
 
         self.annotation_window.annotationCreated.connect(self.annotation_viewer_window.on_annotation_created)
         self.annotation_window.annotationsCreated.connect(self.annotation_viewer_window.on_annotations_created)
