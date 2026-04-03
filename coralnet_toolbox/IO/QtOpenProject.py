@@ -222,8 +222,16 @@ class OpenProject(QDialog):
 
             # Add images directly to the manager without emitting signals
             for path in image_paths:
-                # Call the manager directly to add the raster silently
-                self.image_window.raster_manager.add_raster(path, emit_signal=False) 
+                # Check if this is a saved VideoRaster
+                is_video = False
+                if is_new_format and path in image_data_map:
+                    is_video = image_data_map[path].get('type') == 'VideoRaster'
+
+                if is_video:
+                    self.image_window.raster_manager.add_video_raster(path)
+                else:
+                    # Call the manager directly to add the raster silently
+                    self.image_window.raster_manager.add_raster(path, emit_signal=False)
                 
                 raster = self.image_window.raster_manager.get_raster(path)
                 if not raster:
@@ -366,6 +374,25 @@ class OpenProject(QDialog):
                     if image_path in self.updated_paths:
                         image_path = self.updated_paths[image_path]
                         updated_path = True
+                    elif '::frame_' in image_path:
+                        # Virtual video frame path — valid if the base video is loaded
+                        base_video = image_path.rsplit('::frame_', 1)[0]
+                        # Also check updated_paths for the base video
+                        resolved_video = self.updated_paths.get(base_video, base_video)
+                        if resolved_video not in raster_manager.image_paths:
+                            print(f"Warning: Video not found for frame path: {image_path}")
+                            skipped_count += len(image_annotations)
+                            progress_batch += len(image_annotations)
+                            if progress_batch >= PROGRESS_BATCH_SIZE:
+                                for _ in range(progress_batch):
+                                    progress_bar.update_progress()
+                                progress_batch = 0
+                            continue
+                        # If base video path was remapped, update the virtual path too
+                        if resolved_video != base_video:
+                            frame_num = image_path.rsplit('::frame_', 1)[1]
+                            image_path = f"{resolved_video}::frame_{frame_num}"
+                            updated_path = True
                     else:
                         print(f"Warning: Image not found: {image_path}")
                         skipped_count += len(image_annotations)
@@ -477,6 +504,21 @@ class OpenProject(QDialog):
             # Ensure progress bar completes
             progress_bar.stop_progress()
             progress_bar.close()
+
+            # Force the ImageWindow table to repaint annotation counts.
+            # dataChanged signals may be queued; an explicit viewport update ensures
+            # counts are visible without requiring a resize event.
+            try:
+                self.image_window.tableView.viewport().update()
+            except Exception:
+                pass
+
+            # Refresh video tick marks if a video is already active in the canvas.
+            try:
+                self.annotation_window._update_video_annotation_marks()
+            except Exception:
+                pass
+
             try:
                 self.main_window.status_bar.showMessage("Import complete.", 3000)
             except Exception:

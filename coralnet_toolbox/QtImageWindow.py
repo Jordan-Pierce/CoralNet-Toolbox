@@ -770,8 +770,20 @@ class ImageWindow(QWidget):
             image_path (str): Path to the image
             update_counts (bool): Whether to update the annotation counts in the label window
         """
-        annotations = self.annotation_window.get_image_annotations(image_path)
-        self.raster_manager.update_annotation_info(image_path, annotations)
+        # For video virtual frame paths (e.g. video.mp4::frame_5), resolve to the
+        # video path and aggregate annotations across all frames so the VideoRaster
+        # row in the table shows the correct total count.
+        if '::frame_' in image_path:
+            video_path = image_path.rsplit('::frame_', 1)[0]
+            prefix = video_path + '::frame_'
+            all_annotations = []
+            for key, anns in self.annotation_window.image_annotations_dict.items():
+                if key.startswith(prefix):
+                    all_annotations.extend(anns)
+            self.raster_manager.update_annotation_info(video_path, all_annotations)
+        else:
+            annotations = self.annotation_window.get_image_annotations(image_path)
+            self.raster_manager.update_annotation_info(image_path, annotations)
         
         if update_counts:
             self.main_window.label_window.update_annotation_count()
@@ -1117,9 +1129,9 @@ class ImageWindow(QWidget):
         if raster_under_cursor:
             is_checked = raster_under_cursor.checkbox_state
             if is_checked:
-                action_text = f"Uncheck {count} Highlighted Image{'s' if count > 1 else ''}"
+                action_text = f"Uncheck {count} Highlighted Raster{'s' if count > 1 else ''}"
             else:
-                action_text = f"Check {count} Highlighted Image{'s' if count > 1 else ''}"
+                action_text = f"Check {count} Highlighted Raster{'s' if count > 1 else ''}"
             toggle_check_action = context_menu.addAction(action_text)
             toggle_check_action.triggered.connect(lambda: self.on_toggle(not is_checked))
 
@@ -1127,7 +1139,7 @@ class ImageWindow(QWidget):
         
         # Add batch inference action
         batch_inference_action = context_menu.addAction(
-            f"Batch Inference ({count} Highlighted Image{'s' if count > 1 else ''})"
+            f"Batch Inference ({count} Highlighted Raster{'s' if count > 1 else ''})"
         )
         batch_inference_action.triggered.connect(
             lambda: self.open_batch_inference_dialog(highlighted_paths)
@@ -1140,7 +1152,7 @@ class ImageWindow(QWidget):
 
         # Add import cameras action
         import_cameras_action = cameras_menu.addAction(
-            f"Import Cameras for {count} Highlighted Image{'s' if count > 1 else ''}"
+            f"Import Cameras for {count} Highlighted Raster{'s' if count > 1 else ''}"
         )
         import_cameras_action.triggered.connect(lambda: self._open_import_cameras_for_highlighted(highlighted_paths))
 
@@ -1148,7 +1160,7 @@ class ImageWindow(QWidget):
 
         # Add remove cameras action
         remove_cameras_action = cameras_menu.addAction(
-            f"Remove Cameras from {count} Highlighted Image{'s' if count > 1 else ''}"
+            f"Remove Cameras from {count} Highlighted Raster{'s' if count > 1 else ''}"
         )
         remove_cameras_action.triggered.connect(lambda: self.remove_cameras_highlighted_images())
 
@@ -1157,7 +1169,7 @@ class ImageWindow(QWidget):
 
         # Add import z-channel action
         import_z_channel_action = z_channel_menu.addAction(
-            f"Import for {count} Highlighted Image{'s' if count > 1 else ''}"
+            f"Import for {count} Highlighted Raster{'s' if count > 1 else ''}"
         )
         import_z_channel_action.triggered.connect(
             lambda: self.import_z_channel_highlighted_images()
@@ -1165,7 +1177,7 @@ class ImageWindow(QWidget):
 
         # Add export z-channel action
         export_z_channel_action = z_channel_menu.addAction(
-            f"Export for {count} Highlighted Image{'s' if count > 1 else ''}"
+            f"Export for {count} Highlighted Raster{'s' if count > 1 else ''}"
         )
         export_z_channel_action.triggered.connect(
             lambda: self.export_z_channel_highlighted_images()
@@ -1175,7 +1187,7 @@ class ImageWindow(QWidget):
 
         # Add remove z-channel action
         remove_z_channel_action = z_channel_menu.addAction(
-            f"Remove from {count} Highlighted Image{'s' if count > 1 else ''}"
+            f"Remove from {count} Highlighted Raster{'s' if count > 1 else ''}"
         )
         remove_z_channel_action.triggered.connect(
             lambda: self.remove_z_channel_highlighted_images()
@@ -1184,10 +1196,10 @@ class ImageWindow(QWidget):
         context_menu.addSeparator()
 
         # Add delete actions
-        delete_images_action = context_menu.addAction(f"Delete {count} Highlighted Image{'s' if count > 1 else ''}")
+        delete_images_action = context_menu.addAction(f"Delete {count} Highlighted Raster{'s' if count > 1 else ''}")
         delete_images_action.triggered.connect(lambda: self.delete_highlighted_images())
         delete_annotations_action = context_menu.addAction(
-            f"Delete Annotations for {count} Highlighted Image{'s' if count > 1 else ''}"
+            f"Delete Annotations for {count} Highlighted Raster{'s' if count > 1 else ''}"
         )
         delete_annotations_action.triggered.connect(
             lambda: self.delete_highlighted_images_annotations()
@@ -1589,7 +1601,13 @@ class ImageWindow(QWidget):
                 # Restore signals
                 self.annotation_window.annotationCreated.connect(self.update_annotation_count)
                 self.annotation_window.annotationDeleted.connect(self.update_annotation_count)
-                
+
+                # Refresh video tick marks in case any deleted path was a video
+                try:
+                    self.annotation_window._update_video_annotation_marks()
+                except Exception:
+                    pass
+
                 # Close progress bar
                 if 'progress_bar' in locals() and progress_bar:
                     progress_bar.stop_progress()

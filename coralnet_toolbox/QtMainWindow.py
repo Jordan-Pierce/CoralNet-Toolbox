@@ -52,6 +52,7 @@ from coralnet_toolbox.WorkArea import WorkAreaManager as WorkAreaManagerDialog
 from coralnet_toolbox.IO import (
     ImportImages,
     ImportFrames,
+    ImportVideo,
     ImportLabels,
     ImportCoralNetLabels,
     ImportTagLabLabels,
@@ -284,6 +285,7 @@ class MainWindow(QMainWindow):
         self.export_geojson_annotations_dialog = ExportGeoJSONAnnotations(self)
         self.export_spatial_metrics_dialog = ExportSpatialMetrics(self)
         self.import_frames_dialog = ImportFrames(self)
+        self.import_video = ImportVideo(self)
         self.open_project_dialog = OpenProject(self)
         self.save_project_dialog = SaveProject(self)
 
@@ -363,6 +365,10 @@ class MainWindow(QMainWindow):
         self.import_frames_action = QAction("Frames from Video", self)
         self.import_frames_action.triggered.connect(self.open_import_frames_dialog)
         self.import_rasters_menu.addAction(self.import_frames_action)
+        # Import Video
+        self.import_video_action = QAction("Video File", self)
+        self.import_video_action.triggered.connect(self.import_video.import_video)
+        self.import_rasters_menu.addAction(self.import_video_action)
         
         # Labels submenu
         self.import_labels_menu = self.import_menu.addMenu("Labels")
@@ -1139,6 +1145,8 @@ class MainWindow(QMainWindow):
             self.annotation_dock.add_toolbar(self.annotation_window.create_top_toolbar())
         if hasattr(self.annotation_window, 'create_bottom_toolbar'):
             self.annotation_dock.add_toolbar(self.annotation_window.create_bottom_toolbar(), Qt.BottomToolBarArea)
+        if hasattr(self.annotation_window, 'create_video_toolbar'):
+            self.annotation_dock.add_toolbar(self.annotation_window.create_video_toolbar(), Qt.BottomToolBarArea)
 
         # Setup Image Dock using DockWrapper
         self.rasters_dock = DockWrapper("Rasters", "RastersDock", self.image_window, self)
@@ -2000,6 +2008,27 @@ class MainWindow(QMainWindow):
 
         # Emit to reset the tool
         self.toolChanged.emit(None)
+
+    def set_video_playback_tools_enabled(self, enabled: bool):
+        """Enable or disable tools that are incompatible with live video playback."""
+        video_locked_actions = [
+            self.brush_tool_action,
+            self.fill_tool_action,
+            self.dropper_tool_action,
+            self.erase_tool_action,
+            self.sam_tool_action,
+            self.see_anything_tool_action,
+            self.work_area_tool_action,
+        ]
+        for action in video_locked_actions:
+            action.setEnabled(enabled)
+        if not enabled:
+            # Untoggle any of these tools that are currently active
+            needs_reset = any(a.isChecked() for a in video_locked_actions)
+            for action in video_locked_actions:
+                action.setChecked(False)
+            if needs_reset:
+                self.toolChanged.emit(None)
 
     def handle_tool_changed(self, tool):
         """Update the toolbar UI to reflect the currently selected tool."""
