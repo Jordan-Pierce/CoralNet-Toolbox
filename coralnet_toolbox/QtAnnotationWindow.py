@@ -1167,11 +1167,12 @@ class AnnotationWindow(BaseCanvas):
         # Load annotations for this virtual frame path
         self.load_annotations()
 
-        # Refresh scrub-bar tick marks (cheap; only runs on seek/pause, not playback)
-        self._update_video_annotation_marks()
-
-        # Update the player widget state
+        # Update the player widget state first so the slider range is valid
         self._video_player.update_state(frame_idx, video_raster.frame_count)
+
+        # Then refresh scrub-bar tick marks (cheap; only runs on seek/pause, not playback)
+        # AnnotatedSlider.paintEvent checks slider.maximum(), so ensure range set first.
+        self._update_video_annotation_marks()
 
     def _on_video_seek(self, frame_idx: int):
         """Handle slider seek: stop playback, display frame."""
@@ -1966,7 +1967,19 @@ class AnnotationWindow(BaseCanvas):
         super()._reset_z_channel_to_full_range(colormap_name)
     
     def update_current_image_path(self, image_path):
-        """Update the current image path being displayed."""
+        """Update the current image path being displayed.
+
+        For video rasters, do not override the virtual per-frame `current_image_path`
+        already set by `_display_video_frame`. The `ImageWindow` emits a raw
+        video path after calling `set_image`, so ignore that emission when
+        we're in active video mode to avoid losing the `::frame_N` suffix.
+        """
+        # If we're currently in video mode and the annotation window already has
+        # a per-frame virtual path, don't override it with the raw video path.
+        if getattr(self, '_active_video_raster', None) is not None:
+            if hasattr(self, 'current_image_path') and self.current_image_path and '::frame_' in str(self.current_image_path):
+                return
+
         self.current_image_path = image_path
         
     def update_mask_label_map(self):

@@ -154,9 +154,14 @@ class RasterManager(QObject):
         Returns:
             bool: True if successful, False otherwise
         """
+        # Accept virtual frame paths like 'video.mp4::frame_42' and normalize
+        # them to the underlying video path so VideoRaster rows update properly.
+        if isinstance(image_path, str) and '::frame_' in image_path:
+            image_path = image_path.rsplit('::frame_', 1)[0]
+
         if image_path not in self.rasters:
             return False
-            
+
         self.rasters[image_path].update_annotation_info(annotations)
         self.rasterUpdated.emit(image_path)
         return True
