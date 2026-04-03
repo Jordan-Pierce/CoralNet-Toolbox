@@ -2011,7 +2011,12 @@ class MainWindow(QMainWindow):
 
     def set_video_playback_tools_enabled(self, enabled: bool):
         """Enable or disable tools that are incompatible with live video playback."""
+        # Disable all, for now
         video_locked_actions = [
+            self.select_tool_action,
+            self.patch_tool_action,
+            self.rectangle_tool_action,
+            self.polygon_tool_action,
             self.brush_tool_action,
             self.fill_tool_action,
             self.dropper_tool_action,

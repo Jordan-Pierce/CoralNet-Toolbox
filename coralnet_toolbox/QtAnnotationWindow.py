@@ -2989,6 +2989,12 @@ class AnnotationWindow(BaseCanvas):
             frame_keys = [k for k in list(self.image_annotations_dict.keys()) if k.startswith(prefix)]
             for frame_key in frame_keys:
                 self.delete_image_annotations(frame_key)
+            # If the canvas is currently displaying a frame of this video, force a full
+            # reload to guarantee stale graphics items are cleared from the scene.
+            if (self._active_video_raster is not None and
+                    self.current_image_path and
+                    self.current_image_path.startswith(prefix)):
+                self._display_video_frame(self._current_frame_idx)
             return
 
         # 1. Access label lock state once
