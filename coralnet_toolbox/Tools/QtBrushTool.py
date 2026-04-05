@@ -18,8 +18,9 @@ class StrokeMathSignals(QObject):
     finished = pyqtSignal(object, object, object, object, str)
 
 class StrokeMathWorker(QRunnable):
-    def __init__(self, points, brush_size, brush_mask, img_w, img_h, mask_annotation, label_id):
+    def __init__(self, points, brush_size, brush_mask, img_w, img_h, mask_annotation, label_id, z_channel=None):
         super().__init__()
+
         self.points = points
         self.brush_size = brush_size
         self.brush_mask = brush_mask
@@ -27,6 +28,8 @@ class StrokeMathWorker(QRunnable):
         self.img_h = img_h
         self.mask_annotation = mask_annotation
         self.label_id = label_id
+        self.z_channel = z_channel
+
         self.signals = StrokeMathSignals()
 
     def run(self):
@@ -59,7 +62,55 @@ class StrokeMathWorker(QRunnable):
                 brush_xstart = xstart - px_local
                 brush_xend = brush_xstart + (xend - xstart)
                 
-                combined_mask[ystart:yend, xstart:xend] |= self.brush_mask[brush_ystart:brush_yend, brush_xstart:brush_xend]
+                brush_clip = self.brush_mask[brush_ystart:brush_yend, brush_xstart:brush_xend]
+                
+                # --- STATISTICAL DEPTH FILTER ---
+                if self.z_channel is not None:
+                    # Translate local chunk coordinates to global image coordinates
+                    global_ystart = min_y + ystart
+                    global_yend = min_y + yend
+                    global_xstart = min_x + xstart
+                    global_xend = min_x + xend
+                    
+                    # Ensure we don't slice outside the z_channel bounds
+                    if (global_ystart >= 0 and global_yend <= self.img_h and 
+                        global_xstart >= 0 and global_xend <= self.img_w):
+                        
+                        depth_slice = self.z_channel[global_ystart:global_yend, global_xstart:global_xend]
+                        
+                        # 1. THE PINPOINT ANCHOR (Strict 3x3 core)
+                        cy = (yend - ystart) // 2
+                        cx = (xend - xstart) // 2
+                        
+                        core_y_start = max(0, cy - 1)
+                        core_y_end = min(depth_slice.shape[0], cy + 2)
+                        core_x_start = max(0, cx - 1)
+                        core_x_end = min(depth_slice.shape[1], cx + 2)
+                        
+                        core_depths = depth_slice[core_y_start:core_y_end, core_x_start:core_x_end]
+                        core_depths = core_depths[~np.isnan(core_depths)]
+                        
+                        if len(core_depths) == 0:
+                            valid_depths = depth_slice[brush_clip]
+                            core_depths = valid_depths[~np.isnan(valid_depths)]
+                            
+                        if len(core_depths) > 0:
+                            median_z = np.median(core_depths)
+                            
+                            # 2. RAZOR-THIN TOLERANCE (1.5% of depth, min 2cm)
+                            tolerance = max(0.02, median_z * 0.015) 
+                            
+                            # 3. BRICK WALL CLIFF PROTECTION
+                            with np.errstate(invalid='ignore'):
+                                # Allow 1x tolerance for things sticking out (closer to camera, -Z)
+                                # Allow ONLY 0.5x tolerance for things falling away (further from camera, +Z)
+                                depth_mask = (depth_slice >= (median_z - tolerance)) & (depth_slice <= (median_z + tolerance * 0.5))
+                                
+                            brush_clip = brush_clip & depth_mask
+
+                # ---------------------------------------------------------
+                
+                combined_mask[ystart:yend, xstart:xend] |= brush_clip
 
         local_ys, local_xs = np.where(combined_mask)
         global_xs = local_xs + min_x
@@ -314,6 +365,10 @@ class BrushTool(Tool):
 
         img_h, img_w = mask_annotation.mask_data.shape
         
+        # Safely get the Z-channel
+        raster = self.annotation_window.main_window.image_window.raster_manager.get_raster(mask_annotation.image_path)
+        z_channel = raster.z_channel if raster else None
+        
         self._active_workers += 1
         worker = StrokeMathWorker(
             points=points_to_process, 
@@ -322,7 +377,8 @@ class BrushTool(Tool):
             img_w=img_w, 
             img_h=img_h,
             mask_annotation=mask_annotation,
-            label_id=self.annotation_window.selected_label.id
+            label_id=self.annotation_window.selected_label.id,
+            z_channel=z_channel
         )
         worker.signals.finished.connect(self._on_math_finished)
         QThreadPool.globalInstance().start(worker)

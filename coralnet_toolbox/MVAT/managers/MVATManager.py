@@ -2633,6 +2633,8 @@ class MVATManager(QObject):
                     unique_ids = np.unique(raw_ids)
                     painted_ids = unique_ids[unique_ids > -1]
 
+                # TODO Depth filtering
+
         use_3d = painted_ids is not None and len(painted_ids) > 0
 
         # ------------------------------------------------------------------
