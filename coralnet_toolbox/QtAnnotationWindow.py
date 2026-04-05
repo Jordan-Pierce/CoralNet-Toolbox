@@ -1033,6 +1033,10 @@ class AnnotationWindow(BaseCanvas):
         self._active_video_raster = video_raster
         self._current_frame_idx = 0
 
+        # Start the background decode worker for this raster (paused until play is clicked)
+        video_raster.start_decode_worker(start_frame=0)
+        video_raster.frameReady.connect(self._on_worker_frame_ready)
+
         # Show the video player toolbar
         if self._video_toolbar is not None:
             self._video_toolbar.setVisible(True)
@@ -1091,6 +1095,14 @@ class AnnotationWindow(BaseCanvas):
 
         self._playback_timer.stop()
         self._video_player.set_paused()
+
+        # Stop the decode worker for the outgoing raster
+        if self._active_video_raster is not None:
+            try:
+                self._active_video_raster.frameReady.disconnect(self._on_worker_frame_ready)
+            except Exception:
+                pass
+            self._active_video_raster.stop_decode_worker()
 
         # Disconnect player signals
         try:
@@ -1177,10 +1189,48 @@ class AnnotationWindow(BaseCanvas):
     def _on_video_seek(self, frame_idx: int):
         """Handle slider seek: stop playback, display frame."""
         self._playback_timer.stop()
+        if self._active_video_raster is not None:
+            self._active_video_raster.pause_decode_worker()
         if self._video_player.is_playing:
             self._video_player.set_paused()
             self.main_window.set_video_playback_tools_enabled(True)
         self._display_video_frame(frame_idx)
+
+    def _on_worker_frame_ready(self, frame_idx: int, q_img):
+        """
+        Fast paint path: called by the decode worker for every decoded frame.
+
+        During playback this is the *only* thing the main thread does per frame:
+        swap the scene pixmap and update the slider label.  No scene rebuild,
+        no annotation load.  Those happen only when playback pauses.
+
+        Frames that arrive while the player is paused (e.g. stale events queued
+        between a pause signal and the main-thread slot running) are discarded.
+        """
+        vr = self._active_video_raster
+        if vr is None or not self._video_player.is_playing:
+            # Release the drop-frame gate even on discard so the worker
+            # can emit the next frame if playback resumes.
+            if vr is not None and vr._decode_worker is not None:
+                vr._decode_worker._pending_emit = False
+            return
+
+        self._current_frame_idx = frame_idx
+        self.current_image_path = vr.make_frame_path(vr.image_path, frame_idx)
+
+        # Swap pixmap in-place — does NOT rebuild the scene graph
+        if self._base_image_item is not None:
+            self._base_image_item.setPixmap(QPixmap.fromImage(q_img))
+
+        # Update slider and counter silently (no seekChanged feedback loop)
+        self._video_player.slider.blockSignals(True)
+        self._video_player.slider.setValue(frame_idx)
+        self._video_player.slider.blockSignals(False)
+        self._video_player.lbl_frame.setText(f"{frame_idx} / {vr.frame_count}")
+
+        # Clear the drop-frame gate so the worker sends the next frame
+        if vr._decode_worker is not None:
+            vr._decode_worker._pending_emit = False
 
     def _on_video_play(self):
         """Start the playback timer, clearing annotation graphics first."""
@@ -1190,9 +1240,9 @@ class AnnotationWindow(BaseCanvas):
         # The annotation data is preserved; graphics are rebuilt on pause.
         self._clear_current_frame_annotation_graphics()
         self.main_window.set_video_playback_tools_enabled(False)
-        fps = self._active_video_raster.fps
-        interval = max(1, int(1000 / fps))
-        self._playback_timer.start(interval)
+        # Sync the worker to the current display position then start streaming frames
+        self._active_video_raster.seek_decode_worker(self._current_frame_idx)
+        self._active_video_raster.resume_decode_worker()
 
     def _clear_current_frame_annotation_graphics(self):
         """Remove annotation graphics items for the current frame from the scene.
@@ -1230,8 +1280,10 @@ class AnnotationWindow(BaseCanvas):
                 pass
 
     def _on_video_pause(self):
-        """Stop the timer and do a full frame redisplay with annotations."""
+        """Stop the decode worker and do a full frame redisplay with annotations."""
         self._playback_timer.stop()
+        if self._active_video_raster is not None:
+            self._active_video_raster.pause_decode_worker()
         self.main_window.set_video_playback_tools_enabled(True)
         self._display_video_frame(self._current_frame_idx)
 

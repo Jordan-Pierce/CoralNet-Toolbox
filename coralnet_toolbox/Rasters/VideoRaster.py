@@ -1,12 +1,13 @@
 import warnings
 import os
+import time
 from typing import Optional
 
 import cv2
 import numpy as np
 
 from PyQt5.QtGui import QImage, QPixmap
-from PyQt5.QtCore import QObject
+from PyQt5.QtCore import QObject, QThread, QMutex, pyqtSignal
 
 from coralnet_toolbox.Rasters.QtRaster import Raster
 
@@ -83,6 +84,168 @@ class VideoRasterioShim:
         pass
 
 
+class VideoDecodeWorker(QThread):
+    """
+    Decodes video frames on a background thread so the UI thread is never
+    blocked by file I/O or pixel-format conversion.
+
+    A single ``cv2.VideoCapture`` is kept open for the lifetime of the worker.
+    During playback the worker self-paces with ``time.monotonic()`` rather
+    than relying on QTimer, which eliminates timing jitter.
+
+    Seek requests from the main thread are accepted via a mutex-protected
+    slot and processed on the next loop iteration; the worker always emits
+    one preview frame immediately after seeking so scrub-bar feedback is
+    instant even when paused.
+    """
+
+    frameReady = pyqtSignal(int, object)   # frame_idx, QImage
+
+    def __init__(self, video_path: str, fps: float,
+                 start_frame: int = 0,
+                 playback_max_width: int = 0,
+                 parent=None):
+        super().__init__(parent)
+        self._video_path = video_path
+        self._fps = max(fps, 1.0)
+        self._start_frame = start_frame
+        # 0 = no downscale; set to e.g. 1920 to cap playback resolution
+        self._playback_max_width = playback_max_width
+
+        self._running = False
+        self._paused = True
+        self._mutex = QMutex()
+        self._seek_target: Optional[int] = None
+        self._current_idx: int = start_frame
+        self._total_frames: int = 0
+
+        # Drop-frame gate: prevents frame signal queue buildup when the main
+        # thread is slow.  Worker skips an emit if the previous one has not
+        # been consumed yet.  Main-thread slot resets this flag after paint.
+        self._pending_emit: bool = False
+
+    # ------------------------------------------------------------------
+    # QThread entry point
+    # ------------------------------------------------------------------
+
+    def run(self):
+        """Decode loop.  Runs entirely on the worker thread."""
+        cap = cv2.VideoCapture(self._video_path)
+        if not cap.isOpened():
+            return
+
+        self._total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        frame_interval = 1.0 / self._fps
+        self._running = True
+        last_frame_time = 0.0
+
+        if self._current_idx > 0:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, self._current_idx)
+
+        while self._running:
+            # ---- Collect protected state ----
+            self._mutex.lock()
+            seek = self._seek_target
+            self._seek_target = None
+            paused = self._paused
+            self._mutex.unlock()
+
+            # ---- Handle a seek request ----
+            if seek is not None:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, seek)
+                self._current_idx = seek
+                ret, bgr = cap.read()
+                if ret and bgr is not None:
+                    self._pending_emit = False  # reset so the preview frame is never dropped
+                    self._emit_frame(bgr, seek)
+                    self._current_idx = seek + 1
+                continue
+
+            # ---- Sleep while paused ----
+            if paused:
+                time.sleep(0.005)
+                continue
+
+            # ---- Pace playback with wall clock (no QTimer drift) ----
+            now = time.monotonic()
+            sleep_for = frame_interval - (now - last_frame_time)
+            if sleep_for > 0.001:
+                time.sleep(sleep_for)
+
+            # ---- Loop at end of video ----
+            if self._current_idx >= self._total_frames:
+                self._current_idx = 0
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+
+            # ---- Sequential read — no seek overhead ----
+            ret, bgr = cap.read()
+            if not ret or bgr is None:
+                self._current_idx = 0
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                continue
+
+            self._emit_frame(bgr, self._current_idx)
+            self._current_idx += 1
+            last_frame_time = time.monotonic()
+
+        cap.release()
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _emit_frame(self, bgr: np.ndarray, frame_idx: int):
+        """
+        Convert a BGR frame to ``QImage`` and emit ``frameReady``.
+        Skips the emit if the previous frame signal has not been consumed
+        yet to avoid unbounded queue growth in the Qt event system.
+        """
+        if self._pending_emit:
+            return  # Drop: main thread hasn't processed the previous frame yet
+
+        self._pending_emit = True
+
+        h, w = bgr.shape[:2]
+
+        # Optional display-resolution downscale (helps smooth 4K playback)
+        if self._playback_max_width > 0 and w > self._playback_max_width:
+            scale = self._playback_max_width / w
+            new_w = self._playback_max_width
+            new_h = int(h * scale)
+            bgr = cv2.resize(bgr, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+            h, w = new_h, new_w
+
+        # In-place BGR→RGB channel flip (no full numpy copy)
+        rgb = bgr[..., ::-1]
+        # .tobytes() copies the data so Qt does not hold a dangling buffer
+        q_img = QImage(rgb.tobytes(), w, h, w * 3, QImage.Format_RGB888)
+        self.frameReady.emit(frame_idx, q_img)
+
+    # ------------------------------------------------------------------
+    # Thread-safe API (callable from the main thread)
+    # ------------------------------------------------------------------
+
+    def seek(self, frame_idx: int):
+        """Request a seek.  Thread-safe; can be called from any thread."""
+        self._mutex.lock()
+        if self._total_frames > 0:
+            self._seek_target = max(0, min(frame_idx, self._total_frames - 1))
+        else:
+            self._seek_target = max(0, frame_idx)
+        self._mutex.unlock()
+
+    def set_paused(self, paused: bool):
+        """Pause or resume the decode loop.  Thread-safe."""
+        self._mutex.lock()
+        self._paused = paused
+        self._mutex.unlock()
+
+    def stop(self):
+        """Signal the decode loop to exit and wait (up to 3 s) for the thread."""
+        self._running = False
+        self.wait(3000)
+
+
 class VideoRaster(Raster):
     """
     A Raster subclass backed by a video file instead of a static image.
@@ -93,6 +256,10 @@ class VideoRaster(Raster):
     The shim satisfies the rasterio interface so all annotation tools,
     cropping helpers, and the confidence window work without modification.
     """
+
+    # Emitted by the decode worker (forwarded via _on_worker_frame).
+    # Listeners receive (frame_idx: int, q_img: QImage).
+    frameReady = pyqtSignal(int, object)
 
     def __init__(self, video_path: str):
         # Open the video capture before calling super().__init__ so that
@@ -111,6 +278,9 @@ class VideoRaster(Raster):
 
         # Thumbnail cache (populated on first call to get_thumbnail)
         self._video_thumbnail: Optional[QImage] = None
+
+        # Background decode worker (created by start_decode_worker; None when stopped)
+        self._decode_worker: Optional[VideoDecodeWorker] = None
 
         # Call parent __init__ — it will call load_rasterio() which we override
         super().__init__(video_path)
@@ -212,6 +382,60 @@ class VideoRaster(Raster):
             self._current_frame_idx = frame_idx
 
     # ------------------------------------------------------------------
+    # Decode worker lifecycle
+    # ------------------------------------------------------------------
+
+    def start_decode_worker(self, start_frame: int = 0) -> None:
+        """
+        Create and start the background :class:`VideoDecodeWorker` (paused by default).
+
+        Safe to call multiple times — any existing worker is stopped first.
+        Connect to :attr:`frameReady` *after* calling this method to receive frames.
+        """
+        self.stop_decode_worker()
+        self._decode_worker = VideoDecodeWorker(
+            self.image_path, self._video_fps, start_frame=start_frame
+        )
+        self._decode_worker.frameReady.connect(self._on_worker_frame)
+        self._decode_worker.start()
+
+    def stop_decode_worker(self) -> None:
+        """Stop and destroy the background decode worker."""
+        if self._decode_worker is not None:
+            try:
+                self._decode_worker.frameReady.disconnect()
+            except Exception:
+                pass
+            self._decode_worker.stop()
+            self._decode_worker = None
+
+    def resume_decode_worker(self) -> None:
+        """Unpause the decode worker (begin emitting frames)."""
+        if self._decode_worker is not None:
+            self._decode_worker._pending_emit = False  # Reset drop-gate before unpausing
+            self._decode_worker.set_paused(False)
+
+    def pause_decode_worker(self) -> None:
+        """Pause the decode worker without stopping it."""
+        if self._decode_worker is not None:
+            self._decode_worker.set_paused(True)
+
+    def seek_decode_worker(self, frame_idx: int) -> None:
+        """
+        Seek the decode worker to *frame_idx*.
+
+        The worker will emit one preview frame immediately (even while paused),
+        which is useful for scrub-bar feedback without a full annotation reload.
+        """
+        if self._decode_worker is not None:
+            self._decode_worker.seek(frame_idx)
+
+    def _on_worker_frame(self, frame_idx: int, q_img: QImage) -> None:
+        """Internal slot: forward worker frames and keep ``_current_frame_idx`` in sync."""
+        self._current_frame_idx = frame_idx
+        self.frameReady.emit(frame_idx, q_img)
+
+    # ------------------------------------------------------------------
     # Raster image access overrides
     # ------------------------------------------------------------------
 
@@ -306,6 +530,9 @@ class VideoRaster(Raster):
 
     def cleanup(self):
         """Release cv2 resources before parent cleanup."""
+        # Stop the background decode worker first so its cap is released before ours
+        self.stop_decode_worker()
+
         if hasattr(self, '_cap') and self._cap is not None:
             try:
                 self._cap.release()
