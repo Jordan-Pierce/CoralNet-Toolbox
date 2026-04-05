@@ -6,9 +6,9 @@ from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtWidgets import (QGraphicsScene, QGraphicsPathItem, QGraphicsItemGroup,)
 from PyQt5.QtGui import (QPixmap, QColor, QPen, 
                          QBrush, QPolygonF, QPainter,
-                         QRegion, QImage, QPainterPath)
+                         QRegion, QImage, QPainterPath, QRectF)
 
-from coralnet_toolbox.Annotations.QtAnnotation import Annotation
+from coralnet_toolbox.Annotations.QtAnnotation import Annotation, OptimizedPathItem
 
 from coralnet_toolbox.utilities import rasterio_to_cropped_image
 
@@ -225,13 +225,13 @@ class MultiPolygonAnnotation(Annotation):
         # Create a new group to hold all polygon items
         self.graphics_item_group = QGraphicsItemGroup()
 
-        # Add each polygon as a QGraphicsPathItem to the group
+        # Add each polygon as a OptimizedPathItem to the group
         for poly in self.polygons:
             # Get the path with holes from the PolygonAnnotation object
             path = poly.get_painter_path()
             
-            # Create a QGraphicsPathItem which can render holes
-            item = QGraphicsPathItem(path)
+            # Use OptimizedPathItem for performance (same path for high/low res for simplicity)
+            item = OptimizedPathItem(path, path)
             
             # Apply styling
             color = QColor(self.label.color)
@@ -269,13 +269,13 @@ class MultiPolygonAnnotation(Annotation):
         self.bounding_box_graphics_item = None
         self.polygon_graphics_item = None
 
-        # Recreate QGraphicsPathItems for each polygon and add to the group
+        # Recreate OptimizedPathItems for each polygon and add to the group
         for poly in self.polygons:
             # Get the path with holes from the PolygonAnnotation object
             path = poly.get_painter_path()
             
-            # Create a QGraphicsPathItem which can render holes
-            item = QGraphicsPathItem(path)
+            # Use OptimizedPathItem for performance (same path for high/low res for simplicity)
+            item = OptimizedPathItem(path, path)
             
             # Apply styling
             color = QColor(self.label.color)
@@ -310,10 +310,10 @@ class MultiPolygonAnnotation(Annotation):
 
         # Update all polygon items in the group
         if self.graphics_item_group:
-            # We need to check for QGraphicsPathItem, not QGraphicsPolygonItem
+            # We need to check for OptimizedPathItem (which inherits from QGraphicsPathItem)
             for item in self.graphics_item_group.childItems():
                 from PyQt5.QtWidgets import QGraphicsPathItem
-                if isinstance(item, QGraphicsPathItem):
+                if isinstance(item, QGraphicsPathItem):  # This will match OptimizedPathItem too
                     item.setPen(pen)
 
         # Update helper graphics items

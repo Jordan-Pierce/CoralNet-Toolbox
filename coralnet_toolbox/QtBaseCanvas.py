@@ -116,6 +116,18 @@ class BaseCanvas(QGraphicsView):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setDragMode(QGraphicsView.NoDrag)
+        
+        # --- NEW OPTIMIZATION FLAGS ---
+        # 1. SmartViewportUpdate analyzes the bounding rects of changes to decide 
+        # whether to redraw a specific region or the whole viewport.
+        self.setViewportUpdateMode(QGraphicsView.SmartViewportUpdate)
+        
+        # 2. Prevent Qt from saving/restoring the painter state for every single item.
+        # This saves massive CPU overhead when rendering thousands of items.
+        self.setOptimizationFlag(QGraphicsView.DontSavePainterState)
+        
+        # 3. Prevent Qt from doing sub-pixel antialiasing adjustments during fast pans.
+        self.setOptimizationFlag(QGraphicsView.DontAdjustForAntialiasing)
     
     # ==================== Navigation Events ====================
     
