@@ -179,6 +179,17 @@ class RasterTableModel(QAbstractTableModel):
                         z_info_parts.append(f"NoData: {raster.z_nodata}")
                     tooltip_parts.append(" | ".join(z_info_parts))
 
+                # Add camera parameters information if it exists
+                if raster.intrinsics is not None:
+                    tooltip_parts.append(f"<b>Has Intrinsics:</b> Yes")
+                else:
+                    tooltip_parts.append(f"<b>Has Intrinsics:</b> No")
+                
+                if raster.extrinsics is not None:
+                    tooltip_parts.append(f"<b>Has Extrinsics:</b> Yes")
+                else:
+                    tooltip_parts.append(f"<b>Has Extrinsics:</b> No")
+
                 tooltip_parts.extend([
                     f"<b>Annotations:</b> {'Yes' if raster.has_annotations else 'No'}",
                     f"<b>Predictions:</b> {'Yes' if raster.has_predictions else 'No'}"
