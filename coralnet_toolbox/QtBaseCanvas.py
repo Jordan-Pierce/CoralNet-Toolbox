@@ -11,7 +11,7 @@ import traceback
 import numpy as np
 
 import pyqtgraph as pg
-from PyQt5.QtGui import QMouseEvent, QPixmap, QImage, QBrush, QColor, QPen, QPainterPath
+from PyQt5.QtGui import QMouseEvent, QPixmap, QImage, QBrush, QColor, QPen, QPainterPath, QTransform
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QSize, QObject
 from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, 
                              QGraphicsItemGroup, QGraphicsEllipseItem, QGraphicsLineItem,
@@ -69,6 +69,11 @@ class BaseCanvas(QGraphicsView):
         
         # Navigation state
         self.zoom_factor = 1.0
+        self.rotation_angle = 0.0  # Tracks absolute rotation in degrees
+        self._rotate_active = False
+        self._rotate_start_angle = 0.0
+        self._rotate_start_mouse_angle = 0.0
+        self._rotate_start_canvas_angle = 0.0
         self._min_zoom = 1.0
         self._pan_active = False
         self._pan_start = None
@@ -178,19 +183,50 @@ class BaseCanvas(QGraphicsView):
         self._emit_view_navigated()
     
     def mousePressEvent(self, event: QMouseEvent):
-        """Handle mouse press events for native panning."""
-        # Right-button triggers pan (always available)
+        """Handle mouse press events for rotation or panning."""
         if event.button() == Qt.RightButton and self.active_image:
-            self._pan_active = True
-            self._pan_start = event.pos()
-            self.setCursor(Qt.ClosedHandCursor)
+            # Check for Ctrl + RightButton = rotation interaction
+            if event.modifiers() == Qt.ControlModifier:
+                # Initiate Rotation
+                self._rotate_active = True
+                self.setCursor(Qt.ClosedHandCursor)
+                
+                # Calculate the starting angle relative to the viewport center
+                center = self.viewport().rect().center()
+                dx = event.pos().x() - center.x()
+                dy = event.pos().y() - center.y()
+                # Store the baseline angle of the mouse and the current canvas rotation
+                self._rotate_start_mouse_angle = np.degrees(np.arctan2(dy, dx))
+                self._rotate_start_canvas_angle = self.rotation_angle
+            else:
+                # Initiate Native Pan
+                self._pan_active = True
+                self._pan_start = event.pos()
+                self.setCursor(Qt.ClosedHandCursor)
         else:
             super().mousePressEvent(event)
     
     def mouseMoveEvent(self, event: QMouseEvent):
-        """Handle mouse move events for panning and hover tracking."""
+        """Handle mouse move events for rotation, panning, and hover tracking."""
+        # Handle rotation
+        if self._rotate_active and self.active_image:
+            center = self.viewport().rect().center()
+            dx = event.pos().x() - center.x()
+            dy = event.pos().y() - center.y()
+            current_mouse_angle = np.degrees(np.arctan2(dy, dx))
+            
+            # Calculate how much the mouse has rotated since the click
+            angle_delta = current_mouse_angle - self._rotate_start_mouse_angle
+            new_canvas_angle = self._rotate_start_canvas_angle + angle_delta
+            
+            # Apply absolute rotation
+            self._set_absolute_rotation(new_canvas_angle)
+            
+            # Emit navigation signal so context matrix syncs live
+            self._emit_view_navigated()
+        
         # Handle panning
-        if self._pan_active:
+        elif self._pan_active:
             if not self.active_image:
                 self._pan_active = False
                 return
@@ -212,9 +248,13 @@ class BaseCanvas(QGraphicsView):
         super().mouseMoveEvent(event)
     
     def mouseReleaseEvent(self, event: QMouseEvent):
-        """Handle mouse release events for panning."""
+        """Handle mouse release events for rotation or panning."""
         if event.button() == Qt.RightButton:
-            self._pan_active = False
+            if self._rotate_active:
+                self._rotate_active = False
+            if self._pan_active:
+                self._pan_active = False
+            
             self.setCursor(Qt.ArrowCursor)
             self._emit_view_navigated()
         else:
@@ -397,39 +437,93 @@ class BaseCanvas(QGraphicsView):
         self.setTransformationAnchor(old_anchor)
     
     def set_zoom_level(self, factor):
-        """Set the absolute view transform scale."""
+        """Set the absolute view transform scale, preserving current rotation."""
         if factor <= 0:
             return
         
-        # ---> Prevent anchor fighting by forcing a center anchor temporarily <---
-        old_anchor = self.transformationAnchor()
-        self.setTransformationAnchor(QGraphicsView.AnchorViewCenter)
-        
-        self.resetTransform()
-        self.scale(factor, factor)
-        self.zoom_factor = factor
-        
-        self.setTransformationAnchor(old_anchor)
+        self._apply_transform(factor, self.rotation_angle)
     
-    def snap_to_target(self, target_x, target_y, relative_zoom):
+    def snap_to_target(self, target_x, target_y, relative_zoom, angle_degrees=0.0):
         """
-        Snap to a specific pixel location with a proportional zoom level.
-        Used by Phase 5 sync engine to synchronize context canvases.
+        Snap to a specific pixel location with a proportional zoom level and synchronized rotation.
         
         Args:
             target_x (float): Target pixel X coordinate
             target_y (float): Target pixel Y coordinate
             relative_zoom (float): Zoom ratio relative to fit-to-view
                                    (1.0 = fit whole image, 2.0 = 2x beyond fit, etc.)
+            angle_degrees (float): Target rotation angle in degrees (default 0.0)
         """
         if not self.active_image:
             return
         
-        # Convert the relative zoom ratio to an absolute scale for THIS canvas
         absolute_zoom = self._min_zoom * relative_zoom
-        self.set_zoom_level(absolute_zoom)
+        
+        # 1. Get the pivot point (image center in scene coordinates)
+        image_rect = self.get_image_rect()
+        pivot_x = image_rect.width() / 2.0
+        pivot_y = image_rect.height() / 2.0
+        
+        # 2. Build the explicit transform: translate -> rotate -> scale -> translate
+        transform = QTransform()
+        transform.translate(pivot_x, pivot_y)
+        transform.rotate(angle_degrees)
+        transform.scale(absolute_zoom, absolute_zoom)
+        transform.translate(-pivot_x, -pivot_y)
+        
+        # 3. Apply the transform directly
+        self.setTransform(transform)
+        self.zoom_factor = absolute_zoom
+        self.rotation_angle = angle_degrees
+        
+        # 4. Snap directly to the target pixel (no pan-restoration needed here)
         self.center_on_pixel(target_x, target_y)
         self._emit_view_navigated()
+    
+    def _apply_transform(self, zoom, angle):
+        """
+        Builds and applies the transform matrix from scratch, pivoting on the image center.
+        This mirrors the QtiViewWidget approach to prevent pendulum-swinging during rotation.
+        
+        The transform sequence is:
+        1. Translate origin to image center
+        2. Apply rotation around that center
+        3. Apply zoom scaling
+        4. Translate origin back
+        
+        Then restore the view so the pan position is preserved.
+        """
+        if not self.active_image:
+            return
+
+        # 1. Save where we are currently looking so we don't lose our pan position
+        current_view_center = self.mapToScene(self.viewport().rect().center())
+        
+        # 2. Get the pivot point (the center of the image in scene coordinates)
+        image_rect = self.get_image_rect()
+        pivot_x = image_rect.width() / 2.0
+        pivot_y = image_rect.height() / 2.0
+        
+        # 3. Build the explicit transform: translate -> rotate -> scale -> translate
+        transform = QTransform()
+        transform.translate(pivot_x, pivot_y)
+        transform.rotate(angle)
+        transform.scale(zoom, zoom)
+        transform.translate(-pivot_x, -pivot_y)
+        
+        # 4. Apply the matrix
+        self.setTransform(transform)
+        
+        # 5. Restore the pan position directly
+        self.centerOn(current_view_center)
+        
+        # 6. Update state trackers
+        self.zoom_factor = zoom
+        self.rotation_angle = angle
+
+    def _set_absolute_rotation(self, angle_degrees):
+        """Apply absolute rotation, triggered by mouse movement."""
+        self._apply_transform(self.zoom_factor, angle_degrees)
     
     # ==================== Helper Methods ====================
     
