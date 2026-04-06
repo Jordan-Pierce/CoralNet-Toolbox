@@ -1390,7 +1390,7 @@ class MVATManager(QObject):
         """Handle navigation events from the main AnnotationWindow.
 
         Projects the viewport center into 3D world space, then back into
-        each visible context camera to synchronize their viewports.
+        each visible context camera to synchronize their viewports and rotation.
         """
         if self.context_matrix is None:
             return
@@ -1398,6 +1398,10 @@ class MVATManager(QObject):
             return
         if self.selected_camera is None:
             return
+
+        # NEW: Fetch reference path and current rotation from the Annotation Window
+        reference_path = self.selected_camera.image_path
+        base_rotation = getattr(self.annotation_window, 'rotation_angle', 0.0)
 
         # Step 1: Get the 3D world point at the viewport center
         world_point = self._get_world_point_at_pixel(
@@ -1450,12 +1454,20 @@ class MVATManager(QObject):
         else:
             relative_zoom = 1.0
 
-        # Step 4a: Full snap (zoom + center) for cameras where the world point is in bounds
-        self.context_matrix.request_sync(targets_with_center, relative_zoom)
-
-        # Step 4b: Zoom-only for cameras where the world point falls outside their image —
-        # this keeps all canvases at a consistent zoom level even when positions differ.
-        self.context_matrix.request_zoom_only(zoom_only, relative_zoom)
+        # Step 4: Full snap and Zoom-only (Now passing rotation kwargs)
+        try:
+            self.context_matrix.request_sync(
+                targets_with_center, relative_zoom,
+                reference_path=reference_path, base_rotation=base_rotation
+            )
+            self.context_matrix.request_zoom_only(
+                zoom_only, relative_zoom,
+                reference_path=reference_path, base_rotation=base_rotation
+            )
+        except TypeError:
+            # Fallback if ContextMatrix hasn't been updated to accept kwargs yet
+            self.context_matrix.request_sync(targets_with_center, relative_zoom)
+            self.context_matrix.request_zoom_only(zoom_only, relative_zoom)
 
     def _get_world_point_at_pixel(self, camera, px, py):
         """Get the 3D world point at a specific pixel coordinate.

@@ -1788,12 +1788,25 @@ class AnnotationWindow(BaseCanvas):
         except Exception:
             pass
     
-    
     def reset_scene_view(self):
-        """Resets the scene view"""
+        """Resets the scene view, rotation, and 3D perspective (if MVAT is active)"""
         # Fit the image to the view and recalculate zoom constraints
         self.fit_to_image()
+        # Reset rotation to default
+        self.rotation_angle = 0.0
+        self._set_absolute_rotation(self.rotation_angle )  # Apply the rotation transform reset
         self.viewChanged.emit(*self.get_image_dimensions())
+        
+        # If MVAT viewer is active, sync 3D view to current image's perspective
+        if hasattr(self.main_window, 'mvat_manager') and self.main_window.mvat_manager:
+            mvat_manager = self.main_window.mvat_manager
+            # Find and select the camera corresponding to the current image
+            if self.current_image_path:
+                for camera in mvat_manager.cameras.values():
+                    if camera.image_path == self.current_image_path:
+                        mvat_manager.viewer.match_camera_perspective(camera, animate=True)
+                        break
+        
         # Process events
         QApplication.processEvents()
 
