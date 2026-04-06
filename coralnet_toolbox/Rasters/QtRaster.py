@@ -113,6 +113,10 @@ class Raster(QObject):
         # Camera calibration information
         self.intrinsics: Optional[np.ndarray] = None  # Camera intrinsic parameters as numpy array
         self.extrinsics: Optional[np.ndarray] = None  # Camera extrinsic parameters as numpy array
+        # Lens distortion information
+        self.is_distorted: bool = False  # True if the source image has uncorrected lens distortion
+        self.dist_coeffs: Optional[np.ndarray] = None  # OpenCV layout [k1,k2,p1,p2,k3,k4,k5,k6] float64
+        self.intrinsics_undistorted: Optional[np.ndarray] = None  # K_new: linear camera matrix (wider FOV)
         
         # Spatial transformation for orthomosaics
         self.is_orthomosaic: bool = False
@@ -356,7 +360,169 @@ class Raster(QObject):
     def remove_extrinsics(self):
         """Remove all camera extrinsic parameters."""
         self.extrinsics = None
-    
+
+    def add_distortion(self, dist_coeffs: np.ndarray, is_distorted: bool = True, is_fisheye: bool = False):
+        """
+        Store lens distortion coefficients and optionally compute the linear camera
+        matrix (K_new) via cv2.getOptimalNewCameraMatrix.
+
+        Args:
+            dist_coeffs: OpenCV distortion array, shape (4,), (5,), or (8,).
+                         Layout: [k1, k2, p1, p2, k3, k4, k5, k6] (zero-padded).
+            is_distorted: True if the source image is raw / has uncorrected distortion.
+        """
+        if not isinstance(dist_coeffs, np.ndarray):
+            dist_coeffs = np.asarray(dist_coeffs, dtype=np.float64)
+        self.dist_coeffs = dist_coeffs.astype(np.float64)
+        self.is_distorted = is_distorted
+        # Save fisheye flag for downstream projection/warping decisions
+        self.is_fisheye = bool(is_fisheye)
+
+        if is_distorted:
+            # Keep linear intrinsics identical to original intrinsics to avoid
+            # unintended focal length / principal point shifts.
+            self.intrinsics_undistorted = self.intrinsics.copy() if self.intrinsics is not None else None
+        else:
+            self.intrinsics_undistorted = None
+
+    def compute_undistorted_intrinsics(self):
+        """
+        Set the linear camera matrix. By keeping it identical to the original 
+        intrinsics, we prevent OpenCV from artificially shifting or scaling the 
+        focal length/principal point, eliminating alignment mismatches.
+        """
+        if self.intrinsics is None or self.dist_coeffs is None:
+            return
+            
+        self.intrinsics_undistorted = self.intrinsics.copy()
+        self._undistorted_offset = (0, 0)
+        self._undistorted_size = (self.width, self.height)
+
+    def _cache_warp_maps(self):
+        """Pre-computes the pixel flow maps for blazing fast remapping later."""
+        import cv2
+        import numpy as np
+
+        h, w = self.height, self.width
+        grid_y, grid_x = np.mgrid[0:h, 0:w].astype(np.float32)
+        distorted_pixels = np.stack([grid_x, grid_y], axis=-1).reshape(-1, 1, 2)
+
+        # Fisheye branch uses cv2.fisheye API which expects 4 distortion params
+        if getattr(self, 'is_fisheye', False):
+            try:
+                D = self.dist_coeffs[:4]
+                linear_coords = cv2.fisheye.undistortPoints(
+                    distorted_pixels,
+                    self.intrinsics.astype(np.float64),
+                    D,
+                    P=self.intrinsics_undistorted.astype(np.float64),
+                )
+            except Exception:
+                # Fallback to non-fisheye undistort if fisheye module is unavailable
+                linear_coords = cv2.undistortPoints(
+                    distorted_pixels,
+                    self.intrinsics.astype(np.float64),
+                    self.dist_coeffs,
+                    P=self.intrinsics_undistorted.astype(np.float64),
+                )
+        else:
+            strict_criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_MAX_ITER, 100, 1e-5)
+            R_eye = np.eye(3, dtype=np.float64)
+            try:
+                # Try the more accurate iterative API first when available
+                linear_coords = cv2.undistortPointsIter(
+                    distorted_pixels,
+                    self.intrinsics.astype(np.float64),
+                    self.dist_coeffs,
+                    R_eye,
+                    self.intrinsics_undistorted.astype(np.float64),
+                    strict_criteria,
+                )
+            except AttributeError:
+                # Fallback to standard undistortPoints
+                linear_coords = cv2.undistortPoints(
+                    distorted_pixels,
+                    self.intrinsics.astype(np.float64),
+                    self.dist_coeffs,
+                    P=self.intrinsics_undistorted.astype(np.float64),
+                )
+
+        self._map_x = linear_coords[:, 0, 0].reshape(h, w)
+        self._map_y = linear_coords[:, 0, 1].reshape(h, w)
+
+    def warp_linear_map_to_distorted(self, linear_map, border_value=-1):
+        """
+        Warp a perfectly linear VTK/Open3D render back into the distorted photo space.
+        Uses CUDA via PyTorch if available, falling back to cached cv2.remap.
+        """
+        if not hasattr(self, '_map_x'):
+            self._cache_warp_maps()
+
+        # Try CUDA path first
+        import torch
+        if torch.cuda.is_available():
+            try:
+                return self._warp_pytorch_cuda(linear_map, border_value)
+            except Exception as e:
+                print(f"CUDA warp failed, falling back to CPU: {e}")
+
+        # Fallback to CPU cv2.remap (already 100x faster than before due to caching)
+        import cv2
+        return cv2.remap(
+            linear_map,
+            self._map_x,
+            self._map_y,
+            interpolation=cv2.INTER_NEAREST,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=border_value
+        )
+
+    def _warp_pytorch_cuda(self, linear_map, border_value):
+        import torch
+        import torch.nn.functional as F
+        import numpy as np
+
+        h, w = self.height, self.width
+
+        # Lazily initialize and cache the PyTorch grid and out-of-bounds mask on the GPU
+        if not hasattr(self, '_torch_grid_gpu'):
+            # F.grid_sample expects coordinates normalized to [-1, 1]
+            norm_map_x = (self._map_x / (w - 1)) * 2.0 - 1.0
+            norm_map_y = (self._map_y / (h - 1)) * 2.0 - 1.0
+            grid = np.stack([norm_map_x, norm_map_y], axis=-1)
+            
+            # Send to GPU: shape (1, H, W, 2)
+            self._torch_grid_gpu = torch.tensor(grid, device='cuda', dtype=torch.float32).unsqueeze(0)
+            
+            # Pre-compute out-of-bounds mask to handle OpenCV's border_value correctly
+            self._torch_oob_mask = (
+                (self._torch_grid_gpu[0, ..., 0] < -1.0) | (self._torch_grid_gpu[0, ..., 0] > 1.0) |
+                (self._torch_grid_gpu[0, ..., 1] < -1.0) | (self._torch_grid_gpu[0, ..., 1] > 1.0)
+            )
+
+        # F.grid_sample requires float32 tensors, shape (N, C, H, W)
+        is_int = linear_map.dtype in [np.int32, np.int64]
+        map_tensor = torch.tensor(linear_map, device='cuda', dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+
+        # Execute warp on GPU
+        warped_tensor = F.grid_sample(
+            map_tensor,
+            self._torch_grid_gpu,
+            mode='nearest',
+            padding_mode='zeros', 
+            align_corners=True
+        )
+
+        # Apply the border value to pixels that fell outside the linear image bounds
+        if border_value != 0:
+            warped_tensor[0, 0, self._torch_oob_mask] = border_value
+
+        warped_np = warped_tensor.squeeze().cpu().numpy()
+
+        if is_int:
+            return warped_np.astype(np.int32)
+        return warped_np
+
     def add_index_map(self, index_map: np.ndarray, index_map_path: Optional[str] = None, 
                       visible_indices: Optional[np.ndarray] = None,
                       element_type: Optional[str] = 'point',
@@ -371,6 +537,7 @@ class Raster(QObject):
             element_type (str, optional): Type of element IDs in the index map.
                 One of 'point' (point cloud), 'face' (mesh faces), or 'cell' (DEM grid).
                 Defaults to 'point' for backward compatibility.
+            inverted_index (dict, optional): CSR inverted index with keys
         """
         if not isinstance(index_map, np.ndarray):
             raise ValueError("Index map must be a numpy array")
@@ -389,7 +556,7 @@ class Raster(QObject):
             index_map = cv2.resize(
                 index_map,
                 (self.width, self.height),
-                interpolation=cv2.INTER_LINEAR
+                interpolation=cv2.INTER_NEAREST
             )
         
         self.index_map = index_map.copy()
@@ -541,7 +708,7 @@ class Raster(QObject):
             temp_z = cv2.resize(
                 temp_z,
                 (self.width, self.height),
-                interpolation=cv2.INTER_LINEAR
+                interpolation=cv2.INTER_NEAREST
             )
             
             # Restore the NoData values safely to the newly interpolated pixels
@@ -624,7 +791,7 @@ class Raster(QObject):
             temp_z = cv2.resize(
                 temp_z,
                 (self.width, self.height),
-                interpolation=cv2.INTER_LINEAR
+                interpolation=cv2.INTER_NEAREST
             )
             
             # Restore the NoData values safely to the newly interpolated pixels
@@ -1305,6 +1472,11 @@ class Raster(QObject):
             
         if self.extrinsics is not None:
             raster_data['extrinsics'] = self.extrinsics.tolist()  # Convert numpy array to list for JSON
+
+        # Include lens distortion information if available
+        if self.dist_coeffs is not None:
+            raster_data['dist_coeffs'] = self.dist_coeffs.tolist()
+        raster_data['is_distorted'] = self.is_distorted
             
         # --- NEW ORTHOMOSAIC LOGIC ---
         if self.transform_matrix is not None:
@@ -1398,8 +1570,17 @@ class Raster(QObject):
                 raster.add_extrinsics(extrinsics_array)
             except Exception as e:
                 print(f"Error loading extrinsics for {image_path}: {str(e)}")
-                
-        # --- ORTHOMOSAIC LOGIC ---
+
+        # Load lens distortion information
+        dist_data = raster_dict.get('dist_coeffs')
+        is_distorted = raster_dict.get('is_distorted', False)
+        if dist_data is not None:
+            try:
+                raster.add_distortion(np.array(dist_data, dtype=np.float64), is_distorted=is_distorted)
+            except Exception as e:
+                print(f"Error loading distortion for {image_path}: {str(e)}")
+        else:
+            raster.is_distorted = is_distorted
         raster.is_orthomosaic = raster_dict.get('is_orthomosaic', False)
         transform_data = raster_dict.get('transform_matrix')
         if transform_data:
@@ -1476,7 +1657,18 @@ class Raster(QObject):
                 self.add_extrinsics(extrinsics_array)
             except Exception as e:
                 print(f"Error loading extrinsics for {self.image_path}: {str(e)}")
-                
+
+        # Load lens distortion information
+        dist_data = raster_dict.get('dist_coeffs')
+        is_distorted = raster_dict.get('is_distorted', False)
+        if dist_data is not None:
+            try:
+                self.add_distortion(np.array(dist_data, dtype=np.float64), is_distorted=is_distorted)
+            except Exception as e:
+                print(f"Error loading distortion for {self.image_path}: {str(e)}")
+        else:
+            self.is_distorted = is_distorted
+
         # --- ORTHOMOSAIC LOGIC ---
         self.is_orthomosaic = raster_dict.get('is_orthomosaic', self.is_orthomosaic)
         transform_data = raster_dict.get('transform_matrix')

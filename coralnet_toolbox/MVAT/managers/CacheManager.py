@@ -37,62 +37,72 @@ class CacheManager:
         os.makedirs(self.cache_dir, exist_ok=True)
     
     def _generate_cache_key(self, extrinsics: np.ndarray, point_cloud_path: str,
-                             element_type: str = 'point') -> str:
+                             element_type: str = 'point',
+                             extra_hash_data: Optional[bytes] = None) -> str:
         """
         Generate a unique cache key based on camera extrinsics, geometry path, and element type.
-        
+
         Args:
             extrinsics (np.ndarray): Camera extrinsic matrix (4x4)
             point_cloud_path (str): Path to the geometry file (point cloud, mesh, or DEM)
             element_type (str): Type of indexed elements ('point', 'face', or 'cell')
-            
+            extra_hash_data (bytes, optional): Additional bytes mixed into the hash.
+                Pass ``raster.dist_coeffs.tobytes()`` for distorted cameras so their
+                warped maps never collide with undistorted maps from the same camera.
+
         Returns:
             str: MD5 hash string to use as cache key
         """
-        # Combine extrinsics, path, and element_type into a single string for hashing
         extrinsics_bytes = extrinsics.tobytes()
         path_bytes = point_cloud_path.encode('utf-8')
         element_type_bytes = element_type.encode('utf-8')
-        
-        # Create MD5 hash
+
         hash_obj = hashlib.md5()
         hash_obj.update(extrinsics_bytes)
         hash_obj.update(path_bytes)
         hash_obj.update(element_type_bytes)
-        
+        if extra_hash_data is not None:
+            hash_obj.update(extra_hash_data)
+
         return hash_obj.hexdigest()
     
     def get_cache_path(self, extrinsics: np.ndarray, point_cloud_path: str,
-                        element_type: str = 'point') -> str:
+                        element_type: str = 'point',
+                        extra_hash_data: Optional[bytes] = None) -> str:
         """
         Get the full path to the cache file for given parameters.
-        
+
         Args:
             extrinsics (np.ndarray): Camera extrinsic matrix
             point_cloud_path (str): Path to the geometry file
             element_type (str): Type of indexed elements ('point', 'face', or 'cell')
-            
+            extra_hash_data (bytes, optional): Additional bytes mixed into the hash
+                (see _generate_cache_key).
+
         Returns:
             str: Full path to the cache file (.npz)
         """
-        cache_key = self._generate_cache_key(extrinsics, point_cloud_path, element_type)
+        cache_key = self._generate_cache_key(extrinsics, point_cloud_path, element_type, extra_hash_data)
         return os.path.join(self.cache_dir, f"{cache_key}.npz")
     
     def load_visibility(self, extrinsics: np.ndarray, point_cloud_path: str,
-                         element_type: str = 'point') -> Optional[Dict]:
+                         element_type: str = 'point',
+                         extra_hash_data: Optional[bytes] = None) -> Optional[Dict]:
         """
         Load visibility data from cache if it exists.
-        
+
         Args:
             extrinsics (np.ndarray): Camera extrinsic matrix
             point_cloud_path (str): Path to the geometry file
             element_type (str): Type of indexed elements ('point', 'face', or 'cell')
-            
+            extra_hash_data (bytes, optional): Additional bytes mixed into the hash
+                (see _generate_cache_key).
+
         Returns:
             dict or None: Dictionary with 'index_map', 'visible_indices', 'depth_map',
                          and 'element_type' if cache exists, None otherwise
         """
-        cache_path = self.get_cache_path(extrinsics, point_cloud_path, element_type)
+        cache_path = self.get_cache_path(extrinsics, point_cloud_path, element_type, extra_hash_data)
         
         if not os.path.exists(cache_path):
             return None
@@ -102,12 +112,13 @@ class CacheManager:
             data = np.load(cache_path, allow_pickle=True)
             
             result = {
-                'index_map': data['index_map'],
-                'visible_indices': data['visible_indices']
+                'index_map': data['index_map'].astype(np.int32, copy=False),
+                'visible_indices': np.asarray(data['visible_indices']).astype(np.int32, copy=False)
             }
             # depth_map is optional in older caches
             if 'depth_map' in data:
-                result['depth_map'] = data['depth_map']
+                # allow older caches with float32 but cast to float16 for consistency
+                result['depth_map'] = data['depth_map'].astype(np.float16, copy=False)
             else:
                 result['depth_map'] = None
             
@@ -136,10 +147,12 @@ class CacheManager:
                         index_map: np.ndarray, visible_indices: np.ndarray,
                         depth_map: Optional[np.ndarray] = None,
                         element_type: str = 'point',
-                        inverted_index: Optional[Dict] = None) -> str:
+                        inverted_index: Optional[Dict] = None,
+                        compressed: bool = False,
+                        extra_hash_data: Optional[bytes] = None) -> str:
         """
         Save visibility data to cache.
-        
+
         Args:
             extrinsics (np.ndarray): Camera extrinsic matrix
             point_cloud_path (str): Path to the geometry file
@@ -149,11 +162,14 @@ class CacheManager:
             element_type (str): Type of indexed elements ('point', 'face', or 'cell')
             inverted_index (dict, optional): CSR inverted index with keys
                 'inv_ids', 'inv_offsets', 'inv_pixels'.
-            
+            compressed (bool): Whether to use compressed .npz format (default: False)
+            extra_hash_data (bytes, optional): Additional bytes mixed into the hash
+                (see _generate_cache_key).
+
         Returns:
             str: Path to the saved cache file
         """
-        cache_path = self.get_cache_path(extrinsics, point_cloud_path, element_type)
+        cache_path = self.get_cache_path(extrinsics, point_cloud_path, element_type, extra_hash_data)
         
         # Ensure cache directory exists
         try:
@@ -161,7 +177,16 @@ class CacheManager:
         except Exception as e:
             print(f"Warning: Failed to create cache directory {self.cache_dir}: {e}")
             return None
-        
+        # Enforce canonical dtypes to reduce RAM/disk usage
+        try:
+            index_map = index_map.astype(np.int32, copy=False)
+            visible_indices = np.asarray(visible_indices).astype(np.int32, copy=False)
+            if depth_map is not None:
+                depth_map = depth_map.astype(np.float16, copy=False)
+        except Exception:
+            # If casting fails, proceed with original arrays
+            pass
+
         # Build save dict with required and optional fields
         save_dict = {
             'index_map': index_map,
@@ -170,10 +195,8 @@ class CacheManager:
         }
         if depth_map is not None:
             save_dict['depth_map'] = depth_map
-        if inverted_index is not None:
-            save_dict['inv_ids']     = inverted_index['inv_ids']
-            save_dict['inv_offsets'] = inverted_index['inv_offsets']
-            save_dict['inv_pixels']  = inverted_index['inv_pixels']
+        # NOTE: Inverted index is no longer saved to disk to reduce cache size (~115 MB per camera).
+        # If needed for UI operations, it will be computed on-the-fly using np.where().
 
         # Write atomically: write to a temp file then rename into place to avoid
         # consumers attempting to read a partially-written .npz (which yields
@@ -182,7 +205,11 @@ class CacheManager:
         # ending in '.npz', so the temp name must end in '.npz' or the rename fails.
         temp_path = os.path.splitext(cache_path)[0] + '_tmp.npz'
         try:
-            np.savez_compressed(temp_path, **save_dict)
+            # Changed this from np.savez_compressed to np.savez; switch back if needed
+            if compressed:
+                np.savez_compressed(temp_path, **save_dict)
+            else:
+                np.savez(temp_path, **save_dict)
             # Atomic replace (works on Windows and POSIX)
             os.replace(temp_path, cache_path)
             return cache_path

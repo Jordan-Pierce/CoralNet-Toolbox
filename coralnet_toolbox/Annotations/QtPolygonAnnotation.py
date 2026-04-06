@@ -9,12 +9,13 @@ from rasterio.windows import Window
 from shapely.ops import split, unary_union
 from shapely.geometry import Point, Polygon, LineString
 
-from PyQt5.QtCore import Qt, QPointF
+from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtWidgets import QGraphicsScene, QGraphicsPathItem
 from PyQt5.QtGui import (QPixmap, QColor, QPen, QBrush, QPolygonF,
                          QPainter, QRegion, QImage, QPainterPath)
 
-from coralnet_toolbox.Annotations.QtAnnotation import Annotation
+from coralnet_toolbox.Annotations.QtAnnotation import Annotation, OptimizedPathItem
+
 from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
 
 from coralnet_toolbox.utilities import densify_polygon
@@ -50,7 +51,7 @@ class PolygonAnnotation(Annotation):
         self.holes = holes if holes is not None else []
 
         # Set the main polygon points and calculate initial properties
-        self.set_precision(points, False)
+        self.set_precision(points, True)
         self._set_centroid_and_bbox()
 
     def _set_centroid_and_bbox(self):
@@ -81,15 +82,48 @@ class PolygonAnnotation(Annotation):
 
     def set_precision(self, points: list, reduce: bool = True):
         """
-        Set the precision of the outer points (no longer reduces precision).
-        The reduce parameter is kept for API compatibility but is ignored.
-
-        Args:
-            points: List of QPointF vertices for the outer boundary.
-            reduce: Kept for compatibility, but no longer applies rounding.
+        Set the precision of the outer points and inner holes. If reduce is True, 
+        applies an ultra-modest (0.5 pixel) simplification to strip out sub-pixel 
+        mouse jitter and strictly collinear vertices, improving rendering speed 
+        without altering the visual shape.
         """
-        # Simply assign the points without any rounding to preserve full precision
-        self.points = points
+        modest_tolerance = 0.5
+        
+        # --- 1. Process Outer Boundary ---
+        if reduce and len(points) > 15:
+            from coralnet_toolbox.utilities import simplify_polygon
+            xy_points = [(p.x(), p.y()) for p in points]
+            
+            simplified_coords = simplify_polygon(xy_points, modest_tolerance)
+            
+            # Ensure we don't accidentally over-simplify a tiny shape into a line
+            if len(simplified_coords) >= 3:
+                self.points = [QPointF(x, y) for x, y in simplified_coords]
+            else:
+                self.points = points
+        else:
+            # Fallback to the raw points if reduction was disabled or skipped
+            self.points = points
+
+        # --- 2. Process Inner Holes ---
+        if reduce and hasattr(self, 'holes') and self.holes:
+            from coralnet_toolbox.utilities import simplify_polygon
+            simplified_holes = []
+            
+            for hole in self.holes:
+                if len(hole) > 15:
+                    xy_hole = [(p.x(), p.y()) for p in hole]
+                    simp_coords = simplify_polygon(xy_hole, modest_tolerance)
+                    
+                    # Ensure the hole remains a valid polygon
+                    if len(simp_coords) >= 3:
+                        simplified_holes.append([QPointF(x, y) for x, y in simp_coords])
+                    else:
+                        simplified_holes.append(hole)
+                else:
+                    simplified_holes.append(hole)
+                    
+            self.holes = simplified_holes
 
     def set_centroid(self):
         """

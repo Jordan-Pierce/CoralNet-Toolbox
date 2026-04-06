@@ -431,10 +431,53 @@ class ImageWindow(QWidget):
         # Connect annotation signals
         self.annotation_window.annotationCreated.connect(self.update_annotation_count)
         self.annotation_window.annotationDeleted.connect(self.update_annotation_count)
+        # Update raster table and counts when annotation labels change
+        self.annotation_window.annotationLabelChanged.connect(self.on_annotation_label_changed)
+        self.annotation_window.annotationsLabelsChanged.connect(self.on_annotations_labels_changed)
         
         # Connect our own signals
         self.imageLoaded.connect(self.on_image_loaded)
         self.filterChanged.connect(self.update_image_count_label)
+
+    def on_annotation_label_changed(self, ann_id, new_label=None):
+        """Handler called when a single annotation's label changes.
+
+        Looks up the annotation's image path and refreshes annotation info
+        for that raster so the table and tooltips update immediately.
+        """
+        try:
+            # ann_id may be None or invalid; guard defensively
+            if not ann_id:
+                return
+            annotation = self.annotation_window.annotations_dict.get(ann_id)
+            if annotation and getattr(annotation, 'image_path', None):
+                self.update_image_annotations(annotation.image_path)
+        except Exception:
+            pass
+
+    def on_annotations_labels_changed(self, changes):
+        """Handler for multiple label changes.
+
+        `changes` is expected to be a list of tuples: (annotation_id, old_label, new_label)
+        We aggregate affected image paths and update them once each.
+        """
+        try:
+            if not changes:
+                return
+            images_to_update = set()
+            for item in changes:
+                try:
+                    ann_id = item[0]
+                    annotation = self.annotation_window.annotations_dict.get(ann_id)
+                    if annotation and getattr(annotation, 'image_path', None):
+                        images_to_update.add(annotation.image_path)
+                except Exception:
+                    continue
+
+            for image_path in images_to_update:
+                self.update_image_annotations(image_path)
+        except Exception:
+            pass
         
     def schedule_filter(self):
         """Schedule filtering after a short delay to avoid excessive updates."""
@@ -770,8 +813,20 @@ class ImageWindow(QWidget):
             image_path (str): Path to the image
             update_counts (bool): Whether to update the annotation counts in the label window
         """
-        annotations = self.annotation_window.get_image_annotations(image_path)
-        self.raster_manager.update_annotation_info(image_path, annotations)
+        # For video virtual frame paths (e.g. video.mp4::frame_5), resolve to the
+        # video path and aggregate annotations across all frames so the VideoRaster
+        # row in the table shows the correct total count.
+        if '::frame_' in image_path:
+            video_path = image_path.rsplit('::frame_', 1)[0]
+            prefix = video_path + '::frame_'
+            all_annotations = []
+            for key, anns in self.annotation_window.image_annotations_dict.items():
+                if key.startswith(prefix):
+                    all_annotations.extend(anns)
+            self.raster_manager.update_annotation_info(video_path, all_annotations)
+        else:
+            annotations = self.annotation_window.get_image_annotations(image_path)
+            self.raster_manager.update_annotation_info(image_path, annotations)
         
         if update_counts:
             self.main_window.label_window.update_annotation_count()
@@ -1117,9 +1172,9 @@ class ImageWindow(QWidget):
         if raster_under_cursor:
             is_checked = raster_under_cursor.checkbox_state
             if is_checked:
-                action_text = f"Uncheck {count} Highlighted Image{'s' if count > 1 else ''}"
+                action_text = f"Uncheck {count} Highlighted Raster{'s' if count > 1 else ''}"
             else:
-                action_text = f"Check {count} Highlighted Image{'s' if count > 1 else ''}"
+                action_text = f"Check {count} Highlighted Raster{'s' if count > 1 else ''}"
             toggle_check_action = context_menu.addAction(action_text)
             toggle_check_action.triggered.connect(lambda: self.on_toggle(not is_checked))
 
@@ -1127,7 +1182,7 @@ class ImageWindow(QWidget):
         
         # Add batch inference action
         batch_inference_action = context_menu.addAction(
-            f"Batch Inference ({count} Highlighted Image{'s' if count > 1 else ''})"
+            f"Batch Inference ({count} Highlighted Raster{'s' if count > 1 else ''})"
         )
         batch_inference_action.triggered.connect(
             lambda: self.open_batch_inference_dialog(highlighted_paths)
@@ -1135,12 +1190,29 @@ class ImageWindow(QWidget):
         
         context_menu.addSeparator()
 
+        # Cameras submenu (Import / Remove)
+        cameras_menu = context_menu.addMenu("Cameras...")
+
+        # Add import cameras action
+        import_cameras_action = cameras_menu.addAction(
+            f"Import Cameras for {count} Highlighted Raster{'s' if count > 1 else ''}"
+        )
+        import_cameras_action.triggered.connect(lambda: self._open_import_cameras_for_highlighted(highlighted_paths))
+
+        cameras_menu.addSeparator()
+
+        # Add remove cameras action
+        remove_cameras_action = cameras_menu.addAction(
+            f"Remove Cameras from {count} Highlighted Raster{'s' if count > 1 else ''}"
+        )
+        remove_cameras_action.triggered.connect(lambda: self.remove_cameras_highlighted_images())
+
         # Create Z-Channel sub-menu
         z_channel_menu = context_menu.addMenu("Z-Channel...")
 
         # Add import z-channel action
         import_z_channel_action = z_channel_menu.addAction(
-            f"Import for {count} Highlighted Image{'s' if count > 1 else ''}"
+            f"Import for {count} Highlighted Raster{'s' if count > 1 else ''}"
         )
         import_z_channel_action.triggered.connect(
             lambda: self.import_z_channel_highlighted_images()
@@ -1148,7 +1220,7 @@ class ImageWindow(QWidget):
 
         # Add export z-channel action
         export_z_channel_action = z_channel_menu.addAction(
-            f"Export for {count} Highlighted Image{'s' if count > 1 else ''}"
+            f"Export for {count} Highlighted Raster{'s' if count > 1 else ''}"
         )
         export_z_channel_action.triggered.connect(
             lambda: self.export_z_channel_highlighted_images()
@@ -1158,64 +1230,25 @@ class ImageWindow(QWidget):
 
         # Add remove z-channel action
         remove_z_channel_action = z_channel_menu.addAction(
-            f"Remove from {count} Highlighted Image{'s' if count > 1 else ''}"
+            f"Remove from {count} Highlighted Raster{'s' if count > 1 else ''}"
         )
         remove_z_channel_action.triggered.connect(
             lambda: self.remove_z_channel_highlighted_images()
         )
 
-        # Cameras submenu (Import / Remove)
-        cameras_menu = context_menu.addMenu("Cameras...")
-
-        # Add import cameras action
-        import_cameras_action = cameras_menu.addAction(
-            f"Import Cameras for {count} Highlighted Image{'s' if count > 1 else ''}"
-        )
-        import_cameras_action.triggered.connect(lambda: self._open_import_cameras_for_highlighted(highlighted_paths))
-
-        cameras_menu.addSeparator()
-
-        # Add remove cameras action
-        remove_cameras_action = cameras_menu.addAction(
-            f"Remove Cameras from {count} Highlighted Image{'s' if count > 1 else ''}"
-        )
-        remove_cameras_action.triggered.connect(lambda: self.remove_cameras_highlighted_images())
-
         context_menu.addSeparator()
 
         # Add delete actions
-        delete_images_action = context_menu.addAction(f"Delete {count} Highlighted Image{'s' if count > 1 else ''}")
+        delete_images_action = context_menu.addAction(f"Delete {count} Highlighted Raster{'s' if count > 1 else ''}")
         delete_images_action.triggered.connect(lambda: self.delete_highlighted_images())
         delete_annotations_action = context_menu.addAction(
-            f"Delete Annotations for {count} Highlighted Image{'s' if count > 1 else ''}"
+            f"Delete Annotations for {count} Highlighted Raster{'s' if count > 1 else ''}"
         )
         delete_annotations_action.triggered.connect(
             lambda: self.delete_highlighted_images_annotations()
         )
         context_menu.exec_(self.tableView.viewport().mapToGlobal(position))
 
-    def _open_import_cameras_for_highlighted(self, highlighted_paths: list):
-        """
-        Open the Import Cameras dialog and set it to operate on the highlighted images.
-        """
-        if not highlighted_paths:
-            QMessageBox.warning(self, "No Images Selected", "Please highlight one or more images before importing cameras.")
-            return
-
-        # Use the main window's ImportCameras dialog instance if available
-        try:
-            dialog = self.main_window.import_cameras_dialog
-        except Exception:
-            dialog = None
-
-        if dialog is None:
-            # Fallback - instantiate a temporary dialog
-            dialog = ImportCameras(self.main_window)
-
-        # Provide the highlighted images to the dialog so it restricts matching
-        dialog.highlighted_images = highlighted_paths
-        dialog.exec_()
-        
     def open_batch_inference_dialog(self, highlighted_image_paths):
         """
         Open the batch inference dialog with the highlighted images.
@@ -1248,6 +1281,28 @@ class ImageWindow(QWidget):
         batch_dialog.highlighted_images = highlighted_image_paths
         # Show the dialog
         batch_dialog.exec_()
+
+    def _open_import_cameras_for_highlighted(self, highlighted_paths: list):
+        """
+        Open the Import Cameras dialog and set it to operate on the highlighted images.
+        """
+        if not highlighted_paths:
+            QMessageBox.warning(self, "No Images Selected", "Please highlight one or more images before importing cameras.")
+            return
+
+        # Use the main window's ImportCameras dialog instance if available
+        try:
+            dialog = self.main_window.import_cameras_dialog
+        except Exception:
+            dialog = None
+
+        if dialog is None:
+            # Fallback - instantiate a temporary dialog
+            dialog = ImportCameras(self.main_window)
+
+        # Provide the highlighted images to the dialog so it restricts matching
+        dialog.highlighted_images = highlighted_paths
+        dialog.exec_()
     
     def import_z_channel_highlighted_images(self):
         """Open file dialog and ZImportDialog to import z-channel files for highlighted images."""
@@ -1589,7 +1644,13 @@ class ImageWindow(QWidget):
                 # Restore signals
                 self.annotation_window.annotationCreated.connect(self.update_annotation_count)
                 self.annotation_window.annotationDeleted.connect(self.update_annotation_count)
-                
+
+                # Refresh video tick marks in case any deleted path was a video
+                try:
+                    self.annotation_window._update_video_annotation_marks()
+                except Exception:
+                    pass
+
                 # Close progress bar
                 if 'progress_bar' in locals() and progress_bar:
                     progress_bar.stop_progress()

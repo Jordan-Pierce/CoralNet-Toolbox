@@ -168,7 +168,8 @@ class Frustum:
                 style='wireframe',
                 color=self.color,
                 line_width=self.line_width,
-                name=f"frustum_wire_{id(self)}"  # Unique name
+                name=f"frustum_wire_{id(self)}",  # Unique name
+                reset_camera=False
             )
             # Make sure it's not pickable to avoid interfering with selection
             self.actors[plotter].SetPickable(False)
@@ -226,7 +227,8 @@ class Frustum:
                 texture=texture,
                 opacity=opacity,
                 show_edges=False,
-                name=f"frustum_plane_{id(self)}"
+                name=f"frustum_plane_{id(self)}",
+                reset_camera=False
             )
             # Make sure it's not pickable to avoid interfering with selection
             actor.SetPickable(False)
@@ -528,7 +530,8 @@ class BatchedFrustumManager:
             line_width=line_width,
             render_lines_as_tubes=False,
             style='wireframe',
-            name='_batched_frustums'
+            name='_batched_frustums',
+            reset_camera=False
         )
         # Make sure it's not pickable to avoid interfering with selection
         self.wireframe_actor.SetPickable(False)

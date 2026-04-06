@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Set
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtCore import QObject, pyqtSignal
 
-from coralnet_toolbox.Rasters import Raster
+from coralnet_toolbox.Rasters.QtRaster import Raster
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -68,14 +68,47 @@ class RasterManager(QObject):
     def get_raster(self, image_path: str) -> Optional[Raster]:
         """
         Get a raster by its image path.
+        Resolves virtual frame paths of the form 'video.mp4::frame_42' transparently.
         
         Args:
-            image_path (str): Path to the image file
+            image_path (str): Path to the image file, may be a virtual frame path
             
         Returns:
             Raster or None: The raster object if found, None otherwise
         """
+        # Resolve virtual video frame paths to the underlying video path
+        if '::frame_' in image_path:
+            video_path = image_path.rsplit('::frame_', 1)[0]
+            return self.rasters.get(video_path)
         return self.rasters.get(image_path)
+
+    def add_video_raster(self, video_path: str) -> bool:
+        """
+        Add a VideoRaster to the manager.
+
+        Args:
+            video_path (str): Path to the video file
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if video_path in self.rasters:
+            return True  # Already exists
+
+        try:
+            # Import here to avoid circular imports at module level
+            from coralnet_toolbox.Rasters.VideoRaster import VideoRaster
+            raster = VideoRaster(video_path)
+
+            self.rasters[video_path] = raster
+            self.image_paths.append(video_path)
+
+            self.rasterAdded.emit(video_path)
+            return True
+
+        except Exception as e:
+            print(f"Error adding video raster {video_path}: {str(e)}")
+            return False
     
     def remove_raster(self, image_path: str) -> bool:
         """
@@ -121,9 +154,14 @@ class RasterManager(QObject):
         Returns:
             bool: True if successful, False otherwise
         """
+        # Accept virtual frame paths like 'video.mp4::frame_42' and normalize
+        # them to the underlying video path so VideoRaster rows update properly.
+        if isinstance(image_path, str) and '::frame_' in image_path:
+            image_path = image_path.rsplit('::frame_', 1)[0]
+
         if image_path not in self.rasters:
             return False
-            
+
         self.rasters[image_path].update_annotation_info(annotations)
         self.rasterUpdated.emit(image_path)
         return True

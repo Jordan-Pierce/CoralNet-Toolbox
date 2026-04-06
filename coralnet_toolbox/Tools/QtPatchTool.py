@@ -149,8 +149,21 @@ class PatchTool(Tool):
             # Show the dimension tag while drawing
             if hasattr(self.cursor_annotation, 'dimension_tag_item') and self.cursor_annotation.dimension_tag_item:
                 self.cursor_annotation.dimension_tag_item.setVisible(True)
+            
+            # Track current size for optimization
+            self._last_annotation_size = self.annotation_window.annotation_size
 
     def update_cursor_annotation(self, scene_pos: QPointF = None):
         """Update the cursor annotation position."""
-        self.clear_cursor_annotation()
-        self.create_cursor_annotation(scene_pos)
+        if scene_pos is None:
+            self.clear_cursor_annotation()
+            return
+        
+        # If cursor annotation exists and size hasn't changed, just update position
+        if (self.cursor_annotation and 
+            hasattr(self, '_last_annotation_size') and self._last_annotation_size == self.annotation_window.annotation_size):
+            # Move the existing annotation to new position
+            self.cursor_annotation.update_location(scene_pos)
+        else:
+            self.clear_cursor_annotation()
+            self.create_cursor_annotation(scene_pos)

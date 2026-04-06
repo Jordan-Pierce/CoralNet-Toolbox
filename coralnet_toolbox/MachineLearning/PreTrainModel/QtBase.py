@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                              QGroupBox, QTableWidget, QTableWidgetItem,
                              QHeaderView, QFileDialog, QLabel, QAbstractItemView,
                              QFormLayout, QComboBox, QSpinBox, QDoubleSpinBox, 
-                             QLineEdit, QWidget, QScrollArea, QFrame, QMessageBox)
+                             QLineEdit, QWidget, QScrollArea, QFrame, QMessageBox, QTabWidget)
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -166,6 +166,7 @@ class Base(QDialog):
         self.params = {}
         self.custom_params = []
         self.data_dirs = []  # List to track selected directory paths
+        self.custom_model_path = None  # Track custom model file path
 
         # Create the main layout
         self.layout = QVBoxLayout(self)
@@ -187,9 +188,13 @@ class Base(QDialog):
         output_group = self.create_output_layout()
         right_layout.addWidget(output_group)
         
-        # Add Architecture & Strategy
-        model_ssl_group = self.create_model_ssl_layout()
-        right_layout.addWidget(model_ssl_group)
+        # Add Encoder section
+        encoder_group = self.create_encoder_layout()
+        right_layout.addWidget(encoder_group)
+        
+        # Add Strategy Parameters
+        strategy_group = self.create_strategy_layout()
+        right_layout.addWidget(strategy_group)
         
         # Add Training Parameters
         params_group = self.create_parameters_layout()
@@ -260,10 +265,18 @@ class Base(QDialog):
         """Deprecated: kept for backward compatibility. Use create_data_layout() instead."""
         pass
 
-    def create_model_ssl_layout(self):
-        group_box = QGroupBox("Architecture & Strategy")
-        layout = QFormLayout()
-
+    def create_encoder_layout(self):
+        """Create Encoder group box with tabified Standard and Custom Model options."""
+        group_box = QGroupBox("Encoder")
+        layout = QVBoxLayout()
+        
+        # Create tab widget
+        tab_widget = QTabWidget()
+        
+        # Tab 1: Standard Models
+        standard_tab = QWidget()
+        standard_layout = QFormLayout(standard_tab)
+        
         # Model Selection
         self.model_combo = QComboBox()
         standard_models = [
@@ -274,12 +287,53 @@ class Base(QDialog):
         ]
         self.model_combo.addItems(standard_models)
         self.model_combo.setCurrentText('yolo11n')
-        layout.addRow("Base Architecture:", self.model_combo)
+        standard_layout.addRow("Base Architecture:", self.model_combo)
 
         # Initialization
         self.weights_combo = QComboBox()
         self.weights_combo.addItems(["Use Pre-trained Weights (.pt)", "Initialize from Scratch (.yaml)"])
-        layout.addRow("Initialization:", self.weights_combo)
+        standard_layout.addRow("Initialization:", self.weights_combo)
+        
+        tab_widget.addTab(standard_tab, "Standard")
+        
+        # Tab 2: Custom Model
+        custom_tab = QWidget()
+        custom_layout = QFormLayout(custom_tab)
+        
+        self.custom_model_edit = QLineEdit()
+        self.custom_model_edit.setPlaceholderText("Optional path to custom .pt model")
+        self.custom_model_edit.setReadOnly(True)
+        self.custom_model_button = QPushButton("Browse...")
+        self.custom_model_button.clicked.connect(self.browse_custom_model)
+        
+        custom_model_file_layout = QHBoxLayout()
+        custom_model_file_layout.addWidget(self.custom_model_edit)
+        custom_model_file_layout.addWidget(self.custom_model_button)
+        
+        custom_layout.addRow("Custom Model (.pt):", custom_model_file_layout)
+        
+        info_label = QLabel("When a custom model is selected, it will be used instead of the standard models above.")
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet("color: gray; font-size: 10px;")
+        custom_layout.addRow("", info_label)
+        
+        tab_widget.addTab(custom_tab, "Custom Model")
+        
+        layout.addWidget(tab_widget)
+        group_box.setLayout(layout)
+        return group_box
+    
+    def browse_custom_model(self):
+        """Browse for a custom .pt model file."""
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Custom Model", "", "Model Files (*.pt)")
+        if file_path:
+            self.custom_model_path = file_path
+            self.custom_model_edit.setText(file_path)
+
+    def create_strategy_layout(self):
+        """Create Strategy group box with SSL Method and Teacher Model."""
+        group_box = QGroupBox("Strategy")
+        layout = QFormLayout()
 
         # SSL Method
         self.ssl_method_combo = QComboBox()
@@ -316,7 +370,12 @@ class Base(QDialog):
         return group_box
     
     def setup_model_ssl_layout(self):
-        """Deprecated: kept for backward compatibility. Use create_model_ssl_layout() instead."""
+        """Deprecated: kept for backward compatibility. Use create_encoder_layout() and create_strategy_layout() instead."""
+        pass
+
+    def create_model_ssl_layout(self):
+        """Deprecated: Use create_encoder_layout() and create_strategy_layout() instead."""
+        # This method is kept for backward compatibility but is no longer used
         pass
 
     def create_output_layout(self):
@@ -542,9 +601,13 @@ class Base(QDialog):
 
     # --- Execution Logic ---
     def get_parameters(self):
-        use_pretrained = "Pre-trained" in self.weights_combo.currentText()
-        base_ext = ".pt" if use_pretrained else ".yaml"
-        model_name = f"{self.model_combo.currentText()}{base_ext}"
+        # Determine the model to use: custom model if provided, otherwise standard model
+        if self.custom_model_path:
+            model_name = self.custom_model_path
+        else:
+            use_pretrained = "Pre-trained" in self.weights_combo.currentText()
+            base_ext = ".pt" if use_pretrained else ".yaml"
+            model_name = f"{self.model_combo.currentText()}{base_ext}"
 
         params = {
             'data_dirs': self.data_dirs,

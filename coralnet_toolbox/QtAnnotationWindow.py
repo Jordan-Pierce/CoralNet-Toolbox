@@ -60,7 +60,9 @@ from coralnet_toolbox.Icons import ColorComboBox
 from coralnet_toolbox.Icons import ColormapDelegate
 
 from coralnet_toolbox.utilities import rasterio_open
-from coralnet_toolbox.utilities import convert_scale_units 
+from coralnet_toolbox.utilities import convert_scale_units
+
+from coralnet_toolbox.QtVideoPlayer import VideoPlayerWidget
 
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -133,6 +135,15 @@ class AnnotationWindow(BaseCanvas):
         self.dynamic_range_timer = self._dynamic_range_timer  # Reference BaseCanvas timer
         self.dynamic_range_update_delay = 100  # milliseconds
 
+        # Video playback state
+        self._active_video_raster = None   # VideoRaster when a video is loaded
+        self._current_frame_idx: int = 0
+        self._video_player = VideoPlayerWidget(self)
+        self._playback_timer = QTimer(self)
+        self._playback_timer.timeout.connect(self._playback_tick)
+        # Video toolbar is created lazily via create_video_toolbar()
+        self._video_toolbar = None
+
         # Connect signals to slots
         self.toolChanged.connect(self.set_selected_tool)
         
@@ -147,6 +158,10 @@ class AnnotationWindow(BaseCanvas):
         self.annotationModified.connect(self.annotation_manager.annotationModified)
         self.annotationLabelChanged.connect(self.annotation_manager.annotationLabelChanged)
         self.annotationSelectionChanged.connect(self.annotation_manager.selectionChanged)
+
+        # Keep video scrub-bar tick marks in sync with annotation changes
+        self.annotationCreated.connect(self._on_annotation_change_for_video)
+        self.annotationDeleted.connect(self._on_annotation_change_for_video)
         
         # Initialize toolbar and status bar widgets
         self._init_toolbar_widgets()  # Likely causes an error
@@ -585,6 +600,16 @@ class AnnotationWindow(BaseCanvas):
         # Restore cursor
         QApplication.restoreOverrideCursor()
         
+    # --- VIDEO TOOLBAR HOOK ---
+    def create_video_toolbar(self) -> QToolBar:
+        """Create the video player toolbar (hidden until a VideoRaster is loaded)."""
+        toolbar = QToolBar("Video Player")
+        toolbar.setMovable(False)
+        toolbar.addWidget(self._video_player)
+        toolbar.setVisible(False)
+        self._video_toolbar = toolbar
+        return toolbar
+
     # --- DOCK WRAPPER HOOKS ---
     def create_top_toolbar(self) -> QToolBar:
         """Create the top toolbar with annotation tools and transparency slider.
@@ -857,35 +882,60 @@ class AnnotationWindow(BaseCanvas):
             super().mouseDoubleClickEvent(event)
             return
         
-        # Get depth from z-channel if available
-        raster = camera._raster
-        depth = None
-        
-        if raster.z_channel is not None and raster.z_data_type == 'depth':
-            depth = raster.get_z_value(x, y)
-        
-        # Get default depth from scene if no depth available
-        if depth is None or depth <= 0 or np.isnan(depth):
-            default_depth = mvat_manager.viewer.get_scene_median_depth(camera.position)
-        else:
-            default_depth = depth
-        
-        # Create ray from pixel position to get 3D world point
+        terminal_point = None
+
+        # --- PLAN A: Index Map (Flawless 3D Coordinate) ---
         try:
-            ray = CameraRay.from_pixel_and_camera(
-                pixel_xy=(x, y),
-                camera=camera,
-                depth=depth,
-                default_depth=default_depth
-            )
+            index_map = camera._raster.index_map
+            primary_target = mvat_manager.viewer.scene_context.get_primary_target()
+            if index_map is not None and primary_target is not None:
+                candidate_id = int(index_map[y, x])
+                if candidate_id > -1:
+                    raw_coord = primary_target.get_element_coordinate(candidate_id)
+                    if raw_coord is not None:
+                        # ---> Safely cast PyTorch Tensor to NumPy! <---
+                        if hasattr(raw_coord, 'cpu'):
+                            terminal_point = raw_coord.cpu().numpy().astype(np.float64)
+                        else:
+                            terminal_point = np.asarray(raw_coord, dtype=np.float64)
+        except Exception:
+            pass
+
+        # --- PLAN B: Depth Map / Scene Median Fallback ---
+        if terminal_point is None:
+            raster = camera._raster
+            depth = None
             
-            # Update MVATViewer focal point with the ray's terminal point
-            # This will trigger the existing signal chain that projects back to all camera views
-            mvat_manager.viewer.set_focal_point(ray.terminal_point)
+            if raster.z_channel is not None and raster.z_data_type == 'depth':
+                try:
+                    depth = raster.get_z_value(x, y)
+                except Exception:
+                    pass
             
-        except Exception as e:
-            # Silently handle any errors to allow AnnotationWindow to work independently
-            print(f"Warning: Could not set focal point from double-click: {e}")
+            # Get default depth from scene if no depth available
+            if depth is None or depth <= 0 or np.isnan(depth):
+                try:
+                    default_depth = mvat_manager.viewer.get_scene_median_depth(camera.position)
+                except Exception:
+                    default_depth = 10.0
+            else:
+                default_depth = depth
+            
+            # Create ray from pixel position to get 3D world point
+            try:
+                ray = CameraRay.from_pixel_and_camera(
+                    pixel_xy=(x, y),
+                    camera=camera,
+                    depth=depth,
+                    default_depth=default_depth
+                )
+                terminal_point = ray.terminal_point
+            except Exception as e:
+                print(f"Warning: Could not set focal point from double-click: {e}")
+        
+        # Trigger projection to all context cameras
+        if terminal_point is not None:
+            mvat_manager.viewer.set_focal_point(terminal_point)
         
         super().mouseDoubleClickEvent(event)
         
@@ -909,6 +959,7 @@ class AnnotationWindow(BaseCanvas):
         
         if self.active_image and self.selected_tool:
             self.tools[self.selected_tool].keyPressEvent(event)
+
         super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event):
@@ -916,6 +967,391 @@ class AnnotationWindow(BaseCanvas):
         if self.active_image and self.selected_tool:
             self.tools[self.selected_tool].keyReleaseEvent(event)
         super().keyReleaseEvent(event)
+
+    # =========================================================================
+    # VIDEO MODE
+    # =========================================================================
+
+    def _clear_annotation_graphics_single(self, annotation):
+        """Strip all graphics references from a single annotation without crashing."""
+        try:
+            if (hasattr(annotation, 'graphics_item_group') and
+                    annotation.graphics_item_group is not None):
+                try:
+                    if annotation.graphics_item_group.scene():
+                        annotation.graphics_item_group.scene().removeItem(
+                            annotation.graphics_item_group
+                        )
+                except RuntimeError:
+                    pass
+            annotation.graphics_item_group = None
+            annotation.graphics_item = None
+            annotation.center_graphics_item = None
+            annotation.bounding_box_graphics_item = None
+            if hasattr(annotation, 'tag_item'):
+                annotation.tag_item = None
+            if hasattr(annotation, 'dimension_tag_item'):
+                annotation.dimension_tag_item = None
+            annotation.is_selected = False
+        except Exception:
+            pass
+
+    def _on_annotation_change_for_video(self, *args):
+        """Slot called when annotations are created or deleted; refreshes scrub-bar ticks."""
+        if self._active_video_raster is not None:
+            self._update_video_annotation_marks()
+
+    def _get_annotated_frame_indices(self) -> set:
+        """Return the set of frame indices that have at least one annotation for the active video."""
+        if self._active_video_raster is None:
+            return set()
+        prefix = self._active_video_raster.image_path + '::frame_'
+        frame_indices = set()
+        for key, annotations in self.image_annotations_dict.items():
+            if key.startswith(prefix) and annotations:
+                try:
+                    frame_indices.add(int(key.split('::frame_', 1)[1]))
+                except (ValueError, IndexError):
+                    pass
+        return frame_indices
+
+    def _update_video_annotation_marks(self):
+        """Compute which frame indices have annotations and push them to the player slider."""
+        self._video_player.update_annotation_marks(self._get_annotated_frame_indices())
+
+    def _activate_video_mode(self, video_raster):
+        """Switch the annotation window into video mode for the given VideoRaster."""
+        # If already active for the same raster, just ensure player is visible
+        if self._active_video_raster is video_raster:
+            if self._video_toolbar is not None:
+                self._video_toolbar.setVisible(True)
+            return
+
+        # Stop any existing playback
+        self._playback_timer.stop()
+
+        self._active_video_raster = video_raster
+        self._current_frame_idx = 0
+
+        # Start the background decode worker for this raster (paused until play is clicked)
+        video_raster.start_decode_worker(start_frame=0)
+        video_raster.frameReady.connect(self._on_worker_frame_ready)
+
+        # Show the video player toolbar
+        if self._video_toolbar is not None:
+            self._video_toolbar.setVisible(True)
+
+        # Connect player signals (disconnect first to avoid duplicates)
+        try:
+            self._video_player.seekChanged.disconnect()
+        except Exception:
+            pass
+        try:
+            self._video_player.playClicked.disconnect()
+        except Exception:
+            pass
+        try:
+            self._video_player.pauseClicked.disconnect()
+        except Exception:
+            pass
+        try:
+            self._video_player.nextFrameClicked.disconnect()
+        except Exception:
+            pass
+        try:
+            self._video_player.prevFrameClicked.disconnect()
+        except Exception:
+            pass
+        try:
+            self._video_player.nextAnnotatedClicked.disconnect()
+        except Exception:
+            pass
+        try:
+            self._video_player.prevAnnotatedClicked.disconnect()
+        except Exception:
+            pass
+
+        self._video_player.seekChanged.connect(self._on_video_seek)
+        self._video_player.playClicked.connect(self._on_video_play)
+        self._video_player.pauseClicked.connect(self._on_video_pause)
+        self._video_player.nextFrameClicked.connect(self._on_video_next)
+        self._video_player.prevFrameClicked.connect(self._on_video_prev)
+        self._video_player.nextAnnotatedClicked.connect(self._on_video_next_annotated)
+        self._video_player.prevAnnotatedClicked.connect(self._on_video_prev_annotated)
+
+        # Reset player state
+        self._video_player.reset()
+
+        # Display frame 0
+        self._display_video_frame(0)
+
+        # Populate tick marks for any pre-existing annotations
+        self._update_video_annotation_marks()
+
+    def _deactivate_video_mode(self):
+        """Leave video mode (called when switching to a regular image)."""
+        if self._active_video_raster is None:
+            return
+
+        self._playback_timer.stop()
+        self._video_player.set_paused()
+
+        # Stop the decode worker for the outgoing raster
+        if self._active_video_raster is not None:
+            try:
+                self._active_video_raster.frameReady.disconnect(self._on_worker_frame_ready)
+            except Exception:
+                pass
+            self._active_video_raster.stop_decode_worker()
+
+        # Disconnect player signals
+        try:
+            self._video_player.seekChanged.disconnect()
+        except Exception:
+            pass
+        try:
+            self._video_player.playClicked.disconnect()
+        except Exception:
+            pass
+        try:
+            self._video_player.pauseClicked.disconnect()
+        except Exception:
+            pass
+        try:
+            self._video_player.nextFrameClicked.disconnect()
+        except Exception:
+            pass
+        try:
+            self._video_player.prevFrameClicked.disconnect()
+        except Exception:
+            pass
+        try:
+            self._video_player.nextAnnotatedClicked.disconnect()
+        except Exception:
+            pass
+        try:
+            self._video_player.prevAnnotatedClicked.disconnect()
+        except Exception:
+            pass
+
+        self._video_player.reset()
+        self.main_window.set_video_playback_tools_enabled(True)
+
+        if self._video_toolbar is not None:
+            self._video_toolbar.setVisible(False)
+
+        self._active_video_raster = None
+        self._current_frame_idx = 0
+
+    def _display_video_frame(self, frame_idx: int):
+        """
+        Full display path: load frame, run load_visuals, load annotations.
+        Only called on seek/pause (not during playback).
+        """
+        video_raster = self._active_video_raster
+        if video_raster is None:
+            return
+
+        frame_idx = max(0, min(frame_idx, video_raster.frame_count - 1))
+        self._current_frame_idx = frame_idx
+
+        # Build the virtual path that serves as this frame's image_path key
+        virtual_path = video_raster.make_frame_path(video_raster.image_path, frame_idx)
+
+        # Get the frame QImage
+        q_image = video_raster.get_frame(frame_idx)
+        if q_image is None or q_image.isNull():
+            return
+
+        # Make sure rasterio_image is set for annotation cropping
+        self.rasterio_image = video_raster.rasterio_src
+
+        # Use BaseCanvas canonical loader (clears scene, sets pixmap, fits view)
+        self.load_visuals(q_image, virtual_path, None)
+
+        # Restore cursor (load_visuals may not set it)
+        self.active_image = True
+
+        # Update status bar dimensions
+        self.imageLoaded.emit(video_raster.width, video_raster.height)
+        self.viewChanged.emit(video_raster.width, video_raster.height)
+
+        # Load annotations for this virtual frame path
+        self.load_annotations()
+
+        # Update the player widget state first so the slider range is valid
+        self._video_player.update_state(frame_idx, video_raster.frame_count)
+
+        # Then refresh scrub-bar tick marks (cheap; only runs on seek/pause, not playback)
+        # AnnotatedSlider.paintEvent checks slider.maximum(), so ensure range set first.
+        self._update_video_annotation_marks()
+
+    def _on_video_seek(self, frame_idx: int):
+        """Handle slider seek: stop playback, display frame."""
+        self._playback_timer.stop()
+        if self._active_video_raster is not None:
+            self._active_video_raster.pause_decode_worker()
+        if self._video_player.is_playing:
+            self._video_player.set_paused()
+            self.main_window.set_video_playback_tools_enabled(True)
+        self._display_video_frame(frame_idx)
+
+    def _on_worker_frame_ready(self, frame_idx: int, q_img):
+        """
+        Fast paint path: called by the decode worker for every decoded frame.
+
+        During playback this is the *only* thing the main thread does per frame:
+        swap the scene pixmap and update the slider label.  No scene rebuild,
+        no annotation load.  Those happen only when playback pauses.
+
+        Frames that arrive while the player is paused (e.g. stale events queued
+        between a pause signal and the main-thread slot running) are discarded.
+        """
+        vr = self._active_video_raster
+        if vr is None or not self._video_player.is_playing:
+            # Release the drop-frame gate even on discard so the worker
+            # can emit the next frame if playback resumes.
+            if vr is not None and vr._decode_worker is not None:
+                vr._decode_worker._pending_emit = False
+            return
+
+        self._current_frame_idx = frame_idx
+        self.current_image_path = vr.make_frame_path(vr.image_path, frame_idx)
+
+        # Swap pixmap in-place — does NOT rebuild the scene graph
+        if self._base_image_item is not None:
+            self._base_image_item.setPixmap(QPixmap.fromImage(q_img))
+
+        # Update slider and counter silently (no seekChanged feedback loop)
+        self._video_player.slider.blockSignals(True)
+        self._video_player.slider.setValue(frame_idx)
+        self._video_player.slider.blockSignals(False)
+        self._video_player.lbl_frame.setText(f"{frame_idx} / {vr.frame_count}")
+
+        # Clear the drop-frame gate so the worker sends the next frame
+        if vr._decode_worker is not None:
+            vr._decode_worker._pending_emit = False
+
+    def _on_video_play(self):
+        """Start the playback timer, clearing annotation graphics first."""
+        if self._active_video_raster is None:
+            return
+        # Remove annotation graphics for the current frame from the scene.
+        # The annotation data is preserved; graphics are rebuilt on pause.
+        self._clear_current_frame_annotation_graphics()
+        self.main_window.set_video_playback_tools_enabled(False)
+        # Sync the worker to the current display position then start streaming frames
+        self._active_video_raster.seek_decode_worker(self._current_frame_idx)
+        self._active_video_raster.resume_decode_worker()
+
+    def _clear_current_frame_annotation_graphics(self):
+        """Remove annotation graphics items for the current frame from the scene.
+        Annotation data is kept intact so they reload correctly on pause."""
+        path = self.current_image_path
+        if not path:
+            return
+        for annotation in list(self.image_annotations_dict.get(path, [])):
+            try:
+                # Remove the group from the scene first
+                if (hasattr(annotation, 'graphics_item_group') and
+                        annotation.graphics_item_group is not None):
+                    try:
+                        if annotation.graphics_item_group.scene():
+                            annotation.graphics_item_group.scene().removeItem(
+                                annotation.graphics_item_group
+                            )
+                    except RuntimeError:
+                        pass  # C++ object already deleted
+
+                # Null out ALL graphics item references so deselect() / delete()
+                # don't try to operate on dangling C++ objects
+                annotation.graphics_item_group = None
+                annotation.graphics_item = None
+                annotation.center_graphics_item = None
+                annotation.bounding_box_graphics_item = None
+                if hasattr(annotation, 'tag_item'):
+                    annotation.tag_item = None
+                if hasattr(annotation, 'dimension_tag_item'):
+                    annotation.dimension_tag_item = None
+
+                # Mark as deselected so unselect_annotations() skips the deselect path
+                annotation.is_selected = False
+            except Exception:
+                pass
+
+    def _on_video_pause(self):
+        """Stop the decode worker and do a full frame redisplay with annotations."""
+        self._playback_timer.stop()
+        if self._active_video_raster is not None:
+            self._active_video_raster.pause_decode_worker()
+        self.main_window.set_video_playback_tools_enabled(True)
+        self._display_video_frame(self._current_frame_idx)
+
+    def _on_video_next(self):
+        """Advance one frame."""
+        if self._active_video_raster is None:
+            return
+        next_idx = min(self._current_frame_idx + 1, self._active_video_raster.frame_count - 1)
+        self._display_video_frame(next_idx)
+
+    def _on_video_prev(self):
+        """Step back one frame."""
+        if self._active_video_raster is None:
+            return
+        prev_idx = max(self._current_frame_idx - 1, 0)
+        self._display_video_frame(prev_idx)
+
+    def _on_video_next_annotated(self):
+        """Jump to the nearest annotated frame after the current position."""
+        if self._active_video_raster is None:
+            return
+        candidates = [f for f in self._get_annotated_frame_indices() if f > self._current_frame_idx]
+        if candidates:
+            self._display_video_frame(min(candidates))
+
+    def _on_video_prev_annotated(self):
+        """Jump to the nearest annotated frame before the current position."""
+        if self._active_video_raster is None:
+            return
+        candidates = [f for f in self._get_annotated_frame_indices() if f < self._current_frame_idx]
+        if candidates:
+            self._display_video_frame(max(candidates))
+
+    def _playback_tick(self):
+        """
+        Fast playback path: update the scene pixmap only — no annotation load.
+        Annotations are only loaded when playback pauses.
+        """
+        if self._active_video_raster is None:
+            self._playback_timer.stop()
+            return
+
+        next_idx = (self._current_frame_idx + 1) % self._active_video_raster.frame_count
+        q_image = self._active_video_raster.get_frame(next_idx)
+        if q_image is None:
+            return
+
+        self._current_frame_idx = next_idx
+
+        # Keep current_image_path in sync so pause knows which frame to reload
+        self.current_image_path = self._active_video_raster.make_frame_path(
+            self._active_video_raster.image_path, next_idx
+        )
+
+        # Swap pixmap in-place — cheap paint, no scene rebuild
+        if self._base_image_item is not None:
+            self._base_image_item.setPixmap(QPixmap.fromImage(q_image))
+        else:
+            # Fallback: use the full display path (slower but correct)
+            self.load_visuals(q_image, self.current_image_path, None)
+
+        # Update slider silently
+        self._video_player.slider.blockSignals(True)
+        self._video_player.slider.setValue(next_idx)
+        self._video_player.slider.blockSignals(False)
+        self._video_player.lbl_frame.setText(
+            f"{next_idx} / {self._active_video_raster.frame_count}"
+        )
 
     def cursorInWindow(self, pos, mapped=False):
         """Check if the cursor position is within the image bounds."""
@@ -1392,6 +1828,30 @@ class AnnotationWindow(BaseCanvas):
             self.tools[self.selected_tool].stop_current_drawing()
             if self.selected_tool in ["scale"]:
                 self.main_window.untoggle_all_tools()
+
+        # ---- VIDEO BRANCH ----
+        # Resolve virtual frame paths to the underlying video path for the raster lookup
+        lookup_path = image_path
+        if '::frame_' in image_path:
+            lookup_path = image_path.rsplit('::frame_', 1)[0]
+
+        raster_check = self.main_window.image_window.raster_manager.get_raster(lookup_path)
+
+        # Import here to avoid circular imports at module level
+        try:
+            from coralnet_toolbox.Rasters.VideoRaster import VideoRaster as _VideoRaster
+            _video_raster_cls = _VideoRaster
+        except ImportError:
+            _video_raster_cls = None
+
+        if _video_raster_cls is not None and isinstance(raster_check, _video_raster_cls):
+            QApplication.restoreOverrideCursor()
+            self._activate_video_mode(raster_check)
+            return
+        else:
+            # Deactivate video mode if we're switching to a regular image
+            self._deactivate_video_mode()
+        # ---- END VIDEO BRANCH ----
                     
         # Clean up (This is the ONLY scene clear)
         self.clear_scene()
@@ -1559,7 +2019,19 @@ class AnnotationWindow(BaseCanvas):
         super()._reset_z_channel_to_full_range(colormap_name)
     
     def update_current_image_path(self, image_path):
-        """Update the current image path being displayed."""
+        """Update the current image path being displayed.
+
+        For video rasters, do not override the virtual per-frame `current_image_path`
+        already set by `_display_video_frame`. The `ImageWindow` emits a raw
+        video path after calling `set_image`, so ignore that emission when
+        we're in active video mode to avoid losing the `::frame_N` suffix.
+        """
+        # If we're currently in video mode and the annotation window already has
+        # a per-frame virtual path, don't override it with the raw video path.
+        if getattr(self, '_active_video_raster', None) is not None:
+            if hasattr(self, 'current_image_path') and self.current_image_path and '::frame_' in str(self.current_image_path):
+                return
+
         self.current_image_path = image_path
         
     def update_mask_label_map(self):
@@ -2361,8 +2833,13 @@ class AnnotationWindow(BaseCanvas):
             # Set the visibility based on the current UI state (will respect label checkbox)
             self.set_annotation_visibility(annotation)
             
-            # Force the screen to instantly show the newly drawn item
-            self.viewport().update()
+            # If video is currently playing, immediately strip the graphics we just created
+            # so the annotation doesn't ghost over the advancing frames.
+            if self._playback_timer.isActive():
+                self._clear_annotation_graphics_single(annotation)
+            else:
+                # Force the screen to instantly show the newly drawn item
+                self.viewport().update()
 
         # --- Finalization ---
         # Update the annotation count in the ImageWindow table (always, regardless of visibility)
@@ -2570,7 +3047,19 @@ class AnnotationWindow(BaseCanvas):
 
     def delete_image_annotations(self, image_path):
         """Delete all annotations associated with a specific image path (Bulk Optimized)."""
+        # For VideoRaster base paths, annotations live under ::frame_ virtual keys.
+        # Recurse over every frame key so the caller doesn't need to know about them.
         if image_path not in self.image_annotations_dict:
+            prefix = image_path + '::frame_'
+            frame_keys = [k for k in list(self.image_annotations_dict.keys()) if k.startswith(prefix)]
+            for frame_key in frame_keys:
+                self.delete_image_annotations(frame_key)
+            # If the canvas is currently displaying a frame of this video, force a full
+            # reload to guarantee stale graphics items are cleared from the scene.
+            if (self._active_video_raster is not None and
+                    self.current_image_path and
+                    self.current_image_path.startswith(prefix)):
+                self._display_video_frame(self._current_frame_idx)
             return
 
         # 1. Access label lock state once

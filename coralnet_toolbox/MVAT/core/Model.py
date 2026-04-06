@@ -73,14 +73,9 @@ class PointCloudProduct(AbstractSceneProduct):
         # Synthesize missing scalar arrays for consistent visualization
         self._ensure_scalar_arrays()
         
-        # Build available arrays in priority order:
-        # Hide the raw float normals and expose our visualization-ready ones
-        other_arrays = [arr for arr in self.array_names if arr.lower() not in ('rgb', 'labels', 'normals', 'normals_rgb')]
+        # Build available arrays in priority order
+        other_arrays = [arr for arr in self.array_names if arr.lower() not in ('rgb', 'labels', 'normals', 'class_ids')]
         self.available_arrays = ["RGB", "Labels"]
-        
-        if "Normals_RGB" in self.array_names:
-            self.available_arrays.append("Normals_RGB")
-            
         self.available_arrays.extend(other_arrays)
         
         load_time = time.time() - start_time
@@ -231,69 +226,69 @@ class PointCloudProduct(AbstractSceneProduct):
     def _ensure_scalar_arrays(self):
         """
         Ensure required scalar arrays exist in the mesh.
-        
-        Creates:
-        - "Labels": All white (255, 255, 255) for uniform labeling
-        - "Class_IDs": All zeros (0) for background/unannotated state
-        - "RGB": Metashape purple if not present in the data
-        
-        This allows these arrays to be treated as real data arrays in the mapper.
         """
         if self.mesh is None:
             return
         
         n_points = self.mesh.n_points
         
-        # Create "Labels" array if it doesn't exist - uniform white
         if "Labels" not in self.mesh.array_names:
             labels_array = np.ones((n_points, 3), dtype=np.uint8) * 255  # White
             self.mesh.point_data["Labels"] = labels_array
-            
-        # Create "Class_IDs" array if it doesn't exist - uniform zeros (background)
-        if "Class_IDs" not in self.mesh.array_names:
-            class_ids_array = np.zeros(n_points, dtype=np.int32)
-            self.mesh.point_data["Class_IDs"] = class_ids_array
+        # Create a Python-owned cache detached from the VTK array for background painting
+        # This avoids writing into VTK memory from worker threads.
+        self._labels_cache = np.asarray(self.mesh.point_data["Labels"]).copy()
+
+        # Keep a readonly reference to the PyVista view for eventual flush, but
+        # do NOT write to it directly during painting.
+        self._labels_view = self.mesh.point_data["Labels"]
+
+        # --- THE FIX: Decouple Class_IDs from the GPU ---
+        if not hasattr(self, 'class_ids'):
+            self.class_ids = np.zeros(n_points, dtype=np.int32)
         
-        # Create "RGB" array if it doesn't exist - Metashape purple
         if "RGB" not in self.mesh.array_names:
-            # Metashape purple: #8d8cc4 -> RGB (141, 140, 196)
             rgb_array = np.ones((n_points, 3), dtype=np.uint8)
-            rgb_array[:, 0] = 141  # R
-            rgb_array[:, 1] = 140  # G
-            rgb_array[:, 2] = 196  # B
+            rgb_array[:, 0] = 141  
+            rgb_array[:, 1] = 140  
+            rgb_array[:, 2] = 196  
             self.mesh.point_data["RGB"] = rgb_array
 
-        # Fix Normals visualization: Map [-1, 1] floats to [0, 255] RGB
-        norm_key = "Normals" if "Normals" in self.mesh.array_names else ("normals" if "normals" in self.mesh.array_names else None)
-        if norm_key and "Normals_RGB" not in self.mesh.array_names:
-            raw_normals = self.mesh.point_data[norm_key]
-            rgb_normals = np.clip((raw_normals + 1.0) / 2.0 * 255.0, 0, 255).astype(np.uint8)
-            self.mesh.point_data["Normals_RGB"] = rgb_normals
-        
-        # Update array_names after potentially adding new arrays
         self.array_names = self.mesh.array_names
 
     def apply_labels(self, element_ids: np.ndarray, class_id: int, color_rgb: tuple) -> None:
-        """
-        Update the class ID and visual color for specific points.
-        
-        Args:
-            element_ids: Array of point indices to update.
-            class_id: The semantic integer ID of the label.
-            color_rgb: Tuple of (R, G, B) values (0-255).
-        """
+        """ Update the class ID and visual color for specific points. """
         if self.mesh is None or len(element_ids) == 0:
             return
-            
-        # 1. Update the semantic Ground Truth data
-        self.mesh.point_data["Class_IDs"][element_ids] = class_id
-        
-        # 2. Update the visual RGB data for the viewer
-        color_array = np.array(color_rgb[:3], dtype=np.uint8)
-        self.mesh.point_data["Labels"][element_ids] = color_array
-        
-        # 3. Mark the PyVista arrays as modified so the renderer knows to redraw
-        self.mesh.point_data.Modified()
+
+        # Optimization: Instant Python-side numpy check
+        if np.all(self.class_ids[element_ids] == class_id):
+            return
+
+        # 1. Update the semantic data in pure Python RAM
+        self.class_ids[element_ids] = class_id
+
+        # 2. Update the Python-owned labels cache (no VTK/GL work here)
+        if not hasattr(self, '_labels_cache'):
+            # Fallback: materialize cache if missing
+            self._labels_cache = np.asarray(self.mesh.point_data["Labels"]).copy()
+        self._labels_cache[element_ids] = color_rgb
+
+        # NOTE: Do NOT call Modified() here. The expensive GPU upload is deferred
+        # and performed once by `flush_labels_to_gpu()` on the main thread.
+
+    def flush_labels_to_gpu(self) -> None:
+        """One full GPU upload. Call only on the GUI/main thread when painting pauses."""
+        if self.mesh is None or not hasattr(self, '_labels_cache'):
+            return
+        try:
+            # Overwrite the PyVista/VTK array from our python cache, then mark modified
+            self.mesh.point_data["Labels"] = self._labels_cache
+            v_arr = self.mesh.GetPointData().GetArray("Labels")
+            if v_arr:
+                v_arr.Modified()
+        except Exception as e:
+            print(f"⚠️ flush_labels_to_gpu (PointCloud) failed: {e}")
 
 
 class MeshProduct(AbstractSceneProduct):
@@ -336,14 +331,9 @@ class MeshProduct(AbstractSceneProduct):
         # Synthesize missing scalar arrays for consistent visualization
         self._ensure_scalar_arrays()
         
-        # Build available arrays in priority order:
-        # Hide the raw float normals and expose our visualization-ready ones
-        other_arrays = [arr for arr in self.array_names if arr.lower() not in ('rgb', 'labels', 'normals', 'normals_rgb')]
+        # Build available arrays in priority order
+        other_arrays = [arr for arr in self.array_names if arr.lower() not in ('rgb', 'labels', 'normals', 'class_ids')]
         self.available_arrays = ["RGB", "Labels"]
-        
-        if "Normals_RGB" in self.array_names:
-            self.available_arrays.append("Normals_RGB")
-            
         self.available_arrays.extend(other_arrays)
         
         print(f"Array names in mesh: {self.array_names}")
@@ -387,6 +377,9 @@ class MeshProduct(AbstractSceneProduct):
         
         # Extract the rest to numpy temporarily
         triangles_np = np.asarray(tri_mesh.faces.reshape(-1, 4)[:, 1:], dtype=np.uint32)
+        # Cache a CPU-side copy of the triangle indices to avoid costly
+        # GPU->CPU transfers during repeated hit-tests.
+        self._cached_triangles_np = triangles_np
         centers_np = np.asarray(tri_mesh.cell_centers().points, dtype=np.float32)
         centers_sq_norm_np = np.sum(centers_np**2, axis=1)
         
@@ -398,13 +391,34 @@ class MeshProduct(AbstractSceneProduct):
         
         if self._original_cell_ids is not None:
             self._original_cell_ids_pt = torch.tensor(self._original_cell_ids.astype(np.int64), device=self.device)
-            # Index map stores original (pre-triangulation) cell IDs; use original mesh cell centers
             self._element_centers_np = np.asarray(self.mesh.cell_centers().points, dtype=np.float32)
         else:
-            # Index map stores triangulated face IDs
             self._element_centers_np = centers_np.copy()
+            
+        # --- Build Open3D BVH during load time! ---
+        # try:
+        #     import open3d as o3d
+
+        #     print(f"🌲 Building Open3D BVH for {self.label}...")
+
+        #     bvh_start = time.time()
+        #     scene = o3d.t.geometry.RaycastingScene()
+        #     v_tensor = o3d.core.Tensor(self._cached_vertices, dtype=o3d.core.Dtype.Float32)
+        #     t_tensor = o3d.core.Tensor(triangles_np, dtype=o3d.core.Dtype.UInt32)
+        #     scene.add_triangles(v_tensor, t_tensor)
+            
+        #     # --- Force Embree to compile the tree NOW ---
+        #     dummy_ray = o3d.core.Tensor([[0.0, 0.0, 0.0, 0.0, 0.0, 1.0]], dtype=o3d.core.Dtype.Float32)
+        #     scene.cast_rays(dummy_ray)
+            
+        #     self._o3d_raycasting_scene = scene
+        #     print(f"✅ BVH built and compiled successfully in {time.time() - bvh_start:.3f}s")
+
+        # except ImportError:
+        #     print("⚠️ Open3D not installed. BVH will fall back to point sampling.")
+        #     pass
         
-        print(f"✅ Geometry extracted and cached in {time.time() - start_time:.3f}s")
+        # print(f"✅ Geometry extracted and cached in {time.time() - start_time:.3f}s")
     
     # --------------------------------------------------------------------------
     # AbstractSceneProduct Implementation
@@ -528,76 +542,68 @@ class MeshProduct(AbstractSceneProduct):
     def _ensure_scalar_arrays(self):
         """
         Ensure required scalar arrays exist in the mesh.
-        
-        Creates (as cell/face data):
-        - "Labels": All white (255, 255, 255) for uniform labeling
-        - "Class_IDs": All zeros (0) for background/unannotated state
-        - "RGB": Metashape purple if not present in the data
-        
-        This allows these arrays to be treated as real data arrays in the mapper.
         """
         if self.mesh is None:
             return
         
         n_faces = self.mesh.n_cells
         
-        # Create "Labels" array if it doesn't exist - uniform white
+        # 1. Create "Labels" array if it doesn't exist - uniform white
         if "Labels" not in self.mesh.array_names:
             labels_array = np.ones((n_faces, 3), dtype=np.uint8) * 255  # White
             self.mesh.cell_data["Labels"] = labels_array
 
-        # Create "Class_IDs" array if it doesn't exist - uniform zeros (background)
-        if "Class_IDs" not in self.mesh.array_names:
-            class_ids_array = np.zeros(n_faces, dtype=np.int32)
-            self.mesh.cell_data["Class_IDs"] = class_ids_array
+        # Create a Python-owned labels cache detached from VTK for background painting
+        self._labels_cache = np.asarray(self.mesh.cell_data["Labels"]).copy()
+
+        # Keep a readonly reference to the PyVista view for flush operations only
+        self._labels_view = self.mesh.cell_data["Labels"]
+
+        # Keep this entirely in Python RAM. Do NOT attach class_ids to self.mesh!
+        if not hasattr(self, 'class_ids'):
+            self.class_ids = np.zeros(n_faces, dtype=np.int32)
         
-        # Create "RGB" array if it doesn't exist - Metashape purple
+        # 2. Create "RGB" array if it doesn't exist - Metashape purple
         if "RGB" not in self.mesh.array_names:
-            # Metashape purple: #8d8cc4 -> RGB (141, 140, 196)
             rgb_array = np.ones((n_faces, 3), dtype=np.uint8)
-            rgb_array[:, 0] = 141  # R
-            rgb_array[:, 1] = 140  # G
-            rgb_array[:, 2] = 196  # B
+            rgb_array[:, 0] = 141  
+            rgb_array[:, 1] = 140  
+            rgb_array[:, 2] = 196  
             self.mesh.cell_data["RGB"] = rgb_array
         
-        # Ensure raw normals exist on the mesh (compute them if missing)
+        # Ensure raw float normals exist for default VTK lighting, 
+        # but DO NOT generate the heavy Normals_RGB array.
         if "Normals" not in self.mesh.array_names and "normals" not in self.mesh.array_names:
             self.mesh.compute_normals(cell_normals=True, point_normals=False, inplace=True)
 
-        # Map [-1, 1] floats to [0, 255] RGB
-        norm_key = "Normals" if "Normals" in self.mesh.array_names else ("normals" if "normals" in self.mesh.array_names else None)
-        if norm_key and "Normals_RGB" not in self.mesh.array_names:
-            if norm_key in self.mesh.cell_data:
-                raw_normals = self.mesh.cell_data[norm_key]
-                rgb_normals = np.clip((raw_normals + 1.0) / 2.0 * 255.0, 0, 255).astype(np.uint8)
-                self.mesh.cell_data["Normals_RGB"] = rgb_normals
-            elif norm_key in self.mesh.point_data:
-                raw_normals = self.mesh.point_data[norm_key]
-                rgb_normals = np.clip((raw_normals + 1.0) / 2.0 * 255.0, 0, 255).astype(np.uint8)
-                self.mesh.point_data["Normals_RGB"] = rgb_normals
-
-        # Update array_names after potentially adding new arrays
         self.array_names = self.mesh.array_names
 
     def apply_labels(self, element_ids: np.ndarray, class_id: int, color_rgb: tuple) -> None:
         """
         Update the class ID and visual color for specific mesh faces.
-        
-        Args:
-            element_ids: Array of face (cell) indices to update.
-            class_id: The semantic integer ID of the label.
-            color_rgb: Tuple of (R, G, B) values (0-255).
         """
         if self.mesh is None or len(element_ids) == 0:
             return
-            
-        # 1. Update the semantic Ground Truth data
-        self.mesh.cell_data["Class_IDs"][element_ids] = class_id
-        
-        # 2. Update the visual RGB data for the viewer
-        color_array = np.array(color_rgb[:3], dtype=np.uint8)
-        self.mesh.cell_data["Labels"][element_ids] = color_array
-        
-        # 3. Mark the PyVista arrays as modified
-        self.mesh.cell_data.Modified()
+        # 1. Update semantic data in Python RAM
+        self.class_ids[element_ids] = class_id
+
+        # 2. Update the python-owned labels cache (no VTK writes here)
+        if not hasattr(self, '_labels_cache'):
+            self._labels_cache = np.asarray(self.mesh.cell_data["Labels"]).copy()
+        self._labels_cache[element_ids] = color_rgb
+
+        # NOTE: No immediate VTK Modified() here. The GUI thread should call
+        # `flush_labels_to_gpu()` once painting activity settles.
+
+    def flush_labels_to_gpu(self) -> None:
+        """One full GPU upload. Call only when painting pauses (main thread)."""
+        if self.mesh is None or not hasattr(self, '_labels_cache'):
+            return
+        try:
+            self.mesh.cell_data["Labels"] = self._labels_cache
+            labels_array = self.mesh.GetCellData().GetArray("Labels")
+            if labels_array:
+                labels_array.Modified()
+        except Exception as e:
+            print(f"⚠️ flush_labels_to_gpu (Mesh) failed: {e}")
 

@@ -6,7 +6,7 @@ import platform
 
 import pyqtgraph as pg
 from PyQt5.QtWidgets import QWidget, QLabel, QHBoxLayout, QVBoxLayout, QSizePolicy
-from PyQt5.QtCore import QTimer
+from PyQt5.QtCore import QTimer, QThread, pyqtSignal
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -19,6 +19,124 @@ UPDATE_INTERVAL_MS = 500
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
+
+
+class PerfWorker(QThread):
+    """Background thread that collects system stats off the GUI thread and
+    emits a dictionary via the `dataReady` signal.
+    """
+    dataReady = pyqtSignal(object)
+
+    def __init__(self, interval_ms=UPDATE_INTERVAL_MS):
+        super().__init__()
+        self.interval = interval_ms / 1000.0
+        self._running = False
+        # initialize counters for per-second calculations
+        try:
+            self.prev_disk_io = psutil.disk_io_counters()
+        except Exception:
+            self.prev_disk_io = None
+        try:
+            self.prev_net_io = psutil.net_io_counters()
+        except Exception:
+            self.prev_net_io = None
+        self.prev_time = time.monotonic()
+
+    def run(self):
+        self._running = True
+        # warm up CPU percent baseline
+        try:
+            psutil.cpu_percent(interval=None)
+        except Exception:
+            pass
+
+        while self._running:
+            curr_time = time.monotonic()
+            time_delta = curr_time - (self.prev_time or curr_time)
+
+            # CPU
+            try:
+                cpu_percent = psutil.cpu_percent(interval=None)
+                per_core = psutil.cpu_percent(percpu=True)
+            except Exception:
+                cpu_percent = 0.0
+                per_core = []
+
+            # Memory
+            try:
+                mem_percent = psutil.virtual_memory().percent
+            except Exception:
+                mem_percent = 0.0
+
+            # GPU
+            try:
+                gpus = GPUtil.getGPUs()
+                gpu_percent = gpus[0].load * 100 if gpus else 0.0
+            except Exception:
+                gpu_percent = 0.0
+
+            # Disk I/O
+            try:
+                curr_disk_io = psutil.disk_io_counters()
+                if curr_disk_io and self.prev_disk_io and time_delta > 0:
+                    read_bytes = curr_disk_io.read_bytes - self.prev_disk_io.read_bytes
+                    write_bytes = curr_disk_io.write_bytes - self.prev_disk_io.write_bytes
+                    read_mb_per_sec = (read_bytes / time_delta) / (1024**2)
+                    write_mb_per_sec = (write_bytes / time_delta) / (1024**2)
+                else:
+                    read_mb_per_sec = 0.0
+                    write_mb_per_sec = 0.0
+                self.prev_disk_io = curr_disk_io
+            except Exception:
+                read_mb_per_sec = 0.0
+                write_mb_per_sec = 0.0
+
+            # Network
+            try:
+                curr_net_io = psutil.net_io_counters()
+                if curr_net_io and self.prev_net_io and time_delta > 0:
+                    sent_bytes = curr_net_io.bytes_sent - self.prev_net_io.bytes_sent
+                    recv_bytes = curr_net_io.bytes_recv - self.prev_net_io.bytes_recv
+                    sent_mb_per_sec = (sent_bytes / time_delta) / (1024**2)
+                    recv_mb_per_sec = (recv_bytes / time_delta) / (1024**2)
+                else:
+                    sent_mb_per_sec = 0.0
+                    recv_mb_per_sec = 0.0
+                self.prev_net_io = curr_net_io
+            except Exception:
+                sent_mb_per_sec = 0.0
+                recv_mb_per_sec = 0.0
+
+            self.prev_time = curr_time
+
+            data = {
+                'timestamp': curr_time,
+                'cpu_percent': cpu_percent,
+                'per_core': per_core,
+                'mem_percent': mem_percent,
+                'gpu_percent': gpu_percent,
+                'read_mb_per_sec': read_mb_per_sec,
+                'write_mb_per_sec': write_mb_per_sec,
+                'sent_mb_per_sec': sent_mb_per_sec,
+                'recv_mb_per_sec': recv_mb_per_sec,
+            }
+
+            try:
+                self.dataReady.emit(data)
+            except Exception:
+                pass
+
+            # Sleep in small increments so stop() can be responsive
+            sleep_remaining = self.interval
+            while self._running and sleep_remaining > 0:
+                time.sleep(min(0.1, sleep_remaining))
+                sleep_remaining -= 0.1
+
+    def stop(self, wait=True):
+        self._running = False
+        if wait and self.isRunning():
+            self.wait()
+
 
 
 class PerformanceWindow(QWidget):
@@ -62,12 +180,10 @@ class PerformanceWindow(QWidget):
         # --- Initialize UI ---
         self.setup_ui()
 
-        # --- Timer for Real-Time Updates ---
-        # Set up a QTimer to trigger the update_plots method every UPDATE_INTERVAL_MS
-        # We do NOT start the timer here. It will be started by the showEvent.
-        self.timer = QTimer()
-        self.timer.setInterval(UPDATE_INTERVAL_MS)
-        self.timer.timeout.connect(self.update_plots)
+        # --- Background worker for Real-Time Updates ---
+        # Use a QThread-based worker to collect stats off the GUI thread.
+        self.worker = PerfWorker(interval_ms=UPDATE_INTERVAL_MS)
+        self.worker.dataReady.connect(self._on_worker_data)
 
     def setup_ui(self):
         """
@@ -236,31 +352,81 @@ class PerformanceWindow(QWidget):
 
         self.prev_time = curr_time
 
+    def _on_worker_data(self, data):
+        """Receive metrics from the background worker and update UI elements.
+        Runs in the main (GUI) thread because signals are queued across threads.
+        """
+        curr_time = data.get('timestamp', time.monotonic())
+        # FPS tracking removed per request; timestamp retained for potential future uses
+
+        # --- Update CPU / Memory / GPU UI ---
+        cpu_percent = data.get('cpu_percent', 0.0)
+        self.cpu_data.append(cpu_percent)
+        self.cpu_value_label.setText(f"{cpu_percent:.1f}%")
+        try:
+            self.cpu_curve.setData(list(self.cpu_data))
+        except Exception:
+            pass
+
+        per_core = data.get('per_core', [])
+        for i, usage in enumerate(per_core):
+            if i < len(self.per_core_data):
+                self.per_core_data[i].append(usage)
+
+        mem_percent = data.get('mem_percent', 0.0)
+        self.mem_data.append(mem_percent)
+        self.mem_value_label.setText(f"{mem_percent:.1f}%")
+        try:
+            self.mem_curve.setData(list(self.mem_data))
+        except Exception:
+            pass
+
+        gpu_percent = data.get('gpu_percent', 0.0)
+        self.gpu_data.append(gpu_percent)
+        self.gpu_value_label.setText(f"{gpu_percent:.1f}%")
+        try:
+            self.gpu_curve.setData(list(self.gpu_data))
+        except Exception:
+            pass
+
+        # Disk / Network counters (kept internally)
+        self.disk_read_data.append(data.get('read_mb_per_sec', 0.0))
+        self.disk_write_data.append(data.get('write_mb_per_sec', 0.0))
+        self.net_sent_data.append(data.get('sent_mb_per_sec', 0.0))
+        self.net_recv_data.append(data.get('recv_mb_per_sec', 0.0))
+
     # --- Event Handlers to Control Monitoring ---
     
     def showEvent(self, event):
         """
         Overrides the QWidget's showEvent.
-        Starts the timer when the window is shown.
+        Starts the background worker when the window is shown.
         """
         super().showEvent(event)
-        if not self.timer.isActive():
-            self.timer.start()
+        if hasattr(self, 'worker') and not self.worker.isRunning():
+            self.worker.start()
 
     def hideEvent(self, event):
         """
         Overrides the QWidget's hideEvent.
-        Stops the timer when the window is hidden (e.g., minimized).
+        Stops the background worker when the window is hidden (e.g., minimized).
         """
         super().hideEvent(event)
-        if self.timer.isActive():
-            self.timer.stop()
+        if hasattr(self, 'worker') and self.worker.isRunning():
+            # Request stop but do not block the hiding call
+            try:
+                self.worker.stop(wait=False)
+            except Exception:
+                self.worker._running = False
 
     def closeEvent(self, event):
         """
         Overrides the QMainWindow's closeEvent.
-        Ensures the timer is stopped when the window is closed.
+        Ensures the background worker is stopped when the window is closed.
         """
-        if self.timer.isActive():
-            self.timer.stop()
+        if hasattr(self, 'worker') and self.worker.isRunning():
+            try:
+                self.worker.stop(wait=True)
+            except Exception:
+                self.worker._running = False
         super().closeEvent(event)

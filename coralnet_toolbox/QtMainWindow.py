@@ -52,6 +52,7 @@ from coralnet_toolbox.WorkArea import WorkAreaManager as WorkAreaManagerDialog
 from coralnet_toolbox.IO import (
     ImportImages,
     ImportFrames,
+    ImportVideo,
     ImportLabels,
     ImportCoralNetLabels,
     ImportTagLabLabels,
@@ -284,6 +285,7 @@ class MainWindow(QMainWindow):
         self.export_geojson_annotations_dialog = ExportGeoJSONAnnotations(self)
         self.export_spatial_metrics_dialog = ExportSpatialMetrics(self)
         self.import_frames_dialog = ImportFrames(self)
+        self.import_video = ImportVideo(self)
         self.open_project_dialog = OpenProject(self)
         self.save_project_dialog = SaveProject(self)
 
@@ -363,6 +365,10 @@ class MainWindow(QMainWindow):
         self.import_frames_action = QAction("Frames from Video", self)
         self.import_frames_action.triggered.connect(self.open_import_frames_dialog)
         self.import_rasters_menu.addAction(self.import_frames_action)
+        # Import Video
+        self.import_video_action = QAction("Video File", self)
+        self.import_video_action.triggered.connect(self.import_video.import_video)
+        self.import_rasters_menu.addAction(self.import_video_action)
         
         # Labels submenu
         self.import_labels_menu = self.import_menu.addMenu("Labels")
@@ -516,16 +522,6 @@ class MainWindow(QMainWindow):
         # Utilities menu
         self.utilities_menu = self.menu_bar.addMenu("Utilities")
 
-        # Scale
-        self.scale_action = QAction("Set Scale", self)
-        self.scale_action.triggered.connect(self.open_scale_dialog)
-        self.utilities_menu.addAction(self.scale_action)
-
-        # Rugosity
-        self.rugosity_action = QAction("Measure Rugosity", self)
-        self.rugosity_action.triggered.connect(self.open_rugosity_dialog)
-        self.utilities_menu.addAction(self.rugosity_action)
-        
         # Sampling Annotations
         self.annotation_sampling_action = QAction("Sample Patches", self)
         self.annotation_sampling_action.triggered.connect(self.open_patch_sampling_dialog_dialog)
@@ -535,6 +531,19 @@ class MainWindow(QMainWindow):
         self.tile_manager_action = QAction("Work Areas", self)
         self.tile_manager_action.triggered.connect(self.open_tile_manager_dialog)
         self.utilities_menu.addAction(self.tile_manager_action)
+
+        # Separator
+        self.utilities_menu.addSeparator()
+
+        # Scale
+        self.scale_action = QAction("Set Scale", self)
+        self.scale_action.triggered.connect(self.open_scale_dialog)
+        self.utilities_menu.addAction(self.scale_action)
+
+        # Rugosity
+        self.rugosity_action = QAction("Measure Rugosity", self)
+        self.rugosity_action.triggered.connect(self.open_rugosity_dialog)
+        self.utilities_menu.addAction(self.rugosity_action)
         
         # ========== AI-ASSIST MENU ==========
         # AI-Assist menu
@@ -1136,6 +1145,8 @@ class MainWindow(QMainWindow):
             self.annotation_dock.add_toolbar(self.annotation_window.create_top_toolbar())
         if hasattr(self.annotation_window, 'create_bottom_toolbar'):
             self.annotation_dock.add_toolbar(self.annotation_window.create_bottom_toolbar(), Qt.BottomToolBarArea)
+        if hasattr(self.annotation_window, 'create_video_toolbar'):
+            self.annotation_dock.add_toolbar(self.annotation_window.create_video_toolbar(), Qt.BottomToolBarArea)
 
         # Setup Image Dock using DockWrapper
         self.rasters_dock = DockWrapper("Rasters", "RastersDock", self.image_window, self)
@@ -1316,6 +1327,9 @@ class MainWindow(QMainWindow):
         # ---------------------------------------------------------------------
         self.annotation_window.annotationCreated.connect(self.label_window.update_tooltips)
         self.annotation_window.annotationDeleted.connect(self.label_window.update_tooltips)
+        # Also refresh label tooltips when an annotation's label changes
+        self.annotation_window.annotationLabelChanged.connect(lambda *args: self.label_window.update_tooltips())
+        self.annotation_window.annotationsLabelsChanged.connect(lambda *args: self.label_window.update_tooltips())
 
         self.annotation_window.annotationCreated.connect(self.annotation_viewer_window.on_annotation_created)
         self.annotation_window.annotationsCreated.connect(self.annotation_viewer_window.on_annotations_created)
@@ -1626,8 +1640,23 @@ class MainWindow(QMainWindow):
             file_names = [url.toLocalFile() for url in urls if url.isLocalFile()]
 
             # Accept if any of the files is a project file (.json or .bin)
-            if any(file_name.lower().endswith(('.json', '.bin')) for file_name in file_names):
+            # Route MVAT-compatible files to the MVAT viewer so they are
+            # not treated as images by ImageWindow/AnnotationWindow.
+            try:
+                mvat_exts = set(getattr(self.mvat_viewer, '_POINT_CLOUD_EXTENSIONS', []) +
+                                getattr(self.mvat_viewer, '_MESH_EXTENSIONS', []))
+            except Exception:
+                mvat_exts = set()
+
+            lower_names = [fn.lower() for fn in file_names]
+            if any(fn.endswith(('.json', '.bin')) for fn in lower_names):
                 event.acceptProposedAction()
+            elif any(any(fn.endswith(ext) for ext in mvat_exts) for fn in lower_names):
+                # Let MVAT viewer handle this drag
+                if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
+                    self.mvat_viewer.dragEnterEvent(event)
+                else:
+                    event.ignore()
             else:
                 self.import_images.dragEnterEvent(event)
 
@@ -1640,7 +1669,9 @@ class MainWindow(QMainWindow):
 
         if file_names:
             # Check if a single project file (.json or .bin) was dropped
-            if len(file_names) == 1 and file_names[0].lower().endswith(('.json', '.bin')):
+            lower_names = [fn.lower() for fn in file_names]
+
+            if len(file_names) == 1 and lower_names[0].endswith(('.json', '.bin')):
                 # Open as a project file
                 path = file_names[0]
                 self.open_project_dialog.file_path_edit.setText(path)
@@ -1648,8 +1679,21 @@ class MainWindow(QMainWindow):
                 self.current_project_path = self.open_project_dialog.current_project_path
                 self.update_project_label()
             else:
-                # Handle as image imports
-                self.import_images.dropEvent(event)
+                # If any file matches MVAT-supported extensions, route to MVAT viewer
+                try:
+                    mvat_exts = set(getattr(self.mvat_viewer, '_POINT_CLOUD_EXTENSIONS', []) +
+                                    getattr(self.mvat_viewer, '_MESH_EXTENSIONS', []))
+                except Exception:
+                    mvat_exts = set()
+
+                if any(any(fn.endswith(ext) for ext in mvat_exts) for fn in lower_names):
+                    if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
+                        self.mvat_viewer.dropEvent(event)
+                    else:
+                        event.ignore()
+                else:
+                    # Handle as image imports
+                    self.import_images.dropEvent(event)
 
     def dragMoveEvent(self, event):
         """Handle drag move event for drag-and-drop."""
@@ -1660,8 +1704,21 @@ class MainWindow(QMainWindow):
             file_names = [url.toLocalFile() for url in urls if url.isLocalFile()]
 
             # Accept if any of the files is a project file (.json or .bin)
-            if any(file_name.lower().endswith(('.json', '.bin')) for file_name in file_names):
+            lower_names = [fn.lower() for fn in file_names]
+
+            try:
+                mvat_exts = set(getattr(self.mvat_viewer, '_POINT_CLOUD_EXTENSIONS', []) +
+                                getattr(self.mvat_viewer, '_MESH_EXTENSIONS', []))
+            except Exception:
+                mvat_exts = set()
+
+            if any(fn.endswith(('.json', '.bin')) for fn in lower_names):
                 event.acceptProposedAction()
+            elif any(any(fn.endswith(ext) for ext in mvat_exts) for fn in lower_names):
+                if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
+                    self.mvat_viewer.dragMoveEvent(event)
+                else:
+                    event.ignore()
             else:
                 self.import_images.dragMoveEvent(event)
                 
@@ -1954,6 +2011,32 @@ class MainWindow(QMainWindow):
 
         # Emit to reset the tool
         self.toolChanged.emit(None)
+
+    def set_video_playback_tools_enabled(self, enabled: bool):
+        """Enable or disable tools that are incompatible with live video playback."""
+        # Disable all, for now
+        video_locked_actions = [
+            self.select_tool_action,
+            self.patch_tool_action,
+            self.rectangle_tool_action,
+            self.polygon_tool_action,
+            self.brush_tool_action,
+            self.fill_tool_action,
+            self.dropper_tool_action,
+            self.erase_tool_action,
+            self.sam_tool_action,
+            self.see_anything_tool_action,
+            self.work_area_tool_action,
+        ]
+        for action in video_locked_actions:
+            action.setEnabled(enabled)
+        if not enabled:
+            # Untoggle any of these tools that are currently active
+            needs_reset = any(a.isChecked() for a in video_locked_actions)
+            for action in video_locked_actions:
+                action.setChecked(False)
+            if needs_reset:
+                self.toolChanged.emit(None)
 
     def handle_tool_changed(self, tool):
         """Update the toolbar UI to reflect the currently selected tool."""

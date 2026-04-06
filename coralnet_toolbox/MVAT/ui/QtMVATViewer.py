@@ -29,6 +29,7 @@ from coralnet_toolbox.MVAT.core.Model import PointCloudProduct, MeshProduct
 from coralnet_toolbox.MVAT.core.SceneContext import SceneContext
 from coralnet_toolbox.MVAT.core.SceneProduct import AbstractSceneProduct
 from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED
+from coralnet_toolbox.MVAT.ui.CameraAnimator import CameraAnimator
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -134,6 +135,7 @@ class MVATViewer(QFrame):
     computeIndexMapsToggled = pyqtSignal(bool)
     computeDepthMapsToggled = pyqtSignal(bool)
     primaryTargetChanged = pyqtSignal(str)      # Emits product_id when primary target changes
+    visibilityQualityChanged = pyqtSignal(float)  # Emits scale factor (0.1 - 1.0) when quality changes
 
     def __init__(self, parent=None, point_size=1, show_rays=True):
         super().__init__(parent)
@@ -176,11 +178,12 @@ class MVATViewer(QFrame):
         self._ray_manager = BatchedRayManager()
         # Frustum and thumbnail management
         self._frustum_manager = BatchedFrustumManager()
+        self._camera_animator = CameraAnimator(self.plotter, duration_ms=400)
         self.thumbnail_actors = []
         self.thumbnail_opacity = 0.50
         self.frustum_scale = 0.1
         self._show_wireframes_enabled = True
-        self._show_thumbnails_enabled = True
+        self._show_thumbnails_enabled = False
         
         # Scene product visibility by type
         self._show_point_clouds = True
@@ -407,6 +410,12 @@ class MVATViewer(QFrame):
         view_menu.addSeparator()
 
         # Visibility toggles
+        action_rays = QAction("Show Rays", self)
+        action_rays.setCheckable(True)
+        action_rays.setChecked(self._show_rays_enabled)
+        action_rays.toggled.connect(self.set_ray_visible)
+        view_menu.addAction(action_rays)
+
         action_wireframes = QAction("Show Wireframes", self)
         action_wireframes.setCheckable(True)
         action_wireframes.setChecked(self._show_wireframes_enabled)
@@ -418,12 +427,6 @@ class MVATViewer(QFrame):
         action_thumbnails.setChecked(self._show_thumbnails_enabled)
         action_thumbnails.toggled.connect(self.enable_thumbnails)
         view_menu.addAction(action_thumbnails)
-
-        action_rays = QAction("Show Rays", self)
-        action_rays.setCheckable(True)
-        action_rays.setChecked(self._show_rays_enabled)
-        action_rays.toggled.connect(self.set_ray_visible)
-        view_menu.addAction(action_rays)
 
         view_menu.addSeparator()
         
@@ -470,7 +473,33 @@ class MVATViewer(QFrame):
         self._update_primary_target_menu()  # Populate initially
 
         view_menu.addSeparator()
+
+        # Visibility Quality submenu
+        quality_menu = view_menu.addMenu("Visibility Quality")
+        quality_menu.setToolTip("Set the resolution scale for computing occlusion maps")
+
+        self._quality_action_group = QActionGroup(self)
+        self._quality_action_group.setExclusive(True)
+
+        quality_levels = [
+            ("Highest (100%)", 1.0),
+            ("High (75%)", 0.75),
+            ("Medium (50%)", 0.50),
+            ("Low (25%)", 0.25),
+            ("Lowest (10%)", 0.10),
+        ]
+
+        for label, scale in quality_levels:
+            action = QAction(label, self)
+            action.setCheckable(True)
+            if scale == 0.50:  # default to Medium
+                action.setChecked(True)
+            action.triggered.connect(lambda checked, s=scale: self.visibilityQualityChanged.emit(s))
+            self._quality_action_group.addAction(action)
+            quality_menu.addAction(action)
         
+        view_menu.addSeparator()
+
         # Background computation toggles
         action_index_maps = QAction("Compute Index Maps", self)
         action_index_maps.setCheckable(True)
@@ -1003,6 +1032,10 @@ class MVATViewer(QFrame):
             product = self._create_product_from_file(file_path)
             
             if product is not None:
+                # Force the GPU extraction now while the cursor is still a spinning wheel!
+                if hasattr(product, 'prepare_geometry'):
+                    product.prepare_geometry()
+                    
                 self.add_product(product)
                 self.render_scene()
                 
@@ -1220,6 +1253,7 @@ class MVATViewer(QFrame):
                 actor = self.plotter.add_mesh(
                     mesh,
                     render=False,
+                    reset_camera=False,
                     **style
                 )
                 
@@ -1746,12 +1780,13 @@ class MVATViewer(QFrame):
         except Exception:
             pass
 
-    def match_camera_perspective(self, camera, focal_distance_ratio: float = 0.2):
-        """Match the 3D viewer perspective to a camera's viewpoint.
+    def match_camera_perspective(self, camera, focal_distance_ratio: float = 0.2, animate: bool = False):
+        """Match the 3D viewer perspective to a camera's viewpoint with optional animation.
 
         Args:
             camera: Camera object with position, R, K, width/height
             focal_distance_ratio: Fraction of scene diagonal to use as focal distance
+            animate: If True, smoothly animate the camera transition (default False)
         """
         try:
             # BRANCH: Orthographic camera
@@ -1761,9 +1796,13 @@ class MVATViewer(QFrame):
                 self.plotter.enable_parallel_projection()
                 return
             
-            # RESTORE: Perspective projection for normal cameras
+            # RESTORE: Perspective projection for normal cameras, but ONLY if currently
+            # in parallel projection. PyVista's disable_parallel_projection() unconditionally
+            # overwrites camera.position using stale parallel_scale, which would snap the
+            # viewport to Reset View before the animation start state is captured.
             try:
-                self.plotter.disable_parallel_projection()
+                if self.plotter.camera.GetParallelProjection():
+                    self.plotter.disable_parallel_projection()
             except Exception:
                 pass
             
@@ -1800,11 +1839,8 @@ class MVATViewer(QFrame):
             viewer_pos = (position - view_direction * eps)
             viewer_focal = viewer_pos + view_direction * focal_distance
 
-            self.plotter.camera.position = viewer_pos.tolist()
-            self.plotter.camera.focal_point = viewer_focal.tolist()
-            self.plotter.camera.up = up_vector.tolist()
-
             # Match vertical FOV from intrinsics if available
+            fov_deg = 50.0  # default
             try:
                 if getattr(camera, 'K', None) is not None:
                     fy = camera.K[1, 1]
@@ -1812,9 +1848,25 @@ class MVATViewer(QFrame):
                     fov_rad = 2 * np.arctan(height / (2 * fy))
                     fov_deg = np.degrees(fov_rad)
                     fov_deg = np.clip(fov_deg, 10, 120)
-                    self.plotter.camera.view_angle = fov_deg
             except Exception:
                 pass
+
+            # ANIMATION: If requested, use the animator
+            if animate and self._camera_animator is not None:
+                try:
+                    self._camera_animator.animate_to_camera_state(
+                        viewer_pos, viewer_focal, up_vector, fov_deg
+                    )
+                    return
+                except Exception:
+                    # Fall through to instant update on failure
+                    pass
+            
+            # INSTANT UPDATE: Apply camera state immediately
+            self.plotter.camera.position = viewer_pos.tolist()
+            self.plotter.camera.focal_point = viewer_focal.tolist()
+            self.plotter.camera.up = up_vector.tolist()
+            self.plotter.camera.view_angle = fov_deg
 
             try:
                 self.plotter.render()

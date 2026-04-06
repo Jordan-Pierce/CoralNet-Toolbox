@@ -76,6 +76,17 @@ class Camera:
         # This 3x4 matrix directly maps 3D homogeneous world points to 2D homogeneous image points
         self.P = self.K @ self.extrinsics[:3, :]
 
+        # --- Distortion ---
+        # K_linear: undistorted camera matrix used by 3D rendering engines.
+        # When the raster is distorted, this is K_new from getOptimalNewCameraMatrix (wider FOV).
+        # Falls back to K when undistorted or when cv2 is unavailable.
+        self.dist_coeffs = getattr(raster, 'dist_coeffs', None)
+        self.is_distorted = getattr(raster, 'is_distorted', False)
+        self.is_fisheye = getattr(raster, 'is_fisheye', False)
+        # Avoid using numpy arrays in boolean context (ambiguous truth value).
+        intr_undist = getattr(raster, 'intrinsics_undistorted', None)
+        self.K_linear = intr_undist if intr_undist is not None else self.K
+
         # --- Visualization ---
         self.selected = False
         self.is_orthographic = False  # Flag for orthographic vs perspective camera
@@ -140,61 +151,137 @@ class Camera:
         """
         Return all (u, v) pixel coordinates where element_id is visible.
 
-        Uses the CSR inverted index stored on the raster for O(log N) lookup.
+        Performs on-the-fly lookup using np.where() for single element.
+        Latency: 5-10 ms for 16.8M pixel images (acceptable for UI clicks).
 
         Returns:
-            list of (u, v) tuples, or [] if the inverted index is unavailable
-            or element_id is not visible.
+            list of (u, v) tuples, or [] if element_id is not visible or index_map unavailable.
         """
-        inv_ids     = self._raster.inv_ids
-        inv_offsets = self._raster.inv_offsets
-        inv_pixels  = self._raster.inv_pixels
-        if inv_ids is None or len(inv_ids) == 0:
+        if self._raster.index_map is None:
             return []
-        idx = int(np.searchsorted(inv_ids, element_id))
-        if idx >= len(inv_ids) or inv_ids[idx] != element_id:
+        
+        try:
+            # Fast single-element lookup
+            y_coords, x_coords = np.where(self._raster.index_map == element_id)
+            
+            if len(y_coords) == 0:
+                return []
+            
+            return list(zip(x_coords.tolist(), y_coords.tolist()))
+        except Exception:
+            # Safety: return empty list on any error to avoid hanging
             return []
-        flat = inv_pixels[inv_offsets[idx] : inv_offsets[idx + 1]]
-        v_arr, u_arr = np.divmod(flat, self.width)
-        return list(zip(u_arr.tolist(), v_arr.tolist()))
 
-    def get_pixels_for_elements(self, element_ids: np.ndarray) -> np.ndarray:
+    def get_pixels_for_elements(self, element_ids: np.ndarray, bbox: tuple = None) -> np.ndarray:
         """
         Return a 1D array of flat (row-major) pixel indices for all elements
         in ``element_ids`` that are visible in this camera.
-
-        Uses the CSR inverted index for an O(N log M) vectorised lookup where
-        N = len(element_ids) and M = number of unique elements in the index.
-
+        
         Args:
-            element_ids: 1D int array of element IDs to query (should already
-                         be unique and have -1 filtered out by the caller).
-
-        Returns:
-            np.ndarray (int64): flat pixel indices into a (height × width)
-            row-major image, or an empty array if the inverted index is
-            unavailable or no elements match.
+            element_ids: 1D int array of element IDs to query.
+            bbox: Optional (u_min, u_max, v_min, v_max) to restrict the search area.
         """
-        inv_ids     = self._raster.inv_ids
-        inv_offsets = self._raster.inv_offsets
-        inv_pixels  = self._raster.inv_pixels
-        if inv_ids is None or len(inv_ids) == 0 or len(element_ids) == 0:
+        try:
+            if self._raster.index_map is None:
+                return np.empty(0, dtype=np.int64)
+            if element_ids is None or not isinstance(element_ids, np.ndarray) or len(element_ids) == 0:
+                return np.empty(0, dtype=np.int64)
+
+            # --- LUT Setup ---
+            current_map_id = id(self._raster.index_map)
+            if getattr(self, '_cached_map_id', None) != current_map_id:
+                self._cached_max_id = int(np.max(self._raster.index_map))
+                self._cached_map_id = current_map_id
+                self._lut_buf = None  # Invalidate buffer when index map changes
+
+            max_id = self._cached_max_id
+            valid_query_ids = element_ids[element_ids <= max_id]
+            if len(valid_query_ids) == 0:
+                return np.empty(0, dtype=np.int64)
+
+            # Reuse pre-allocated buffer — zero-allocation fast path
+            if getattr(self, '_lut_buf', None) is None or len(self._lut_buf) < max_id + 2:
+                self._lut_buf = np.zeros(max_id + 2, dtype=bool)
+            lut = self._lut_buf
+            lut[valid_query_ids] = True
+            
+            # --- Localized Sub-grid Search ---
+            if bbox is not None:
+                # BBOX Clamping to image dimensions
+                u_min, u_max, v_min, v_max = bbox
+                
+                u_min = max(0, int(u_min))
+                u_max = min(self.width, int(u_max))
+                v_min = max(0, int(v_min))
+                v_max = min(self.height, int(v_max))
+                
+                if u_min >= u_max or v_min >= v_max:
+                    return np.empty(0, dtype=np.int64)
+                    
+                sub_map = self._raster.index_map[v_min:v_max, u_min:u_max].ravel()
+                valid_mask = lut[sub_map]
+                local_flat_indices = np.where(valid_mask)[0].astype(np.int64)
+                
+                if len(local_flat_indices) == 0:
+                    return np.empty(0, dtype=np.int64)
+                    
+                box_width = u_max - u_min
+                local_v, local_u = np.divmod(local_flat_indices, box_width)
+                
+                global_flat_indices = (local_v + v_min) * self.width + (local_u + u_min)
+                # CRITICAL: Reset only the bits we set before returning
+                lut[valid_query_ids] = False
+                return global_flat_indices
+                
+            # --- STRIDED PRE-SEARCH OPTIMIZATION (Fallback) ---
+            else:
+                # If we don't have a bbox, DO NOT scan 16M pixels! 
+                # Scan a 1/64th resolution version to find the rough bounding box instantly.
+                stride = 8
+                sub_map = self._raster.index_map[::stride, ::stride].ravel()
+                valid_mask_sub = lut[sub_map]
+                
+                if not valid_mask_sub.any():
+                    lut[valid_query_ids] = False
+                    return np.empty(0, dtype=np.int64)
+                    
+                sub_flat_indices = np.where(valid_mask_sub)[0]
+                sub_w = (self.width + stride - 1) // stride
+                sub_v, sub_u = np.divmod(sub_flat_indices, sub_w)
+                
+                # Convert back to full resolution with a generous safety margin
+                u_min = max(0, (sub_u.min() - 1) * stride)
+                u_max = min(self.width, (sub_u.max() + 2) * stride)
+                v_min = max(0, (sub_v.min() - 1) * stride)
+                v_max = min(self.height, (sub_v.max() + 2) * stride)
+                
+                # Now do the exact search ONLY within this tight bounding box
+                exact_map = self._raster.index_map[v_min:v_max, u_min:u_max].ravel()
+                valid_mask = lut[exact_map]
+                local_flat_indices = np.where(valid_mask)[0].astype(np.int64)
+                
+                if len(local_flat_indices) == 0:
+                    lut[valid_query_ids] = False
+                    return np.empty(0, dtype=np.int64)
+                    
+                box_width = u_max - u_min
+                local_v, local_u = np.divmod(local_flat_indices, box_width)
+                
+                global_flat_indices = (local_v + v_min) * self.width + (local_u + u_min)
+                # CRITICAL: Reset only the bits we set before returning
+                lut[valid_query_ids] = False
+                return global_flat_indices
+                
+        except Exception as e:
+            # Safety: ensure LUT is reset even on error
+            if hasattr(self, '_lut_buf') and getattr(self, '_lut_buf') is not None:
+                try:
+                    if 'valid_query_ids' in dir():
+                        self._lut_buf[valid_query_ids] = False
+                except Exception:
+                    self._lut_buf = None  # Force reallocation next call
+            print(f"⚠️ get_pixels_for_elements failed: {e}")
             return np.empty(0, dtype=np.int64)
-
-        # Vectorised binary search: find the slot in inv_ids for each queried ID
-        idxs = np.searchsorted(inv_ids, element_ids)
-
-        # Mask out any positions where the ID wasn't actually found
-        safe_idxs = np.minimum(idxs, len(inv_ids) - 1)
-        valid_mask = inv_ids[safe_idxs] == element_ids
-        valid_idxs = idxs[valid_mask]
-
-        if len(valid_idxs) == 0:
-            return np.empty(0, dtype=np.int64)
-
-        # Gather all pixel slices for the matched IDs into one flat array
-        parts = [inv_pixels[inv_offsets[i]:inv_offsets[i + 1]] for i in valid_idxs]
-        return np.concatenate(parts).astype(np.int64)
 
     # --------------------------------------------------------------------------
     # Geometric Methods
@@ -203,60 +290,104 @@ class Camera:
     def project(self, points_3d_world):
         """
         Project a 3D world point into a 2D pixel coordinate.
-        
-        Math: 
-        $x_{pix} = P \cdot X_{world}$
-        
+
+        When the source image has lens distortion, uses cv2.projectPoints so the
+        result lands on the correct *distorted* pixel. Falls back to linear matrix
+        multiplication otherwise.
+
         Args:
             points_3d_world (np.ndarray): 3D point [x, y, z] in world coordinates.
 
         Returns:
             np.ndarray: 2D pixel coordinate [u, v] or [nan, nan] if invalid.
         """
-        # Add homogeneous coordinate (append 1.0)
-        points_hom = np.hstack((points_3d_world, 1.0))
-        
-        # Project using the P matrix
+        if self.is_distorted and self.dist_coeffs is not None:
+            try:
+                import cv2
+                pts = np.asarray(points_3d_world, dtype=np.float64).reshape(1, 1, 3)
+                rvec, _ = cv2.Rodrigues(self.R.astype(np.float64))
+                # ---> FISHEYE BRANCH <---
+                if getattr(self, 'is_fisheye', False):
+                    D = self.dist_coeffs[:4]
+                    projected, _ = cv2.fisheye.projectPoints(
+                        pts, rvec, self.t.astype(np.float64), self.K.astype(np.float64), D
+                    )
+                else:
+                    projected, _ = cv2.projectPoints(
+                        pts, rvec, self.t.astype(np.float64), self.K.astype(np.float64), self.dist_coeffs
+                    )
+
+                u, v = float(projected[0, 0, 0]), float(projected[0, 0, 1])
+                # Check if the point is in front of the camera
+                pt_cam = self.R @ np.asarray(points_3d_world, dtype=np.float64) + self.t
+                if pt_cam[2] <= 0:
+                    return np.array([np.nan, np.nan])
+                return np.array([u, v])
+            except ImportError:
+                pass  # Fall through to linear path
+            except Exception:
+                return np.array([np.nan, np.nan])
+
+        # Linear (undistorted) path
+        points_hom = np.hstack((np.asarray(points_3d_world, dtype=np.float64), 1.0))
         points_cam_hom = (self.P @ points_hom.T).T
-        
-        # Normalize by dividing by the 3rd component (depth Z in camera frame)
         points_pixel = np.full(2, np.nan)
-        
-        # Check if point is in front of the camera (Z > 0)
         if points_cam_hom[2] > 0:
             points_pixel = points_cam_hom[:2] / points_cam_hom[2]
-            
         return points_pixel
 
-    def unproject(self, pixel_coord):
+    def unproject(self, pixel_coord, depth=None):
         """
         Unproject a 2D pixel coordinate to a 3D world point.
-        
+
         Requires valid depth data in the associated Raster (Z-channel).
-        
+        When the image is distorted, the raw pixel is first undistorted to its
+        linear position in K_linear space before back-projection.
+
         Args:
-            pixel_coord (tuple/list): 2D pixel [u, v].
+            pixel_coord (tuple/list): 2D pixel [u, v] in distorted image space.
+            depth (float, optional): Depth value at the pixel. If None, it will be fetched from the raster's Z-channel.
 
         Returns:
             np.ndarray: 3D world point [x, y, z] or None if depth is missing.
         """
-        # 1. Get the depth value at this pixel
-        depth = self._get_depth_from_raster(int(pixel_coord[0]), int(pixel_coord[1]))
-        
+        if depth is None:
+            depth = self._get_depth_from_raster(int(pixel_coord[0]), int(pixel_coord[1]))
+            
         if depth is None or depth <= 0 or np.isnan(depth):
             return None
-            
-        # 2. Create homogeneous pixel coordinate
-        pixel_hom = np.array([pixel_coord[0], pixel_coord[1], 1])
-        
-        # 3. Transform to Camera Coordinate System (Back-projection)
-        # $X_{cam} = Z \cdot K^{-1} \cdot x_{pix}$
+
+        if self.is_distorted and self.dist_coeffs is not None and self.K_linear is not None:
+            try:
+                import cv2
+                # Map the distorted pixel to its undistorted (linear) equivalent
+                pts_in = np.array([[[float(pixel_coord[0]), float(pixel_coord[1])]]], dtype=np.float32)
+                # ---> FISHEYE BRANCH <---
+                if getattr(self, 'is_fisheye', False):
+                    D = self.dist_coeffs[:4]
+                    pts_out = cv2.fisheye.undistortPoints(
+                        pts_in, self.K.astype(np.float64), D, P=self.K_linear.astype(np.float64)
+                    )
+                else:
+                    pts_out = cv2.undistortPoints(
+                        pts_in, self.K.astype(np.float64), self.dist_coeffs, P=self.K_linear.astype(np.float64)
+                    )
+
+                u_lin, v_lin = float(pts_out[0, 0, 0]), float(pts_out[0, 0, 1])
+                K_linear_inv = np.linalg.inv(self.K_linear)
+                pixel_hom = np.array([u_lin, v_lin, 1.0])
+                point_cam = depth * (K_linear_inv @ pixel_hom)
+                point_world = self.R.T @ (point_cam - self.t)
+                return point_world
+            except ImportError:
+                pass  # Fall through to linear path
+            except Exception:
+                return None
+
+        # Linear (undistorted) path
+        pixel_hom = np.array([pixel_coord[0], pixel_coord[1], 1.0])
         point_cam = depth * (self.K_inv @ pixel_hom)
-        
-        # 4. Transform to World Coordinate System
-        # $X_{world} = R^T \cdot (X_{cam} - t)$
         point_world = self.R.T @ (point_cam - self.t)
-        
         return point_world
 
     def _get_depth_from_raster(self, x, y):

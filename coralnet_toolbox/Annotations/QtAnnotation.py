@@ -10,7 +10,7 @@ from PyQt5.QtGui import QColor, QPen, QBrush, QPainterPath, QFont, QPainter
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, pyqtProperty, QRectF
 from PyQt5.QtWidgets import (QMessageBox, QGraphicsRectItem, QGraphicsItem,
                              QGraphicsScene, QGraphicsItemGroup, QGraphicsSimpleTextItem, 
-                             QGraphicsPathItem)
+                             QGraphicsPathItem, QStyleOptionGraphicsItem)
 
 from coralnet_toolbox.QtLabelWindow import Label
 
@@ -22,6 +22,51 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
+
+
+class OptimizedPathItem(QGraphicsPathItem):
+    """A path item that dynamically switches between high-res and low-res geometry based on zoom level."""
+    def __init__(self, high_res_path, low_res_path):
+        super().__init__()
+        self.high_res_path = high_res_path
+        self.low_res_path = low_res_path
+        
+        # Set the item's path to the low-res one by default for faster shape() calculations
+        self.setPath(self.low_res_path)
+
+    def set_cached_bounding_rect(self, rect: QRectF):
+        """Cache the bounding rect to avoid expensive recalculation."""
+        self._cached_rect = rect
+
+    def boundingRect(self):
+        """Return the pre-calculated bounding rect instantly."""
+        if hasattr(self, '_cached_rect'):
+            return self._cached_rect
+        return super().boundingRect()
+
+    def paint(self, painter, option, widget=None):
+        # Calculate the Level of Detail (Zoom factor)
+        lod = option.levelOfDetailFromTransform(painter.worldTransform())
+        
+        # Grab the current pen
+        pen = self.pen()
+        
+        # If zoomed out significantly (e.g., < 0.4x scale), use simplified geometry
+        # and turn off cosmetic pens, using a fixed physical width.
+        if lod < 0.4:
+            pen.setCosmetic(False)
+            pen.setWidthF(2.0 / lod)  # Approximate visual thickness
+            painter.setPen(pen)
+            painter.setBrush(self.brush())
+            # Paint the fast, simplified polygon
+            painter.drawPath(self.low_res_path)
+        else:
+            # Normal viewing: Keep the beautiful cosmetic pens and exact geometry
+            pen.setCosmetic(True)
+            painter.setPen(pen)
+            painter.setBrush(self.brush())
+            # Paint the exact, pixel-perfect polygon
+            painter.drawPath(self.high_res_path)
 
 
 class FloatingTagItem(QGraphicsSimpleTextItem):
@@ -726,12 +771,9 @@ class Annotation(QObject):
     def select(self):
         """Mark the annotation as selected and update its visual appearance."""
         self.is_selected = True
-        if self.bounding_box_graphics_item:
-            self.bounding_box_graphics_item.setVisible(True)
-        if hasattr(self, 'tag_item') and self.tag_item:
-            self.tag_item.setVisible(True)
-        if hasattr(self, 'dimension_tag_item') and self.dimension_tag_item:
-            self.dimension_tag_item.setVisible(True)
+        # Hydrate the UI if the group exists
+        if self.graphics_item_group and self.graphics_item_group.scene():
+            self._hydrate_ui_elements(self.graphics_item_group.scene())
             
         self._update_pen_styles()
         self.animate()
@@ -739,12 +781,8 @@ class Annotation(QObject):
     def deselect(self):
         """Mark the annotation as not selected and update its visual appearance."""
         self.is_selected = False
-        if self.bounding_box_graphics_item:
-            self.bounding_box_graphics_item.setVisible(False)
-        if hasattr(self, 'tag_item') and self.tag_item:
-            self.tag_item.setVisible(False)
-        if hasattr(self, 'dimension_tag_item') and self.dimension_tag_item:
-            self.dimension_tag_item.setVisible(False)
+        # Dehydrate the UI
+        self._dehydrate_ui_elements()
             
         self.deanimate()
         self._update_pen_styles()
@@ -793,30 +831,51 @@ class Annotation(QObject):
             self.graphics_item.setData(0, self.id)
             self.graphics_item_group.addToGroup(self.graphics_item)
 
+        # ONLY build the expensive UI elements if the item is currently selected!
+        if self.is_selected:
+            self._hydrate_ui_elements(scene)
+            
+        scene.addItem(self.graphics_item_group)
+        
+    def _hydrate_ui_elements(self, scene):
+        """Creates the heavy interactive visual elements."""
         self.create_center_graphics_item(self.center_xy, scene, add_to_group=True)
-        self.create_bounding_box_graphics_item(self.get_bounding_box_top_left(),
-                                               self.get_bounding_box_bottom_right(),
-                                               scene, add_to_group=True)
-                                               
-        # --- Add the Floating Class Tag ---
+        self.create_bounding_box_graphics_item(
+            self.get_bounding_box_top_left(),
+            self.get_bounding_box_bottom_right(),
+            scene, add_to_group=True
+        )
+        
+        # Add the floating tag
         tag_text = self.label.short_label_code
         self.tag_item = FloatingTagItem(tag_text, self.label.color)
         
         # Position it just above the top-left corner
         top_left = self.get_bounding_box_top_left()
+        self.tag_item.setPos(top_left.x(), top_left.y())
         
-        # Note: Because the tag ignores transformations, we don't need a huge offset. 
-        # A tiny visual bump places it right on the perimeter.
-        self.tag_item.setPos(top_left.x(), top_left.y()) 
-        
-        # Clutter Control (Only show when selected)
-        self.tag_item.setVisible(self.is_selected)
-
         self.graphics_item_group.addToGroup(self.tag_item)
-        # ---------------------------------------
+
+    def _dehydrate_ui_elements(self):
+        """Destroys the heavy interactive visual elements to save memory/CPU."""
+        if not self.graphics_item_group:
+            return
         
-        scene.addItem(self.graphics_item_group)
-        
+        # Remove and destroy center crosshair
+        if self.center_graphics_item:
+            self.graphics_item_group.removeFromGroup(self.center_graphics_item)
+            self.center_graphics_item = None
+            
+        # Remove and destroy bounding box
+        if self.bounding_box_graphics_item:
+            self.graphics_item_group.removeFromGroup(self.bounding_box_graphics_item)
+            self.bounding_box_graphics_item = None
+            
+        # Remove and destroy tag
+        if hasattr(self, 'tag_item') and self.tag_item:
+            self.graphics_item_group.removeFromGroup(self.tag_item)
+            self.tag_item = None
+
     def is_graphics_item_valid(self):
         """
         Checks if the graphics item group is still valid and added to a scene.

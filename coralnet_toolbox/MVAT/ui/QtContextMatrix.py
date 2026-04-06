@@ -20,7 +20,7 @@ from typing import List, Optional, Dict
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QSize, QEvent
 from PyQt5.QtWidgets import (
     QWidget, QGridLayout, QVBoxLayout, QHBoxLayout,
-    QLabel, QToolBar, QPushButton, QToolButton, QSizePolicy, QFrame
+    QLabel, QToolBar, QPushButton, QToolButton, QSizePolicy, QFrame, QApplication
 )
 
 from coralnet_toolbox.QtBaseCanvas import BaseCanvas
@@ -28,6 +28,8 @@ from coralnet_toolbox.MVAT.core.constants import (
     MARKER_COLOR_SELECTED,
     MARKER_COLOR_HIGHLIGHTED,
     MARKER_COLOR_INVALID,
+    SELECT_COLOR,
+    HIGHLIGHT_COLOR,
 )
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -91,11 +93,7 @@ class ContextMatrixWidget(QWidget):
 
         # Multi-camera annotation state
         self.multi_annotate_enabled = False
-        self._sync_timer = QTimer()
-        self._sync_timer.setSingleShot(True)
-        self._sync_timer.timeout.connect(self._process_pending_sync)
         self._pending_sync = None
-        self._sync_throttle_ms = 30  # ~33 fps
 
         # Annotation visualization state (Phase 6)
         self._annotation_manager = None
@@ -106,11 +104,6 @@ class ContextMatrixWidget(QWidget):
         # Canvas pool
         self._canvas_pool: List[BaseCanvas] = []
         self._visible_canvases: List[List[Optional[BaseCanvas]]] = []
-
-        # Timers
-        self._resize_debounce_timer = QTimer()
-        self._resize_debounce_timer.setSingleShot(True)
-        self._resize_debounce_timer.timeout.connect(self._evaluate_auto_layout)
 
         # UI Setup
         self._main_layout = QVBoxLayout(self)
@@ -173,11 +166,17 @@ class ContextMatrixWidget(QWidget):
         return handler
 
     def _make_canvas_double_click_handler(self, canvas: BaseCanvas):
-        """Double-click promotes a context camera to the main active camera."""
+        """Double-click loads a context camera image without clearing selections.
+        
+        Emits both active_requested (to set the active camera) and contextImagePromoted
+        (to load the image). Selections/highlights are preserved—users must use
+        Ctrl+Click or the Clear button to modify them.
+        """
         def handler(event):
             if event.button() == Qt.LeftButton:
                 path = canvas.current_image_path
                 if path:
+                    # Set as active and load the image without clearing selections
                     self.active_requested.emit(path)
                     self.contextImagePromoted.emit(path)
             BaseCanvas.mouseDoubleClickEvent(canvas, event)
@@ -299,8 +298,7 @@ class ContextMatrixWidget(QWidget):
     def resizeEvent(self, event):
         """Auto-adjust layout on resize without changing camera count."""
         super().resizeEvent(event)
-        self._resize_debounce_timer.stop()
-        self._resize_debounce_timer.start(200)
+        self._evaluate_auto_layout()
 
     # ==================== Data Feed ====================
 
@@ -475,6 +473,13 @@ class ContextMatrixWidget(QWidget):
         sep4.setFrameShadow(QFrame.Sunken)
         layout.addWidget(sep4)
 
+        # Select All button
+        self.select_all_btn = QToolButton()
+        self.select_all_btn.setText("Select All")
+        self.select_all_btn.setToolTip("Highlight all cameras (even if not visible in grid)")
+        self.select_all_btn.clicked.connect(self._on_select_all)
+        layout.addWidget(self.select_all_btn)
+
         # Clear button
         self.clear_btn = QToolButton()
         self.clear_btn.setText("Clear")
@@ -508,6 +513,25 @@ class ContextMatrixWidget(QWidget):
         if checked:
             self._request_sync_from_main_view()
 
+    def _on_select_all(self):
+        """Highlight only cameras currently visible in the grid."""
+        # Set busy cursor
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
+        try:
+            # Collect only visible camera paths from the currently displayed grid
+            visible_paths = []
+            for row in self._visible_canvases:
+                for canvas in row:
+                    if canvas and canvas.current_image_path:
+                        visible_paths.append(canvas.current_image_path)
+            
+            if visible_paths:
+                self.selection_requested.emit(visible_paths)
+        finally:
+            # Always restore cursor
+            QApplication.restoreOverrideCursor()
+
     def _on_multi_annotate_toggled(self, checked: bool):
         self.multi_annotate_enabled = checked
         self.multiAnnotateToggled.emit(checked)
@@ -521,16 +545,20 @@ class ContextMatrixWidget(QWidget):
             active_path: Image path of the currently active (green-bordered) camera.
             selected_paths: Set of image paths that are highlighted (cyan-bordered).
         """
+        # Convert QColor objects to hex for CSS
+        active_color = SELECT_COLOR.name()
+        highlight_color = HIGHLIGHT_COLOR.name()
+        
         for canvas in self._canvas_pool:
             if not canvas.isVisible() or not canvas.current_image_path:
                 continue
             path = canvas.current_image_path
             if path == active_path:
-                canvas.setStyleSheet("border: 4px solid #32CD32;")   # Lime Green
+                canvas.setStyleSheet(f"border: 6px dashed {active_color};")   # Active camera (SELECT_COLOR), dashed
             elif path in selected_paths:
-                canvas.setStyleSheet("border: 2px solid #00FFFF;")   # Cyan
+                canvas.setStyleSheet(f"border: 5px dashed {highlight_color};")   # Highlighted cameras (HIGHLIGHT_COLOR), dashed
             else:
-                canvas.setStyleSheet("border: 1px solid #444444;")   # Default
+                canvas.setStyleSheet("border: 3px solid #000000;")   # Default, solid black
 
     # ==================== Marker Routing (Phase 4) ====================
 
@@ -586,13 +614,19 @@ class ContextMatrixWidget(QWidget):
                 continue
 
             u, v = float(pixel[0]), float(pixel[1])
-            try:
-                is_occluded = camera.is_point_occluded_depth_based(point_3d, depth_threshold=0.15)
-            except Exception:
-                is_occluded = False
 
-            color = MARKER_COLOR_INVALID if is_occluded else MARKER_COLOR_SELECTED
-            canvas.update_static_marker(u, v, color=color)
+            # Explicit bounds check: hide if projected outside this camera's image
+            cam_w = getattr(camera, 'width', 0)
+            cam_h = getattr(camera, 'height', 0)
+            if cam_w and cam_h and not (0 <= u < cam_w and 0 <= v < cam_h):
+                canvas.clear_static_marker()
+                continue
+
+            # Static focal-point markers are always valid surface picks — always green.
+            # Occlusion testing (is_point_occluded_depth_based) produces false-positives
+            # for MVATViewer picks due to depth-buffer floating-point imprecision and is
+            # only appropriate for dynamic hover markers, not for static focal-point marks.
+            canvas.update_static_marker(u, v, color=MARKER_COLOR_SELECTED)
 
     def clear_all_static_markers(self):
         self._last_focal_point = None
@@ -605,15 +639,23 @@ class ContextMatrixWidget(QWidget):
         self._mvat_manager = manager
 
     def request_sync(self, targets: dict, zoom_factor: float):
-        self._pending_sync = (targets, zoom_factor)
-        if not self._sync_timer.isActive():
-            self._sync_timer.start(self._sync_throttle_ms)
+        self.sync_to_targets(targets, zoom_factor)
 
-    def _process_pending_sync(self):
-        if self._pending_sync:
-            targets, zoom_factor = self._pending_sync
-            self._pending_sync = None
-            self.sync_to_targets(targets, zoom_factor)
+    def request_zoom_only(self, canvas_indices: set, zoom_factor: float):
+        """Apply zoom synchronisation without changing the viewport center.
+
+        Used for canvases where the 3D world point falls outside the image FOV.
+        All visible canvases will share the same relative zoom level even when
+        their center pixel cannot be determined from the shared world point.
+        """
+        if not self.target_lock_enabled:
+            return
+        for i in canvas_indices:
+            if i < len(self._canvas_pool):
+                canvas = self._canvas_pool[i]
+                if canvas.isVisible() and canvas.active_image:
+                    absolute_zoom = canvas._min_zoom * zoom_factor
+                    canvas.set_zoom_level(absolute_zoom)
 
     def sync_to_targets(self, targets: dict, zoom_factor: float):
         if not self.target_lock_enabled:
@@ -746,6 +788,32 @@ class ContextMatrixWidget(QWidget):
         """Hide cursor previews on all canvases in the pool."""
         for canvas in self._canvas_pool:
             canvas.clear_cursor_preview()
+
+    # --- NEW METHODS ---
+    def update_live_scratchpads(self, projections, size, shape, color):
+        """Draws a live vector trail on all visible context cameras."""
+        canvas_map = self._get_canvas_camera_map()
+
+        for path, canvas in canvas_map.items():
+            proj = projections.get(path)
+            if not proj:
+                continue
+
+            u, v, is_valid = proj
+            # Only draw if the 3D point is actually visible to this camera
+            if is_valid:
+                try:
+                    canvas.add_to_scratchpad(u, v, size, shape, color)
+                except Exception:
+                    pass
+
+    def clear_all_scratchpads(self):
+        """Clears the fake vector trails across all cameras."""
+        for canvas in self._canvas_pool:
+            try:
+                canvas.clear_scratchpad()
+            except Exception:
+                pass
 
     # ==================== Z-Channel Synchronization ====================
 

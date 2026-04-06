@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import QGraphicsScene, QGraphicsPathItem
 from PyQt5.QtGui import (QPixmap, QColor, QPen, QBrush, QPainter,
                          QPolygonF, QImage, QRegion, QPainterPath)
 
-from coralnet_toolbox.Annotations.QtAnnotation import Annotation
+from coralnet_toolbox.Annotations.QtAnnotation import Annotation, OptimizedPathItem
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
 
@@ -260,8 +260,13 @@ class PatchAnnotation(Annotation):
         # Get the complete shape as a QPainterPath.
         path = self.get_painter_path()
         
-        # Use a QGraphicsPathItem for rendering.
-        self.graphics_item = QGraphicsPathItem(path)
+        # Use OptimizedPathItem for consistency (same path for high/low res since patches are simple)
+        self.graphics_item = OptimizedPathItem(path, path)
+        
+        # Inject the pre-calculated bounding rect for performance
+        tl = self.get_bounding_box_top_left()
+        br = self.get_bounding_box_bottom_right()
+        self.graphics_item.set_cached_bounding_rect(QRectF(tl, br))
         
         # Call the parent class method to handle grouping, styling, and adding to the scene.
         super().create_graphics_item(scene)
@@ -285,8 +290,13 @@ class PatchAnnotation(Annotation):
         # Get the complete shape as a QPainterPath.
         path = self.get_painter_path()
         
-        # Use a QGraphicsPathItem to correctly represent the shape.
-        self.graphics_item = QGraphicsPathItem(path)
+        # Use OptimizedPathItem for consistency (same path for high/low res since patches are simple)
+        self.graphics_item = OptimizedPathItem(path, path)
+        
+        # Inject the pre-calculated bounding rect for performance
+        tl = self.get_bounding_box_top_left()
+        br = self.get_bounding_box_bottom_right()
+        self.graphics_item.set_cached_bounding_rect(QRectF(tl, br))
         
         # Call the parent class method to handle rebuilding the graphics group.
         super().update_graphics_item()
