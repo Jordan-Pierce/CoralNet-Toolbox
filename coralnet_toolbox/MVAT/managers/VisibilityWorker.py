@@ -192,6 +192,12 @@ class VisibilityWorker(QObject):
                     # UPDATE: Use np.nan so the 3D occlusion logic ignores the curved borders
                     result['depth_map'] = warp_fn(depth_map, border_value=np.nan)
 
+                # Normalize dtypes for downstream consumers and caching
+                try:
+                    VisibilityManager._normalize_result_dict(result, self.compute_depth_maps)
+                except Exception:
+                    pass
+
             # Update status for distortion corrections
             try:
                 from PyQt5.QtCore import QMetaObject, Qt, Q_ARG

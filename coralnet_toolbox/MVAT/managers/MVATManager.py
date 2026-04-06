@@ -2602,6 +2602,7 @@ class MVATManager(QObject):
                 self.selected_camera, binary_mask.astype(bool), px, py, _p1_target
             )
         else:
+            import cv2
             # PointCloud (or non-mesh) target: use the pre-computed index_map.
             # Use the in-memory raster index_map to avoid triggering lazy disk loads.
             source_index_map = self.selected_camera._raster.index_map
@@ -2629,43 +2630,70 @@ class MVATManager(QObject):
 
                     valid_mask = mask_clip.astype(bool)
                     source_depth_map = self.selected_camera._raster.z_channel
-                    
+
                     if source_depth_map is not None:
+                        import cv2
                         depth_slice = source_depth_map[cy0:cy1, cx0:cx1]
-                        
-                        local_px = px - cx0
-                        local_py = py - cy0
-                        
-                        # 1. THE PINPOINT ANCHOR (Strict 3x3 core)
-                        core_y_start = max(0, local_py - 1)
-                        core_y_end = min(depth_slice.shape[0], local_py + 2)
-                        core_x_start = max(0, local_px - 1)
-                        core_x_end = min(depth_slice.shape[1], local_px + 2)
-                        
-                        core_depths = depth_slice[core_y_start:core_y_end, core_x_start:core_x_end]
-                        core_depths = core_depths[~np.isnan(core_depths)]
-                        
-                        if len(core_depths) == 0:
-                            valid_depths = depth_slice[valid_mask]
-                            core_depths = valid_depths[~np.isnan(valid_depths)]
-                            
-                        if len(core_depths) > 0:
-                            median_z = np.median(core_depths)
-                            
-                            # 2. RAZOR-THIN TOLERANCE (1.5% of depth, min 2cm)
-                            tolerance = max(0.02, median_z * 0.015) 
-                            
-                            # 3. BRICK WALL CLIFF PROTECTION
+
+                        # ----------------------------------------------------------
+                        # Gradient depth filtering at the mask perimeter
+                        #
+                        # Rather than a hard interior/perimeter split, each pixel in the
+                        # perimeter band gets a tolerance that ramps from a tight floor
+                        # at the very outer edge up to the full interior-derived tolerance
+                        # at the inner edge of the band.  The true interior is kept as-is.
+                        # ----------------------------------------------------------
+
+                        # 1. Erode to define the trusted interior region.
+                        erosion_r = int(np.clip(min(mask_clip.shape) * 0.03, 2, 12))
+                        kernel = cv2.getStructuringElement(
+                            cv2.MORPH_ELLIPSE, (2 * erosion_r + 1, 2 * erosion_r + 1)
+                        )
+                        interior_mask = cv2.erode(
+                            valid_mask.astype(np.uint8), kernel, iterations=1
+                        ).astype(bool)
+                        perimeter_mask = valid_mask & ~interior_mask
+
+                        # 2. Reference depth + natural spread from interior only.
+                        interior_depths = depth_slice[interior_mask]
+                        interior_depths = interior_depths[~np.isnan(interior_depths)]
+
+                        if len(interior_depths) >= 10 and perimeter_mask.any():
+                            ref_depth      = np.median(interior_depths)
+                            interior_spread = np.std(interior_depths)
+
+                            # Tight absolute floor: what we allow at the very outermost pixel.
+                            abs_floor = max(0.02, ref_depth * 0.005)   # 0.5% of depth, min 2 cm
+
+                            # Full tolerance at the inner edge of the perimeter band —
+                            # same formula as before so sloping surfaces stay unclipped.
+                            full_tol = interior_spread * 2.0 + abs_floor
+
+                            # 3. Distance transform: each mask pixel gets its L2 distance
+                            #    to the nearest background pixel (0 at edge, grows inward).
+                            dist = cv2.distanceTransform(
+                                valid_mask.astype(np.uint8), cv2.DIST_L2, 5
+                            )
+
+                            # Normalise within the perimeter band: 0.0 = outer edge, 1.0 = inner edge.
+                            # We cap at erosion_r so interior pixels don't influence the scale.
+                            norm_dist = np.clip(dist / max(erosion_r, 1), 0.0, 1.0)
+
+                            # 4. Per-pixel tolerance: ramps from abs_floor → full_tol across the band.
+                            per_pixel_tol = abs_floor + (full_tol - abs_floor) * norm_dist
+
                             with np.errstate(invalid='ignore'):
-                                depth_mask = (depth_slice >= (median_z - tolerance)) & (depth_slice <= (median_z + tolerance * 0.5))
-                                
-                            valid_mask = valid_mask & depth_mask
+                                perimeter_depth_ok = (
+                                    np.abs(depth_slice - ref_depth) <= per_pixel_tol
+                                )
+
+                            # Interior: unconditionally kept.
+                            # Perimeter: only pixels whose depth is within their per-pixel tolerance.
+                            valid_mask = interior_mask | (perimeter_mask & perimeter_depth_ok)
 
                     raw_ids = index_slice[valid_mask]
                     unique_ids = np.unique(raw_ids)
                     painted_ids = unique_ids[unique_ids > -1]
-
-                # TODO Depth filtering
 
         use_3d = painted_ids is not None and len(painted_ids) > 0
 

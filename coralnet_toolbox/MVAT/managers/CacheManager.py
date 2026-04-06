@@ -112,12 +112,13 @@ class CacheManager:
             data = np.load(cache_path, allow_pickle=True)
             
             result = {
-                'index_map': data['index_map'],
-                'visible_indices': data['visible_indices']
+                'index_map': data['index_map'].astype(np.int32, copy=False),
+                'visible_indices': np.asarray(data['visible_indices']).astype(np.int32, copy=False)
             }
             # depth_map is optional in older caches
             if 'depth_map' in data:
-                result['depth_map'] = data['depth_map']
+                # allow older caches with float32 but cast to float16 for consistency
+                result['depth_map'] = data['depth_map'].astype(np.float16, copy=False)
             else:
                 result['depth_map'] = None
             
@@ -176,7 +177,16 @@ class CacheManager:
         except Exception as e:
             print(f"Warning: Failed to create cache directory {self.cache_dir}: {e}")
             return None
-        
+        # Enforce canonical dtypes to reduce RAM/disk usage
+        try:
+            index_map = index_map.astype(np.int32, copy=False)
+            visible_indices = np.asarray(visible_indices).astype(np.int32, copy=False)
+            if depth_map is not None:
+                depth_map = depth_map.astype(np.float16, copy=False)
+        except Exception:
+            # If casting fails, proceed with original arrays
+            pass
+
         # Build save dict with required and optional fields
         save_dict = {
             'index_map': index_map,

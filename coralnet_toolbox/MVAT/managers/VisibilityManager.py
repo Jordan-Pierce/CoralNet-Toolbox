@@ -88,6 +88,30 @@ class VisibilityManager:
             'inv_pixels':  sorted_pixels,
         }
 
+    @staticmethod
+    def _normalize_result_dict(result: dict, compute_depth_map: bool = True) -> dict:
+        """
+        Ensure canonical dtypes for index/depth maps and visible indices.
+        - index_map -> np.int32
+        - visible_indices -> np.int32
+        - depth_map -> np.float16 (final storage), only if compute_depth_map True
+        This mutates the dict in-place and returns it for convenience.
+        """
+        try:
+            if result is None:
+                return result
+            if 'index_map' in result and result['index_map'] is not None:
+                result['index_map'] = result['index_map'].astype(np.int32, copy=False)
+            if 'visible_indices' in result and result['visible_indices'] is not None:
+                result['visible_indices'] = np.asarray(result['visible_indices']).astype(np.int32, copy=False)
+            if compute_depth_map and 'depth_map' in result and result['depth_map'] is not None:
+                # Accept float32 internally but store/cache as float16 to save RAM/disk
+                result['depth_map'] = result['depth_map'].astype(np.float16, copy=False)
+        except Exception:
+            # Be conservative on failure: leave original arrays unchanged
+            pass
+        return result
+
     @classmethod
     def compute_visibility_from_scene(cls,
                                       scene_context: 'SceneContext',
@@ -123,13 +147,13 @@ class VisibilityManager:
         primary_target = scene_context.get_primary_target()
         
         if primary_target is None:
-            return {
+            return cls._normalize_result_dict({
                 'index_map': np.full((height, width), -1, dtype=np.int32),
                 'visible_indices': np.array([], dtype=np.int32),
                 'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
                 'element_type': 'point',
                 'inverted_index': None,
-            }
+            }, compute_depth_map)
         
         element_type = primary_target.get_element_type()
         
@@ -153,13 +177,13 @@ class VisibilityManager:
             return result
         
         # Fallback: empty result
-        return {
+        return cls._normalize_result_dict({
             'index_map': np.full((height, width), -1, dtype=np.int32),
             'visible_indices': np.array([], dtype=np.int32),
             'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
             'element_type': element_type,
             'inverted_index': None,
-        }
+        }, compute_depth_map)
 
     @classmethod
     def _compute_mesh_visibility(cls,
@@ -437,6 +461,9 @@ class VisibilityManager:
                 'depth_map': depth_map,
                 'inverted_index': None,
             })
+            results[-1] = cls._normalize_result_dict(results[-1], compute_depth_map)
+            # Normalize dtypes for consistency and memory savings
+            results[-1] = cls._normalize_result_dict(results[-1], compute_depth_map)
             
         raycast_time = time.time() - raycast_start_time
         total_time = time.time() - start_time
@@ -482,12 +509,12 @@ class VisibilityManager:
         
         if n_cells == 0:
             print("   ⚠️ No cells in mesh. Returning empty maps.")
-            return {
+            return cls._normalize_result_dict({
                 'index_map': np.full((height, width), -1, dtype=np.int32),
                 'visible_indices': np.array([], dtype=np.int32),
                 'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
                 'inverted_index': None,
-            }
+            }, compute_depth_map)
         
         print(f"   Mesh: {n_cells:,} cells | Render: {width}x{height} pixels")
         
@@ -585,13 +612,14 @@ class VisibilityManager:
                 vtk_depth = plotter.get_image_depth(fill_value=np.nan)
                 
                 # Negate to convert from VTK (-Z forward) to OpenCV (+Z forward) convention
-                depth_map = -vtk_depth.astype(np.float16)
+                # Keep depth in float32 during computation, normalize to float16 on return
+                depth_map = -vtk_depth.astype(np.float32)
                 depth_time = time.time() - depth_start
                 print(f"   ✅ Depth buffer extracted in {depth_time:.4f}s")
                 
             except Exception as e:
                 print(f"   ⚠️ Failed to extract depth buffer: {e}")
-                depth_map = np.full((height, width), np.nan, dtype=np.float16)
+                depth_map = np.full((height, width), np.nan, dtype=np.float32)
         
         # --- 6. Extract visible face IDs ---
         visible_indices = np.unique(index_map[index_map >= 0]).astype(np.int32)
@@ -614,12 +642,12 @@ class VisibilityManager:
         print(f"   - Result: {n_visible:,} visible faces, {coverage:.1f}% pixel coverage")
         print(f"{'='*50}\n")
         
-        return {
+        return cls._normalize_result_dict({
             'index_map': index_map,
             'visible_indices': visible_indices,
             'depth_map': depth_map,
             'inverted_index': None,
-        }
+        }, compute_depth_map)
     
     @classmethod
     def compute_batch_mesh_visibility_vtk(cls,
@@ -780,7 +808,7 @@ class VisibilityManager:
                 'depth_map': depth_map,
                 'inverted_index': None,
             })
-            
+            results[-1] = cls._normalize_result_dict(results[-1], compute_depth_map)
             # 7. UI Yielding
             t0 = time.time()
             try:
@@ -975,7 +1003,9 @@ class VisibilityManager:
                                         height, 
                                         compute_depth_map=compute_depth_map)
             compute_time = time.time() - compute_start
-        
+        # Normalize result dtypes for consistency (index_map int32, depth_map float16)
+        result = cls._normalize_result_dict(result, compute_depth_map)
+
         total_time = time.time() - start_time
         visible_count = len(result['visible_indices'])
         coverage = np.sum(result['index_map'] >= 0) / (width * height) * 100
@@ -1175,12 +1205,12 @@ class VisibilityManager:
 
         if valid_ids.numel() == 0:
             # Nothing visible
-            return {
+            return VisibilityManager._normalize_result_dict({
                 'index_map': np.full((height, width), -1, dtype=np.int32),
                 'visible_indices': np.array([], dtype=np.int32),
                 'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
                 'inverted_index': None,
-            }
+            }, compute_depth_map)
 
         # 5. Z-Buffering (Scatter Reduce)
         # Flatten indices: idx = y * width + x
@@ -1244,12 +1274,12 @@ class VisibilityManager:
         if str(device) == 'cuda':
             torch.cuda.empty_cache()
 
-        return {
+        return VisibilityManager._normalize_result_dict({
             'index_map': index_map_np,
             'visible_indices': visible_indices.cpu().numpy(),
             'depth_map': depth_map_np,
             'inverted_index': None,
-        }
+        }, compute_depth_map)
 
     @staticmethod
     def _compute_numpy(points, ids, K, R, t, width, height, compute_depth_map: bool = True):
@@ -1294,12 +1324,12 @@ class VisibilityManager:
         stage_times['bounds'] = time.time() - bounds_start
 
         if len(id_valid) == 0:
-            return {
+            return VisibilityManager._normalize_result_dict({
                 'index_map': np.full((height, width), -1, dtype=np.int32),
                 'visible_indices': np.array([], dtype=np.int32),
                 'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
                 'inverted_index': None,
-            }
+            }, compute_depth_map)
 
         # 4. Z-Buffering (The Sorting Trick)
         # To handle occlusion efficiently in NumPy, we sort points by depth (Descending).
@@ -1328,12 +1358,12 @@ class VisibilityManager:
         # Extract unique IDs from the final map
         visible_indices = np.unique(index_map[index_map != -1])
 
-        return {
+        return VisibilityManager._normalize_result_dict({
             'index_map': index_map,
             'visible_indices': visible_indices,
             'depth_map': depth_map,
             'inverted_index': None,
-        }
+        }, compute_depth_map)
         
     @classmethod
     def compute_orthographic_visibility(cls, 
@@ -1421,11 +1451,11 @@ class VisibilityManager:
         valid_ids = p_ids[valid_mask]
 
         if valid_ids.numel() == 0:
-            return {
+            return VisibilityManager._normalize_result_dict({
                 'index_map': np.full((height, width), -1, dtype=np.int32),
                 'visible_indices': np.array([], dtype=np.int32),
                 'inverted_index': None,
-            }
+            }, compute_depth_map=False)
 
         # 5. Z-Buffering (Scatter Reduce for Max Z)
         flat_indices = valid_v * width + valid_u
@@ -1459,11 +1489,11 @@ class VisibilityManager:
         if str(device) == 'cuda':
             torch.cuda.empty_cache()
 
-        return {
+        return VisibilityManager._normalize_result_dict({
             'index_map': index_map_np,
             'visible_indices': visible_indices.cpu().numpy(),
             'inverted_index': None,
-        }
+        }, compute_depth_map=False)
 
     @staticmethod
     def _compute_ortho_numpy(points, ids, transform_inv, width, height, chunk_transform_inv=None):
@@ -1495,11 +1525,11 @@ class VisibilityManager:
         id_valid = ids[valid_mask]
 
         if len(id_valid) == 0:
-            return {
+            return VisibilityManager._normalize_result_dict({
                 'index_map': np.full((height, width), -1, dtype=np.int32),
                 'visible_indices': np.array([], dtype=np.int32),
                 'inverted_index': None,
-            }
+            }, compute_depth_map=False)
 
         # Vectorized Z-Buffering (The Sorting Trick)
         # Sort ASCENDING by Z. Since index_map[y, x] = id overwrites previous values,
@@ -1515,8 +1545,8 @@ class VisibilityManager:
 
         visible_indices = np.unique(index_map[index_map != -1])
 
-        return {
+        return VisibilityManager._normalize_result_dict({
             'index_map': index_map,
             'visible_indices': visible_indices,
             'inverted_index': VisibilityManager._build_inverted_index(index_map),
-        }
+        }, compute_depth_map=False)
