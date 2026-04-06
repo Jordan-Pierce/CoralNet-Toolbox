@@ -2606,7 +2606,6 @@ class MVATManager(QObject):
             # Use the in-memory raster index_map to avoid triggering lazy disk loads.
             source_index_map = self.selected_camera._raster.index_map
             if source_index_map is not None:
-                # The binary_mask is a crop centred at (px, py)
                 x0 = px - mask_w // 2
                 y0 = py - mask_h // 2
                 x1 = x0 + mask_w
@@ -2620,7 +2619,6 @@ class MVATManager(QObject):
                     cx1 = min(x1, img_w)
                     cy1 = min(y1, img_h)
 
-                    # Corresponding slice of the binary_mask
                     bx0 = cx0 - x0
                     by0 = cy0 - y0
                     bx1 = bx0 + (cx1 - cx0)
@@ -2629,7 +2627,41 @@ class MVATManager(QObject):
                     index_slice = source_index_map[cy0:cy1, cx0:cx1]
                     mask_clip   = binary_mask[by0:by1, bx0:bx1]
 
-                    raw_ids = index_slice[mask_clip.astype(bool)]
+                    valid_mask = mask_clip.astype(bool)
+                    source_depth_map = self.selected_camera._raster.z_channel
+                    
+                    if source_depth_map is not None:
+                        depth_slice = source_depth_map[cy0:cy1, cx0:cx1]
+                        
+                        local_px = px - cx0
+                        local_py = py - cy0
+                        
+                        # 1. THE PINPOINT ANCHOR (Strict 3x3 core)
+                        core_y_start = max(0, local_py - 1)
+                        core_y_end = min(depth_slice.shape[0], local_py + 2)
+                        core_x_start = max(0, local_px - 1)
+                        core_x_end = min(depth_slice.shape[1], local_px + 2)
+                        
+                        core_depths = depth_slice[core_y_start:core_y_end, core_x_start:core_x_end]
+                        core_depths = core_depths[~np.isnan(core_depths)]
+                        
+                        if len(core_depths) == 0:
+                            valid_depths = depth_slice[valid_mask]
+                            core_depths = valid_depths[~np.isnan(valid_depths)]
+                            
+                        if len(core_depths) > 0:
+                            median_z = np.median(core_depths)
+                            
+                            # 2. RAZOR-THIN TOLERANCE (1.5% of depth, min 2cm)
+                            tolerance = max(0.02, median_z * 0.015) 
+                            
+                            # 3. BRICK WALL CLIFF PROTECTION
+                            with np.errstate(invalid='ignore'):
+                                depth_mask = (depth_slice >= (median_z - tolerance)) & (depth_slice <= (median_z + tolerance * 0.5))
+                                
+                            valid_mask = valid_mask & depth_mask
+
+                    raw_ids = index_slice[valid_mask]
                     unique_ids = np.unique(raw_ids)
                     painted_ids = unique_ids[unique_ids > -1]
 
