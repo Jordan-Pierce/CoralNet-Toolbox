@@ -508,8 +508,7 @@ class MVATManager(QObject):
             except Exception:
                 pass
         
-        # Generate and load 3D elevation for any orthomosaics with DEMs
-        self._populate_ortho_elevation()
+        # Generate and load 3D elevation
         self._render_frustums()  
         self.viewer.fit_to_view()
         
@@ -543,15 +542,6 @@ class MVATManager(QObject):
             highlighted_paths=highlighted,
             hovered_camera=self.hovered_camera
         )
-        
-    def _populate_ortho_elevation(self):
-        """
-        Previously populated the 3D scene with elevation meshes generated
-        from orthomosaic DEMs. Orthomosaic support has been removed, so
-        this is now a no-op to preserve call sites.
-        """
-        # No-op: orthomosaic elevation meshes are no longer generated or added to the scene.
-        return
 
     # --- Signal Handlers ---
 

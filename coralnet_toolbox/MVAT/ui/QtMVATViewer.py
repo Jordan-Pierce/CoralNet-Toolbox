@@ -1660,10 +1660,10 @@ class MVATViewer(QFrame):
         """Add a single image-plane thumbnail for the given camera."""
         if scale is None:
             scale = self.frustum_scale
-        # Guard against cameras that do not have a Frustum (orthomosaics)
+        # Guard against cameras that do not have a Frustum 
         fr = getattr(camera, 'frustum', None)
         if fr is None:
-            # No frustum for this camera (e.g., orthomosaic) — skip thumbnail
+            # No frustum for this camera — skip thumbnail
             return
 
         try:
