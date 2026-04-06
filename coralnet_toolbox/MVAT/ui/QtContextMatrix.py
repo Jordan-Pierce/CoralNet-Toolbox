@@ -490,12 +490,11 @@ class ContextMatrixWidget(QWidget):
         toolbar.addWidget(container)
         return toolbar
 
-    def update_stats(self, perspective_count: int, ortho_count: int = 0):
+    def update_stats(self, perspective_count: int):
         """Update the overall camera count labels."""
         if not hasattr(self, 'stats_label'):
             return
-        ortho_str = f", {ortho_count} ortho" if ortho_count > 0 else ""
-        self.stats_label.setText(f"Cameras: {perspective_count} perspective{ortho_str}")
+        self.stats_label.setText(f"Cameras: {perspective_count} perspective")
 
     def update_selection_labels(self, active_label: str, highlighted_count: int):
         """Update the labels indicating selected/highlighted cameras."""
@@ -670,9 +669,9 @@ class ContextMatrixWidget(QWidget):
                     total_angle = base_rotation
                     
                     # NEW: Calculate relative 3D camera roll using the "Up" vector
-                    if ref_cam is not None and not getattr(ref_cam, 'is_orthographic', False):
+                    if ref_cam is not None:
                         ctx_cam = self._mvat_manager.cameras.get(canvas.current_image_path)
-                        if ctx_cam is not None and not getattr(ctx_cam, 'is_orthographic', False):
+                        if ctx_cam is not None:
                             
                             # 1. Reference camera's "Up" direction (-Y axis in image space)
                             up_ref_cam = np.array([0.0, -1.0, 0.0])
@@ -709,9 +708,9 @@ class ContextMatrixWidget(QWidget):
                     total_angle = base_rotation
                     
                     # NEW: Calculate relative 3D camera roll using the "Up" vector
-                    if ref_cam is not None and not getattr(ref_cam, 'is_orthographic', False):
+                    if ref_cam is not None:
                         ctx_cam = self._mvat_manager.cameras.get(canvas.current_image_path)
-                        if ctx_cam is not None and not getattr(ctx_cam, 'is_orthographic', False):
+                        if ctx_cam is not None:
                             
                             # 1. Reference camera's "Up" direction (-Y axis in image space)
                             up_ref_cam = np.array([0.0, -1.0, 0.0])

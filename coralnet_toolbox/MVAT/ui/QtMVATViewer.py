@@ -1038,30 +1038,6 @@ class MVATViewer(QFrame):
                     
                 self.add_product(product)
                 self.render_scene()
-                
-                # --- QUICK EDIT: PROMPT FOR CHUNK TRANSFORM GRID ---
-                QApplication.restoreOverrideCursor() # Restore cursor so user can click
-                
-                dialog = TransformInputDialog(self)
-                if dialog.exec_() == QDialog.Accepted:
-                    import numpy as np
-                    matrix = dialog.get_matrix()
-                    try:
-                        inv_matrix = np.linalg.inv(matrix)
-                        # Inject into OrthographicCameras via MVATManager
-                        top = self.window()
-                        if hasattr(top, 'mvat_manager'):
-                            for cam in top.mvat_manager.cameras.values():
-                                if getattr(cam, 'is_orthographic', False):
-                                    cam.chunk_transform_inv = inv_matrix
-                            print("✅ Successfully injected chunk_transform_inv into OrthographicCameras")
-                            print("Injected Matrix:\n", matrix)
-                    except np.linalg.LinAlgError:
-                        print("⚠️ Matrix is singular and cannot be inverted!")
-                
-                QApplication.setOverrideCursor(Qt.WaitCursor) # Set back for remainder
-                # ---------------------------------------------------
-                
                 event.acceptProposedAction()
                 
                 # Trigger visibility filtering based on the model's current selections
@@ -1789,13 +1765,6 @@ class MVATViewer(QFrame):
             animate: If True, smoothly animate the camera transition (default False)
         """
         try:
-            # BRANCH: Orthographic camera
-            if getattr(camera, 'is_orthographic', False):
-                print(f"🗺️ Switching to orthographic projection for {camera.label}")
-                self.view_top()  # Snap to top-down view
-                self.plotter.enable_parallel_projection()
-                return
-            
             # RESTORE: Perspective projection for normal cameras, but ONLY if currently
             # in parallel projection. PyVista's disable_parallel_projection() unconditionally
             # overwrites camera.position using stale parallel_scale, which would snap the

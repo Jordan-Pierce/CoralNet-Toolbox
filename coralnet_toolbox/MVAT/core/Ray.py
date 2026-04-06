@@ -89,30 +89,7 @@ class CameraRay:
                               depth: Optional[float] = None, default_depth: float = 10.0,
                               element_id: int = -1) -> 'CameraRay':
         
-        # --- ORTHOGRAPHIC RAYS ---
-        if getattr(camera, 'is_orthographic', False):
-            # unproject_ray offsets in WORLD Z before transforming to local space,
-            # so the direction is correct regardless of local-axis orientation.
-            origin, direction, terminal_point = camera.unproject_ray(pixel_xy)
-            has_accurate_depth = terminal_point is not None
-
-            if terminal_point is None:          # pure fallback, no DEM
-                terminal_point = np.array([0.0, 0.0, 0.0])
-
-            ray = cls(
-                origin=origin,
-                direction=direction,
-                terminal_point=terminal_point,
-                has_accurate_depth=has_accurate_depth,
-                pixel_coord=pixel_xy,
-                source_camera=camera,
-                element_id=element_id,
-            )
-            ray.visual_origin   = origin.copy()
-            ray.visual_terminal = terminal_point.copy()
-            return ray
-        
-        # EXISTING: Perspective camera logic
+        # Perspective camera logic
         # Camera origin is the optical center in world coordinates
         origin = camera.position.copy()
         
@@ -186,36 +163,7 @@ class CameraRay:
         # from highlighted cameras should use solid or dashed line styling
         # based on depth accuracy at the projected point.
         """
-        # BRANCH: Orthographic camera
-        if getattr(camera, 'is_orthographic', False):
-            world_point = np.asarray(world_point, dtype=np.float64)
-
-            # Derive the world-Z direction expressed in local space
-            if getattr(camera, 'chunk_transform_inv', None) is not None:
-                world_up_hom = np.array([0.0, 0.0, 1.0, 0.0])   # direction (w=0)
-                local_up = (camera.chunk_transform_inv @ world_up_hom)[:3]
-                n = np.linalg.norm(local_up)
-                local_up = local_up / n if n > 1e-12 else np.array([0.0, 0.0, 1.0])
-            else:
-                local_up = np.array([0.0, 0.0, 1.0])
-
-            origin    = world_point + local_up * 1000.0
-            direction = -local_up
-            
-            ray = cls(
-                origin=origin,
-                direction=direction,
-                terminal_point=world_point,
-                has_accurate_depth=True,
-                pixel_coord=None,
-                source_camera=camera,
-                element_id=element_id
-            )
-            ray.visual_origin = origin.copy()
-            ray.visual_terminal = world_point.copy()
-            return ray
-        
-        # EXISTING: Perspective camera logic
+        # Perspective camera logic
         origin = camera.position.copy()
         world_point = np.asarray(world_point, dtype=np.float64)
         

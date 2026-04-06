@@ -117,11 +117,6 @@ class Raster(QObject):
         self.is_distorted: bool = False  # True if the source image has uncorrected lens distortion
         self.dist_coeffs: Optional[np.ndarray] = None  # OpenCV layout [k1,k2,p1,p2,k3,k4,k5,k6] float64
         self.intrinsics_undistorted: Optional[np.ndarray] = None  # K_new: linear camera matrix (wider FOV)
-        
-        # Spatial transformation for orthomosaics
-        self.is_orthomosaic: bool = False
-        self.transform_matrix: Optional[np.ndarray] = None
-        
         # Visibility/Index map information (for MultiView Annotation)
         self.index_map: Optional[np.ndarray] = None  # 2D array mapping pixels to element IDs (H x W int32)
         self.index_map_path: Optional[str] = None  # Path to index_map file if saved separately
@@ -289,27 +284,6 @@ class Raster(QObject):
         self.metadata.pop('scale_x', None)
         self.metadata.pop('scale_y', None)
         self.metadata.pop('original_crs', None)  # Also remove derived crs
-        
-    def _extract_transform_matrix(self, source_dataset=None):
-        """
-        Extracts the 3x3 affine transform matrix.
-        If source_dataset is provided (e.g., from a DEM), uses that.
-        Otherwise, uses the main image's rasterio source.
-        """
-        dataset = source_dataset if source_dataset is not None else self._rasterio_src
-        
-        if dataset is not None:
-            t = dataset.transform
-            # Ensure it's not a default identity matrix (meaning no actual spatial data)
-            if not t.is_identity:
-                self.transform_matrix = np.array([
-                    [t.a, t.b, t.c],
-                    [t.d, t.e, t.f],
-                    [t.g, t.h, t.i]
-                ])
-                self.metadata['transform_matrix'] = "Extracted from source"
-                return True
-        return False
     
     def add_intrinsics(self, intrinsics: np.ndarray):
         """
@@ -731,12 +705,6 @@ class Raster(QObject):
         # Set z_data_type if provided
         if z_data_type is not None:
             self.z_data_type = z_data_type
-            
-            # --- NEW ORTHOMOSAIC LOGIC ---
-            if z_data_type == 'elevation':
-                self.is_orthomosaic = True
-                if self.transform_matrix is None:
-                    self._extract_transform_matrix()
         
         # Set z_nodata if provided
         if z_nodata is not None:
@@ -956,16 +924,11 @@ class Raster(QObject):
             normalize_z_unit
         )
         
-        # Ensure we have extracted the orthomosaic's transform before loading the DEM!
-        if self.transform_matrix is None:
-            self._extract_transform_matrix()
-        
         z_data, z_path, z_nodata = load_z_channel_from_file(
             z_channel_path, 
             target_width=self.width, 
             target_height=self.height,
             z_data_type=z_data_type,
-            target_transform=self.transform_matrix
         )
         
         if z_data is not None:
@@ -983,31 +946,6 @@ class Raster(QObject):
                 final_z_nodata = self.z_nodata
             else:
                 final_z_nodata = z_nodata
-
-            # --- CORRECTED DEM TRANSFORM EXTRACTION ---
-            # If the user supplied a non-georeferenced image (like a JPG) but gave us a DEM, 
-            # we must extract the transform from the DEM and scale it to account for 
-            # the fact that the DEM was just resized to fit the JPG.
-            if z_data_type == 'elevation' and self.transform_matrix is None:
-                try:
-                    import rasterio
-                    with rasterio.open(z_channel_path) as dem_dataset:
-                        t = dem_dataset.transform
-                        if not t.is_identity:
-                            # Calculate the scale factor between the original DEM and our base image
-                            scale_x = dem_dataset.width / self.width if self.width > 0 else 1.0
-                            scale_y = dem_dataset.height / self.height if self.height > 0 else 1.0
-                            
-                            # Scale the transform matrix (T_corrected = T_dem * S)
-                            self.transform_matrix = np.array([
-                                [t.a * scale_x, t.b * scale_y, t.c],
-                                [t.d * scale_x, t.e * scale_y, t.f],
-                                [0.0, 0.0, 1.0]
-                            ])
-                            self.metadata['transform_matrix'] = "Extracted and scaled from DEM"
-                            self.is_orthomosaic = True
-                except Exception as e:
-                    print(f"Warning: Could not extract and scale transform from DEM {z_channel_path}: {e}")
             
             # Add z_channel with the nodata value and data type
             self.z_unit = z_unit
@@ -1455,7 +1393,6 @@ class Raster(QObject):
                 'checkbox_state': self.checkbox_state
             },
             'work_areas': work_areas_list,
-            'is_orthomosaic': self.is_orthomosaic  # --- NEW ORTHOMOSAIC LOGIC ---
         }
         
         # Include scale information if available
@@ -1478,10 +1415,6 @@ class Raster(QObject):
             raster_data['dist_coeffs'] = self.dist_coeffs.tolist()
         raster_data['is_distorted'] = self.is_distorted
             
-        # --- NEW ORTHOMOSAIC LOGIC ---
-        if self.transform_matrix is not None:
-            raster_data['transform_matrix'] = self.transform_matrix.tolist()
-        
         # Include index_map path and visible_indices if available
         if self.index_map_path is not None:
             raster_data['index_map_path'] = self.index_map_path
@@ -1581,14 +1514,7 @@ class Raster(QObject):
                 print(f"Error loading distortion for {image_path}: {str(e)}")
         else:
             raster.is_distorted = is_distorted
-        raster.is_orthomosaic = raster_dict.get('is_orthomosaic', False)
-        transform_data = raster_dict.get('transform_matrix')
-        if transform_data:
-            try:
-                raster.transform_matrix = np.array(transform_data)
-            except Exception as e:
-                print(f"Error loading transform_matrix for {image_path}: {str(e)}")
-        
+
         # Load z_channel path if available and attempt to load the z-channel data
         z_channel_path = raster_dict.get('z_channel_path')
         if z_channel_path:
@@ -1669,15 +1595,6 @@ class Raster(QObject):
         else:
             self.is_distorted = is_distorted
 
-        # --- ORTHOMOSAIC LOGIC ---
-        self.is_orthomosaic = raster_dict.get('is_orthomosaic', self.is_orthomosaic)
-        transform_data = raster_dict.get('transform_matrix')
-        if transform_data:
-            try:
-                self.transform_matrix = np.array(transform_data)
-            except Exception as e:
-                print(f"Error loading transform_matrix for {self.image_path}: {str(e)}")
-        
         # Update index_map path and visible_indices if available
         index_map_path = raster_dict.get('index_map_path')
         if index_map_path:
@@ -1731,10 +1648,6 @@ class Raster(QObject):
         # Clear camera calibration and z channel data
         self.intrinsics = None
         self.extrinsics = None
-        
-        # --- NEW ORTHOMOSAIC LOGIC ---
-        self.is_orthomosaic = False
-        self.transform_matrix = None
         
         self.z_channel = None
         self.z_channel_path = None
