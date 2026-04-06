@@ -2,11 +2,11 @@ import warnings
 
 from rasterio.windows import Window
 
-from PyQt5.QtCore import Qt, QPointF
+from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtWidgets import (QGraphicsScene, QGraphicsPathItem, QGraphicsItemGroup,)
 from PyQt5.QtGui import (QPixmap, QColor, QPen, 
                          QBrush, QPolygonF, QPainter,
-                         QRegion, QImage, QPainterPath, QRectF)
+                         QRegion, QImage, QPainterPath)
 
 from coralnet_toolbox.Annotations.QtAnnotation import Annotation, OptimizedPathItem
 
