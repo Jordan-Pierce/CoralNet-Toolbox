@@ -109,6 +109,35 @@ class RasterManager(QObject):
         except Exception as e:
             print(f"Error adding video raster {video_path}: {str(e)}")
             return False
+
+    def add_ortho_raster(self, ortho_path: str, emit_signal: bool = True) -> bool:
+        """
+        Add an OrthoRaster to the manager.
+
+        Args:
+            ortho_path (str): Path to the orthomosaic file
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if ortho_path in self.rasters:
+            return True
+
+        try:
+            # Import here to avoid circular imports
+            from coralnet_toolbox.Rasters.OrthoRaster import OrthoRaster
+            raster = OrthoRaster(ortho_path)
+
+            self.rasters[ortho_path] = raster
+            self.image_paths.append(ortho_path)
+
+            if emit_signal:
+                self.rasterAdded.emit(ortho_path)
+            return True
+
+        except Exception as e:
+            print(f"Error adding ortho raster {ortho_path}: {str(e)}")
+            return False
     
     def remove_raster(self, image_path: str) -> bool:
         """

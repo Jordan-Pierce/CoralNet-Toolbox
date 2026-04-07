@@ -369,6 +369,10 @@ class MainWindow(QMainWindow):
         self.import_frames_action = QAction("Frames from Video", self)
         self.import_frames_action.triggered.connect(self.open_import_frames_dialog)
         self.import_rasters_menu.addAction(self.import_frames_action)
+        # Import Orthomosaics
+        self.import_orthomosaics_action = QAction("Orthomosaics", self)
+        self.import_orthomosaics_action.triggered.connect(self.import_images.import_orthomosaics)
+        self.import_rasters_menu.addAction(self.import_orthomosaics_action)
         
         # Labels submenu
         self.import_labels_menu = self.import_menu.addMenu("Labels")
@@ -488,7 +492,7 @@ class MainWindow(QMainWindow):
         
         # Export Spatial Metrics (at Export menu level, not in Annotations submenu)
         self.export_spatial_metrics_action = QAction("Spatial Metrics", self)
-        self.export_spatial_metrics_action.triggered.connect(self.export_spatial_metrics_dialog.exec_)
+        self.export_spatial_metrics_action.triggered.connect(self.open_export_spatial_metrics_dialog)
         self.export_menu.addAction(self.export_spatial_metrics_action)
         
         # Add a separator
@@ -2612,6 +2616,28 @@ class MainWindow(QMainWindow):
                 "Load Failed",
                 f"Failed to load layout '{layout_name}'."
             )
+
+    def open_export_spatial_metrics_dialog(self):
+        """Open the Export Spatial Metrics dialog to export spatial metrics."""
+        # Check if there are loaded images
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "Export Spatial Metrics",
+                                "No images are present in the project.")
+            return
+
+        # Check if there are annotations
+        if not len(self.annotation_window.annotations_dict):
+            QMessageBox.warning(self,
+                                "Export Spatial Metrics",
+                                "No annotations are present in the project.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.export_spatial_metrics_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_import_dataset_dialog(self):
         """Open the Import Dataset dialog to import datasets into the project."""

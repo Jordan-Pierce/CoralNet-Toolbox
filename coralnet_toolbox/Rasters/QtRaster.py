@@ -130,6 +130,12 @@ class Raster(QObject):
         # Metadata
         self.metadata = {}  # Can store any additional metadata
         
+        # Raster type: canonical class-name string. One of:
+        #   - "ImageRaster" (default)
+        #   - "VideoRaster"
+        #   - "OrthoRaster"
+        self.raster_type = "ImageRaster"
+
         # Load rasterio source
         self.load_rasterio()
         
@@ -1394,6 +1400,8 @@ class Raster(QObject):
             },
             'work_areas': work_areas_list,
         }
+        # Canonical raster type for project files (backwards-compatible with legacy 'type')
+        raster_data['raster_type'] = self.raster_type
         
         # Include scale information if available
         if self.scale_x is not None and self.scale_y is not None and self.scale_units is not None:
@@ -1458,6 +1466,11 @@ class Raster(QObject):
         # Create the raster with the image path
         image_path = raster_dict['path']
         raster = cls(image_path)
+        # Restore canonical raster_type if present, fallback to legacy 'type'
+        try:
+            raster.raster_type = raster_dict.get('raster_type', raster_dict.get('type', raster.raster_type))
+        except Exception:
+            pass
         
         # Load state information
         state = raster_dict.get('state', {})
@@ -1543,6 +1556,11 @@ class Raster(QObject):
         # Update state information
         state = raster_dict.get('state', {})
         self.checkbox_state = state.get('checkbox_state', False)
+        # Restore canonical raster_type if present, fallback to legacy 'type'
+        try:
+            self.raster_type = raster_dict.get('raster_type', raster_dict.get('type', self.raster_type))
+        except Exception:
+            pass
         
         # Update work areas
         work_areas_list = raster_dict.get('work_areas', [])

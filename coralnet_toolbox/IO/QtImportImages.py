@@ -30,6 +30,17 @@ class ImportImages:
         if file_names:
             self._process_image_files(file_names)
 
+    def import_orthomosaics(self):
+        """Import files as OrthoRaster instances (orthomosaics)."""
+        self.main_window.untoggle_all_tools()
+
+        file_names, _ = QFileDialog.getOpenFileNames(self.image_window,
+                                                     "Open Orthomosaic Files",
+                                                     "",
+                                                     "Image Files (*.png *.jpg *.jpeg *.tif* *.bmp)")
+        if file_names:
+            self._process_image_files(file_names, raster_type='OrthoRaster')
+
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
@@ -48,8 +59,13 @@ class ImportImages:
     def dragLeaveEvent(self, event):
         event.accept()
     
-    def _process_image_files(self, file_names):
-        """Helper method to process a list of image files with progress tracking."""
+    def _process_image_files(self, file_names, raster_type: str = None):
+        """Helper method to process a list of image files with progress tracking.
+
+        Args:
+            file_names (list): list of file paths to import
+            raster_type (str, optional): if 'OrthoRaster', create OrthoRaster instances
+        """
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
         progress_bar = ProgressBar(self.image_window, title="Importing Images")
@@ -66,8 +82,12 @@ class ImportImages:
                 if file_name not in self.image_window.raster_manager.image_paths:
                     # Call the manager directly to add the raster silently,
                     # bypassing ImageWindow.add_image and its signal handlers.
-                    if self.image_window.raster_manager.add_raster(file_name, emit_signal=False):
-                        imported_paths.append(file_name)
+                    if raster_type == 'OrthoRaster':
+                        if self.image_window.raster_manager.add_ortho_raster(file_name, emit_signal=False):
+                            imported_paths.append(file_name)
+                    else:
+                        if self.image_window.raster_manager.add_raster(file_name, emit_signal=False):
+                            imported_paths.append(file_name)
                 else:
                     imported_paths.append(file_name)
 

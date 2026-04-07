@@ -262,6 +262,9 @@ class VideoRaster(Raster):
     frameReady = pyqtSignal(int, object)
 
     def __init__(self, video_path: str):
+        # Canonical type
+        self.raster_type = "VideoRaster"
+
         # Open the video capture before calling super().__init__ so that
         # load_rasterio() (called inside super().__init__) can use it.
         self._cap = cv2.VideoCapture(video_path)
@@ -481,7 +484,9 @@ class VideoRaster(Raster):
     def to_dict(self) -> dict:
         """Extend base serialization with video-specific fields."""
         data = super().to_dict()
+        # Keep legacy 'type' key for compatibility, and add canonical 'raster_type'
         data['type'] = 'VideoRaster'
+        data['raster_type'] = 'VideoRaster'
         data['fps'] = self._video_fps
         data['frame_count'] = self._video_frame_count
         return data
