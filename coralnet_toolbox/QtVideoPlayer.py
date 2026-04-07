@@ -1,5 +1,5 @@
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent
-from PyQt5.QtGui import QPainter, QPen, QColor, QPixmap
+from PyQt5.QtGui import QPainter, QPen, QColor, QPixmap, QImage, QCursor
 from PyQt5.QtWidgets import (QWidget, QHBoxLayout, QPushButton, QSlider,
                              QLabel, QStyle, QSizePolicy, QStyleOptionSlider, QFrame, QApplication)
 
@@ -25,36 +25,29 @@ class AnnotatedSlider(QSlider):
         self.update()
 
     def paintEvent(self, event):
-        # Draw the standard slider first
+        # Call the base class to draw the standard slider, 
+        # including the groove, default ticks, and handle.
         super().paintEvent(event)
 
-        if not self._annotation_frames or self.maximum() <= 0:
+        if not self._annotation_frames or (self.maximum() <= self.minimum()):
             return
 
-        # Use the style to find the exact groove rectangle
+        painter = QPainter(self)
         opt = QStyleOptionSlider()
         self.initStyleOption(opt)
-        groove = self.style().subControlRect(
-            QStyle.CC_Slider, opt, QStyle.SC_SliderGroove, self
-        )
+        
+        # Get the groove rectangle to position your custom marks
+        groove = self.style().subControlRect(QStyle.CC_Slider, opt, QStyle.SC_SliderGroove, self)
+        
+        tick_color = QColor(230, 62, 0, 220)  # blood red
+        painter.setPen(QPen(tick_color, 2))
 
-        painter = QPainter(self)
-        tick_color = QColor(255, 190, 0, 220)   # amber / gold
-        pen = QPen(tick_color, 2)
-        painter.setPen(pen)
-
-        span = self.maximum() - self.minimum()
-        gx = groove.x()
-        gw = groove.width()
-        gy_top = groove.y()
-        gy_bot = groove.y() + groove.height()
-
-        for frame_idx in self._annotation_frames:
+        span = max(1, self.maximum() - self.minimum())
+        for frame_idx in sorted(self._annotation_frames):
             ratio = (frame_idx - self.minimum()) / span
-            x = gx + int(ratio * gw)
-            # Draw a short line that straddles the groove edges
-            painter.drawLine(x, gy_top - 2, x, gy_bot + 2)
-
+            x = groove.x() + int(ratio * groove.width())
+            painter.drawLine(x, groove.top() - 2, x, groove.bottom() + 2)
+        
         painter.end()
 
     def mousePressEvent(self, event):
@@ -138,6 +131,8 @@ class VideoPlayerWidget(QWidget):
             self.preview_tooltip = FramePreviewTooltip(self)
 
         self._last_preview_idx = None
+        self._is_user_scrubbing = False
+        self._was_playing_before_scrub = False
         # Install event filter on slider to capture hover and clicks
         self.slider.installEventFilter(self)
         
@@ -191,10 +186,11 @@ class VideoPlayerWidget(QWidget):
         self.slider = AnnotatedSlider(Qt.Horizontal)
         self.slider.setToolTip("Seek Frame")
         self.slider.setMouseTracking(True)
-        # Connect sliderReleased/valueChanged depending on desired behavior.
-        # using valueChanged allows dragging to scrub, but might be heavy if not optimized.
-        # We generally use sliderMoved for scrubbing and valueChanged for clicks.
-        self.slider.sliderMoved.connect(self.seekChanged.emit) 
+        # During user scrubbing we will show thumbnails but delay the actual
+        # seek until the user releases the slider to avoid loading frames.
+        self.slider.sliderMoved.connect(self._on_slider_moved)
+        self.slider.sliderPressed.connect(self._on_slider_pressed)
+        self.slider.sliderReleased.connect(self._on_slider_released)
         self.slider.valueChanged.connect(self._on_slider_value_changed)
         layout.addWidget(self.slider)
 
@@ -218,9 +214,8 @@ class VideoPlayerWidget(QWidget):
         # Intercept events on the slider to implement Ctrl+hover preview and Ctrl+click seek
         if obj is self.slider:
             if event.type() == QEvent.MouseMove:
-                # Show preview only when Ctrl is held
-                if QApplication.keyboardModifiers() & Qt.ControlModifier:
-                    # Compute value from mouse x position
+                # Show preview when Ctrl is held or while the user is scrubbing (dragging)
+                if (QApplication.keyboardModifiers() & Qt.ControlModifier) or self.slider.isSliderDown():
                     pos = event.pos()
                     w = max(1, self.slider.width())
                     x = pos.x()
@@ -234,48 +229,10 @@ class VideoPlayerWidget(QWidget):
 
                     if frame_idx != self._last_preview_idx:
                         self._last_preview_idx = frame_idx
-                        # Resolve the AnnotationWindow that owns this player.  When the
-                        # player is placed into a QToolBar it may be reparented, so
-                        # prefer an explicit reference if provided.
-                        aw = getattr(self, 'annotation_window', None)
-                        if aw is None:
-                            p = self.parent()
-                            while p is not None:
-                                if hasattr(p, '_active_video_raster'):
-                                    aw = p
-                                    break
-                                p = p.parent()
-
-                        raster = None
-                        if aw is not None:
-                            raster = getattr(aw, '_active_video_raster', None)
-
-                        if aw is not None:
-                            # Prefer RasterManager thumbnail API which handles videos
-                            try:
-                                rm = None
-                                try:
-                                    rm = aw.main_window.image_window.raster_manager
-                                except Exception:
-                                    rm = None
-
-                                if rm is not None and hasattr(aw, '_active_video_raster') and aw._active_video_raster is not None:
-                                    virtual = aw._active_video_raster.make_frame_path(aw._active_video_raster.image_path, frame_idx)
-                                    pix = rm.get_thumbnail(virtual, longest_edge=256)
-                                    if pix is not None:
-                                        self.preview_tooltip.set_image(pix)
-                                        self.preview_tooltip.show_at(event.globalPos())
-                                    else:
-                                        self.preview_tooltip.hide()
-                                else:
-                                    self.preview_tooltip.hide()
-                            except Exception:
-                                self.preview_tooltip.hide()
-                        else:
-                            self.preview_tooltip.hide()
+                        self._show_preview_for_frame_idx(frame_idx, event.globalPos())
                     return False
                 else:
-                    # Hide preview when Ctrl not held
+                    # Hide preview when neither Ctrl nor scrubbing
                     self._last_preview_idx = None
                     self.preview_tooltip.hide()
                     return False
@@ -310,6 +267,86 @@ class VideoPlayerWidget(QWidget):
                         return True
 
         return super().eventFilter(obj, event)
+
+    def _on_slider_pressed(self):
+        self._is_user_scrubbing = True
+        self._last_preview_idx = None
+        # If video was playing, pause it for scrubbing and remember state
+        self._was_playing_before_scrub = bool(self.is_playing)
+        if self._was_playing_before_scrub:
+            self.set_paused()
+            try:
+                self.pauseClicked.emit()
+            except Exception:
+                pass
+
+    def _on_slider_moved(self, value):
+        # Show a thumbnail preview for the current drag position without
+        # emitting a seek — the actual seek occurs on release.
+        if value != self._last_preview_idx:
+            self._last_preview_idx = value
+            try:
+                self._show_preview_for_frame_idx(value, QCursor.pos())
+            except Exception:
+                self.preview_tooltip.hide()
+
+    def _on_slider_released(self):
+        # User finished scrubbing — perform the actual seek and hide preview.
+        self._is_user_scrubbing = False
+        final_value = self.slider.value()
+        self._last_preview_idx = None
+        self.preview_tooltip.hide()
+        self.seekChanged.emit(final_value)
+        # Restore playback if it was playing before scrubbing
+        if getattr(self, '_was_playing_before_scrub', False):
+            # Ensure UI shows playing and notify controller
+            self.set_playing()
+            try:
+                self.playClicked.emit()
+            except Exception:
+                pass
+        self._was_playing_before_scrub = False
+
+    def _show_preview_for_frame_idx(self, frame_idx, global_pos=None):
+        # Resolve owning AnnotationWindow in case the player has been reparented
+        aw = getattr(self, 'annotation_window', None)
+        if aw is None:
+            p = self.parent()
+            while p is not None:
+                if hasattr(p, '_active_video_raster'):
+                    aw = p
+                    break
+                p = p.parent()
+
+        if aw is None:
+            self.preview_tooltip.hide()
+            return
+
+        try:
+            rm = None
+            try:
+                rm = aw.main_window.image_window.raster_manager
+            except Exception:
+                rm = None
+
+            if rm is not None and hasattr(aw, '_active_video_raster') and aw._active_video_raster is not None:
+                virtual = aw._active_video_raster.make_frame_path(aw._active_video_raster.image_path, frame_idx)
+                pix = rm.get_thumbnail(virtual, longest_edge=256)
+                if pix is not None:
+                    if isinstance(pix, QImage):
+                        pm = QPixmap.fromImage(pix)
+                    else:
+                        pm = pix
+                    self.preview_tooltip.set_image(pm)
+                    if global_pos is None:
+                        global_pos = QCursor.pos()
+                    self.preview_tooltip.show_at(global_pos)
+                else:
+                    self.preview_tooltip.hide()
+            else:
+                self.preview_tooltip.hide()
+        except Exception:
+            self.preview_tooltip.hide()
 
     def toggle_playback_state(self):
         """
@@ -360,7 +397,7 @@ class VideoPlayerWidget(QWidget):
 
     def update_annotation_marks(self, frame_indices):
         """
-        Update the amber tick marks on the scrub bar.
+        Update the tick marks on the scrub bar.
 
         Args:
             frame_indices (set[int]): Frame indices that contain at least one annotation.

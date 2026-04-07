@@ -118,6 +118,9 @@ class AnnotationWindow(BaseCanvas):
         self.selected_label = None  # Flag to check if an active label is set
         self.selected_tool = None  # Store the current tool state
         self._syncing_selection = False  # Flag to prevent selection sync loops
+        # Streaming inference mode: when True, new annotations are saved to the
+        # data model but heavy Qt graphics are skipped to keep playback smooth.
+        self.is_streaming_inference = False
         
         # Image state (BaseCanvas has pixmap_image, active_image, current_image_path)
         self.rasterio_image = None
@@ -162,8 +165,11 @@ class AnnotationWindow(BaseCanvas):
         self.annotationSelectionChanged.connect(self.annotation_manager.selectionChanged)
 
         # Keep video scrub-bar tick marks in sync with annotation changes
+        # Connect both singular (for individual operations) and plural (for batch operations)
         self.annotationCreated.connect(self._on_annotation_change_for_video)
         self.annotationDeleted.connect(self._on_annotation_change_for_video)
+        self.annotationsCreated.connect(self._on_annotation_change_for_video)  # batch inference
+        self.annotationsDeleted.connect(self._on_annotation_change_for_video)  # bulk delete
         
         # Initialize toolbar and status bar widgets
         self._init_toolbar_widgets()  # Likely causes an error
@@ -2853,21 +2859,24 @@ class AnnotationWindow(BaseCanvas):
 
         # --- Conditional UI Logic (runs only if the image is visible AND label is visible) ---
         if annotation.image_path == self.current_image_path and annotation.label.is_visible:
-            
-            # Create graphics item for display in the scene
-            if not annotation.graphics_item:
-                annotation.create_graphics_item(self.scene)
-                
-            # Set the visibility based on the current UI state (will respect label checkbox)
-            self.set_annotation_visibility(annotation)
-            
-            # If video is currently playing, immediately strip the graphics we just created
-            # so the annotation doesn't ghost over the advancing frames.
-            if self._playback_timer.isActive():
-                self._clear_annotation_graphics_single(annotation)
+            # ---> Skip heavy graphics if streaming inference <---
+            if getattr(self, 'is_streaming_inference', False):
+                pass
             else:
-                # Force the screen to instantly show the newly drawn item
-                self.viewport().update()
+                # Create graphics item for display in the scene
+                if not annotation.graphics_item:
+                    annotation.create_graphics_item(self.scene)
+                    
+                # Set the visibility based on the current UI state (will respect label checkbox)
+                self.set_annotation_visibility(annotation)
+                
+                # If video is currently playing, immediately strip the graphics we just created
+                # so the annotation doesn't ghost over the advancing frames.
+                if self._playback_timer.isActive():
+                    self._clear_annotation_graphics_single(annotation)
+                else:
+                    # Force the screen to instantly show the newly drawn item
+                    self.viewport().update()
 
         # --- Finalization ---
         # Update the annotation count in the ImageWindow table (always, regardless of visibility)
@@ -2923,7 +2932,11 @@ class AnnotationWindow(BaseCanvas):
             # If the annotation belongs to the current image, we MUST 
             # create its visual item in the scene immediately.
             if annotation.image_path == self.current_image_path:
-                self.load_annotation(annotation)
+                # ---> Skip heavy graphics if streaming inference <---
+                if getattr(self, 'is_streaming_inference', False):
+                    pass
+                else:
+                    self.load_annotation(annotation)
                 
         # Restore spatial indexing
         self.scene.setItemIndexMethod(QGraphicsScene.BspTreeIndex)
@@ -3019,9 +3032,6 @@ class AnnotationWindow(BaseCanvas):
             ann.blockSignals(True)
             ann.delete()
             ann.blockSignals(False)
-            
-            # Firing this singular signal is safely blocked from triggering UI updates
-            self.annotationDeleted.emit(ann.id)
 
         # Turn signals and spatial indexing back on
         self.blockSignals(False)
