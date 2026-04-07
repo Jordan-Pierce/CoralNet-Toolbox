@@ -8,7 +8,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QVBoxLayout,
                              QLabel, QDialog, QDialogButtonBox, QGroupBox,
-                             QFormLayout, QComboBox, QHBoxLayout, QCheckBox, QButtonGroup)
+                             QFormLayout, QComboBox, QHBoxLayout, QCheckBox, QButtonGroup,
+                             QSpinBox, QPushButton)
 
 from coralnet_toolbox.Icons import get_icon
 from coralnet_toolbox.Common import ThresholdsWidget
@@ -207,6 +208,65 @@ class BatchInferenceDialog(QDialog):
         group_box.setLayout(layout)
         self.task_specific_group = group_box
         self.layout.addWidget(group_box)
+
+        # --- Video-specific options (Start / End / Stride) ---
+        video_box = QGroupBox("Video Options")
+        video_layout = QFormLayout()
+
+        # Start frame with 'Set to Current' button
+        start_h = QHBoxLayout()
+        self.video_start_spin = QSpinBox()
+        self.video_start_spin.setMinimum(0)
+        self.video_start_spin.setMaximum(99999999)
+        self.set_start_current_btn = QPushButton("Set to Current")
+        start_h.addWidget(self.video_start_spin)
+        start_h.addWidget(self.set_start_current_btn)
+
+        # End frame with 'Set to Current' button
+        end_h = QHBoxLayout()
+        self.video_end_spin = QSpinBox()
+        self.video_end_spin.setMinimum(0)
+        self.video_end_spin.setMaximum(99999999)
+        self.set_end_current_btn = QPushButton("Set to Current")
+        end_h.addWidget(self.video_end_spin)
+        end_h.addWidget(self.set_end_current_btn)
+
+        # Stride (Every N frames)
+        stride_h = QHBoxLayout()
+        self.video_stride_spin = QSpinBox()
+        self.video_stride_spin.setMinimum(1)
+        self.video_stride_spin.setMaximum(9999)
+        self.video_stride_spin.setValue(1)
+        stride_h.addWidget(self.video_stride_spin)
+
+        # Reset button
+        self.reset_video_range_btn = QPushButton("Reset to Full Video")
+
+        video_layout.addRow("Start Frame:", start_h)
+        video_layout.addRow("End Frame:", end_h)
+        video_layout.addRow("Every N Frames:", stride_h)
+        video_layout.addRow("", self.reset_video_range_btn)
+
+        video_box.setLayout(video_layout)
+        self.video_group = video_box
+        self.layout.addWidget(video_box)
+
+        # Connect handlers
+        try:
+            self.set_start_current_btn.clicked.connect(self._on_set_start_to_current)
+            self.set_end_current_btn.clicked.connect(self._on_set_end_to_current)
+            self.reset_video_range_btn.clicked.connect(self._on_reset_video_range)
+            # Keep start <= end by silently fixing the other spinbox when needed
+            self.video_start_spin.valueChanged.connect(self._on_video_start_changed)
+            self.video_end_spin.valueChanged.connect(self._on_video_end_changed)
+        except Exception:
+            pass
+
+        # Initially disabled until videos are selected
+        try:
+            self.video_group.setEnabled(False)
+        except Exception:
+            pass
 
     def setup_buttons_layout(self):
         """
@@ -652,6 +712,66 @@ class BatchInferenceDialog(QDialog):
         """
         try:
             self.highlighted_images = image_paths or []
+
+            # Video-specific UI behavior:
+            # - 0 videos selected: disable the Video group
+            # - 1 video selected: enable Video group and allow Start/End edits
+            # - >1 videos selected: show Video group, disable Start/End, keep Stride enabled
+            try:
+                # Gather any VideoRaster paths from highlighted_images
+                video_paths = []
+                for p in self.highlighted_images:
+                    try:
+                        raster_manager = getattr(self.image_window, 'raster_manager', None)
+                        raster = None
+                        if raster_manager is not None:
+                            raster = raster_manager.get_raster(p)
+                        if raster is not None and getattr(raster, 'raster_type', '') == 'VideoRaster':
+                            video_paths.append(p)
+                    except Exception:
+                        continue
+
+                vcount = len(video_paths)
+                if not hasattr(self, 'video_group'):
+                    # No video UI created; skip
+                    pass
+                else:
+                    if vcount == 0:
+                        self.video_group.setEnabled(False)
+                    elif vcount == 1:
+                        self.video_group.setEnabled(True)
+                        # enable controls
+                        self.video_start_spin.setEnabled(True)
+                        self.video_end_spin.setEnabled(True)
+                        self.video_stride_spin.setEnabled(True)
+
+                        # set spinbox ranges / defaults from the single video
+                        vp = video_paths[0]
+                        try:
+                            raster_manager = getattr(self.image_window, 'raster_manager', None)
+                            raster = None
+                            if raster_manager is not None:
+                                raster = raster_manager.get_raster(vp)
+                            if raster is not None and hasattr(raster, 'frame_count'):
+                                max_frame = max(1, int(getattr(raster, 'frame_count', 1)))
+                                self.video_start_spin.setMaximum(max_frame - 1)
+                                self.video_end_spin.setMaximum(max_frame - 1)
+                                # default to full video
+                                self.video_start_spin.setValue(0)
+                                self.video_end_spin.setValue(max_frame - 1)
+                        except Exception:
+                            pass
+                    else:
+                        # Multiple videos selected: allow stride, but not explicit start/end
+                        self.video_group.setEnabled(True)
+                        self.video_start_spin.setEnabled(False)
+                        self.video_end_spin.setEnabled(False)
+                        self.video_stride_spin.setEnabled(True)
+
+            except Exception:
+                # non-fatal video UI update errors
+                pass
+
             # Update the status label depending on inference type
             if hasattr(self, 'inference_type_combo') and self.inference_type_combo.currentText() == 'Tiled':
                 self.update_status_label_for_tiled()
@@ -659,6 +779,73 @@ class BatchInferenceDialog(QDialog):
                 self.update_status_label()
         except Exception:
             # Swallow errors to avoid noisy exceptions from signal handlers
+            pass
+
+    def _on_set_start_to_current(self):
+        """Set the Start spinbox to the main annotation window's current frame."""
+        try:
+            idx = getattr(self.annotation_window, '_current_frame_idx', None)
+            if idx is None:
+                return
+            self.video_start_spin.setValue(int(idx))
+        except Exception:
+            pass
+
+    def _on_set_end_to_current(self):
+        """Set the End spinbox to the main annotation window's current frame."""
+        try:
+            idx = getattr(self.annotation_window, '_current_frame_idx', None)
+            if idx is None:
+                return
+            self.video_end_spin.setValue(int(idx))
+        except Exception:
+            pass
+
+    def _on_reset_video_range(self):
+        """Reset start/end to full video (0 .. frame_count-1) for single selected video."""
+        try:
+            if not self.highlighted_images:
+                return
+            # Prefer the first highlighted video
+            for p in self.highlighted_images:
+                raster = None
+                try:
+                    raster_manager = getattr(self.image_window, 'raster_manager', None)
+                    if raster_manager is not None:
+                        raster = raster_manager.get_raster(p)
+                except Exception:
+                    continue
+                if raster is not None and getattr(raster, 'raster_type', '') == 'VideoRaster':
+                    max_frame = int(getattr(raster, 'frame_count', 1))
+                    self.video_start_spin.setMaximum(max_frame - 1)
+                    self.video_end_spin.setMaximum(max_frame - 1)
+                    self.video_start_spin.setValue(0)
+                    self.video_end_spin.setValue(max_frame - 1)
+                    return
+        except Exception:
+            pass
+
+    def _on_video_start_changed(self, value):
+        """Ensure start <= end; if not, silently set end to start."""
+        try:
+            # If end is less than new start, bump end up to start
+            end_val = self.video_end_spin.value()
+            if end_val < value:
+                self.video_end_spin.blockSignals(True)
+                self.video_end_spin.setValue(value)
+                self.video_end_spin.blockSignals(False)
+        except Exception:
+            pass
+
+    def _on_video_end_changed(self, value):
+        """Ensure end >= start; if not, silently set start to end."""
+        try:
+            start_val = self.video_start_spin.value()
+            if start_val > value:
+                self.video_start_spin.blockSignals(True)
+                self.video_start_spin.setValue(value)
+                self.video_start_spin.blockSignals(False)
+        except Exception:
             pass
 
     def apply(self):

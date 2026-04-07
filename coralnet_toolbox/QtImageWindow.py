@@ -651,6 +651,17 @@ class ImageWindow(QWidget):
         # Finally, update the count label after any changes.
         self.update_highlighted_count_label()
 
+        # If BatchInferenceDialog is open, push updated highlighted paths so
+        # it can adjust video-related controls dynamically.
+        try:
+            if hasattr(self.main_window, 'batch_inference_dialog') and \
+               self.main_window.batch_inference_dialog and \
+               self.main_window.batch_inference_dialog.isVisible():
+                highlighted = self.table_model.get_highlighted_paths()
+                self.main_window.batch_inference_dialog.update_highlighted_images(highlighted)
+        except Exception:
+            # Swallow any errors coming from cross-widget signaling
+            pass
     def on_table_double_clicked(self, index):
         """Handle double click on table view (selects image and loads it)."""
         if not index.isValid():
