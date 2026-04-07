@@ -331,6 +331,18 @@ class MainWindow(QMainWindow):
         # This is accessed via ImageWindow right-click context menu
         self.batch_inference_dialog = BatchInferenceDialog(self)
 
+        # Keep the BatchInferenceDialog updated when image highlights change
+        try:
+            # Connect the table-model highlight change signal to update the dialog's highlighted list
+            self.image_window.table_model.rowsChanged.connect(
+                lambda: self.batch_inference_dialog.update_highlighted_images(
+                    self.image_window.table_model.get_highlighted_paths()
+                )
+            )
+        except Exception:
+            # If connection fails for some reason, continue without breaking startup
+            pass
+
         # Create dialogs (Work Areas)
         self.tile_manager_dialog = WorkAreaManagerDialog(self)
         self.classify_tile_dataset_dialog = ClassifyTileDatasetDialog(self)

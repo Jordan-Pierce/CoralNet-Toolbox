@@ -47,6 +47,12 @@ class BatchInferenceDialog(QDialog):
         self.setWindowIcon(get_icon("coralnet.svg"))
         self.setWindowTitle("Batch Inference")
         self.resize(500, 400)
+        # Keep this dialog on top so users can update highlights while it is open
+        try:
+            self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+        except Exception:
+            # Fallback for PyQt versions without setWindowFlag
+            self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
 
         # Initialize references to various deployment dialogs
         self.classify_dialog = getattr(main_window, 'classify_deploy_model_dialog', None)
@@ -637,6 +643,23 @@ class BatchInferenceDialog(QDialog):
         """
         # Return the highlighted images provided at initialization
         return self.highlighted_images
+
+    def update_highlighted_images(self, image_paths):
+        """Update the dialog's highlighted image list and refresh the status label.
+
+        This method can be called while the dialog is open to reflect changes
+        in which rows are highlighted in the ImageWindow.
+        """
+        try:
+            self.highlighted_images = image_paths or []
+            # Update the status label depending on inference type
+            if hasattr(self, 'inference_type_combo') and self.inference_type_combo.currentText() == 'Tiled':
+                self.update_status_label_for_tiled()
+            else:
+                self.update_status_label()
+        except Exception:
+            # Swallow errors to avoid noisy exceptions from signal handlers
+            pass
 
     def apply(self):
         """

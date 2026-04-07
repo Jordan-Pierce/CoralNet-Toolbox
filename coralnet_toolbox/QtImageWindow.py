@@ -1279,8 +1279,27 @@ class ImageWindow(QWidget):
         
         # Update the batch inference dialog with the highlighted images
         batch_dialog.highlighted_images = highlighted_image_paths
-        # Show the dialog
-        batch_dialog.exec_()
+        # Show the dialog modelessly so users can change highlighted rows while it is open
+        try:
+            batch_dialog.setModal(False)
+            batch_dialog.setWindowModality(Qt.NonModal)
+            # Ensure the dialog stays on top of the main window while modeless
+            batch_dialog.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+        except Exception:
+            pass
+
+        # Refresh the dialog display to reflect the initial highlighted selection
+        try:
+            if hasattr(batch_dialog, 'inference_type_combo') and batch_dialog.inference_type_combo.currentText() == 'Tiled':
+                batch_dialog.update_status_label_for_tiled()
+            else:
+                batch_dialog.update_status_label()
+        except Exception:
+            pass
+
+        batch_dialog.show()
+        batch_dialog.raise_()
+        batch_dialog.activateWindow()
 
     def _open_import_cameras_for_highlighted(self, highlighted_paths: list):
         """
