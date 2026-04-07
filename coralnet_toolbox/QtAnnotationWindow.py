@@ -1222,6 +1222,13 @@ class AnnotationWindow(BaseCanvas):
         # Swap pixmap in-place — does NOT rebuild the scene graph
         if self._base_image_item is not None:
             self._base_image_item.setPixmap(QPixmap.fromImage(q_img))
+            # ---> Draw lightweight annotations during playback <---
+            try:
+                frame_annotations = self.image_annotations_dict.get(self.current_image_path, [])
+                visible_annotations = [a for a in frame_annotations if getattr(a.label, 'is_visible', True)]
+                self._render_annotations_readonly(visible_annotations)
+            except Exception:
+                pass
 
         # Update slider and counter silently (no seekChanged feedback loop)
         self._video_player.slider.blockSignals(True)
@@ -1342,6 +1349,13 @@ class AnnotationWindow(BaseCanvas):
         # Swap pixmap in-place — cheap paint, no scene rebuild
         if self._base_image_item is not None:
             self._base_image_item.setPixmap(QPixmap.fromImage(q_image))
+            # ---> Draw lightweight annotations during playback <---
+            try:
+                frame_annotations = self.image_annotations_dict.get(self.current_image_path, [])
+                visible_annotations = [a for a in frame_annotations if getattr(a.label, 'is_visible', True)]
+                self._render_annotations_readonly(visible_annotations)
+            except Exception:
+                pass
         else:
             # Fallback: use the full display path (slower but correct)
             self.load_visuals(q_image, self.current_image_path, None)
