@@ -24,8 +24,6 @@ class OrthoRaster(Raster):
 
     def to_dict(self) -> dict:
         data = super().to_dict()
-        # Preserve legacy key for compatibility
-        data['type'] = 'OrthoRaster'
         data['raster_type'] = 'OrthoRaster'
         return data
 

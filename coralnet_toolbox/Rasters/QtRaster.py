@@ -1466,9 +1466,9 @@ class Raster(QObject):
         # Create the raster with the image path
         image_path = raster_dict['path']
         raster = cls(image_path)
-        # Restore canonical raster_type if present, fallback to legacy 'type'
+        # Restore canonical raster_type if present
         try:
-            raster.raster_type = raster_dict.get('raster_type', raster_dict.get('type', raster.raster_type))
+            raster.raster_type = raster_dict.get('raster_type', raster.raster_type)
         except Exception:
             pass
         
@@ -1556,9 +1556,9 @@ class Raster(QObject):
         # Update state information
         state = raster_dict.get('state', {})
         self.checkbox_state = state.get('checkbox_state', False)
-        # Restore canonical raster_type if present, fallback to legacy 'type'
+        # Restore canonical raster_type if present
         try:
-            self.raster_type = raster_dict.get('raster_type', raster_dict.get('type', self.raster_type))
+            self.raster_type = raster_dict.get('raster_type', self.raster_type)
         except Exception:
             pass
         

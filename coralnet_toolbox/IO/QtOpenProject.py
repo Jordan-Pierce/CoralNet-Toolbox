@@ -222,10 +222,10 @@ class OpenProject(QDialog):
 
             # Add images directly to the manager without emitting signals
             for path in image_paths:
-                # Determine canonical raster type (supports legacy 'type')
+                # Determine canonical raster type (only 'raster_type' expected)
                 r_type = None
                 if is_new_format and path in image_data_map:
-                    r_type = image_data_map[path].get('raster_type', image_data_map[path].get('type', None))
+                    r_type = image_data_map[path].get('raster_type', None)
 
                 if r_type == 'VideoRaster':
                     self.image_window.raster_manager.add_video_raster(path)

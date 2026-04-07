@@ -484,8 +484,7 @@ class VideoRaster(Raster):
     def to_dict(self) -> dict:
         """Extend base serialization with video-specific fields."""
         data = super().to_dict()
-        # Keep legacy 'type' key for compatibility, and add canonical 'raster_type'
-        data['type'] = 'VideoRaster'
+        # Canonical raster type
         data['raster_type'] = 'VideoRaster'
         data['fps'] = self._video_fps
         data['frame_count'] = self._video_frame_count
