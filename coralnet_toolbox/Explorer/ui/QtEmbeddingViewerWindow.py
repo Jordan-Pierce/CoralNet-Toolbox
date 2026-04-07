@@ -350,6 +350,8 @@ class EmbeddingViewerWindow(QWidget):
         self.graphics_view.mouseReleaseEvent = self._mouse_release_event
         self.graphics_view.mouseMoveEvent = self._mouse_move_event
         self.graphics_view.wheelEvent = self._wheel_event
+        # Override key press events
+        self.graphics_view.keyPressEvent = self._key_press_event
         self.graphics_view.setStyleSheet("background-color: #1e1e1e;")
         self.graphics_scene.setBackgroundBrush(QColor('#1e1e1e'))
         
@@ -1888,6 +1890,32 @@ class EmbeddingViewerWindow(QWidget):
         old_pos = self.graphics_view.mapToScene(event.pos())
         zoom_factor = zoom_in_factor if event.angleDelta().y() > 0 else zoom_out_factor
         self.graphics_view.scale(zoom_factor, zoom_factor)
+
+    def _key_press_event(self, event):
+        """Handle key press events for the graphics view."""
+        try:
+            if event.key() == Qt.Key_A and (event.modifiers() & Qt.ControlModifier):
+                if not self.points_by_id:
+                    return
+
+                # Grab IDs for all points that are currently visible
+                ids_to_select = [
+                    ann_id for ann_id, pt in self.points_by_id.items()
+                    if pt.isVisible()
+                ]
+
+                if ids_to_select:
+                    # Respect existing selection rendering path
+                    self.render_selection_from_ids(set(ids_to_select))
+
+                event.accept()
+                return
+        except Exception:
+            # Fall through to default handling on error
+            pass
+
+        # Default behavior: call the native handler
+        QGraphicsView.keyPressEvent(self.graphics_view, event)
         new_pos = self.graphics_view.mapToScene(event.pos())
         delta = new_pos - old_pos
         self.graphics_view.translate(delta.x(), delta.y())
