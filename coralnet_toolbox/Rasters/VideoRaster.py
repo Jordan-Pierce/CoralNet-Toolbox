@@ -495,8 +495,15 @@ class VideoRaster(Raster):
         """Reconstruct a VideoRaster from a saved dictionary."""
         video_path = raster_dict['path']
         raster = cls(video_path)
-        state = raster_dict.get('state', {})
-        raster.checkbox_state = state.get('checkbox_state', False)
+        # Let the base class restore common properties (work areas, scale,
+        # intrinsics, z-channel, etc.) while preserving the subclass's
+        # `raster_type` (see Raster.update_from_dict for conditional logic).
+        try:
+            raster.update_from_dict(raster_dict)
+        except Exception:
+            # Fallback: at least restore simple state if update_from_dict fails
+            state = raster_dict.get('state', {})
+            raster.checkbox_state = state.get('checkbox_state', False)
         return raster
 
     # ------------------------------------------------------------------

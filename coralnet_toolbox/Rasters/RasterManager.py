@@ -44,23 +44,41 @@ class RasterManager(QObject):
         """
         if image_path in self.rasters:
             return True  # Already exists
-            
+
+        # If the path looks like a video, delegate to add_video_raster so we
+        # create a VideoRaster instead of a plain Raster. This avoids cases
+        # where videos are treated as ImageRasters (and passed as file paths
+        # to image loaders expecting images).
+        try:
+            ext = os.path.splitext(image_path)[1].lower()
+            from coralnet_toolbox.Rasters.VideoRaster import VIDEO_EXTENSIONS
+            if ext in VIDEO_EXTENSIONS:
+                return self.add_video_raster(image_path)
+        except Exception:
+            # If the import fails for any reason, fall back to default behavior
+            pass
+
+        # No automatic guessing between Raster vs OrthoRaster here.
+        # `OrthoRaster` should only be created when the user explicitly
+        # imports files as orthomosaics. Drag/drop/import as images should
+        # create plain `Raster` objects unless the file is a video.
+
         try:
             raster = Raster(image_path)
             if raster.rasterio_src is None:
                 return False
-                
+
             self.rasters[image_path] = raster
             self.image_paths.append(image_path)
-            
+
             # Connect raster's z-channel signal to forward as zChannelUpdated
             raster.zChannelChanged.connect(lambda: self.zChannelUpdated.emit(image_path))
-            
+
             if emit_signal:
                 self.rasterAdded.emit(image_path)
-                
+
             return True
-            
+
         except Exception as e:
             print(f"Error adding raster {image_path}: {str(e)}")
             return False

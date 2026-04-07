@@ -134,7 +134,11 @@ class Raster(QObject):
         #   - "ImageRaster" (default)
         #   - "VideoRaster"
         #   - "OrthoRaster"
-        self.raster_type = "ImageRaster"
+        # Do not overwrite a subclass-provided value (some subclasses set
+        # `self.raster_type` before calling `super().__init__`). Only set the
+        # default if it wasn't already provided by the subclass.
+        if not hasattr(self, 'raster_type') or self.raster_type is None:
+            self.raster_type = "ImageRaster"
 
         # Load rasterio source
         self.load_rasterio()
@@ -1466,9 +1470,13 @@ class Raster(QObject):
         # Create the raster with the image path
         image_path = raster_dict['path']
         raster = cls(image_path)
-        # Restore canonical raster_type if present
+        # Restore canonical raster_type if present, but do not overwrite
+        # a subclass-provided raster_type (e.g., VideoRaster) unless the
+        # current type is the default 'ImageRaster' or unset.
         try:
-            raster.raster_type = raster_dict.get('raster_type', raster.raster_type)
+            incoming_type = raster_dict.get('raster_type', None)
+            if incoming_type and (not hasattr(raster, 'raster_type') or raster.raster_type in (None, 'ImageRaster')):
+                raster.raster_type = incoming_type
         except Exception:
             pass
         
@@ -1556,9 +1564,13 @@ class Raster(QObject):
         # Update state information
         state = raster_dict.get('state', {})
         self.checkbox_state = state.get('checkbox_state', False)
-        # Restore canonical raster_type if present
+        # Restore canonical raster_type if present, but only if current
+        # raster_type is the default or unset to avoid overwriting subclass
+        # values (e.g., VideoRaster) created during import.
         try:
-            self.raster_type = raster_dict.get('raster_type', self.raster_type)
+            incoming_type = raster_dict.get('raster_type', None)
+            if incoming_type and (not hasattr(self, 'raster_type') or self.raster_type in (None, 'ImageRaster')):
+                self.raster_type = incoming_type
         except Exception:
             pass
         

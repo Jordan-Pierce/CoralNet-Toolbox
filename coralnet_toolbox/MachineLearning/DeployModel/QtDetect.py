@@ -217,14 +217,48 @@ class Detect(Base):
                 
                 # Get the list of items to process
                 is_full_image = self.annotation_window.get_selected_tool() != "work_area"
-                
-                if is_full_image:
-                    work_items_data = [raster.image_path]  # List with one string
-                    work_areas = [None]  # Dummy list to make loops match
+
+                # Handle video virtual-frame paths specially (video.mp4::frame_N)
+                work_items_data = None
+                work_areas = None
+                if isinstance(image_path, str) and '::frame_' in image_path:
+                    # Import here to avoid circular imports
+                    from coralnet_toolbox.Rasters.VideoRaster import VideoRaster
+                    video_path, frame_idx = VideoRaster.parse_frame_path(image_path)
+
+                    # RasterManager.get_raster resolves virtual paths to the underlying video raster
+                    # Ensure the raster is a VideoRaster before using frame APIs
+                    if hasattr(raster, 'raster_type') and raster.raster_type == 'VideoRaster':
+                        if is_full_image:
+                            # For full-image detect on a video frame, pass the raw BGR numpy array
+                            bgr = raster.get_bgr_frame(frame_idx)
+                            if bgr is None:
+                                print(f"Warning: Could not read frame {frame_idx} from {video_path}. Skipping.")
+                                continue
+                            work_items_data = [bgr]
+                            work_areas = [None]
+                        else:
+                            # For work-area mode, update the shim to point at this frame
+                            raster.update_shim_for_frame(frame_idx)
+                            work_areas = raster.get_work_areas()
+                            work_items_data = raster.get_work_areas_data(as_format='BGR')
+                    else:
+                        # Fallback to normal handling if raster isn't a VideoRaster
+                        if is_full_image:
+                            work_items_data = [raster.image_path]
+                            work_areas = [None]
+                        else:
+                            work_areas = raster.get_work_areas()
+                            work_items_data = raster.get_work_areas_data(as_format='BGR')
                 else:
-                    # Get both parallel lists: coordinate objects and data arrays
-                    work_areas = raster.get_work_areas()  # List of WorkArea objects
-                    work_items_data = raster.get_work_areas_data(as_format='BGR')  # List of np.ndarray
+                    # Regular (non-video) path handling
+                    if is_full_image:
+                        work_items_data = [raster.image_path]  # List with one string
+                        work_areas = [None]  # Dummy list to make loops match
+                    else:
+                        # Get both parallel lists: coordinate objects and data arrays
+                        work_areas = raster.get_work_areas()  # List of WorkArea objects
+                        work_items_data = raster.get_work_areas_data(as_format='BGR')  # List of np.ndarray
 
                 if not work_items_data or not work_areas:
                     print(f"Warning: No work items found for {image_path}. Skipping.")
