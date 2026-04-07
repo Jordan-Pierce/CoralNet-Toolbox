@@ -52,7 +52,7 @@ from coralnet_toolbox.WorkArea import WorkAreaManager as WorkAreaManagerDialog
 from coralnet_toolbox.IO import (
     ImportImages,
     ImportFrames,
-    ImportVideo,
+    ImportVideos,
     ImportLabels,
     ImportCoralNetLabels,
     ImportTagLabLabels,
@@ -285,7 +285,7 @@ class MainWindow(QMainWindow):
         self.export_geojson_annotations_dialog = ExportGeoJSONAnnotations(self)
         self.export_spatial_metrics_dialog = ExportSpatialMetrics(self)
         self.import_frames_dialog = ImportFrames(self)
-        self.import_video = ImportVideo(self)
+        self.import_videos = ImportVideos(self)
         self.open_project_dialog = OpenProject(self)
         self.save_project_dialog = SaveProject(self)
 
@@ -361,14 +361,14 @@ class MainWindow(QMainWindow):
         self.import_images_action = QAction("Images", self)
         self.import_images_action.triggered.connect(self.import_images.import_images)
         self.import_rasters_menu.addAction(self.import_images_action)
+        # Import Videos
+        self.import_videos_action = QAction("Videos", self)
+        self.import_videos_action.triggered.connect(self.import_videos.import_videos)
+        self.import_rasters_menu.addAction(self.import_videos_action)
         # Import Frames
         self.import_frames_action = QAction("Frames from Video", self)
         self.import_frames_action.triggered.connect(self.open_import_frames_dialog)
         self.import_rasters_menu.addAction(self.import_frames_action)
-        # Import Video
-        self.import_video_action = QAction("Video File", self)
-        self.import_video_action.triggered.connect(self.import_video.import_video)
-        self.import_rasters_menu.addAction(self.import_video_action)
         
         # Labels submenu
         self.import_labels_menu = self.import_menu.addMenu("Labels")
@@ -1658,7 +1658,15 @@ class MainWindow(QMainWindow):
                 else:
                     event.ignore()
             else:
-                self.import_images.dragEnterEvent(event)
+                # Route video files to the video importer if present
+                video_exts = ('.mp4', '.avi', '.mov', '.mkv', '.webm')
+                if any(fn.endswith(video_exts) for fn in lower_names):
+                    if hasattr(self, 'import_videos') and self.import_videos:
+                        self.import_videos.dragEnterEvent(event)
+                    else:
+                        event.ignore()
+                else:
+                    self.import_images.dragEnterEvent(event)
 
     def dropEvent(self, event):
         """Handle drop event for drag-and-drop."""
@@ -1692,8 +1700,16 @@ class MainWindow(QMainWindow):
                     else:
                         event.ignore()
                 else:
-                    # Handle as image imports
-                    self.import_images.dropEvent(event)
+                    # If any dropped file is a video, route to ImportVideos
+                    video_exts = ('.mp4', '.avi', '.mov', '.mkv', '.webm')
+                    if any(fn.endswith(video_exts) for fn in lower_names):
+                        if hasattr(self, 'import_videos') and self.import_videos:
+                            self.import_videos.dropEvent(event)
+                        else:
+                            event.ignore()
+                    else:
+                        # Handle as image imports
+                        self.import_images.dropEvent(event)
 
     def dragMoveEvent(self, event):
         """Handle drag move event for drag-and-drop."""
@@ -1720,7 +1736,15 @@ class MainWindow(QMainWindow):
                 else:
                     event.ignore()
             else:
-                self.import_images.dragMoveEvent(event)
+                # Route video drags to ImportVideos when applicable
+                video_exts = ('.mp4', '.avi', '.mov', '.mkv', '.webm')
+                if any(fn.endswith(video_exts) for fn in lower_names):
+                    if hasattr(self, 'import_videos') and self.import_videos:
+                        self.import_videos.dragMoveEvent(event)
+                    else:
+                        event.ignore()
+                else:
+                    self.import_images.dragMoveEvent(event)
                 
     def switch_back_to_tool(self):
         """Switches back to the tool used to create the currently selected annotation."""        

@@ -1914,11 +1914,8 @@ class EmbeddingViewerWindow(QWidget):
             # Fall through to default handling on error
             pass
 
-        # Default behavior: call the native handler
+        # Default behavior: call the native handler and refresh view
         QGraphicsView.keyPressEvent(self.graphics_view, event)
-        new_pos = self.graphics_view.mapToScene(event.pos())
-        delta = new_pos - old_pos
-        self.graphics_view.translate(delta.x(), delta.y())
 
         if self.locate_graphics_item:
             # refresh location indicator positions

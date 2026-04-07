@@ -1,7 +1,7 @@
-from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QPainter, QPen, QColor
+from PyQt5.QtCore import Qt, pyqtSignal, QEvent
+from PyQt5.QtGui import QPainter, QPen, QColor, QPixmap
 from PyQt5.QtWidgets import (QWidget, QHBoxLayout, QPushButton, QSlider,
-                             QLabel, QStyle, QSizePolicy, QStyleOptionSlider)
+                             QLabel, QStyle, QSizePolicy, QStyleOptionSlider, QFrame, QApplication)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -57,6 +57,53 @@ class AnnotatedSlider(QSlider):
 
         painter.end()
 
+    def mousePressEvent(self, event):
+        # Let the parent/VideoPlayerWidget handle Ctrl+click behavior via eventFilter.
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        # Forward to base implementation; VideoPlayerWidget installs an event filter
+        # to handle Ctrl-hover previews.
+        super().mouseMoveEvent(event)
+
+
+class FramePreviewTooltip(QFrame):
+    """
+    Lightweight tooltip that shows a QPixmap. Provides `set_image(pixmap)` and
+    `show_at(global_pos)` methods to mirror ImagePreviewTooltip API used elsewhere.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.ToolTip)
+        self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._label = QLabel(self)
+        self._label.setAlignment(Qt.AlignCenter)
+        self._label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self._pixmap = None
+
+    def set_image(self, pixmap: QPixmap):
+        if pixmap is None:
+            self._pixmap = None
+            self.hide()
+            return
+        self._pixmap = pixmap
+        self._label.setPixmap(self._pixmap)
+        self._label.adjustSize()
+        self.adjustSize()
+
+    def show_at(self, global_pos):
+        if self._pixmap is None:
+            return
+        # Offset tooltip slightly above cursor
+        geo = self._label.geometry()
+        w = geo.width()
+        h = geo.height()
+        x = global_pos.x() - (w // 2)
+        y = global_pos.y() - h - 20
+        self.move(x, y)
+        self.show()
+
 
 class VideoPlayerWidget(QWidget):
     """
@@ -73,13 +120,26 @@ class VideoPlayerWidget(QWidget):
     nextAnnotatedClicked = pyqtSignal()
     prevAnnotatedClicked = pyqtSignal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, annotation_window=None):
         super().__init__(parent)
+        # Direct reference to the owning AnnotationWindow (set by caller)
+        self.annotation_window = annotation_window
         
         self.is_playing = False
         self.total_frames = 0
         
         self.setup_ui()
+
+        # Prefer reuse of ImagePreviewTooltip from ImageWindow if available
+        try:
+            from coralnet_toolbox.QtImageWindow import ImagePreviewTooltip
+            self.preview_tooltip = ImagePreviewTooltip(self)
+        except Exception:
+            self.preview_tooltip = FramePreviewTooltip(self)
+
+        self._last_preview_idx = None
+        # Install event filter on slider to capture hover and clicks
+        self.slider.installEventFilter(self)
         
     def setup_ui(self):
         """Initialize the layout and widgets."""
@@ -130,6 +190,7 @@ class VideoPlayerWidget(QWidget):
         # --- 6. Scrubber Slider (AnnotatedSlider draws per-frame annotation ticks) ---
         self.slider = AnnotatedSlider(Qt.Horizontal)
         self.slider.setToolTip("Seek Frame")
+        self.slider.setMouseTracking(True)
         # Connect sliderReleased/valueChanged depending on desired behavior.
         # using valueChanged allows dragging to scrub, but might be heavy if not optimized.
         # We generally use sliderMoved for scrubbing and valueChanged for clicks.
@@ -152,6 +213,103 @@ class VideoPlayerWidget(QWidget):
         # Only emit if the slider is not currently being dragged (handled by sliderMoved)
         if not self.slider.isSliderDown():
             self.seekChanged.emit(value)
+
+    def eventFilter(self, obj, event):
+        # Intercept events on the slider to implement Ctrl+hover preview and Ctrl+click seek
+        if obj is self.slider:
+            if event.type() == QEvent.MouseMove:
+                # Show preview only when Ctrl is held
+                if QApplication.keyboardModifiers() & Qt.ControlModifier:
+                    # Compute value from mouse x position
+                    pos = event.pos()
+                    w = max(1, self.slider.width())
+                    x = pos.x()
+                    ratio = min(max(0.0, x / w), 1.0)
+                    vmin = self.slider.minimum()
+                    vmax = self.slider.maximum()
+                    if vmax > vmin:
+                        frame_idx = int(round(vmin + ratio * (vmax - vmin)))
+                    else:
+                        frame_idx = vmin
+
+                    if frame_idx != self._last_preview_idx:
+                        self._last_preview_idx = frame_idx
+                        # Resolve the AnnotationWindow that owns this player.  When the
+                        # player is placed into a QToolBar it may be reparented, so
+                        # prefer an explicit reference if provided.
+                        aw = getattr(self, 'annotation_window', None)
+                        if aw is None:
+                            p = self.parent()
+                            while p is not None:
+                                if hasattr(p, '_active_video_raster'):
+                                    aw = p
+                                    break
+                                p = p.parent()
+
+                        raster = None
+                        if aw is not None:
+                            raster = getattr(aw, '_active_video_raster', None)
+
+                        if aw is not None:
+                            # Prefer RasterManager thumbnail API which handles videos
+                            try:
+                                rm = None
+                                try:
+                                    rm = aw.main_window.image_window.raster_manager
+                                except Exception:
+                                    rm = None
+
+                                if rm is not None and hasattr(aw, '_active_video_raster') and aw._active_video_raster is not None:
+                                    virtual = aw._active_video_raster.make_frame_path(aw._active_video_raster.image_path, frame_idx)
+                                    pix = rm.get_thumbnail(virtual, longest_edge=256)
+                                    if pix is not None:
+                                        self.preview_tooltip.set_image(pix)
+                                        self.preview_tooltip.show_at(event.globalPos())
+                                    else:
+                                        self.preview_tooltip.hide()
+                                else:
+                                    self.preview_tooltip.hide()
+                            except Exception:
+                                self.preview_tooltip.hide()
+                        else:
+                            self.preview_tooltip.hide()
+                    return False
+                else:
+                    # Hide preview when Ctrl not held
+                    self._last_preview_idx = None
+                    self.preview_tooltip.hide()
+                    return False
+
+            if event.type() == QEvent.Leave:
+                self._last_preview_idx = None
+                self.preview_tooltip.hide()
+                return False
+
+            if event.type() == QEvent.MouseButtonPress:
+                # Ctrl+click: jump to computed frame
+                if QApplication.keyboardModifiers() & Qt.ControlModifier:
+                    mouse_event = event
+                    if mouse_event.button() == Qt.LeftButton:
+                        pos = mouse_event.pos()
+                        w = max(1, self.slider.width())
+                        x = pos.x()
+                        ratio = min(max(0.0, x / w), 1.0)
+                        vmin = self.slider.minimum()
+                        vmax = self.slider.maximum()
+                        if vmax > vmin:
+                            frame_idx = int(round(vmin + ratio * (vmax - vmin)))
+                        else:
+                            frame_idx = vmin
+
+                        # Update slider UI and emit seek
+                        self.slider.setValue(frame_idx)
+                        self.seekChanged.emit(frame_idx)
+                        # Hide tooltip after selection
+                        self._last_preview_idx = None
+                        self.preview_tooltip.hide()
+                        return True
+
+        return super().eventFilter(obj, event)
 
     def toggle_playback_state(self):
         """

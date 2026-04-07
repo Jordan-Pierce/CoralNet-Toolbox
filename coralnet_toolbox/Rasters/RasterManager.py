@@ -5,7 +5,7 @@ import gc
 from typing import Dict, List, Optional, Set
 
 from PyQt5.QtGui import QPixmap
-from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt5.QtCore import QObject, pyqtSignal, Qt
 
 from coralnet_toolbox.Rasters.QtRaster import Raster
 
@@ -219,10 +219,40 @@ class RasterManager(QObject):
         Returns:
             QPixmap or None: Thumbnail as a QPixmap, or None if error
         """
-        if image_path not in self.rasters:
+        # Handle virtual video frame paths like 'video.mp4::frame_42'
+        if isinstance(image_path, str) and '::frame_' in image_path:
+            video_path, frame_part = image_path.rsplit('::frame_', 1)
+            try:
+                frame_idx = int(frame_part)
+            except Exception:
+                return None
+
+            raster = self.rasters.get(video_path)
+            if raster is None:
+                return None
+
+            # If raster supports direct frame access (VideoRaster), use it
+            if hasattr(raster, 'get_frame'):
+                try:
+                    qimg = raster.get_frame(frame_idx)
+                    if qimg is None:
+                        return None
+                    pix = QPixmap.fromImage(qimg)
+                    if longest_edge is not None:
+                        pix = pix.scaled(longest_edge, longest_edge,
+                                         Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    return pix
+                except Exception:
+                    return None
+
+            # Fallback to frame-0 pixmap
+            return raster.get_pixmap(longest_edge=longest_edge)
+
+        # Regular (non-virtual) image/video path
+        raster = self.rasters.get(image_path)
+        if raster is None:
             return None
-            
-        return self.rasters[image_path].get_pixmap(longest_edge=longest_edge)
+        return raster.get_pixmap(longest_edge=longest_edge)
     
     def clear(self):
         """Clear all rasters from the manager."""

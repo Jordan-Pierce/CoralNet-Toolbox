@@ -138,7 +138,9 @@ class AnnotationWindow(BaseCanvas):
         # Video playback state
         self._active_video_raster = None   # VideoRaster when a video is loaded
         self._current_frame_idx: int = 0
-        self._video_player = VideoPlayerWidget(self)
+        # Pass the annotation window instance to the player so it can access
+        # the active VideoRaster even when reparented into toolbar widgets.
+        self._video_player = VideoPlayerWidget(self, annotation_window=self)
         self._playback_timer = QTimer(self)
         self._playback_timer.timeout.connect(self._playback_tick)
         # Video toolbar is created lazily via create_video_toolbar()
@@ -886,12 +888,11 @@ class AnnotationWindow(BaseCanvas):
 
         # --- PLAN A: Index Map (Flawless 3D Coordinate) ---
         try:
-            index_map = camera._raster.index_map
             primary_target = mvat_manager.viewer.scene_context.get_primary_target()
-            if index_map is not None and primary_target is not None:
-                candidate_id = int(index_map[y, x])
-                if candidate_id > -1:
-                    raw_coord = primary_target.get_element_coordinate(candidate_id)
+            if primary_target is not None:
+                candidate_id = camera.get_index_at_pixel(x, y)
+                if candidate_id is not None and int(candidate_id) > -1:
+                    raw_coord = primary_target.get_element_coordinate(int(candidate_id))
                     if raw_coord is not None:
                         # ---> Safely cast PyTorch Tensor to NumPy! <---
                         if hasattr(raw_coord, 'cpu'):
