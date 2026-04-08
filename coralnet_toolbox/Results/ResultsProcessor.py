@@ -136,11 +136,11 @@ class ResultsProcessor:
         """
         Processes a *single* Results object from a single work area.
         
-        This function filters the results, runs NMS against existing annotations,
-        and creates a list of new annotation objects to be added.
+        Optimized to keep bounding boxes and confidence scores as PyTorch tensors 
+        for as long as possible, delaying expensive Python object creation and 
+        polygon extraction until after NMS filters out the noise.
         """
         annotations_to_add = []
-        new_detections = []
         
         if not results or not results.boxes: 
             return annotations_to_add
@@ -152,95 +152,84 @@ class ResultsProcessor:
         indices_area = set(self.indices_pass_area(results))
         filtered_indices = list(indices_uncertainty.intersection(indices_area))
         
-        for idx in filtered_indices:
-            try:
-                box = results.boxes[idx]
-                xyxy = box.xyxy[0].cpu().numpy()
-                conf = float(box.conf[0].cpu().numpy())
-                cls_id = int(box.cls[0].cpu().numpy())
-                cls_name = results.names[cls_id]
-                
-                bbox_coords = [float(xyxy[0]), float(xyxy[1]), float(xyxy[2]), float(xyxy[3])]
-
-                detection_data = {
-                    'bbox': bbox_coords,
-                    'confidence': conf,
-                    'class_name': cls_name,
-                    'class_id': cls_id,
-                    'is_existing': False,
-                    'polygon_points': None,
-                    'model_type': model_type
-                }
-                
-                if model_type == 'segmentation':
-                    if results.masks and idx < len(results.masks.xy):
-                        xy = results.masks.xy[idx]
-                        points = [(float(x), float(y)) for x, y in xy]
-                        detection_data['polygon_points'] = points
-                        new_detections.append(detection_data)
-                else:  # 'detection'
-                    new_detections.append(detection_data)
-                    
-            except Exception as e:
-                print(f"Warning: Failed to extract result in first pass: {e}")
-        
-        if not new_detections:
+        if not filtered_indices:
             return annotations_to_add
-            
-        # --- 2. Run NMS vs. Existing Annotations (Class-Agnostic) ---
+
+        # --- 2. Extract Tensors for New Detections ---
+        # Slice the PyTorch tensors directly. Move to CPU to match existing UI coords.
+        new_bboxes = results.boxes.xyxy[filtered_indices].cpu()
+        new_scores = results.boxes.conf[filtered_indices].cpu()
         
+        # --- 3. Fast-Extract Existing Annotations ---
         existing_annotations = self.annotation_window.get_image_annotations(image_path)
         existing_annotations = [a for a in existing_annotations if (isinstance(a, RectangleAnnotation) or 
                                                                     isinstance(a, PolygonAnnotation))]
-        existing_detections = self._convert_annotations_to_nms_format(existing_annotations)
         
-        # Combine existing (with 1.0 conf) and new survivors
-        all_detections_combined = existing_detections + new_detections
-        
-        if not all_detections_combined:
-            return annotations_to_add
+        if existing_annotations:
+            # Bypass the dictionary creation entirely, just grab the raw coordinates
+            ext_boxes = []
+            for ann in existing_annotations:
+                tl = ann.get_bounding_box_top_left()
+                br = ann.get_bounding_box_bottom_right()
+                ext_boxes.append([tl.x(), tl.y(), br.x(), br.y()])
             
-        # Convert to tensors for NMS
-        bboxes = torch.tensor([det['bbox'] for det in all_detections_combined], dtype=torch.float32)
-        scores = torch.tensor([det['confidence'] for det in all_detections_combined], dtype=torch.float32)
-        
+            existing_bboxes = torch.tensor(ext_boxes, dtype=torch.float32)
+            # Force 1.0 confidence so existing annotations always win against new predictions
+            existing_scores = torch.ones(len(ext_boxes), dtype=torch.float32) 
+            
+            # Combine tensors
+            all_bboxes = torch.cat([existing_bboxes, new_bboxes])
+            all_scores = torch.cat([existing_scores, new_scores])
+            num_existing = len(existing_bboxes)
+        else:
+            all_bboxes = new_bboxes
+            all_scores = new_scores
+            num_existing = 0
+
+        # --- 4. Run NMS (Class-Agnostic) ---
         try:
-            # Apply NMS using TorchNMS. This is class-agnostic.
-            keep_indices_tensor = TorchNMS.fast_nms(bboxes, scores, self._get_iou_thresh())
+            keep_indices_tensor = TorchNMS.fast_nms(all_bboxes, all_scores, self._get_iou_thresh())
             keep_indices = keep_indices_tensor.tolist()  # Convert tensor to standard list of ints
         except Exception as e:
             print(f"Warning: Stage 2 NMS (TorchNMS) failed: {e}")
-            keep_indices = list(range(len(all_detections_combined)))
+            keep_indices = list(range(len(all_bboxes)))
             
-        # --- 3. Create Annotations for final survivors ---
-        
+        # --- 5. Unpack Survivors and Create Annotations ---
         for idx in keep_indices:
-            # Check if the kept index is a NEW detection
-            original_detection = all_detections_combined[idx]
-            if not original_detection['is_existing']:
+            # We only care if the survivor is a NEW detection (index >= num_existing)
+            if idx >= num_existing:
+                # Map the concatenated index back to the original index in the YOLO results object
+                original_yolo_idx = filtered_indices[idx - num_existing]
+                
                 try:
-                    conf = original_detection['confidence']
-                    cls_name = original_detection['class_name']
+                    box = results.boxes[original_yolo_idx]
+                    xyxy = box.xyxy[0].cpu().numpy()
+                    conf = float(box.conf[0].cpu().numpy())
+                    cls_id = int(box.cls[0].cpu().numpy())
+                    cls_name = results.names[cls_id]
                     
                     short_label = self.get_mapped_short_label(cls_name, conf)
                     label = self.label_window.get_label_by_short_code(short_label)
                     
                     annotation = None
-                    if original_detection['model_type'] == 'detection':
-                        xmin, ymin, xmax, ymax = original_detection['bbox']
+                    if model_type == 'detection':
+                        xmin, ymin, xmax, ymax = float(xyxy[0]), float(xyxy[1]), float(xyxy[2]), float(xyxy[3])
                         annotation = self.create_rectangle_annotation(xmin, ymin, xmax, ymax, label, image_path)
                     
-                    elif original_detection['model_type'] == 'segmentation' and original_detection['polygon_points']:
-                        # No automatic simplification - preserve full precision
-                        points = original_detection['polygon_points']
-                        annotation = self.create_polygon_annotation(points, label, image_path)
+                    elif model_type == 'segmentation':
+                        # ONLY unpack the polygon mask if the detection survived NMS!
+                        # This saves massive CPU overhead.
+                        if results.masks and original_yolo_idx < len(results.masks.xy):
+                            xy = results.masks.xy[original_yolo_idx]
+                            points = [(float(x), float(y)) for x, y in xy]
+                            annotation = self.create_polygon_annotation(points, label, image_path)
 
                     if annotation:
                         processed_annotation = self._post_process_new_annotation(annotation, cls_name, conf)
                         annotations_to_add.append(processed_annotation)
                 
                 except Exception as e:
-                    print(f"Warning: Failed to create annotation: {e}")
+                    print(f"Warning: Failed to create annotation for survivor: {e}")
         
         return annotations_to_add
 
