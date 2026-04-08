@@ -720,20 +720,29 @@ class SeeAnythingTool(Tool):
         progress_bar.show()
         progress_bar.start_progress(len(self.annotations))
             
-        for annotation in self.annotations:
+        total = len(self.annotations)
+        for idx, annotation in enumerate(self.annotations):
+            # Allow canceling from the progress dialog
+            if progress_bar.wasCanceled():
+                break
+
             # The add_annotation_from_tool will re-bind it
             # and it will animate normally if selected.
             annotation.deanimate()
-            
+
             # Create cropped image if not already done
             if not annotation.cropped_image and self.annotation_window.rasterio_image:
                 annotation.create_cropped_image(self.annotation_window.rasterio_image)
-            
+
             # Add the annotation using the add_annotation_from_tool method
             self.annotation_window.add_annotation_from_tool(annotation)
 
-            # Update progress bar
-            progress_bar.update_progress()
+            # Update progress bar every ~10% to avoid excessive UI updates
+            if total > 10:
+                if idx % (total // 10) == 0:
+                    progress_bar.update_progress_percentage((idx / total) * 100)
+            else:
+                progress_bar.update_progress_percentage((idx / total) * 100)
             
         # Update the scene to reflect deanimation
         self.annotation_window.scene.update()

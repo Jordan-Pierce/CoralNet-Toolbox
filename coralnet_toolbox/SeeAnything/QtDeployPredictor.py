@@ -602,6 +602,15 @@ class DeployPredictorDialog(QDialog):
                 
                 # Set the updated VPE in the model
                 self.loaded_model.is_fused = lambda: False
+                # Ensure underlying model.names is a dict mapping index->name
+                mdl = getattr(self.loaded_model, 'model', None)
+                if mdl is not None:
+                    names_attr_inner = getattr(mdl, 'names', None)
+                    if isinstance(names_attr_inner, list):
+                        try:
+                            mdl.names = {i: n for i, n in enumerate(names_attr_inner)}
+                        except Exception:
+                            pass
                 self.loaded_model.set_classes(["object0"], self.vpe)
             
             # Clear visual prompts since we're using VPE

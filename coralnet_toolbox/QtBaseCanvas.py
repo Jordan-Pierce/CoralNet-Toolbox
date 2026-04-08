@@ -104,17 +104,19 @@ class BaseCanvas(QGraphicsView):
         """Initialize the base canvas."""
         super().__init__(parent)
         
-        # --- PHASE 2: ENABLE HARDWARE ACCELERATION ---
-        gl_widget = QOpenGLWidget()
-        
-        # Enable Anti-Aliasing (4x MSAA) for smooth vector drawing
-        format_gl = QSurfaceFormat()
-        format_gl.setSamples(4) 
-        gl_widget.setFormat(format_gl)
-        
-        # Set the hardware-accelerated widget as the viewport
-        self.setViewport(gl_widget)
-        # ---------------------------------------------
+        if False:
+            # Causes a lag, leaving commented out for now.
+            # --- PHASE 2: ENABLE HARDWARE ACCELERATION ---
+            gl_widget = QOpenGLWidget()
+            
+            # Enable Anti-Aliasing (4x MSAA) for smooth vector drawing
+            format_gl = QSurfaceFormat()
+            format_gl.setSamples(4) 
+            gl_widget.setFormat(format_gl)
+            
+            # Set the hardware-accelerated widget as the viewport
+            self.setViewport(gl_widget)
+            # ---------------------------------------------
         
         # Create and set the scene
         self.scene = QGraphicsScene(self)

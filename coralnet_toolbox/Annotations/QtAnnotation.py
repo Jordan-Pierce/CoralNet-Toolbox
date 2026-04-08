@@ -1014,17 +1014,28 @@ class Annotation(QObject):
             return pen
     
     def _update_pen_styles(self):
-        """Update pen styles with current pulse alpha."""
+        """Update the pen styles of all graphics items based on the 
+        current selection and animation state."""
         color = QColor(self.label.color)
         pen = self._create_pen(color)
-        
-        # Update all graphics items with the pen
-        if self.graphics_item:
-            self.graphics_item.setPen(pen)
-        if self.center_graphics_item:
-            self.center_graphics_item.setPen(pen)
-        if self.bounding_box_graphics_item:
-            self.bounding_box_graphics_item.setPen(pen)
+
+        try:
+            if self.graphics_item and self.graphics_item.scene():
+                self.graphics_item.setPen(pen)
+        except RuntimeError:
+            self.graphics_item = None
+
+        try:
+            if self.center_graphics_item and self.center_graphics_item.scene():
+                self.center_graphics_item.setPen(pen)
+        except RuntimeError:
+            self.center_graphics_item = None
+
+        try:
+            if self.bounding_box_graphics_item and self.bounding_box_graphics_item.scene():
+                self.bounding_box_graphics_item.setPen(pen)
+        except RuntimeError:
+            self.bounding_box_graphics_item = None
 
     def create_center_graphics_item(self, center_xy, scene, add_to_group=False):
         """Create a graphical item representing the annotation's center point."""

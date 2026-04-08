@@ -550,20 +550,8 @@ class DeployGeneratorDialog(QDialog):
         self.reference_label_combo_box.currentIndexChanged.connect(self.filter_images_by_label_and_type)
         layout.addRow("Reference Label:", self.reference_label_combo_box)
         
-        # Create a Reference model combobox (VPE, Images)
-        self.reference_method_combo_box = QComboBox()
-        self.reference_method_combo_box.addItems(["VPE", "Images"])
-        layout.addRow("Reference Method:", self.reference_method_combo_box)
-
-        # Add a spinbox for the user to define the number of prototypes (K)
-        self.k_prototypes_spinbox = QSpinBox()
-        self.k_prototypes_spinbox.setRange(0, 1000)
-        self.k_prototypes_spinbox.setValue(0)
-        self.k_prototypes_spinbox.setToolTip(
-            "Set the number of prototype clusters (K) to generate from references.\n"
-            "Set to 0 to treat every unique reference image/VPE as its own prototype (K=N)."
-        )
-        layout.addRow("Number of Prototypes (K):", self.k_prototypes_spinbox)
+        # Reference method is fixed to VPE only (Images pathway removed)
+        # K-prototype UI removed; K is hardcoded to 0 (use all VPEs)
 
         group_box.setLayout(layout)
         self.right_panel.addWidget(group_box)
@@ -941,7 +929,23 @@ class DeployGeneratorDialog(QDialog):
         if self.vpe is not None and isinstance(self.vpe, torch.Tensor):
             # Directly set the final tensor as the prompt for the predictor
             self.loaded_model.is_fused = lambda: False
+            # Ensure underlying model.names is a dict mapping index->name
+            mdl = getattr(self.loaded_model, 'model', None)
+            if mdl is not None:
+                names_attr_inner = getattr(mdl, 'names', None)
+                if isinstance(names_attr_inner, list):
+                    try:
+                        mdl.names = {i: n for i, n in enumerate(names_attr_inner)}
+                    except Exception:
+                        pass
             self.loaded_model.set_classes(["object0"], self.vpe)
+            # Ensure `loaded_model.names` is a dict mapping index->name
+            names_attr = getattr(self.loaded_model, 'names', None)
+            if isinstance(names_attr, list):
+                try:
+                    self.loaded_model.names = {i: n for i, n in enumerate(names_attr)}
+                except Exception:
+                    pass
             
     def predict(self, image_paths=None, progress_bar=None):
         """
@@ -999,17 +1003,8 @@ class DeployGeneratorDialog(QDialog):
                 # Get the reference information
                 references_dict = self._get_references()
                 
-                setup_success = False
-                if self.reference_method_combo_box.currentText() == "VPE":
-                    setup_success = self._setup_model_with_vpes()
-                else:  
-                    if not references_dict:
-                        QMessageBox.warning(self,
-                                            "No References", 
-                                            "Reference Images method selected, "
-                                            "but no valid reference images were found.")
-                        continue  # Skip this image
-                    setup_success = self._setup_model_with_images(references_dict)
+                # Only VPE pathway is supported now; always setup with VPEs
+                setup_success = self._setup_model_with_vpes()
 
                 if not setup_success:
                     print(f"Failed to set up model for {image_path}. Skipping.")
@@ -1120,7 +1115,7 @@ class DeployGeneratorDialog(QDialog):
                                 continue
 
                             results_obj.path = image_path
-                            
+                            # results_obj.names is a dict:  {0: 'object0', 1: 'object1', 2: 'object2', 3: 'object3', ...}
                             # --- 4d. Map Result ---
                             if work_area:
                                 mapped_result = MapResults().map_results_from_work_area(
@@ -1304,65 +1299,7 @@ class DeployGeneratorDialog(QDialog):
 
         return reference_annotations_dict
 
-    def _setup_model_with_images(self, reference_dict):
-        """
-        Sets up the model using reference images.
-        Generates VPEs, clusters them into K prototypes, and configures the model.
-        
-        Args:
-            reference_dict (dict): Dictionary containing reference annotations.
-            
-        Returns:
-            bool: True on success, False on failure.
-        """
-        # 1. Reload model and generate initial VPEs
-        self.reload_model()
-        initial_vpes = self.references_to_vpe(reference_dict, update_reference_vpes=False)
-
-        if not initial_vpes:
-            QMessageBox.warning(self, 
-                                "VPE Generation Failed", 
-                                "Could not generate VPEs from the selected reference images.")
-            return False
-
-        # 2. Generate K prototypes from the N generated VPEs
-        k = self.k_prototypes_spinbox.value()
-        num_available_vpes = len(initial_vpes)
-        prototype_vpes = []
-
-        if k == 0 or k >= num_available_vpes:
-            prototype_vpes = initial_vpes
-        else:
-            try:
-                all_vpes_tensor = torch.cat([vpe.squeeze(1) for vpe in initial_vpes], dim=0)
-                vpes_np = all_vpes_tensor.cpu().numpy()
-
-                from sklearn.cluster import KMeans
-                kmeans = KMeans(n_clusters=k, random_state=0, n_init='auto').fit(vpes_np)
-                centroids_np = kmeans.cluster_centers_
-
-                centroids_tensor = torch.from_numpy(centroids_np).to(self.device)
-                for i in range(k):
-                    centroid = centroids_tensor[i].unsqueeze(0).unsqueeze(0)
-                    normalized_centroid = torch.nn.functional.normalize(centroid, p=2, dim=-1)
-                    prototype_vpes.append(normalized_centroid)
-            except Exception as e:
-                QMessageBox.critical(self, "Clustering Error", f"Failed to perform K-Means clustering: {e}")
-                return False
-
-        # 3. Configure the model with the K prototypes
-        if not prototype_vpes:
-            QMessageBox.warning(self, "Prototype Error", "Could not generate any prototypes for prediction.")
-            return False
-
-        num_prototypes = len(prototype_vpes)
-        proto_class_names = [f"object{i}" for i in range(num_prototypes)]
-        stacked_vpes = torch.cat(prototype_vpes, dim=1)  # Shape: (1, K, E)
-
-        self.loaded_model.is_fused = lambda: False
-        self.loaded_model.set_classes(proto_class_names, stacked_vpes)
-        
-        return True
+    # Legacy image-based setup removed — use `_setup_model_with_vpes` instead.
     
     def generate_vpes_from_references(self):
         """
@@ -1412,93 +1349,64 @@ class DeployGeneratorDialog(QDialog):
             QApplication.restoreOverrideCursor()
             progress_bar.stop_progress()
             progress_bar.close()
-    
     def references_to_vpe(self, reference_dict, update_reference_vpes=True):
         """
         Converts the contents of a reference dictionary to VPEs (Visual Prompt Embeddings).
-        (This function is unchanged)
+
+        Returns a list of normalized VPE tensors or None if none could be produced.
         """
-        # Check if the reference dictionary is empty
         if not reference_dict:
             return None
-            
-        # Create a list to hold the individual VPE tensors
+
         vpe_list = []
-
         for ref_path, ref_annotations in reference_dict.items():
-            # Set the prompts to the model predictor
-            self.loaded_model.predictor.set_prompts(ref_annotations)
+            try:
+                # Set the prompts on the predictor and retrieve the VPE for this reference
+                self.loaded_model.predictor.set_prompts(ref_annotations)
+                vpe = self.loaded_model.predictor.get_vpe(ref_path)
+                vpe_normalized = torch.nn.functional.normalize(vpe, p=2, dim=-1)
+                vpe_list.append(vpe_normalized)
+            except Exception as e:
+                # Skip references that fail but continue processing others
+                print(f"Warning: could not generate VPE for {ref_path}: {e}")
+                continue
 
-            # Get the VPE from the model
-            vpe = self.loaded_model.predictor.get_vpe(ref_path)
-            
-            # Normalize individual VPE
-            vpe_normalized = torch.nn.functional.normalize(vpe, p=2, dim=-1)
-            vpe_list.append(vpe_normalized)
-
-        # Check if we have any valid VPEs
         if not vpe_list:
             return None
-        
-        # Update the reference_vpes list if requested
+
         if update_reference_vpes:
             self.reference_vpes = vpe_list
-            
+
         return vpe_list
 
     def _setup_model_with_vpes(self):
         """
-        Sets up the model using VPEs.
-        Supports clustering N VPEs into K prototypes and configures the model.
-        
-        Returns:
-            bool: True on success, False on failure.
+        Sets up the model using available VPEs. K is hardcoded to 0 so we use
+        all available VPEs as prototypes.
+
+        Returns True on success, False on failure.
         """
-        # 1. Reload the model
+        # Ensure model is loaded fresh
         self.reload_model()
-        
-        # 2. Gather all available VPEs
+
         combined_vpes = []
-        if self.imported_vpes:
+        if getattr(self, 'imported_vpes', None):
             combined_vpes.extend(self.imported_vpes)
-        if self.reference_vpes:
+        if getattr(self, 'reference_vpes', None):
             combined_vpes.extend(self.reference_vpes)
-        
+
         if not combined_vpes:
             QMessageBox.warning(self, "No VPEs Available", "No VPEs are available for prediction.")
             return False
-        
-        # 3. Generate K prototypes from the N available VPEs
-        k = self.k_prototypes_spinbox.value()
-        num_available_vpes = len(combined_vpes)
-        prototype_vpes = []
 
-        if k == 0 or k >= num_available_vpes:
-            prototype_vpes = combined_vpes
-        else:
-            try:
-                all_vpes_tensor = torch.cat([vpe.squeeze(1) for vpe in combined_vpes], dim=0)
-                vpes_np = all_vpes_tensor.cpu().numpy()
+        # Use all available VPEs as prototypes (K=0)
+        prototype_vpes = combined_vpes
 
-                from sklearn.cluster import KMeans
-                kmeans = KMeans(n_clusters=k, random_state=0, n_init='auto').fit(vpes_np)
-                centroids_np = kmeans.cluster_centers_
-
-                centroids_tensor = torch.from_numpy(centroids_np).to(self.device)
-                for i in range(k):
-                    centroid = centroids_tensor[i].unsqueeze(0).unsqueeze(0)
-                    normalized_centroid = torch.nn.functional.normalize(centroid, p=2, dim=-1)
-                    prototype_vpes.append(normalized_centroid)
-            except Exception as e:
-                QMessageBox.critical(self, "Clustering Error", f"Failed to perform K-Means clustering: {e}")
-                return False
-
-        # 4. Configure the model with the K prototypes
         if not prototype_vpes:
             QMessageBox.warning(self, "Prototype Error", "Could not generate any prototypes for prediction.")
             return False
 
-        # For backward compatibility
+        # For backward compatibility: set averaged VPE tensor
         averaged_prototype = torch.cat(prototype_vpes).mean(dim=0, keepdim=True)
         self.vpe = torch.nn.functional.normalize(averaged_prototype, p=2, dim=-1)
 
@@ -1506,9 +1414,25 @@ class DeployGeneratorDialog(QDialog):
         proto_class_names = [f"object{i}" for i in range(num_prototypes)]
         stacked_vpes = torch.cat(prototype_vpes, dim=1)
 
-        self.loaded_model.is_fused = lambda: False 
+        self.loaded_model.is_fused = lambda: False
+        # Ensure underlying model.names is a dict mapping index->name
+        mdl = getattr(self.loaded_model, 'model', None)
+        if mdl is not None:
+            names_attr_inner = getattr(mdl, 'names', None)
+            if isinstance(names_attr_inner, list):
+                try:
+                    mdl.names = {i: n for i, n in enumerate(names_attr_inner)}
+                except Exception:
+                    pass
         self.loaded_model.set_classes(proto_class_names, stacked_vpes)
-        
+        # Ensure `loaded_model.names` is a dict mapping index->name
+        names_attr = getattr(self.loaded_model, 'names', None)
+        if isinstance(names_attr, list):
+            try:
+                self.loaded_model.names = {i: n for i, n in enumerate(names_attr)}
+            except Exception:
+                pass
+
         return True
 
     def _apply_model(self, inputs):
@@ -1606,89 +1530,36 @@ class DeployGeneratorDialog(QDialog):
         Show a visualization of the stored VPEs and their K-prototypes.
         """
         try:
-            # 1. Gather all raw VPEs from imports and references
+            # Gather all raw VPEs from imports and references
             vpes_with_source = []
-            if self.imported_vpes:
+            if getattr(self, 'imported_vpes', None):
                 for vpe in self.imported_vpes:
                     vpes_with_source.append((vpe, "Import"))
-            if self.reference_vpes:
+            if getattr(self, 'reference_vpes', None):
                 for vpe in self.reference_vpes:
                     vpes_with_source.append((vpe, "Reference"))
 
             if not vpes_with_source:
-                QMessageBox.warning(
-                    self,
-                    "No VPEs Available",
-                    "No VPEs available to visualize. Please load or generate VPEs first."
-                )
+                QMessageBox.warning(self, "No VPEs Available", "No VPEs available to visualize. Please load or generate VPEs first.")
                 return
 
-            raw_vpes = [vpe for vpe, source in vpes_with_source]
-            num_raw = len(raw_vpes)
-            
-            # 2. Get K and determine if we need to cluster
-            k = self.k_prototypes_spinbox.value()
-            prototypes = []  # This will be the centroids if clustering is performed
-            final_vpe = None
+            raw_vpes = [vpe for vpe, _ in vpes_with_source]
+
+            # Use all raw VPEs as prototypes (K=0)
+            prototypes = raw_vpes
+            final_vpe = torch.cat(prototypes).mean(dim=0, keepdim=True)
+            final_vpe = torch.nn.functional.normalize(final_vpe, p=2, dim=-1)
             clustering_performed = False
+            k = 0
 
-            # Case 1: We want to cluster (1 <= k < num_raw)
-            if 1 <= k < num_raw:
-                try:
-                    # Prepare tensor for scikit-learn: shape (N, E)
-                    all_vpes_tensor = torch.cat([vpe.squeeze(1) for vpe in raw_vpes], dim=0)
-                    vpes_np = all_vpes_tensor.cpu().numpy()
-
-                    from sklearn.cluster import KMeans
-                    kmeans = KMeans(n_clusters=k, random_state=0, n_init='auto').fit(vpes_np)
-                    centroids_np = kmeans.cluster_centers_
-
-                    centroids_tensor = torch.from_numpy(centroids_np).to(self.device)
-                    for i in range(k):
-                        centroid = centroids_tensor[i].unsqueeze(0).unsqueeze(0)
-                        normalized_centroid = torch.nn.functional.normalize(centroid, p=2, dim=-1)
-                        prototypes.append(normalized_centroid)
-
-                    # The final VPE is the average of the centroids
-                    stacked_prototypes = torch.cat(prototypes, dim=1)  # Shape: (1, k, E)
-                    averaged_prototype = stacked_prototypes.mean(dim=1, keepdim=True)  # Shape: (1, 1, E)
-                    final_vpe = torch.nn.functional.normalize(averaged_prototype, p=2, dim=-1)
-                    clustering_performed = True
-
-                except Exception as e:
-                    QMessageBox.critical(self, 
-                                         "Clustering Error", 
-                                         f"Could not perform clustering for visualization: {e}")
-                    # If clustering fails, fall back to using all raw VPEs
-                    prototypes = []
-                    clustering_performed = False
-
-            # Case 2: k==0 -> use all raw VPEs as prototypes (no clustering)
-            if k == 0 or not clustering_performed:
-                # We are not clustering, so we use all raw VPEs as prototypes
-                # For visualization purposes, we'll show the raw VPEs and their average
-                stacked_raw = torch.cat(raw_vpes, dim=1)  # Shape: (1, num_raw, E)
-                averaged_raw = stacked_raw.mean(dim=1, keepdim=True)  # Shape: (1, 1, E)
-                final_vpe = torch.nn.functional.normalize(averaged_raw, p=2, dim=-1)
-                # Don't set prototypes here - we'll show raw VPEs separately in the visualization
-            
-            # Case 3: k >= num_raw -> use all raw VPEs as prototypes (no clustering needed)
-            elif k >= num_raw:
-                # We have more requested prototypes than available VPEs, so we use all VPEs
-                stacked_raw = torch.cat(raw_vpes, dim=1)  # Shape: (1, num_raw, E)
-                averaged_raw = stacked_raw.mean(dim=1, keepdim=True)  # Shape: (1, 1, E)
-                final_vpe = torch.nn.functional.normalize(averaged_raw, p=2, dim=-1)
-                # Don't set prototypes here - we'll show raw VPEs separately in the visualization
-
-            # 3. Create and show the visualization dialog
             QApplication.setOverrideCursor(Qt.WaitCursor)
             dialog = VPEVisualizationDialog(
-                vpes_with_source, 
-                final_vpe, 
-                prototypes=prototypes, 
+                vpes_with_source,
+                final_vpe,
+                prototypes=prototypes,
                 clustering_performed=clustering_performed,
                 k_value=k,
-                parent=self
+                parent=self,
             )
             QApplication.restoreOverrideCursor()
             dialog.exec_()
