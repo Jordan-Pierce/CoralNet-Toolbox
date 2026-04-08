@@ -1373,6 +1373,12 @@ class BatchInferenceDialog(QDialog):
             # Bake any annotations cached by synchronous processing (images-only path)
             self._bake_cached_annotations()
 
+            # Auto-close the dialog once everything is done
+            try:
+                self.accept()
+            except Exception:
+                pass
+
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to complete batch inference: {str(e)}")
         finally:
@@ -1599,9 +1605,9 @@ class BatchInferenceDialog(QDialog):
         except Exception:
             pass
 
-        # 7. Restore the dialog visibility when inference completes
+        # 7. Auto-close the dialog once inference and baking are complete
         try:
-            self.show()
+            self.accept()
         except Exception:
             pass
 

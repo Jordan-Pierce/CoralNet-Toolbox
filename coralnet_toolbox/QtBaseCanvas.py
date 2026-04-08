@@ -38,7 +38,12 @@ class FastImageItem(QGraphicsItem):
         self.setCacheMode(QGraphicsItem.NoCache)
 
     def set_image(self, qimage):
-        self._image = qimage
+        # Deep-copy so Qt owns the pixel data, preventing use-after-free when
+        # the source QImage borrows a numpy array that later gets garbage-collected.
+        if qimage is not None and not qimage.isNull():
+            self._image = qimage.copy()
+        else:
+            self._image = qimage
         self.update()
 
     def set_readonly_annotations(self, paths_data):
