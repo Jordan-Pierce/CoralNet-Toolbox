@@ -9,7 +9,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QGroupBox, QFormLayout, QComboBox)
 
 from torch.cuda import empty_cache
-from ultralytics import YOLO, RTDETR
+from ultralytics import YOLO
 
 from coralnet_toolbox.MachineLearning.DeployModel.QtBase import Base
 
@@ -90,11 +90,13 @@ class Segment(Base):
         # Check if the user wants to use the SAM model
         if self.use_sam_dropdown.currentText() == "True":
             # SAM is requested. Check if it's actually available.
-            sam_is_available = (
-                hasattr(self, 'sam_dialog') and
-                self.sam_dialog is not None and
-                self.sam_dialog.loaded_model is not None
-            )
+            sam_is_available = False
+            try:
+                sam_is_available = hasattr(self, 'sam_dialog') and self.sam_dialog is not None
+                if sam_is_available:
+                    sam_is_available = getattr(self.sam_dialog, 'loaded_model', None) is not None
+            except Exception:
+                sam_is_available = False
 
             if sam_is_available:
                 # If SAM is wanted and available, the task must be segmentation.
@@ -136,7 +138,7 @@ class Segment(Base):
 
             try:
                 imgsz = self.loaded_model.__dict__['overrides']['imgsz']
-            except:
+            except Exception:
                 imgsz = 640
 
             self.loaded_model(np.zeros((imgsz, imgsz, 3), dtype=np.uint8))
@@ -361,16 +363,70 @@ class Segment(Base):
                 
                 # --- 4. Process All Results for This Image at Once ---
                 if results_for_this_image:
-                    # This processing is now batched for the UI
-                    if is_segmentation:
-                        results_processor.process_segmentation_results(results_for_this_image)
-                    else:
-                        results_processor.process_detection_results(results_for_this_image)
+                    # ---> FAST PATH: Render-First, Bake-Later <---
+
+                    # 4a. Fast Render: Send paths directly to the OpenGL canvas
+                    try:
+                        fast_paths = []
+                        for res in results_for_this_image:
+                            paths = results_processor.generate_fast_render_paths(res, self.task)
+                            if paths:
+                                fast_paths.extend(paths)
+
+                        if getattr(self.annotation_window, '_base_image_item', None) is not None:
+                            try:
+                                self.annotation_window._base_image_item.set_readonly_annotations(fast_paths)
+                                QApplication.processEvents()
+                            except Exception:
+                                pass
+                    except Exception as e:
+                        print(f"Warning: Fast render failed in Segment.predict: {e}")
+
+                    # 4b. Cache the raw results for later hydration
+                    if not hasattr(self.annotation_window, 'batch_results_cache'):
+                        self.annotation_window.batch_results_cache = {}
+
+                    self.annotation_window.batch_results_cache[image_path] = results_for_this_image
 
         except Exception as e:
             print(f"A fatal error occurred during the prediction workflow: {e}")
         finally:
-            # Only close the progress bar if we created it here
+            # --- 5. BAKE (HYDRATE) ALL IMAGES AT THE END ---
+            if not progress_bar_created_here:
+                # Part of a larger batch; leave cache for batch controller
+                pass
+            else:
+                # Standalone call: bake cached results now
+                cache = getattr(self.annotation_window, 'batch_results_cache', {})
+                if cache:
+                    self.annotation_window.is_streaming_inference = True
+
+                    bake_pb = ProgressBar(self.annotation_window, title="Saving Annotations...")
+                    bake_pb.show()
+                    bake_pb.start_progress(len(cache))
+
+                    is_segmentation = self.task == 'segment' or self.use_sam_dropdown.currentText() == "True"
+
+                    for path, results_list in cache.items():
+                        if is_segmentation:
+                            results_processor.process_segmentation_results(results_list)
+                        else:
+                            results_processor.process_detection_results(results_list)
+                        bake_pb.update_progress()
+                        QApplication.processEvents()
+
+                    bake_pb.close()
+                    self.annotation_window.is_streaming_inference = False
+
+                    try:
+                        self.main_window.label_window.update_annotation_count()
+                        for path in cache.keys():
+                            self.image_window.update_image_annotations(path, update_counts=False)
+                    except Exception:
+                        pass
+
+                    self.annotation_window.batch_results_cache = {}
+
             if progress_bar_created_here and progress_bar is not None:
                 progress_bar.finish_progress()
                 progress_bar.stop_progress()

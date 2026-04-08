@@ -1153,12 +1153,68 @@ class DeployGeneratorDialog(QDialog):
                 
                 # --- 5. Process All Results for This Image at Once ---
                 if results_for_this_image:
-                    # This single call now handles remapping and adding to UI
-                    self._process_results(results_processor, results_for_this_image, image_path)
+                    # ---> FAST PATH: Render-First, Bake-Later <---
+
+                    try:
+                        fast_paths = []
+                        for res in results_for_this_image:
+                            paths = results_processor.generate_fast_render_paths(res, self.task)
+                            if paths:
+                                fast_paths.extend(paths)
+
+                        if getattr(self.annotation_window, '_base_image_item', None) is not None:
+                            try:
+                                self.annotation_window._base_image_item.set_readonly_annotations(fast_paths)
+                                QApplication.processEvents()
+                            except Exception:
+                                pass
+                    except Exception as e:
+                        print(f"Warning: Fast render failed in SeeAnything.predict: {e}")
+
+                    # Cache raw results for later hydration
+                    if not hasattr(self.annotation_window, 'batch_results_cache'):
+                        self.annotation_window.batch_results_cache = {}
+                    self.annotation_window.batch_results_cache[image_path] = results_for_this_image
 
         except Exception as e:
             print(f"A fatal error occurred during the prediction workflow: {e}")
         finally:
+            # --- 6. BAKE (HYDRATE) ALL IMAGES AT THE END ---
+            if not progress_bar_created_here:
+                # Leave cache for batch controller
+                pass
+            else:
+                cache = getattr(self.annotation_window, 'batch_results_cache', {})
+                if cache:
+                    self.annotation_window.is_streaming_inference = True
+
+                    bake_pb = ProgressBar(self.annotation_window, title="Saving Annotations...")
+                    bake_pb.show()
+                    bake_pb.start_progress(len(cache))
+
+                    is_segmentation = self.task == 'segment' or self.use_sam_dropdown.currentText() == "True"
+
+                    for path, results_list in cache.items():
+                        # Use the dialog's _process_results which handles SeeAnything specifics
+                        try:
+                            self._process_results(results_processor, results_list, path)
+                        except Exception as e:
+                            print(f"Error baking results for {path}: {e}")
+                        bake_pb.update_progress()
+                        QApplication.processEvents()
+
+                    bake_pb.close()
+                    self.annotation_window.is_streaming_inference = False
+
+                    try:
+                        self.main_window.label_window.update_annotation_count()
+                        for path in cache.keys():
+                            self.image_window.update_image_annotations(path, update_counts=False)
+                    except Exception:
+                        pass
+
+                    self.annotation_window.batch_results_cache = {}
+
             if progress_bar_created_here and progress_bar is not None:
                 progress_bar.finish_progress()
                 progress_bar.stop_progress()
