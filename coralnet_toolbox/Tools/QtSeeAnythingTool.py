@@ -663,7 +663,8 @@ class SeeAnythingTool(Tool):
             # Set the animation manager
             annotation.set_animation_manager(self.animation_manager)
             # Ensure the annotation is added to the scene after creation (but not saved yet)
-            annotation.create_graphics_item(self.annotation_window.scene)
+            # Force hydrate so these tool-generated previews behave like normal Qt objects
+            annotation.create_graphics_item(self.annotation_window.scene, force_hydrate=True)
             # Animate the annotation
             annotation.animate(force=True)
             
@@ -702,7 +703,8 @@ class SeeAnythingTool(Tool):
             # Set the animation manager
             annotation.set_animation_manager(self.animation_manager)
             # Ensure the annotation is added to the scene after creation (but not saved yet)
-            annotation.create_graphics_item(self.annotation_window.scene)
+            # Force hydrate so these tool-generated previews behave like normal Qt objects
+            annotation.create_graphics_item(self.annotation_window.scene, force_hydrate=True)
             # Animate the annotation
             annotation.animate(force=True)
             

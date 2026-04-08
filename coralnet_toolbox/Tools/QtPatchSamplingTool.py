@@ -734,16 +734,12 @@ class PatchSamplingDialog(QDialog):
             if sampled_annotations:
                 self.annotation_window.add_annotations(sampled_annotations, record_action=True)
                 
-                # --- Instantly draw the ones that belong on the current screen ---
-                current_image = self.annotation_window.current_image_path
-                for ann in sampled_annotations:
-                    if ann.image_path == current_image and ann.label.is_visible:
-                        if not ann.graphics_item:
-                            ann.create_graphics_item(self.annotation_window.scene)
-                        self.annotation_window.set_annotation_visibility(ann)
-                
-                # Force a single visual refresh
-                self.annotation_window.viewport().update()
+                # --- PHANTOM ARCHITECTURE UPDATE ---
+                # We NO LONGER force the creation of Qt graphics items here.
+                # Instead, render them as sleeping phantoms using the fast readonly pass.
+                if self.annotation_window.current_image_path in image_paths:
+                    self.annotation_window.refresh_phantom_annotations()
+                    self.annotation_window.viewport().update()
                 # --------------------------------------------------------------------------
 
         except Exception as e:

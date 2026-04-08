@@ -193,7 +193,8 @@ class RectangleTool(Tool):
             self.cursor_annotation = self.create_annotation(scene_pos)
             if self.cursor_annotation:
                 self.cursor_annotation.update_transparency(self.annotation_window.main_window.get_transparency_value())
-                self.cursor_annotation.create_graphics_item(self.annotation_window.scene)
+                # Force hydrate so the cursor preview is an actual Qt object (smooth mouse follow)
+                self.cursor_annotation.create_graphics_item(self.annotation_window.scene, force_hydrate=True)
                 # Show the dimension tag while drawing
                 if hasattr(self.cursor_annotation, 'dimension_tag_item') and self.cursor_annotation.dimension_tag_item:
                     self.cursor_annotation.dimension_tag_item.setVisible(True)

@@ -605,6 +605,9 @@ class AnnotationWindow(BaseCanvas):
         if hasattr(self.main_window, 'context_matrix') and self.main_window.context_matrix:
             self.main_window.context_matrix.sync_annotations_to_all_canvases()
 
+        # PHANTOM ARCHITECTURE: Re-render phantom layer with new transparency
+        self.refresh_phantom_annotations()
+
         # Restore cursor
         QApplication.restoreOverrideCursor()
         
@@ -1732,6 +1735,9 @@ class AnnotationWindow(BaseCanvas):
         finally:
             self.blockSignals(False)
     
+        # PHANTOM ARCHITECTURE: Re-render phantom layer with visibility changes
+        self.refresh_phantom_annotations()
+        
         self.scene.update()
         self.viewport().update()
         
@@ -2413,7 +2419,14 @@ class AnnotationWindow(BaseCanvas):
             
         if annotation not in self.selected_annotations:
             self.selected_annotations.append(annotation)
+
+            # First, mark the annotation selected so create_graphics_item
+            # will not early-return due to the Phantom Gatekeeper.
             annotation.select()
+
+            # PHANTOM ARCHITECTURE: Build the Qt objects if they don't exist
+            if not annotation.is_graphics_item_valid():
+                annotation.create_graphics_item(self.scene)
             self.selected_label = annotation.label
             self.annotationSelected.emit(annotation.id)
             
@@ -2434,6 +2447,8 @@ class AnnotationWindow(BaseCanvas):
                 self.main_window.label_window.deselect_active_label()
                 self.main_window.confidence_window.clear_display()
             self.viewport().update()
+            # PHANTOM ARCHITECTURE: Re-render phantom layer to remove this annotation from it
+            self.refresh_phantom_annotations()
             self._emit_selection_changed()
 
     def select_annotations(self):
@@ -2553,14 +2568,19 @@ class AnnotationWindow(BaseCanvas):
                 except TypeError: 
                     pass
             
+            # PHANTOM ARCHITECTURE: Destroy Qt objects BEFORE deselect() so the group's
+            # children (center, bbox, tag) are still attached and removed cleanly together,
+            # preventing orphaned items being left in the scene.
+            self._clear_annotation_graphics_single(annotation)
             annotation.deselect()
-            self.set_annotation_visibility(annotation)
             
             # --- BULK MODE CHECK ---
             if not bulk_mode:
                 if not self.selected_annotations:
                     self.main_window.confidence_window.clear_display()
                 self.viewport().update()
+                # PHANTOM ARCHITECTURE: Re-render phantom layer to draw this annotation in it
+                self.refresh_phantom_annotations()
                 self._emit_selection_changed()
 
     def unselect_annotations(self):
@@ -2590,10 +2610,12 @@ class AnnotationWindow(BaseCanvas):
                 except TypeError:
                     pass
             
+            # PHANTOM ARCHITECTURE: Destroy Qt objects BEFORE deselect() so the group's
+            # children (center, bbox, tag) are still attached and removed cleanly together,
+            # preventing orphaned items being left in the scene.
+            self._clear_annotation_graphics_single(annotation)
             # Update annotation's internal state
             annotation.deselect()
-            # Set the visibility of the annotation
-            self.set_annotation_visibility(annotation)
             
         # --- NEW: Restore BSP indexing ---
         if self.scene:
@@ -2601,6 +2623,9 @@ class AnnotationWindow(BaseCanvas):
         
         # Clear the confidence window
         self.main_window.confidence_window.clear_display()
+        
+        # PHANTOM ARCHITECTURE: Re-render phantom layer with all now-deselected annotations
+        self.refresh_phantom_annotations()
         
         # Update the viewport once for all changes
         self.viewport().update()
@@ -2634,10 +2659,12 @@ class AnnotationWindow(BaseCanvas):
         current_slider_value = self.main_window.get_transparency_value()
         annotation.update_transparency(current_slider_value)
 
-        # Create the graphics item (scene previously cleared)
-        annotation.create_graphics_item(self.scene)
-        # Set the visibility based on the label's visibility checkbox
-        self.set_annotation_visibility(annotation)
+        # PHANTOM ARCHITECTURE: Only create graphics items for selected annotations
+        # Unselected annotations remain as phantom data (just paths and boundaries)
+        if annotation.is_selected:
+            annotation.create_graphics_item(self.scene)
+            # Set the visibility based on the label's visibility checkbox
+            self.set_annotation_visibility(annotation)
         
         # Connect essential update signals (guard prevents duplicate connections)
         if not annotation._signals_connected:
@@ -2720,6 +2747,9 @@ class AnnotationWindow(BaseCanvas):
         # Update the label window tool tips (this might need to be optimized later)
         self.main_window.label_window.update_tooltips()
         
+        # PHANTOM ARCHITECTURE: Render all unselected annotations to phantom layer
+        self.refresh_phantom_annotations()
+        
         QApplication.processEvents()
         self.viewport().update()
 
@@ -2747,6 +2777,29 @@ class AnnotationWindow(BaseCanvas):
 
         # Update the view
         self.viewport().update()
+
+    def refresh_phantom_annotations(self):
+        """
+        Draws all unselected vector annotations using the ultra-fast readonly pass.
+        This is called when selections change to update the phantom layer.
+        """
+        # If we don't have the FastImageItem active, bail out
+        if getattr(self, '_base_image_item', None) is None:
+            return
+            
+        annotations = self.get_image_annotations()
+        paths_data = []
+        
+        for a in annotations:
+            # Only draw it as a Phantom if it's visible, NOT selected, and NOT a mask
+            if getattr(a.label, 'is_visible', True) and not a.is_selected and not hasattr(a, 'mask_data'):
+                try:
+                    paths_data.append((a.get_painter_path(), a.label.color, a.transparency))
+                except Exception:
+                    pass
+                    
+        # Hand off to the fast C++ painter
+        self._base_image_item.set_readonly_annotations(paths_data)
 
     def get_image_annotations(self, image_path=None):
         """Get all annotations for the specified image path or current image."""
@@ -2888,6 +2941,9 @@ class AnnotationWindow(BaseCanvas):
                 if self._playback_timer.isActive():
                     self._clear_annotation_graphics_single(annotation)
                 else:
+                    # PHANTOM ARCHITECTURE: Push the new annotation into the phantom layer
+                    # so it is immediately visible without needing to be selected first.
+                    self.refresh_phantom_annotations()
                     # Force the screen to instantly show the newly drawn item
                     self.viewport().update()
 
@@ -2965,6 +3021,8 @@ class AnnotationWindow(BaseCanvas):
             
             # Repaint exactly ONCE, but only if the active image was affected by the import
             if self.current_image_path in images_to_update:
+                # PHANTOM ARCHITECTURE: Push all new annotations into the phantom layer
+                self.refresh_phantom_annotations()
                 self.viewport().update()
 
         if record_action:
@@ -2978,8 +3036,12 @@ class AnnotationWindow(BaseCanvas):
         """Delete an annotation by its ID from dicts."""
         if annotation_id in self.annotations_dict:
             annotation = self.annotations_dict[annotation_id]
-            # Pass bulk_mode down
-            self.unselect_annotation(annotation, bulk_mode=bulk_mode)
+            
+            # Always suppress the phantom refresh inside unselect_annotation; we must
+            # remove the annotation from image_annotations_dict FIRST before refreshing,
+            # otherwise refresh_phantom_annotations() would still find it in the dict and
+            # paint it back into the phantom layer as a ghost.
+            self.unselect_annotation(annotation, bulk_mode=True)
 
             if annotation.image_path in self.image_annotations_dict:
                 if annotation in self.image_annotations_dict[annotation.image_path]:
@@ -3003,6 +3065,16 @@ class AnnotationWindow(BaseCanvas):
                 except Exception: 
                     pass
                 self.main_window.confidence_window.clear_display()
+                # Refresh the phantom layer NOW that the annotation is fully removed from
+                # all dicts, so the ghost is immediately erased.
+                self.refresh_phantom_annotations()
+                # Ensure scene and viewport are updated and events are processed
+                try:
+                    self.scene.update()
+                except Exception:
+                    pass
+                self.viewport().update()
+                QApplication.processEvents()
 
     def delete_annotations(self, annotations, record_action=True):
         """Delete a list of annotations (Ultimate Bulk Optimization)."""
@@ -3069,6 +3141,14 @@ class AnnotationWindow(BaseCanvas):
             pass
             
         self.main_window.confidence_window.clear_display()
+        
+        # Rebuild the phantom layer from the now-pruned annotation dicts so that
+        # deleted annotations don't linger as ghost outlines. This MUST happen after
+        # image_annotations_dict is updated (step 3 above) and before the viewport
+        # repaint, otherwise the stale path data from the previous unselect_annotations()
+        # call is used and the phantoms stay visible until the next click.
+        if self.current_image_path in affected_images:
+            self.refresh_phantom_annotations()
         
         # A single viewport update after the scene is completely modified
         self.viewport().update()

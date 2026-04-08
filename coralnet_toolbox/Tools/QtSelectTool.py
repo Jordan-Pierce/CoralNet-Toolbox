@@ -281,9 +281,12 @@ class SelectTool(Tool):
 
     def _get_annotation_from_items(self, items, position):
         """
-        Finds the first valid annotation at a position from a list of items.
-        First prioritizes annotations where the center graphic contains the point,
-        then falls back to any annotation that contains the point.
+        Finds the first valid annotation at a position.
+        Checks active UI items first (selected/awake annotations), then falls back 
+        to mathematical checks on Phantoms (unselected/sleeping annotations).
+        
+        Returns the topmost annotation at the position, respecting Z-index ordering
+        and label visibility.
         """
         # Filter out resize handles
         valid_items = [item for item in items if item not in self.resize_subtool.resize_handles_items]
@@ -292,7 +295,8 @@ class SelectTool(Tool):
         center_candidates = []
         general_candidates = []
         
-        # Gather all potential candidates
+        # ========== PHASE 1: Check Awake (Selected) items via Qt's collision detection ==========
+        # Gather all potential candidates from the scene
         for item in valid_items:
             annotation = self._get_annotation_from_item(item)
             if annotation and annotation.contains_point(position):
@@ -303,11 +307,38 @@ class SelectTool(Tool):
                 else:
                     general_candidates.append(annotation)
         
-        # Return priority: center candidates first, then general candidates
+        # Return awake item if found (high priority)
         if center_candidates:
             return center_candidates[0]
         elif general_candidates:
             return general_candidates[0]
+        
+        # ========== PHASE 2: Check Sleeping (Phantom) items via mathematical collision ==========
+        # If the Qt layer didn't find anything, check all annotations (including phantoms)
+        # Iterate in reverse to respect visual Z-index (topmost items clicked first)
+        all_annotations = self.annotation_window.get_image_annotations()
+        
+        phantom_center_candidates = []
+        phantom_general_candidates = []
+        
+        for annotation in reversed(all_annotations):
+            # Skip selected annotations (already checked above) and invisible labels
+            if annotation.is_selected or not getattr(annotation.label, 'is_visible', True):
+                continue
+                
+            # Check if this phantom annotation contains the position mathematically
+            if annotation.contains_point(position):
+                center_distance = (position - annotation.center_xy).manhattanLength()
+                if center_distance <= center_threshold:
+                    phantom_center_candidates.append(annotation)
+                else:
+                    phantom_general_candidates.append(annotation)
+        
+        # Return phantom item if found (lower priority than awake items)
+        if phantom_center_candidates:
+            return phantom_center_candidates[0]
+        elif phantom_general_candidates:
+            return phantom_general_candidates[0]
                 
         return None
 

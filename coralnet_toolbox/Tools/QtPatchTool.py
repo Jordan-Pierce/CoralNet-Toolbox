@@ -145,7 +145,8 @@ class PatchTool(Tool):
         if self.cursor_annotation:
             # Make the cursor annotation semi-transparent to distinguish it from actual annotations
             self.cursor_annotation.update_transparency(self.annotation_window.main_window.get_transparency_value())
-            self.cursor_annotation.create_graphics_item(self.annotation_window.scene)
+            # Force hydrate the cursor preview so it follows the mouse smoothly
+            self.cursor_annotation.create_graphics_item(self.annotation_window.scene, force_hydrate=True)
             # Show the dimension tag while drawing
             if hasattr(self.cursor_annotation, 'dimension_tag_item') and self.cursor_annotation.dimension_tag_item:
                 self.cursor_annotation.dimension_tag_item.setVisible(True)

@@ -810,8 +810,18 @@ class Annotation(QObject):
         self.center_graphics_item = None
         self.bounding_box_graphics_item = None
 
-    def create_graphics_item(self, scene: QGraphicsScene):
-        """Create all graphics items for the annotation and add them to the scene as a group."""
+    def create_graphics_item(self, scene: QGraphicsScene, force_hydrate: bool = False):
+        """Create all graphics items for the annotation and add them to the scene as a group.
+
+        The Phantom Gatekeeper: avoid creating heavy Qt objects for sleeping (unselected)
+        annotations unless `force_hydrate` is True. This keeps thousands of annotations
+        as lightweight math-only phantoms while allowing tools to request a real Qt
+        object for smooth cursor previews.
+        """
+        # Abort early for phantoms unless explicitly forced
+        if not self.is_selected and not force_hydrate:
+            return
+
         if self.graphics_item_group and self.graphics_item_group.scene():
             self.graphics_item_group.scene().removeItem(self.graphics_item_group)
             self.center_graphics_item = None
@@ -831,8 +841,9 @@ class Annotation(QObject):
             self.graphics_item.setData(0, self.id)
             self.graphics_item_group.addToGroup(self.graphics_item)
 
-        # ONLY build the expensive UI elements if the item is currently selected!
-        if self.is_selected:
+        # ONLY build the expensive UI elements if the item is currently selected
+        # (or force_hydrate was requested by a tool)
+        if self.is_selected or force_hydrate:
             self._hydrate_ui_elements(scene)
             
         scene.addItem(self.graphics_item_group)
@@ -863,17 +874,32 @@ class Annotation(QObject):
         
         # Remove and destroy center crosshair
         if self.center_graphics_item:
-            self.graphics_item_group.removeFromGroup(self.center_graphics_item)
+            try:
+                self.graphics_item_group.removeFromGroup(self.center_graphics_item)
+                if self.center_graphics_item.scene():
+                    self.center_graphics_item.scene().removeItem(self.center_graphics_item)
+            except RuntimeError:
+                pass
             self.center_graphics_item = None
             
         # Remove and destroy bounding box
         if self.bounding_box_graphics_item:
-            self.graphics_item_group.removeFromGroup(self.bounding_box_graphics_item)
+            try:
+                self.graphics_item_group.removeFromGroup(self.bounding_box_graphics_item)
+                if self.bounding_box_graphics_item.scene():
+                    self.bounding_box_graphics_item.scene().removeItem(self.bounding_box_graphics_item)
+            except RuntimeError:
+                pass
             self.bounding_box_graphics_item = None
             
         # Remove and destroy tag
         if hasattr(self, 'tag_item') and self.tag_item:
-            self.graphics_item_group.removeFromGroup(self.tag_item)
+            try:
+                self.graphics_item_group.removeFromGroup(self.tag_item)
+                if self.tag_item.scene():
+                    self.tag_item.scene().removeItem(self.tag_item)
+            except RuntimeError:
+                pass
             self.tag_item = None
 
     def is_graphics_item_valid(self):

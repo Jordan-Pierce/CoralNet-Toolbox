@@ -215,8 +215,12 @@ class MaskAnnotation(Annotation):
         height, width = self.mask_data.shape
         return QPointF(width, height)
 
-    def create_graphics_item(self, scene: QGraphicsScene):
-        """Create a QGraphicsPixmapItem to display the mask."""
+    def create_graphics_item(self, scene: QGraphicsScene, force_hydrate: bool = False):
+        """Create a QGraphicsPixmapItem to display the mask.
+
+        Accepts `force_hydrate` for API compatibility; masks are always heavy widgets
+        so the flag is ignored.
+        """
         self.graphics_item = MaskGraphicsItem(self)
         scene.addItem(self.graphics_item)
 

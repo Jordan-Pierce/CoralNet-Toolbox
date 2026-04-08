@@ -303,7 +303,38 @@ class RectangleAnnotation(Annotation):
         # NOTE: Do NOT emit annotationUpdated here - creating a cropped image is not a modification.
         # The caller is responsible for handling display updates if needed.
 
-    def create_graphics_item(self, scene: QGraphicsScene):
+    def _hydrate_ui_elements(self, scene):
+        """Creates the heavy interactive visual elements (parent + dimension tag)."""
+        super()._hydrate_ui_elements(scene)
+        
+        # --- Add the Dimension Tag ---
+        from coralnet_toolbox.Annotations.QtAnnotation import FloatingTagItem
+        width = int(abs(self.bottom_right.x() - self.top_left.x()))
+        height = int(abs(self.bottom_right.y() - self.top_left.y()))
+        dimension_text = f"{width}×{height}"
+        self.dimension_tag_item = FloatingTagItem(dimension_text, self.label.color)
+        
+        # Position it at the bottom-left corner of the bounding box
+        bottom_left = QPointF(self.get_bounding_box_top_left().x(), self.get_bounding_box_bottom_right().y())
+        self.dimension_tag_item.setPos(bottom_left.x(), bottom_left.y())
+        
+        self.graphics_item_group.addToGroup(self.dimension_tag_item)
+
+    def _dehydrate_ui_elements(self):
+        """Destroys the heavy interactive visual elements (parent + dimension tag)."""
+        if hasattr(self, 'dimension_tag_item') and self.dimension_tag_item:
+            try:
+                if self.graphics_item_group:
+                    self.graphics_item_group.removeFromGroup(self.dimension_tag_item)
+                if self.dimension_tag_item.scene():
+                    self.dimension_tag_item.scene().removeItem(self.dimension_tag_item)
+            except RuntimeError:
+                pass
+            self.dimension_tag_item = None
+            
+        super()._dehydrate_ui_elements()
+
+    def create_graphics_item(self, scene: QGraphicsScene, force_hydrate: bool = False):
         """Create all graphics items for the annotation and add them to the scene."""
         # Get the complete shape as a QPainterPath.
         path = self.get_painter_path()
@@ -317,23 +348,8 @@ class RectangleAnnotation(Annotation):
         self.graphics_item.set_cached_bounding_rect(QRectF(tl, br))
         
         # Call the parent class method to handle grouping, styling, and adding to the scene.
-        super().create_graphics_item(scene)
-        
-        # --- Add the Dimension Tag ---
-        from coralnet_toolbox.Annotations.QtAnnotation import FloatingTagItem
-        width = int(abs(self.bottom_right.x() - self.top_left.x()))
-        height = int(abs(self.bottom_right.y() - self.top_left.y()))
-        dimension_text = f"{width}×{height}"
-        self.dimension_tag_item = FloatingTagItem(dimension_text, self.label.color)
-        
-        # Position it at the bottom-left corner of the bounding box
-        bottom_left = QPointF(self.get_bounding_box_top_left().x(), self.get_bounding_box_bottom_right().y())
-        self.dimension_tag_item.setPos(bottom_left.x(), bottom_left.y())
-        
-        # Only show when selected
-        self.dimension_tag_item.setVisible(self.is_selected)
-        
-        self.graphics_item_group.addToGroup(self.dimension_tag_item)
+        # This now includes hydration if selected
+        super().create_graphics_item(scene, force_hydrate=force_hydrate)
     
     def update_graphics_item(self):
         """Update the graphical representation of the rectangle annotation."""

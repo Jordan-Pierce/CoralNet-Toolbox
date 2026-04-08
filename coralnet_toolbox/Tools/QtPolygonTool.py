@@ -231,7 +231,8 @@ class PolygonTool(Tool):
             )
             self.cursor_annotation = annotation
             self.cursor_annotation.update_transparency(self.annotation_window.main_window.get_transparency_value())
-            self.cursor_annotation.create_graphics_item(self.annotation_window.scene)
+            # Force hydrate the preview so the polygon cursor follows the mouse smoothly
+            self.cursor_annotation.create_graphics_item(self.annotation_window.scene, force_hydrate=True)
 
     def update_cursor_annotation(self, scene_pos: QPointF = None):
         """Update the cursor annotation position."""

@@ -210,8 +210,11 @@ class MultiPolygonAnnotation(Annotation):
         # NOTE: Do NOT emit annotationUpdated here - creating a cropped image is not a modification.
         # The caller is responsible for handling display updates if needed.
 
-    def create_graphics_item(self, scene: QGraphicsScene):
-        """Create and add QGraphicsItems for all polygons to the scene."""
+    def create_graphics_item(self, scene: QGraphicsScene, force_hydrate: bool = False):
+        """Create and add QGraphicsItems for all polygons to the scene.
+
+        Accepts `force_hydrate` for API compatibility with the base class.
+        """
         # This import is necessary to check the type of the created item
         from PyQt5.QtWidgets import QGraphicsPathItem
 

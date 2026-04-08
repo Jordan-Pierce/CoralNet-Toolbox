@@ -476,7 +476,7 @@ class PolygonAnnotation(Annotation):
         # NOTE: Do NOT emit annotationUpdated here - creating a cropped image is not a modification.
         # The caller is responsible for handling display updates if needed.
 
-    def create_graphics_item(self, scene: QGraphicsScene):
+    def create_graphics_item(self, scene: QGraphicsScene, force_hydrate: bool = False):
         """
         Create all graphics items for the annotation and add them to the scene.
         
@@ -487,9 +487,9 @@ class PolygonAnnotation(Annotation):
         
         # Use a QGraphicsPathItem, the correct item for a QPainterPath.
         self.graphics_item = QGraphicsPathItem(path)
-        
+
         # Call the parent class method to handle grouping, styling, and adding to the scene.
-        super().create_graphics_item(scene)
+        super().create_graphics_item(scene, force_hydrate=force_hydrate)
 
     def update_graphics_item(self):
         """

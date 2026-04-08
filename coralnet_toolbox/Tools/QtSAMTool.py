@@ -456,8 +456,8 @@ class SAMTool(Tool):
                 return
             
             self.temp_annotation.set_animation_manager(self.animation_manager)
-            # Create the graphics item for the temporary annotation
-            self.temp_annotation.create_graphics_item(self.annotation_window.scene)
+            # Create the graphics item for the temporary annotation (force hydrate for smooth preview)
+            self.temp_annotation.create_graphics_item(self.annotation_window.scene, force_hydrate=True)
             # Make the annotation animated immediately
             self.temp_annotation.animate(force=True)
             
