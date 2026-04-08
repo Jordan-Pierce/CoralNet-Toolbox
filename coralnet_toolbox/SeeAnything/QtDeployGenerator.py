@@ -227,13 +227,6 @@ class DeployGeneratorDialog(QDialog):
         annotation that has BOTH the selected label AND a valid type (Polygon or Rectangle).
         This uses the fast, pre-computed cache for performance.
         """
-        # Persist the user's current highlights from the table model before filtering.
-        # This ensures that if the user highlights items and then changes the filter,
-        # their selection is not lost.
-        current_highlights = self.image_selection_window.table_model.get_highlighted_paths()
-        if current_highlights:
-            self.reference_image_paths = current_highlights
-
         reference_label = self.reference_label_combo_box.currentData()
         reference_label_text = self.reference_label_combo_box.currentText()
 
@@ -314,11 +307,12 @@ class DeployGeneratorDialog(QDialog):
         # Check for a valid VPE source using the now-stashed list.
         has_reference_images = bool(self.reference_image_paths)
         has_imported_vpes = bool(self.imported_vpes)
+        has_reference_vpes = bool(self.reference_vpes)
 
-        if not has_reference_images and not has_imported_vpes:
+        if not has_reference_images and not has_imported_vpes and not has_reference_vpes:
             QMessageBox.warning(self, 
                                 "No VPE Source Provided", 
-                                "You must highlight at least one reference image or load a VPE file to proceed.")
+                                "You must highlight at least one reference image, load a VPE file, or generate VPEs to proceed.")
             return
 
         # If validation passes, close the dialog.
@@ -996,13 +990,7 @@ class DeployGeneratorDialog(QDialog):
                 
                 # Update the model with user parameters
                 self.task = self.use_task_dropdown.currentText()
-                self.loaded_model.conf = self.thresholds_widget.get_uncertainty_thresh()
-                self.loaded_model.iou = self.thresholds_widget.get_iou_thresh()
-                self.loaded_model.max_det = self.thresholds_widget.get_max_detections()
-                
-                # Get the reference information
-                references_dict = self._get_references()
-                
+
                 # Only VPE pathway is supported now; always setup with VPEs
                 setup_success = self._setup_model_with_vpes()
 
@@ -1196,10 +1184,23 @@ class DeployGeneratorDialog(QDialog):
                     except Exception as e:
                         print(f"Warning: Fast render failed in SeeAnything.predict: {e}")
 
-                    # Cache raw results for later hydration
+                    # --- 5a. Remap multi-prototype class IDs → 0 before caching ---
+                    # This must happen here so the batch path sees clean single-class
+                    # results (names = {0: target_label_name}) rather than objectN names.
+                    target_label_name = self.reference_label.short_label_code
+                    remapped_results = []
+                    for r in results_for_this_image:
+                        if r is not None and r.boxes is not None and len(r.boxes) > 0:
+                            new_data = r.boxes.data.clone()
+                            new_data[:, 5] = 0  # collapse all objectN classes to class 0
+                            r.boxes = type(r.boxes)(new_data, r.boxes.orig_shape)
+                            r.names = {0: target_label_name}
+                        remapped_results.append(r)
+
+                    # Cache remapped results for later hydration
                     if not hasattr(self.annotation_window, 'batch_results_cache'):
                         self.annotation_window.batch_results_cache = {}
-                    self.annotation_window.batch_results_cache[image_path] = results_for_this_image
+                    self.annotation_window.batch_results_cache[image_path] = remapped_results
 
         except Exception as e:
             print(f"A fatal error occurred during the prediction workflow: {e}")
@@ -1496,34 +1497,16 @@ class DeployGeneratorDialog(QDialog):
 
     def _process_results(self, results_processor, results_list, image_path):
         """
-        Process the results, merging K proto-class detections into a single target class.
-        This no longer runs a progress bar or does mapping.
+        Bake a list of already-remapped results into Annotation objects.
+        Class remapping (objectN → 0 + target label name) is done earlier,
+        before caching, so results here are already clean single-class results.
         """
-        updated_results = []
-        target_label_name = self.reference_label.short_label_code
+        valid_results = [r for r in results_list if r is not None]
 
-        for results in results_list:
-            if results and results.boxes is not None and len(results.boxes) > 0:
-                # Clone the data tensor and set all classes to 0
-                new_data = results.boxes.data.clone()
-                new_data[:, 5] = 0   # The 6th column (index 5) is the class
-
-                # Create a new Boxes object
-                new_boxes = type(results.boxes)(new_data, results.boxes.orig_shape)
-                results.boxes = new_boxes
-
-                # Update 'names' dictionary to map our single class ID (0)
-                # to the final target label name chosen by the user.
-                results.names = {0: target_label_name}
-                
-                # Append the modified result object
-                updated_results.append(results)
-
-        # Process the Results in one batch
         if self.task == 'segment' or self.use_sam_dropdown.currentText() == "True":
-            results_processor.process_segmentation_results(updated_results)
+            results_processor.process_segmentation_results(valid_results)
         else:
-            results_processor.process_detection_results(updated_results)
+            results_processor.process_detection_results(valid_results)
         
     def show_vpe(self):
         """
