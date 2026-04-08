@@ -4,6 +4,8 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtCore import pyqtSignal, QPropertyAnimation, QEventLoop
 from PyQt5.QtWidgets import QProgressBar, QVBoxLayout, QDialog, QPushButton, QApplication, QLabel
 
+from coralnet_toolbox.Icons import get_icon
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
@@ -37,6 +39,23 @@ class ProgressBar(QDialog):
         
         # This tells Qt to delete the widget when it receives a close event.
         self.setAttribute(Qt.WA_DeleteOnClose, True)
+
+        # Default window icon: use parent's icon if available otherwise use coralnet logo
+        try:
+            if parent is not None:
+                icon = parent.windowIcon()
+                if icon is not None and not icon.isNull():
+                    self.setWindowIcon(icon)
+                else:
+                    self.setWindowIcon(get_icon("coralnet.svg"))
+            else:
+                self.setWindowIcon(get_icon("coralnet.svg"))
+        except Exception:
+            # Be robust in case parent doesn't expose windowIcon()
+            try:
+                self.setWindowIcon(get_icon("coralnet.svg"))
+            except Exception:
+                pass
 
         # Create progress bar widget
         self.progress_bar = QProgressBar(self)
