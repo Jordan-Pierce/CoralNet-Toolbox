@@ -275,6 +275,54 @@ class BatchInferenceDialog(QDialog):
         
         if hasattr(self, 'thresholds_widget'):
             self.thresholds_widget.initialize_thresholds()
+        # Ensure video UI reflects current highlights and, if a single
+        # video is selected, default the start frame to the current
+        # frame and the end frame to the last frame of the video.
+        try:
+            # Update video UI based on current highlights first
+            self.update_highlighted_images(self.highlighted_images)
+
+            if len(self.highlighted_images) == 1:
+                vp = self.highlighted_images[0]
+                try:
+                    rm = getattr(self.image_window, 'raster_manager', None)
+                    raster = None
+                    if rm is not None:
+                        raster = rm.get_raster(vp)
+
+                    if raster is not None and getattr(raster, 'raster_type', '') == 'VideoRaster':
+                        max_frame = int(getattr(raster, 'frame_count', 1))
+                        # Configure spinbox ranges
+                        self.video_start_spin.setMaximum(max(0, max_frame - 1))
+                        self.video_end_spin.setMaximum(max(0, max_frame - 1))
+
+                        # Default start = current frame if available, else 0
+                        current_idx = getattr(self.annotation_window, '_current_frame_idx', None)
+                        if current_idx is not None:
+                            try:
+                                ci = int(current_idx)
+                            except Exception:
+                                ci = 0
+                            ci = min(max(0, ci), max(0, max_frame - 1))
+                            self.video_start_spin.setValue(ci)
+                        else:
+                            self.video_start_spin.setValue(0)
+
+                        # Default end = last frame
+                        self.video_end_spin.setValue(max(0, max_frame - 1))
+
+                        # Ensure controls are enabled for single-video case
+                        try:
+                            self.video_group.setEnabled(True)
+                            self.video_start_spin.setEnabled(True)
+                            self.video_end_spin.setEnabled(True)
+                            self.video_stride_spin.setEnabled(True)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def setup_info_layout(self):
         """
@@ -1127,7 +1175,7 @@ class BatchInferenceDialog(QDialog):
                             stride = max(1, stride)
 
                             for fi in range(start, end + 1, stride):
-                                expanded_paths.append(VideoRaster.make_frame_path(vp, fi))
+                                expanded_paths.append(VideoRaster.make_frame_path(raster.image_path, fi))
                         except Exception:
                             continue
 
