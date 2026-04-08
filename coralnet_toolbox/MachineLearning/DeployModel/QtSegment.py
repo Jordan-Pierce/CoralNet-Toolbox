@@ -448,13 +448,11 @@ class Segment(Base):
                     bake_pb.close()
                     self.annotation_window.is_streaming_inference = False
 
-                    # ---> THE FIX: Clear the lightweight ghost graphics <---
+                    # Repopulate the phantom layer with the freshly-baked real annotations
                     try:
-                        if getattr(self.annotation_window, '_base_image_item', None) is not None:
-                            self.annotation_window._base_image_item.set_readonly_annotations([])
+                        self.annotation_window.refresh_phantom_annotations()
                     except Exception:
                         pass
-                    # -------------------------------------------------------
 
                     try:
                         self.main_window.label_window.update_annotation_count()

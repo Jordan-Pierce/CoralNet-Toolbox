@@ -1405,6 +1405,14 @@ class BatchInferenceDialog(QDialog):
             else:
                 raise ValueError(f"Unknown model type: {selected_model}")
 
+            # Close the inference progress bar BEFORE baking so the bake bar is clearly visible
+            try:
+                progress_bar.finish_progress()
+                progress_bar.stop_progress()
+                progress_bar.close()
+            except Exception:
+                pass
+
             # Bake any annotations cached by synchronous processing (images-only path)
             self._bake_cached_annotations()
 
@@ -1412,9 +1420,12 @@ class BatchInferenceDialog(QDialog):
             QMessageBox.critical(self, "Error", f"Failed to complete batch inference: {str(e)}")
         finally:
             QApplication.restoreOverrideCursor()
-            progress_bar.finish_progress()
-            progress_bar.stop_progress()
-            progress_bar.close()
+            try:
+                progress_bar.finish_progress()
+                progress_bar.stop_progress()
+                progress_bar.close()
+            except Exception:
+                pass
 
     # -------------------- Worker signal handlers --------------------
     def _on_worker_progress(self, current, total):
@@ -1530,7 +1541,8 @@ class BatchInferenceDialog(QDialog):
         if not cache:
             return
 
-        bake_pb = ProgressBar(self.annotation_window, title="Saving Annotations to Project...")
+        bake_pb = ProgressBar(None, title="Saving Annotations to Project...")
+        bake_pb.setWindowFlags(bake_pb.windowFlags() | Qt.WindowStaysOnTopHint)
         bake_pb.show()
         bake_pb.start_progress(len(cache))
 
@@ -1567,10 +1579,10 @@ class BatchInferenceDialog(QDialog):
         # Clear the unified cache
         self.annotation_window.batch_results_cache = {}
 
-        # Clear the lightweight ghost graphics from the screen
+        # Repopulate the phantom layer with the freshly-baked real annotations
+        # (replaces ghost paths immediately so annotations are visible without a click)
         try:
-            if getattr(self.annotation_window, '_base_image_item', None) is not None:
-                self.annotation_window._base_image_item.set_readonly_annotations([])
+            self.annotation_window.refresh_phantom_annotations()
         except Exception:
             pass
 
