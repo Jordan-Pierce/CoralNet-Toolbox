@@ -299,6 +299,14 @@ class BatchInferenceDialog(QDialog):
         
         # Untoggle all tools in the annotation window
         self.annotation_window.toolChanged.emit(None)
+        # Ensure main window tools are restored (in case cleanup was called mid-run)
+        try:
+            try:
+                self.main_window.set_video_playback_tools_enabled(True)
+            except Exception:
+                pass
+        except Exception:
+            pass
         
         if hasattr(self, 'thresholds_widget'):
             self.thresholds_widget.initialize_thresholds()
@@ -1298,6 +1306,15 @@ class BatchInferenceDialog(QDialog):
                         except Exception:
                             self._results_processor = None
 
+                        try:
+                            # Lock main UI tools while streaming inference is running
+                            try:
+                                self.main_window.set_video_playback_tools_enabled(False)
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass
+
                         self._batch_worker.start()
                         # Hide the dialog to show only the progress bar during inference
                         self.hide()
@@ -1575,6 +1592,15 @@ class BatchInferenceDialog(QDialog):
         # 4. Unlock the rest of the dialog UI
         try:
             self.set_ui_processing_state(False)
+        except Exception:
+            pass
+
+        # 4b. Restore main window tools that were locked for streaming inference
+        try:
+            try:
+                self.main_window.set_video_playback_tools_enabled(True)
+            except Exception:
+                pass
         except Exception:
             pass
 
