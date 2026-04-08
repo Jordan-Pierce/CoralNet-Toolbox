@@ -541,7 +541,7 @@ class BatchInferenceDialog(QDialog):
         self.status_label = QLabel()
         self.update_status_label()
         button_layout.addWidget(self.status_label)
-        
+
         # Stretch to push buttons to the right
         button_layout.addStretch()
         
@@ -1268,6 +1268,15 @@ class BatchInferenceDialog(QDialog):
                         # Prepare progress bar for worker
                         progress_bar.set_title("Video Inference")
                         progress_bar.start_progress(len(expanded_paths))
+                        # Ensure the visible bar is reset to zero before the
+                        # background worker begins (prevents a residual 100%)
+                        try:
+                            progress_bar.set_value(0)
+                            progress_bar.progress_bar.setValue(0)
+                            QApplication.processEvents()
+                        except Exception:
+                            pass
+
                         # Store for handlers
                         self._progress_bar = progress_bar
                         self._active_model_dialog = model_dialog
@@ -1328,9 +1337,16 @@ class BatchInferenceDialog(QDialog):
                         except Exception:
                             pass
 
-                        # Allow cancel button on progress dialog
+                        # Allow cancel button on progress dialog and wire it
+                        # to the same stop handler used by the dialog's OK
+                        # button so the user can stop inference from the
+                        # progress dialog as an alternative.
                         try:
                             progress_bar.cancel_button.setEnabled(True)
+                            try:
+                                progress_bar.cancel_button.clicked.connect(lambda checked=False: self._on_stop_inference_clicked())
+                            except Exception:
+                                pass
                         except Exception:
                             pass
 
@@ -1344,19 +1360,26 @@ class BatchInferenceDialog(QDialog):
                         except Exception:
                             self._results_processor = None
 
+                        # Disable interactive UI and video playback tools so the
+                        # user cannot change settings during streaming inference.
                         try:
-                            # Lock main UI tools while streaming inference is running
-                            try:
-                                self.main_window.set_video_playback_tools_enabled(False)
-                            except Exception:
-                                pass
+                            # Disable controls in this dialog and the video player
+                            self.set_ui_processing_state(True)
                         except Exception:
                             pass
 
+                        # Make the Stop button visually prominent (red)
+                        try:
+                            ok_btn = self.button_box.button(QDialogButtonBox.Ok)
+                            if ok_btn:
+                                ok_btn.setText("Stop Inference")
+                                ok_btn.setEnabled(True)
+                                ok_btn.setStyleSheet("background-color: #d9534f; color: white;")
+                        except Exception:
+                            pass
+
+                        # Start worker and return early — worker will drive UI updates via signals
                         self._batch_worker.start()
-                        # Hide the dialog to show only the progress bar during inference
-                        self.hide()
-                        # Return early — worker will drive UI updates via signals
                         return
                     else:
                         # No video frames could be expanded (edge case).
@@ -1675,6 +1698,10 @@ class BatchInferenceDialog(QDialog):
             if ok_btn:
                 ok_btn.setText("Apply")
                 ok_btn.setEnabled(True)
+                try:
+                    ok_btn.setStyleSheet("")
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -1743,15 +1770,46 @@ class BatchInferenceDialog(QDialog):
                 self.inference_type_combo.setEnabled(enabled)
             except Exception:
                 pass
+
+            # Thresholds and task-specific controls
             try:
-                ok_btn = self.button_box.button(QDialogButtonBox.Ok)
-                if ok_btn:
-                    ok_btn.setEnabled(enabled)
+                if hasattr(self, 'thresholds_widget') and self.thresholds_widget is not None:
+                    self.thresholds_widget.setEnabled(enabled)
+            except Exception:
+                pass
+            try:
+                if hasattr(self, 'task_specific_group') and self.task_specific_group is not None:
+                    self.task_specific_group.setEnabled(enabled)
+            except Exception:
+                pass
+            try:
+                if hasattr(self, 'video_group') and self.video_group is not None:
+                    self.video_group.setEnabled(enabled)
+            except Exception:
+                pass
+
+            # Disable/enable the Cancel button explicitly (Ok/Stop handled elsewhere)
+            try:
+                cancel_btn = self.button_box.button(QDialogButtonBox.Cancel)
+                if cancel_btn:
+                    cancel_btn.setEnabled(enabled)
+            except Exception:
+                pass
+
+            # Also disable the video player widget so playback controls can't be used
+            try:
+                if hasattr(self.annotation_window, '_video_player') and self.annotation_window._video_player is not None:
+                    self.annotation_window._video_player.setEnabled(enabled)
+            except Exception:
+                pass
+
+            # Mirror this for the main window toolbar actions related to video playback
+            try:
+                self.main_window.set_video_playback_tools_enabled(enabled)
             except Exception:
                 pass
         except Exception:
             pass
-
 
     def cleanup(self):
         """
