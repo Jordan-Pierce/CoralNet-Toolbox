@@ -2955,11 +2955,13 @@ class AnnotationWindow(BaseCanvas):
         self.scene.setItemIndexMethod(QGraphicsScene.BspTreeIndex)
 
         if images_to_update:
-            for path in images_to_update:
-                # Pass False so it only updates the raster, not the whole UI
-                self.main_window.image_window.update_image_annotations(path, update_counts=False)
-            # The final UI update handles the counts ONCE
-            self.main_window.label_window.update_annotation_count()
+            # ---> Respect streaming flag to avoid O(N²) UI freezes <---
+            if not getattr(self, 'is_streaming_inference', False):
+                for path in images_to_update:
+                    # Pass False so it only updates the raster, not the whole UI
+                    self.main_window.image_window.update_image_annotations(path, update_counts=False)
+                # The final UI update handles the counts ONCE
+                self.main_window.label_window.update_annotation_count()
             
             # Repaint exactly ONCE, but only if the active image was affected by the import
             if self.current_image_path in images_to_update:

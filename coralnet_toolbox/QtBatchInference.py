@@ -1201,7 +1201,9 @@ class BatchInferenceDialog(QDialog):
         if model_dialog is None:
             raise ValueError(f"No model loaded for {selected_model}")
 
-        progress_bar = ProgressBar(self.annotation_window, title="Batch Inference")
+        # Create progress bar as a top-level window (not parented, so it stays visible independently)
+        progress_bar = ProgressBar(None, title="Batch Inference")
+        progress_bar.setWindowFlags(progress_bar.windowFlags() | Qt.WindowStaysOnTopHint)
         progress_bar.show()
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -1413,7 +1415,7 @@ class BatchInferenceDialog(QDialog):
         try:
             from coralnet_toolbox.Rasters.VideoRaster import VideoRaster
             
-            # 1. Update State
+            # 1. Update UI State
             try:
                 _, frame_idx = VideoRaster.parse_frame_path(virtual_path)
                 self.annotation_window.current_image_path = virtual_path
@@ -1421,39 +1423,28 @@ class BatchInferenceDialog(QDialog):
             except Exception:
                 pass
 
-            # 2. Persist detections to the data model (Required so they actually save!)
-            try:
-                if yolo_results is not None:
-                    yolo_results.path = virtual_path
-                    rp = getattr(self, '_results_processor', None)
-                    if rp is not None:
-                        is_segmentation = getattr(self._active_model_dialog, 'task', '') == 'segment'
-                        if is_segmentation:
-                            rp.process_segmentation_results([yolo_results])
-                        else:
-                            rp.process_detection_results([yolo_results])
-            except Exception as e:
-                print(f"Warning: ResultsProcessor failed for {virtual_path}: {e}")
+            # 2. CACHE THE RAW RESULTS (Do not create Annotation objects yet!)
+            if not hasattr(self.annotation_window, 'video_results_cache'):
+                self.annotation_window.video_results_cache = {}
+            if yolo_results is not None:
+                yolo_results.path = virtual_path
+                self.annotation_window.video_results_cache[virtual_path] = yolo_results
 
-            # 3. FAST RENDERING: Send QImage directly to the OpenGL canvas (No QPixmap!)
+            # 3. FAST RENDERING: Send QImage directly to the OpenGL canvas
             try:
                 if q_image is not None and getattr(self.annotation_window, '_base_image_item', None) is not None:
-                    # Look at this! We use set_image instead of setPixmap
                     self.annotation_window._base_image_item.set_image(q_image)
             except Exception:
                 pass
 
-            # 4. FAST ANNOTATIONS: Bypass Qt Object Creation entirely
+            # 4. FAST ANNOTATIONS: Bypass Python Object Creation entirely
             try:
                 if yolo_results is not None and getattr(self.annotation_window, '_base_image_item', None) is not None:
                     model_type = getattr(self._active_model_dialog, 'task', 'detect')
                     rp = getattr(self, '_results_processor', None)
                     
                     if rp is not None:
-                        # Extract the raw rendering paths instantly from PyTorch
                         paths_data = rp.generate_fast_render_paths(yolo_results, model_type)
-                        
-                        # Hand them directly to the FastImageItem's paint method
                         self.annotation_window._base_image_item.set_readonly_annotations(paths_data)
             except Exception:
                 pass
@@ -1476,7 +1467,6 @@ class BatchInferenceDialog(QDialog):
         except Exception as e:
             print(f"Error in on_frame_processed: {e}")
         finally:
-            # Release the drop-frame gate
             try:
                 if hasattr(self, '_batch_worker') and self._batch_worker is not None:
                     self._batch_worker.release_frame_gate()
@@ -1486,7 +1476,7 @@ class BatchInferenceDialog(QDialog):
     def _on_worker_finished(self):
         """Cleanup UI and restore button behavior when worker finishes."""
         
-        # 1. Close and clean up the progress bar
+        # 1. Close and clean up the video streaming progress bar
         pb = getattr(self, '_progress_bar', None)
         if pb is not None:
             try:
@@ -1497,19 +1487,62 @@ class BatchInferenceDialog(QDialog):
                 pass
             self._progress_bar = None
 
-        # 2. Turn off streaming mode in the annotation window
+        # --- 2. BAKE (HYDRATE) ALL CACHED FRAMES ---
+        # Now that playback is done, we convert the raw cached tensors of ALL frames 
+        # into real, editable Annotation objects and save them to the project.
+        cache = getattr(self.annotation_window, 'video_results_cache', {})
+        if cache and hasattr(self, '_results_processor'):
+            from coralnet_toolbox.QtProgressBar import ProgressBar
+            
+            bake_pb = ProgressBar(self.annotation_window, title="Saving Annotations to Project...")
+            bake_pb.show()
+            bake_pb.start_progress(len(cache))
+            
+            # Keep streaming mode ON to suppress the O(N²) UI updates during the loop
+            self.annotation_window.is_streaming_inference = True 
+            
+            is_segmentation = getattr(self._active_model_dialog, 'task', '') == 'segment'
+            
+            for path, cached_results in cache.items():
+                try:
+                    if is_segmentation:
+                        self._results_processor.process_segmentation_results([cached_results])
+                    else:
+                        self._results_processor.process_detection_results([cached_results])
+                except Exception as e:
+                    print(f"Error hydrating cached results for {path}: {e}")
+                
+                bake_pb.update_progress()
+                QApplication.processEvents()  # Keep UI from completely freezing during save
+                
+            bake_pb.close()
+            
+            # Now that all objects are created, manually trigger the UI update ONCE
+            self.annotation_window.is_streaming_inference = False
+            try:
+                self.main_window.label_window.update_annotation_count()
+                for path in cache.keys():
+                    self.image_window.update_image_annotations(path, update_counts=False)
+            except Exception:
+                pass
+                
+            # Clear the cache
+            self.annotation_window.video_results_cache = {}
+        # -------------------------------------------
+
+        # 3. Turn off streaming mode in the annotation window (failsafe)
         try:
             self.annotation_window.is_streaming_inference = False
         except Exception:
             pass
 
-        # 3. Unlock the rest of the dialog UI
+        # 4. Unlock the rest of the dialog UI
         try:
             self.set_ui_processing_state(False)
         except Exception:
             pass
 
-        # 4. Restore the Apply button routing and text
+        # 5. Restore the Apply button routing and text
         try:
             try:
                 self.button_box.accepted.disconnect()
@@ -1524,16 +1557,14 @@ class BatchInferenceDialog(QDialog):
         except Exception:
             pass
 
-        # 5. Trigger a full frame redraw on the exact frame we stopped on
-        # This clears the lightweight read-only graphics and spawns the full, 
-        # interactive bounding boxes/masks so the user can start editing.
+        # 6. Trigger a full frame redraw on the exact frame we stopped on
         try:
             if getattr(self.annotation_window, '_active_video_raster', None) is not None:
                 current_frame = getattr(self.annotation_window, '_current_frame_idx', None)
                 if current_frame is not None:
                     self.annotation_window._display_video_frame(current_frame)
                 
-                # 6. Refresh the scrub bar so the new annotation tick marks appear all at once
+                # Refresh the scrub bar so the new annotation tick marks appear all at once
                 self.annotation_window._update_video_annotation_marks()
         except Exception:
             pass
