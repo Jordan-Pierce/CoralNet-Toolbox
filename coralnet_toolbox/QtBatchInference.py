@@ -1201,6 +1201,17 @@ class BatchInferenceDialog(QDialog):
         if model_dialog is None:
             raise ValueError(f"No model loaded for {selected_model}")
 
+        # Store active model and results processor for later baking
+        self._active_model_dialog = model_dialog
+        try:
+            from coralnet_toolbox.Results import ResultsProcessor
+            self._results_processor = ResultsProcessor(
+                self.main_window,
+                getattr(model_dialog, 'class_mapping', {})
+            )
+        except Exception:
+            self._results_processor = None
+
         # Create progress bar as a top-level window (not parented, so it stays visible independently)
         progress_bar = ProgressBar(None, title="Batch Inference")
         progress_bar.setWindowFlags(progress_bar.windowFlags() | Qt.WindowStaysOnTopHint)
@@ -1335,6 +1346,11 @@ class BatchInferenceDialog(QDialog):
                         self.hide()
                         # Return early — worker will drive UI updates via signals
                         return
+                    else:
+                        # No video frames could be expanded (edge case).
+                        # Non-video images were already processed synchronously above;
+                        # bake their cached results now before falling through.
+                        self._bake_cached_annotations()
             except Exception:
                 # Non-fatal: fall back to synchronous processing below
                 pass
@@ -1389,6 +1405,9 @@ class BatchInferenceDialog(QDialog):
             else:
                 raise ValueError(f"Unknown model type: {selected_model}")
 
+            # Bake any annotations cached by synchronous processing (images-only path)
+            self._bake_cached_annotations()
+
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to complete batch inference: {str(e)}")
         finally:
@@ -1424,11 +1443,11 @@ class BatchInferenceDialog(QDialog):
                 pass
 
             # 2. CACHE THE RAW RESULTS (Do not create Annotation objects yet!)
-            if not hasattr(self.annotation_window, 'video_results_cache'):
-                self.annotation_window.video_results_cache = {}
+            if not hasattr(self.annotation_window, 'batch_results_cache'):
+                self.annotation_window.batch_results_cache = {}
             if yolo_results is not None:
                 yolo_results.path = virtual_path
-                self.annotation_window.video_results_cache[virtual_path] = yolo_results
+                self.annotation_window.batch_results_cache[virtual_path] = yolo_results
 
             # 3. FAST RENDERING: Send QImage directly to the OpenGL canvas
             try:
@@ -1497,6 +1516,64 @@ class BatchInferenceDialog(QDialog):
             except Exception:
                 pass
 
+    def _bake_cached_annotations(self):
+        """Bakes all cached tensors into real Annotation objects and saves them to the project.
+
+        Handles both image results (stored as lists) and video-frame results (stored as
+        single Results objects) via the unified ``batch_results_cache`` on the
+        AnnotationWindow.  Safe to call even when the cache is empty.
+        """
+        if not hasattr(self, '_results_processor') or self._results_processor is None:
+            return
+
+        cache = getattr(self.annotation_window, 'batch_results_cache', {})
+        if not cache:
+            return
+
+        bake_pb = ProgressBar(self.annotation_window, title="Saving Annotations to Project...")
+        bake_pb.show()
+        bake_pb.start_progress(len(cache))
+
+        # Suppress O(N²) UI updates during the loop
+        self.annotation_window.is_streaming_inference = True
+
+        is_segmentation = getattr(self._active_model_dialog, 'task', '') == 'segment'
+
+        for path, cached_results in cache.items():
+            # Normalise: images store lists, video frames store single Results objects
+            results_to_process = cached_results if isinstance(cached_results, list) else [cached_results]
+            try:
+                if is_segmentation:
+                    self._results_processor.process_segmentation_results(results_to_process)
+                else:
+                    self._results_processor.process_detection_results(results_to_process)
+            except Exception as e:
+                print(f"Error hydrating cached results for {path}: {e}")
+
+            bake_pb.update_progress()
+            QApplication.processEvents()  # Keep UI responsive
+
+        bake_pb.close()
+
+        # Re-enable UI updates and trigger one final master sync
+        self.annotation_window.is_streaming_inference = False
+        try:
+            self.main_window.label_window.update_annotation_count()
+            for path in cache.keys():
+                self.image_window.update_image_annotations(path, update_counts=False)
+        except Exception:
+            pass
+
+        # Clear the unified cache
+        self.annotation_window.batch_results_cache = {}
+
+        # Clear the lightweight ghost graphics from the screen
+        try:
+            if getattr(self.annotation_window, '_base_image_item', None) is not None:
+                self.annotation_window._base_image_item.set_readonly_annotations([])
+        except Exception:
+            pass
+
     def _on_worker_finished(self):
         """Cleanup UI and restore button behavior when worker finishes."""
         
@@ -1511,56 +1588,8 @@ class BatchInferenceDialog(QDialog):
                 pass
             self._progress_bar = None
 
-        # --- 2. BAKE (HYDRATE) ALL CACHED FRAMES ---
-        # Now that playback is done, we convert the raw cached tensors of ALL frames 
-        # into real, editable Annotation objects and save them to the project.
-        cache = getattr(self.annotation_window, 'video_results_cache', {})
-        if cache and hasattr(self, '_results_processor'):
-            from coralnet_toolbox.QtProgressBar import ProgressBar
-            
-            bake_pb = ProgressBar(self.annotation_window, title="Saving Annotations to Project...")
-            bake_pb.show()
-            bake_pb.start_progress(len(cache))
-            
-            # Keep streaming mode ON to suppress the O(N²) UI updates during the loop
-            self.annotation_window.is_streaming_inference = True 
-            
-            is_segmentation = getattr(self._active_model_dialog, 'task', '') == 'segment'
-            
-            for path, cached_results in cache.items():
-                try:
-                    if is_segmentation:
-                        self._results_processor.process_segmentation_results([cached_results])
-                    else:
-                        self._results_processor.process_detection_results([cached_results])
-                except Exception as e:
-                    print(f"Error hydrating cached results for {path}: {e}")
-                
-                bake_pb.update_progress()
-                QApplication.processEvents()  # Keep UI from completely freezing during save
-                
-            bake_pb.close()
-
-            # ---> THE FIX: Clear the lightweight ghost graphics <---
-            try:
-                if getattr(self.annotation_window, '_base_image_item', None) is not None:
-                    self.annotation_window._base_image_item.set_readonly_annotations([])
-            except Exception:
-                pass
-            # -------------------------------------------------------
-
-            # Now that all objects are created, manually trigger the UI update ONCE
-            self.annotation_window.is_streaming_inference = False
-            try:
-                self.main_window.label_window.update_annotation_count()
-                for path in cache.keys():
-                    self.image_window.update_image_annotations(path, update_counts=False)
-            except Exception:
-                pass
-                
-            # Clear the cache
-            self.annotation_window.video_results_cache = {}
-        # -------------------------------------------
+        # 2. BAKE ALL CACHED FRAMES (images + video, unified)
+        self._bake_cached_annotations()
 
         # 3. Turn off streaming mode in the annotation window (failsafe)
         try:
