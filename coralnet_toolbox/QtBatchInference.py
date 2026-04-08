@@ -1099,11 +1099,20 @@ class BatchInferenceDialog(QDialog):
             QMessageBox.critical(self, "Error", f"Failed to complete batch inference: {str(e)}")
         finally:
             QApplication.restoreOverrideCursor()
-            self.cleanup()
-            # If a background worker was started, keep the dialog open until it finishes.
+            # Only perform final cleanup and close the dialog if no background
+            # worker was started or it is already finished. If a worker is
+            # running, leave cleanup to `_on_worker_finished` so the thread can
+            # complete normally without being killed immediately.
             worker = getattr(self, '_batch_worker', None)
             if worker is None or not getattr(worker, 'isRunning', lambda: False)():
-                self.accept()  # Close dialog when no worker is running
+                try:
+                    self.cleanup()
+                except Exception:
+                    pass
+                try:
+                    self.accept()
+                except Exception:
+                    pass
 
     def batch_inference(self):
         """
@@ -1482,83 +1491,72 @@ class BatchInferenceDialog(QDialog):
 
     def _on_worker_finished(self):
         """Cleanup UI and restore button behavior when worker finishes."""
+        
+        # 1. Close and clean up the progress bar
+        pb = getattr(self, '_progress_bar', None)
+        if pb is not None:
+            try:
+                pb.finish_progress()
+                pb.stop_progress()
+                pb.close()
+            except Exception:
+                pass
+            self._progress_bar = None
+
+        # 2. Turn off streaming mode in the annotation window
         try:
-            pb = getattr(self, '_progress_bar', None)
-            if pb is not None:
-                try:
-                    pb.finish_progress()
-                    pb.stop_progress()
-                    pb.close()
-                except Exception:
-                    pass
-                self._progress_bar = None
-
-            # Restore OK button behavior
-            try:
-                try:
-                    self.button_box.accepted.disconnect()
-                except Exception:
-                    pass
-                self.button_box.accepted.connect(self.apply)
-                ok_btn = self.button_box.button(QDialogButtonBox.Ok)
-                if ok_btn:
-                    ok_btn.setText('Ok')
-                    ok_btn.setEnabled(True)
-            except Exception:
-                pass
-
-            # --- Streaming cleanup: restore interactive UI and full graphics ---
-            try:
-                try:
-                    self.annotation_window.is_streaming_inference = False
-                except Exception:
-                    pass
-
-                try:
-                    # Small helper to re-enable widgets
-                    self.set_ui_processing_state(False)
-                except Exception:
-                    pass
-
-                try:
-                    ok_btn = self.button_box.button(QDialogButtonBox.Ok)
-                    if ok_btn:
-                        ok_btn.setText("Apply")
-                except Exception:
-                    pass
-
-                # Trigger a full frame redraw on the current frame so heavy graphics are recreated
-                try:
-                    if getattr(self.annotation_window, '_active_video_raster', None) is not None:
-                        current_frame = getattr(self.annotation_window, '_current_frame_idx', None)
-                        if current_frame is not None:
-                            self.annotation_window._display_video_frame(current_frame)
-                except Exception:
-                    pass
-
-                # Update tick marks on timeline once after all frames processed
-                try:
-                    self.annotation_window._update_video_annotation_marks()
-                except Exception:
-                    pass
-            except Exception:
-                pass
-
-            # Restore the dialog when inference completes
-            try:
-                self.show()
-            except Exception:
-                pass
-
-            # Remove worker ref
-            try:
-                if hasattr(self, '_batch_worker'):
-                    del self._batch_worker
-            except Exception:
-                pass
-
+            self.annotation_window.is_streaming_inference = False
         except Exception:
             pass
+
+        # 3. Unlock the rest of the dialog UI
+        try:
+            self.set_ui_processing_state(False)
+        except Exception:
+            pass
+
+        # 4. Restore the Apply button routing and text
+        try:
+            try:
+                self.button_box.accepted.disconnect()
+            except TypeError:
+                pass  # Ignore if not connected
+            
+            self.button_box.accepted.connect(self.apply)
+            ok_btn = self.button_box.button(QDialogButtonBox.Ok)
+            if ok_btn:
+                ok_btn.setText("Apply")
+                ok_btn.setEnabled(True)
+        except Exception:
+            pass
+
+        # 5. Trigger a full frame redraw on the exact frame we stopped on
+        # This clears the lightweight read-only graphics and spawns the full, 
+        # interactive bounding boxes/masks so the user can start editing.
+        try:
+            if getattr(self.annotation_window, '_active_video_raster', None) is not None:
+                current_frame = getattr(self.annotation_window, '_current_frame_idx', None)
+                if current_frame is not None:
+                    self.annotation_window._display_video_frame(current_frame)
+                
+                # 6. Refresh the scrub bar so the new annotation tick marks appear all at once
+                self.annotation_window._update_video_annotation_marks()
+        except Exception:
+            pass
+
+        # 7. Restore the dialog visibility when inference completes
+        try:
+            self.show()
+        except Exception:
+            pass
+
+        # 8. Safely clean up the worker thread
+        if hasattr(self, '_batch_worker') and self._batch_worker is not None:
+            try:
+                self._batch_worker.deleteLater()
+            except Exception:
+                pass
+            self._batch_worker = None
 
     def _on_stop_inference_clicked(self):
         """Called when the user clicks 'Stop Inference' (OK button remapped)."""
