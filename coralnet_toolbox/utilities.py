@@ -195,12 +195,21 @@ def rasterio_to_qimage(rasterio_src, longest_edge=None):
                 image = image.astype(float) * (255.0 / image.max())
             image = image.astype(np.uint8)
 
-        # Convert the numpy array to QImage
-        qimage = QImage(image.data.tobytes(),
+        # --- PHASE 1: ZERO-COPY QIMAGE ---
+        # Ensure the array is contiguous in memory
+        image_contiguous = np.ascontiguousarray(image)
+        
+        # Pass the memory pointer (.data) directly instead of .tobytes()
+        qimage = QImage(image_contiguous.data,
                         scaled_width,
                         scaled_height,
                         scaled_width * num_bands,  # bytes per line for Greyscale or RGB
                         qimage_format)
+        
+        # CRITICAL: Prevent Python's garbage collector from destroying the array
+        # while Qt is using it for rendering.
+        qimage.ndarray_reference = image_contiguous
+        # ---------------------------------
 
         return qimage
 
@@ -290,12 +299,20 @@ def rasterio_to_cropped_image(rasterio_src, window):
                 image = image.astype(float) * (255.0 / image.max())
             image = image.astype(np.uint8)
 
-        # Convert the numpy array to QImage
-        qimage = QImage(image.data.tobytes(),
+        # --- PHASE 1: ZERO-COPY QIMAGE ---
+        # Ensure the array is contiguous in memory
+        image_contiguous = np.ascontiguousarray(image)
+
+        # Pass the memory pointer (.data) directly instead of .tobytes()
+        qimage = QImage(image_contiguous.data,
                         int(window.width),
                         int(window.height),
                         int(window.width * num_bands),  # bytes per line
                         qimage_format)
+
+        # CRITICAL: Prevent Python's garbage collector from destroying the array
+        qimage.ndarray_reference = image_contiguous
+        # ---------------------------------
 
         return qimage
 

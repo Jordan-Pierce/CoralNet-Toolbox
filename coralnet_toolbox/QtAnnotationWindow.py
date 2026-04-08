@@ -1225,16 +1225,28 @@ class AnnotationWindow(BaseCanvas):
         self._current_frame_idx = frame_idx
         self.current_image_path = vr.make_frame_path(vr.image_path, frame_idx)
 
-        # Swap pixmap in-place — does NOT rebuild the scene graph
+        # --- PHASE 4: FAST PLAYBACK RENDERING ---
         if self._base_image_item is not None:
-            self._base_image_item.setPixmap(QPixmap.fromImage(q_img))
-            # ---> Draw lightweight annotations during playback <---
+            # 1. Update the background image instantly
+            self._base_image_item.set_image(q_img)
+            
+            # 2. Compile paths without creating Qt Items
             try:
                 frame_annotations = self.image_annotations_dict.get(self.current_image_path, [])
-                visible_annotations = [a for a in frame_annotations if getattr(a.label, 'is_visible', True)]
-                self._render_annotations_readonly(visible_annotations)
+                paths_data = []
+                
+                for a in frame_annotations:
+                    if getattr(a.label, 'is_visible', True) and not hasattr(a, 'mask_data'):
+                        try:
+                            paths_data.append((a.get_painter_path(), a.label.color, a.transparency))
+                        except Exception:
+                            pass
+                
+                # Send the raw paths to the fast item
+                self._base_image_item.set_readonly_annotations(paths_data)
             except Exception:
                 pass
+        # ----------------------------------------
 
         # Update slider and counter silently (no seekChanged feedback loop)
         self._video_player.slider.blockSignals(True)
@@ -1346,33 +1358,34 @@ class AnnotationWindow(BaseCanvas):
             return
 
         self._current_frame_idx = next_idx
-
-        # Keep current_image_path in sync so pause knows which frame to reload
         self.current_image_path = self._active_video_raster.make_frame_path(
             self._active_video_raster.image_path, next_idx
         )
 
-        # Swap pixmap in-place — cheap paint, no scene rebuild
+        # --- PHASE 4: FAST PLAYBACK RENDERING ---
         if self._base_image_item is not None:
-            self._base_image_item.setPixmap(QPixmap.fromImage(q_image))
-            # ---> Draw lightweight annotations during playback <---
+            self._base_image_item.set_image(q_image)
             try:
                 frame_annotations = self.image_annotations_dict.get(self.current_image_path, [])
-                visible_annotations = [a for a in frame_annotations if getattr(a.label, 'is_visible', True)]
-                self._render_annotations_readonly(visible_annotations)
+                paths_data = []
+                for a in frame_annotations:
+                    if getattr(a.label, 'is_visible', True) and not hasattr(a, 'mask_data'):
+                        try:
+                            paths_data.append((a.get_painter_path(), a.label.color, a.transparency))
+                        except Exception:
+                            pass
+                self._base_image_item.set_readonly_annotations(paths_data)
             except Exception:
                 pass
         else:
-            # Fallback: use the full display path (slower but correct)
             self.load_visuals(q_image, self.current_image_path, None)
+        # ----------------------------------------
 
         # Update slider silently
         self._video_player.slider.blockSignals(True)
         self._video_player.slider.setValue(next_idx)
         self._video_player.slider.blockSignals(False)
-        self._video_player.lbl_frame.setText(
-            f"{next_idx} / {self._active_video_raster.frame_count}"
-        )
+        self._video_player.lbl_frame.setText(f"{next_idx} / {self._active_video_raster.frame_count}")
 
     def cursorInWindow(self, pos, mapped=False):
         """Check if the cursor position is within the image bounds."""

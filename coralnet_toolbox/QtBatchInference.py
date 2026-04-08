@@ -56,6 +56,10 @@ class BatchInferenceWorker(QThread):
         locker = QMutexLocker(self._mutex)
         try:
             self._is_running = False
+            try:
+                print(f"[BatchInferenceWorker] stop() called at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+            except Exception:
+                pass
         finally:
             del locker
 
@@ -66,6 +70,10 @@ class BatchInferenceWorker(QThread):
         next frame immediately, giving the illusion of buttery-smooth playback.
         """
         self._waiting_for_ui = False
+        try:
+            print(f"[BatchInferenceWorker] release_frame_gate at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        except Exception:
+            pass
 
     def update_thresholds(self, conf=None, iou=None, max_det=None):
         """Thread-safe slot called by the Main Thread when the user moves a slider."""
@@ -77,6 +85,11 @@ class BatchInferenceWorker(QThread):
                 self._thresholds['iou'] = iou
             if max_det is not None:
                 self._thresholds['max_det'] = max_det
+            try:
+                print(f"[BatchInferenceWorker] update_thresholds at {time.strftime('%Y-%m-%d %H:%M:%S')} "
+                      f"conf={self._thresholds.get('conf')} iou={self._thresholds.get('iou')} max_det={self._thresholds.get('max_det')}")
+            except Exception:
+                pass
         finally:
             del locker
 
@@ -84,16 +97,27 @@ class BatchInferenceWorker(QThread):
         """The main loop executed on the background thread."""
         try:
             total_items = len(self.paths)
+            print(f"[BatchInferenceWorker] run started at {time.strftime('%Y-%m-%d %H:%M:%S')} total_items={total_items}")
+            overall_start = time.perf_counter()
 
             for i, path in enumerate(self.paths):
-                # 0. Drop-frame gate: spin until the UI has consumed the previous frame
-                while self._waiting_for_ui and self._is_running:
-                    time.sleep(0.002)
+                frame_start = time.perf_counter()
+                try:
+                    if self._waiting_for_ui:
+                        wait_start = time.perf_counter()
+                        print(f"[BatchInferenceWorker] waiting for UI before frame {i+1}/{total_items} at {time.strftime('%H:%M:%S')}")
+                        while self._waiting_for_ui and self._is_running:
+                            time.sleep(0.002)
+                        waited = time.perf_counter() - wait_start
+                        print(f"[BatchInferenceWorker] waited_for_ui={waited:.4f}s for frame {i+1}/{total_items}")
+                except Exception:
+                    pass
 
-                # 1. Check if the user clicked "Stop"
+                # Check if the user clicked "Stop"
                 locker = QMutexLocker(self._mutex)
                 try:
                     if not self._is_running:
+                        print(f"[BatchInferenceWorker] stop requested; exiting loop at frame {i+1}/{total_items}")
                         break
                     # Grab a snapshot of the current thresholds for this frame
                     current_conf = self._thresholds.get('conf', 0.25)
@@ -102,32 +126,37 @@ class BatchInferenceWorker(QThread):
                 finally:
                     del locker
 
-                # 2. Video Frame Extraction
+                # Video Frame Extraction
                 if isinstance(path, str) and '::frame_' in path:
                     # Import here to avoid circular dependencies
                     from coralnet_toolbox.Rasters.VideoRaster import VideoRaster
 
                     base_path, frame_idx = VideoRaster.parse_frame_path(path)
+                    t0 = time.perf_counter()
                     raster = self.raster_manager.get_raster(base_path)
+                    t_raster_get = time.perf_counter() - t0
 
                     if not raster:
                         # Skip missing raster
                         self.progressUpdated.emit(i + 1, total_items)
-                        print(f"Warning: Raster not found for path {base_path}. Skipping.")
+                        print(f"[BatchInferenceWorker] Raster not found for path {base_path}. Skipping. raster_lookup_time={t_raster_get:.4f}s")
                         continue
 
                     # Extract the raw numpy array directly from cv2
                     try:
+                        t0 = time.perf_counter()
                         frame_bgr = raster.get_bgr_frame(frame_idx)
+                        t_frame_extract = time.perf_counter() - t0
                     except Exception:
                         frame_bgr = None
+                        t_frame_extract = None
 
                     if frame_bgr is None:
                         self.progressUpdated.emit(i + 1, total_items)
-                        print(f"Warning: Failed to extract frame {frame_idx} from raster {base_path}. Skipping.")
+                        print(f"[BatchInferenceWorker] Failed to extract frame {frame_idx} from raster {base_path}. Skipping. frame_extract_time={t_frame_extract}")
                         continue
 
-                    # 3. Run Inference
+                    # Run Inference
                     try:
                         # Provide common flags similar to in-dialog inference where possible
                         call_kwargs = dict(conf=current_conf,
@@ -137,8 +166,9 @@ class BatchInferenceWorker(QThread):
                                            stream=False,
                                            verbose=False)
 
-                        # Some model wrappers ignore unknown kwargs; protect call
+                        t0 = time.perf_counter()
                         results = self.model(frame_bgr, **call_kwargs)
+                        t_infer = time.perf_counter() - t0
 
                         # YOLO may return a single Results or a list
                         try:
@@ -149,30 +179,41 @@ class BatchInferenceWorker(QThread):
                         except Exception:
                             final = results
 
-                        # 4. Convert BGR→RGB and build QImage in the worker thread
-                        #    (saves the UI thread from doing the expensive pixel crunch)
+                        # Convert BGR→RGB and build QImage in the worker thread
+                        # (saves the UI thread from doing the expensive pixel crunch)
                         try:
+                            t0 = time.perf_counter()
                             from coralnet_toolbox.Rasters.VideoRaster import VideoRaster
                             q_img = VideoRaster._bgr_to_qimage(frame_bgr)
+                            t_qimg = time.perf_counter() - t0
                         except Exception:
                             q_img = None
+                            t_qimg = None
 
-                        # 5. Emit back to the Main Thread; raise gate so worker waits
+                        # Emit back to the Main Thread; raise gate so worker waits
                         self._waiting_for_ui = True
                         self.frameProcessed.emit(path, q_img, final)
+
+                        frame_total = time.perf_counter() - frame_start
+                        print(f"[BatchInferenceWorker] frame={i+1}/{total_items} path={os.path.basename(base_path)} "
+                              f"frame_idx={frame_idx} raster_lookup={t_raster_get:.4f}s extract={t_frame_extract:.4f}s "
+                              f"infer={t_infer:.4f}s qimg={t_qimg:.4f}s total={frame_total:.4f}s")
 
                     except Exception as e:
                         # Emit error but continue with next frames
                         self.error.emit(str(e))
-                        print(f"Error processing frame {frame_idx} from raster {base_path}: {e}")
+                        print(f"[BatchInferenceWorker] Error processing frame {frame_idx} from raster {base_path}: {e} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
                 else:
                     # Currently only video-frame fast-path implemented
-                    print(f"Warning: Unsupported path format {path}. Skipping.")
+                    print(f"[BatchInferenceWorker] Unsupported path format {path}. Skipping.")
                     pass
 
                 # Update progress bar
                 self.progressUpdated.emit(i + 1, total_items)
+
+            overall_time = time.perf_counter() - overall_start
+            print(f"[BatchInferenceWorker] run finished at {time.strftime('%Y-%m-%d %H:%M:%S')} total_time={overall_time:.4f}s")
 
         except Exception as e:
             self.error.emit(str(e))

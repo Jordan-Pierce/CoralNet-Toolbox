@@ -11,18 +11,68 @@ import traceback
 import numpy as np
 
 import pyqtgraph as pg
-from PyQt5.QtGui import QMouseEvent, QPixmap, QImage, QBrush, QColor, QPen, QPainterPath, QTransform
+from PyQt5.QtGui import (QMouseEvent, QPixmap, QImage, QBrush, QColor, QPen, 
+                         QPainterPath, QTransform, QSurfaceFormat, QPainter)
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QSize, QObject
 from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, 
                              QGraphicsItemGroup, QGraphicsEllipseItem, QGraphicsLineItem,
-                             QGraphicsItem, QGraphicsPathItem, QLabel, QApplication)
+                             QGraphicsItem, QGraphicsPathItem, QLabel, QApplication,
+                             QOpenGLWidget)
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-# ----------------------------------------------------------------------------------------------------------------------
+#-------------------------------------------------------------------------------------------------
 # Classes
-# ----------------------------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
+
+
+class FastImageItem(QGraphicsItem):
+    """A high-performance image item that bypasses QPixmap and draws directly via OpenGL."""
+    def __init__(self):
+        super().__init__()
+        self._image = None
+        self._readonly_paths = [] 
+        
+        # Optimize for rapidly changing content
+        self.setCacheMode(QGraphicsItem.NoCache)
+
+    def set_image(self, qimage):
+        self._image = qimage
+        self.update()
+
+    def set_readonly_annotations(self, paths_data):
+        """Pass a list of ready-to-draw paths: (QPainterPath, QColor, opacity)"""
+        self._readonly_paths = paths_data
+        self.update()
+
+    def boundingRect(self):
+        if self._image is None or self._image.isNull():
+            return QRectF(0, 0, 100, 100) # Fallback safe rect
+        return QRectF(0, 0, self._image.width(), self._image.height())
+
+    def paint(self, painter, option, widget):
+        # 1. Draw the video frame directly from RAM to the OpenGL Viewport
+        if self._image is not None and not self._image.isNull():
+            painter.drawImage(0, 0, self._image)
+
+        # 2. Draw all annotations in a single ultra-fast pass
+        if self._readonly_paths:
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            
+            for path, color_val, transparency in self._readonly_paths:
+                # Setup Fill
+                fill_color = QColor(color_val)
+                fill_color.setAlpha(transparency)
+                painter.setBrush(QBrush(fill_color))
+                
+                # Setup Outline
+                pen = QPen(color_val, 1)
+                pen.setCosmetic(True)
+                painter.setPen(pen)
+                
+                # Draw directly to the GPU
+                painter.drawPath(path)
 
 
 class BaseCanvas(QGraphicsView):
@@ -48,6 +98,18 @@ class BaseCanvas(QGraphicsView):
     def __init__(self, parent=None):
         """Initialize the base canvas."""
         super().__init__(parent)
+        
+        # --- PHASE 2: ENABLE HARDWARE ACCELERATION ---
+        gl_widget = QOpenGLWidget()
+        
+        # Enable Anti-Aliasing (4x MSAA) for smooth vector drawing
+        format_gl = QSurfaceFormat()
+        format_gl.setSamples(4) 
+        gl_widget.setFormat(format_gl)
+        
+        # Set the hardware-accelerated widget as the viewport
+        self.setViewport(gl_widget)
+        # ---------------------------------------------
         
         # Create and set the scene
         self.scene = QGraphicsScene(self)
@@ -370,13 +432,18 @@ class BaseCanvas(QGraphicsView):
         # Hide placeholder
         self._hide_placeholder()
         
-        # Create and store pixmap
-        self.pixmap_image = QPixmap(q_image)
+        # Create and store pixmap (keep this for legacy fallbacks if needed)
+        self.pixmap_image = QPixmap.fromImage(q_image) if isinstance(q_image, QImage) else QPixmap(q_image)
         
-        # Create base image item
-        self._base_image_item = QGraphicsPixmapItem(self.pixmap_image)
+        # --- PHASE 3: USE FAST IMAGE ITEM ---
+        self._base_image_item = FastImageItem()
+        # If q_image is a QImage, pass it directly. If it's a QPixmap (from legacy code), convert to image
+        img_to_pass = q_image if isinstance(q_image, QImage) else self.pixmap_image.toImage()
+        self._base_image_item.set_image(img_to_pass)
+        
         self._base_image_item.setZValue(-10)
         self.scene.addItem(self._base_image_item)
+        # ------------------------------------
         
         # Update state
         self.current_image_path = image_path
