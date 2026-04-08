@@ -252,6 +252,35 @@ class BatchInferenceDialog(QDialog):
         self.setup_task_specific_layout()
         self.setup_buttons_layout()
 
+    def _update_worker_thresholds(self, *args):
+        """Safely pass updated global thresholds from MainWindow to the active worker.
+
+        This slot listens to MainWindow signals (`uncertaintyChanged`, `iouChanged`,
+        `maxDetectionsChanged`) and forwards the latest values to the running
+        BatchInferenceWorker (if present). Connecting to MainWindow avoids
+        creating duplicate anonymous lambda handlers on every run.
+        """
+        worker = getattr(self, '_batch_worker', None)
+        if worker is None:
+            return
+        try:
+            conf = self.main_window.get_uncertainty_thresh() if hasattr(self.main_window, 'get_uncertainty_thresh') else None
+            iou = self.main_window.get_iou_thresh() if hasattr(self.main_window, 'get_iou_thresh') else None
+            max_det = self.main_window.get_max_detections() if hasattr(self.main_window, 'get_max_detections') else None
+            worker.update_thresholds(conf=conf, iou=iou, max_det=max_det)
+        except Exception:
+            pass
+
+        # Route global threshold changes (MainWindow) into the active worker.
+        # This avoids repeatedly connecting anonymous lambdas each time batch
+        # inference is started, which would otherwise accumulate handlers.
+        try:
+            self.main_window.uncertaintyChanged.connect(self._update_worker_thresholds)
+            self.main_window.iouChanged.connect(self._update_worker_thresholds)
+            self.main_window.maxDetectionsChanged.connect(self._update_worker_thresholds)
+        except Exception:
+            pass
+
     def showEvent(self, event):
         """
         Update model availability when the dialog is shown.
@@ -1211,10 +1240,15 @@ class BatchInferenceDialog(QDialog):
                             self.image_window.raster_manager,
                             device=getattr(self.main_window, 'device', None)
                         )
-                        # Enable streaming inference mode on the AnnotationWindow so
-                        # ResultsProcessor will persist annotations but skip heavy graphics.
+                        # Enable streaming inference mode on the AnnotationWindow
                         try:
                             self.annotation_window.is_streaming_inference = True
+                            
+                            # --- Clear the paused frame's heavy graphics ---
+                            # Strip the heavy items so they don't stay glued to the screen 
+                            if hasattr(self.annotation_window, '_clear_current_frame_annotation_graphics'):
+                                self.annotation_window._clear_current_frame_annotation_graphics()
+                                
                         except Exception:
                             pass
 
@@ -1223,26 +1257,6 @@ class BatchInferenceDialog(QDialog):
                         self._batch_worker.progressUpdated.connect(self._on_worker_progress)
                         self._batch_worker.error.connect(lambda msg: print(f"BatchInferenceWorker error: {msg}"))
                         self._batch_worker.finished.connect(self._on_worker_finished)
-
-                        # Connect thresholds sliders to worker
-                        try:
-                            if hasattr(self.thresholds_widget, 'uncertainty_threshold_slider'):
-                                self.thresholds_widget.uncertainty_threshold_slider.valueChanged.connect(
-                                    lambda v: self._batch_worker.update_thresholds(conf=(v / 100.0), iou=None, max_det=None) 
-                                    if hasattr(self, '_batch_worker') else None
-                                )
-                            if hasattr(self.thresholds_widget, 'iou_threshold_slider'):
-                                self.thresholds_widget.iou_threshold_slider.valueChanged.connect(
-                                    lambda v: self._batch_worker.update_thresholds(conf=None, iou=(v / 100.0), max_det=None) 
-                                    if hasattr(self, '_batch_worker') else None
-                                )
-                            if hasattr(self.thresholds_widget, 'max_detections_spinbox'):
-                                self.thresholds_widget.max_detections_spinbox.valueChanged.connect(
-                                    lambda v: self._batch_worker.update_thresholds(conf=None, iou=None, max_det=v) 
-                                    if hasattr(self, '_batch_worker') else None
-                                )
-                        except Exception:
-                            pass
 
                         # Transform Apply (Ok) button into Stop Inference
                         try:
@@ -1353,55 +1367,84 @@ class BatchInferenceDialog(QDialog):
         except Exception:
             pass
 
-    def _on_batch_frame_processed(self, virtual_path, bgr_array, yolo_results):
-        """Handle a processed frame from the worker on the main thread.
-
-        - Convert the BGR array to QImage and load into the annotation canvas
-        - Map YOLO `Results` to annotations using ResultsProcessor
-        """
+    def on_frame_processed(self, virtual_path, q_image, yolo_results):
+        """Slot that receives data from the background worker and updates the streaming UI."""
         try:
+            from PyQt5.QtGui import QPixmap
             from coralnet_toolbox.Rasters.VideoRaster import VideoRaster
             from coralnet_toolbox.Results import ResultsProcessor
 
-            # Convert to QImage
+            # --- 1. Update State FIRST ---
+            # So the AnnotationWindow actually knows which frame it's looking at
             try:
-                qimg = VideoRaster._bgr_to_qimage(bgr_array)
-            except Exception:
-                qimg = None
-
-            # Determine raster for optional z-channel display
-            try:
-                base_path, _ = VideoRaster.parse_frame_path(virtual_path)
-                raster = self.image_window.raster_manager.get_raster(base_path)
-            except Exception:
-                raster = None
-
-            # Load visuals (this replaces the canvas image to create streaming illusion)
-            try:
-                if qimg is not None:
-                    self.annotation_window.load_visuals(qimg, virtual_path, raster)
+                _, frame_idx = VideoRaster.parse_frame_path(virtual_path)
+                self.annotation_window.current_image_path = virtual_path
+                self.annotation_window._current_frame_idx = int(frame_idx)
             except Exception:
                 pass
 
-            # Ensure result path is correct
+            # 2. Ensure Results object has the correct virtual path
             try:
                 yolo_results.path = virtual_path
             except Exception:
                 pass
 
-            # Map results to annotations and add them
+            # 3. Persist detections/segments into the project's annotation model
             try:
-                rp = ResultsProcessor(self.main_window, getattr(self._active_model_dialog, 'class_mapping', {}))
-                is_seg = getattr(self._active_model_dialog, 'task', '') == 'segment'
-                if is_seg:
-                    rp.process_segmentation_results([yolo_results])
-                else:
-                    rp.process_detection_results([yolo_results])
+                rp = getattr(self, '_results_processor', None)
+                if rp is not None:
+                    is_segmentation = getattr(self._active_model_dialog, 'task', '') == 'segment'
+                    if is_segmentation:
+                        rp.process_segmentation_results([yolo_results])
+                    else:
+                        rp.process_detection_results([yolo_results])
             except Exception as e:
-                print(f"Warning: Failed to process results for {virtual_path}: {e}")
+                print(f"Warning: ResultsProcessor failed for {virtual_path}: {e}")
+
+            # 4. Swap the Pixmap on the canvas (in-place, no scene rebuild)
+            try:
+                if q_image is not None:
+                    pixmap = QPixmap.fromImage(q_image)
+                    if getattr(self.annotation_window, '_base_image_item', None) is not None:
+                        self.annotation_window._base_image_item.setPixmap(pixmap)
+            except Exception:
+                pass
+
+            # 5. Render the lightweight read-only annotations for this frame
+            try:
+                frame_annotations = self.annotation_window.get_image_annotations(virtual_path)
+                visible_annotations = [a for a in frame_annotations if getattr(a.label, 'is_visible', True)]
+                self.annotation_window._render_annotations_readonly(visible_annotations)
+            except Exception:
+                pass
+
+            # 6. Update the Video Player UI Slider
+            try:
+                if hasattr(self.annotation_window, '_video_player') and self.annotation_window._video_player:
+                    vp = self.annotation_window._video_player
+                    vp.slider.blockSignals(True)
+                    try:
+                        vp.slider.setValue(self.annotation_window._current_frame_idx)
+                    finally:
+                        vp.slider.blockSignals(False)
+
+                    total_frames = getattr(self.annotation_window._active_video_raster, 'frame_count', 0)
+                    try:
+                        vp.lbl_frame.setText(f"{self.annotation_window._current_frame_idx} / {total_frames}")
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
         except Exception as e:
-            print(f"Error in _on_batch_frame_processed: {e}")
+            print(f"Error in on_frame_processed: {e}")
+        finally:
+            # Release the drop-frame gate
+            try:
+                if hasattr(self, '_batch_worker') and self._batch_worker is not None:
+                    self._batch_worker.release_frame_gate()
+            except Exception:
+                pass
 
     def on_frame_processed(self, virtual_path, q_image, yolo_results):
         """Slot that receives data from the background worker and updates the streaming UI.
