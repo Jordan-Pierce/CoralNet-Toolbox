@@ -1136,6 +1136,20 @@ class DeployGeneratorDialog(QDialog):
                 
                 # --- 5. Process All Results for This Image at Once ---
                 if results_for_this_image:
+                    # --- 5a. Remap multi-prototype class IDs → 0 FIRST ---
+                    # Must happen before fast-render path generation so
+                    # generate_fast_render_paths sees the correct label name
+                    # (not 'object12' etc.) and renders the right color.
+                    # Also ensures the cached results are already clean for
+                    # the batch bake path.
+                    target_label_name = self.reference_label.short_label_code
+                    for r in results_for_this_image:
+                        if r is not None and r.boxes is not None and len(r.boxes) > 0:
+                            new_data = r.boxes.data.clone()
+                            new_data[:, 5] = 0  # collapse all objectN classes to class 0
+                            r.boxes = type(r.boxes)(new_data, r.boxes.orig_shape)
+                            r.names = {0: target_label_name}
+
                     # ---> FAST PATH: Render-First, Bake-Later <---
 
                     try:
@@ -1184,23 +1198,10 @@ class DeployGeneratorDialog(QDialog):
                     except Exception as e:
                         print(f"Warning: Fast render failed in SeeAnything.predict: {e}")
 
-                    # --- 5a. Remap multi-prototype class IDs → 0 before caching ---
-                    # This must happen here so the batch path sees clean single-class
-                    # results (names = {0: target_label_name}) rather than objectN names.
-                    target_label_name = self.reference_label.short_label_code
-                    remapped_results = []
-                    for r in results_for_this_image:
-                        if r is not None and r.boxes is not None and len(r.boxes) > 0:
-                            new_data = r.boxes.data.clone()
-                            new_data[:, 5] = 0  # collapse all objectN classes to class 0
-                            r.boxes = type(r.boxes)(new_data, r.boxes.orig_shape)
-                            r.names = {0: target_label_name}
-                        remapped_results.append(r)
-
-                    # Cache remapped results for later hydration
+                    # Cache the already-remapped results for later hydration
                     if not hasattr(self.annotation_window, 'batch_results_cache'):
                         self.annotation_window.batch_results_cache = {}
-                    self.annotation_window.batch_results_cache[image_path] = remapped_results
+                    self.annotation_window.batch_results_cache[image_path] = results_for_this_image
 
         except Exception as e:
             print(f"A fatal error occurred during the prediction workflow: {e}")
