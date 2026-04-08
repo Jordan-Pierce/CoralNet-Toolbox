@@ -363,21 +363,50 @@ class Detect(Base):
                 if results_for_this_image:
                     # ---> FAST PATH: Render-First, Bake-Later <---
 
-                    # 4a. Fast Render: Send paths directly to the OpenGL canvas
+                    # 4a. FAST PATH: Render-First, Bake-Later (composite with existing annotations)
                     try:
+                        # 1. Update the background image pixels
+                        from coralnet_toolbox.utilities import rasterio_to_qimage
+                        try:
+                            q_img = rasterio_to_qimage(raster.rasterio_src)
+                        except Exception:
+                            q_img = None
+
+                        if getattr(self.annotation_window, '_base_image_item', None) is not None:
+                            if q_img is not None:
+                                try:
+                                    self.annotation_window.current_image_path = image_path
+                                    self.annotation_window._base_image_item.set_image(q_img)
+                                    self.annotation_window.fit_to_image()
+                                except Exception:
+                                    pass
+
+                        # 2. Generate the fast paths for the NEW predictions
                         fast_paths = []
                         for res in results_for_this_image:
                             paths = results_processor.generate_fast_render_paths(res, self.task)
                             if paths:
                                 fast_paths.extend(paths)
 
+                        # 3. Grab existing annotations so they don't disappear!
+                        try:
+                            existing_annotations = self.annotation_window.get_image_annotations(image_path)
+                            for a in existing_annotations:
+                                # Only grab visible vector annotations
+                                if getattr(a.label, 'is_visible', True) and not hasattr(a, 'mask_data'):
+                                    try:
+                                        fast_paths.append((a.get_painter_path(), a.label.color, a.transparency))
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            pass
+
+                        # 4. Draw ALL paths and force a screen refresh
                         if getattr(self.annotation_window, '_base_image_item', None) is not None:
                             try:
                                 self.annotation_window._base_image_item.set_readonly_annotations(fast_paths)
-                                # Force Qt to paint the fast paths right now so the user sees progress
                                 QApplication.processEvents()
                             except Exception:
-                                # Non-fatal: if fast render fails, fall back to normal baking later
                                 pass
                     except Exception as e:
                         print(f"Warning: Fast render failed in Detect.predict: {e}")

@@ -1437,17 +1437,41 @@ class BatchInferenceDialog(QDialog):
             except Exception:
                 pass
 
-            # 4. FAST ANNOTATIONS: Bypass Python Object Creation entirely
+            # 4. FAST ANNOTATIONS: Combine new predictions with existing annotations
             try:
-                if yolo_results is not None and getattr(self.annotation_window, '_base_image_item', None) is not None:
-                    model_type = getattr(self._active_model_dialog, 'task', 'detect')
-                    rp = getattr(self, '_results_processor', None)
-                    
-                    if rp is not None:
-                        paths_data = rp.generate_fast_render_paths(yolo_results, model_type)
+                if getattr(self.annotation_window, '_base_image_item', None) is not None:
+                    paths_data = []
+
+                    # A. Generate fast paths for the NEW YOLO predictions
+                    if yolo_results is not None:
+                        model_type = getattr(self._active_model_dialog, 'task', 'detect')
+                        rp = getattr(self, '_results_processor', None)
+                        if rp is not None:
+                            try:
+                                paths_data.extend(rp.generate_fast_render_paths(yolo_results, model_type))
+                            except Exception:
+                                pass
+
+                    # B. Grab EXISTING annotations so they don't disappear during playback!
+                    try:
+                        existing_annotations = self.annotation_window.get_image_annotations(virtual_path)
+                        for a in existing_annotations:
+                            # Only grab visible vector annotations (ignore heavy raster masks)
+                            if getattr(a.label, 'is_visible', True) and not hasattr(a, 'mask_data'):
+                                try:
+                                    paths_data.append((a.get_painter_path(), a.label.color, a.transparency))
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+
+                    # C. Send the combined paths directly to the OpenGL painter
+                    try:
                         self.annotation_window._base_image_item.set_readonly_annotations(paths_data)
-            except Exception:
-                pass
+                    except Exception:
+                        pass
+            except Exception as e:
+                print(f"Warning: Fast annotation render failed: {e}")
 
             # 5. Update the Video Player UI Slider
             try:
