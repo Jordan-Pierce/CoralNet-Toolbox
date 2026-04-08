@@ -1516,7 +1516,15 @@ class BatchInferenceDialog(QDialog):
                 QApplication.processEvents()  # Keep UI from completely freezing during save
                 
             bake_pb.close()
-            
+
+            # ---> THE FIX: Clear the lightweight ghost graphics <---
+            try:
+                if getattr(self.annotation_window, '_base_image_item', None) is not None:
+                    self.annotation_window._base_image_item.set_readonly_annotations([])
+            except Exception:
+                pass
+            # -------------------------------------------------------
+
             # Now that all objects are created, manually trigger the UI update ONCE
             self.annotation_window.is_streaming_inference = False
             try:
