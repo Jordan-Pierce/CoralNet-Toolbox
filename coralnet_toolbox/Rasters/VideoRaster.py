@@ -39,18 +39,8 @@ class VideoRasterioShim:
         self.closed = False  # Required: rasterio_to_cropped_image checks getattr(src, 'closed', True)
         self._current_bgr: Optional[np.ndarray] = None  # (H, W, 3) BGR
 
-    def read(self, bands=None, window=None):
-        """
-        Return image data matching rasterio's read() interface.
-
-        Args:
-            bands: int (single band, 1-indexed) or list of ints, or None (all bands).
-            window: rasterio Window-like object with col_off, row_off, width, height.
-
-        Returns:
-            ndarray: (H, W) for a single band, (B, H, W) for multiple bands.
-        """
-        # Resolve crop region from window
+    def read(self, bands=None, window=None, out_shape=None, resampling=None):
+        # Resolve crop region
         if window is not None:
             col = max(0, min(int(window.col_off), self.width))
             row = max(0, min(int(window.row_off), self.height))
@@ -59,29 +49,55 @@ class VideoRasterioShim:
         else:
             col, row, w, h = 0, 0, self.width, self.height
 
-        if self._current_bgr is None:
-            # Blank frame
-            if isinstance(bands, int):
-                return np.zeros((h, w), dtype=np.uint8)
-            n = len(bands) if isinstance(bands, list) else 3
-            return np.zeros((n, h, w), dtype=np.uint8)
+        # Determine desired output size (out_shape may be (bands, H, W) or (H, W))
+        out_h, out_w = h, w
+        if out_shape is not None:
+            try:
+                if isinstance(out_shape, (tuple, list)):
+                    if len(out_shape) == 3:
+                        _, out_h, out_w = map(int, out_shape)
+                    elif len(out_shape) == 2:
+                        out_h, out_w = map(int, out_shape)
+            except Exception:
+                out_h, out_w = h, w
 
-        # Crop and convert BGR → RGB, produce (3, H, W)
+        # Empty frame -> return zeros with requested shape
+        if self._current_bgr is None:
+            if isinstance(bands, int):
+                return np.zeros((out_h, out_w), dtype=np.uint8)
+            n = len(bands) if isinstance(bands, list) else 3
+            return np.zeros((n, out_h, out_w), dtype=np.uint8)
+
+        # Crop and convert BGR -> RGB
         rgb = self._current_bgr[:, :, ::-1]
-        cropped = rgb[row:row + h, col:col + w]       # (H, W, 3)
-        band_data = np.ascontiguousarray(np.transpose(cropped, (2, 0, 1)))  # (3, H, W)
+        cropped = rgb[row:row + h, col:col + w]  # (h, w, 3)
+
+        # Resize if requested
+        if (out_h != h) or (out_w != w):
+            interp = cv2.INTER_LINEAR
+            try:
+                name = getattr(resampling, "name", None)
+                if name == "nearest":
+                    interp = cv2.INTER_NEAREST
+                elif name == "bilinear":
+                    interp = cv2.INTER_LINEAR
+                elif name == "cubic":
+                    interp = cv2.INTER_CUBIC
+            except Exception:
+                pass
+            resized = cv2.resize(cropped, (int(out_w), int(out_h)), interpolation=interp)
+        else:
+            resized = cropped
+
+        band_data = np.ascontiguousarray(np.transpose(resized, (2, 0, 1)))  # (3, H, W)
 
         if isinstance(bands, int):
-            return band_data[bands - 1]               # (H, W), 1-indexed
+            return band_data[bands - 1]
         elif isinstance(bands, list):
-            indices = [b - 1 for b in bands]          # 1-indexed → 0-indexed
-            return band_data[indices]                  # (len(bands), H, W)
+            indices = [b - 1 for b in bands]
+            return band_data[indices]
         else:
-            return band_data                           # (3, H, W)
-
-    # Close is a no-op — required so Raster.cleanup() doesn't crash
-    def close(self):
-        pass
+            return band_data
 
 
 class VideoDecodeWorker(QThread):
