@@ -1,4 +1,5 @@
 from PyQt5.QtCore import QPointF
+from PyQt5.QtGui import QColor
 
 import torch
 from ultralytics.utils.nms import TorchNMS
@@ -249,6 +250,68 @@ class ResultsProcessor:
                 print(f"Warning: Failed to convert annotation {annotation.id} to NMS format: {e}")
         
         return nms_detections
+    
+    def generate_fast_render_paths(self, results, model_type):
+        """
+        Ultra-fast method to generate Qt rendering paths directly from YOLO tensors.
+        Used to draw boxes instantly without freezing the UI.
+        """
+        paths_data = []
+        
+        if not results or not results.boxes:
+            return paths_data
+            
+        try:
+            # Move data to CPU once
+            confidences = results.boxes.conf.cpu().numpy()
+            class_ids = results.boxes.cls.cpu().numpy().astype(int)
+            
+            # Pre-fetch colors to avoid dictionary lookups in the loop
+            color_cache = {}
+            transparency = self.main_window.get_transparency_value()
+            uncertainty_thresh = self._get_uncertainty_thresh()
+            
+            for i in range(len(confidences)):
+                conf = confidences[i]
+                cls_id = class_ids[i]
+                
+                if cls_id not in color_cache:
+                    cls_name = results.names[cls_id]
+                    short_label = self.get_mapped_short_label(cls_name, conf)
+                    label = self.label_window.get_label_by_short_code(short_label)
+                    color_cache[cls_id] = label.color if label else QColor(255, 255, 255)
+                
+                color = color_cache[cls_id]
+                if conf < uncertainty_thresh:
+                    review_label = self.label_window.get_label_by_id('-1')
+                    if review_label:
+                        color = review_label.color
+                
+                from PyQt5.QtGui import QPainterPath
+                from PyQt5.QtCore import QPointF, QRectF
+                from PyQt5.QtGui import QPolygonF
+                path = QPainterPath()
+                
+                if model_type == 'segmentation' and results.masks:
+                    if i < len(results.masks.xy):
+                        xy_coords = results.masks.xy[i]
+                        if len(xy_coords) > 2:
+                            # Extremely fast polygon generation from array
+                            qt_poly = QPolygonF([QPointF(xy_coords[j][0], xy_coords[j][1]) 
+                                               for j in range(len(xy_coords))])
+                            path.addPolygon(qt_poly)
+                            path.closeSubpath()
+                            paths_data.append((path, color, transparency))
+                            
+                elif model_type in ['detection', 'detect', 'segment']:
+                    box = results.boxes.xyxy[i].cpu().numpy()
+                    path.addRect(QRectF(box[0], box[1], box[2] - box[0], box[3] - box[1]))
+                    paths_data.append((path, color, transparency))
+                    
+        except Exception as e:
+            print(f"Warning: Fast path generation failed: {e}")
+            
+        return paths_data
         
     def get_mapped_short_label(self, cls_name, conf):
         """

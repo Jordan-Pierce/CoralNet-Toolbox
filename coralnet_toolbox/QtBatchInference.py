@@ -1411,12 +1411,9 @@ class BatchInferenceDialog(QDialog):
     def on_frame_processed(self, virtual_path, q_image, yolo_results):
         """Slot that receives data from the background worker and updates the streaming UI."""
         try:
-            from PyQt5.QtGui import QPixmap
             from coralnet_toolbox.Rasters.VideoRaster import VideoRaster
-            from coralnet_toolbox.Results import ResultsProcessor
-
-            # --- 1. Update State FIRST ---
-            # So the AnnotationWindow actually knows which frame it's looking at
+            
+            # 1. Update State
             try:
                 _, frame_idx = VideoRaster.parse_frame_path(virtual_path)
                 self.annotation_window.current_image_path = virtual_path
@@ -1424,42 +1421,44 @@ class BatchInferenceDialog(QDialog):
             except Exception:
                 pass
 
-            # 2. Ensure Results object has the correct virtual path
+            # 2. Persist detections to the data model (Required so they actually save!)
             try:
-                yolo_results.path = virtual_path
-            except Exception:
-                pass
-
-            # 3. Persist detections/segments into the project's annotation model
-            try:
-                rp = getattr(self, '_results_processor', None)
-                if rp is not None:
-                    is_segmentation = getattr(self._active_model_dialog, 'task', '') == 'segment'
-                    if is_segmentation:
-                        rp.process_segmentation_results([yolo_results])
-                    else:
-                        rp.process_detection_results([yolo_results])
+                if yolo_results is not None:
+                    yolo_results.path = virtual_path
+                    rp = getattr(self, '_results_processor', None)
+                    if rp is not None:
+                        is_segmentation = getattr(self._active_model_dialog, 'task', '') == 'segment'
+                        if is_segmentation:
+                            rp.process_segmentation_results([yolo_results])
+                        else:
+                            rp.process_detection_results([yolo_results])
             except Exception as e:
                 print(f"Warning: ResultsProcessor failed for {virtual_path}: {e}")
 
-            # 4. Swap the Pixmap on the canvas (in-place, no scene rebuild)
+            # 3. FAST RENDERING: Send QImage directly to the OpenGL canvas (No QPixmap!)
             try:
-                if q_image is not None:
-                    pixmap = QPixmap.fromImage(q_image)
-                    if getattr(self.annotation_window, '_base_image_item', None) is not None:
-                        self.annotation_window._base_image_item.setPixmap(pixmap)
+                if q_image is not None and getattr(self.annotation_window, '_base_image_item', None) is not None:
+                    # Look at this! We use set_image instead of setPixmap
+                    self.annotation_window._base_image_item.set_image(q_image)
             except Exception:
                 pass
 
-            # 5. Render the lightweight read-only annotations for this frame
+            # 4. FAST ANNOTATIONS: Bypass Qt Object Creation entirely
             try:
-                frame_annotations = self.annotation_window.get_image_annotations(virtual_path)
-                visible_annotations = [a for a in frame_annotations if getattr(a.label, 'is_visible', True)]
-                self.annotation_window._render_annotations_readonly(visible_annotations)
+                if yolo_results is not None and getattr(self.annotation_window, '_base_image_item', None) is not None:
+                    model_type = getattr(self._active_model_dialog, 'task', 'detect')
+                    rp = getattr(self, '_results_processor', None)
+                    
+                    if rp is not None:
+                        # Extract the raw rendering paths instantly from PyTorch
+                        paths_data = rp.generate_fast_render_paths(yolo_results, model_type)
+                        
+                        # Hand them directly to the FastImageItem's paint method
+                        self.annotation_window._base_image_item.set_readonly_annotations(paths_data)
             except Exception:
                 pass
 
-            # 6. Update the Video Player UI Slider
+            # 5. Update the Video Player UI Slider
             try:
                 if hasattr(self.annotation_window, '_video_player') and self.annotation_window._video_player:
                     vp = self.annotation_window._video_player
@@ -1470,10 +1469,7 @@ class BatchInferenceDialog(QDialog):
                         vp.slider.blockSignals(False)
 
                     total_frames = getattr(self.annotation_window._active_video_raster, 'frame_count', 0)
-                    try:
-                        vp.lbl_frame.setText(f"{self.annotation_window._current_frame_idx} / {total_frames}")
-                    except Exception:
-                        pass
+                    vp.lbl_frame.setText(f"{self.annotation_window._current_frame_idx} / {total_frames}")
             except Exception:
                 pass
 
@@ -1481,92 +1477,6 @@ class BatchInferenceDialog(QDialog):
             print(f"Error in on_frame_processed: {e}")
         finally:
             # Release the drop-frame gate
-            try:
-                if hasattr(self, '_batch_worker') and self._batch_worker is not None:
-                    self._batch_worker.release_frame_gate()
-            except Exception:
-                pass
-
-    def on_frame_processed(self, virtual_path, q_image, yolo_results):
-        """Slot that receives data from the background worker and updates the streaming UI.
-
-        This is the lightweight fast-path used during streaming inference. It:
-        - persists Results into the Annotation data model via ResultsProcessor
-        - swaps the base pixmap on the canvas (no scene rebuild)
-        - invokes the lightweight read-only renderer to draw annotations
-        - keeps the video player slider / frame counter in sync
-        - releases the drop-frame gate so the worker can proceed to the next frame
-        """
-        try:
-            from PyQt5.QtGui import QPixmap
-            from coralnet_toolbox.Rasters.VideoRaster import VideoRaster
-            from coralnet_toolbox.Results import ResultsProcessor
-
-            # 1. Ensure Results object has the correct virtual path
-            try:
-                yolo_results.path = virtual_path
-            except Exception:
-                pass
-
-            # 2. Persist detections/segments into the project's annotation model
-            try:
-                rp = getattr(self, '_results_processor', None)
-                if rp is not None:
-                    is_segmentation = getattr(self._active_model_dialog, 'task', '') == 'segment'
-                    if is_segmentation:
-                        rp.process_segmentation_results([yolo_results])
-                    else:
-                        rp.process_detection_results([yolo_results])
-            except Exception as e:
-                print(f"Warning: ResultsProcessor failed for {virtual_path}: {e}")
-
-            # 3. Wrap the pre-converted QImage in a QPixmap (worker did the heavy lifting)
-            try:
-                pixmap = QPixmap.fromImage(q_image) if q_image is not None else None
-            except Exception:
-                pixmap = None
-
-            # 4. Swap the Pixmap on the canvas (in-place, no scene rebuild)
-            try:
-                if pixmap is not None and getattr(self.annotation_window, '_base_image_item', None) is not None:
-                    self.annotation_window._base_image_item.setPixmap(pixmap)
-            except Exception:
-                pass
-
-            # 5. Render the lightweight read-only annotations for this frame
-            try:
-                frame_annotations = self.annotation_window.get_image_annotations(virtual_path)
-                visible_annotations = [a for a in frame_annotations if getattr(a.label, 'is_visible', True)]
-                self.annotation_window._render_annotations_readonly(visible_annotations)
-            except Exception:
-                pass
-
-            # 6. Update the Video Player UI and internal state
-            try:
-                _, frame_idx = VideoRaster.parse_frame_path(virtual_path)
-                self.annotation_window.current_image_path = virtual_path
-                self.annotation_window._current_frame_idx = int(frame_idx)
-
-                if hasattr(self.annotation_window, '_video_player') and self.annotation_window._video_player:
-                    vp = self.annotation_window._video_player
-                    vp.slider.blockSignals(True)
-                    try:
-                        vp.slider.setValue(int(frame_idx))
-                    finally:
-                        vp.slider.blockSignals(False)
-
-                    total_frames = getattr(self.annotation_window._active_video_raster, 'frame_count', 0)
-                    try:
-                        vp.lbl_frame.setText(f"{int(frame_idx)} / {total_frames}")
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-
-        except Exception as e:
-            print(f"Error in on_frame_processed: {e}")
-        finally:
-            # Release the drop-frame gate so the worker can process the next frame
             try:
                 if hasattr(self, '_batch_worker') and self._batch_worker is not None:
                     self._batch_worker.release_frame_gate()
