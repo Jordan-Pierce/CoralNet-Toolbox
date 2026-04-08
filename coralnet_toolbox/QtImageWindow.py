@@ -1490,7 +1490,7 @@ class ImageWindow(QWidget):
         reply = QMessageBox.question(
             self,
             "Confirm Z-Channel Removal",
-            f"Are you sure you want to remove the z-channel from {count} image{plural}?",
+            f"Are you sure you want to remove the z-channel from {count} raster{plural}?",
             QMessageBox.Yes | QMessageBox.No
         )
         
@@ -1542,7 +1542,7 @@ class ImageWindow(QWidget):
         reply = QMessageBox.question(
             self,
             "Confirm Camera Parameter Removal",
-            f"Are you sure you want to remove cameras from {count} image{plural}?",
+            f"Are you sure you want to remove cameras from {count} raster{plural}?",
             QMessageBox.Yes | QMessageBox.No
         )
 
@@ -1611,10 +1611,11 @@ class ImageWindow(QWidget):
             return
             
         # Confirm deletion
+        plural = 's' if len(highlighted_paths) > 1 else ''
         reply = QMessageBox.question(
             self,
             "Confirm Multiple Image Deletions",
-            f"Are you sure you want to delete {len(highlighted_paths)} images?\n"
+            f"Are you sure you want to delete {len(highlighted_paths)} raster{plural}?\n"
             "This will delete all associated annotations.",
             QMessageBox.Yes | QMessageBox.No
         )
@@ -1639,10 +1640,11 @@ class ImageWindow(QWidget):
             return
             
         # Confirm deletion
+        plural = 's' if len(highlighted_paths) > 1 else ''
         reply = QMessageBox.question(
             self,
             "Confirm Multiple Annotation Deletions",
-            f"Are you sure you want to delete annotations for {len(highlighted_paths)} images?",
+            f"Are you sure you want to delete annotations for {len(highlighted_paths)} raster{plural}?",
             QMessageBox.Yes | QMessageBox.No
         )
         
