@@ -460,6 +460,21 @@ class BatchInferenceDialog(QDialog):
         video_box = QGroupBox("Video Options")
         video_layout = QFormLayout()
 
+        # Save annotations dropdown (boolean) - controls whether video frame
+        # predictions are cached and ultimately saved to the project.
+        self.save_annotations_combo = QComboBox()
+        # Use explicit True/False strings for easy parsing
+        self.save_annotations_combo.addItems(["True", "False"])
+        # Default to True
+        self.save_annotations_combo.setCurrentText("True")
+        # Internal flag used later when processing frames
+        self.save_video_annotations = True
+        try:
+            self.save_annotations_combo.currentTextChanged.connect(self._on_save_annotations_changed)
+        except Exception:
+            pass
+        video_layout.addRow("Save Annotations:", self.save_annotations_combo)
+
         # Start frame with 'Set to Current' button
         start_h = QHBoxLayout()
         self.video_start_spin = QSpinBox()
@@ -1038,6 +1053,19 @@ class BatchInferenceDialog(QDialog):
         except Exception:
             pass
 
+    def _on_save_annotations_changed(self, text):
+        """Handler for the Save Annotations combobox.
+
+        Stores a boolean flag on the dialog which is checked when video
+        frames are processed. Defaults to True.
+        """
+        try:
+            # Accept several truthy string forms, but primarily expect "True"/"False"
+            self.save_video_annotations = True if str(text).lower() in ("true", "1", "yes") else False
+        except Exception:
+            # Fallback to True to avoid accidentally dropping saved results
+            self.save_video_annotations = True
+
     def _on_set_end_to_current(self):
         """Set the End spinbox to the main annotation window's current frame."""
         try:
@@ -1244,6 +1272,16 @@ class BatchInferenceDialog(QDialog):
                         self._progress_bar = progress_bar
                         self._active_model_dialog = model_dialog
 
+                        # If user requested NOT to save annotations for video
+                        # runs, ensure any existing unified cache is cleared so
+                        # nothing gets baked later.
+                        try:
+                            if hasattr(self, 'save_video_annotations') and not self.save_video_annotations:
+                                if hasattr(self.annotation_window, 'batch_results_cache'):
+                                    self.annotation_window.batch_results_cache = {}
+                        except Exception:
+                            pass
+
                         # Initial thresholds snapshot
                         initial_thresholds = {
                             'conf': self.thresholds_widget.get_uncertainty_thresh() if hasattr(self, 'thresholds_widget') else 0.25,
@@ -1434,11 +1472,18 @@ class BatchInferenceDialog(QDialog):
                 pass
 
             # 2. CACHE THE RAW RESULTS (Do not create Annotation objects yet!)
-            if not hasattr(self.annotation_window, 'batch_results_cache'):
-                self.annotation_window.batch_results_cache = {}
-            if yolo_results is not None:
-                yolo_results.path = virtual_path
-                self.annotation_window.batch_results_cache[virtual_path] = yolo_results
+            # Only cache/save video-frame results when the user has enabled it
+            # via the `Save Annotations` control in the Video Options. This
+            # allows fast visualization runs without persisting results.
+            if getattr(self, 'save_video_annotations', True):
+                if not hasattr(self.annotation_window, 'batch_results_cache'):
+                    self.annotation_window.batch_results_cache = {}
+                if yolo_results is not None:
+                    yolo_results.path = virtual_path
+                    self.annotation_window.batch_results_cache[virtual_path] = yolo_results
+            else:
+                # Skip caching/saving for this frame (visualization/debug mode)
+                pass
 
             # 3. FAST RENDERING: Send QImage directly to the OpenGL canvas
             try:
@@ -1514,6 +1559,20 @@ class BatchInferenceDialog(QDialog):
         single Results objects) via the unified ``batch_results_cache`` on the
         AnnotationWindow.  Safe to call even when the cache is empty.
         """
+        # If the user has chosen not to save annotations for video runs,
+        # skip baking entirely and clear any cached results. This protects
+        # against stale caches from being unintentionally written.
+        try:
+            if hasattr(self, 'save_video_annotations') and not self.save_video_annotations:
+                try:
+                    if hasattr(self.annotation_window, 'batch_results_cache'):
+                        self.annotation_window.batch_results_cache = {}
+                except Exception:
+                    pass
+                return
+        except Exception:
+            pass
+
         if not hasattr(self, '_results_processor') or self._results_processor is None:
             return
 
