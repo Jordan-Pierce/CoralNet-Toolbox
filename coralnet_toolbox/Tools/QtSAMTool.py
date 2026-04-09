@@ -961,7 +961,8 @@ class SAMTool(Tool):
                 self.annotation_window.selected_label.color,
                 self.annotation_window.current_image_path,
                 self.annotation_window.selected_label.id,
-                self.main_window.get_transparency_value()
+                self.main_window.get_transparency_value(),
+                show_confidence=False
             )
             return annotation
         else:
@@ -1001,7 +1002,8 @@ class SAMTool(Tool):
                 color=self.annotation_window.selected_label.color,
                 image_path=self.annotation_window.current_image_path,
                 label_id=self.annotation_window.selected_label.id,
-                transparency=self.main_window.get_transparency_value()
+                transparency=self.main_window.get_transparency_value(),
+                show_confidence=False
             )
             return annotation
 

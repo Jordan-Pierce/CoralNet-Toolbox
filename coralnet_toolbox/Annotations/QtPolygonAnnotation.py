@@ -39,9 +39,9 @@ class PolygonAnnotation(Annotation):
                  image_path: str,
                  label_id: str,
                  transparency: int = 128,
-                 show_msg: bool = False,
-                 holes: list = None):
-        super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
+                 holes: list = None,
+                 show_confidence: bool = True):
+        super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_confidence)
 
         self.center_xy = QPointF(0, 0)
         self.cropped_bbox = (0, 0, 0, 0)

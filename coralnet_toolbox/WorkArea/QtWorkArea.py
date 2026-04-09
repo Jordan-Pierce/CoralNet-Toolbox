@@ -351,12 +351,34 @@ class WorkArea(QObject):
         graphics_item = self.create_graphics(scene)
         if not graphics_item or not graphics_item.scene():
             return False
-            
+
         # Create the remove button
         remove_button = self.create_remove_button()
         if not remove_button:
             return False
-            
+
+        # Ensure a dimension tag exists and is added to the scene.
+        # Centralize tag restoration so callers that add graphics do not need
+        # to separately manage tag creation/visibility.
+        try:
+            if not self.tag_item:
+                # Create a fresh tag and add it to the scene
+                self.create_tag(scene)
+            else:
+                # If the tag exists but isn't in a scene (e.g. carried over from
+                # a temporary drawing), add it back to the current scene.
+                if not (hasattr(self.tag_item, "scene") and self.tag_item.scene()):
+                    scene.addItem(self.tag_item)
+
+            # Position and update the tag text to match the rectangle.
+            self.update_tag(self.rect.width(), self.rect.height())
+
+            # Keep the tag hidden by default; visibility is managed by the tool (Ctrl+Shift).
+            self.hide_tag()
+        except Exception as e:
+            # Don't let tag restoration break adding the work area; log for debugging.
+            print(f"Warning: failed to restore work area tag: {e}")
+
         return True
 
     def remove_from_scene(self):

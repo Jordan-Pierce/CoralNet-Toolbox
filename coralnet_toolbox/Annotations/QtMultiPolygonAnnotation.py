@@ -29,7 +29,7 @@ class MultiPolygonAnnotation(Annotation):
                  image_path: str,
                  label_id: str,
                  transparency: int = 128,
-                 show_msg: bool = False):
+                 show_confidence: bool = True):
         """Initialize a MultiPolygonAnnotation from a list of PolygonAnnotation objects."""
         # Use properties from the first polygon if not provided
         if polygons and hasattr(polygons[0], 'label'):
@@ -40,8 +40,7 @@ class MultiPolygonAnnotation(Annotation):
             image_path = image_path or first.image_path
             label_id = label_id or first.label.id
             transparency = transparency if transparency is not None else first.transparency
-            show_msg = show_msg if show_msg is not None else first.show_message
-        super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
+        super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_confidence)
 
         self.center_xy = QPointF(0, 0)
         self.cropped_bbox = (0, 0, 0, 0)
@@ -53,6 +52,9 @@ class MultiPolygonAnnotation(Annotation):
         self.graphics_items = []
         self.set_centroid()
         self.set_cropped_bbox()
+
+        if polygons and hasattr(polygons[0], 'show_message'):
+            self.show_message = polygons[0].show_message
 
     def set_precision(self, reduce: bool = True):
         """Round coordinates of all polygons to 3 decimal places."""

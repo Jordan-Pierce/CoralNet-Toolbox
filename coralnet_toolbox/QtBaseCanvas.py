@@ -85,27 +85,40 @@ class FastImageItem(QGraphicsItem):
             painter.setRenderHint(QPainter.Antialiasing, True)
             
             for path, color_val, transparency in self._readonly_paths:
-                # Setup Fill
+                # --- PASS 1: FILL AND SHADOW BORDER ---
+                # 1a. Set up the translucent fill
                 fill_color = QColor(color_val)
                 fill_color.setAlpha(transparency)
                 painter.setBrush(QBrush(fill_color))
                 
-                # Setup Outline (2px, rounded, fully opaque)
+                # 1b. Set up a thicker, semi-transparent dark "halo" pen
+                shadow_pen = QPen(QColor(0, 0, 0, 130), 4.0, Qt.SolidLine)
+                shadow_pen.setCapStyle(Qt.RoundCap)
+                shadow_pen.setJoinStyle(Qt.RoundJoin)
+                shadow_pen.setCosmetic(True)
+                
+                painter.setPen(shadow_pen)
+                
+                # Draw the path (this drops the fill and the dark 4px border)
+                painter.drawPath(path)
+                
+                
+                # --- PASS 2: CRISP COLORED INNER BORDER ---
+                # 2a. Turn off the brush so we don't double-stack the transparency
+                painter.setBrush(Qt.NoBrush)
+                
+                # 2b. Set up the vibrant 2px colored pen
                 pen_color = QColor(color_val)
                 pen_color.setAlpha(255)  
                 
-                pen = QPen(pen_color, 2, Qt.SolidLine)
-                pen.setCapStyle(Qt.RoundCap)
-                pen.setJoinStyle(Qt.RoundJoin)
-                pen.setCosmetic(True)
+                main_pen = QPen(pen_color, 2.0, Qt.SolidLine)
+                main_pen.setCapStyle(Qt.RoundCap)
+                main_pen.setJoinStyle(Qt.RoundJoin)
+                main_pen.setCosmetic(True)
                 
-                # Make the borders slightly darker than the fill!
-                pen.setColor(pen_color.darker(120))
+                painter.setPen(main_pen)
                 
-                painter.setPen(pen)
-                # --------------------------------
-                
-                # Draw directly to the GPU
+                # Draw the path again (this drops the crisp 2px colored line right inside the shadow)
                 painter.drawPath(path)
 
 

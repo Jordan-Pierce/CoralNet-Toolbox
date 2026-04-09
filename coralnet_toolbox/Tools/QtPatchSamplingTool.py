@@ -722,7 +722,8 @@ class PatchSamplingDialog(QDialog):
                         used_label.color,
                         image_path,
                         used_label.id,
-                        transparency=self.main_window.get_transparency_value()
+                        transparency=self.main_window.get_transparency_value(),
+                        show_confidence=False
                     )
                     sampled_annotations.append(new_annotation)  # Appends to the SHARED list
                     progress_bar.update_progress()

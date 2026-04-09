@@ -199,7 +199,8 @@ class PolygonTool(Tool):
                                        self.annotation_window.selected_label.color,
                                        self.annotation_window.current_image_path,
                                        self.annotation_window.selected_label.id,
-                                       self.annotation_window.main_window.get_transparency_value())
+                                       self.annotation_window.main_window.get_transparency_value(),
+                                       show_confidence=False)
 
         if finished:
             # Reset the tool
@@ -227,7 +228,8 @@ class PolygonTool(Tool):
                 self.annotation_window.selected_label.color,
                 self.annotation_window.current_image_path,
                 self.annotation_window.selected_label.id,
-                self.annotation_window.main_window.get_transparency_value()
+                self.annotation_window.main_window.get_transparency_value(),
+                show_confidence=False,
             )
             self.cursor_annotation = annotation
             self.cursor_annotation.update_transparency(self.annotation_window.main_window.get_transparency_value())

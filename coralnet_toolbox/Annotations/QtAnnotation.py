@@ -90,7 +90,7 @@ class FloatingTagItem(QGraphicsSimpleTextItem):
         self.setBrush(QBrush(text_color))
         
         # Set a crisp, modern font
-        font = QFont("Arial", 5)
+        font = QFont("Arial", 6, QFont.Bold)
         self.setFont(font)
         
         # THE MAGIC FLAG: Keeps the tag readable at any zoom level
@@ -135,7 +135,7 @@ class Annotation(QObject):
                  image_path: str,
                  label_id: str,
                  transparency: int = 128,
-                 show_msg: bool = False):
+                 show_confidence: bool = True):
         """Initialize an annotation object with label and display properties."""
         super().__init__()
         self.id = str(uuid.uuid4())
@@ -152,7 +152,8 @@ class Annotation(QObject):
         self.cropped_image = None
         self._cached_cropped_image_graphic = None
 
-        self.show_message = show_msg
+        self.show_message = False
+        self.show_confidence = show_confidence
     
         self.center_xy = None
         self.annotation_size = None
@@ -858,7 +859,7 @@ class Annotation(QObject):
         )
         
         # Add the floating tag
-        tag_text = self.label.short_label_code
+        tag_text = self.get_display_tag_text()
         self.tag_item = FloatingTagItem(tag_text, self.label.color)
         
         # Position it just above the top-left corner
@@ -1194,6 +1195,30 @@ class Annotation(QObject):
             path.lineTo(center_xy.x(), center_xy.y() + gap + length)
             
             self.center_graphics_item.setPath(path)
+
+    def get_display_confidence(self) -> float:
+        """Return the confidence value that should appear in the on-canvas tag."""
+        if self.verified:
+            return 100.0
+
+        if self.machine_confidence:
+            return float(max(self.machine_confidence.values()) * 100.0)
+
+        if self.user_confidence:
+            return float(max(self.user_confidence.values()) * 100.0)
+
+        return 0.0
+
+    def get_display_tag_text(self) -> str:
+        """Return the class label text shown in the tag, including confidence."""
+        label_text = self.label.short_label_code if self.label else ""
+        if not self.show_confidence:
+            return label_text
+
+        confidence_text = "100%" if self.verified else f"{self.get_display_confidence():.1f}%"
+        if label_text:
+            return f"{label_text} {confidence_text}"
+        return confidence_text
     
     def update_bounding_box_graphics_item(self, top_left, bottom_right):
         """Update the position and appearance of the bounding box graphics item."""

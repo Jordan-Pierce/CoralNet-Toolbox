@@ -103,7 +103,8 @@ class PatchTool(Tool):
                                      self.annotation_window.selected_label.color,
                                      self.annotation_window.current_image_path,
                                      self.annotation_window.selected_label.id,
-                                     self.annotation_window.main_window.get_transparency_value())
+                                     self.annotation_window.main_window.get_transparency_value(),
+                                     show_confidence=False)
         return annotation
 
     def create_cursor_preview_item(self, u: float, v: float):
@@ -118,6 +119,7 @@ class PatchTool(Tool):
             QPointF(u, v), size,
             label.short_label_code, label.long_label_code,
             label.color, "", label.id, transparency,
+            show_confidence=False,
         )
         path = ann.get_painter_path()
         item = QGraphicsPathItem(path)

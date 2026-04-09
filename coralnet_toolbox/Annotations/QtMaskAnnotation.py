@@ -58,7 +58,6 @@ class MaskAnnotation(Annotation):
                  mask_data: np.ndarray,
                  initial_labels: list,
                  transparency: int = 128,
-                 show_msg: bool = False,
                  rasterio_src=None):
         """
         Initialize a full-image semantic segmentation annotation.
@@ -75,7 +74,6 @@ class MaskAnnotation(Annotation):
             image_path=image_path,
             label_id=placeholder_label.id,
             transparency=transparency,
-            show_msg=show_msg
         )
         
         self.mask_data = mask_data.astype(np.uint8)
