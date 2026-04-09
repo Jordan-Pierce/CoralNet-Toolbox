@@ -244,10 +244,9 @@ class BatchInferenceDialog(QDialog):
 
         # Setup layouts in order
         self.setup_info_layout()
-        self.setup_models_layout()
-        self.setup_inference_layout()
-        self.setup_thresholds_layout()
+        self.setup_options_layout()
         self.setup_task_specific_layout()
+        self.setup_thresholds_layout()
         self.setup_buttons_layout()
 
     def _update_worker_thresholds(self, *args):
@@ -270,12 +269,13 @@ class BatchInferenceDialog(QDialog):
             pass
 
         # Route global threshold changes (MainWindow) into the active worker.
-        # This avoids repeatedly connecting anonymous lambdas each time batch
-        # inference is started, which would otherwise accumulate handlers.
+        # Connect once per dialog lifetime to avoid duplicate connections.
         try:
-            self.main_window.uncertaintyChanged.connect(self._update_worker_thresholds)
-            self.main_window.iouChanged.connect(self._update_worker_thresholds)
-            self.main_window.maxDetectionsChanged.connect(self._update_worker_thresholds)
+            if not getattr(self, '_thresholds_connected', False):
+                self.main_window.uncertaintyChanged.connect(self._update_worker_thresholds)
+                self.main_window.iouChanged.connect(self._update_worker_thresholds)
+                self.main_window.maxDetectionsChanged.connect(self._update_worker_thresholds)
+                self._thresholds_connected = True
         except Exception:
             pass
 
@@ -368,7 +368,6 @@ class BatchInferenceDialog(QDialog):
 
         info_label = QLabel(
             "Perform batch inferencing on the selected images. "
-            "It is highly recommended to save the current project before proceeding."
         )
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
@@ -377,16 +376,35 @@ class BatchInferenceDialog(QDialog):
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
-    def setup_models_layout(self):
+    def setup_options_layout(self):
         """
-        Set up the model selection dropdown.
+        Combined Options: Model, Inference Type, and Save Annotations.
         """
-        group_box = QGroupBox("Select Model")
+        group_box = QGroupBox("Options")
         form_layout = QFormLayout()
 
+        # Model selection
         self.model_combo = QComboBox()
         self.model_combo.currentIndexChanged.connect(self.on_model_changed)
         form_layout.addRow("Model:", self.model_combo)
+
+        # Inference type selection
+        self.inference_type_combo = QComboBox()
+        self.inference_type_combo.addItem("Standard")
+        self.inference_type_combo.addItem("Tiled")
+        self.inference_type_combo.currentTextChanged.connect(self.on_inference_type_changed)
+        form_layout.addRow("Type:", self.inference_type_combo)
+
+        # Save annotations (moved out of Video Options so editable for non-video runs)
+        self.save_annotations_combo = QComboBox()
+        self.save_annotations_combo.addItems(["True", "False"])
+        self.save_annotations_combo.setCurrentText("True")
+        self.save_video_annotations = True
+        try:
+            self.save_annotations_combo.currentTextChanged.connect(self._on_save_annotations_changed)
+        except Exception:
+            pass
+        form_layout.addRow("Save Annotations:", self.save_annotations_combo)
 
         group_box.setLayout(form_layout)
         self.layout.addWidget(group_box)
@@ -460,20 +478,8 @@ class BatchInferenceDialog(QDialog):
         video_box = QGroupBox("Video Options")
         video_layout = QFormLayout()
 
-        # Save annotations dropdown (boolean) - controls whether video frame
-        # predictions are cached and ultimately saved to the project.
-        self.save_annotations_combo = QComboBox()
-        # Use explicit True/False strings for easy parsing
-        self.save_annotations_combo.addItems(["True", "False"])
-        # Default to True
-        self.save_annotations_combo.setCurrentText("True")
-        # Internal flag used later when processing frames
-        self.save_video_annotations = True
-        try:
-            self.save_annotations_combo.currentTextChanged.connect(self._on_save_annotations_changed)
-        except Exception:
-            pass
-        video_layout.addRow("Save Annotations:", self.save_annotations_combo)
+        # Save annotations moved to Options group so users can change it
+        # even when Video Options are disabled.
 
         # Start frame with 'Set to Current' button
         start_h = QHBoxLayout()
@@ -1156,6 +1162,60 @@ class BatchInferenceDialog(QDialog):
                 if selected_model == "Classify":
                     self.preprocess_annotations()
 
+            # If a video is active, ensure the player is synced to the
+            # requested start frame before beginning batch inference.
+            try:
+                aw = getattr(self, 'annotation_window', None)
+                if aw is not None and hasattr(aw, '_active_video_raster') and aw._active_video_raster is not None:
+                    # Determine requested start frame
+                    try:
+                        start_frame = int(self.video_start_spin.value()) if hasattr(self, 'video_start_spin') else 0
+                    except Exception:
+                        start_frame = 0
+
+                    # If player is playing, pause it via the AnnotationWindow handler
+                    try:
+                        vp = getattr(aw, '_video_player', None)
+                        timer = getattr(aw, '_playback_timer', None)
+                        is_playing = False
+                        if vp is not None:
+                            is_playing = getattr(vp, 'is_playing', False)
+                        if not is_playing and timer is not None:
+                            try:
+                                is_playing = timer.isActive()
+                            except Exception:
+                                pass
+
+                        if is_playing:
+                            try:
+                                # Prefer the window-level pause handler to keep state consistent
+                                if hasattr(aw, '_on_video_pause'):
+                                    aw._on_video_pause()
+                                else:
+                                    if vp is not None:
+                                        vp.set_paused()
+                                        try:
+                                            vp.pauseClicked.emit()
+                                        except Exception:
+                                            pass
+                            except Exception:
+                                pass
+
+                        # Seek to the start frame so the worker and UI are in sync
+                        try:
+                            if hasattr(aw, '_on_video_seek'):
+                                aw._on_video_seek(start_frame)
+                            elif hasattr(aw, '_display_video_frame'):
+                                aw._display_video_frame(start_frame)
+                        except Exception:
+                            pass
+
+                    except Exception:
+                        pass
+                    
+            except Exception:
+                pass
+
             self.batch_inference()
 
         except Exception as e:
@@ -1324,6 +1384,13 @@ class BatchInferenceDialog(QDialog):
                         self._batch_worker.error.connect(lambda msg: print(f"BatchInferenceWorker error: {msg}"))
                         self._batch_worker.finished.connect(self._on_worker_finished)
 
+                        # Push the initial thresholds into the worker and
+                        # connect main-window threshold signals -> worker updater
+                        try:
+                            self._update_worker_thresholds()
+                        except Exception:
+                            pass
+
                         # Transform Apply (Ok) button into Stop Inference
                         try:
                             try:
@@ -1364,7 +1431,14 @@ class BatchInferenceDialog(QDialog):
                         # user cannot change settings during streaming inference.
                         try:
                             # Disable controls in this dialog and the video player
+                            # but keep thresholds enabled for live tuning.
                             self.set_ui_processing_state(True)
+                            try:
+                                if hasattr(self, 'thresholds_widget') and self.thresholds_widget is not None:
+                                    # Keep thresholds enabled so the user can adjust them
+                                    self.thresholds_widget.setEnabled(True)
+                            except Exception:
+                                pass
                         except Exception:
                             pass
 
@@ -1772,11 +1846,8 @@ class BatchInferenceDialog(QDialog):
                 pass
 
             # Thresholds and task-specific controls
-            try:
-                if hasattr(self, 'thresholds_widget') and self.thresholds_widget is not None:
-                    self.thresholds_widget.setEnabled(enabled)
-            except Exception:
-                pass
+            # Do NOT disable thresholds_widget here; keep thresholds editable
+            # during streaming inference so users can tune values live.
             try:
                 if hasattr(self, 'task_specific_group') and self.task_specific_group is not None:
                     self.task_specific_group.setEnabled(enabled)
