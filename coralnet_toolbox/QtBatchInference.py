@@ -449,7 +449,7 @@ class BatchInferenceDialog(QDialog):
         Visibility is controlled by on_model_changed().
         """
         # Create a group box for Classify-specific annotation options
-        group_box = QGroupBox("Annotation Options")
+        group_box = QGroupBox("Classify Options")
         layout = QVBoxLayout()
 
         # Create a button group for the annotation checkboxes
@@ -699,7 +699,8 @@ class BatchInferenceDialog(QDialog):
             self.current_selected_model = selected_model
             self.update_thresholds_for_model(selected_model)
             
-            # Enable annotation options only for Classify model
+            # Enable only for Classify; otherwise keep the group visible but
+            # disabled so users can see options but not interact with them.
             if selected_model == "Classify":
                 self.task_specific_group.setVisible(True)
                 self.task_specific_group.setEnabled(True)
@@ -707,12 +708,14 @@ class BatchInferenceDialog(QDialog):
                 self.inference_type_combo.setEnabled(False)
                 self.inference_type_combo.setCurrentText("Standard")
             elif selected_model == "Z-Inference":
-                # Hide annotation options and disable tiled inference for Z-Inference
-                self.task_specific_group.setVisible(False)
+                # Keep annotation/classify options visible but disabled for Z-Inference
+                self.task_specific_group.setVisible(True)
+                self.task_specific_group.setEnabled(False)
                 self.inference_type_combo.setEnabled(False)
                 self.inference_type_combo.setCurrentText("Standard")
             else:
-                self.task_specific_group.setVisible(False)
+                # Show group but grey it out for non-Classify models
+                self.task_specific_group.setVisible(True)
                 self.task_specific_group.setEnabled(False)
                 # Enable inference type dropdown for other models
                 self.inference_type_combo.setEnabled(True)

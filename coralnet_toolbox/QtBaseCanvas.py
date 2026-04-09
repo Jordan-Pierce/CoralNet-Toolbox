@@ -34,16 +34,28 @@ class FastImageItem(QGraphicsItem):
         self._image = None
         self._readonly_paths = [] 
         
+        # --- CRITICAL: Initialize the mask variables here! ---
+        self._mask_image = None
+        self._mask_opacity = 1.0
+        
         # Optimize for rapidly changing content
         self.setCacheMode(QGraphicsItem.NoCache)
 
     def set_image(self, qimage):
-        # Deep-copy so Qt owns the pixel data, preventing use-after-free when
-        # the source QImage borrows a numpy array that later gets garbage-collected.
         if qimage is not None and not qimage.isNull():
             self._image = qimage.copy()
         else:
             self._image = qimage
+        self.update()
+
+    def set_mask_image(self, qimage, opacity=1.0):
+        """Provide a mask image to be drawn natively on top of the base image."""
+        if qimage is not None and not qimage.isNull():
+            # Zero-copy pointer to the live numpy array
+            self._mask_image = qimage 
+        else:
+            self._mask_image = None
+        self._mask_opacity = opacity
         self.update()
 
     def set_readonly_annotations(self, paths_data):
@@ -61,7 +73,14 @@ class FastImageItem(QGraphicsItem):
         if self._image is not None and not self._image.isNull():
             painter.drawImage(0, 0, self._image)
 
-        # 2. Draw all annotations in a single ultra-fast pass
+        # 2. Draw the mask overlay natively (using getattr as a failsafe)
+        mask = getattr(self, '_mask_image', None)
+        if mask is not None and not mask.isNull():
+            painter.setOpacity(self._mask_opacity)
+            painter.drawImage(0, 0, mask)
+            painter.setOpacity(1.0) # Reset opacity
+
+        # 3. Draw all annotations in a single ultra-fast pass
         if self._readonly_paths:
             painter.setRenderHint(QPainter.Antialiasing, True)
             
@@ -71,10 +90,20 @@ class FastImageItem(QGraphicsItem):
                 fill_color.setAlpha(transparency)
                 painter.setBrush(QBrush(fill_color))
                 
-                # Setup Outline
-                pen = QPen(color_val, 1)
+                # Setup Outline (2px, rounded, fully opaque)
+                pen_color = QColor(color_val)
+                pen_color.setAlpha(255)  
+                
+                pen = QPen(pen_color, 2, Qt.SolidLine)
+                pen.setCapStyle(Qt.RoundCap)
+                pen.setJoinStyle(Qt.RoundJoin)
                 pen.setCosmetic(True)
+                
+                # Make the borders slightly darker than the fill!
+                pen.setColor(pen_color.darker(120))
+                
                 painter.setPen(pen)
+                # --------------------------------
                 
                 # Draw directly to the GPU
                 painter.drawPath(path)
