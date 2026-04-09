@@ -86,8 +86,6 @@ from coralnet_toolbox.MachineLearning import (
     DeployDetect as DetectDeployModelDialog,
     DeploySegment as SegmentDeployModelDialog,
     DeploySemantic as SemanticDeployModelDialog,
-    VideoDetect as DetectVideoInferenceDialog,
-    VideoSegment as SegmentVideoInferenceDialog,
     ImportDetect as DetectImportDatasetDialog,
     ImportSegment as SegmentImportDatasetDialog,
     ExportClassify as ClassifyExportDatasetDialog,
@@ -315,8 +313,6 @@ class MainWindow(QMainWindow):
         self.detect_deploy_model_dialog = DetectDeployModelDialog(self)
         self.segment_deploy_model_dialog = SegmentDeployModelDialog(self)
         self.semantic_deploy_model_dialog = SemanticDeployModelDialog(self)
-        self.detect_video_inference_dialog = DetectVideoInferenceDialog(self)
-        self.segment_video_inference_dialog = SegmentVideoInferenceDialog(self)
 
         # Create dialogs (SAM)
         self.sam_deploy_predictor_dialog = SAMDeployPredictorDialog(self)
@@ -696,16 +692,7 @@ class MainWindow(QMainWindow):
         # Add a separator
         self.ml_menu.addSeparator()
 
-        # Video Inference submenu
-        self.ml_video_inference_menu = self.ml_menu.addMenu("Video Inference")
-        # Video Inference Detection
-        self.ml_detect_video_inference_action = QAction("Detect", self)
-        self.ml_detect_video_inference_action.triggered.connect(self.open_detect_video_inference_dialog)
-        self.ml_video_inference_menu.addAction(self.ml_detect_video_inference_action)
-        # Video Inference Segmentation
-        self.ml_segment_video_inference_action = QAction("Segment", self)
-        self.ml_segment_video_inference_action.triggered.connect(self.open_segment_video_inference_dialog)
-        self.ml_video_inference_menu.addAction(self.ml_segment_video_inference_action)
+        # TODO Batch Inference submenu (not yet implemented)
 
         # ========== CORALNET MENU ==========
         # CoralNet menu
@@ -2951,22 +2938,6 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.semantic_deploy_model_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-            
-    def open_detect_video_inference_dialog(self):
-        """Open the Detect Video Inference dialog to run inference on video files."""
-        try:
-            self.untoggle_all_tools()
-            self.detect_video_inference_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-            
-    def open_segment_video_inference_dialog(self):
-        """Open the Segment Video Inference dialog to run inference on video files."""
-        try:
-            self.untoggle_all_tools()
-            self.segment_video_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
