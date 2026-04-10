@@ -441,6 +441,17 @@ class ResultsProcessor:
             if progress_bar_created_here and progress_bar:
                 progress_bar.stop_progress()
                 progress_bar.close()
+
+            # Rebuild the phantom (dehydrated annotation) layer so unselected
+            # patch colours update immediately on the current image, regardless
+            # of whether this was called from a single-image or batch path.
+            try:
+                from PyQt5.QtWidgets import QApplication
+                self.annotation_window.refresh_phantom_annotations()
+                self.annotation_window.viewport().update()
+                QApplication.processEvents()
+            except Exception:
+                pass
         
     def _update_and_display_classification(self, annotation, cls_name, conf, predictions):
         """
