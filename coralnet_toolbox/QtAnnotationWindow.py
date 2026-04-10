@@ -1247,6 +1247,37 @@ class AnnotationWindow(BaseCanvas):
                 
                 # Send the raw paths to the fast item
                 self._base_image_item.set_readonly_annotations(paths_data)
+                # Also check for per-frame cached mask overlay and set/clear it
+                try:
+                    cached = getattr(self, 'batch_results_cache', {}).get(self.current_image_path)
+                    if cached and cached.get('mask_qimage') is not None:
+                        try:
+                            self._base_image_item.set_mask_image(cached.get('mask_qimage'), cached.get('opacity', 128 / 255.0))
+                        except Exception:
+                            pass
+                    else:
+                        try:
+                            self._base_image_item.set_mask_image(None)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                # Also check for a per-frame cached mask overlay and set it (or clear)
+                try:
+                    cached = getattr(self, 'batch_results_cache', {}).get(self.current_image_path)
+                    if cached and cached.get('mask_qimage') is not None:
+                        try:
+                            self._base_image_item.set_mask_image(cached.get('mask_qimage'), cached.get('opacity', 128 / 255.0))
+                        except Exception:
+                            pass
+                    else:
+                        try:
+                            # No per-frame mask available: ensure overlay cleared
+                            self._base_image_item.set_mask_image(None)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
             except Exception:
                 pass
         # ----------------------------------------
@@ -2763,11 +2794,31 @@ class AnnotationWindow(BaseCanvas):
         """Load the mask annotation for the current image, if it exists."""
         if not self.current_image_path:
             return
+        # If this is a virtual video frame and we have a per-frame overlay cached,
+        # show that overlay directly instead of creating or mutating a per-raster
+        # MaskAnnotation. This avoids creating a single MaskAnnotation shared
+        # across all frames which leads to ghosting.
+        try:
+            if '::frame_' in str(self.current_image_path) and hasattr(self, 'batch_results_cache'):
+                cached = self.batch_results_cache.get(self.current_image_path)
+                if cached:
+                    qimg = cached.get('mask_qimage')
+                    opacity = cached.get('opacity', 128 / 255.0)
+                    try:
+                        if getattr(self, '_base_image_item', None) is not None:
+                            self._base_image_item.set_mask_image(qimg, opacity)
+                    except Exception:
+                        pass
+                    # We displayed the per-frame overlay — do not create raster-level mask
+                    return
+        except Exception:
+            pass
 
+        # Fallback: existing behavior for non-virtual frames (may create a raster-level mask)
         mask_annotation = self.current_mask_annotation
         if not mask_annotation:
             return
-        
+
         # Remove the graphics item from its current scene if it exists
         if mask_annotation.graphics_item and mask_annotation.graphics_item.scene():
             mask_annotation.graphics_item.scene().removeItem(mask_annotation.graphics_item)

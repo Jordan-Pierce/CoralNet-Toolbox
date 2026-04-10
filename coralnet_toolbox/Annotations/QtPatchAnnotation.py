@@ -28,14 +28,11 @@ class PatchAnnotation(Annotation):
     def __init__(self,
                  center_xy: QPointF,
                  annotation_size: int,
-                 short_label_code: str,
-                 long_label_code: str,
-                 color: QColor,
+                 label: 'Label',
                  image_path: str,
-                 label_id: str,
                  transparency: int = 128,
                  show_confidence: bool = True):
-        super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_confidence)
+        super().__init__(label=label, image_path=image_path, transparency=transparency, show_confidence=show_confidence)
 
         self.center_xy = QPointF(0, 0)
         self.cropped_bbox = (0, 0, 0, 0)
@@ -376,12 +373,12 @@ class PatchAnnotation(Annotation):
             
             # --- Get properties from the first annotation for the new one ---
             first_anno = annotations[0]
+            # Pass the shared Label object and image path to avoid creating new UI Labels
             common_args = {
-                "short_label_code": first_anno.label.short_label_code,
-                "long_label_code": first_anno.label.long_label_code,
-                "color": first_anno.label.color,
+                "label": first_anno.label,
                 "image_path": first_anno.image_path,
-                "label_id": first_anno.label.id
+                "transparency": first_anno.transparency,
+                "show_confidence": first_anno.show_confidence,
             }
 
             # 3. Build the appropriate new annotation based on the result.
@@ -419,13 +416,16 @@ class PatchAnnotation(Annotation):
     @classmethod
     def from_dict(cls, data, label_window):
         """Create an annotation from a dictionary representation."""
-        annotation = cls(QPointF(*data['center_xy']),
-                         data['annotation_size'],
-                         data['label_short_code'],
-                         data['label_long_code'],
-                         QColor(*data['annotation_color']),
-                         data['image_path'],
-                         data['label_id'])
+        # Resolve the Label instance from the label_window
+        label = label_window.get_label_by_short_code(data.get('label_short_code'))
+
+        annotation = cls(
+            QPointF(*data['center_xy']),
+            data['annotation_size'],
+            label,
+            data.get('image_path'),
+            transparency=data.get('transparency', 128)
+        )
 
         # Set the UUID if present
         if 'id' in data:

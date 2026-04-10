@@ -226,19 +226,6 @@ class ResultsProcessor:
                             annotation = self.create_polygon_annotation(points, label, image_path)
 
                     if annotation:
-                        # TODO
-                        # replace the freshly-created Label widget with the shared LabelWindow label
-                        try:
-                            old_label_widget = annotation.label
-                            if old_label_widget is not None and old_label_widget is not label:
-                                annotation.label = label
-                                try:
-                                    old_label_widget.deleteLater()
-                                except Exception:
-                                    pass
-                        except Exception:
-                            pass
-                        # ----
                         processed_annotation = self._post_process_new_annotation(annotation, cls_name, conf)
                         annotations_to_add.append(processed_annotation)
                 
@@ -353,14 +340,13 @@ class ResultsProcessor:
         try:
             top_left = QPointF(xmin, ymin)
             bottom_right = QPointF(xmax, ymax)
-            annotation = RectangleAnnotation(top_left,
-                                             bottom_right,
-                                             label.short_label_code,
-                                             label.long_label_code,
-                                             label.color,
-                                             image_path,
-                                             label.id,
-                                             self.main_window.get_transparency_value())
+            annotation = RectangleAnnotation(
+                top_left,
+                bottom_right,
+                label,
+                image_path,
+                transparency=self.main_window.get_transparency_value()
+            )
         except Exception:
             annotation = None
 
@@ -377,13 +363,12 @@ class ResultsProcessor:
         """
         try:
             points = [QPointF(x, y) for x, y in points]
-            annotation = PolygonAnnotation(points,
-                                           label.short_label_code,
-                                           label.long_label_code,
-                                           label.color,
-                                           image_path,
-                                           label.id,
-                                           self.main_window.get_transparency_value())
+            annotation = PolygonAnnotation(
+                points,
+                label,
+                image_path,
+                transparency=self.main_window.get_transparency_value()
+            )
         except Exception:
             annotation = None
 

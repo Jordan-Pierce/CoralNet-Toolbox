@@ -956,12 +956,9 @@ class SAMTool(Tool):
             annotation = RectangleAnnotation(
                 top_left,
                 bottom_right,
-                self.annotation_window.selected_label.short_label_code,
-                self.annotation_window.selected_label.long_label_code,
-                self.annotation_window.selected_label.color,
+                self.annotation_window.selected_label,
                 self.annotation_window.current_image_path,
-                self.annotation_window.selected_label.id,
-                self.main_window.get_transparency_value(),
+                transparency=self.main_window.get_transparency_value(),
                 show_confidence=False
             )
             return annotation
@@ -997,11 +994,8 @@ class SAMTool(Tool):
             annotation = PolygonAnnotation(
                 points=self.points,
                 holes=final_holes,
-                short_label_code=self.annotation_window.selected_label.short_label_code,
-                long_label_code=self.annotation_window.selected_label.long_label_code,
-                color=self.annotation_window.selected_label.color,
+                label=self.annotation_window.selected_label,
                 image_path=self.annotation_window.current_image_path,
-                label_id=self.annotation_window.selected_label.id,
                 transparency=self.main_window.get_transparency_value(),
                 show_confidence=False
             )

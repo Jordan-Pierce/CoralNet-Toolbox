@@ -170,13 +170,12 @@ class ImportTagLabAnnotations:
                         points = self.parse_contour(annotation['contour'])
                         holes = [self.parse_contour(inner) for inner in annotation.get('inner contours', [])]
 
+                        # Resolve (or fetch) the Label object we just ensured exists
+                        label_obj = self.label_window.get_label_by_short_code(short_label_code)
                         polygon_annotation = PolygonAnnotation(
                             points=points,
-                            short_label_code=short_label_code,
-                            long_label_code=short_label_code,
-                            color=color,
+                            label=label_obj,
                             image_path=image_full_path,
-                            label_id=label_id,
                             holes=holes,
                         )
                         polygon_annotation.data = {k: annotation.get(k) for k in ['bbox', 
@@ -206,14 +205,12 @@ class ImportTagLabAnnotations:
 
                         self.label_window.add_label_if_not_exists(short_label_code, short_label_code, color, label_id)
                         
+                        label_obj = self.label_window.get_label_by_short_code(short_label_code)
                         patch_annotation = PatchAnnotation(
                             center_xy=QPointF(annotation['X'], annotation['Y']),
                             annotation_size=annotation_size,
-                            short_label_code=short_label_code,
-                            long_label_code=short_label_code,
-                            color=color,
+                            label=label_obj,
                             image_path=image_full_path,
-                            label_id=label_id
                         )
                         all_patch_annotations.append(patch_annotation)
                     except Exception as e:

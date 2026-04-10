@@ -26,14 +26,11 @@ class RectangleAnnotation(Annotation):
     def __init__(self,
                  top_left: QPointF,
                  bottom_right: QPointF,
-                 short_label_code: str,
-                 long_label_code: str,
-                 color: QColor,
+                 label: 'Label',
                  image_path: str,
-                 label_id: str,
                  transparency: int = 128,
                  show_confidence: bool = True):
-        super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_confidence)
+        super().__init__(label=label, image_path=image_path, transparency=transparency, show_confidence=show_confidence)
 
         self.center_xy = QPointF(0, 0)
         self.cropped_bbox = (0, 0, 0, 0)
@@ -515,16 +512,15 @@ class RectangleAnnotation(Annotation):
         top_left = QPointF(min_x, min_y)
         bottom_right = QPointF(max_x, max_y)
 
-        # Extract info from the first annotation
+        # Extract info from the first annotation and pass the shared Label instance
         first_anno = annotations[0]
         new_annotation = cls(
             top_left=top_left,
             bottom_right=bottom_right,
-            short_label_code=first_anno.label.short_label_code,
-            long_label_code=first_anno.label.long_label_code,
-            color=first_anno.label.color,
+            label=first_anno.label,
             image_path=first_anno.image_path,
-            label_id=first_anno.label.id
+            transparency=first_anno.transparency,
+            show_confidence=first_anno.show_confidence,
         )
 
         return new_annotation
@@ -578,15 +574,14 @@ class RectangleAnnotation(Annotation):
                 if maxx - minx < 1 or maxy - miny < 1:
                     continue
 
-                # Create a new rectangle annotation with the bounds
+                # Create a new rectangle annotation with the bounds, passing the shared Label
                 new_anno = cls(
                     top_left=QPointF(minx, miny),
                     bottom_right=QPointF(maxx, maxy),
-                    short_label_code=annotation.label.short_label_code,
-                    long_label_code=annotation.label.long_label_code,
-                    color=annotation.label.color,
+                    label=annotation.label,
                     image_path=annotation.image_path,
-                    label_id=annotation.label.id
+                    transparency=annotation.transparency,
+                    show_confidence=annotation.show_confidence,
                 )
 
                 # Transfer rasterio source if available
@@ -618,12 +613,14 @@ class RectangleAnnotation(Annotation):
         """Create a RectangleAnnotation from a dictionary representation."""
         top_left = QPointF(data['top_left'][0], data['top_left'][1])
         bottom_right = QPointF(data['bottom_right'][0], data['bottom_right'][1])
-        annotation = cls(top_left, bottom_right,
-                         data['label_short_code'],
-                         data['label_long_code'],
-                         QColor(*data['annotation_color']),
-                         data['image_path'],
-                         data['label_id'])
+        label = label_window.get_label_by_short_code(data.get('label_short_code'))
+        annotation = cls(
+            top_left,
+            bottom_right,
+            label,
+            data.get('image_path'),
+            transparency=data.get('transparency', 128)
+        )
         
         # Set the UUID if present
         if 'id' in data:

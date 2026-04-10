@@ -67,12 +67,10 @@ class MaskAnnotation(Annotation):
             raise ValueError("initial_labels cannot be empty.")
         placeholder_label = initial_labels[0]
 
+        # Pass the existing Label instance to the base class to avoid creating UI widgets
         super().__init__(
-            short_label_code=placeholder_label.short_label_code,
-            long_label_code=placeholder_label.long_label_code,
-            color=placeholder_label.color,
+            label=placeholder_label,
             image_path=image_path,
-            label_id=placeholder_label.id,
             transparency=transparency,
         )
         
@@ -959,11 +957,8 @@ class MaskAnnotation(Annotation):
                 label = self.class_id_to_label_map[class_id]
                 anno = PolygonAnnotation(
                     points=points,
-                    short_label_code=label.short_label_code,
-                    long_label_code=label.long_label_code,
-                    color=label.color,
+                    label=label,
                     image_path=self.image_path,
-                    label_id=label.id
                 )
                 annotations.append(anno)
         return annotations

@@ -717,11 +717,8 @@ class PatchSamplingDialog(QDialog):
                     new_annotation = PatchAnnotation(
                         QPointF(x + size // 2, y + size // 2),
                         size,
-                        used_label.short_label_code,
-                        used_label.long_label_code,
-                        used_label.color,
+                        used_label,
                         image_path,
-                        used_label.id,
                         transparency=self.main_window.get_transparency_value(),
                         show_confidence=False
                     )

@@ -1748,65 +1748,105 @@ class BatchInferenceDialog(QDialog):
 
             save = getattr(self, 'save_video_annotations', True)
 
-            # ── Semantic: paint directly into MaskAnnotation, skip cache ─────
+            # ── Semantic: reconstruct mask and store per-frame overlays (do not mutate per-raster mask for videos)
             is_semantic_run = getattr(getattr(self, '_batch_worker', None), '_is_semantic', False)
             if is_semantic_run:
-                if inf_result.yolo_result is not None and (not inf_result.is_video or save):
+                if inf_result.yolo_result is not None:
                     try:
                         from coralnet_toolbox.MachineLearning.DeployModel.QtSemantic import (
                             _reconstruct_semantic_mask)
+                        # Defer heavy imports to avoid circular top-level imports
+                        try:
+                            from coralnet_toolbox.Annotations.QtMaskAnnotation import MaskAnnotation
+                        except Exception:
+                            MaskAnnotation = None
+
                         raster_manager = getattr(self.image_window, 'raster_manager', None)
                         raster = raster_manager.get_raster(inf_result.image_path) if raster_manager else None
-                        if raster is not None:
-                            project_labels = self.main_window.label_window.labels
-                            # Show status message when creating the mask for the first time
-                            if raster.mask_annotation is None:
+
+                        project_labels = self.main_window.label_window.labels
+
+                        # Build a stable label_id -> class_id map (same ordering as MaskAnnotation.sync_label_map)
+                        mask_ann_map = {lbl.id: (i + 1) for i, lbl in enumerate(project_labels)}
+
+                        offset = (0, 0)
+                        if inf_result.work_area is not None:
+                            offset = (int(inf_result.work_area.rect.x()),
+                                      int(inf_result.work_area.rect.y()))
+
+                        reconstructed = _reconstruct_semantic_mask(
+                            inf_result.yolo_result,
+                            getattr(self, '_semantic_model_class_names', []),
+                            self.main_window.label_window,
+                            mask_ann_map,
+                            include_background=getattr(self, '_semantic_include_bg', False),
+                        )
+
+                        # Video frames: create a temporary MaskAnnotation to produce a colored QImage,
+                        # store it in the annotation window cache keyed by the virtual path.
+                        if inf_result.is_video:
+                            if save and reconstructed is not None and reconstructed.size:
                                 try:
-                                    self.main_window.status_bar.showMessage(
-                                        f"Creating mask annotation for "
-                                        f"{os.path.basename(inf_result.image_path)}\u2026", 3000
-                                    )
+                                    if MaskAnnotation is not None:
+                                        tmp_mask = MaskAnnotation(
+                                            image_path=inf_result.batch_key,
+                                            mask_data=reconstructed.copy(),
+                                            initial_labels=project_labels,
+                                            transparency=128,
+                                            rasterio_src=None,
+                                        )
+                                        # Make a deep copy of the QImage so we can drop tmp_mask safely
+                                        qimg_copy = tmp_mask.qimage.copy() if tmp_mask.qimage is not None else None
+                                        opacity = tmp_mask.get_current_transparency() / 255.0 if tmp_mask.qimage is not None else 1.0
+                                    else:
+                                        qimg_copy = None
+                                        opacity = 128 / 255.0
+
+                                    # Cache per-frame mask overlay (virtual path key)
+                                    cache[inf_result.batch_key] = {
+                                        'mask_qimage': qimg_copy,
+                                        'mask_arr': reconstructed.copy(),
+                                        'opacity': opacity,
+                                    }
+
+                                    # Show overlay immediately for the displayed frame
+                                    try:
+                                        if qimg_copy is not None:
+                                            aw._base_image_item.set_mask_image(qimg_copy, opacity)
+                                    except Exception:
+                                        pass
+                                except Exception as e:
+                                    print(f"Semantic temp mask error: {e}")
+                            else:
+                                # Not saving per-frame masks: ensure overlay cleared
+                                try:
+                                    aw._base_image_item.set_mask_image(None)
                                 except Exception:
                                     pass
-                            mask_ann = raster.get_mask_annotation(project_labels)
-                            mask_ann.sync_label_map(project_labels)
-                            mask_ann_map = mask_ann.label_id_to_class_id_map
-
-                            offset = (0, 0)
-                            if inf_result.work_area is not None:
-                                offset = (int(inf_result.work_area.rect.x()),
-                                          int(inf_result.work_area.rect.y()))
-
-                            reconstructed = _reconstruct_semantic_mask(
-                                inf_result.yolo_result,
-                                getattr(self, '_semantic_model_class_names', []),
-                                self.main_window.label_window,
-                                mask_ann_map,
-                                include_background=getattr(self, '_semantic_include_bg', False),
-                            )
-                            mask_ann.update_mask_with_mask(reconstructed, top_left=offset)
-
-                            if not hasattr(self, '_semantic_processed_images'):
-                                self._semantic_processed_images = set()
-                            self._semantic_processed_images.add(inf_result.image_path)
-
-                            # For video: push the mask overlay to the canvas immediately
-                            if inf_result.is_video:
+                        else:
+                            # Non-video: persist into the raster-level mask_annotation (existing behavior)
+                            if raster is not None:
                                 try:
-                                    opacity = mask_ann.get_current_transparency() / 255.0
-                                    aw._base_image_item.set_mask_image(mask_ann.qimage, opacity)
-                                except Exception:
-                                    pass
+                                    if raster.mask_annotation is None:
+                                        try:
+                                            self.main_window.status_bar.showMessage(
+                                                f"Creating mask annotation for "
+                                                f"{os.path.basename(inf_result.image_path)}\u2026", 3000
+                                            )
+                                        except Exception:
+                                            pass
+                                    mask_ann = raster.get_mask_annotation(project_labels)
+                                    mask_ann.sync_label_map(project_labels)
+                                    mask_ann.update_mask_with_mask(reconstructed, top_left=offset)
+
+                                    if not hasattr(self, '_semantic_processed_images'):
+                                        self._semantic_processed_images = set()
+                                    self._semantic_processed_images.add(inf_result.image_path)
+                                except Exception as e:
+                                    print(f"Semantic persist mask error: {e}")
                     except Exception as e:
                         print(f"Semantic inline paint error: {e}")
-                # For video with save=False: clear the stale mask overlay as the video advances
-                if inf_result.is_video and not save:
-                    try:
-                        aw._base_image_item.set_mask_image(None)
-                    except Exception:
-                        pass
-                # For non-Semantic code paths the result goes into the cache below;
-                # for Semantic we skip caching entirely and fall through to video UI updates.
+                # Preserve original early-return for non-video semantic items
                 if not inf_result.is_video:
                     # Non-video Semantic items: nothing left to do for this item
                     return

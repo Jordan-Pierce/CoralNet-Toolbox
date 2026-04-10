@@ -1746,11 +1746,8 @@ class MVATManager(QObject):
                         new_annotation = PatchAnnotation(
                             center_xy=QPointF(u_centroid, v_centroid),
                             annotation_size=annotation.annotation_size,
-                            short_label_code=annotation.label.short_label_code,
-                            long_label_code=annotation.label.long_label_code,
-                            color=annotation.label.color,
+                            label=annotation.label,
                             image_path=target_path,
-                            label_id=annotation.label.id,
                             transparency=annotation.transparency,
                         )
                         try:
@@ -1773,11 +1770,8 @@ class MVATManager(QObject):
                         new_annotation = PatchAnnotation(
                             center_xy=QPointF(u, v),
                             annotation_size=annotation.annotation_size,
-                            short_label_code=annotation.label.short_label_code,
-                            long_label_code=annotation.label.long_label_code,
-                            color=annotation.label.color,
+                            label=annotation.label,
                             image_path=target_path,
-                            label_id=annotation.label.id,
                             transparency=annotation.transparency,
                         )
                         try:

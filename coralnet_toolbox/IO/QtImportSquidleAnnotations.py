@@ -219,11 +219,8 @@ class ImportSquidleAnnotations:
                         annotation = PatchAnnotation(
                             center_xy=center_xy,  # QPointF center
                             annotation_size=patch_size,
-                            short_label_code=label_obj.short_label_code,
-                            long_label_code=label_obj.long_label_code,
-                            color=label_obj.color,
+                            label=label_obj,
                             image_path=image_path,
-                            label_id=label_obj.id
                         )
                     elif anno_type == "RECTANGLE":
                         top_left = geometry.topLeft()
@@ -231,21 +228,15 @@ class ImportSquidleAnnotations:
                         annotation = RectangleAnnotation(
                             top_left=top_left,  # QPointF
                             bottom_right=bottom_right,  # QPointF
-                            short_label_code=label_obj.short_label_code,
-                            long_label_code=label_obj.long_label_code,
-                            color=label_obj.color,
+                            label=label_obj,
                             image_path=image_path,
-                            label_id=label_obj.id
                         )
                     elif anno_type == "POLYGON":
                         points = geometry  # List of QPointF
                         annotation = PolygonAnnotation(
                             points=points,
-                            short_label_code=label_obj.short_label_code,
-                            long_label_code=label_obj.long_label_code,
-                            color=label_obj.color,
+                            label=label_obj,
                             image_path=image_path,
-                            label_id=label_obj.id
                         )
 
                     # 5. Metadata Stashing

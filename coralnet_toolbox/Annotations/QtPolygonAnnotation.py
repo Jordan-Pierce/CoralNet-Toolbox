@@ -30,18 +30,16 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 
+
 class PolygonAnnotation(Annotation):
     def __init__(self,
                  points: list,
-                 short_label_code: str,
-                 long_label_code: str,
-                 color: QColor,
+                 label: 'Label',
                  image_path: str,
-                 label_id: str,
                  transparency: int = 128,
                  holes: list = None,
                  show_confidence: bool = True):
-        super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_confidence)
+        super().__init__(label=label, image_path=image_path, transparency=transparency, show_confidence=show_confidence)
 
         self.center_xy = QPointF(0, 0)
         self.cropped_bbox = (0, 0, 0, 0)
@@ -825,15 +823,14 @@ class PolygonAnnotation(Annotation):
                 if len(new_points) < 3:
                     continue
                 
-                # Create a new annotation with the new points and holes
+                # Create a new annotation with the new points and holes, reusing the same Label
                 new_anno = cls(
                     points=new_points,
-                    holes=new_holes,  # Pass the new holes
-                    short_label_code=annotation.label.short_label_code,
-                    long_label_code=annotation.label.long_label_code,
-                    color=annotation.label.color,
+                    holes=new_holes,
+                    label=annotation.label,
                     image_path=annotation.image_path,
-                    label_id=annotation.label.id
+                    transparency=annotation.transparency,
+                    show_confidence=annotation.show_confidence,
                 )
 
                 # Transfer rasterio source if available
@@ -957,15 +954,15 @@ class PolygonAnnotation(Annotation):
         holes_data = data.get('holes', [])
         holes = [[QPointF(x, y) for x, y in hole_data] for hole_data in holes_data]
 
-        # Pass the points and holes to the constructor.
+        # Resolve the Label instance and pass it to the constructor.
+        label = label_window.get_label_by_short_code(data.get('label_short_code'))
+
         annotation = cls(
             points=points,
             holes=holes,
-            short_label_code=data['label_short_code'],
-            long_label_code=data['label_long_code'],
-            color=QColor(*data['annotation_color']),
-            image_path=data['image_path'],
-            label_id=data['label_id']
+            label=label,
+            image_path=data.get('image_path'),
+            transparency=data.get('transparency', 128)
         )
         
         # Set the UUID if present

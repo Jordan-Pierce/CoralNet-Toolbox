@@ -129,17 +129,17 @@ class Annotation(QObject):
     annotationUpdated = pyqtSignal(object)
 
     def __init__(self,
-                 short_label_code: str,
-                 long_label_code: str,
-                 color: QColor,
+                 label: 'Label',
                  image_path: str,
-                 label_id: str,
                  transparency: int = 128,
                  show_confidence: bool = True):
-        """Initialize an annotation object with label and display properties."""
+        """Initialize an annotation object with a shared label reference."""
         super().__init__()
         self.id = str(uuid.uuid4())
-        self.label = Label(short_label_code, long_label_code, color, label_id)
+
+        # ZERO OVERHEAD: Store the reference to the existing master Label widget
+        self.label = label
+
         self.image_path = image_path
         self.is_selected = False
         self.graphics_item = None
@@ -154,32 +154,27 @@ class Annotation(QObject):
 
         self.show_message = False
         self.show_confidence = show_confidence
-    
+
         self.center_xy = None
         self.annotation_size = None
-        self.tolerance = 0.1  # Default detail level for simplification/densification
+        self.tolerance = 0.1
         
         self.scale_x: float | None = None
         self.scale_y: float | None = None
         self.scale_units: str | None = None
 
-        # Attributes to store the graphics items for center/centroid and bounding box
         self.center_graphics_item = None
         self.bounding_box_graphics_item = None
-        self.dimension_tag_item = None  # For displaying size/dimensions when selected
+        self.dimension_tag_item = None
 
-        # Group for all graphics items
         self.graphics_item_group = None
         
-        # Animation attributes
         self.animation_manager = None
         self.is_animating = False
         
-        # Modern Animation properties (Marching Ants)
         self._dash_offset = 0.0
-        self._dash_speed = 1.0  # Pixels to move per animation tick
+        self._dash_speed = 1.0  
         
-        # Guard to prevent duplicate QtSignal connections
         self._signals_connected = False
         
     def contains_point(self, point: QPointF) -> bool:

@@ -162,15 +162,14 @@ class RectangleTool(Tool):
                 )
 
         # Create the rectangle annotation
-        annotation = RectangleAnnotation(top_left,
-                                         bottom_right,
-                                         self.annotation_window.selected_label.short_label_code,
-                                         self.annotation_window.selected_label.long_label_code,
-                                         self.annotation_window.selected_label.color,
-                                         self.annotation_window.current_image_path,
-                                         self.annotation_window.selected_label.id,
-                                         self.annotation_window.main_window.get_transparency_value(),
-                                         show_confidence=False)
+        annotation = RectangleAnnotation(
+            top_left,
+            bottom_right,
+            self.annotation_window.selected_label,
+            self.annotation_window.current_image_path,
+            transparency=self.annotation_window.main_window.get_transparency_value(),
+            show_confidence=False,
+        )
         if finished:
             self.start_point = None
             self.end_point = None

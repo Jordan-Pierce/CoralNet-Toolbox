@@ -290,11 +290,8 @@ class ImportViscoreAnnotations(QDialog):
                 annotation = PatchAnnotation(
                     QPointF(col_coord, row_coord),
                     annotation_size,
-                    label_code,
-                    label_code,
-                    existing_label.color,
+                    existing_label,
                     image_path,
-                    existing_label.id
                 )
 
                 annotation.data = {

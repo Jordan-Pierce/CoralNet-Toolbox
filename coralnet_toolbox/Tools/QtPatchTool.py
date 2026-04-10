@@ -96,15 +96,14 @@ class PatchTool(Tool):
             self.update_cursor_annotation(scene_pos)
             
     def create_annotation(self, scene_pos: QPointF, finished: bool = False):
-        annotation = PatchAnnotation(scene_pos,
-                                     self.annotation_window.annotation_size,
-                                     self.annotation_window.selected_label.short_label_code,
-                                     self.annotation_window.selected_label.long_label_code,
-                                     self.annotation_window.selected_label.color,
-                                     self.annotation_window.current_image_path,
-                                     self.annotation_window.selected_label.id,
-                                     self.annotation_window.main_window.get_transparency_value(),
-                                     show_confidence=False)
+        annotation = PatchAnnotation(
+            scene_pos,
+            self.annotation_window.annotation_size,
+            self.annotation_window.selected_label,
+            self.annotation_window.current_image_path,
+            transparency=self.annotation_window.main_window.get_transparency_value(),
+            show_confidence=False,
+        )
         return annotation
 
     def create_cursor_preview_item(self, u: float, v: float):
@@ -116,9 +115,11 @@ class PatchTool(Tool):
         size = self.annotation_window.annotation_size
         transparency = self.annotation_window.main_window.get_transparency_value()
         ann = PatchAnnotation(
-            QPointF(u, v), size,
-            label.short_label_code, label.long_label_code,
-            label.color, "", label.id, transparency,
+            QPointF(u, v),
+            size,
+            label,
+            "",
+            transparency,
             show_confidence=False,
         )
         path = ann.get_painter_path()
