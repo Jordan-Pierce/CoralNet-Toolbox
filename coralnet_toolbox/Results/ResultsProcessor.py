@@ -137,9 +137,7 @@ class ResultsProcessor:
         """
         Processes a *single* Results object from a single work area.
         
-        Optimized to keep bounding boxes and confidence scores as PyTorch tensors 
-        for as long as possible, delaying expensive Python object creation and 
-        polygon extraction until after NMS filters out the noise.
+        Optimized to eliminate per-item GPU-to-CPU syncs during loop processing.
         """
         annotations_to_add = []
         
@@ -156,10 +154,15 @@ class ResultsProcessor:
         if not filtered_indices:
             return annotations_to_add
 
-        # --- 2. Extract Tensors for New Detections ---
-        # Slice the PyTorch tensors directly. Move to CPU to match existing UI coords.
+        # --- 2. FAST EXTRACT: Move ALL necessary data to CPU once ---
+        # By doing this here, we avoid calling .cpu() inside the for loop below
         new_bboxes = results.boxes.xyxy[filtered_indices].cpu()
         new_scores = results.boxes.conf[filtered_indices].cpu()
+        new_classes = results.boxes.cls[filtered_indices].cpu().numpy().astype(int)
+        
+        # Pre-convert to numpy arrays for lightning-fast reading in the loop
+        np_bboxes = new_bboxes.numpy()
+        np_scores = new_scores.numpy()
         
         # --- 3. Fast-Extract Existing Annotations ---
         existing_annotations = self.annotation_window.get_image_annotations(image_path)
@@ -167,7 +170,6 @@ class ResultsProcessor:
                                                                     isinstance(a, PolygonAnnotation))]
         
         if existing_annotations:
-            # Bypass the dictionary creation entirely, just grab the raw coordinates
             ext_boxes = []
             for ann in existing_annotations:
                 tl = ann.get_bounding_box_top_left()
@@ -175,10 +177,8 @@ class ResultsProcessor:
                 ext_boxes.append([tl.x(), tl.y(), br.x(), br.y()])
             
             existing_bboxes = torch.tensor(ext_boxes, dtype=torch.float32)
-            # Force 1.0 confidence so existing annotations always win against new predictions
             existing_scores = torch.ones(len(ext_boxes), dtype=torch.float32) 
             
-            # Combine tensors
             all_bboxes = torch.cat([existing_bboxes, new_bboxes])
             all_scores = torch.cat([existing_scores, new_scores])
             num_existing = len(existing_bboxes)
@@ -190,27 +190,35 @@ class ResultsProcessor:
         # --- 4. Run NMS (Class-Agnostic) ---
         try:
             keep_indices_tensor = TorchNMS.fast_nms(all_bboxes, all_scores, self._get_iou_thresh())
-            keep_indices = keep_indices_tensor.tolist()  # Convert tensor to standard list of ints
+            keep_indices = keep_indices_tensor.tolist()  
         except Exception as e:
             print(f"Warning: Stage 2 NMS (TorchNMS) failed: {e}")
             keep_indices = list(range(len(all_bboxes)))
             
         # --- 5. Unpack Survivors and Create Annotations ---
+        # Cache labels to avoid repeated dictionary lookups
+        label_cache = {}
+        
         for idx in keep_indices:
-            # We only care if the survivor is a NEW detection (index >= num_existing)
             if idx >= num_existing:
-                # Map the concatenated index back to the original index in the YOLO results object
-                original_yolo_idx = filtered_indices[idx - num_existing]
+                # Calculate the relative index in our CPU pre-fetched arrays
+                relative_idx = idx - num_existing
+                original_yolo_idx = filtered_indices[relative_idx]
                 
                 try:
-                    box = results.boxes[original_yolo_idx]
-                    xyxy = box.xyxy[0].cpu().numpy()
-                    conf = float(box.conf[0].cpu().numpy())
-                    cls_id = int(box.cls[0].cpu().numpy())
+                    # Read instantly from our CPU numpy arrays
+                    xyxy = np_bboxes[relative_idx]
+                    conf = float(np_scores[relative_idx])
+                    cls_id = new_classes[relative_idx]
                     cls_name = results.names[cls_id]
                     
-                    short_label = self.get_mapped_short_label(cls_name, conf)
-                    label = self.label_window.get_label_by_short_code(short_label)
+                    # Use cache for label lookups
+                    cache_key = (cls_name, conf <= self._get_uncertainty_thresh())
+                    if cache_key not in label_cache:
+                        short_label = self.get_mapped_short_label(cls_name, conf)
+                        label_cache[cache_key] = self.label_window.get_label_by_short_code(short_label)
+                    
+                    label = label_cache[cache_key]
                     
                     annotation = None
                     if model_type == 'detection':
@@ -218,8 +226,6 @@ class ResultsProcessor:
                         annotation = self.create_rectangle_annotation(xmin, ymin, xmax, ymax, label, image_path)
                     
                     elif model_type == 'segmentation':
-                        # ONLY unpack the polygon mask if the detection survived NMS!
-                        # This saves massive CPU overhead.
                         if results.masks and original_yolo_idx < len(results.masks.xy):
                             xy = results.masks.xy[original_yolo_idx]
                             points = [(float(x), float(y)) for x, y in xy]
