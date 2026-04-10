@@ -976,9 +976,10 @@ class LabelWindow(QWidget):
             # Restore cursor and unblock signals
             QApplication.restoreOverrideCursor()
             self.annotation_window.blockSignals(False)
-        
+
         # Use update_scene() which includes QApplication.processEvents()
         # This ensures the scene is properly refreshed with all changes
+        self.annotation_window.refresh_phantom_annotations()
         self.annotation_window.update_scene()
         # Force an immediate repaint of the viewport and return focus to the
         # annotation view so visibility changes appear without an extra click.
