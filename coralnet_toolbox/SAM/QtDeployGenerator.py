@@ -389,6 +389,12 @@ class DeployGeneratorDialog(QDialog):
                     data_chunk = work_items_data[i:i + current_batch_size]
                     area_chunk = work_areas[i:i + current_batch_size]
 
+                    # Highlight all tiles in this batch before inference so the
+                    # user can see which regions are queued for processing.
+                    for wa in area_chunk:
+                        if wa is not None:
+                            wa.highlight()
+
                     # OOM-adaptive: halve batch and retry on out-of-memory
                     batch_results = None
                     tmp_data = data_chunk
@@ -414,14 +420,13 @@ class DeployGeneratorDialog(QDialog):
                                 raise
 
                     if batch_results is None:
-                        for _ in area_chunk:
+                        for wa in area_chunk:
+                            if wa is not None:
+                                wa.unhighlight()
                             progress_bar.update_progress()
                         continue
 
                     for wa, result in zip(tmp_areas, batch_results):
-                        if wa is not None:
-                            wa.highlight()
-
                         if not result:
                             if wa is not None:
                                 wa.unhighlight()
@@ -466,23 +471,19 @@ class DeployGeneratorDialog(QDialog):
             import traceback
             traceback.print_exc()
         finally:
-            progress_bar.close()
-
             if cache:
                 self.annotation_window.is_streaming_inference = True
-                bake_pb = ProgressBar(self.annotation_window, title="Saving Annotations...")
-                bake_pb.show()
-                bake_pb.start_progress(len(cache))
+                progress_bar.set_title("Saving Annotations...")
+                progress_bar.start_progress(len(cache))
 
                 for path, results_list in cache.items():
                     if is_segmentation:
                         results_processor.process_segmentation_results(results_list)
                     else:
                         results_processor.process_detection_results(results_list)
-                    bake_pb.update_progress()
+                    progress_bar.update_progress()
                     QApplication.processEvents()
 
-                bake_pb.close()
                 self.annotation_window.is_streaming_inference = False
 
                 try:
@@ -496,6 +497,7 @@ class DeployGeneratorDialog(QDialog):
                 except Exception:
                     pass
 
+            progress_bar.close()
             QApplication.restoreOverrideCursor()
             import gc as _gc
             _gc.collect()

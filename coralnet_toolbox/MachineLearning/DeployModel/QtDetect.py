@@ -281,6 +281,9 @@ class Detect(Base):
                         is_segmentation = True
                     except Exception as e:
                         print(f"Detect.predict: SAM pass failed for {image_path}: {e}")
+                    finally:
+                        gc.collect()
+                        empty_cache()
 
                 cache[image_path] = results_for_image
 
@@ -297,24 +300,21 @@ class Detect(Base):
             import traceback
             traceback.print_exc()
         finally:
-            progress_bar.close()
-
-            # Bake all cached results into real Annotation objects
             if cache:
                 self.annotation_window.is_streaming_inference = True
-                bake_pb = ProgressBar(self.annotation_window, title="Saving Annotations...")
-                bake_pb.show()
-                bake_pb.start_progress(len(cache))
+                # Reuse the inference bar — set_title calls processEvents so there's
+                # no visible gap between "Running Inference" and "Saving Annotations"
+                progress_bar.set_title("Saving Annotations...")
+                progress_bar.start_progress(len(cache))
 
                 for path, results_list in cache.items():
                     if is_segmentation:
                         results_processor.process_segmentation_results(results_list)
                     else:
                         results_processor.process_detection_results(results_list)
-                    bake_pb.update_progress()
+                    progress_bar.update_progress()
                     QApplication.processEvents()
 
-                bake_pb.close()
                 self.annotation_window.is_streaming_inference = False
 
                 try:
@@ -328,6 +328,7 @@ class Detect(Base):
                 except Exception:
                     pass
 
+            progress_bar.close()
             QApplication.restoreOverrideCursor()
             gc.collect()
             empty_cache()

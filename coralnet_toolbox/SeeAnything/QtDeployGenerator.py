@@ -1017,6 +1017,11 @@ class DeployGeneratorDialog(QDialog):
                         # Get the mini-batch chunks
                         data_chunk = work_items_data[i: i + BATCH_SIZE]
                         area_chunk = work_areas[i: i + BATCH_SIZE]
+
+                        # Highlight all tiles in this batch before inference
+                        for wa in area_chunk:
+                            if wa is not None:
+                                wa.highlight()
                         
                         # --- 4a. Apply Model (Batched) ---
                         # Returns a flat list: [res1, res2, ...]
@@ -1029,15 +1034,14 @@ class DeployGeneratorDialog(QDialog):
                         # Safety check
                         if len(sam_results_list) != len(area_chunk):
                             print("Warning: Mismatch in batch results. Skipping batch.")
-                            for _ in area_chunk: 
+                            for wa in area_chunk:
+                                if wa is not None:
+                                    wa.unhighlight()
                                 progress_bar.update_progress()
                             continue
                             
-                        # --- 4c. Post-process (Streaming w/ Highlight) ---
+                        # --- 4c. Post-process ---
                         for results_obj, work_area in zip(sam_results_list, area_chunk):
-                            
-                            if work_area:
-                                work_area.highlight()
 
                             if not results_obj:  # Handle potential empty result
                                 if work_area:
@@ -1095,25 +1099,20 @@ class DeployGeneratorDialog(QDialog):
         except Exception as e:
             print(f"A fatal error occurred during the prediction workflow: {e}")
         finally:
-            progress_bar.close()
-
             if cache:
                 is_segmentation = self.task == 'segment' or self.use_sam_dropdown.currentText() == "True"
                 self.annotation_window.is_streaming_inference = True
-
-                bake_pb = ProgressBar(self.annotation_window, title="Saving Annotations...")
-                bake_pb.show()
-                bake_pb.start_progress(len(cache))
+                progress_bar.set_title("Saving Annotations...")
+                progress_bar.start_progress(len(cache))
 
                 for path, results_list in cache.items():
                     try:
                         self._process_results(results_processor, results_list, path)
                     except Exception as e:
                         print(f"Error baking results for {path}: {e}")
-                    bake_pb.update_progress()
+                    progress_bar.update_progress()
                     QApplication.processEvents()
 
-                bake_pb.close()
                 self.annotation_window.is_streaming_inference = False
 
                 try:
@@ -1127,6 +1126,7 @@ class DeployGeneratorDialog(QDialog):
                 except Exception:
                     pass
 
+            progress_bar.close()
             QApplication.restoreOverrideCursor()
             gc.collect()
             empty_cache()

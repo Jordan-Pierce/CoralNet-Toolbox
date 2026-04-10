@@ -468,6 +468,18 @@ class BatchInferenceDialog(QDialog):
             pass
         form_layout.addRow("Save Annotations:", self.save_annotations_combo)
 
+        # Batch size — controls the mini-batch sent to the GPU per inference call.
+        # Reduce if you see out-of-memory errors; increase for higher GPU utilisation.
+        self.batch_size_spin = QSpinBox()
+        self.batch_size_spin.setMinimum(1)
+        self.batch_size_spin.setMaximum(256)
+        self.batch_size_spin.setValue(16)
+        self.batch_size_spin.setToolTip(
+            "Number of tiles/frames sent to the GPU per inference call.\n"
+            "Reduce if you get out-of-memory errors."
+        )
+        form_layout.addRow("Batch Size:", self.batch_size_spin)
+
         group_box.setLayout(form_layout)
         self.layout.addWidget(group_box)
 
@@ -1440,7 +1452,7 @@ class BatchInferenceDialog(QDialog):
                     return
 
                 task       = getattr(model_dialog, 'task', 'detect')
-                batch_size = getattr(model_dialog, 'BATCH_SIZE', 16)
+                batch_size = self.batch_size_spin.value()
 
                 initial_thresholds = {}
                 if hasattr(self, 'thresholds_widget'):
@@ -1853,6 +1865,7 @@ class BatchInferenceDialog(QDialog):
         bake_pb.setWindowFlags(bake_pb.windowFlags() | Qt.WindowStaysOnTopHint)
         bake_pb.show()
         bake_pb.start_progress(len(cache))
+        QApplication.processEvents()  # ensure bar is painted before first heavy bake call
 
         # Suppress O(N²) UI updates during the loop
         self.annotation_window.is_streaming_inference = True
@@ -1907,6 +1920,7 @@ class BatchInferenceDialog(QDialog):
             except Exception:
                 pass
             self._progress_bar = None
+        QApplication.processEvents()  # flush bar close before SAM / bake bars appear
 
         # 2. SAM post-processing pass (Detect/Segment with SAM enabled, non-video images only)
         #    Runs once per image on all collected tile results before baking so SAM's ViT
