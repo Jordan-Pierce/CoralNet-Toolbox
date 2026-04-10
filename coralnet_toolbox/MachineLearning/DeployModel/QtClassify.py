@@ -2,7 +2,6 @@ import warnings
 
 import gc
 import os
-from copy import deepcopy
 
 import numpy as np
 
@@ -193,24 +192,19 @@ class Classify(Base):
                     continue
 
         # Only proceed if we have valid images to process
-        if images_np:            
-            if not self.BATCH_SIZE:
-                # Predict the classification results
-                results = self.loaded_model(images_np,
-                                            conf=self.thresholds_widget.get_uncertainty_thresh(),
-                                            device=self.main_window.device,
-                                            half=True,
-                                            stream=True)
-                
-            else:  # process one by one
-                results = []
-                for _ in range(len(images_np)):
-                    result = self.loaded_model(images_np[_],
-                                               conf=self.thresholds_widget.get_uncertainty_thresh(),
-                                               device=self.main_window.device,
-                                               half=True)
-                    if result:  # Ensure the result list is not empty
-                        results.append(deepcopy(result[0]))  # Append the Results object itself
+        if images_np:
+            # stream=True yields results lazily one-by-one, avoiding the deepcopy
+            # overhead of the old non-streaming engine path.  YOLO honours the
+            # model's compiled batch size internally, so this path is safe for
+            # both normal (.pt) and fixed-batch TensorRT (.engine) models.
+            results = self.loaded_model(
+                images_np,
+                conf=self.thresholds_widget.get_uncertainty_thresh(),
+                device=self.main_window.device,
+                half=True,
+                stream=True,
+                verbose=False,
+            )
 
             # Create a result processor
             results_processor = ResultsProcessor(self.main_window,

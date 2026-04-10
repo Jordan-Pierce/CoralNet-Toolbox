@@ -3,9 +3,6 @@ import warnings
 
 import os
 from collections import namedtuple
-from itertools import groupby
-from operator import attrgetter
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QMutex, QMutexLocker
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QVBoxLayout,
@@ -294,9 +291,7 @@ class BatchInferenceDialog(QDialog):
         self.loaded_model = None
         self.current_selected_model = None  # Track the current selected model
 
-        # Storage for image paths and annotations
-        self.annotations = []
-        self.prepared_patches = []
+        # Storage for image paths
         self.image_paths = []
         
         # Store highlighted images if provided
@@ -943,102 +938,6 @@ class BatchInferenceDialog(QDialog):
         self.update_model_availability()
         return self.loaded_model is not None
 
-    def preprocess_annotations(self):
-        """
-        Get annotations based on user selection and preprocess them (Classify only).
-        Groups annotations by image and crops them using concurrent processing.
-        """
-        # Get the annotations based on user selection
-        if self.review_checkbox.isChecked():
-            for image_path in self.image_paths:
-                self.annotations.extend(self.annotation_window.get_image_review_annotations(image_path))
-        else:
-            for image_path in self.image_paths:
-                self.annotations.extend(self.annotation_window.get_image_annotations(image_path))
-
-        # Check if annotations need to be cropped
-        annotations_to_crop = []
-        for annotation in self.annotations:
-            if hasattr(annotation, 'cropped_image') and annotation.cropped_image:
-                # Annotation already has cropped image, add to prepared patches
-                self.prepared_patches.append(annotation)
-            else:
-                # Annotation needs to be cropped
-                annotations_to_crop.append(annotation)
-
-        # Only crop annotations that need cropping
-        if annotations_to_crop:
-            self.bulk_preprocess_patch_annotations(annotations_to_crop)
-
-    def bulk_preprocess_patch_annotations(self, annotations_to_crop=None):
-        """
-        Bulk preprocess patch annotations by cropping the images concurrently.
-        Uses ThreadPoolExecutor for parallel processing.
-
-        Args:
-            annotations_to_crop: List of annotations that need to be cropped.
-                                If None, uses self.annotations.
-        """
-        if annotations_to_crop is None:
-            annotations_to_crop = self.annotations
-
-        if not annotations_to_crop:
-            return
-
-        # Get unique image paths for annotations that need cropping
-        crop_image_paths = list(set(a.image_path for a in annotations_to_crop))
-
-        # Create progress bar for cropping
-        progress_bar = ProgressBar(self.annotation_window, title="Cropping Annotations")
-        progress_bar.show()
-        progress_bar.start_progress(len(crop_image_paths))
-
-        # Group annotations by image path
-        grouped_annotations = groupby(sorted(annotations_to_crop, key=attrgetter('image_path')),
-                                      key=attrgetter('image_path'))
-
-        try:
-            # Use ThreadPoolExecutor for parallel processing
-            with ThreadPoolExecutor(max_workers=os.cpu_count() // 2) as executor:
-                # Dictionary to track futures and their corresponding image paths
-                futures = {}
-
-                # Process each group of annotations by image path
-                for image_path, group in grouped_annotations:
-                    # Convert group iterator to list for reuse
-                    image_annotations = list(group)
-
-                    # Submit cropping task asynchronously for each image
-                    # Returns a Future object representing pending execution
-                    future = executor.submit(self.annotation_window.crop_annotations,
-                                             image_path,
-                                             image_annotations,
-                                             verbose=False)
-
-                    # Store image path for each future for error reporting
-                    futures[future] = image_path
-
-                # Process completed futures as they finish
-                for future in as_completed(futures):
-                    try:
-                        # Get cropped patches from completed task
-                        cropped = future.result()
-                        # Add cropped patches to prepared patches list
-                        self.prepared_patches.extend(cropped)
-                    except Exception as exc:
-                        print(f"{futures[future]} generated an exception: {exc}")
-                    finally:
-                        # Update progress bar after each image is processed
-                        progress_bar.update_progress()
-
-        except Exception as e:
-            print(f"Error in bulk preprocessing: {e}")
-
-        finally:
-            progress_bar.finish_progress()
-            progress_bar.stop_progress()
-            progress_bar.close()
-
     def get_selected_image_paths(self):
         """
         Get the selected image paths.
@@ -1209,7 +1108,6 @@ class BatchInferenceDialog(QDialog):
     def apply(self):
         """
         Apply the selected batch inference options.
-        For Classify, runs preprocessing first to crop annotations.
         """
         if not self.check_model_availability():
             QMessageBox.warning(self, "No Model", "Please load a model first.")
@@ -1234,10 +1132,6 @@ class BatchInferenceDialog(QDialog):
                                         "Model Not Available",
                                         f"{selected_model} model is not loaded.")
                     return
-
-                # For Classify, preprocess annotations first
-                if selected_model == "Classify":
-                    self.preprocess_annotations()
 
             # If a video is active, ensure the player is synced to the
             # requested start frame before beginning batch inference.
@@ -1542,24 +1436,77 @@ class BatchInferenceDialog(QDialog):
 
             # ── Classify ──────────────────────────────────────────────────────
             elif selected_model == "Classify":
-                if not self.prepared_patches:
+                use_review = (
+                    getattr(self, 'review_checkbox', None) is not None
+                    and self.review_checkbox.isChecked()
+                )
+
+                # ── Collect annotations per image ──────────────────────────────
+                image_annotations = {}
+                for path in self.image_paths:
+                    anns = (
+                        self.annotation_window.get_image_review_annotations(path)
+                        if use_review
+                        else self.annotation_window.get_image_annotations(path)
+                    )
+                    if anns:
+                        image_annotations[path] = list(anns)
+
+                if not image_annotations:
                     try:
                         progress_bar.close()
                     except Exception:
                         pass
                     return
 
-                groups    = groupby(sorted(self.prepared_patches, key=attrgetter('image_path')),
-                                    key=attrgetter('image_path'))
-                num_paths = len(set(a.image_path for a in self.prepared_patches))
+                total_paths = len(image_annotations)
+                raster_manager = getattr(self.image_window, 'raster_manager', None)
 
-                for idx_path, (path, patches) in enumerate(groups):
-                    try:
-                        progress_bar.set_title(
-                            f"Predicting: {idx_path + 1}/{num_paths} - {os.path.basename(path)}")
-                        model_dialog.predict(inputs=list(patches), progress_bar=progress_bar)
-                    except Exception as e:
-                        print(f"Classify failed on {path}: {e}")
+                # Flatten all annotations from all images into one list so we
+                # can make a single GPU call rather than N separate calls.
+                flat_annotations = [
+                    ann for anns in image_annotations.values() for ann in anns
+                ]
+
+                # ── Phase 1: Crop patches (progress for uncropped only) ─────────
+                uncropped = [ann for ann in flat_annotations if not ann.cropped_image]
+                if uncropped:
+                    # Group uncropped by image so we open each rasterio source once.
+                    by_path = {}
+                    for ann in uncropped:
+                        by_path.setdefault(ann.image_path, []).append(ann)
+
+                    progress_bar.set_title("Preparing Patches...")
+                    progress_bar.start_progress(len(uncropped))
+                    for path, anns in by_path.items():
+                        raster = raster_manager.get_raster(path) if raster_manager else None
+                        rasterio_src = getattr(raster, 'rasterio_src', None) if raster else None
+                        for ann in anns:
+                            if rasterio_src is not None:
+                                try:
+                                    ann.create_cropped_image(rasterio_src)
+                                except Exception:
+                                    pass
+                            progress_bar.update_progress()
+
+                # ── Phase 2: Single GPU call across ALL patches ──────────────────
+                progress_bar.set_title(
+                    f"Classifying {len(flat_annotations)} patches "
+                    f"across {total_paths} image(s)..."
+                )
+                model_dialog.predict(inputs=flat_annotations, progress_bar=progress_bar)
+
+                # ── Phase 3: Refresh the phantom layer for the current image ─────
+                # update_machine_confidence() updates real scene items (selected
+                # annotations) but the phantom layer (dehydrated/unselected patches)
+                # is a pre-baked pixmap that must be rebuilt explicitly.
+                try:
+                    aw = self.annotation_window
+                    aw.refresh_phantom_annotations()
+                    aw.viewport().update()
+                    QApplication.processEvents()
+                except Exception:
+                    pass
 
             # ── Semantic ──────────────────────────────────────────────────────
             elif selected_model == "Semantic":
@@ -2086,8 +2033,6 @@ class BatchInferenceDialog(QDialog):
                     pass
         except Exception:
             pass
-        self.annotations = []
-        self.prepared_patches = []
         self.image_paths = []
         
         # Reset inference type to Standard

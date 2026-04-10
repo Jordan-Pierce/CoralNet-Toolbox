@@ -1307,6 +1307,9 @@ class Annotation(QObject):
         prediction = {k: v for k, v in sorted(prediction.items(), key=lambda item: item[1], reverse=True)}
         # Update machine confidence
         self.machine_confidence = prediction
+        # Ensure confidence is visible on the on-canvas tag when
+        # machine predictions are applied.
+        self.show_confidence = True
 
         if not from_import:
             # Set user confidence to None
