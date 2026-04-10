@@ -54,56 +54,66 @@ class WorkArea(QObject):
         
         # Store the original color for reverting
         self.original_color = QColor(0, 168, 230)
-        # Animation properties (updated for pulsing)
-        self._pulse_alpha = 128  # Starting alpha for pulsing (semi-transparent)
-        self._pulse_direction = 1  # 1 for increasing alpha, -1 for decreasing
+        # Animation properties (pulse value 0.0..1.0 for blending toward white)
+        self._pulse_value = 0.0  # 0.0 = no pulse, 1.0 = full pulse
+        self._pulse_direction = 1  # 1 for increasing, -1 for decreasing
         
     @pyqtProperty(int)
     def pulse_alpha(self):
-        """Get the current pulse alpha for animation."""
-        return self._pulse_alpha
-    
+        """Compatibility property: returns pulse scaled to 0-255."""
+        return int(self._pulse_value * 255)
+
     @pulse_alpha.setter
     def pulse_alpha(self, value):
-        """Set the pulse alpha and update pen styles."""
-        self._pulse_alpha = int(max(0, min(255, value)))  # Clamp to 0-255 and convert to int
+        """Set pulse via 0-255 compatibility value (maps to 0.0-1.0)."""
+        v = max(0, min(255, int(value)))
+        self._pulse_value = float(v) / 255.0
         self._update_pen_style()
     
     def tick_animation(self):
         """
-        Update the pulse alpha for a heartbeat-like effect.
-        This is now called by the GLOBAL timer in AnimationManager.
+        Update the pulse value for a heartbeat-like effect (fast rise, slow fall).
+        Called by the global AnimationManager timer.
         """
         if self._pulse_direction == 1:
             # Quick increase (systole-like)
-            self._pulse_alpha += 30
+            self._pulse_value += 0.30
         else:
             # Slow decrease (diastole-like)
-            self._pulse_alpha -= 10
+            self._pulse_value -= 0.10
 
-        # Check direction before clamping to ensure smooth transition
-        if self._pulse_alpha >= 255:
-            self._pulse_alpha = 255  # Clamp to max
+        # Clamp and flip direction to create a heartbeat rhythm
+        if self._pulse_value >= 1.0:
+            self._pulse_value = 1.0
             self._pulse_direction = -1
-        elif self._pulse_alpha <= 50:
-            self._pulse_alpha = 50   # Clamp to min
+        elif self._pulse_value <= 0.0:
+            self._pulse_value = 0.0
             self._pulse_direction = 1
-        
-        # Update the pen style after the alpha is calculated
+
+        # Update the pen style after the pulse value is calculated
         self._update_pen_style()
     
     def _create_pen(self):
-        """Create a pen with pulsing alpha and brighter color if animating."""
+        """Create a pen that lightens (blends toward white) when animating."""
         pen = QPen(self.work_area_pen)
         pen.setCosmetic(True)
-        
-        # Check self.is_animating flag instead of timer
-        if self.is_animating:
-            pen_color = QColor(self.work_area_pen.color())
-            pen_color.setAlpha(self._pulse_alpha)  # Apply pulsing alpha for animation
-            pen.setColor(pen_color)
-            
-        pen.setStyle(Qt.DotLine)  # Predefined dotted line (static, no movement)
+
+        base_color = QColor(self.work_area_pen.color())
+
+        if self.is_animating and self._pulse_value > 0.0:
+            # Compute lighter percentage (100% = original, up to 180% at full pulse)
+            percent = 100 + int(self._pulse_value * 80)
+            try:
+                lighter_color = base_color.lighter(percent)
+            except Exception:
+                # Fallback: use base color if lighter() fails
+                lighter_color = base_color
+            pen.setColor(lighter_color)
+        else:
+            pen.setColor(base_color)
+
+        # Respect the style chosen in self.work_area_pen (do not override)
+        pen.setStyle(self.work_area_pen.style())
         return pen
 
     def animate(self):
@@ -117,8 +127,8 @@ class WorkArea(QObject):
         self.is_animating = False
         if self.animation_manager:
             self.animation_manager.unregister_animating_object(self)
-            
-        self._pulse_alpha = 128  # Reset to default
+        
+        self._pulse_value = 0.0  # Reset to default (no pulse)
         self._update_pen_style()  # Apply the default style
     
     def highlight(self):

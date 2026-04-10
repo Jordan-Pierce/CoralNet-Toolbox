@@ -491,8 +491,10 @@ class DeployPredictorDialog(QDialog):
                                 )
                         
                         if pred_masks is not None and len(pred_masks) > 0:
-                            # --- THE VRAM SWAP FIX: COMPRESS TO BOOLEAN ---
-                            compressed_masks = pred_masks.to(torch.bool)
+                            # --- THE VRAM SWAP FIX: COMPRESS TO BOOLEAN AND MOVE TO CPU ---
+                            # Move each chunk to CPU immediately to avoid accumulating
+                            # GPU-resident tensors prior to the final concat.
+                            compressed_masks = pred_masks.to(torch.bool).cpu()
                             all_sam_masks.append(compressed_masks)
                         
                         i += current_chunk_size
@@ -505,7 +507,6 @@ class DeployPredictorDialog(QDialog):
                                                      "Your GPU does not have enough memory to process this image.")
                                 break
                             
-                            import gc
                             gc.collect()
                             if torch.cuda.is_available():
                                 torch.cuda.empty_cache()
@@ -516,9 +517,19 @@ class DeployPredictorDialog(QDialog):
                             raise e
                 
                 if all_sam_masks:
-                    # Concatenate the boolean masks, then cast back to float to satisfy Ultralytics
+                    # Concatenate the boolean masks (now on CPU), then cast back to
+                    # float to satisfy Ultralytics and attach to the Results object.
                     combined_masks = torch.cat(all_sam_masks, dim=0).float()
                     results.update(masks=combined_masks)
+                    # Free any lingering GPU fragmentation now that masks are offloaded
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        try:
+                            # `empty_cache` was imported at module top
+                            empty_cache()
+                        except Exception:
+                            # Best-effort: ignore if GPU cache flush isn't available
+                            pass
                 
                 output_results.append(results)
             

@@ -2104,6 +2104,13 @@ class BatchInferenceDialog(QDialog):
         is_segmentation = getattr(self._active_model_dialog, 'task', '') == 'segment'
 
         for path, cached_results in cache.items():
+            # Skip non-Results overlay entries (e.g., dict overlays for masks)
+            if isinstance(cached_results, dict):
+                # Count it as processed for the progress bar and continue
+                bake_pb.update_progress()
+                QApplication.processEvents()
+                continue
+
             # Normalise: images store lists, video frames store single Results objects
             results_to_process = cached_results if isinstance(cached_results, list) else [cached_results]
             try:
