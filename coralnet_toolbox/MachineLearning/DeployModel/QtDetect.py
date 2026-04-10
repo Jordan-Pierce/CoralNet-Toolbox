@@ -245,6 +245,24 @@ class Detect(Base):
                             wa.highlight()
                             inputs.append(raster.get_work_area_data(wa, as_format='BGR'))
                         else:
+                            # Full-image: special-case virtual video-frame paths.
+                            # If the current image_path is a virtual video frame
+                            # (video.mp4::frame_N) fetch the raw BGR frame and
+                            # pass the ndarray directly to the model to avoid
+                            # giving Ultralytics a non-filesystem path.
+                            if isinstance(image_path, str) and '::frame_' in image_path:
+                                try:
+                                    from coralnet_toolbox.Rasters.VideoRaster import VideoRaster
+                                    _, frame_idx = VideoRaster.parse_frame_path(image_path)
+                                    if frame_idx is not None and hasattr(raster, 'get_bgr_frame'):
+                                        bgr = raster.get_bgr_frame(int(frame_idx))
+                                        if bgr is not None:
+                                            inputs.append(bgr)
+                                            continue
+                                except Exception:
+                                    # Any failure falls back to letting YOLO open the path
+                                    pass
+                            # Fallback: let YOLO open the path (normal image or video file)
                             inputs.append(image_path)  # full-image: let YOLO do the I/O
 
                     batch_results = self._apply_model(inputs)

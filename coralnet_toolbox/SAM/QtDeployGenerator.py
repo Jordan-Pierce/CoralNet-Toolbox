@@ -371,7 +371,25 @@ class DeployGeneratorDialog(QDialog):
                     work_items_data = raster.get_work_areas_data()  # RGB
                 else:
                     work_areas = [None]
-                    work_items_data = [raster.image_path]
+                    # If the requested image_path is a virtual video frame, try
+                    # to fetch the raw BGR frame and pass it directly to the model.
+                    # Any failure falls back to using the raster.image_path.
+                    if isinstance(image_path, str) and '::frame_' in image_path:
+                        try:
+                            from coralnet_toolbox.Rasters.VideoRaster import VideoRaster
+                            _, frame_idx = VideoRaster.parse_frame_path(image_path)
+                            if frame_idx is not None and hasattr(raster, 'get_bgr_frame'):
+                                bgr = raster.get_bgr_frame(int(frame_idx))
+                                if bgr is not None:
+                                    work_items_data = [bgr]
+                                else:
+                                    work_items_data = [raster.image_path]
+                            else:
+                                work_items_data = [raster.image_path]
+                        except Exception:
+                            work_items_data = [raster.image_path]
+                    else:
+                        work_items_data = [raster.image_path]
 
                 if not work_items_data:
                     print(f"SAM.predict: no work items for {image_path}, skipping.")

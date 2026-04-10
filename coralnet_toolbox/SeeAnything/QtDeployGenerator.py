@@ -1179,8 +1179,26 @@ class DeployGeneratorDialog(QDialog):
         """Get the inputs for the model prediction."""
         raster = self.image_window.raster_manager.get_raster(image_path)
         if self.annotation_window.get_selected_tool() != "work_area":
-            # Use the image path
-            work_areas_data = [raster.image_path]
+            # Use the image path. If this is a virtual video-frame path,
+            # fetch the raw BGR frame and return it so the model receives
+            # an ndarray instead of a non-filesystem path string.
+            if isinstance(image_path, str) and '::frame_' in image_path:
+                try:
+                    from coralnet_toolbox.Rasters.VideoRaster import VideoRaster
+                    _, frame_idx = VideoRaster.parse_frame_path(image_path)
+                    if frame_idx is not None and hasattr(raster, 'get_bgr_frame'):
+                        bgr = raster.get_bgr_frame(int(frame_idx))
+                        if bgr is not None:
+                            work_areas_data = [bgr]
+                        else:
+                            work_areas_data = [raster.image_path]
+                    else:
+                        work_areas_data = [raster.image_path]
+                except Exception:
+                    work_areas_data = [raster.image_path]
+            else:
+                # Use the image path
+                work_areas_data = [raster.image_path]
         else:
             # Get the work areas
             work_areas_data = raster.get_work_areas_data()
