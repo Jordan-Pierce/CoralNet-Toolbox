@@ -226,6 +226,19 @@ class ResultsProcessor:
                             annotation = self.create_polygon_annotation(points, label, image_path)
 
                     if annotation:
+                        # TODO
+                        # replace the freshly-created Label widget with the shared LabelWindow label
+                        try:
+                            old_label_widget = annotation.label
+                            if old_label_widget is not None and old_label_widget is not label:
+                                annotation.label = label
+                                try:
+                                    old_label_widget.deleteLater()
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                        # ----
                         processed_annotation = self._post_process_new_annotation(annotation, cls_name, conf)
                         annotations_to_add.append(processed_annotation)
                 

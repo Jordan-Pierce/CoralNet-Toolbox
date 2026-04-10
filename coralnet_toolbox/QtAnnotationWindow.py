@@ -2124,8 +2124,14 @@ class AnnotationWindow(BaseCanvas):
             return None
         
         # This will get the existing mask or create it on the first call
+        is_new = raster.mask_annotation is None
         project_labels = self.main_window.label_window.labels
         mask_annotation = raster.get_mask_annotation(project_labels)
+        if is_new:
+            self.main_window.status_bar.showMessage(
+                f"Creating mask annotation for {os.path.basename(self.current_image_path)}…", 3000
+            )
+
         return mask_annotation
 
     def rasterize_annotations(self):

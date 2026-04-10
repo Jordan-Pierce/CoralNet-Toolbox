@@ -283,15 +283,35 @@ class Semantic(Base):
                     print(f"Warning: Could not get raster for {image_path}. Skipping.")
                     continue
 
-                # Ensure the raster has a mask annotation
+                # Ensure the raster has a mask annotation; show a status message the first time
                 if raster.mask_annotation is None:
+                    self.main_window.status_bar.showMessage(
+                        f"Creating mask annotation for {os.path.basename(image_path)}…", 3000
+                    )
+                    QApplication.processEvents()
                     raster.get_mask_annotation(project_labels)
-                    
+
                 mask_annotation = raster.mask_annotation
                 # This call ensures the mask is synced with the live labels
                 mask_annotation.sync_label_map(project_labels)
                 # Get the mapping from Label UUID -> internal mask class ID (once)
                 mask_annotation_map = mask_annotation.label_id_to_class_id_map
+
+                # ── Clear the existing mask before starting new inference ────────────────
+                # Zero the data in-place so stale tiles don't accumulate across runs.
+                # Do NOT remove the graphics_item from the scene — removing it orphans
+                # the item so update_mask_with_mask() produces no visible output until
+                # load_mask_annotation() is called again at the end.
+                try:
+                    mask_annotation.mask_data[:] = 0
+                    mask_annotation.update_graphics_item()  # repaint blank in-place
+                    # If the image being processed is the one currently displayed,
+                    # ensure the graphics_item is registered in the scene now so
+                    # tile repaints are immediately visible.
+                    if image_path == self.annotation_window.current_image_path:
+                        self.annotation_window.load_mask_annotation()
+                except Exception:
+                    pass
                 
                 # Get the list of items to process
                 is_full_image = self.annotation_window.get_selected_tool() != "work_area"
@@ -355,60 +375,57 @@ class Semantic(Base):
                 progress_bar.set_title(title)
                 progress_bar.start_progress(len(work_items_data))  # Total is number of tiles
                 
-                # --- 3. Process One Item at a Time (Streaming) ---
+                # --- 3. Process Tiles in Batches (like Detect) ---
                 try:
-                    # Loop by index to keep parallel lists in sync
-                    for idx_tile in range(len(work_items_data)):
-                        
-                        # Get the data and the corresponding coordinate object
-                        input_data = [work_items_data[idx_tile]]
-                        item = work_areas[idx_tile]  # This is the WorkArea object or None
-                        
-                        # --- 3a. Get Input Data and Offset ---
-                        if is_full_image:
-                            # Full image path, offset is 0
-                            offset = (0, 0)
-                        else:
-                            # WorkArea object
-                            item.highlight()  # Highlight current tile
-                            # Get (x, y) coords from the rect
-                            offset = (int(item.rect.x()), int(item.rect.y()))
+                    include_bg = (
+                        getattr(self, 'predict_background_checkbox', None) is not None
+                        and self.predict_background_checkbox.isChecked()
+                    )
+                    # Iterate in chunks of BATCH_SIZE to maximise GPU utilisation
+                    for batch_start in range(0, len(work_items_data), self.BATCH_SIZE):
+                        batch_data  = work_items_data[batch_start:batch_start + self.BATCH_SIZE]
+                        batch_areas = work_areas[batch_start:batch_start + self.BATCH_SIZE]
+
+                        if not is_full_image:
+                            for wa in batch_areas:
+                                if wa is not None:
+                                    wa.highlight()
                             QApplication.processEvents()
 
-                        # --- 3b. Apply Model ---
-                        results_list = self._apply_model(input_data)
-                        
-                        if not results_list:
-                            if not is_full_image: 
-                                item.unhighlight()
-                            progress_bar.update_progress()
-                            continue
-                            
-                        # Get the single Results object. 
-                        results_obj = results_list[0]
-                        results_obj.path = image_path  # Fix path
+                        # --- 3b. Apply Model (batch call) ---
+                        results_list = self._apply_model(batch_data)
 
-                        # --- 3c. Reconstruct Small Mask ---
-                        reconstructed_mask = _reconstruct_semantic_mask(
-                            results_obj,
-                            model_class_names,                            # List of model class names
-                            self.main_window.label_window,                # Live project labels
-                            mask_annotation_map,                          # Mask's map {LabelObj.id: 2}
-                            include_background=getattr(self, 'predict_background_checkbox', None) and self.predict_background_checkbox.isChecked()
-                        )
-                        
-                        # --- 3d. Update Main Annotation (Streaming) ---
-                        # This updates the UI *immediately* for each tile
-                        mask_annotation.update_mask_with_mask(
-                            reconstructed_mask, 
-                            top_left=offset
-                        )
-                        
-                        if not is_full_image: 
-                            item.unhighlight()
-                        progress_bar.update_progress()
-                        
-                        # Break if this was a full image
+                        for results_obj, item in zip(results_list or [], batch_areas):
+                            # --- 3a. Get Offset ---
+                            if is_full_image or item is None:
+                                offset = (0, 0)
+                            else:
+                                offset = (int(item.rect.x()), int(item.rect.y()))
+
+                            results_obj.path = image_path  # Fix path
+
+                            # --- 3c. Reconstruct Semantic Mask ---
+                            reconstructed_mask = _reconstruct_semantic_mask(
+                                results_obj,
+                                model_class_names,
+                                self.main_window.label_window,
+                                mask_annotation_map,
+                                include_background=include_bg,
+                            )
+
+                            # --- 3d. Update Main Annotation (streaming, per tile) ---
+                            mask_annotation.update_mask_with_mask(
+                                reconstructed_mask,
+                                top_left=offset,
+                            )
+                            progress_bar.update_progress()
+
+                        if not is_full_image:
+                            for wa in batch_areas:
+                                if wa is not None:
+                                    wa.unhighlight()
+
+                        # Full-image mode only ever has one item
                         if is_full_image:
                             break
 

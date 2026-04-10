@@ -60,13 +60,14 @@ class BatchInferenceWorker(QThread):
     error = pyqtSignal(str)
 
     def __init__(self, model, items, initial_thresholds,
-                 device=None, task='detect', batch_size=16, parent=None):
+                 device=None, task='detect', batch_size=16, is_semantic=False, parent=None):
         super().__init__(parent)
         self.model = model
         self.items = list(items)
         self.device = device
         self._task = task
         self._batch_size = max(1, int(batch_size))
+        self._is_semantic = is_semantic
         self._is_running = True
         self._waiting_for_ui = False
         self._mutex = QMutex()
@@ -170,7 +171,7 @@ class BatchInferenceWorker(QThread):
                         iou=iou,
                         max_det=max_det,
                         device=self.device,
-                        retina_masks=False,
+                        retina_masks=self._is_semantic,
                         half=True,
                         agnostic_nms=True,
                         stream=True,
@@ -188,8 +189,11 @@ class BatchInferenceWorker(QThread):
                     try:
                         result.path = item.image_path
 
-                        # Remap tile coordinates to full-image space (pure math — thread-safe)
-                        if item.work_area is not None:
+                        # Remap tile coordinates to full-image space (pure math — thread-safe).
+                        # Skipped for semantic: we paint the tile-sized mask at the offset
+                        # ourselves in on_item_processed, so orig_shape and masks.data must
+                        # stay consistent at tile dimensions.
+                        if item.work_area is not None and not self._is_semantic:
                             from coralnet_toolbox.Results.MapResults import MapResults
                             result = MapResults().map_results_from_work_area(
                                 result,
@@ -1508,9 +1512,155 @@ class BatchInferenceDialog(QDialog):
                 except Exception:
                     pass
 
-            # ── Semantic ──────────────────────────────────────────────────────
+            # ── Semantic → unified async worker (same path as Detect/Segment) ───
             elif selected_model == "Semantic":
-                model_dialog.predict(self.image_paths, progress_bar)
+                inference_type = (self.inference_type_combo.currentText()
+                                  if hasattr(self, 'inference_type_combo') else "Standard")
+                video_start  = int(self.video_start_spin.value())  if hasattr(self, 'video_start_spin')  else 0
+                video_end    = int(self.video_end_spin.value())    if hasattr(self, 'video_end_spin')    else None
+                video_stride = int(self.video_stride_spin.value()) if hasattr(self, 'video_stride_spin') else 1
+
+                items = self._build_inference_items(
+                    self.image_paths, inference_type,
+                    video_start=video_start,
+                    video_end=video_end,
+                    video_stride=video_stride,
+                )
+
+                if not items:
+                    try:
+                        progress_bar.close()
+                    except Exception:
+                        pass
+                    return
+
+                task       = getattr(model_dialog, 'task', 'segment')
+                batch_size = self.batch_size_spin.value()
+
+                initial_thresholds = {}
+                if hasattr(self, 'thresholds_widget'):
+                    try:
+                        initial_thresholds = {
+                            'conf':    self.thresholds_widget.get_uncertainty_thresh(),
+                            'iou':     self.thresholds_widget.get_iou_thresh(),
+                            'max_det': self.thresholds_widget.get_max_detections(),
+                        }
+                    except Exception:
+                        pass
+
+                # Snapshot Semantic-specific settings needed by on_item_processed
+                try:
+                    self._semantic_model_class_names = list(model_dialog.loaded_model.names.values())
+                except Exception:
+                    self._semantic_model_class_names = []
+                try:
+                    self._semantic_include_bg = (
+                        hasattr(model_dialog, 'predict_background_checkbox')
+                        and model_dialog.predict_background_checkbox.isChecked()
+                    )
+                except Exception:
+                    self._semantic_include_bg = False
+                self._semantic_processed_images = set()
+
+                # ── Pre-clear mask annotations for all affected images ────────
+                # Zero the mask data BEFORE the worker starts so stale tiles don't
+                # accumulate. Keep the graphics_item in the scene so tiles paint
+                # live — removing it from the scene would orphan the item and make
+                # update_mask_with_mask() calls invisible until load_mask_annotation()
+                # is called again at the end.
+                try:
+                    raster_manager = getattr(self.image_window, 'raster_manager', None)
+                    images_to_clear = set(it.image_path for it in items)
+                    for _ip in images_to_clear:
+                        try:
+                            _raster = raster_manager.get_raster(_ip) if raster_manager else None
+                            if _raster and _raster.mask_annotation:
+                                _ma = _raster.mask_annotation
+                                _ma.mask_data[:] = 0
+                                _ma.update_graphics_item()  # repaint blank in-place
+                        except Exception:
+                            pass
+                    # Ensure the currently-displayed image has its graphics_item
+                    # registered in the scene so incoming tiles are immediately visible.
+                    try:
+                        cur = getattr(self.annotation_window, 'current_image_path', None)
+                        if cur and cur in images_to_clear:
+                            self.annotation_window.load_mask_annotation()
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+
+                progress_bar.set_title("Running Semantic Inference")
+                progress_bar.start_progress(len(items))
+                try:
+                    progress_bar.set_value(0)
+                    progress_bar.progress_bar.setValue(0)
+                    QApplication.processEvents()
+                except Exception:
+                    pass
+
+                self._progress_bar = progress_bar
+
+                self._batch_worker = BatchInferenceWorker(
+                    model=model_dialog.loaded_model,
+                    items=items,
+                    initial_thresholds=initial_thresholds,
+                    device=getattr(self.main_window, 'device', None),
+                    task=task,
+                    batch_size=batch_size,
+                    is_semantic=True,
+                )
+
+                try:
+                    self.annotation_window.is_streaming_inference = True
+                    if hasattr(self.annotation_window, '_clear_current_frame_annotation_graphics'):
+                        self.annotation_window._clear_current_frame_annotation_graphics()
+                except Exception:
+                    pass
+
+                self._batch_worker.itemProcessed.connect(self.on_item_processed)
+                self._batch_worker.progressUpdated.connect(self._on_worker_progress)
+                self._batch_worker.error.connect(
+                    lambda msg: print(f"BatchInferenceWorker error: {msg}"))
+                self._batch_worker.finished.connect(self._on_worker_finished)
+
+                try:
+                    self._update_worker_thresholds()
+                except Exception:
+                    pass
+
+                # Remap OK → Stop Inference
+                try:
+                    try:
+                        self.button_box.accepted.disconnect()
+                    except Exception:
+                        pass
+                    self.button_box.accepted.connect(self._on_stop_inference_clicked)
+                    ok_btn = self.button_box.button(QDialogButtonBox.Ok)
+                    if ok_btn:
+                        ok_btn.setText("Stop Inference")
+                        ok_btn.setEnabled(True)
+                        ok_btn.setStyleSheet("background-color: #d9534f; color: white;")
+                except Exception:
+                    pass
+
+                try:
+                    progress_bar.cancel_button.setEnabled(True)
+                    progress_bar.cancel_button.clicked.connect(
+                        lambda checked=False: self._on_stop_inference_clicked())
+                except Exception:
+                    pass
+
+                self.set_ui_processing_state(True)
+                try:
+                    if hasattr(self, 'thresholds_widget') and self.thresholds_widget is not None:
+                        self.thresholds_widget.setEnabled(True)
+                except Exception:
+                    pass
+
+                self._batch_worker.start()
+                return  # _on_worker_finished drives everything from here
 
             # ── SAM / See Anything ────────────────────────────────────────────
             elif selected_model in ("SAM", "See Anything"):
@@ -1598,8 +1748,71 @@ class BatchInferenceDialog(QDialog):
 
             save = getattr(self, 'save_video_annotations', True)
 
-            # ── Store result ─────────────────────────────────────────────────
-            if inf_result.yolo_result is not None:
+            # ── Semantic: paint directly into MaskAnnotation, skip cache ─────
+            is_semantic_run = getattr(getattr(self, '_batch_worker', None), '_is_semantic', False)
+            if is_semantic_run:
+                if inf_result.yolo_result is not None and (not inf_result.is_video or save):
+                    try:
+                        from coralnet_toolbox.MachineLearning.DeployModel.QtSemantic import (
+                            _reconstruct_semantic_mask)
+                        raster_manager = getattr(self.image_window, 'raster_manager', None)
+                        raster = raster_manager.get_raster(inf_result.image_path) if raster_manager else None
+                        if raster is not None:
+                            project_labels = self.main_window.label_window.labels
+                            # Show status message when creating the mask for the first time
+                            if raster.mask_annotation is None:
+                                try:
+                                    self.main_window.status_bar.showMessage(
+                                        f"Creating mask annotation for "
+                                        f"{os.path.basename(inf_result.image_path)}\u2026", 3000
+                                    )
+                                except Exception:
+                                    pass
+                            mask_ann = raster.get_mask_annotation(project_labels)
+                            mask_ann.sync_label_map(project_labels)
+                            mask_ann_map = mask_ann.label_id_to_class_id_map
+
+                            offset = (0, 0)
+                            if inf_result.work_area is not None:
+                                offset = (int(inf_result.work_area.rect.x()),
+                                          int(inf_result.work_area.rect.y()))
+
+                            reconstructed = _reconstruct_semantic_mask(
+                                inf_result.yolo_result,
+                                getattr(self, '_semantic_model_class_names', []),
+                                self.main_window.label_window,
+                                mask_ann_map,
+                                include_background=getattr(self, '_semantic_include_bg', False),
+                            )
+                            mask_ann.update_mask_with_mask(reconstructed, top_left=offset)
+
+                            if not hasattr(self, '_semantic_processed_images'):
+                                self._semantic_processed_images = set()
+                            self._semantic_processed_images.add(inf_result.image_path)
+
+                            # For video: push the mask overlay to the canvas immediately
+                            if inf_result.is_video:
+                                try:
+                                    opacity = mask_ann.get_current_transparency() / 255.0
+                                    aw._base_image_item.set_mask_image(mask_ann.qimage, opacity)
+                                except Exception:
+                                    pass
+                    except Exception as e:
+                        print(f"Semantic inline paint error: {e}")
+                # For video with save=False: clear the stale mask overlay as the video advances
+                if inf_result.is_video and not save:
+                    try:
+                        aw._base_image_item.set_mask_image(None)
+                    except Exception:
+                        pass
+                # For non-Semantic code paths the result goes into the cache below;
+                # for Semantic we skip caching entirely and fall through to video UI updates.
+                if not inf_result.is_video:
+                    # Non-video Semantic items: nothing left to do for this item
+                    return
+
+            # ── Store result (Detect / Segment only) ─────────────────────────
+            if not is_semantic_run and inf_result.yolo_result is not None:
                 if inf_result.is_video:
                     # Video: one result per virtual frame path
                     if save:
@@ -1804,6 +2017,37 @@ class BatchInferenceDialog(QDialog):
         if not hasattr(self, '_results_processor') or self._results_processor is None:
             return
 
+        # ── Semantic: results were painted inline; just finalize stats and UI ───
+        is_semantic_run = isinstance(
+            getattr(self, '_active_model_dialog', None),
+            type(None)
+        )
+        try:
+            from coralnet_toolbox.MachineLearning.DeployModel.QtSemantic import Semantic as _Semantic
+            is_semantic_run = isinstance(getattr(self, '_active_model_dialog', None), _Semantic)
+        except Exception:
+            is_semantic_run = False
+
+        if is_semantic_run:
+            processed = getattr(self, '_semantic_processed_images', set())
+            raster_manager = getattr(self.image_window, 'raster_manager', None)
+            for image_path in processed:
+                try:
+                    raster = raster_manager.get_raster(image_path) if raster_manager else None
+                    if raster and raster.mask_annotation:
+                        raster.mask_annotation.recalculate_class_statistics()
+                    self.image_window.update_image_annotations(image_path)
+                except Exception as e:
+                    print(f"Semantic finalize error for {image_path}: {e}")
+            # Reload the mask graphics for the currently displayed image
+            try:
+                if getattr(self.annotation_window, 'current_image_path', None) in processed:
+                    self.annotation_window.load_mask_annotation()
+            except Exception:
+                pass
+            self._semantic_processed_images = set()
+            return
+
         cache = getattr(self.annotation_window, 'batch_results_cache', {})
         if not cache:
             return
@@ -1856,6 +2100,14 @@ class BatchInferenceDialog(QDialog):
 
     def _on_worker_finished(self):
         """Cleanup UI and restore button behavior when worker finishes."""
+
+        # 0. Defensive cursor reset — clear any override cursor that was left on
+        # the stack by batch_inference() or predict() paths that returned early.
+        try:
+            while QApplication.overrideCursor():
+                QApplication.restoreOverrideCursor()
+        except Exception:
+            pass
         
         # 1. Close and clean up the video streaming progress bar
         pb = getattr(self, '_progress_bar', None)
@@ -1923,7 +2175,16 @@ class BatchInferenceDialog(QDialog):
                 current_frame = getattr(self.annotation_window, '_current_frame_idx', None)
                 if current_frame is not None:
                     self.annotation_window._display_video_frame(current_frame)
-                
+
+                # For Semantic video: reload the mask graphics item so it persists
+                # after the frame display clears and rebuilds the scene.
+                try:
+                    from coralnet_toolbox.MachineLearning.DeployModel.QtSemantic import Semantic as _Sem
+                    if isinstance(getattr(self, '_active_model_dialog', None), _Sem):
+                        self.annotation_window.load_mask_annotation()
+                except Exception:
+                    pass
+
                 # Refresh the scrub bar so the new annotation tick marks appear all at once
                 self.annotation_window._update_video_annotation_marks()
         except Exception:
