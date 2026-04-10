@@ -178,298 +178,195 @@ class Segment(Base):
         finally:
             QApplication.restoreOverrideCursor()
 
-    def predict(self, image_paths=None, progress_bar=None):
-        """
-        Make predictions on the given image paths using the loaded model.
-        Processes tiles in mini-batches for speed, but post-processes
-        one-by-one to provide UI feedback.
+    def predict(self, image_paths=None):
+        """Run interactive inference on one or more images.
+
+        Manages its own progress bar and bakes results immediately afterwards.
+        For batch inference over many images or video frames, use
+        BatchInferenceDialog which routes Detect/Segment tasks through the
+        async BatchInferenceWorker.
 
         Args:
-            image_paths: List of image paths to process. If None, uses the current image.
-            progress_bar: Optional progress bar to use.
+            image_paths: List of image paths to process.  If None, processes
+                         the currently displayed image.
         """
         if not self.loaded_model:
             return
-        
+
         if not image_paths:
-            # Predict only the current image
             if self.annotation_window.current_image_path is None:
                 QMessageBox.warning(self, "Warning", "No image is currently loaded for annotation.")
                 return
             image_paths = [self.annotation_window.current_image_path]
 
-        # Create a results processor (it's stateless, so creating it once is fine)
-        results_processor = ResultsProcessor(
-            self.main_window,
-            self.class_mapping
+        results_processor = ResultsProcessor(self.main_window, self.class_mapping)
+
+        use_sam = (
+            getattr(self, 'use_sam_dropdown', None) is not None
+            and self.use_sam_dropdown.currentText() == "True"
+            and getattr(self, 'sam_dialog', None) is not None
+            and getattr(self.sam_dialog, 'loaded_model', None) is not None
         )
+        is_segmentation = self.task == 'segment' or use_sam
 
-        # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
+        progress_bar = ProgressBar(self.annotation_window, title="Running Inference")
+        progress_bar.show()
 
-        # Track if we created the progress bar ourselves
-        progress_bar_created_here = progress_bar is None
-        
+        cache = {}  # image_path → [Results, …]
+
         try:
-            # --- We process one image at a time ---
             for idx, image_path in enumerate(image_paths):
-                
-                # --- 1. Get Raster and Work Items ---
                 raster = self.image_window.raster_manager.get_raster(image_path)
                 if raster is None:
-                    print(f"Warning: Could not get raster for {image_path}. Skipping.")
+                    print(f"Segment.predict: no raster for {image_path}, skipping.")
                     continue
-                
-                # Get the list of items to process
-                is_full_image = self.annotation_window.get_selected_tool() != "work_area"
 
-                # Handle video virtual-frame paths specially (video.mp4::frame_N)
-                work_items_data = None
-                work_areas = None
-                if isinstance(image_path, str) and '::frame_' in image_path:
-                    from coralnet_toolbox.Rasters.VideoRaster import VideoRaster
-                    video_path, frame_idx = VideoRaster.parse_frame_path(image_path)
+                use_tiles = (
+                    raster.has_work_areas()
+                    and self.annotation_window.get_selected_tool() == "work_area"
+                )
+                work_areas = raster.get_work_areas() if use_tiles else [None]
 
-                    # RasterManager.get_raster resolves virtual paths to the underlying video raster
-                    # Ensure the raster is a VideoRaster before using frame APIs
-                    if hasattr(raster, 'raster_type') and raster.raster_type == 'VideoRaster':
-                        if is_full_image:
-                            # For full-image segmentation on a video frame, pass the raw BGR numpy array
-                            bgr = raster.get_bgr_frame(frame_idx)
-                            if bgr is None:
-                                print(f"Warning: Could not read frame {frame_idx} from {video_path}. Skipping.")
-                                continue
-                            work_items_data = [bgr]
-                            work_areas = [None]
+                progress_bar.set_title(
+                    f"Image {idx + 1}/{len(image_paths)}: {os.path.basename(image_path)}"
+                )
+                progress_bar.start_progress(len(work_areas))
+
+                results_for_image = []
+
+                for i in range(0, len(work_areas), self.BATCH_SIZE):
+                    wa_chunk = work_areas[i:i + self.BATCH_SIZE]
+
+                    inputs = []
+                    for wa in wa_chunk:
+                        if wa is not None:
+                            wa.highlight()
+                            inputs.append(raster.get_work_area_data(wa, as_format='BGR'))
                         else:
-                            # For work-area mode, update the shim to point at this frame
-                            raster.update_shim_for_frame(frame_idx)
-                            work_areas = raster.get_work_areas()
-                            work_items_data = raster.get_work_areas_data(as_format='BGR')
-                    else:
-                        # Fallback to normal handling if raster isn't a VideoRaster
-                        if is_full_image:
-                            work_items_data = [raster.image_path]
-                            work_areas = [None]
-                        else:
-                            work_areas = raster.get_work_areas()
-                            work_items_data = raster.get_work_areas_data(as_format='BGR')
-                else:
-                    # Regular (non-video) path handling
-                    if is_full_image:
-                        work_items_data = [raster.image_path]  # List with one string
-                        work_areas = [None]  # Dummy list to make loops match
-                    else:
-                        # Get both parallel lists: coordinate objects and data arrays
-                        work_areas = raster.get_work_areas()  # List of WorkArea objects
-                        work_items_data = raster.get_work_areas_data(as_format='BGR')  # List of np.ndarray
+                            inputs.append(image_path)
 
-                if not work_items_data or not work_areas:
-                    print(f"Warning: No work items found for {image_path}. Skipping.")
-                    continue
-                    
-                # --- 2. Setup Progress Bar ---
-                title = f"Predicting: {idx + 1}/{len(image_paths)} - {os.path.basename(image_path)}"
-                if progress_bar is None:
-                    progress_bar = ProgressBar(self.annotation_window)
-                    progress_bar.show()
-                progress_bar.set_title(title)
-                progress_bar.start_progress(len(work_items_data))  # Total is still number of tiles
+                    batch_results = self._apply_model(inputs)
 
-                # --- 3. Process Tiles and Collect Results ---
-                
-                # Create a list to hold all results for THIS image
-                results_for_this_image = []
-                is_segmentation = self.task == 'segment' or self.use_sam_dropdown.currentText() == "True"
-                
-                try:
-                    # --- Loop over the data in mini-batches ---
-                    for i in range(0, len(work_items_data), self.BATCH_SIZE):
-                        
-                        # Get the mini-batch chunks
-                        data_chunk = work_items_data[i: i + self.BATCH_SIZE]
-                        area_chunk = work_areas[i: i + self.BATCH_SIZE]
+                    for wa, result in zip(wa_chunk, batch_results):
+                        result.path = image_path
+                        if wa is not None:
+                            result = MapResults().map_results_from_work_area(
+                                result, raster, wa,
+                                map_masks=(self.task == 'segment'),
+                                task=self.task,
+                            )
+                            wa.unhighlight()
+                        results_for_image.append(result)
+                        progress_bar.update_progress()
 
-                        # --- 3a. Apply Model (Batched) ---
-                        # Returns a flat list: [res1, res2, ...]
-                        batch_results_list = self._apply_model(data_chunk)
-                        
-                        # --- 3b. Apply SAM (Batched) ---
-                        # Takes a flat list, returns a flat list: [sam_res1, sam_res2, ...]
-                        sam_results_list = self._apply_sam(batch_results_list, image_path)
+                    gc.collect()
+                    empty_cache()
 
-                        # Safety check
-                        if len(sam_results_list) != len(area_chunk):
-                            print(f"Warning: Mismatch in batch results (Got {len(sam_results_list)}, "
-                                  f"expected {len(area_chunk)}). Skipping batch.")
-                            
-                            # Update progress bar for the skipped items
-                            for _ in area_chunk:
-                                progress_bar.update_progress()
-                            continue
-                            
-                        # --- 3c. Post-process (Streaming w/ Highlight) ---
-                        # Loop through the flat lists
-                        for results_obj, work_area in zip(sam_results_list, area_chunk):
-                            
-                            # --- Highlight at the START of post-processing ---
-                            if work_area:
-                                work_area.highlight()
-
-                            if not results_obj:  # Handle potential empty result from SAM
-                                if work_area: 
-                                    work_area.unhighlight()
-                                progress_bar.update_progress()
-                                continue
-
-                            # Get the single result object
-                            results_obj.path = image_path
-                            
-                            # --- 3d. Map Result (logic from _process_results) ---
-                            if work_area:
-                                # Highlight is already active
-                                mapped_result = MapResults().map_results_from_work_area(
-                                    results_obj,
-                                    raster,
-                                    work_area,
-                                    is_segmentation
-                                )
-                            else:
-                                mapped_result = results_obj
-
-                            # --- 3e. Append to list, DO NOT process yet ---
-                            results_for_this_image.append(mapped_result)
-
-                            # --- 3f. Update progress bar for this tile ---
-                            progress_bar.update_progress()
-                            
-                            # --- 3g. Unhighlight at the END of post-processing ---
-                            if work_area:
-                                work_area.unhighlight()
-
-                        # --- Clean up GPU memory *after* the mini-batch ---
-                        gc.collect()
-                        empty_cache()
-
-                except Exception as e:
-                    print(f"An error occurred during prediction on {image_path}: {e}")
-                    import traceback
-                    traceback.print_exc()
-                finally:
-                    if progress_bar_created_here:
-                        progress_bar.finish_progress()
-                        progress_bar.stop_progress()
-                        progress_bar.close()
-                
-                # --- 4. Process All Results for This Image at Once ---
-                if results_for_this_image:
-                    # ---> FAST PATH: Render-First, Bake-Later <---
-
-                    # 4a. FAST PATH: Render-First, Bake-Later (composite with existing annotations)
+                # SAM pass: once per image after all tiles are collected
+                if use_sam and results_for_image:
                     try:
-                        # 1. Update the background image pixels
-                        from coralnet_toolbox.utilities import rasterio_to_qimage
-                        try:
-                            q_img = rasterio_to_qimage(raster.rasterio_src)
-                        except Exception:
-                            q_img = None
-
-                        if getattr(self.annotation_window, '_base_image_item', None) is not None:
-                            if q_img is not None:
-                                try:
-                                    self.annotation_window.current_image_path = image_path
-                                    self.annotation_window._base_image_item.set_image(q_img)
-                                    self.annotation_window.fit_to_image()
-                                except Exception:
-                                    pass
-
-                        # 2. Generate the fast paths for the NEW predictions
-                        fast_paths = []
-                        for res in results_for_this_image:
-                            paths = results_processor.generate_fast_render_paths(res, self.task)
-                            if paths:
-                                fast_paths.extend(paths)
-
-                        # 3. Grab existing annotations so they don't disappear!
-                        try:
-                            existing_annotations = self.annotation_window.get_image_annotations(image_path)
-                            for a in existing_annotations:
-                                if getattr(a.label, 'is_visible', True) and not hasattr(a, 'mask_data'):
-                                    try:
-                                        fast_paths.append((a.get_painter_path(), a.label.color, a.transparency))
-                                    except Exception:
-                                        pass
-                        except Exception:
-                            pass
-
-                        # 4. Draw ALL paths and force a screen refresh
-                        if getattr(self.annotation_window, '_base_image_item', None) is not None:
-                            try:
-                                self.annotation_window._base_image_item.set_readonly_annotations(fast_paths)
-                                QApplication.processEvents()
-                            except Exception:
-                                pass
+                        import cv2
+                        numpy_arr = raster.get_numpy()
+                        if numpy_arr is not None:
+                            full_bgr = cv2.cvtColor(numpy_arr, cv2.COLOR_RGB2BGR)
+                            for r in results_for_image:
+                                r.orig_img = full_bgr
+                        results_for_image = self.sam_dialog.predict_from_results(
+                            results_for_image, image_path)
+                        is_segmentation = True
                     except Exception as e:
-                        print(f"Warning: Fast render failed in Segment.predict: {e}")
+                        print(f"Segment.predict: SAM pass failed for {image_path}: {e}")
 
-                    # 4b. Cache the raw results for later hydration
-                    if not hasattr(self.annotation_window, 'batch_results_cache'):
-                        self.annotation_window.batch_results_cache = {}
+                cache[image_path] = results_for_image
 
-                    self.annotation_window.batch_results_cache[image_path] = results_for_this_image
+                if image_path == self.annotation_window.current_image_path:
+                    try:
+                        self._fast_render_image(
+                            image_path, raster, results_for_image, results_processor)
+                    except Exception as e:
+                        print(f"Segment.predict: fast render failed: {e}")
 
         except Exception as e:
-            print(f"A fatal error occurred during the prediction workflow: {e}")
+            print(f"Segment.predict: fatal error: {e}")
+            import traceback
+            traceback.print_exc()
         finally:
-            # --- 5. BAKE (HYDRATE) ALL IMAGES AT THE END ---
-            if not progress_bar_created_here:
-                # Part of a larger batch; leave cache for batch controller
-                pass
-            else:
-                # Standalone call: bake cached results now
-                cache = getattr(self.annotation_window, 'batch_results_cache', {})
-                if cache:
-                    self.annotation_window.is_streaming_inference = True
+            progress_bar.close()
 
-                    bake_pb = ProgressBar(self.annotation_window, title="Saving Annotations...")
-                    bake_pb.show()
-                    bake_pb.start_progress(len(cache))
+            if cache:
+                self.annotation_window.is_streaming_inference = True
+                bake_pb = ProgressBar(self.annotation_window, title="Saving Annotations...")
+                bake_pb.show()
+                bake_pb.start_progress(len(cache))
 
-                    is_segmentation = self.task == 'segment' or self.use_sam_dropdown.currentText() == "True"
+                for path, results_list in cache.items():
+                    if is_segmentation:
+                        results_processor.process_segmentation_results(results_list)
+                    else:
+                        results_processor.process_detection_results(results_list)
+                    bake_pb.update_progress()
+                    QApplication.processEvents()
 
-                    for path, results_list in cache.items():
-                        if is_segmentation:
-                            results_processor.process_segmentation_results(results_list)
-                        else:
-                            results_processor.process_detection_results(results_list)
-                        bake_pb.update_progress()
-                        QApplication.processEvents()
+                bake_pb.close()
+                self.annotation_window.is_streaming_inference = False
 
-                    bake_pb.close()
-                    self.annotation_window.is_streaming_inference = False
+                try:
+                    self.annotation_window.refresh_phantom_annotations()
+                except Exception:
+                    pass
+                try:
+                    self.main_window.label_window.update_annotation_count()
+                    for path in cache:
+                        self.image_window.update_image_annotations(path, update_counts=False)
+                except Exception:
+                    pass
 
-                    # Repopulate the phantom layer with the freshly-baked real annotations
-                    try:
-                        self.annotation_window.refresh_phantom_annotations()
-                    except Exception:
-                        pass
-
-                    try:
-                        self.main_window.label_window.update_annotation_count()
-                        for path in cache.keys():
-                            self.image_window.update_image_annotations(path, update_counts=False)
-                    except Exception:
-                        pass
-
-                    self.annotation_window.batch_results_cache = {}
-
-            if progress_bar_created_here and progress_bar is not None:
-                progress_bar.finish_progress()
-                progress_bar.stop_progress()
-                progress_bar.close()
             QApplication.restoreOverrideCursor()
             gc.collect()
             empty_cache()
+
+    def _fast_render_image(self, image_path, raster, results_for_image, results_processor):
+        """Push a ghost-render of new predictions to the OpenGL canvas without baking."""
+        from coralnet_toolbox.utilities import rasterio_to_qimage
+        aw = self.annotation_window
+
+        try:
+            q_img = rasterio_to_qimage(raster.rasterio_src)
+        except Exception:
+            q_img = None
+
+        if getattr(aw, '_base_image_item', None) is not None:
+            if q_img is not None:
+                try:
+                    aw.current_image_path = image_path
+                    aw._base_image_item.set_image(q_img)
+                    aw.fit_to_image()
+                except Exception:
+                    pass
+
+        fast_paths = []
+        for res in results_for_image:
+            try:
+                fast_paths.extend(results_processor.generate_fast_render_paths(res, self.task))
+            except Exception:
+                pass
+        try:
+            for ann in aw.get_image_annotations(image_path):
+                if getattr(ann.label, 'is_visible', True) and not hasattr(ann, 'mask_data'):
+                    try:
+                        fast_paths.append((ann.get_painter_path(), ann.label.color, ann.transparency))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        if getattr(aw, '_base_image_item', None) is not None:
+            try:
+                aw._base_image_item.set_readonly_annotations(fast_paths)
+                QApplication.processEvents()
+            except Exception:
+                pass
 
     def _apply_model(self, inputs):
         """
