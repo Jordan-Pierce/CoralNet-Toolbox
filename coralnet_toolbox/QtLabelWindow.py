@@ -6,13 +6,39 @@ import random
 
 from PyQt5.QtCore import QMimeData, QTimer, Qt, pyqtSignal, QRectF, pyqtProperty
 from PyQt5.QtGui import (QColor, QPainter, QPen, QBrush, QFontMetrics, QLinearGradient, QDrag)
-from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QHBoxLayout,
+from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QToolButton, QWidget, QHBoxLayout,
                              QVBoxLayout, QColorDialog, QLineEdit, QDialog, 
                              QPushButton, QApplication, QScrollArea,
                              QGraphicsDropShadowEffect, QToolBar,
                              QListWidget, QListWidgetItem, QComboBox, QLabel)
 
 from coralnet_toolbox.Icons import get_icon
+
+# Theme tokens (moved here from coralnet_toolbox/theme.py)
+# Colors
+BACKGROUND = QColor('#FFFFFF')
+SURFACE = QColor('#F7F9FB')
+PRIMARY = QColor('#0B78D1')
+TEXT_PRIMARY = QColor('#222222')
+TEXT_SECONDARY = QColor('#6B7280')
+
+# Shadow / elevation
+SHADOW_COLOR = QColor(0, 0, 0, 80)
+ELEVATION_BLUR = 8
+ELEVATION_OFFSET = (2, 2)
+
+# Sizes
+LABEL_HEIGHT = 34
+SWATCH_SIZE = 14
+SWATCH_RADIUS = 4
+LABEL_SPACING = 6
+
+# Animation tuning
+ANIMATION = {
+    'pulse_interval_ms': 60,
+    'pulse_delta_up': 30,
+    'pulse_delta_down': 10,
+}
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -73,6 +99,20 @@ class LabelDisplay(QWidget):
         painter.setPen(Qt.NoPen)
         painter.drawRect(rect)
 
+        # --- 1.5 Left accent bar for selection / identity ---
+        accent_width = 6
+        accent_rect = QRectF(rect.left(), rect.top(), accent_width, rect.height())
+        try:
+            accent_color = QColor(self.label.color)
+        except Exception:
+            accent_color = QColor('#CCCCCC')
+        if self.label.is_selected:
+            # Make accent slightly brighter when selected
+            accent_color = accent_color.lighter(110)
+        painter.setBrush(QBrush(accent_color))
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(accent_rect, 3, 3)
+
         # --- 2. Animated Selection Indicator ---
         if self.label.is_selected:
             pen_color = QColor(self.label.color).darker(300)
@@ -89,10 +129,12 @@ class LabelDisplay(QWidget):
         text_color = Qt.black if luminance > 0.5 else Qt.white
         painter.setPen(QPen(text_color))
 
-        # --- 4. Draw Text ---
+        # --- 4. Draw Text (avoid the accent area) ---
         font_metrics = QFontMetrics(painter.font())
-        truncated_text = font_metrics.elidedText(self.label.short_label_code, Qt.ElideRight, int(rect.width() - 10))
-        painter.drawText(rect, Qt.AlignCenter, truncated_text)
+        text_rect = rect.adjusted(accent_width + 6, 0, -6, 0)
+        truncated_text = font_metrics.elidedText(self.label.short_label_code, Qt.ElideRight, int(text_rect.width() - 10))
+        painter.setPen(QPen(text_color))
+        painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, truncated_text)
         
 
 class Label(QWidget):
@@ -125,14 +167,53 @@ class Label(QWidget):
         self.display_widget = LabelDisplay(self)
         self.display_widget.selected.connect(self._handle_selection)
 
-        # 2. The visibility checkbox - controls whether annotations of this label are shown
-        self.visibility_checkbox = QCheckBox()
+        # 2. Small color swatch for quick recognition
+        self.color_swatch = QLabel()
+        self.color_swatch.setFixedSize(SWATCH_SIZE, SWATCH_SIZE)
+        self.color_swatch.setStyleSheet(f"background-color: {self.color.name()}; border-radius: {SWATCH_RADIUS}px; border: 1px solid #DDDDDD;")
+        self.color_swatch.setToolTip("Label color")
+
+        # 3. Visibility toggle - compact icon button (eye)
+        self.visibility_checkbox = QToolButton()
+        visible_icon = get_icon("show.svg") 
+        invisible_icon = get_icon("hide.svg")
+        if visible_icon:
+            self.visibility_checkbox.setIcon(visible_icon)
+        else:
+            self.visibility_checkbox.setText("👁")
+        self.visibility_checkbox.setCheckable(True)
         self.visibility_checkbox.setChecked(True)
         self.visibility_checkbox.setToolTip("Show/hide annotations for this label")
-        self.visibility_checkbox.stateChanged.connect(self._on_visibility_changed)
-        
-        # Add widgets to the layout
-        layout.addWidget(self.display_widget)
+        # Make it visually flat by default (material-style)
+        try:
+            self.visibility_checkbox.setAutoRaise(True)
+        except Exception:
+            pass
+        # Connect to a compatibility-friendly handler that accepts bool or int
+        self.visibility_checkbox.toggled.connect(self._on_visibility_changed)
+        # Sync icon/text when toggled to reflect visible/invisible state
+        def _sync_visibility_icon(visible):
+            try:
+                if visible:
+                    if visible_icon:
+                        self.visibility_checkbox.setIcon(visible_icon)
+                    else:
+                        self.visibility_checkbox.setText("👁")
+                else:
+                    if invisible_icon:
+                        self.visibility_checkbox.setIcon(invisible_icon)
+                    else:
+                        self.visibility_checkbox.setText("")
+            except Exception:
+                pass
+
+        self.visibility_checkbox.toggled.connect(_sync_visibility_icon)
+        # Initialize icon state
+        _sync_visibility_icon(self.visibility_checkbox.isChecked())
+
+        # Add widgets to the layout: swatch, flexible display, and toggle
+        layout.addWidget(self.color_swatch)
+        layout.addWidget(self.display_widget, 1)
         layout.addWidget(self.visibility_checkbox)
 
         # --- Animation Properties ---
@@ -144,14 +225,14 @@ class Label(QWidget):
         self._pulse_direction = 1
 
         # --- Widget settings ---
-        self.setFixedHeight(30)
+        self.setFixedHeight(LABEL_HEIGHT)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setToolTip(self.long_label_code)
-
+        # Apply subtle elevation only when necessary (keeps rendering cheap)
         shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(8)
-        shadow.setColor(QColor(0, 0, 0, 80))
-        shadow.setOffset(2, 2)
+        shadow.setBlurRadius(ELEVATION_BLUR)
+        shadow.setColor(SHADOW_COLOR)
+        shadow.setOffset(ELEVATION_OFFSET[0], ELEVATION_OFFSET[1])
         self.setGraphicsEffect(shadow)
 
     def _handle_selection(self):
@@ -221,9 +302,11 @@ class Label(QWidget):
     
     def _on_visibility_changed(self, state):
         """Handle visibility checkbox state changes."""
-        # State is 0 (unchecked), 1 (partially checked), or 2 (checked)
-        # We only care about fully checked (2) or unchecked (0)
-        is_visible = state == 2
+        # Accept both Qt checkbox integer states and QToolButton bool toggles
+        if isinstance(state, bool):
+            is_visible = state
+        else:
+            is_visible = (state == 2)
         self.visibilityChanged.emit(is_visible)
 
     def select(self):
@@ -243,6 +326,10 @@ class Label(QWidget):
 
     def update_color(self):
         """Trigger a repaint to reflect color changes."""
+        try:
+            self.color_swatch.setStyleSheet(f"background-color: {self.color.name()}; border-radius: {SWATCH_RADIUS}px; border: 1px solid #DDDDDD;")
+        except Exception:
+            pass
         self.display_widget.update()
 
     def update_selection(self):
@@ -253,6 +340,11 @@ class Label(QWidget):
         """Update the label's color and emit the colorChanged signal."""
         if self.color != new_color:
             self.color = new_color
+            # Update the small swatch immediately if present
+            try:
+                self.color_swatch.setStyleSheet(f"background-color: {self.color.name()}; border-radius: {SWATCH_RADIUS}px; border: 1px solid #DDDDDD;")
+            except Exception:
+                pass
             self.update_color()
             self.colorChanged.emit(new_color)
 
@@ -884,10 +976,18 @@ class LabelWindow(QWidget):
             # Restore cursor and unblock signals
             QApplication.restoreOverrideCursor()
             self.annotation_window.blockSignals(False)
-        
+
         # Use update_scene() which includes QApplication.processEvents()
         # This ensures the scene is properly refreshed with all changes
+        self.annotation_window.refresh_phantom_annotations()
         self.annotation_window.update_scene()
+        # Force an immediate repaint of the viewport and return focus to the
+        # annotation view so visibility changes appear without an extra click.
+        try:
+            self.annotation_window.viewport().repaint()
+            self.annotation_window.setFocus(Qt.OtherFocusReason)
+        except Exception:
+            pass
         
         # Update annotation count in case visibility changes affect displayed count
         self.update_annotation_count()

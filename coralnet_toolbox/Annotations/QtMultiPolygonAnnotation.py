@@ -23,25 +23,19 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 class MultiPolygonAnnotation(Annotation):
     def __init__(self,
                  polygons: list,  # Now a list of PolygonAnnotation objects
-                 short_label_code: str,
-                 long_label_code: str,
-                 color: QColor,
+                 label: 'Label',
                  image_path: str,
-                 label_id: str,
                  transparency: int = 128,
-                 show_msg: bool = False):
+                 show_confidence: bool = True):
         """Initialize a MultiPolygonAnnotation from a list of PolygonAnnotation objects."""
-        # Use properties from the first polygon if not provided
-        if polygons and hasattr(polygons[0], 'label'):
+        # If polygons provided and label is None-ish, try to inherit from first polygon
+        if (polygons and hasattr(polygons[0], 'label')) and (label is None):
             first = polygons[0]
-            short_label_code = short_label_code or first.label.short_label_code
-            long_label_code = long_label_code or first.label.long_label_code
-            color = color or first.label.color
+            label = first.label
             image_path = image_path or first.image_path
-            label_id = label_id or first.label.id
             transparency = transparency if transparency is not None else first.transparency
-            show_msg = show_msg if show_msg is not None else first.show_message
-        super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
+
+        super().__init__(label=label, image_path=image_path, transparency=transparency, show_confidence=show_confidence)
 
         self.center_xy = QPointF(0, 0)
         self.cropped_bbox = (0, 0, 0, 0)
@@ -53,6 +47,9 @@ class MultiPolygonAnnotation(Annotation):
         self.graphics_items = []
         self.set_centroid()
         self.set_cropped_bbox()
+
+        if polygons and hasattr(polygons[0], 'show_message'):
+            self.show_message = polygons[0].show_message
 
     def set_precision(self, reduce: bool = True):
         """Round coordinates of all polygons to 3 decimal places."""
@@ -210,8 +207,11 @@ class MultiPolygonAnnotation(Annotation):
         # NOTE: Do NOT emit annotationUpdated here - creating a cropped image is not a modification.
         # The caller is responsible for handling display updates if needed.
 
-    def create_graphics_item(self, scene: QGraphicsScene):
-        """Create and add QGraphicsItems for all polygons to the scene."""
+    def create_graphics_item(self, scene: QGraphicsScene, force_hydrate: bool = False):
+        """Create and add QGraphicsItems for all polygons to the scene.
+
+        Accepts `force_hydrate` for API compatibility with the base class.
+        """
         # This import is necessary to check the type of the created item
         from PyQt5.QtWidgets import QGraphicsPathItem
 
@@ -358,14 +358,15 @@ class MultiPolygonAnnotation(Annotation):
         # Convert polygon dictionaries to PolygonAnnotation objects
         polygons = [PolygonAnnotation.from_dict(poly_dict, label_window) for poly_dict in data['polygons']]
 
+        # Resolve label using the provided label_window
+        label = label_window.get_label_by_short_code(data.get('label_short_code'))
+
         # Create a new MultiPolygonAnnotation instance
         annotation = cls(
             polygons=polygons,
-            short_label_code=data.get('label_short_code'),
-            long_label_code=data.get('label_long_code'),
-            color=QColor(*data.get('annotation_color', (255, 0, 0))),
+            label=label,
             image_path=data.get('image_path'),
-            label_id=data.get('label_id')
+            transparency=data.get('transparency', 128)
         )
         
         # Set the UUID if present

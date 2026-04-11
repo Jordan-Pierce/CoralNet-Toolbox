@@ -193,13 +193,13 @@ class PolygonTool(Tool):
             self.points = filtered_points
 
         # Create the annotation with validated points
-        annotation = PolygonAnnotation(self.points,
-                                       self.annotation_window.selected_label.short_label_code,
-                                       self.annotation_window.selected_label.long_label_code,
-                                       self.annotation_window.selected_label.color,
-                                       self.annotation_window.current_image_path,
-                                       self.annotation_window.selected_label.id,
-                                       self.annotation_window.main_window.get_transparency_value())
+        annotation = PolygonAnnotation(
+            self.points,
+            self.annotation_window.selected_label,
+            self.annotation_window.current_image_path,
+            transparency=self.annotation_window.main_window.get_transparency_value(),
+            show_confidence=False,
+        )
 
         if finished:
             # Reset the tool
@@ -222,16 +222,15 @@ class PolygonTool(Tool):
             # Create the preview annotation using preview_points
             annotation = PolygonAnnotation(
                 preview_points,
-                self.annotation_window.selected_label.short_label_code,
-                self.annotation_window.selected_label.long_label_code,
-                self.annotation_window.selected_label.color,
+                self.annotation_window.selected_label,
                 self.annotation_window.current_image_path,
-                self.annotation_window.selected_label.id,
-                self.annotation_window.main_window.get_transparency_value()
+                transparency=self.annotation_window.main_window.get_transparency_value(),
+                show_confidence=False,
             )
             self.cursor_annotation = annotation
             self.cursor_annotation.update_transparency(self.annotation_window.main_window.get_transparency_value())
-            self.cursor_annotation.create_graphics_item(self.annotation_window.scene)
+            # Force hydrate the preview so the polygon cursor follows the mouse smoothly
+            self.cursor_annotation.create_graphics_item(self.annotation_window.scene, force_hydrate=True)
 
     def update_cursor_annotation(self, scene_pos: QPointF = None):
         """Update the cursor annotation position."""

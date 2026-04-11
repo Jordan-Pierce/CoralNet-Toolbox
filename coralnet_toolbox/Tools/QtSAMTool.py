@@ -456,8 +456,8 @@ class SAMTool(Tool):
                 return
             
             self.temp_annotation.set_animation_manager(self.animation_manager)
-            # Create the graphics item for the temporary annotation
-            self.temp_annotation.create_graphics_item(self.annotation_window.scene)
+            # Create the graphics item for the temporary annotation (force hydrate for smooth preview)
+            self.temp_annotation.create_graphics_item(self.annotation_window.scene, force_hydrate=True)
             # Make the annotation animated immediately
             self.temp_annotation.animate(force=True)
             
@@ -956,12 +956,10 @@ class SAMTool(Tool):
             annotation = RectangleAnnotation(
                 top_left,
                 bottom_right,
-                self.annotation_window.selected_label.short_label_code,
-                self.annotation_window.selected_label.long_label_code,
-                self.annotation_window.selected_label.color,
+                self.annotation_window.selected_label,
                 self.annotation_window.current_image_path,
-                self.annotation_window.selected_label.id,
-                self.main_window.get_transparency_value()
+                transparency=self.main_window.get_transparency_value(),
+                show_confidence=False
             )
             return annotation
         else:
@@ -996,12 +994,10 @@ class SAMTool(Tool):
             annotation = PolygonAnnotation(
                 points=self.points,
                 holes=final_holes,
-                short_label_code=self.annotation_window.selected_label.short_label_code,
-                long_label_code=self.annotation_window.selected_label.long_label_code,
-                color=self.annotation_window.selected_label.color,
+                label=self.annotation_window.selected_label,
                 image_path=self.annotation_window.current_image_path,
-                label_id=self.annotation_window.selected_label.id,
-                transparency=self.main_window.get_transparency_value()
+                transparency=self.main_window.get_transparency_value(),
+                show_confidence=False
             )
             return annotation
 

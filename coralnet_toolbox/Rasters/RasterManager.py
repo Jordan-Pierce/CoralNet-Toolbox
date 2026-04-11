@@ -5,7 +5,7 @@ import gc
 from typing import Dict, List, Optional, Set
 
 from PyQt5.QtGui import QPixmap
-from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt5.QtCore import QObject, pyqtSignal, Qt
 
 from coralnet_toolbox.Rasters.QtRaster import Raster
 
@@ -44,23 +44,41 @@ class RasterManager(QObject):
         """
         if image_path in self.rasters:
             return True  # Already exists
-            
+
+        # If the path looks like a video, delegate to add_video_raster so we
+        # create a VideoRaster instead of a plain Raster. This avoids cases
+        # where videos are treated as ImageRasters (and passed as file paths
+        # to image loaders expecting images).
+        try:
+            ext = os.path.splitext(image_path)[1].lower()
+            from coralnet_toolbox.Rasters.VideoRaster import VIDEO_EXTENSIONS
+            if ext in VIDEO_EXTENSIONS:
+                return self.add_video_raster(image_path)
+        except Exception:
+            # If the import fails for any reason, fall back to default behavior
+            pass
+
+        # No automatic guessing between Raster vs OrthoRaster here.
+        # `OrthoRaster` should only be created when the user explicitly
+        # imports files as orthomosaics. Drag/drop/import as images should
+        # create plain `Raster` objects unless the file is a video.
+
         try:
             raster = Raster(image_path)
             if raster.rasterio_src is None:
                 return False
-                
+
             self.rasters[image_path] = raster
             self.image_paths.append(image_path)
-            
+
             # Connect raster's z-channel signal to forward as zChannelUpdated
             raster.zChannelChanged.connect(lambda: self.zChannelUpdated.emit(image_path))
-            
+
             if emit_signal:
                 self.rasterAdded.emit(image_path)
-                
+
             return True
-            
+
         except Exception as e:
             print(f"Error adding raster {image_path}: {str(e)}")
             return False
@@ -108,6 +126,35 @@ class RasterManager(QObject):
 
         except Exception as e:
             print(f"Error adding video raster {video_path}: {str(e)}")
+            return False
+
+    def add_ortho_raster(self, ortho_path: str, emit_signal: bool = True) -> bool:
+        """
+        Add an OrthoRaster to the manager.
+
+        Args:
+            ortho_path (str): Path to the orthomosaic file
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if ortho_path in self.rasters:
+            return True
+
+        try:
+            # Import here to avoid circular imports
+            from coralnet_toolbox.Rasters.OrthoRaster import OrthoRaster
+            raster = OrthoRaster(ortho_path)
+
+            self.rasters[ortho_path] = raster
+            self.image_paths.append(ortho_path)
+
+            if emit_signal:
+                self.rasterAdded.emit(ortho_path)
+            return True
+
+        except Exception as e:
+            print(f"Error adding ortho raster {ortho_path}: {str(e)}")
             return False
     
     def remove_raster(self, image_path: str) -> bool:
@@ -219,10 +266,40 @@ class RasterManager(QObject):
         Returns:
             QPixmap or None: Thumbnail as a QPixmap, or None if error
         """
-        if image_path not in self.rasters:
+        # Handle virtual video frame paths like 'video.mp4::frame_42'
+        if isinstance(image_path, str) and '::frame_' in image_path:
+            video_path, frame_part = image_path.rsplit('::frame_', 1)
+            try:
+                frame_idx = int(frame_part)
+            except Exception:
+                return None
+
+            raster = self.rasters.get(video_path)
+            if raster is None:
+                return None
+
+            # If raster supports direct frame access (VideoRaster), use it
+            if hasattr(raster, 'get_frame'):
+                try:
+                    qimg = raster.get_frame(frame_idx)
+                    if qimg is None:
+                        return None
+                    pix = QPixmap.fromImage(qimg)
+                    if longest_edge is not None:
+                        pix = pix.scaled(longest_edge, longest_edge,
+                                         Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    return pix
+                except Exception:
+                    return None
+
+            # Fallback to frame-0 pixmap
+            return raster.get_pixmap(longest_edge=longest_edge)
+
+        # Regular (non-virtual) image/video path
+        raster = self.rasters.get(image_path)
+        if raster is None:
             return None
-            
-        return self.rasters[image_path].get_pixmap(longest_edge=longest_edge)
+        return raster.get_pixmap(longest_edge=longest_edge)
     
     def clear(self):
         """Clear all rasters from the manager."""

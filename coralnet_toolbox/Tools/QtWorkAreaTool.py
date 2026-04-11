@@ -73,30 +73,31 @@ class WorkAreaTool(Tool):
         
     def clear_work_area_graphics(self):
         """Remove all work area graphics from the scene without clearing the data in the raster."""
-        # Create a copy to safely iterate
+        # Try to centralize cleanup using WorkArea.remove_from_scene(); fall back
+        # to best-effort manual removal if something goes wrong.
         for work_area in self.work_areas:
-            # Deanimate to unregister from animation manager
-            work_area.deanimate()
-            # Then handle the main graphics item and its children
-            if work_area.graphics_item and work_area.graphics_item.scene():
+            try:
+                work_area.remove_from_scene()
+            except Exception as e:
+                # Fallback: attempt to de-register and remove items manually
                 try:
-                    # Remove from scene but keep the object
-                    self.annotation_window.scene.removeItem(work_area.graphics_item)
-                except RuntimeError as e:
-                    print(f"Error removing graphics item: {e}")
-            
-            # Remove tag if it exists
-            if work_area.tag_item and work_area.tag_item.scene():
+                    work_area.deanimate()
+                except Exception:
+                    pass
                 try:
-                    self.annotation_window.scene.removeItem(work_area.tag_item)
-                except RuntimeError as e:
-                    print(f"Error removing tag item: {e}")
-                
-            # Always clear references, even if scene removal fails
-            work_area.graphics_item = None
-            work_area.remove_button = None
-            work_area.tag_item = None
-        
+                    if work_area.graphics_item and work_area.graphics_item.scene():
+                        self.annotation_window.scene.removeItem(work_area.graphics_item)
+                except Exception as e2:
+                    print(f"Error removing graphics item: {e2}")
+                try:
+                    if work_area.tag_item and work_area.tag_item.scene():
+                        self.annotation_window.scene.removeItem(work_area.tag_item)
+                except Exception as e3:
+                    print(f"Error removing tag item: {e3}")
+                work_area.graphics_item = None
+                work_area.remove_button = None
+                work_area.tag_item = None
+
         # Clear our internal list since we removed the graphics items
         # This doesn't remove them from the raster
         self.work_areas = []
@@ -673,19 +674,23 @@ class WorkAreaTool(Tool):
         
         # Remove each work area's graphics item from the scene
         for work_area in work_areas_copy:
-            # Remove the tag item if it exists
-            if work_area.tag_item and work_area.tag_item.scene():
-                self.annotation_window.scene.removeItem(work_area.tag_item)
-                work_area.tag_item = None
-            
-            # If the graphics item exists and is in the scene, it will automatically
-            # remove all its children (including the remove_button) when removed
-            if work_area.graphics_item and work_area.graphics_item.scene():
-                self.annotation_window.scene.removeItem(work_area.graphics_item)
+            try:
+                work_area.remove_from_scene()
+            except Exception:
+                # Best-effort fallback
+                try:
+                    if work_area.tag_item and work_area.tag_item.scene():
+                        self.annotation_window.scene.removeItem(work_area.tag_item)
+                except Exception:
+                    pass
+                try:
+                    if work_area.graphics_item and work_area.graphics_item.scene():
+                        self.annotation_window.scene.removeItem(work_area.graphics_item)
+                except Exception:
+                    pass
                 work_area.graphics_item = None
-                # We don't need to explicitly remove the button as it was a child item
-                # Just make sure we clear our reference to it
                 work_area.remove_button = None
+                work_area.tag_item = None
                 
         # Also clear all work areas from the raster data
         if raster:

@@ -227,13 +227,6 @@ class DeployGeneratorDialog(QDialog):
         annotation that has BOTH the selected label AND a valid type (Polygon or Rectangle).
         This uses the fast, pre-computed cache for performance.
         """
-        # Persist the user's current highlights from the table model before filtering.
-        # This ensures that if the user highlights items and then changes the filter,
-        # their selection is not lost.
-        current_highlights = self.image_selection_window.table_model.get_highlighted_paths()
-        if current_highlights:
-            self.reference_image_paths = current_highlights
-
         reference_label = self.reference_label_combo_box.currentData()
         reference_label_text = self.reference_label_combo_box.currentText()
 
@@ -314,11 +307,12 @@ class DeployGeneratorDialog(QDialog):
         # Check for a valid VPE source using the now-stashed list.
         has_reference_images = bool(self.reference_image_paths)
         has_imported_vpes = bool(self.imported_vpes)
+        has_reference_vpes = bool(self.reference_vpes)
 
-        if not has_reference_images and not has_imported_vpes:
+        if not has_reference_images and not has_imported_vpes and not has_reference_vpes:
             QMessageBox.warning(self, 
                                 "No VPE Source Provided", 
-                                "You must highlight at least one reference image or load a VPE file to proceed.")
+                                "You must highlight at least one reference image, load a VPE file, or generate VPEs to proceed.")
             return
 
         # If validation passes, close the dialog.
@@ -550,20 +544,8 @@ class DeployGeneratorDialog(QDialog):
         self.reference_label_combo_box.currentIndexChanged.connect(self.filter_images_by_label_and_type)
         layout.addRow("Reference Label:", self.reference_label_combo_box)
         
-        # Create a Reference model combobox (VPE, Images)
-        self.reference_method_combo_box = QComboBox()
-        self.reference_method_combo_box.addItems(["VPE", "Images"])
-        layout.addRow("Reference Method:", self.reference_method_combo_box)
-
-        # Add a spinbox for the user to define the number of prototypes (K)
-        self.k_prototypes_spinbox = QSpinBox()
-        self.k_prototypes_spinbox.setRange(0, 1000)
-        self.k_prototypes_spinbox.setValue(0)
-        self.k_prototypes_spinbox.setToolTip(
-            "Set the number of prototype clusters (K) to generate from references.\n"
-            "Set to 0 to treat every unique reference image/VPE as its own prototype (K=N)."
-        )
-        layout.addRow("Number of Prototypes (K):", self.k_prototypes_spinbox)
+        # Reference method is fixed to VPE only (Images pathway removed)
+        # K-prototype UI removed; K is hardcoded to 0 (use all VPEs)
 
         group_box.setLayout(layout)
         self.right_panel.addWidget(group_box)
@@ -941,113 +923,90 @@ class DeployGeneratorDialog(QDialog):
         if self.vpe is not None and isinstance(self.vpe, torch.Tensor):
             # Directly set the final tensor as the prompt for the predictor
             self.loaded_model.is_fused = lambda: False
+            # Ensure underlying model.names is a dict mapping index->name
+            mdl = getattr(self.loaded_model, 'model', None)
+            if mdl is not None:
+                names_attr_inner = getattr(mdl, 'names', None)
+                if isinstance(names_attr_inner, list):
+                    try:
+                        mdl.names = {i: n for i, n in enumerate(names_attr_inner)}
+                    except Exception:
+                        pass
             self.loaded_model.set_classes(["object0"], self.vpe)
+            # Ensure `loaded_model.names` is a dict mapping index->name
+            names_attr = getattr(self.loaded_model, 'names', None)
+            if isinstance(names_attr, list):
+                try:
+                    self.loaded_model.names = {i: n for i, n in enumerate(names_attr)}
+                except Exception:
+                    pass
             
-    def predict(self, image_paths=None, progress_bar=None):
-        """
-        Make predictions on the given image paths using the loaded model.
-        Processes tiles in mini-batches for speed, but post-processes
-        one-by-one to provide UI feedback.
+    def predict(self, image_paths=None):
+        """Run SeeAnything (YOLOE) inference on one or more images.
+
+        Manages its own progress bar and always bakes results at the end.
+        SAM is applied per tile-batch inline (required for YOLOE prompt context).
 
         Args:
-            image_paths: List of image paths to process. If None, uses the current image.
+            image_paths: List of image paths to process.  If None, processes
+                         the currently displayed image.
         """
         if not self.loaded_model or not self.reference_label:
             QMessageBox.warning(self, "Setup Error", "Model must be loaded and Reference Label selected.")
             return
 
         if not image_paths:
-            # Predict only the current image
             if self.annotation_window.current_image_path is None:
                 QMessageBox.warning(self, "Warning", "No image is currently loaded for annotation.")
                 return
             image_paths = [self.annotation_window.current_image_path]
 
-        # --- Define a batch size for prediction ---
-        BATCH_SIZE = 16  # Adjust based on VRAM
+        BATCH_SIZE = 16
 
-        # Update class mapping with the selected reference label.
-        # This is used by the ResultsProcessor.
         self.class_mapping = {0: self.reference_label}
+        results_processor = ResultsProcessor(self.main_window, self.class_mapping)
 
-        # Create a results processor
-        results_processor = ResultsProcessor(
-            self.main_window,
-            self.class_mapping
-        )
-
-        # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
+        progress_bar = ProgressBar(self.annotation_window, title="Running Inference")
+        progress_bar.show()
 
-        # Track if we created the progress bar ourselves
-        progress_bar_created_here = progress_bar is None
-        
+        cache = {}  # image_path → [Results, …]
+
         try:
-            # --- We process one image at a time ---
             for img_idx, image_path in enumerate(image_paths):
-                
-                # --- 1. SETUP MODEL FOR THIS IMAGE ---
-                # This must be done *once per image*, before batching tiles.
-                # This loads VPEs, clusters, and calls model.set_classes()
-                
-                # Update the model with user parameters
-                self.task = self.use_task_dropdown.currentText()
-                self.loaded_model.conf = self.thresholds_widget.get_uncertainty_thresh()
-                self.loaded_model.iou = self.thresholds_widget.get_iou_thresh()
-                self.loaded_model.max_det = self.thresholds_widget.get_max_detections()
-                
-                # Get the reference information
-                references_dict = self._get_references()
-                
-                setup_success = False
-                if self.reference_method_combo_box.currentText() == "VPE":
-                    setup_success = self._setup_model_with_vpes()
-                else:  
-                    if not references_dict:
-                        QMessageBox.warning(self,
-                                            "No References", 
-                                            "Reference Images method selected, "
-                                            "but no valid reference images were found.")
-                        continue  # Skip this image
-                    setup_success = self._setup_model_with_images(references_dict)
-
-                if not setup_success:
-                    print(f"Failed to set up model for {image_path}. Skipping.")
-                    continue  # Skip this image
                 
                 # --- 2. Get Raster and Work Items ---
                 raster = self.image_window.raster_manager.get_raster(image_path)
                 if raster is None:
-                    print(f"Warning: Could not get raster for {image_path}. Skipping.")
+                    print(f"SeeAnything.predict: no raster for {image_path}, skipping.")
                     continue
-                
-                # Get the list of items to process
-                is_full_image = self.annotation_window.get_selected_tool() != "work_area"
-                
-                if is_full_image:
-                    work_items_data = [raster.image_path]  # List with one string
-                    work_areas = [None]  # Dummy list to make loops match
-                else:
+
+                # Only VPE pathway is supported now; set up model before any inference
+                self.task = self.use_task_dropdown.currentText()
+                if not self._setup_model_with_vpes():
+                    print(f"SeeAnything.predict: model setup failed for {image_path}, skipping.")
+                    continue
+
+                use_tiles = (
+                    raster.has_work_areas()
+                    and self.annotation_window.get_selected_tool() == "work_area"
+                )
+                if use_tiles:
                     work_areas = raster.get_work_areas()
                     work_items_data = raster.get_work_areas_data()
+                else:
+                    work_areas = [None]
+                    work_items_data = [raster.image_path]
 
-                if not work_items_data or not work_areas:
-                    print(f"Warning: No work items found for {image_path}. Skipping.")
+                if not work_items_data:
+                    print(f"SeeAnything.predict: no work items for {image_path}, skipping.")
                     continue
-                    
-                if len(work_items_data) != len(work_areas):
-                    print(f"Error: Mismatch in work items. Data: {len(work_items_data)}, Areas: {len(work_areas)}")
-                    continue
-                
-                # --- 3. Setup Progress Bar ---
-                title = f"Predicting: {img_idx + 1}/{len(image_paths)} - {os.path.basename(image_path)}"
-                if progress_bar is None:
-                    progress_bar = ProgressBar(self.annotation_window)
-                    progress_bar.show()
-                progress_bar.set_title(title)
-                progress_bar.start_progress(len(work_items_data))  # Total is number of tiles
 
-                # --- 4. Process Tiles and Collect Results ---
+                progress_bar.set_title(
+                    f"Image {img_idx + 1}/{len(image_paths)}: {os.path.basename(image_path)}"
+                )
+                progress_bar.start_progress(len(work_items_data))
+
                 results_for_this_image = []
                 is_segmentation = self.task == 'segment' or self.use_sam_dropdown.currentText() == "True"
                 
@@ -1058,6 +1017,11 @@ class DeployGeneratorDialog(QDialog):
                         # Get the mini-batch chunks
                         data_chunk = work_items_data[i: i + BATCH_SIZE]
                         area_chunk = work_areas[i: i + BATCH_SIZE]
+
+                        # Highlight all tiles in this batch before inference
+                        for wa in area_chunk:
+                            if wa is not None:
+                                wa.highlight()
                         
                         # --- 4a. Apply Model (Batched) ---
                         # Returns a flat list: [res1, res2, ...]
@@ -1070,15 +1034,14 @@ class DeployGeneratorDialog(QDialog):
                         # Safety check
                         if len(sam_results_list) != len(area_chunk):
                             print("Warning: Mismatch in batch results. Skipping batch.")
-                            for _ in area_chunk: 
+                            for wa in area_chunk:
+                                if wa is not None:
+                                    wa.unhighlight()
                                 progress_bar.update_progress()
                             continue
                             
-                        # --- 4c. Post-process (Streaming w/ Highlight) ---
+                        # --- 4c. Post-process ---
                         for results_obj, work_area in zip(sam_results_list, area_chunk):
-                            
-                            if work_area:
-                                work_area.highlight()
 
                             if not results_obj:  # Handle potential empty result
                                 if work_area:
@@ -1087,7 +1050,7 @@ class DeployGeneratorDialog(QDialog):
                                 continue
 
                             results_obj.path = image_path
-                            
+                            # results_obj.names is a dict:  {0: 'object0', 1: 'object1', 2: 'object2', 3: 'object3', ...}
                             # --- 4d. Map Result ---
                             if work_area:
                                 mapped_result = MapResults().map_results_from_work_area(
@@ -1112,34 +1075,130 @@ class DeployGeneratorDialog(QDialog):
                     print(f"An error occurred during prediction on {image_path}: {e}")
                     import traceback
                     traceback.print_exc()
-                finally:
-                    if progress_bar_created_here:
-                        progress_bar.finish_progress()
-                        progress_bar.stop_progress()
-                        progress_bar.close()
-                
+
                 # --- 5. Process All Results for This Image at Once ---
                 if results_for_this_image:
-                    # This single call now handles remapping and adding to UI
-                    self._process_results(results_processor, results_for_this_image, image_path)
+                    # Remap multi-prototype class IDs → 0 before rendering
+                    target_label_name = self.reference_label.short_label_code
+                    for r in results_for_this_image:
+                        if r is not None and r.boxes is not None and len(r.boxes) > 0:
+                            new_data = r.boxes.data.clone()
+                            new_data[:, 5] = 0
+                            r.boxes = type(r.boxes)(new_data, r.boxes.orig_shape)
+                            r.names = {0: target_label_name}
+
+                    cache[image_path] = results_for_this_image
+
+                    if image_path == self.annotation_window.current_image_path:
+                        try:
+                            self._fast_render_image(
+                                image_path, raster, results_for_this_image, results_processor)
+                        except Exception as e:
+                            print(f"SeeAnything.predict: fast render failed: {e}")
 
         except Exception as e:
             print(f"A fatal error occurred during the prediction workflow: {e}")
         finally:
-            if progress_bar_created_here and progress_bar is not None:
-                progress_bar.finish_progress()
-                progress_bar.stop_progress()
-                progress_bar.close()
+            if cache:
+                is_segmentation = self.task == 'segment' or self.use_sam_dropdown.currentText() == "True"
+                self.annotation_window.is_streaming_inference = True
+                progress_bar.set_title("Saving Annotations...")
+                progress_bar.start_progress(len(cache))
+
+                for path, results_list in cache.items():
+                    try:
+                        self._process_results(results_processor, results_list, path)
+                    except Exception as e:
+                        print(f"Error baking results for {path}: {e}")
+                    progress_bar.update_progress()
+                    QApplication.processEvents()
+
+                self.annotation_window.is_streaming_inference = False
+
+                try:
+                    self.annotation_window.refresh_phantom_annotations()
+                except Exception:
+                    pass
+                try:
+                    self.main_window.label_window.update_annotation_count()
+                    for path in cache:
+                        self.image_window.update_image_annotations(path, update_counts=False)
+                except Exception:
+                    pass
+
+            progress_bar.close()
             QApplication.restoreOverrideCursor()
             gc.collect()
             empty_cache()
+
+    def _fast_render_image(self, image_path, raster, results_for_image, results_processor):
+        """Push a ghost-render of new predictions to the OpenGL canvas without baking."""
+        from coralnet_toolbox.utilities import rasterio_to_qimage
+        aw = self.annotation_window
+
+        try:
+            q_img = rasterio_to_qimage(raster.rasterio_src)
+        except Exception:
+            q_img = None
+
+        if getattr(aw, '_base_image_item', None) is not None:
+            if q_img is not None:
+                try:
+                    aw.current_image_path = image_path
+                    aw._base_image_item.set_image(q_img)
+                    aw.fit_to_image()
+                except Exception:
+                    pass
+
+        fast_paths = []
+        for res in results_for_image:
+            try:
+                fast_paths.extend(results_processor.generate_fast_render_paths(res, self.task))
+            except Exception:
+                pass
+        try:
+            for ann in aw.get_image_annotations(image_path):
+                if getattr(ann.label, 'is_visible', True) and not hasattr(ann, 'mask_data'):
+                    try:
+                        fast_paths.append((ann.get_painter_path(), ann.label.color, ann.transparency))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        if getattr(aw, '_base_image_item', None) is not None:
+            try:
+                aw._base_image_item.set_readonly_annotations(fast_paths)
+                QApplication.processEvents()
+            except Exception:
+                pass
+
+
 
     def _get_inputs(self, image_path):
         """Get the inputs for the model prediction."""
         raster = self.image_window.raster_manager.get_raster(image_path)
         if self.annotation_window.get_selected_tool() != "work_area":
-            # Use the image path
-            work_areas_data = [raster.image_path]
+            # Use the image path. If this is a virtual video-frame path,
+            # fetch the raw BGR frame and return it so the model receives
+            # an ndarray instead of a non-filesystem path string.
+            if isinstance(image_path, str) and '::frame_' in image_path:
+                try:
+                    from coralnet_toolbox.Rasters.VideoRaster import VideoRaster
+                    _, frame_idx = VideoRaster.parse_frame_path(image_path)
+                    if frame_idx is not None and hasattr(raster, 'get_bgr_frame'):
+                        bgr = raster.get_bgr_frame(int(frame_idx))
+                        if bgr is not None:
+                            work_areas_data = [bgr]
+                        else:
+                            work_areas_data = [raster.image_path]
+                    else:
+                        work_areas_data = [raster.image_path]
+                except Exception:
+                    work_areas_data = [raster.image_path]
+            else:
+                # Use the image path
+                work_areas_data = [raster.image_path]
         else:
             # Get the work areas
             work_areas_data = raster.get_work_areas_data()
@@ -1179,65 +1238,7 @@ class DeployGeneratorDialog(QDialog):
 
         return reference_annotations_dict
 
-    def _setup_model_with_images(self, reference_dict):
-        """
-        Sets up the model using reference images.
-        Generates VPEs, clusters them into K prototypes, and configures the model.
-        
-        Args:
-            reference_dict (dict): Dictionary containing reference annotations.
-            
-        Returns:
-            bool: True on success, False on failure.
-        """
-        # 1. Reload model and generate initial VPEs
-        self.reload_model()
-        initial_vpes = self.references_to_vpe(reference_dict, update_reference_vpes=False)
-
-        if not initial_vpes:
-            QMessageBox.warning(self, 
-                                "VPE Generation Failed", 
-                                "Could not generate VPEs from the selected reference images.")
-            return False
-
-        # 2. Generate K prototypes from the N generated VPEs
-        k = self.k_prototypes_spinbox.value()
-        num_available_vpes = len(initial_vpes)
-        prototype_vpes = []
-
-        if k == 0 or k >= num_available_vpes:
-            prototype_vpes = initial_vpes
-        else:
-            try:
-                all_vpes_tensor = torch.cat([vpe.squeeze(1) for vpe in initial_vpes], dim=0)
-                vpes_np = all_vpes_tensor.cpu().numpy()
-
-                from sklearn.cluster import KMeans
-                kmeans = KMeans(n_clusters=k, random_state=0, n_init='auto').fit(vpes_np)
-                centroids_np = kmeans.cluster_centers_
-
-                centroids_tensor = torch.from_numpy(centroids_np).to(self.device)
-                for i in range(k):
-                    centroid = centroids_tensor[i].unsqueeze(0).unsqueeze(0)
-                    normalized_centroid = torch.nn.functional.normalize(centroid, p=2, dim=-1)
-                    prototype_vpes.append(normalized_centroid)
-            except Exception as e:
-                QMessageBox.critical(self, "Clustering Error", f"Failed to perform K-Means clustering: {e}")
-                return False
-
-        # 3. Configure the model with the K prototypes
-        if not prototype_vpes:
-            QMessageBox.warning(self, "Prototype Error", "Could not generate any prototypes for prediction.")
-            return False
-
-        num_prototypes = len(prototype_vpes)
-        proto_class_names = [f"object{i}" for i in range(num_prototypes)]
-        stacked_vpes = torch.cat(prototype_vpes, dim=1)  # Shape: (1, K, E)
-
-        self.loaded_model.is_fused = lambda: False
-        self.loaded_model.set_classes(proto_class_names, stacked_vpes)
-        
-        return True
+    # Legacy image-based setup removed — use `_setup_model_with_vpes` instead.
     
     def generate_vpes_from_references(self):
         """
@@ -1287,93 +1288,64 @@ class DeployGeneratorDialog(QDialog):
             QApplication.restoreOverrideCursor()
             progress_bar.stop_progress()
             progress_bar.close()
-    
     def references_to_vpe(self, reference_dict, update_reference_vpes=True):
         """
         Converts the contents of a reference dictionary to VPEs (Visual Prompt Embeddings).
-        (This function is unchanged)
+
+        Returns a list of normalized VPE tensors or None if none could be produced.
         """
-        # Check if the reference dictionary is empty
         if not reference_dict:
             return None
-            
-        # Create a list to hold the individual VPE tensors
+
         vpe_list = []
-
         for ref_path, ref_annotations in reference_dict.items():
-            # Set the prompts to the model predictor
-            self.loaded_model.predictor.set_prompts(ref_annotations)
+            try:
+                # Set the prompts on the predictor and retrieve the VPE for this reference
+                self.loaded_model.predictor.set_prompts(ref_annotations)
+                vpe = self.loaded_model.predictor.get_vpe(ref_path)
+                vpe_normalized = torch.nn.functional.normalize(vpe, p=2, dim=-1)
+                vpe_list.append(vpe_normalized)
+            except Exception as e:
+                # Skip references that fail but continue processing others
+                print(f"Warning: could not generate VPE for {ref_path}: {e}")
+                continue
 
-            # Get the VPE from the model
-            vpe = self.loaded_model.predictor.get_vpe(ref_path)
-            
-            # Normalize individual VPE
-            vpe_normalized = torch.nn.functional.normalize(vpe, p=2, dim=-1)
-            vpe_list.append(vpe_normalized)
-
-        # Check if we have any valid VPEs
         if not vpe_list:
             return None
-        
-        # Update the reference_vpes list if requested
+
         if update_reference_vpes:
             self.reference_vpes = vpe_list
-            
+
         return vpe_list
 
     def _setup_model_with_vpes(self):
         """
-        Sets up the model using VPEs.
-        Supports clustering N VPEs into K prototypes and configures the model.
-        
-        Returns:
-            bool: True on success, False on failure.
+        Sets up the model using available VPEs. K is hardcoded to 0 so we use
+        all available VPEs as prototypes.
+
+        Returns True on success, False on failure.
         """
-        # 1. Reload the model
+        # Ensure model is loaded fresh
         self.reload_model()
-        
-        # 2. Gather all available VPEs
+
         combined_vpes = []
-        if self.imported_vpes:
+        if getattr(self, 'imported_vpes', None):
             combined_vpes.extend(self.imported_vpes)
-        if self.reference_vpes:
+        if getattr(self, 'reference_vpes', None):
             combined_vpes.extend(self.reference_vpes)
-        
+
         if not combined_vpes:
             QMessageBox.warning(self, "No VPEs Available", "No VPEs are available for prediction.")
             return False
-        
-        # 3. Generate K prototypes from the N available VPEs
-        k = self.k_prototypes_spinbox.value()
-        num_available_vpes = len(combined_vpes)
-        prototype_vpes = []
 
-        if k == 0 or k >= num_available_vpes:
-            prototype_vpes = combined_vpes
-        else:
-            try:
-                all_vpes_tensor = torch.cat([vpe.squeeze(1) for vpe in combined_vpes], dim=0)
-                vpes_np = all_vpes_tensor.cpu().numpy()
+        # Use all available VPEs as prototypes (K=0)
+        prototype_vpes = combined_vpes
 
-                from sklearn.cluster import KMeans
-                kmeans = KMeans(n_clusters=k, random_state=0, n_init='auto').fit(vpes_np)
-                centroids_np = kmeans.cluster_centers_
-
-                centroids_tensor = torch.from_numpy(centroids_np).to(self.device)
-                for i in range(k):
-                    centroid = centroids_tensor[i].unsqueeze(0).unsqueeze(0)
-                    normalized_centroid = torch.nn.functional.normalize(centroid, p=2, dim=-1)
-                    prototype_vpes.append(normalized_centroid)
-            except Exception as e:
-                QMessageBox.critical(self, "Clustering Error", f"Failed to perform K-Means clustering: {e}")
-                return False
-
-        # 4. Configure the model with the K prototypes
         if not prototype_vpes:
             QMessageBox.warning(self, "Prototype Error", "Could not generate any prototypes for prediction.")
             return False
 
-        # For backward compatibility
+        # For backward compatibility: set averaged VPE tensor
         averaged_prototype = torch.cat(prototype_vpes).mean(dim=0, keepdim=True)
         self.vpe = torch.nn.functional.normalize(averaged_prototype, p=2, dim=-1)
 
@@ -1381,9 +1353,25 @@ class DeployGeneratorDialog(QDialog):
         proto_class_names = [f"object{i}" for i in range(num_prototypes)]
         stacked_vpes = torch.cat(prototype_vpes, dim=1)
 
-        self.loaded_model.is_fused = lambda: False 
+        self.loaded_model.is_fused = lambda: False
+        # Ensure underlying model.names is a dict mapping index->name
+        mdl = getattr(self.loaded_model, 'model', None)
+        if mdl is not None:
+            names_attr_inner = getattr(mdl, 'names', None)
+            if isinstance(names_attr_inner, list):
+                try:
+                    mdl.names = {i: n for i, n in enumerate(names_attr_inner)}
+                except Exception:
+                    pass
         self.loaded_model.set_classes(proto_class_names, stacked_vpes)
-        
+        # Ensure `loaded_model.names` is a dict mapping index->name
+        names_attr = getattr(self.loaded_model, 'names', None)
+        if isinstance(names_attr, list):
+            try:
+                self.loaded_model.names = {i: n for i, n in enumerate(names_attr)}
+            except Exception:
+                pass
+
         return True
 
     def _apply_model(self, inputs):
@@ -1447,123 +1435,52 @@ class DeployGeneratorDialog(QDialog):
 
     def _process_results(self, results_processor, results_list, image_path):
         """
-        Process the results, merging K proto-class detections into a single target class.
-        This no longer runs a progress bar or does mapping.
+        Bake a list of already-remapped results into Annotation objects.
+        Class remapping (objectN → 0 + target label name) is done earlier,
+        before caching, so results here are already clean single-class results.
         """
-        updated_results = []
-        target_label_name = self.reference_label.short_label_code
+        valid_results = [r for r in results_list if r is not None]
 
-        for results in results_list:
-            if results and results.boxes is not None and len(results.boxes) > 0:
-                # Clone the data tensor and set all classes to 0
-                new_data = results.boxes.data.clone()
-                new_data[:, 5] = 0   # The 6th column (index 5) is the class
-
-                # Create a new Boxes object
-                new_boxes = type(results.boxes)(new_data, results.boxes.orig_shape)
-                results.boxes = new_boxes
-
-                # Update 'names' dictionary to map our single class ID (0)
-                # to the final target label name chosen by the user.
-                results.names = {0: target_label_name}
-                
-                # Append the modified result object
-                updated_results.append(results)
-
-        # Process the Results in one batch
         if self.task == 'segment' or self.use_sam_dropdown.currentText() == "True":
-            results_processor.process_segmentation_results(updated_results)
+            results_processor.process_segmentation_results(valid_results)
         else:
-            results_processor.process_detection_results(updated_results)
+            results_processor.process_detection_results(valid_results)
         
     def show_vpe(self):
         """
         Show a visualization of the stored VPEs and their K-prototypes.
         """
         try:
-            # 1. Gather all raw VPEs from imports and references
+            # Gather all raw VPEs from imports and references
             vpes_with_source = []
-            if self.imported_vpes:
+            if getattr(self, 'imported_vpes', None):
                 for vpe in self.imported_vpes:
                     vpes_with_source.append((vpe, "Import"))
-            if self.reference_vpes:
+            if getattr(self, 'reference_vpes', None):
                 for vpe in self.reference_vpes:
                     vpes_with_source.append((vpe, "Reference"))
 
             if not vpes_with_source:
-                QMessageBox.warning(
-                    self,
-                    "No VPEs Available",
-                    "No VPEs available to visualize. Please load or generate VPEs first."
-                )
+                QMessageBox.warning(self, "No VPEs Available", "No VPEs available to visualize. Please load or generate VPEs first.")
                 return
 
-            raw_vpes = [vpe for vpe, source in vpes_with_source]
-            num_raw = len(raw_vpes)
-            
-            # 2. Get K and determine if we need to cluster
-            k = self.k_prototypes_spinbox.value()
-            prototypes = []  # This will be the centroids if clustering is performed
-            final_vpe = None
+            raw_vpes = [vpe for vpe, _ in vpes_with_source]
+
+            # Use all raw VPEs as prototypes (K=0)
+            prototypes = raw_vpes
+            final_vpe = torch.cat(prototypes).mean(dim=0, keepdim=True)
+            final_vpe = torch.nn.functional.normalize(final_vpe, p=2, dim=-1)
             clustering_performed = False
+            k = 0
 
-            # Case 1: We want to cluster (1 <= k < num_raw)
-            if 1 <= k < num_raw:
-                try:
-                    # Prepare tensor for scikit-learn: shape (N, E)
-                    all_vpes_tensor = torch.cat([vpe.squeeze(1) for vpe in raw_vpes], dim=0)
-                    vpes_np = all_vpes_tensor.cpu().numpy()
-
-                    from sklearn.cluster import KMeans
-                    kmeans = KMeans(n_clusters=k, random_state=0, n_init='auto').fit(vpes_np)
-                    centroids_np = kmeans.cluster_centers_
-
-                    centroids_tensor = torch.from_numpy(centroids_np).to(self.device)
-                    for i in range(k):
-                        centroid = centroids_tensor[i].unsqueeze(0).unsqueeze(0)
-                        normalized_centroid = torch.nn.functional.normalize(centroid, p=2, dim=-1)
-                        prototypes.append(normalized_centroid)
-
-                    # The final VPE is the average of the centroids
-                    stacked_prototypes = torch.cat(prototypes, dim=1)  # Shape: (1, k, E)
-                    averaged_prototype = stacked_prototypes.mean(dim=1, keepdim=True)  # Shape: (1, 1, E)
-                    final_vpe = torch.nn.functional.normalize(averaged_prototype, p=2, dim=-1)
-                    clustering_performed = True
-
-                except Exception as e:
-                    QMessageBox.critical(self, 
-                                         "Clustering Error", 
-                                         f"Could not perform clustering for visualization: {e}")
-                    # If clustering fails, fall back to using all raw VPEs
-                    prototypes = []
-                    clustering_performed = False
-
-            # Case 2: k==0 -> use all raw VPEs as prototypes (no clustering)
-            if k == 0 or not clustering_performed:
-                # We are not clustering, so we use all raw VPEs as prototypes
-                # For visualization purposes, we'll show the raw VPEs and their average
-                stacked_raw = torch.cat(raw_vpes, dim=1)  # Shape: (1, num_raw, E)
-                averaged_raw = stacked_raw.mean(dim=1, keepdim=True)  # Shape: (1, 1, E)
-                final_vpe = torch.nn.functional.normalize(averaged_raw, p=2, dim=-1)
-                # Don't set prototypes here - we'll show raw VPEs separately in the visualization
-            
-            # Case 3: k >= num_raw -> use all raw VPEs as prototypes (no clustering needed)
-            elif k >= num_raw:
-                # We have more requested prototypes than available VPEs, so we use all VPEs
-                stacked_raw = torch.cat(raw_vpes, dim=1)  # Shape: (1, num_raw, E)
-                averaged_raw = stacked_raw.mean(dim=1, keepdim=True)  # Shape: (1, 1, E)
-                final_vpe = torch.nn.functional.normalize(averaged_raw, p=2, dim=-1)
-                # Don't set prototypes here - we'll show raw VPEs separately in the visualization
-
-            # 3. Create and show the visualization dialog
             QApplication.setOverrideCursor(Qt.WaitCursor)
             dialog = VPEVisualizationDialog(
-                vpes_with_source, 
-                final_vpe, 
-                prototypes=prototypes, 
+                vpes_with_source,
+                final_vpe,
+                prototypes=prototypes,
                 clustering_performed=clustering_performed,
                 k_value=k,
-                parent=self
+                parent=self,
             )
             QApplication.restoreOverrideCursor()
             dialog.exec_()

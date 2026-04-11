@@ -525,23 +525,21 @@ class Base(QDialog):
             annotation = None
             if raw_ann["type"] == "RectangleAnnotation":
                 tl, br = raw_ann["top_left"], raw_ann["bottom_right"]
-                annotation = RectangleAnnotation(QPointF(tl[0], tl[1]), 
-                                                 QPointF(br[0], br[1]), 
-                                                 label.short_label_code, 
-                                                 label.long_label_code, 
-                                                 label.color, 
-                                                 raw_ann["image_path"], 
-                                                 label.id, 
-                                                 self.main_window.get_transparency_value())
+                annotation = RectangleAnnotation(
+                    QPointF(tl[0], tl[1]),
+                    QPointF(br[0], br[1]),
+                    label,
+                    raw_ann["image_path"],
+                    transparency=self.main_window.get_transparency_value(),
+                )
             else: # PolygonAnnotation
                 points = [QPointF(p[0], p[1]) for p in raw_ann["points"]]
-                annotation = PolygonAnnotation(points, 
-                                               label.short_label_code, 
-                                               label.long_label_code,
-                                               label.color, 
-                                               raw_ann["image_path"], 
-                                               label.id, 
-                                               self.main_window.get_transparency_value())
+                annotation = PolygonAnnotation(
+                    points,
+                    label,
+                    raw_ann["image_path"],
+                    transparency=self.main_window.get_transparency_value(),
+                )
             
             if annotation:
                 newly_created_annotations.append(annotation)

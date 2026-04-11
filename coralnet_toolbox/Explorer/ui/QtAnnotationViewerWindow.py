@@ -448,6 +448,8 @@ class AnnotationViewerWindow(QWidget):
         self.list_view.setResizeMode(QListView.Adjust)
         self.list_view.setSelectionMode(QListView.ExtendedSelection)
         self.list_view.setSpacing(5)
+        # Override key press events to support Ctrl+A selection
+        self.list_view.keyPressEvent = self._list_view_key_press_event
         # Set background and rubber-band styling (cyan rubber band)
         self.list_view.setStyleSheet("background-color: #1e1e1e;"
                          "QRubberBand { border: 1px solid rgba(0,255,255,200); background: rgba(0,255,255,40); }")
@@ -1641,8 +1643,9 @@ class AnnotationViewerWindow(QWidget):
         self._resize_timer.start(100)
     
     def eventFilter(self, source, event):
-        """Filter events for list viewport (Ctrl+Wheel zoom)."""
+        """Filter events for list viewport (Ctrl+Wheel zoom and double-click reset)."""
         if hasattr(self, 'list_view') and source is self.list_view.viewport():
+            # Handle Ctrl+Wheel for zooming
             if event.type() == QEvent.Wheel:
                 try:
                     if event.modifiers() & Qt.ControlModifier:
@@ -1671,7 +1674,35 @@ class AnnotationViewerWindow(QWidget):
                         return True
                 except Exception:
                     return True
+                
+            # Handle double-click on empty space to reset view
+            if event.type() == QEvent.MouseButtonDblClick and event.button() == Qt.LeftButton:
+                # Check if double-click was on empty space
+                index = self.list_view.indexAt(event.pos())
+                if not index.isValid():
+                    self.list_view.clearSelection()
+                    self.reset_view_requested.emit()
+                    return True
+                
         return super().eventFilter(source, event)
+
+    def _list_view_key_press_event(self, event):
+        """Handle key press events for the list view."""
+        try:
+            if event.key() == Qt.Key_A and (event.modifiers() & Qt.ControlModifier):
+                # Prevent selecting if we are in the placeholder state
+                if getattr(self, '_filter_applied', False) and self.all_data_items:
+                    try:
+                        self.list_view.selectAll()
+                    except Exception:
+                        pass
+                event.accept()
+                return
+        except Exception:
+            pass
+
+        # Fallback to native behavior
+        QListView.keyPressEvent(self.list_view, event)
 
     def _toggle_group_from_header(self, group_key):
         """Toggle group expansion when sticky header clicked."""

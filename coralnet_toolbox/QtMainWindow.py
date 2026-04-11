@@ -52,7 +52,7 @@ from coralnet_toolbox.WorkArea import WorkAreaManager as WorkAreaManagerDialog
 from coralnet_toolbox.IO import (
     ImportImages,
     ImportFrames,
-    ImportVideo,
+    ImportVideos,
     ImportLabels,
     ImportCoralNetLabels,
     ImportTagLabLabels,
@@ -86,8 +86,6 @@ from coralnet_toolbox.MachineLearning import (
     DeployDetect as DetectDeployModelDialog,
     DeploySegment as SegmentDeployModelDialog,
     DeploySemantic as SemanticDeployModelDialog,
-    VideoDetect as DetectVideoInferenceDialog,
-    VideoSegment as SegmentVideoInferenceDialog,
     ImportDetect as DetectImportDatasetDialog,
     ImportSegment as SegmentImportDatasetDialog,
     ExportClassify as ClassifyExportDatasetDialog,
@@ -285,7 +283,7 @@ class MainWindow(QMainWindow):
         self.export_geojson_annotations_dialog = ExportGeoJSONAnnotations(self)
         self.export_spatial_metrics_dialog = ExportSpatialMetrics(self)
         self.import_frames_dialog = ImportFrames(self)
-        self.import_video = ImportVideo(self)
+        self.import_videos = ImportVideos(self)
         self.open_project_dialog = OpenProject(self)
         self.save_project_dialog = SaveProject(self)
 
@@ -315,8 +313,6 @@ class MainWindow(QMainWindow):
         self.detect_deploy_model_dialog = DetectDeployModelDialog(self)
         self.segment_deploy_model_dialog = SegmentDeployModelDialog(self)
         self.semantic_deploy_model_dialog = SemanticDeployModelDialog(self)
-        self.detect_video_inference_dialog = DetectVideoInferenceDialog(self)
-        self.segment_video_inference_dialog = SegmentVideoInferenceDialog(self)
 
         # Create dialogs (SAM)
         self.sam_deploy_predictor_dialog = SAMDeployPredictorDialog(self)
@@ -330,6 +326,18 @@ class MainWindow(QMainWindow):
         # Create dialogs (Batch Inference - Consolidated)
         # This is accessed via ImageWindow right-click context menu
         self.batch_inference_dialog = BatchInferenceDialog(self)
+
+        # Keep the BatchInferenceDialog updated when image highlights change
+        try:
+            # Connect the table-model highlight change signal to update the dialog's highlighted list
+            self.image_window.table_model.rowsChanged.connect(
+                lambda: self.batch_inference_dialog.update_highlighted_images(
+                    self.image_window.table_model.get_highlighted_paths()
+                )
+            )
+        except Exception:
+            # If connection fails for some reason, continue without breaking startup
+            pass
 
         # Create dialogs (Work Areas)
         self.tile_manager_dialog = WorkAreaManagerDialog(self)
@@ -361,14 +369,18 @@ class MainWindow(QMainWindow):
         self.import_images_action = QAction("Images", self)
         self.import_images_action.triggered.connect(self.import_images.import_images)
         self.import_rasters_menu.addAction(self.import_images_action)
+        # Import Videos
+        self.import_videos_action = QAction("Videos", self)
+        self.import_videos_action.triggered.connect(self.import_videos.import_videos)
+        self.import_rasters_menu.addAction(self.import_videos_action)
         # Import Frames
         self.import_frames_action = QAction("Frames from Video", self)
         self.import_frames_action.triggered.connect(self.open_import_frames_dialog)
         self.import_rasters_menu.addAction(self.import_frames_action)
-        # Import Video
-        self.import_video_action = QAction("Video File", self)
-        self.import_video_action.triggered.connect(self.import_video.import_video)
-        self.import_rasters_menu.addAction(self.import_video_action)
+        # Import Orthomosaics
+        self.import_orthomosaics_action = QAction("Orthomosaics", self)
+        self.import_orthomosaics_action.triggered.connect(self.import_images.import_orthomosaics)
+        self.import_rasters_menu.addAction(self.import_orthomosaics_action)
         
         # Labels submenu
         self.import_labels_menu = self.import_menu.addMenu("Labels")
@@ -488,7 +500,7 @@ class MainWindow(QMainWindow):
         
         # Export Spatial Metrics (at Export menu level, not in Annotations submenu)
         self.export_spatial_metrics_action = QAction("Spatial Metrics", self)
-        self.export_spatial_metrics_action.triggered.connect(self.export_spatial_metrics_dialog.exec_)
+        self.export_spatial_metrics_action.triggered.connect(self.open_export_spatial_metrics_dialog)
         self.export_menu.addAction(self.export_spatial_metrics_action)
         
         # Add a separator
@@ -680,16 +692,7 @@ class MainWindow(QMainWindow):
         # Add a separator
         self.ml_menu.addSeparator()
 
-        # Video Inference submenu
-        self.ml_video_inference_menu = self.ml_menu.addMenu("Video Inference")
-        # Video Inference Detection
-        self.ml_detect_video_inference_action = QAction("Detect", self)
-        self.ml_detect_video_inference_action.triggered.connect(self.open_detect_video_inference_dialog)
-        self.ml_video_inference_menu.addAction(self.ml_detect_video_inference_action)
-        # Video Inference Segmentation
-        self.ml_segment_video_inference_action = QAction("Segment", self)
-        self.ml_segment_video_inference_action.triggered.connect(self.open_segment_video_inference_dialog)
-        self.ml_video_inference_menu.addAction(self.ml_segment_video_inference_action)
+        # TODO Batch Inference submenu (not yet implemented)
 
         # ========== CORALNET MENU ==========
         # CoralNet menu
@@ -1658,7 +1661,15 @@ class MainWindow(QMainWindow):
                 else:
                     event.ignore()
             else:
-                self.import_images.dragEnterEvent(event)
+                # Route video files to the video importer if present
+                video_exts = ('.mp4', '.avi', '.mov', '.mkv', '.webm')
+                if any(fn.endswith(video_exts) for fn in lower_names):
+                    if hasattr(self, 'import_videos') and self.import_videos:
+                        self.import_videos.dragEnterEvent(event)
+                    else:
+                        event.ignore()
+                else:
+                    self.import_images.dragEnterEvent(event)
 
     def dropEvent(self, event):
         """Handle drop event for drag-and-drop."""
@@ -1692,8 +1703,16 @@ class MainWindow(QMainWindow):
                     else:
                         event.ignore()
                 else:
-                    # Handle as image imports
-                    self.import_images.dropEvent(event)
+                    # If any dropped file is a video, route to ImportVideos
+                    video_exts = ('.mp4', '.avi', '.mov', '.mkv', '.webm')
+                    if any(fn.endswith(video_exts) for fn in lower_names):
+                        if hasattr(self, 'import_videos') and self.import_videos:
+                            self.import_videos.dropEvent(event)
+                        else:
+                            event.ignore()
+                    else:
+                        # Handle as image imports
+                        self.import_images.dropEvent(event)
 
     def dragMoveEvent(self, event):
         """Handle drag move event for drag-and-drop."""
@@ -1720,7 +1739,15 @@ class MainWindow(QMainWindow):
                 else:
                     event.ignore()
             else:
-                self.import_images.dragMoveEvent(event)
+                # Route video drags to ImportVideos when applicable
+                video_exts = ('.mp4', '.avi', '.mov', '.mkv', '.webm')
+                if any(fn.endswith(video_exts) for fn in lower_names):
+                    if hasattr(self, 'import_videos') and self.import_videos:
+                        self.import_videos.dragMoveEvent(event)
+                    else:
+                        event.ignore()
+                else:
+                    self.import_images.dragMoveEvent(event)
                 
     def switch_back_to_tool(self):
         """Switches back to the tool used to create the currently selected annotation."""        
@@ -2589,6 +2616,28 @@ class MainWindow(QMainWindow):
                 f"Failed to load layout '{layout_name}'."
             )
 
+    def open_export_spatial_metrics_dialog(self):
+        """Open the Export Spatial Metrics dialog to export spatial metrics."""
+        # Check if there are loaded images
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "Export Spatial Metrics",
+                                "No images are present in the project.")
+            return
+
+        # Check if there are annotations
+        if not len(self.annotation_window.annotations_dict):
+            QMessageBox.warning(self,
+                                "Export Spatial Metrics",
+                                "No annotations are present in the project.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.export_spatial_metrics_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
     def open_import_dataset_dialog(self):
         """Open the Import Dataset dialog to import datasets into the project."""
         try:
@@ -2889,22 +2938,6 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.semantic_deploy_model_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-            
-    def open_detect_video_inference_dialog(self):
-        """Open the Detect Video Inference dialog to run inference on video files."""
-        try:
-            self.untoggle_all_tools()
-            self.detect_video_inference_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-            
-    def open_segment_video_inference_dialog(self):
-        """Open the Segment Video Inference dialog to run inference on video files."""
-        try:
-            self.untoggle_all_tools()
-            self.segment_video_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

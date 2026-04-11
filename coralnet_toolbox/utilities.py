@@ -195,12 +195,21 @@ def rasterio_to_qimage(rasterio_src, longest_edge=None):
                 image = image.astype(float) * (255.0 / image.max())
             image = image.astype(np.uint8)
 
-        # Convert the numpy array to QImage
-        qimage = QImage(image.data.tobytes(),
+        # --- PHASE 1: ZERO-COPY QIMAGE ---
+        # Ensure the array is contiguous in memory
+        image_contiguous = np.ascontiguousarray(image)
+        
+        # Pass the memory pointer (.data) directly instead of .tobytes()
+        qimage = QImage(image_contiguous.data,
                         scaled_width,
                         scaled_height,
                         scaled_width * num_bands,  # bytes per line for Greyscale or RGB
                         qimage_format)
+        
+        # CRITICAL: Prevent Python's garbage collector from destroying the array
+        # while Qt is using it for rendering.
+        qimage.ndarray_reference = image_contiguous
+        # ---------------------------------
 
         return qimage
 
@@ -290,12 +299,20 @@ def rasterio_to_cropped_image(rasterio_src, window):
                 image = image.astype(float) * (255.0 / image.max())
             image = image.astype(np.uint8)
 
-        # Convert the numpy array to QImage
-        qimage = QImage(image.data.tobytes(),
+        # --- PHASE 1: ZERO-COPY QIMAGE ---
+        # Ensure the array is contiguous in memory
+        image_contiguous = np.ascontiguousarray(image)
+
+        # Pass the memory pointer (.data) directly instead of .tobytes()
+        qimage = QImage(image_contiguous.data,
                         int(window.width),
                         int(window.height),
                         int(window.width * num_bands),  # bytes per line
                         qimage_format)
+
+        # CRITICAL: Prevent Python's garbage collector from destroying the array
+        qimage.ndarray_reference = image_contiguous
+        # ---------------------------------
 
         return qimage
 
@@ -681,14 +698,12 @@ def convert_scale_units(value, from_unit, to_unit):
     return value_in_meters * from_meters[to_unit]
 
 
-def load_z_channel_from_file(z_channel_path, target_width=None, target_height=None, z_data_type=None, target_transform=None):
+def load_z_channel_from_file(z_channel_path, target_width=None, target_height=None, z_data_type=None):
     """
     Load a depth map / elevation map from file using rasterio.
-    If a target_transform is provided, spatially warp the DEM to align perfectly with the target grid.
     """
     import os
     import rasterio
-    import cv2
     import numpy as np
     
     try:
@@ -708,42 +723,6 @@ def load_z_channel_from_file(z_channel_path, target_width=None, target_height=No
                 z_data[z_data == z_nodata] = np.nan
             elif z_data_type == 'depth':
                 z_data[z_data == 0] = np.nan
-            
-            if target_width is not None and target_height is not None:
-                # Extract DEM's native spatial transform
-                t = src.transform
-                dem_transform = np.array([
-                    [t.a, t.b, t.c],
-                    [t.d, t.e, t.f],
-                    [0.0, 0.0, 1.0]
-                ])
-
-                # Geographically Aware Alignment (Warping)
-                if target_transform is not None and not t.is_identity:
-                    try:
-                        # Calculate matrix M: DEM Pixel Space -> Target Pixel Space
-                        target_inv = np.linalg.inv(target_transform)
-                        M = target_inv @ dem_transform
-                        M_cv2 = M[:2, :] # OpenCV requires 2x3 matrix
-                        
-                        z_data = cv2.warpAffine(
-                            z_data,
-                            M_cv2,
-                            (target_width, target_height),
-                            flags=cv2.INTER_LINEAR,
-                            borderMode=cv2.BORDER_CONSTANT,
-                            borderValue=np.nan # Pad areas outside the DEM with NaN
-                        )
-                        print(f"🌍 Spatially aligned DEM to target dimensions ({target_width}x{target_height})")
-                    except np.linalg.LinAlgError:
-                        print("Warning: Matrix inversion failed, falling back to blind resize.")
-                        if z_data.shape != (target_height, target_width):
-                            z_data = cv2.resize(z_data, (target_width, target_height), interpolation=cv2.INTER_LINEAR)
-                
-                # Blind Resize (Fallback for non-georeferenced images)
-                elif z_data.shape != (target_height, target_width):
-                    z_data = cv2.resize(z_data, (target_width, target_height), interpolation=cv2.INTER_LINEAR)
-                    print(f"Resampled z-channel from {src.height}x{src.width} to {target_height}x{target_width}")
             
             # Restore the nodata value safely to the newly interpolated pixels
             if z_nodata is not None:

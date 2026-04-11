@@ -90,7 +90,7 @@ class FloatingTagItem(QGraphicsSimpleTextItem):
         self.setBrush(QBrush(text_color))
         
         # Set a crisp, modern font
-        font = QFont("Arial", 5)
+        font = QFont("Arial", 6, QFont.Bold)
         self.setFont(font)
         
         # THE MAGIC FLAG: Keeps the tag readable at any zoom level
@@ -129,17 +129,17 @@ class Annotation(QObject):
     annotationUpdated = pyqtSignal(object)
 
     def __init__(self,
-                 short_label_code: str,
-                 long_label_code: str,
-                 color: QColor,
+                 label: 'Label',
                  image_path: str,
-                 label_id: str,
                  transparency: int = 128,
-                 show_msg: bool = False):
-        """Initialize an annotation object with label and display properties."""
+                 show_confidence: bool = True):
+        """Initialize an annotation object with a shared label reference."""
         super().__init__()
         self.id = str(uuid.uuid4())
-        self.label = Label(short_label_code, long_label_code, color, label_id)
+
+        # ZERO OVERHEAD: Store the reference to the existing master Label widget
+        self.label = label
+
         self.image_path = image_path
         self.is_selected = False
         self.graphics_item = None
@@ -152,33 +152,29 @@ class Annotation(QObject):
         self.cropped_image = None
         self._cached_cropped_image_graphic = None
 
-        self.show_message = show_msg
-    
+        self.show_message = False
+        self.show_confidence = show_confidence
+
         self.center_xy = None
         self.annotation_size = None
-        self.tolerance = 0.1  # Default detail level for simplification/densification
+        self.tolerance = 0.1
         
         self.scale_x: float | None = None
         self.scale_y: float | None = None
         self.scale_units: str | None = None
 
-        # Attributes to store the graphics items for center/centroid and bounding box
         self.center_graphics_item = None
         self.bounding_box_graphics_item = None
-        self.dimension_tag_item = None  # For displaying size/dimensions when selected
+        self.dimension_tag_item = None
 
-        # Group for all graphics items
         self.graphics_item_group = None
         
-        # Animation attributes
         self.animation_manager = None
         self.is_animating = False
         
-        # Modern Animation properties (Marching Ants)
         self._dash_offset = 0.0
-        self._dash_speed = 1.0  # Pixels to move per animation tick
+        self._dash_speed = 1.0  
         
-        # Guard to prevent duplicate QtSignal connections
         self._signals_connected = False
         
     def contains_point(self, point: QPointF) -> bool:
@@ -810,8 +806,18 @@ class Annotation(QObject):
         self.center_graphics_item = None
         self.bounding_box_graphics_item = None
 
-    def create_graphics_item(self, scene: QGraphicsScene):
-        """Create all graphics items for the annotation and add them to the scene as a group."""
+    def create_graphics_item(self, scene: QGraphicsScene, force_hydrate: bool = False):
+        """Create all graphics items for the annotation and add them to the scene as a group.
+
+        The Phantom Gatekeeper: avoid creating heavy Qt objects for sleeping (unselected)
+        annotations unless `force_hydrate` is True. This keeps thousands of annotations
+        as lightweight math-only phantoms while allowing tools to request a real Qt
+        object for smooth cursor previews.
+        """
+        # Abort early for phantoms unless explicitly forced
+        if not self.is_selected and not force_hydrate:
+            return
+
         if self.graphics_item_group and self.graphics_item_group.scene():
             self.graphics_item_group.scene().removeItem(self.graphics_item_group)
             self.center_graphics_item = None
@@ -831,8 +837,9 @@ class Annotation(QObject):
             self.graphics_item.setData(0, self.id)
             self.graphics_item_group.addToGroup(self.graphics_item)
 
-        # ONLY build the expensive UI elements if the item is currently selected!
-        if self.is_selected:
+        # ONLY build the expensive UI elements if the item is currently selected
+        # (or force_hydrate was requested by a tool)
+        if self.is_selected or force_hydrate:
             self._hydrate_ui_elements(scene)
             
         scene.addItem(self.graphics_item_group)
@@ -847,7 +854,7 @@ class Annotation(QObject):
         )
         
         # Add the floating tag
-        tag_text = self.label.short_label_code
+        tag_text = self.get_display_tag_text()
         self.tag_item = FloatingTagItem(tag_text, self.label.color)
         
         # Position it just above the top-left corner
@@ -863,17 +870,32 @@ class Annotation(QObject):
         
         # Remove and destroy center crosshair
         if self.center_graphics_item:
-            self.graphics_item_group.removeFromGroup(self.center_graphics_item)
+            try:
+                self.graphics_item_group.removeFromGroup(self.center_graphics_item)
+                if self.center_graphics_item.scene():
+                    self.center_graphics_item.scene().removeItem(self.center_graphics_item)
+            except RuntimeError:
+                pass
             self.center_graphics_item = None
             
         # Remove and destroy bounding box
         if self.bounding_box_graphics_item:
-            self.graphics_item_group.removeFromGroup(self.bounding_box_graphics_item)
+            try:
+                self.graphics_item_group.removeFromGroup(self.bounding_box_graphics_item)
+                if self.bounding_box_graphics_item.scene():
+                    self.bounding_box_graphics_item.scene().removeItem(self.bounding_box_graphics_item)
+            except RuntimeError:
+                pass
             self.bounding_box_graphics_item = None
             
         # Remove and destroy tag
         if hasattr(self, 'tag_item') and self.tag_item:
-            self.graphics_item_group.removeFromGroup(self.tag_item)
+            try:
+                self.graphics_item_group.removeFromGroup(self.tag_item)
+                if self.tag_item.scene():
+                    self.tag_item.scene().removeItem(self.tag_item)
+            except RuntimeError:
+                pass
             self.tag_item = None
 
     def is_graphics_item_valid(self):
@@ -988,17 +1010,28 @@ class Annotation(QObject):
             return pen
     
     def _update_pen_styles(self):
-        """Update pen styles with current pulse alpha."""
+        """Update the pen styles of all graphics items based on the 
+        current selection and animation state."""
         color = QColor(self.label.color)
         pen = self._create_pen(color)
-        
-        # Update all graphics items with the pen
-        if self.graphics_item:
-            self.graphics_item.setPen(pen)
-        if self.center_graphics_item:
-            self.center_graphics_item.setPen(pen)
-        if self.bounding_box_graphics_item:
-            self.bounding_box_graphics_item.setPen(pen)
+
+        try:
+            if self.graphics_item and self.graphics_item.scene():
+                self.graphics_item.setPen(pen)
+        except RuntimeError:
+            self.graphics_item = None
+
+        try:
+            if self.center_graphics_item and self.center_graphics_item.scene():
+                self.center_graphics_item.setPen(pen)
+        except RuntimeError:
+            self.center_graphics_item = None
+
+        try:
+            if self.bounding_box_graphics_item and self.bounding_box_graphics_item.scene():
+                self.bounding_box_graphics_item.setPen(pen)
+        except RuntimeError:
+            self.bounding_box_graphics_item = None
 
     def create_center_graphics_item(self, center_xy, scene, add_to_group=False):
         """Create a graphical item representing the annotation's center point."""
@@ -1157,6 +1190,30 @@ class Annotation(QObject):
             path.lineTo(center_xy.x(), center_xy.y() + gap + length)
             
             self.center_graphics_item.setPath(path)
+
+    def get_display_confidence(self) -> float:
+        """Return the confidence value that should appear in the on-canvas tag."""
+        if self.verified:
+            return 100.0
+
+        if self.machine_confidence:
+            return float(max(self.machine_confidence.values()) * 100.0)
+
+        if self.user_confidence:
+            return float(max(self.user_confidence.values()) * 100.0)
+
+        return 0.0
+
+    def get_display_tag_text(self) -> str:
+        """Return the class label text shown in the tag, including confidence."""
+        label_text = self.label.short_label_code if self.label else ""
+        if not self.show_confidence:
+            return label_text
+
+        confidence_text = "100%" if self.verified else f"{self.get_display_confidence():.1f}%"
+        if label_text:
+            return f"{label_text} {confidence_text}"
+        return confidence_text
     
     def update_bounding_box_graphics_item(self, top_left, bottom_right):
         """Update the position and appearance of the bounding box graphics item."""
@@ -1245,6 +1302,9 @@ class Annotation(QObject):
         prediction = {k: v for k, v in sorted(prediction.items(), key=lambda item: item[1], reverse=True)}
         # Update machine confidence
         self.machine_confidence = prediction
+        # Ensure confidence is visible on the on-canvas tag when
+        # machine predictions are applied.
+        self.show_confidence = True
 
         if not from_import:
             # Set user confidence to None

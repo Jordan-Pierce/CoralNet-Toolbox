@@ -651,19 +651,18 @@ class SeeAnythingTool(Tool):
             # Create the annotation
             annotation = RectangleAnnotation(top_left,
                                              bottom_right,
-                                             self.annotation_window.selected_label.short_label_code,
-                                             self.annotation_window.selected_label.long_label_code,
-                                             self.annotation_window.selected_label.color,
+                                             self.annotation_window.selected_label,
                                              self.annotation_window.current_image_path,
-                                             self.annotation_window.selected_label.id,
-                                             self.annotation_window.main_window.get_transparency_value())
+                                             transparency=self.annotation_window.main_window.get_transparency_value(),
+                                             show_confidence=False)
 
             # Update the confidence score of annotation
             annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
             # Set the animation manager
             annotation.set_animation_manager(self.animation_manager)
             # Ensure the annotation is added to the scene after creation (but not saved yet)
-            annotation.create_graphics_item(self.annotation_window.scene)
+            # Force hydrate so these tool-generated previews behave like normal Qt objects
+            annotation.create_graphics_item(self.annotation_window.scene, force_hydrate=True)
             # Animate the annotation
             annotation.animate(force=True)
             
@@ -690,19 +689,18 @@ class SeeAnythingTool(Tool):
             points = [QPointF(point[0], point[1]) for point in points]
             # Create the annotation
             annotation = PolygonAnnotation(points,
-                                           self.annotation_window.selected_label.short_label_code,
-                                           self.annotation_window.selected_label.long_label_code,
-                                           self.annotation_window.selected_label.color,
+                                           self.annotation_window.selected_label,
                                            self.annotation_window.current_image_path,
-                                           self.annotation_window.selected_label.id,
-                                           self.annotation_window.main_window.get_transparency_value())
+                                           transparency=self.annotation_window.main_window.get_transparency_value(),
+                                           show_confidence=False)
 
             # Update the confidence score of annotation
             annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
             # Set the animation manager
             annotation.set_animation_manager(self.animation_manager)
             # Ensure the annotation is added to the scene after creation (but not saved yet)
-            annotation.create_graphics_item(self.annotation_window.scene)
+            # Force hydrate so these tool-generated previews behave like normal Qt objects
+            annotation.create_graphics_item(self.annotation_window.scene, force_hydrate=True)
             # Animate the annotation
             annotation.animate(force=True)
             
@@ -718,20 +716,29 @@ class SeeAnythingTool(Tool):
         progress_bar.show()
         progress_bar.start_progress(len(self.annotations))
             
-        for annotation in self.annotations:
+        total = len(self.annotations)
+        for idx, annotation in enumerate(self.annotations):
+            # Allow canceling from the progress dialog
+            if progress_bar.wasCanceled():
+                break
+
             # The add_annotation_from_tool will re-bind it
             # and it will animate normally if selected.
             annotation.deanimate()
-            
+
             # Create cropped image if not already done
             if not annotation.cropped_image and self.annotation_window.rasterio_image:
                 annotation.create_cropped_image(self.annotation_window.rasterio_image)
-            
+
             # Add the annotation using the add_annotation_from_tool method
             self.annotation_window.add_annotation_from_tool(annotation)
 
-            # Update progress bar
-            progress_bar.update_progress()
+            # Update progress bar every ~10% to avoid excessive UI updates
+            if total > 10:
+                if idx % (total // 10) == 0:
+                    progress_bar.update_progress_percentage((idx / total) * 100)
+            else:
+                progress_bar.update_progress_percentage((idx / total) * 100)
             
         # Update the scene to reflect deanimation
         self.annotation_window.scene.update()

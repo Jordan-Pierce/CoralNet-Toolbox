@@ -129,11 +129,8 @@ class ImportCoralNetAnnotations:
                 annotation = PatchAnnotation(
                     QPointF(row['Column'], row['Row']),
                     row.get('Patch Size', annotation_size),
-                    label.short_label_code,
-                    label.long_label_code,
-                    label.color,
+                    label,
                     image_path,
-                    label.id
                 )
                 
                 machine_confidence = self._extract_machine_confidence(row, label_cache)

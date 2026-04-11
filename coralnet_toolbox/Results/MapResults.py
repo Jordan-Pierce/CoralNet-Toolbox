@@ -256,12 +256,15 @@ class MapResults:
                         boundary_filtered_indices.append(i)
                 
                 # Filter mask tensor data to boundary-filtered indices
-                mask_data = results.masks.data
+                # Move mask data to CPU for mapping to avoid allocating large
+                # full-image tensors on the GPU which can cause OOM.
+                mask_data = results.masks.data.cpu()
                 if len(boundary_filtered_indices) == 0:
-                    # empty mask set
-                    filtered_mask_data = torch.zeros((0, orig_h, orig_w), device=device, dtype=mask_data.dtype)
+                    # empty mask set on CPU
+                    filtered_mask_data = torch.zeros((0, orig_h, orig_w), device='cpu', dtype=mask_data.dtype)
                 else:
-                    idx_tensor = torch.tensor(boundary_filtered_indices, dtype=torch.long, device=mask_data.device)
+                    # index tensors on CPU
+                    idx_tensor = torch.tensor(boundary_filtered_indices, dtype=torch.long)
                     filtered_mask_data = mask_data[idx_tensor]
                 
                 # Create a new Masks object using filtered data
@@ -277,12 +280,13 @@ class MapResults:
             # ELSE: This is raster data (from SemanticModel), not polygons.
             # We must create a new full-size tensor and paste the tile into it.
             else:
-                # Get the original tile mask data
-                tile_masks = results.masks.data  # (N, tile_h, tile_w) e.g., (N, 640, 640)
+                # Get the original tile mask data and move to CPU to avoid
+                # allocating full-image tensors on the GPU.
+                tile_masks = results.masks.data.cpu()  # (N, tile_h, tile_w) e.g., (N, 640, 640)
                 n, tile_h, tile_w = tile_masks.shape
 
-                # 1. Create a new, empty, full-size tensor for the mapped masks
-                full_masks = torch.zeros((n, orig_h, orig_w), device=device, dtype=tile_masks.dtype)
+                # 1. Create a new, empty, full-size tensor for the mapped masks on CPU
+                full_masks = torch.zeros((n, orig_h, orig_w), device='cpu', dtype=tile_masks.dtype)
 
                 # 2. Get destination coordinates
                 y_start_dest, x_start_dest = wa_y, wa_x
@@ -307,11 +311,12 @@ class MapResults:
                 # 6. Filter full_masks by kept indices if present, then create the Masks object
                 if kept_indices is not None:
                     if len(kept_indices) == 0:
-                        mapped_masks = Masks(torch.zeros((0, orig_h, orig_w), 
-                                                         device=device, dtype=full_masks.dtype), 
+                        mapped_masks = Masks(torch.zeros((0, orig_h, orig_w),
+                                                         device='cpu', dtype=full_masks.dtype),
                                              orig_shape=(orig_h, orig_w))
                     else:
-                        idx_tensor = torch.tensor(kept_indices, dtype=torch.long, device=full_masks.device)
+                        # index on CPU
+                        idx_tensor = torch.tensor(kept_indices, dtype=torch.long)
                         mapped_masks = Masks(full_masks[idx_tensor], orig_shape=(orig_h, orig_w))
                 else:
                     mapped_masks = Masks(full_masks, orig_shape=(orig_h, orig_w))

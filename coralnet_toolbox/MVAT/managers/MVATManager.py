@@ -90,42 +90,21 @@ class MousePositionBridge(QObject):
         if candidate_id > -1 and primary_target is not None:
             coord = primary_target.get_element_coordinate(candidate_id)
             if coord is not None:
-                if getattr(camera, 'is_orthographic', False):
-                    if getattr(camera, 'chunk_transform_inv', None) is not None:
-                        world_up_hom = np.array([0.0, 0.0, 1.0, 0.0])
-                        local_up = (camera.chunk_transform_inv @ world_up_hom)[:3]
-                        n = np.linalg.norm(local_up)
-                        local_up = local_up / n if n > 1e-12 else np.array([0.0, 0.0, 1.0])
-                    else:
-                        local_up = np.array([0.0, 0.0, 1.0])
-                    origin    = coord + local_up * 1000.0
-                    direction = -local_up
+                # ---> Perspective logic <---
+                origin = camera.position.copy()
+                direction = coord - origin
+                norm = np.linalg.norm(direction)
+                direction = direction / norm if norm > 0 else camera.R.T @ np.array([0, 0, 1])
                 
-                    ray = CameraRay(
-                        origin=origin,
-                        direction=direction,
-                        terminal_point=coord,
-                        has_accurate_depth=True,
-                        pixel_coord=(x, y),
-                        source_camera=camera,
-                        element_id=candidate_id,
-                    )
-                else:
-                    # ---> Perspective logic <---
-                    origin = camera.position.copy()
-                    direction = coord - origin
-                    norm = np.linalg.norm(direction)
-                    direction = direction / norm if norm > 0 else camera.R.T @ np.array([0, 0, 1])
-                    
-                    ray = CameraRay(
-                        origin=origin,
-                        direction=direction,
-                        terminal_point=coord,
-                        has_accurate_depth=True,
-                        pixel_coord=(x, y),
-                        source_camera=camera,
-                        element_id=candidate_id
-                    )
+                ray = CameraRay(
+                    origin=origin,
+                    direction=direction,
+                    terminal_point=coord,
+                    has_accurate_depth=True,
+                    pixel_coord=(x, y),
+                    source_camera=camera,
+                    element_id=candidate_id
+                )
 
         # --- Path B: Z-channel / depth fallback ---
         if ray is None:
@@ -172,15 +151,6 @@ class MousePositionBridge(QObject):
 
         for target_cam in highlighted_cameras:
             if target_cam.image_path == camera.image_path:
-                continue
-
-            # Orthographic secondary cameras: skip index-map occlusion check
-            if target_cam.is_orthographic:
-                target_ray = CameraRay.from_world_point_and_camera(
-                    world_point=ray.terminal_point, camera=target_cam)
-                rays_with_colors.append((target_ray, RAY_COLOR_HIGHLIGHTED))
-                visibility_status[target_cam.image_path] = False
-                accuracies[target_cam.image_path] = True
                 continue
 
             # Project primary terminal point into this camera
@@ -430,26 +400,14 @@ class MVATManager(QObject):
             self.main_window.status_bar.showMessage("Loading cameras...", 0)
 
             valid_count = 0
-            ortho_count = 0
             
             for path in all_paths:
                 raster = self.raster_manager.get_raster(path)
                 if not raster:
                     continue
                 
-                # CREATE ORTHOGRAPHIC CAMERA
-                if raster.is_orthomosaic:
-                    try:
-                        from coralnet_toolbox.MVAT.core.Camera import OrthographicCamera
-                        self.cameras[path] = OrthographicCamera(raster)
-                        ortho_count += 1
-                        valid_count += 1
-                    except Exception as e:
-                        print(f"❌ Failed to load orthomosaic {raster.basename}: {e}")
-                        continue
-                
                 # CREATE PERSPECTIVE CAMERA
-                elif raster.intrinsics is not None and raster.extrinsics is not None:
+                if raster.intrinsics is not None and raster.extrinsics is not None:
                     try:
                         self.cameras[path] = Camera(raster)
                         valid_count += 1
@@ -465,8 +423,7 @@ class MVATManager(QObject):
                 pass
             
             self.main_window.status_bar.showMessage(
-                f"Loaded cameras: {valid_count} total ({ortho_count} orthomosaics, "
-                f"{valid_count - ortho_count} perspective)",
+                f"Loaded {valid_count} cameras",
                 3000
             )
             
@@ -486,9 +443,9 @@ class MVATManager(QObject):
             uncached_cameras = []
             
             for path, cam in self.cameras.items():
-                cache_key = cam.transform_matrix if cam.is_orthographic else cam._raster.extrinsics
+                cache_key = cam._raster.extrinsics
                 extra = (cam._raster.dist_coeffs.tobytes()
-                         if not cam.is_orthographic and cam.is_distorted
+                         if cam.is_distorted
                          and cam._raster.dist_coeffs is not None else None)
                 cache_path = self.cache_manager.get_cache_path(cache_key, target_path, element_type, extra)
                 
@@ -538,11 +495,11 @@ class MVATManager(QObject):
                         self._compute_visibility_async(primary_target, uncached_cameras)
         
         # FILTER: Only pass perspective cameras to grid UI
-        perspective_cameras = {p: c for p, c in self.cameras.items() if not c.is_orthographic}    
+        perspective_cameras = self.cameras    
 
         if self.context_matrix is not None:
             try:
-                self.context_matrix.update_stats(len(perspective_cameras), ortho_count)
+                self.context_matrix.update_stats(len(perspective_cameras), 0)
             except Exception:
                 pass
             try:
@@ -551,8 +508,7 @@ class MVATManager(QObject):
             except Exception:
                 pass
         
-        # Generate and load 3D elevation for any orthomosaics with DEMs
-        self._populate_ortho_elevation()
+        # Generate and load 3D elevation
         self._render_frustums()  
         self.viewer.fit_to_view()
         
@@ -560,10 +516,7 @@ class MVATManager(QObject):
         current_image_path = getattr(self.annotation_window, 'current_image_path', None)
         if current_image_path and current_image_path in self.cameras:
             self.selection_model.set_active(current_image_path)
-        elif perspective_cameras:
-            self.selection_model.set_active(next(iter(perspective_cameras)))
         elif self.cameras:
-            # Only orthomosaics loaded - activate the first one
             self.selection_model.set_active(next(iter(self.cameras)))
 
     def _render_frustums(self):
@@ -589,15 +542,6 @@ class MVATManager(QObject):
             highlighted_paths=highlighted,
             hovered_camera=self.hovered_camera
         )
-        
-    def _populate_ortho_elevation(self):
-        """
-        Previously populated the 3D scene with elevation meshes generated
-        from orthomosaic DEMs. DEM-as-mesh support has been removed, so
-        this is now a no-op to preserve call sites.
-        """
-        # No-op: elevation meshes are no longer generated or added to the scene.
-        return
 
     # --- Signal Handlers ---
 
@@ -728,10 +672,10 @@ class MVATManager(QObject):
             # 2. Fallback for sync paths (like VTK) that run on the main thread
             if cache_path is None and self.cache_manager is not None and target_file_path:
                 try:
-                    # Use transform_matrix for orthomosaic, extrinsics for perspective
-                    cache_key = camera.transform_matrix if camera.is_orthographic else camera._raster.extrinsics
+                    # Use extrinsics for perspective
+                    cache_key = camera._raster.extrinsics
                     extra = (camera._raster.dist_coeffs.tobytes()
-                             if not camera.is_orthographic and camera.is_distorted
+                             if camera.is_distorted
                              and camera._raster.dist_coeffs is not None else None)
                     cache_path = self.cache_manager.save_visibility(
                         cache_key,
@@ -777,16 +721,9 @@ class MVATManager(QObject):
         instructs the viewer to match the selected camera perspective (when
         supported), reorders the grid to prioritize nearby cameras, and asks
         the image window to load the selected image.
-        
-        ENFORCES: Clean map view for orthomosaics by clearing all highlights.
         """
         camera = self.cameras.get(path)
         if camera:
-            # ENFORCE: Clear all highlights when entering orthomosaic view
-            if camera.is_orthographic:
-                print(f"📍 Entering orthomosaic view: {camera.label}")
-                self.selection_model.clear_selections(keep_active=True, emit=True)
-            
             self.viewer.clear_ray()
             self._select_camera(path, camera)
             if hasattr(self.viewer, 'match_camera_perspective'):
@@ -998,10 +935,10 @@ class MVATManager(QObject):
             loaded_from_cache = False
             if self.cache_manager is not None and target_file_path:
                 self.main_window.status_bar.showMessage(f"Checking cache for {camera.label}...", 1000)
-                # Use transform_matrix for orthomosaics, extrinsics for perspective
-                cache_key = camera.transform_matrix if camera.is_orthographic else camera._raster.extrinsics
+                # Use extrinsics for perspective
+                cache_key = camera._raster.extrinsics
                 extra = (camera._raster.dist_coeffs.tobytes()
-                         if not camera.is_orthographic and camera.is_distorted
+                         if camera.is_distorted
                          and camera._raster.dist_coeffs is not None else None)
                 cached_data = self.cache_manager.load_visibility(cache_key, target_file_path, element_type, extra)
                 
@@ -1065,10 +1002,6 @@ class MVATManager(QObject):
             
             results = {}
             for i, camera in enumerate(cameras):
-                if camera.is_orthographic:
-                    # Skip orthographic cameras for now (use fallback)
-                    continue
-                
                 try:
                     # Use K_linear so the 3D engine renders a linear (undistorted) map
                     K_for_render = camera.K_linear
@@ -1115,18 +1048,13 @@ class MVATManager(QObject):
         dist_coeffs_bytes_dict = {}
 
         for cam in cameras:
-            if cam.is_orthographic:
-                # Include chunk_transform_inv if available (for local->world bridge in visibility computation)
-                camera_params_dict[cam.image_path] = ('ortho', cam.transform_matrix_inv, cam.width, cam.height, cam.chunk_transform_inv)
-                cache_keys_dict[cam.image_path] = cam.transform_matrix
-            else:
-                # Use K_linear so the 3D rendering engine operates in linear (undistorted) space
-                camera_params_dict[cam.image_path] = (cam.K_linear, cam.R, cam.t, cam.width, cam.height)
-                cache_keys_dict[cam.image_path] = cam._raster.extrinsics
-                # Register a warp callable for cameras whose source image has lens distortion
-                if cam.is_distorted and cam._raster.intrinsics_undistorted is not None:
-                    warp_callables_dict[cam.image_path] = cam._raster.warp_linear_map_to_distorted
-                    dist_coeffs_bytes_dict[cam.image_path] = cam._raster.dist_coeffs.tobytes()
+            # Use K_linear so the 3D rendering engine operates in linear (undistorted) space
+            camera_params_dict[cam.image_path] = (cam.K_linear, cam.R, cam.t, cam.width, cam.height)
+            cache_keys_dict[cam.image_path] = cam._raster.extrinsics
+            # Register a warp callable for cameras whose source image has lens distortion
+            if cam.is_distorted and cam._raster.intrinsics_undistorted is not None:
+                warp_callables_dict[cam.image_path] = cam._raster.warp_linear_map_to_distorted
+                dist_coeffs_bytes_dict[cam.image_path] = cam._raster.dist_coeffs.tobytes()
 
         try:
             self._is_computing_visibility = True
@@ -1360,10 +1288,6 @@ class MVATManager(QObject):
         """Reorder cameras based on proximity to reference camera."""
         reference_camera = self.cameras.get(reference_path)
         if not reference_camera: 
-            return
-        
-        # Skip reordering for orthomosaics (no meaningful view direction)
-        if reference_camera.is_orthographic:
             return
         
         camera_scores = []
@@ -1703,21 +1627,10 @@ class MVATManager(QObject):
                     if candidate_id > -1:
                         coord = primary_target.get_element_coordinate(candidate_id)
                         if coord is not None:
-                            if getattr(camera, 'is_orthographic', False):
-                                if getattr(camera, 'chunk_transform_inv', None) is not None:
-                                    world_up_hom = np.array([0.0, 0.0, 1.0, 0.0])
-                                    local_up = (camera.chunk_transform_inv @ world_up_hom)[:3]
-                                    n = np.linalg.norm(local_up)
-                                    local_up = local_up / n if n > 1e-12 else np.array([0.0, 0.0, 1.0])
-                                else:
-                                    local_up = np.array([0.0, 0.0, 1.0])
-                                origin    = coord + local_up * 1000.0
-                                direction = -local_up
-                            else:
-                                origin = camera.position.copy()
-                                direction = coord - origin
-                                norm = np.linalg.norm(direction)
-                                direction = direction / norm if norm > 0 else camera.R.T @ np.array([0, 0, 1])
+                            origin = camera.position.copy()
+                            direction = coord - origin
+                            norm = np.linalg.norm(direction)
+                            direction = direction / norm if norm > 0 else camera.R.T @ np.array([0, 0, 1])
 
                             ray = CameraRay(
                                 origin=origin,
@@ -1833,11 +1746,8 @@ class MVATManager(QObject):
                         new_annotation = PatchAnnotation(
                             center_xy=QPointF(u_centroid, v_centroid),
                             annotation_size=annotation.annotation_size,
-                            short_label_code=annotation.label.short_label_code,
-                            long_label_code=annotation.label.long_label_code,
-                            color=annotation.label.color,
+                            label=annotation.label,
                             image_path=target_path,
-                            label_id=annotation.label.id,
                             transparency=annotation.transparency,
                         )
                         try:
@@ -1860,11 +1770,8 @@ class MVATManager(QObject):
                         new_annotation = PatchAnnotation(
                             center_xy=QPointF(u, v),
                             annotation_size=annotation.annotation_size,
-                            short_label_code=annotation.label.short_label_code,
-                            long_label_code=annotation.label.long_label_code,
-                            color=annotation.label.color,
+                            label=annotation.label,
                             image_path=target_path,
-                            label_id=annotation.label.id,
                             transparency=annotation.transparency,
                         )
                         try:
@@ -1909,12 +1816,6 @@ class MVATManager(QObject):
             np.ndarray[int32]: Unique face IDs that were hit, or empty array on
             failure, missing Open3D, or orthographic source camera.
         """
-        # Orthographic cameras use an affine projection model without K / R —
-        # pinhole ray casting is not applicable; let the caller fall back to
-        # the index_map path instead.
-        if getattr(source_camera, 'is_orthographic', False):
-            return np.array([], dtype=np.int32)
-
         try:
             import open3d as o3d
         except ImportError:
@@ -2114,7 +2015,7 @@ class MVATManager(QObject):
         # ------------------------------------------------------------------
         painted_ids = None
         _p1_target = self.viewer.scene_context.get_primary_target()
-        if isinstance(_p1_target, MeshProduct) and not getattr(self.selected_camera, 'is_orthographic', False) and False: # now fast
+        if isinstance(_p1_target, MeshProduct) and False: # now fast
             try:
                 # Dense ray casting: cast through every True pixel in the brush mask
                 # to intersect the full triangle surface area rather than relying on
@@ -2278,7 +2179,7 @@ class MVATManager(QObject):
         # ------------------------------------------------------------------
         painted_ids = None
         _p1_target = self.viewer.scene_context.get_primary_target()
-        if fill_mask is not None and isinstance(_p1_target, MeshProduct) and not getattr(self.selected_camera, 'is_orthographic', False) and False:
+        if fill_mask is not None and isinstance(_p1_target, MeshProduct) and False:
             # Dense ray casting: fill_mask is full image-sized, so pass center coords
             # that produce a zero offset (x0=0, y0=0) aligning the mask to image space.
             mask_h_fill, mask_w_fill = fill_mask.shape
@@ -2468,7 +2369,7 @@ class MVATManager(QObject):
         # ------------------------------------------------------------------
         painted_ids = None
         _p1_target = self.viewer.scene_context.get_primary_target()
-        if isinstance(_p1_target, MeshProduct) and not getattr(self.selected_camera, 'is_orthographic', False) and False:
+        if isinstance(_p1_target, MeshProduct) and False:
             # Dense ray casting: cast through every True pixel in the eraser mask
             # to intersect the full triangle surface area, matching the brush approach.
             painted_ids = self._dense_mesh_hit_test(
@@ -2605,7 +2506,7 @@ class MVATManager(QObject):
         # ------------------------------------------------------------------
         painted_ids = None
         _p1_target = self.viewer.scene_context.get_primary_target()
-        if isinstance(_p1_target, MeshProduct) and not getattr(self.selected_camera, 'is_orthographic', False) and False:
+        if isinstance(_p1_target, MeshProduct) and False:
             # Dense ray casting: cast through every True pixel in the SAM binary_mask
             # to intersect the full triangle surface area rather than relying on
             # the downsampled index_map (which only captures face centres at reduced

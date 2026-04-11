@@ -651,6 +651,17 @@ class ImageWindow(QWidget):
         # Finally, update the count label after any changes.
         self.update_highlighted_count_label()
 
+        # If BatchInferenceDialog is open, push updated highlighted paths so
+        # it can adjust video-related controls dynamically.
+        try:
+            if hasattr(self.main_window, 'batch_inference_dialog') and \
+               self.main_window.batch_inference_dialog and \
+               self.main_window.batch_inference_dialog.isVisible():
+                highlighted = self.table_model.get_highlighted_paths()
+                self.main_window.batch_inference_dialog.update_highlighted_images(highlighted)
+        except Exception:
+            # Swallow any errors coming from cross-widget signaling
+            pass
     def on_table_double_clicked(self, index):
         """Handle double click on table view (selects image and loads it)."""
         if not index.isValid():
@@ -1279,8 +1290,27 @@ class ImageWindow(QWidget):
         
         # Update the batch inference dialog with the highlighted images
         batch_dialog.highlighted_images = highlighted_image_paths
-        # Show the dialog
-        batch_dialog.exec_()
+        # Show the dialog modelessly so users can change highlighted rows while it is open
+        try:
+            batch_dialog.setModal(False)
+            batch_dialog.setWindowModality(Qt.NonModal)
+            # Ensure the dialog stays on top of the main window while modeless
+            batch_dialog.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+        except Exception:
+            pass
+
+        # Refresh the dialog display to reflect the initial highlighted selection
+        try:
+            if hasattr(batch_dialog, 'inference_type_combo') and batch_dialog.inference_type_combo.currentText() == 'Tiled':
+                batch_dialog.update_status_label_for_tiled()
+            else:
+                batch_dialog.update_status_label()
+        except Exception:
+            pass
+
+        batch_dialog.show()
+        batch_dialog.raise_()
+        batch_dialog.activateWindow()
 
     def _open_import_cameras_for_highlighted(self, highlighted_paths: list):
         """
@@ -1460,7 +1490,7 @@ class ImageWindow(QWidget):
         reply = QMessageBox.question(
             self,
             "Confirm Z-Channel Removal",
-            f"Are you sure you want to remove the z-channel from {count} image{plural}?",
+            f"Are you sure you want to remove the z-channel from {count} raster{plural}?",
             QMessageBox.Yes | QMessageBox.No
         )
         
@@ -1512,7 +1542,7 @@ class ImageWindow(QWidget):
         reply = QMessageBox.question(
             self,
             "Confirm Camera Parameter Removal",
-            f"Are you sure you want to remove cameras from {count} image{plural}?",
+            f"Are you sure you want to remove cameras from {count} raster{plural}?",
             QMessageBox.Yes | QMessageBox.No
         )
 
@@ -1581,10 +1611,11 @@ class ImageWindow(QWidget):
             return
             
         # Confirm deletion
+        plural = 's' if len(highlighted_paths) > 1 else ''
         reply = QMessageBox.question(
             self,
             "Confirm Multiple Image Deletions",
-            f"Are you sure you want to delete {len(highlighted_paths)} images?\n"
+            f"Are you sure you want to delete {len(highlighted_paths)} raster{plural}?\n"
             "This will delete all associated annotations.",
             QMessageBox.Yes | QMessageBox.No
         )
@@ -1609,10 +1640,11 @@ class ImageWindow(QWidget):
             return
             
         # Confirm deletion
+        plural = 's' if len(highlighted_paths) > 1 else ''
         reply = QMessageBox.question(
             self,
             "Confirm Multiple Annotation Deletions",
-            f"Are you sure you want to delete annotations for {len(highlighted_paths)} images?",
+            f"Are you sure you want to delete annotations for {len(highlighted_paths)} raster{plural}?",
             QMessageBox.Yes | QMessageBox.No
         )
         

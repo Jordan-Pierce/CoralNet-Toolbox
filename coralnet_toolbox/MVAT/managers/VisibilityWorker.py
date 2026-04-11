@@ -44,8 +44,7 @@ class VisibilityWorker(QObject):
 
     def run(self):
         try:
-            # Separate orthographic and perspective cameras
-            ortho_params = {}
+            # Perspective cameras
             perspective_params = {}
             
             for path, params in self.camera_params_dict.items():
@@ -55,14 +54,7 @@ class VisibilityWorker(QObject):
                     perspective_params[path] = params
                     continue
 
-                if isinstance(first, str) and first == 'ortho':
-                    if len(params) == 5:
-                        _, transform_inv, width, height, chunk_transform_inv = params
-                    else:
-                        _, transform_inv, width, height = params
-                        chunk_transform_inv = None
-                    ortho_params[path] = (transform_inv, width, height, chunk_transform_inv)
-                else:
+                if isinstance(first, np.ndarray) and first.shape == (3, 3):
                     perspective_params[path] = params
             
             results = {}
@@ -145,26 +137,6 @@ class VisibilityWorker(QObject):
                         for p, r in zip(paths, batch_results):
                             r['element_type'] = element_type
                             results[p] = r
-                    
-                    # ORTHOGRAPHIC CAMERAS
-                    if ortho_params:
-                        for path, ortho_param_tuple in ortho_params.items():
-                            if len(ortho_param_tuple) == 4:
-                                transform_inv, width, height, chunk_transform_inv = ortho_param_tuple
-                            else:
-                                transform_inv, width, height = ortho_param_tuple
-                                chunk_transform_inv = None
-                            
-                            result = VisibilityManager.compute_orthographic_visibility(
-                                points_world=points_world,
-                                transform_matrix_inv=transform_inv,
-                                width=width,
-                                height=height,
-                                point_ids=element_ids,
-                                chunk_transform_inv=chunk_transform_inv
-                            )
-                            result['element_type'] = element_type
-                            results[path] = result
 
             # =================================================================
             # 0. Apply distortion warp to maps generated with K_linear

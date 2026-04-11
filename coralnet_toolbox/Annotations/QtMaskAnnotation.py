@@ -58,7 +58,6 @@ class MaskAnnotation(Annotation):
                  mask_data: np.ndarray,
                  initial_labels: list,
                  transparency: int = 128,
-                 show_msg: bool = False,
                  rasterio_src=None):
         """
         Initialize a full-image semantic segmentation annotation.
@@ -68,14 +67,11 @@ class MaskAnnotation(Annotation):
             raise ValueError("initial_labels cannot be empty.")
         placeholder_label = initial_labels[0]
 
+        # Pass the existing Label instance to the base class to avoid creating UI widgets
         super().__init__(
-            short_label_code=placeholder_label.short_label_code,
-            long_label_code=placeholder_label.long_label_code,
-            color=placeholder_label.color,
+            label=placeholder_label,
             image_path=image_path,
-            label_id=placeholder_label.id,
             transparency=transparency,
-            show_msg=show_msg
         )
         
         self.mask_data = mask_data.astype(np.uint8)
@@ -215,8 +211,12 @@ class MaskAnnotation(Annotation):
         height, width = self.mask_data.shape
         return QPointF(width, height)
 
-    def create_graphics_item(self, scene: QGraphicsScene):
-        """Create a QGraphicsPixmapItem to display the mask."""
+    def create_graphics_item(self, scene: QGraphicsScene, force_hydrate: bool = False):
+        """Create a QGraphicsPixmapItem to display the mask.
+
+        Accepts `force_hydrate` for API compatibility; masks are always heavy widgets
+        so the flag is ignored.
+        """
         self.graphics_item = MaskGraphicsItem(self)
         scene.addItem(self.graphics_item)
 
@@ -957,11 +957,8 @@ class MaskAnnotation(Annotation):
                 label = self.class_id_to_label_map[class_id]
                 anno = PolygonAnnotation(
                     points=points,
-                    short_label_code=label.short_label_code,
-                    long_label_code=label.long_label_code,
-                    color=label.color,
+                    label=label,
                     image_path=self.image_path,
-                    label_id=label.id
                 )
                 annotations.append(anno)
         return annotations

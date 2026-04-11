@@ -1,7 +1,7 @@
 import warnings
 import numpy as np
 
-from PyQt5.QtGui import QColor, QPen
+from PyQt5.QtGui import QColor, QPen, QBrush
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtWidgets import QGraphicsEllipseItem, QGraphicsRectItem, QApplication
 
@@ -83,9 +83,34 @@ class EraseTool(BrushTool):
         self._last_shape = self.shape
 
     def _apply_brush(self, event):
-        """Overrides BrushTool to NOT draw a solid scratchpad, since we are erasing."""
+        """Draw a lightweight eraser scratchpad and accumulate points."""
+        # Reuse the brush scratchpad path but style it for erasing so users get instant feedback
         scene_pos = self.annotation_window.mapToScene(event.pos())
-        self._accumulated_points.append(scene_pos)
+        # Let the parent append the point and update the path (if available)
+        try:
+            super()._apply_brush(event)
+        except Exception:
+            # Fallback to manual accumulation if super fails
+            self._accumulated_points.append(scene_pos)
+
+        # If the parent created a scratchpad item, restyle it as an eraser (transparent fill + outline)
+        try:
+            if self.scratchpad_item:
+                self.scratchpad_item.setBrush(QBrush(QColor(0, 0, 0, 0)))
+                pen = QPen(QColor(0, 0, 0, 160), 2)
+                pen.setCosmetic(True)
+                pen.setStyle(Qt.SolidLine)
+                self.scratchpad_item.setPen(pen)
+        except Exception:
+            pass
+
+        # Stream a lightweight live stroke to MVAT (if hooked). Use a semi-transparent red to indicate erasing.
+        if hasattr(self, 'live_stroke_callback') and callable(self.live_stroke_callback):
+            try:
+                eraser_color = QColor(255, 0, 0, 120)
+                self.live_stroke_callback(scene_pos, self.brush_size, self.shape, eraser_color)
+            except Exception:
+                pass
 
     def _on_math_finished(self, flat_indices, center_pos, combined_mask, mask_annotation, selected_label_id):
         """Executes on the Main Thread: Writes 0 (background) and triggers 3D sync."""

@@ -1,4 +1,5 @@
 from PyQt5.QtCore import QPointF
+from PyQt5.QtGui import QColor
 
 import torch
 from ultralytics.utils.nms import TorchNMS
@@ -136,11 +137,9 @@ class ResultsProcessor:
         """
         Processes a *single* Results object from a single work area.
         
-        This function filters the results, runs NMS against existing annotations,
-        and creates a list of new annotation objects to be added.
+        Optimized to eliminate per-item GPU-to-CPU syncs during loop processing.
         """
         annotations_to_add = []
-        new_detections = []
         
         if not results or not results.boxes: 
             return annotations_to_add
@@ -152,95 +151,92 @@ class ResultsProcessor:
         indices_area = set(self.indices_pass_area(results))
         filtered_indices = list(indices_uncertainty.intersection(indices_area))
         
-        for idx in filtered_indices:
-            try:
-                box = results.boxes[idx]
-                xyxy = box.xyxy[0].cpu().numpy()
-                conf = float(box.conf[0].cpu().numpy())
-                cls_id = int(box.cls[0].cpu().numpy())
-                cls_name = results.names[cls_id]
-                
-                bbox_coords = [float(xyxy[0]), float(xyxy[1]), float(xyxy[2]), float(xyxy[3])]
-
-                detection_data = {
-                    'bbox': bbox_coords,
-                    'confidence': conf,
-                    'class_name': cls_name,
-                    'class_id': cls_id,
-                    'is_existing': False,
-                    'polygon_points': None,
-                    'model_type': model_type
-                }
-                
-                if model_type == 'segmentation':
-                    if results.masks and idx < len(results.masks.xy):
-                        xy = results.masks.xy[idx]
-                        points = [(float(x), float(y)) for x, y in xy]
-                        detection_data['polygon_points'] = points
-                        new_detections.append(detection_data)
-                else:  # 'detection'
-                    new_detections.append(detection_data)
-                    
-            except Exception as e:
-                print(f"Warning: Failed to extract result in first pass: {e}")
-        
-        if not new_detections:
+        if not filtered_indices:
             return annotations_to_add
-            
-        # --- 2. Run NMS vs. Existing Annotations (Class-Agnostic) ---
+
+        # --- 2. FAST EXTRACT: Move ALL necessary data to CPU once ---
+        # By doing this here, we avoid calling .cpu() inside the for loop below
+        new_bboxes = results.boxes.xyxy[filtered_indices].cpu()
+        new_scores = results.boxes.conf[filtered_indices].cpu()
+        new_classes = results.boxes.cls[filtered_indices].cpu().numpy().astype(int)
         
+        # Pre-convert to numpy arrays for lightning-fast reading in the loop
+        np_bboxes = new_bboxes.numpy()
+        np_scores = new_scores.numpy()
+        
+        # --- 3. Fast-Extract Existing Annotations ---
         existing_annotations = self.annotation_window.get_image_annotations(image_path)
         existing_annotations = [a for a in existing_annotations if (isinstance(a, RectangleAnnotation) or 
                                                                     isinstance(a, PolygonAnnotation))]
-        existing_detections = self._convert_annotations_to_nms_format(existing_annotations)
         
-        # Combine existing (with 1.0 conf) and new survivors
-        all_detections_combined = existing_detections + new_detections
-        
-        if not all_detections_combined:
-            return annotations_to_add
+        if existing_annotations:
+            ext_boxes = []
+            for ann in existing_annotations:
+                tl = ann.get_bounding_box_top_left()
+                br = ann.get_bounding_box_bottom_right()
+                ext_boxes.append([tl.x(), tl.y(), br.x(), br.y()])
             
-        # Convert to tensors for NMS
-        bboxes = torch.tensor([det['bbox'] for det in all_detections_combined], dtype=torch.float32)
-        scores = torch.tensor([det['confidence'] for det in all_detections_combined], dtype=torch.float32)
-        
+            existing_bboxes = torch.tensor(ext_boxes, dtype=torch.float32)
+            existing_scores = torch.ones(len(ext_boxes), dtype=torch.float32) 
+            
+            all_bboxes = torch.cat([existing_bboxes, new_bboxes])
+            all_scores = torch.cat([existing_scores, new_scores])
+            num_existing = len(existing_bboxes)
+        else:
+            all_bboxes = new_bboxes
+            all_scores = new_scores
+            num_existing = 0
+
+        # --- 4. Run NMS (Class-Agnostic) ---
         try:
-            # Apply NMS using TorchNMS. This is class-agnostic.
-            keep_indices_tensor = TorchNMS.fast_nms(bboxes, scores, self._get_iou_thresh())
-            keep_indices = keep_indices_tensor.tolist()  # Convert tensor to standard list of ints
+            keep_indices_tensor = TorchNMS.fast_nms(all_bboxes, all_scores, self._get_iou_thresh())
+            keep_indices = keep_indices_tensor.tolist()  
         except Exception as e:
             print(f"Warning: Stage 2 NMS (TorchNMS) failed: {e}")
-            keep_indices = list(range(len(all_detections_combined)))
+            keep_indices = list(range(len(all_bboxes)))
             
-        # --- 3. Create Annotations for final survivors ---
+        # --- 5. Unpack Survivors and Create Annotations ---
+        # Cache labels to avoid repeated dictionary lookups
+        label_cache = {}
         
         for idx in keep_indices:
-            # Check if the kept index is a NEW detection
-            original_detection = all_detections_combined[idx]
-            if not original_detection['is_existing']:
+            if idx >= num_existing:
+                # Calculate the relative index in our CPU pre-fetched arrays
+                relative_idx = idx - num_existing
+                original_yolo_idx = filtered_indices[relative_idx]
+                
                 try:
-                    conf = original_detection['confidence']
-                    cls_name = original_detection['class_name']
+                    # Read instantly from our CPU numpy arrays
+                    xyxy = np_bboxes[relative_idx]
+                    conf = float(np_scores[relative_idx])
+                    cls_id = new_classes[relative_idx]
+                    cls_name = results.names[cls_id]
                     
-                    short_label = self.get_mapped_short_label(cls_name, conf)
-                    label = self.label_window.get_label_by_short_code(short_label)
+                    # Use cache for label lookups
+                    cache_key = (cls_name, conf <= self._get_uncertainty_thresh())
+                    if cache_key not in label_cache:
+                        short_label = self.get_mapped_short_label(cls_name, conf)
+                        label_cache[cache_key] = self.label_window.get_label_by_short_code(short_label)
+                    
+                    label = label_cache[cache_key]
                     
                     annotation = None
-                    if original_detection['model_type'] == 'detection':
-                        xmin, ymin, xmax, ymax = original_detection['bbox']
+                    if model_type == 'detection':
+                        xmin, ymin, xmax, ymax = float(xyxy[0]), float(xyxy[1]), float(xyxy[2]), float(xyxy[3])
                         annotation = self.create_rectangle_annotation(xmin, ymin, xmax, ymax, label, image_path)
                     
-                    elif original_detection['model_type'] == 'segmentation' and original_detection['polygon_points']:
-                        # No automatic simplification - preserve full precision
-                        points = original_detection['polygon_points']
-                        annotation = self.create_polygon_annotation(points, label, image_path)
+                    elif model_type == 'segmentation':
+                        if results.masks and original_yolo_idx < len(results.masks.xy):
+                            xy = results.masks.xy[original_yolo_idx]
+                            points = [(float(x), float(y)) for x, y in xy]
+                            annotation = self.create_polygon_annotation(points, label, image_path)
 
                     if annotation:
                         processed_annotation = self._post_process_new_annotation(annotation, cls_name, conf)
                         annotations_to_add.append(processed_annotation)
                 
                 except Exception as e:
-                    print(f"Warning: Failed to create annotation: {e}")
+                    print(f"Warning: Failed to create annotation for survivor: {e}")
         
         return annotations_to_add
 
@@ -260,6 +256,68 @@ class ResultsProcessor:
                 print(f"Warning: Failed to convert annotation {annotation.id} to NMS format: {e}")
         
         return nms_detections
+    
+    def generate_fast_render_paths(self, results, model_type):
+        """
+        Ultra-fast method to generate Qt rendering paths directly from YOLO tensors.
+        Used to draw boxes instantly without freezing the UI.
+        """
+        paths_data = []
+        
+        if not results or not results.boxes:
+            return paths_data
+            
+        try:
+            # Move data to CPU once
+            confidences = results.boxes.conf.cpu().numpy()
+            class_ids = results.boxes.cls.cpu().numpy().astype(int)
+            
+            # Pre-fetch colors to avoid dictionary lookups in the loop
+            color_cache = {}
+            transparency = self.main_window.get_transparency_value()
+            uncertainty_thresh = self._get_uncertainty_thresh()
+            
+            for i in range(len(confidences)):
+                conf = confidences[i]
+                cls_id = class_ids[i]
+                
+                if cls_id not in color_cache:
+                    cls_name = results.names[cls_id]
+                    short_label = self.get_mapped_short_label(cls_name, conf)
+                    label = self.label_window.get_label_by_short_code(short_label)
+                    color_cache[cls_id] = label.color if label else QColor(255, 255, 255)
+                
+                color = color_cache[cls_id]
+                if conf < uncertainty_thresh:
+                    review_label = self.label_window.get_label_by_id('-1')
+                    if review_label:
+                        color = review_label.color
+                
+                from PyQt5.QtGui import QPainterPath
+                from PyQt5.QtCore import QPointF, QRectF
+                from PyQt5.QtGui import QPolygonF
+                path = QPainterPath()
+                
+                if model_type == 'segmentation' and results.masks:
+                    if i < len(results.masks.xy):
+                        xy_coords = results.masks.xy[i]
+                        if len(xy_coords) > 2:
+                            # Extremely fast polygon generation from array
+                            qt_poly = QPolygonF([QPointF(xy_coords[j][0], xy_coords[j][1]) 
+                                               for j in range(len(xy_coords))])
+                            path.addPolygon(qt_poly)
+                            path.closeSubpath()
+                            paths_data.append((path, color, transparency))
+                            
+                elif model_type in ['detection', 'detect', 'segment']:
+                    box = results.boxes.xyxy[i].cpu().numpy()
+                    path.addRect(QRectF(box[0], box[1], box[2] - box[0], box[3] - box[1]))
+                    paths_data.append((path, color, transparency))
+                    
+        except Exception as e:
+            print(f"Warning: Fast path generation failed: {e}")
+            
+        return paths_data
         
     def get_mapped_short_label(self, cls_name, conf):
         """
@@ -288,14 +346,13 @@ class ResultsProcessor:
         try:
             top_left = QPointF(xmin, ymin)
             bottom_right = QPointF(xmax, ymax)
-            annotation = RectangleAnnotation(top_left,
-                                             bottom_right,
-                                             label.short_label_code,
-                                             label.long_label_code,
-                                             label.color,
-                                             image_path,
-                                             label.id,
-                                             self.main_window.get_transparency_value())
+            annotation = RectangleAnnotation(
+                top_left,
+                bottom_right,
+                label,
+                image_path,
+                transparency=self.main_window.get_transparency_value()
+            )
         except Exception:
             annotation = None
 
@@ -312,13 +369,12 @@ class ResultsProcessor:
         """
         try:
             points = [QPointF(x, y) for x, y in points]
-            annotation = PolygonAnnotation(points,
-                                           label.short_label_code,
-                                           label.long_label_code,
-                                           label.color,
-                                           image_path,
-                                           label.id,
-                                           self.main_window.get_transparency_value())
+            annotation = PolygonAnnotation(
+                points,
+                label,
+                image_path,
+                transparency=self.main_window.get_transparency_value()
+            )
         except Exception:
             annotation = None
 
@@ -389,6 +445,17 @@ class ResultsProcessor:
             if progress_bar_created_here and progress_bar:
                 progress_bar.stop_progress()
                 progress_bar.close()
+
+            # Rebuild the phantom (dehydrated annotation) layer so unselected
+            # patch colours update immediately on the current image, regardless
+            # of whether this was called from a single-image or batch path.
+            try:
+                from PyQt5.QtWidgets import QApplication
+                self.annotation_window.refresh_phantom_annotations()
+                self.annotation_window.viewport().update()
+                QApplication.processEvents()
+            except Exception:
+                pass
         
     def _update_and_display_classification(self, annotation, cls_name, conf, predictions):
         """
