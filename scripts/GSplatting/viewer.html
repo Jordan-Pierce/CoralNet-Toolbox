@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { margin: 0; overflow: hidden; background: #111; color: #fff; font-family: monospace; }
+        #overlay {
+            position: fixed; inset: 0;
+            display: flex; align-items: center; justify-content: center;
+            background: #111; font-size: 18px; z-index: 10;
+            transition: opacity 0.4s;
+        }
+        #overlay.hidden { opacity: 0; pointer-events: none; }
+        #hint { position: fixed; top: 8px; left: 8px; font-size: 11px; color: #666; z-index: 20; pointer-events: none; }
+    </style>
+</head>
+<body>
+    <div id="overlay">Loading splat...</div>
+    <div id="hint">Drag: orbit &nbsp;|&nbsp; Right-drag: pan &nbsp;|&nbsp; Scroll: zoom</div>
+
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+
+    <script type="module">
+        // ── Error handler for uncaught promise rejections ────────────────────
+        window.addEventListener('unhandledrejection', event => {
+            console.error("[Spark] Unhandled promise rejection:", event.reason);
+            document.getElementById('overlay').textContent = `Error: ${event.reason}`;
+            event.preventDefault();
+        });
+
+        import * as THREE        from '/three.module.js';
+        import { OrbitControls } from '/OrbitControls.js';
+        import { SplatMesh }     from '/spark.module.js';
+
+        // ── Qt Bridge (optional — only active inside PyQt5 widget) ────────────
+        let bridge;
+        try {
+            new QWebChannel(qt.webChannelTransport, ch => {
+                bridge = ch.objects.sparkBridge;
+                console.log("[Spark] Qt bridge connected");
+            });
+        } catch { /* running in plain browser */ }
+
+        // ── Renderer ──────────────────────────────────────────────────────────
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const scene  = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.001, 10000);
+        camera.position.set(0, 0, 5);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+
+        // ── Fit camera to splat bounding box ──────────────────────────────────
+        const fitCamera = () => {
+            let box = typeof splatMesh.getBoundingBox === 'function'
+                ? splatMesh.getBoundingBox()
+                : null;
+            if (!box || box.isEmpty()) box = new THREE.Box3().setFromObject(splatMesh);
+            if (!box || box.isEmpty()) return;
+            const center = new THREE.Vector3();
+            const size   = new THREE.Vector3();
+            box.getCenter(center);
+            box.getSize(size);
+            const maxDim = Math.max(size.x, size.y, size.z);
+            const dist   = (maxDim / 2) / Math.tan((camera.fov * Math.PI / 180) / 2) * 2;
+            camera.position.set(center.x, center.y + size.y * 0.25, center.z + dist);
+            controls.target.copy(center);
+            controls.update();
+        };
+
+        // ── Load splat ────────────────────────────────────────────────────────
+        // new SplatMesh() takes no args — url goes to asyncInitialize()
+        // update() is handled automatically via Three.js onBeforeRender
+        const splatMesh = new SplatMesh();
+        scene.add(splatMesh);
+
+        (async () => {
+            try {
+                await splatMesh.asyncInitialize({ url: '/model.ply' });
+                fitCamera();
+                document.getElementById('overlay').classList.add('hidden');
+            } catch (err) {
+                document.getElementById('overlay').textContent = `Load error: ${err}`;
+                console.error("[Spark] asyncInitialize failed:", err);
+            }
+        })();
+
+        // ── Render loop ───────────────────────────────────────────────────────
+        renderer.setAnimationLoop(() => {
+            controls.update();
+            renderer.render(scene, camera);
+        });
+
+        // ── Expose to Python ──────────────────────────────────────────────────
+        window.viewer = {
+            resetCamera: () => {
+                fitCamera();
+                if (bridge) bridge.log_from_js("Camera reset");
+            }
+        };
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
