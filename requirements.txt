@@ -1,5 +1,4 @@
 PyQt5>=5.15.11
-pyqtdarktheme
 PyQtADS
 pyqtgraph
 ujson

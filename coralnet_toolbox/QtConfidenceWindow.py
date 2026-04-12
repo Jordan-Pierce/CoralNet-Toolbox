@@ -11,6 +11,7 @@ from coralnet_toolbox.utilities import scale_pixmap
 from coralnet_toolbox.utilities import convert_scale_units
 
 from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox import theme as app_theme
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -300,7 +301,9 @@ class ConfidenceWindow(QWidget):
     def init_graphics_view(self):
         """Initialize the graphics view for displaying the cropped image."""
         self.graphics_view = QGraphicsView(self)
-        self.graphics_view.setStyleSheet("QGraphicsView { border: 2px solid transparent; border-radius: 4px; }")
+        self.graphics_view.setStyleSheet(
+            f"QGraphicsView {{ border: 1px solid {app_theme.SURFACE_BORDER_COLOR.name()}; border-radius: 4px; background-color: {app_theme.BACKGROUND_COLOR.name()}; }}"
+        )
         self.scene = QGraphicsScene(self)
         self.graphics_view.setScene(self.scene)
         self.containerLayout.addWidget(self.graphics_view, 2)  # 2 for stretch factor

@@ -8,6 +8,8 @@ from PyQt5.QtCore import QThread, pyqtSignal
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy,
                              QMenu, QAction)
 
+from coralnet_toolbox import theme as app_theme
+
 warnings.filterwarnings("ignore", category=DeprecationWarning) 
 
 
@@ -90,9 +92,9 @@ class TimerWindow(QWidget):
 
         # Time display (more readable/default styling)
         self.time_label = QLabel("00:00:00")
-        self.time_label.setFont(QFont("Arial", 10, QFont.Bold))
+        self.time_label.setFont(QFont(app_theme.APP_FONT_FAMILY, 10, QFont.Bold))
         self.time_label.setStyleSheet(
-            "color: #333; padding: 6px; background-color: #F0F0F0; border-radius: 4px;"
+            f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; padding: 6px; background-color: {app_theme.SURFACE_COLOR.name()}; border: 1px solid {app_theme.SURFACE_BORDER_COLOR.name()}; border-radius: 4px;"
         )
         self.time_label.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         layout.addWidget(self.time_label)

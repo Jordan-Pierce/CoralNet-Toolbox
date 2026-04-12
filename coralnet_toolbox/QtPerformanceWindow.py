@@ -8,6 +8,8 @@ import pyqtgraph as pg
 from PyQt5.QtWidgets import QWidget, QLabel, QHBoxLayout, QVBoxLayout, QSizePolicy
 from PyQt5.QtCore import QTimer, QThread, pyqtSignal
 
+from coralnet_toolbox import theme as app_theme
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Constants
@@ -196,11 +198,12 @@ class PerformanceWindow(QWidget):
         layout.setSpacing(8)
 
         # --- Styling (light background with bold black text; neon graph colors) ---
-        light_bg_hex = '#F8F9FA'  # rgba(248,249,250)
+        light_bg_hex = app_theme.BACKGROUND_COLOR.name()
         pg.setConfigOption('background', light_bg_hex)
-        pg.setConfigOption('foreground', '#000000')
-        # Set widget background to match theme
-        self.setStyleSheet("background-color: rgba(248,249,250,1); color: #000000;")
+        pg.setConfigOption('foreground', app_theme.TEXT_PRIMARY_COLOR.name())
+        self.setStyleSheet(
+            f"background-color: {app_theme.BACKGROUND_COLOR.name()}; color: {app_theme.TEXT_PRIMARY_COLOR.name()};"
+        )
 
         # --- Compact Header (CPU / Memory / GPU) ---
         header = QWidget()
@@ -218,9 +221,9 @@ class PerformanceWindow(QWidget):
             gpu_info = "No GPU"
 
         info_label_style = (
-            "color: #000000;"
+            f"color: {app_theme.TEXT_PRIMARY_COLOR.name()};"
             "font-size: 10pt;"
-            "font-family: 'Consolas', 'Courier New', monospace;"
+            f"font-family: '{app_theme.APP_FONT_FAMILY}', 'Consolas', 'Courier New', monospace;"
             "font-weight: bold;"
         )
 
@@ -238,9 +241,13 @@ class PerformanceWindow(QWidget):
             v.setContentsMargins(4, 2, 4, 2)
             v.setSpacing(2)
             title = QLabel(name)
-            title.setStyleSheet("font-weight:700; font-size:10pt; color: #000000; font-family: 'Consolas', monospace;")
+            title.setStyleSheet(
+                f"font-weight:700; font-size:10pt; color: {app_theme.TEXT_PRIMARY_COLOR.name()}; font-family: '{app_theme.APP_FONT_FAMILY}', monospace;"
+            )
             val = QLabel(initial_value)
-            val.setStyleSheet("font-weight:800; font-size:12pt; color: #000000; font-family: 'Consolas', monospace;")
+            val.setStyleSheet(
+                f"font-weight:800; font-size:12pt; color: {app_theme.TEXT_PRIMARY_COLOR.name()}; font-family: '{app_theme.APP_FONT_FAMILY}', monospace;"
+            )
 
             # tiny sparkline
             spark = pg.PlotWidget()
@@ -260,9 +267,9 @@ class PerformanceWindow(QWidget):
             return w, val, curve
 
         # Graph colors: CPU=yellow, Memory=cyan, GPU=magenta
-        cpu_color = '#00A8E6' # FFD400'   # yellow
-        mem_color = '#00A8E6' # 00E5FF'   # cyan
-        gpu_color = '#00A8E6' # FF00CC'   # magenta
+        cpu_color = app_theme.ACCENT_COLOR.name()
+        mem_color = '#00A8E6'
+        gpu_color = '#49d17d'
 
         cpu_widget, self.cpu_value_label, self.cpu_curve = make_compact_metric("CPU", "0%", cpu_color)
         mem_widget, self.mem_value_label, self.mem_curve = make_compact_metric("Memory", "0%", mem_color)

@@ -19,6 +19,8 @@ from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPixmapItem,
                              QGraphicsItem, QGraphicsPathItem, QLabel, QApplication,
                              QOpenGLWidget)
 
+from coralnet_toolbox import theme as app_theme
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
@@ -166,9 +168,9 @@ class BaseCanvas(QGraphicsView):
         
         # Set dark background for the annotation workspace
         try:
-            self.scene.setBackgroundBrush(QBrush(QColor('#1e1e1e')))
-            self.setBackgroundBrush(QBrush(QColor('#1e1e1e')))
-            self.viewport().setStyleSheet("background-color: #1e1e1e;")
+            self.scene.setBackgroundBrush(QBrush(app_theme.BACKGROUND_COLOR))
+            self.setBackgroundBrush(QBrush(app_theme.BACKGROUND_COLOR))
+            self.viewport().setStyleSheet(f"background-color: {app_theme.BACKGROUND_COLOR.name()};")
         except Exception:
             pass
         
@@ -223,7 +225,7 @@ class BaseCanvas(QGraphicsView):
         )
         self._placeholder_label.setAlignment(Qt.AlignCenter)
         self._placeholder_label.setStyleSheet(
-            "color: #888888; font-size: 14px; background-color: transparent;"
+            f"color: {app_theme.TEXT_MUTED_COLOR.name()}; font-size: 14px; background-color: transparent;"
         )
         
         # View transformation settings

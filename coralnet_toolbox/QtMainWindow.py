@@ -19,6 +19,8 @@ from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSize
                              QMessageBox, QWidget, QVBoxLayout, QLabel, QHBoxLayout,
                              QSpinBox, QSlider, QDialog, QPushButton, QListWidget)
 
+from coralnet_toolbox import theme as app_theme
+
 # Utilities
 from coralnet_toolbox.QtEventFilter import GlobalEventFilter
 from coralnet_toolbox.QtAnimationManager import AnimationManager
@@ -1057,85 +1059,8 @@ class MainWindow(QMainWindow):
             self.dock_manager.configFlags() & ~ads.CDockManager.DockAreaHasTabsMenuButton
         )
         
-        # Apply custom QSS for vibrant cyan tabs
-        self.dock_manager.setStyleSheet("""
-            /* The flat grey background behind the tabs */
-            ads--CDockAreaTabBar {
-            background-color: #f0f0f0;
-            height: 28px;
-            }
-
-            /* Inactive tabs - subtle grey, pushed down slightly */
-            ads--CDockWidgetTab {
-            background-color: #e8e8e8;
-            border: none;
-            border-right: 1px solid #d0d0d0; /* Subtle separator between inactive tabs */
-            padding: 2px 12px;
-            color: #666666;
-            margin-top: 2px; /* Pushes inactive tabs down so they don't protrude */
-            font-weight: 700;
-            min-width: 100px;
-            max-width: 600px;
-            }
-
-            /* Slight highlight when hovering over inactive tabs */
-            ads--CDockWidgetTab:hover {
-            background-color: #d9d9d9;
-            color: #333333;
-            }
-
-            /* The currently active tab - Vibrant Cyan, protruding up */
-            ads--CDockWidgetTab[activeTab="true"] {
-            background-color: #00A8E6; /* Bright, vibrant cyan */
-            border: none;
-            color: #ffffff; /* Pure white text for maximum contrast */
-            font-weight: 800; /* Bold for prominence */
-            margin-top: 0px; /* Zero margin pulls it flush to the top, making it protrude */
-            padding: 4px 12px;
-            min-width: 100px;
-            max-width: 600px;
-            }
-
-            /* Active tab on hover - slightly darker cyan */
-            ads--CDockWidgetTab[activeTab="true"]:hover {
-            background-color: #0095CC; /* Slightly darker cyan on hover */
-            }
-
-            /* Close button - blend with tab, no button appearance */
-            ads--CDockWidgetTab QAbstractButton {
-            background-color: transparent;
-            border: none;
-            padding: 0px;
-            margin: 0px 4px;
-            width: 14px;
-            height: 14px;
-            }
-
-            ads--CDockWidgetTab[activeTab="true"] QAbstractButton {
-            background-color: transparent;
-            }
-
-            ads--CDockWidgetTab QAbstractButton:hover {
-            background-color: rgba(255, 255, 255, 0.3);
-            border-radius: 2px;
-            }
-
-            ads--CDockWidgetTab[activeTab="true"] QAbstractButton:hover {
-            background-color: rgba(0, 0, 0, 0.2);
-            border-radius: 2px;
-            }
-
-            /* Focus state - keep the same solid block look */
-            ads--CDockWidgetTab:focus {
-            outline: none; /* Kills default Qt dotted line */
-            }
-            
-            /* Dock area background */
-            ads--CDockArea {
-            background-color: #ffffff;
-            border: 1px solid #d0d0d0;
-            }
-        """)
+        # Apply the shared dock tab theme
+        self.dock_manager.setStyleSheet(app_theme.build_dock_stylesheet())
 
         # --------------------------------------------------
         # 2. Create the Docks & Containers

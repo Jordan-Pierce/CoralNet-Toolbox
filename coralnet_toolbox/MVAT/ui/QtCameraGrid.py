@@ -16,6 +16,8 @@ from PyQt5.QtWidgets import (
     QApplication, QToolBar, QMessageBox
 )
 
+from coralnet_toolbox import theme as app_theme
+
 from coralnet_toolbox.MVAT.core.constants import (
     HIGHLIGHT_COLOR,
     SELECT_COLOR,
@@ -541,14 +543,14 @@ class CameraGrid(QWidget):
         
         # --- Initialize Toolbar Widgets (Do not add to layout yet) ---
         self.stats_label = QLabel("Cameras: 0")
-        self.stats_label.setStyleSheet("color: #333;")
+        self.stats_label.setStyleSheet(f"color: {app_theme.TEXT_PRIMARY_COLOR.name()};")
 
         
         self.selected_label = QLabel("None selected")
-        self.selected_label.setStyleSheet("color: #666;")
+        self.selected_label.setStyleSheet(f"color: {app_theme.TEXT_SECONDARY_COLOR.name()};")
         
         self.selection_label = QLabel("0 highlighted")
-        self.selection_label.setStyleSheet("color: #666;")
+        self.selection_label.setStyleSheet(f"color: {app_theme.TEXT_SECONDARY_COLOR.name()};")
 
         # Load Cameras button (disabled by default until MVAT manager is wired)
         self.load_btn = QToolButton()
@@ -565,7 +567,7 @@ class CameraGrid(QWidget):
         # --- Scroll Area ---
         # Content widget inside scroll area
         self.content_widget = QWidget()
-        self.content_widget.setStyleSheet("background-color: #1e1e1e;")
+        self.content_widget.setStyleSheet(f"background-color: {app_theme.BACKGROUND_COLOR.name()};")
         
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
@@ -581,7 +583,9 @@ class CameraGrid(QWidget):
             "No cameras available\nLoad camera lists to populate the grid.", 
             self.content_widget
         )
-        self._placeholder_label.setStyleSheet("color: white; background-color: #1e1e1e; font-size: 14px; padding: 16px;")
+        self._placeholder_label.setStyleSheet(
+            f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; background-color: transparent; font-size: 14px; padding: 16px;"
+        )
         self._placeholder_label.setAlignment(Qt.AlignCenter)
         self._placeholder_label.setWordWrap(True)
         self._show_placeholder()  # Show placeholder initially

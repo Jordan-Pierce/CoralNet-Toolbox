@@ -30,6 +30,7 @@ from coralnet_toolbox.MVAT.core.SceneContext import SceneContext
 from coralnet_toolbox.MVAT.core.SceneProduct import AbstractSceneProduct
 from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED
 from coralnet_toolbox.MVAT.ui.CameraAnimator import CameraAnimator
+from coralnet_toolbox import theme as app_theme
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -156,7 +157,7 @@ class MVATViewer(QFrame):
         self.plotter = QtInteractor(self, point_smoothing=False)
 
         # Optimizations TODO make configurable?
-        self.plotter.set_background('#1e1e1e')
+        self.plotter.set_background(app_theme.BACKGROUND_COLOR.name())
         self.plotter.disable_anti_aliasing()
         self.plotter.disable_eye_dome_lighting()
         self.plotter.disable_shadows()
@@ -213,7 +214,9 @@ class MVATViewer(QFrame):
         self._placeholder_label = QLabel(
             "No 3D data loaded\nDrag a file here to load:\n• Point clouds (.ply, .pcd)\n• Meshes (.obj, .stl)"
         )
-        self._placeholder_label.setStyleSheet("color: white; background-color: #1e1e1e; font-size: 14px; padding: 16px;")
+        self._placeholder_label.setStyleSheet(
+            f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; background-color: transparent; font-size: 14px; padding: 16px;"
+        )
         self._placeholder_label.setAlignment(Qt.AlignCenter)
         self._placeholder_label.setAutoFillBackground(True)
         self._placeholder_label.setWordWrap(True)
@@ -224,7 +227,7 @@ class MVATViewer(QFrame):
 
         # Point size hint (spinbox removed; use Ctrl + mouse wheel)
         hint_label = QLabel("Point Size: Ctrl + Mouse Wheel")
-        hint_label.setStyleSheet("color: white;")
+        hint_label.setStyleSheet(f"color: {app_theme.TEXT_PRIMARY_COLOR.name()};")
         bottom_layout.addStretch(1)
         bottom_layout.addWidget(hint_label)
 

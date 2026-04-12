@@ -1,13 +1,22 @@
 import warnings
+import os
+from functools import lru_cache
 
 from importlib.resources import files
 
 import numpy as np
 
 import pyqtgraph as pg
-from PyQt5.QtCore import Qt, QRectF
+from PyQt5.QtCore import Qt, QRectF, QSize
 from PyQt5.QtGui import QIcon, QImage, QPixmap, QPen, QColor, QPainter, QPainterPath
 from PyQt5.QtWidgets import QStyledItemDelegate, QStyle, QStyleOptionComboBox, QComboBox, QStyleOptionViewItem
+
+from coralnet_toolbox import theme as app_theme
+
+try:
+    from PyQt5.QtSvg import QSvgRenderer
+except ImportError:  # pragma: no cover - optional Qt module fallback
+    QSvgRenderer = None
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -24,20 +33,111 @@ def get_icon_path(icon_name):
     :return:
     """
     icon_dir = files('coralnet_toolbox').joinpath('Icons')
-    return str(icon_dir.joinpath(icon_name))
+    name = str(icon_name).strip()
+    base, ext = os.path.splitext(name)
+
+    if ext.lower() == '.svg':
+        candidates = [name, f'{base}.png']
+    elif ext.lower() == '.png':
+        candidates = [f'{base}.svg', name]
+    else:
+        candidates = [f'{name}.svg', f'{name}.png', name]
+
+    for candidate_name in candidates:
+        candidate = icon_dir.joinpath(candidate_name)
+        if candidate.is_file():
+            return str(candidate)
+
+    return str(icon_dir.joinpath(candidates[0]))
 
 
-def get_icon(icon_name):
+def _normalize_tint(tint=None) -> QColor:
+    if tint is None:
+        return QColor(app_theme.ICON_DEFAULT_COLOR)
+    if isinstance(tint, QColor):
+        return QColor(tint)
+    return QColor(tint)
+
+
+def _render_svg_pixmap(svg_path: str, size: int, tint: QColor) -> QPixmap:
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+
+    if QSvgRenderer is None:
+        return pixmap
+
+    renderer = QSvgRenderer(svg_path)
+    if not renderer.isValid():
+        return pixmap
+
+    painter = QPainter(pixmap)
+    try:
+        renderer.render(painter)
+        painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+        painter.fillRect(pixmap.rect(), tint)
+    finally:
+        painter.end()
+
+    return pixmap
+
+
+def _render_png_pixmap(image_path: str, size: int, tint: QColor) -> QPixmap:
+    image = QImage(image_path)
+    if image.isNull():
+        return QPixmap(image_path)
+
+    scaled = image.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    pixmap = QPixmap.fromImage(scaled)
+    if pixmap.isNull():
+        return QPixmap(image_path)
+
+    painter = QPainter(pixmap)
+    try:
+        painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+        painter.fillRect(pixmap.rect(), tint)
+    finally:
+        painter.end()
+
+    return pixmap
+
+
+@lru_cache(maxsize=256)
+def _build_tinted_icon(icon_path: str, tint_hex: str) -> QIcon:
+    tint = QColor(tint_hex)
+    icon = QIcon()
+
+    source_path = icon_path
+    if source_path.lower().endswith('.svg') and QSvgRenderer is None:
+        png_fallback = os.path.splitext(source_path)[0] + '.png'
+        if os.path.exists(png_fallback):
+            source_path = png_fallback
+        else:
+            return QIcon(source_path)
+
+    for size in (16, 20, 24, 32, 48, 64, 128):
+        if source_path.lower().endswith('.svg'):
+            pixmap = _render_svg_pixmap(source_path, size, tint)
+        else:
+            pixmap = _render_png_pixmap(source_path, size, tint)
+        if not pixmap.isNull():
+            icon.addPixmap(pixmap)
+
+    return icon
+
+
+def get_icon(icon_name, tint=None):
     """
 
     :param icon_name:
     :return:
     """
-    if ".png" in icon_name.lower():
-        # Keep for backwards compatibility, but prefer SVGs
-        icon_name = icon_name.lower().replace(".png", ".svg")
-        
-    return QIcon(get_icon_path(icon_name))
+    icon_path = get_icon_path(icon_name)
+    tint_color = _normalize_tint(tint)
+
+    if icon_path.lower().endswith('.svg'):
+        return _build_tinted_icon(icon_path, tint_color.name())
+
+    return _build_tinted_icon(icon_path, tint_color.name())
 
 
 # ----------------------------------------------------------------------------------------------------------------------

@@ -13,14 +13,18 @@ from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QToolButton, Q
                              QListWidget, QListWidgetItem, QComboBox, QLabel)
 
 from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox import theme as app_theme
 
 # Theme tokens (moved here from coralnet_toolbox/theme.py)
 # Colors
-BACKGROUND = QColor('#FFFFFF')
-SURFACE = QColor('#F7F9FB')
-PRIMARY = QColor('#0B78D1')
-TEXT_PRIMARY = QColor('#222222')
-TEXT_SECONDARY = QColor('#6B7280')
+BACKGROUND = app_theme.BACKGROUND_COLOR
+SURFACE = app_theme.SURFACE_COLOR
+PRIMARY = app_theme.ACCENT_COLOR
+TEXT_PRIMARY = app_theme.TEXT_PRIMARY_COLOR
+TEXT_SECONDARY = app_theme.TEXT_SECONDARY_COLOR
+BORDER = app_theme.SURFACE_BORDER_COLOR
+FIELD_STYLE = f"background-color: {SURFACE.name()}; color: {TEXT_PRIMARY.name()}; border: 1px solid {BORDER.name()}; border-radius: 4px; padding: 3px 6px;"
+FIELD_STYLE_EDITABLE = f"background-color: {app_theme.SURFACE_ELEVATED_COLOR.name()}; color: {TEXT_PRIMARY.name()}; border: 1px solid {PRIMARY.name()}; border-radius: 4px; padding: 3px 6px;"
 
 # Shadow / elevation
 SHADOW_COLOR = QColor(0, 0, 0, 80)
@@ -105,7 +109,7 @@ class LabelDisplay(QWidget):
         try:
             accent_color = QColor(self.label.color)
         except Exception:
-            accent_color = QColor('#CCCCCC')
+            accent_color = QColor(BORDER)
         if self.label.is_selected:
             # Make accent slightly brighter when selected
             accent_color = accent_color.lighter(110)
@@ -170,7 +174,7 @@ class Label(QWidget):
         # 2. Small color swatch for quick recognition
         self.color_swatch = QLabel()
         self.color_swatch.setFixedSize(SWATCH_SIZE, SWATCH_SIZE)
-        self.color_swatch.setStyleSheet(f"background-color: {self.color.name()}; border-radius: {SWATCH_RADIUS}px; border: 1px solid #DDDDDD;")
+        self.color_swatch.setStyleSheet(f"background-color: {self.color.name()}; border-radius: {SWATCH_RADIUS}px; border: 1px solid {BORDER.name()};")
         self.color_swatch.setToolTip("Label color")
 
         # 3. Visibility toggle - compact icon button (eye)
@@ -327,7 +331,7 @@ class Label(QWidget):
     def update_color(self):
         """Trigger a repaint to reflect color changes."""
         try:
-            self.color_swatch.setStyleSheet(f"background-color: {self.color.name()}; border-radius: {SWATCH_RADIUS}px; border: 1px solid #DDDDDD;")
+            self.color_swatch.setStyleSheet(f"background-color: {self.color.name()}; border-radius: {SWATCH_RADIUS}px; border: 1px solid {BORDER.name()};")
         except Exception:
             pass
         self.display_widget.update()
@@ -342,7 +346,7 @@ class Label(QWidget):
             self.color = new_color
             # Update the small swatch immediately if present
             try:
-                self.color_swatch.setStyleSheet(f"background-color: {self.color.name()}; border-radius: {SWATCH_RADIUS}px; border: 1px solid #DDDDDD;")
+                self.color_swatch.setStyleSheet(f"background-color: {self.color.name()}; border-radius: {SWATCH_RADIUS}px; border: 1px solid {BORDER.name()};")
             except Exception:
                 pass
             self.update_color()
@@ -568,11 +572,11 @@ class LabelWindow(QWidget):
         """Instantiate count displays."""
         self.label_count_display = QLineEdit("Labels: 1")
         self.label_count_display.setReadOnly(True)
-        self.label_count_display.setStyleSheet("background-color: #F0F0F0;")
+        self.label_count_display.setStyleSheet(FIELD_STYLE)
 
         self.annotation_count_display = QLineEdit("Annotations: 0")
         self.annotation_count_display.setReadOnly(True)
-        self.annotation_count_display.setStyleSheet("background-color: #F0F0F0;")
+        self.annotation_count_display.setStyleSheet(FIELD_STYLE)
         self.annotation_count_display.returnPressed.connect(self.update_annotation_count_index)
 
     def setup_labels_section(self):
@@ -689,10 +693,10 @@ class LabelWindow(QWidget):
         """Update the annotation count display based on the current selection."""
         if self.annotation_window.selected_tool == "select":
             self.annotation_count_display.setReadOnly(False)  # Make it editable
-            self.annotation_count_display.setStyleSheet("background-color: white;")
+            self.annotation_count_display.setStyleSheet(FIELD_STYLE_EDITABLE)
         else:
             self.annotation_count_display.setReadOnly(True)  # Make it uneditable
-            self.annotation_count_display.setStyleSheet("background-color: #F0F0F0;")
+            self.annotation_count_display.setStyleSheet(FIELD_STYLE)
 
         # Update the annotation count display after a tool is switched
         self.update_annotation_count()

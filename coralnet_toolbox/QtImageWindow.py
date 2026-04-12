@@ -22,6 +22,7 @@ from coralnet_toolbox.IO import ImportCameras
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox import theme as app_theme
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
@@ -355,11 +356,12 @@ class ImageWindow(QWidget):
         
         self.tableView.horizontalHeader().setStyleSheet("""
             QHeaderView::section {
-            background-color: #E0E0E0;
+            background-color: %s;
             padding: 4px;
-            border: 1px solid #D0D0D0;
+            border: 1px solid %s;
+            color: %s;
             }
-        """)
+        """ % (app_theme.SURFACE_COLOR.name(), app_theme.SURFACE_BORDER_COLOR.name(), app_theme.TEXT_PRIMARY_COLOR.name()))
         
         self.tableView.leftClicked.connect(self.on_table_pressed)
         self.tableView.doubleClicked.connect(self.on_table_double_clicked)
@@ -1778,11 +1780,12 @@ class ImagePreviewTooltip(QFrame):
         self.setFrameShadow(QFrame.Raised)
         self.setStyleSheet("""
             QFrame {
-                background-color: #f8f8f8;
-                border: 1px solid #aaaaaa;
-                border-radius: 4px;
+                background-color: %s;
+                border: 1px solid %s;
+                border-radius: 6px;
+                color: %s;
             }
-        """)
+        """ % (app_theme.SURFACE_COLOR.name(), app_theme.SURFACE_BORDER_COLOR.name(), app_theme.TEXT_PRIMARY_COLOR.name()))
         
         # Create layout
         self.layout = QVBoxLayout(self)

@@ -33,6 +33,8 @@ from PyQt5.QtWidgets import (
     QGraphicsRectItem, QSizePolicy, QMessageBox, QApplication
 )
 
+from coralnet_toolbox import theme as app_theme
+
 from coralnet_toolbox.Explorer.core.QtDataItem import EmbeddingPointItem, POINT_SIZE, SPRITE_SIZE
 from coralnet_toolbox.Explorer.core.QtDataItem import AnnotationDataItem
 from coralnet_toolbox.Explorer.managers.QtCacheManager import CacheManager
@@ -352,8 +354,8 @@ class EmbeddingViewerWindow(QWidget):
         self.graphics_view.wheelEvent = self._wheel_event
         # Override key press events
         self.graphics_view.keyPressEvent = self._key_press_event
-        self.graphics_view.setStyleSheet("background-color: #1e1e1e;")
-        self.graphics_scene.setBackgroundBrush(QColor('#1e1e1e'))
+        self.graphics_view.setStyleSheet(f"background-color: {app_theme.BACKGROUND_COLOR.name()};")
+        self.graphics_scene.setBackgroundBrush(QColor(app_theme.BACKGROUND_COLOR))
         
         layout.addWidget(self.graphics_view)
         
@@ -361,7 +363,9 @@ class EmbeddingViewerWindow(QWidget):
         self.placeholder_label = QLabel(
             "No embedding data available\nRun embedding to see visualizations."
         )
-        self.placeholder_label.setStyleSheet("color: white; background-color: #1e1e1e; font-size: 14px; padding: 16px;")
+        self.placeholder_label.setStyleSheet(
+            f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; background-color: transparent; font-size: 14px; padding: 16px;"
+        )
         self.placeholder_label.setAlignment(Qt.AlignCenter)
         self.placeholder_label.setAutoFillBackground(True)
         self._show_placeholder()

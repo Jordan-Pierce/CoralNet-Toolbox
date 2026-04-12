@@ -21,6 +21,8 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtWidgets import QHBoxLayout
 from types import SimpleNamespace
 
+from coralnet_toolbox import theme as app_theme
+
 from coralnet_toolbox.Explorer.core.QtDataItem import AnnotationDataItem
 from coralnet_toolbox.Explorer.models.annotation_list_model import AnnotationListModel, AnnotationItemDelegate
 from coralnet_toolbox.Explorer.ui.widgets import MultiSelectCombo
@@ -451,8 +453,11 @@ class AnnotationViewerWindow(QWidget):
         # Override key press events to support Ctrl+A selection
         self.list_view.keyPressEvent = self._list_view_key_press_event
         # Set background and rubber-band styling (cyan rubber band)
-        self.list_view.setStyleSheet("background-color: #1e1e1e;"
-                         "QRubberBand { border: 1px solid rgba(0,255,255,200); background: rgba(0,255,255,40); }")
+        self.list_view.setStyleSheet(
+            "background-color: %s;"
+            "QRubberBand { border: 1px solid %s; background: rgba(61,122,237,40); }"
+            % (app_theme.BACKGROUND_COLOR.name(), app_theme.ACCENT_COLOR.name())
+        )
         layout.addWidget(self.list_view)
 
         # Backwards-compatibility aliases for code paths that still reference the
@@ -465,7 +470,9 @@ class AnnotationViewerWindow(QWidget):
         self.placeholder_label = QLabel(
             "No annotations available\nLoad annotations or adjust the gallery filters to display results."
         )
-        self.placeholder_label.setStyleSheet("color: white; background-color: #1e1e1e; font-size: 14px; padding: 16px;")
+        self.placeholder_label.setStyleSheet(
+            f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; background-color: transparent; font-size: 14px; padding: 16px;"
+        )
         self.placeholder_label.setAlignment(Qt.AlignCenter)
         self.placeholder_label.setAutoFillBackground(True)
         self._show_placeholder()
@@ -1335,12 +1342,12 @@ class AnnotationViewerWindow(QWidget):
         """Create a group header label."""
         header = QLabel(text, self.content_widget)
         
-        bg_color = color.name() if color else "#f0f0f0"
+        bg_color = color.name() if color else app_theme.SURFACE_COLOR.name()
         if color:
             luminance = (0.299 * color.red() + 0.587 * color.green() + 0.114 * color.blue()) / 255
             text_color = "#ffffff" if luminance < 0.5 else "#000000"
         else:
-            text_color = "#555"
+            text_color = app_theme.TEXT_PRIMARY_COLOR.name()
         
         header.setStyleSheet(f"""
             QLabel {{

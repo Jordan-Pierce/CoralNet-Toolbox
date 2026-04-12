@@ -63,6 +63,7 @@ from coralnet_toolbox.utilities import rasterio_open
 from coralnet_toolbox.utilities import convert_scale_units
 
 from coralnet_toolbox.QtVideoPlayer import VideoPlayerWidget
+from coralnet_toolbox import theme as app_theme
 
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -129,7 +130,9 @@ class AnnotationWindow(BaseCanvas):
         self._placeholder_label.setText(
             "No image loaded\nImport or drag and drop an image or Project file."
         )
-        self._placeholder_label.setStyleSheet("color: white; background-color: #1e1e1e; font-size: 14px; padding: 16px;")
+        self._placeholder_label.setStyleSheet(
+            f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; background-color: transparent; font-size: 14px; padding: 16px;"
+        )
         self._placeholder_label.setWordWrap(True)
         self._placeholder_label.setAutoFillBackground(True)
         
