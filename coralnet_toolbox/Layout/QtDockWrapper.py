@@ -109,6 +109,15 @@ class DockWrapper(ads.CDockWidget):
         for toolbar in self.inner_widget.findChildren(QToolBar):
             toolbar.setVisible(visible)
 
+    def refresh_scaling(self):
+        """Reapply panel styling after a scale change."""
+        self.inner_widget.setStyleSheet(app_theme.build_panel_stylesheet())
+        if hasattr(self, '_local_menubar'):
+            self._local_menubar.setStyleSheet(app_theme.build_panel_stylesheet())
+
+        for toolbar in self.inner_widget.findChildren(QToolBar):
+            toolbar.setIconSize(app_theme.scale_size(18))
+
     # --- LIFECYCLE EVENT FORWARDING ---
     def closeEvent(self, event):
         if hasattr(self.payload_widget, 'closeEvent'):

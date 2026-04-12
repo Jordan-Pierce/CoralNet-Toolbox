@@ -12,8 +12,9 @@ from PyQt5.QtWidgets import (QFileDialog, QVBoxLayout, QPushButton, QLabel, QLin
                              QDialog, QApplication, QMessageBox, QGroupBox,
                              QHBoxLayout, QFormLayout, QComboBox, QSpinBox, QSlider,
                              QStyle, QFrame, QTabWidget, QWidget)
+from coralnet_toolbox import theme as app_theme
 from coralnet_toolbox.QtProgressBar import ProgressBar
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -302,7 +303,7 @@ class ImportFrames(QDialog):
         self.main_window = main_window
         self.image_window = main_window.image_window
 
-        self.setWindowIcon(get_icon("coralnet.svg"))
+        self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowTitle("Import Frames from Video")
         self.resize(1000, 600)
 
@@ -565,11 +566,11 @@ class ImportFrames(QDialog):
 
         self.frame_counter = QLabel("Frame: 0 / 0")
         self.frame_counter.setAlignment(Qt.AlignCenter)
-        self.frame_counter.setStyleSheet("QLabel { font-size: 11pt; }")
+        self.frame_counter.setStyleSheet(app_theme.scale_qss("QLabel { font-size: 11pt; }"))
 
         self.frame_timestamp = QLabel("Time: 00:00")
         self.frame_timestamp.setAlignment(Qt.AlignCenter)
-        self.frame_timestamp.setStyleSheet("QLabel { font-size: 11pt; }")
+        self.frame_timestamp.setStyleSheet(app_theme.scale_qss("QLabel { font-size: 11pt; }"))
 
         line = QFrame()
         line.setFrameShape(QFrame.HLine)

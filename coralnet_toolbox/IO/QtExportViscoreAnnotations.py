@@ -16,7 +16,7 @@ from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -32,7 +32,7 @@ class ExportViscoreAnnotations(QDialog):
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
 
-        self.setWindowIcon(get_icon("coralnet.svg"))
+        self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowTitle("Export Viscore Annotations")
         self.resize(600, 150)
 

@@ -32,6 +32,8 @@ from coralnet_toolbox.MVAT.core.constants import (
     HIGHLIGHT_COLOR,
 )
 
+from coralnet_toolbox import theme as app_theme
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
@@ -398,7 +400,8 @@ class ContextMatrixWidget(QWidget):
     def create_top_toolbar(self) -> QToolBar:
         """Create toolbar unifying legacy grid stats and matrix options."""
         toolbar = QToolBar("Grid Context Tools")
-        toolbar.setIconSize(QSize(16, 16))
+        toolbar.setIconSize(app_theme.scale_size(16))
+        self.toolbar = toolbar
 
         container = QWidget()
         layout = QHBoxLayout(container)
@@ -489,6 +492,11 @@ class ContextMatrixWidget(QWidget):
 
         toolbar.addWidget(container)
         return toolbar
+
+    def refresh_scaling(self):
+        """Refresh toolbar sizing after a UI scale change."""
+        if hasattr(self, 'toolbar'):
+            self.toolbar.setIconSize(app_theme.scale_size(16))
 
     def update_stats(self, perspective_count: int):
         """Update the overall camera count labels."""

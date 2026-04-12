@@ -13,7 +13,7 @@ from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QFont
 from PyQt5.QtWidgets import (QMainWindow, QMessageBox, QDialog, QVBoxLayout,
                              QHBoxLayout, QPushButton, QLabel, QButtonGroup)
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -720,7 +720,7 @@ class LightCycleGame(QMainWindow):
         self.main_window = main_window
         self.setWindowFlags(Qt.Window | Qt.CustomizeWindowHint |
                             Qt.WindowTitleHint | Qt.WindowCloseButtonHint)
-        self.setWindowIcon(get_icon("lightcycle.svg"))
+        self.setWindowIcon(get_window_icon("lightcycle.svg"))
         self.title = "Light Cycle Game"
 
         self.board_width  = BOARD_WIDTH

@@ -131,7 +131,9 @@ class AnnotationWindow(BaseCanvas):
             "No image loaded\nImport or drag and drop an image or Project file."
         )
         self._placeholder_label.setStyleSheet(
-            f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; background-color: transparent; font-size: 14px; padding: 16px;"
+            app_theme.scale_qss(
+                f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; background-color: transparent; font-size: 14px; padding: 16px;"
+            )
         )
         self._placeholder_label.setWordWrap(True)
         self._placeholder_label.setAutoFillBackground(True)
@@ -220,20 +222,24 @@ class AnnotationWindow(BaseCanvas):
 
         # --- Positional/Dimensional Labels ---
         self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
-        self.mouse_position_label.setFixedWidth(150)
+        self.mouse_position_label.setMinimumWidth(app_theme.scale_int(150))
+        self.mouse_position_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.image_dimensions_label = QLabel("Image: 0 x 0")
-        self.image_dimensions_label.setFixedWidth(150)
+        self.image_dimensions_label.setMinimumWidth(app_theme.scale_int(150))
+        self.image_dimensions_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.view_dimensions_label = QLabel("View: 0 x 0")
-        self.view_dimensions_label.setFixedWidth(150)
+        self.view_dimensions_label.setMinimumWidth(app_theme.scale_int(150))
+        self.view_dimensions_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
 
         # --- Scale ---
         self.scaled_dimensions_label = QLabel("Scale: 0 x 0")
-        self.scaled_dimensions_label.setFixedWidth(220)
+        self.scaled_dimensions_label.setMinimumWidth(app_theme.scale_int(240))
+        self.scaled_dimensions_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.scaled_dimensions_label.setEnabled(False)
         self.scale_unit_dropdown = QComboBox()
         self.scale_unit_dropdown.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi'])
         self.scale_unit_dropdown.setCurrentIndex(2)
-        self.scale_unit_dropdown.setFixedWidth(72)
+        self.scale_unit_dropdown.setFixedWidth(app_theme.scale_int(72))
         self.scale_unit_dropdown.setEnabled(False)
         self.scale_unit_dropdown.currentTextChanged.connect(self.on_scale_unit_changed)
 
@@ -243,12 +249,13 @@ class AnnotationWindow(BaseCanvas):
         self.z_unit_dropdown.insertSeparator(self.z_unit_dropdown.count())
         self.z_unit_dropdown.addItem('px')
         self.z_unit_dropdown.setCurrentIndex(2)
-        self.z_unit_dropdown.setFixedWidth(72)
+        self.z_unit_dropdown.setFixedWidth(app_theme.scale_int(72))
         self.z_unit_dropdown.setEnabled(False)
         self.z_unit_dropdown.currentTextChanged.connect(self.on_z_unit_changed)
 
         self.z_label = QLabel("Z: -----")
-        self.z_label.setFixedWidth(140)
+        self.z_label.setMinimumWidth(app_theme.scale_int(140))
+        self.z_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.z_label.setEnabled(False)
 
         self.z_colormap_dropdown = ColorComboBox()
@@ -256,7 +263,7 @@ class AnnotationWindow(BaseCanvas):
         self.z_colormap_dropdown.setItemDelegate(delegate)
         self.z_colormap_dropdown.addItems(['None', 'Viridis', 'Plasma', 'Inferno', 'Magma', 'Cividis', 'Turbo'])
         self.z_colormap_dropdown.setCurrentIndex(0)
-        self.z_colormap_dropdown.setFixedWidth(100)
+        self.z_colormap_dropdown.setFixedWidth(app_theme.scale_int(100))
         self.z_colormap_dropdown.setEnabled(False)
         self.z_colormap_dropdown.currentTextChanged.connect(self.on_z_colormap_changed)
 
@@ -637,13 +644,13 @@ class AnnotationWindow(BaseCanvas):
         trans_widget = QWidget()
         trans_layout = QHBoxLayout(trans_widget)
         trans_layout.setContentsMargins(4, 0, 4, 0)
-        t_icon = QLabel()
-        t_icon.setPixmap(get_icon("transparent.svg").pixmap(QSize(16, 16)))
-        o_icon = QLabel()
-        o_icon.setPixmap(get_icon("opaque.svg").pixmap(QSize(16, 16)))
-        trans_layout.addWidget(t_icon)
+        self.transparent_icon_label = QLabel()
+        self.transparent_icon_label.setPixmap(get_icon("transparent.svg").pixmap(app_theme.scale_size(16)))
+        self.opaque_icon_label = QLabel()
+        self.opaque_icon_label.setPixmap(get_icon("opaque.svg").pixmap(app_theme.scale_size(16)))
+        trans_layout.addWidget(self.transparent_icon_label)
         trans_layout.addWidget(self.transparency_slider)
-        trans_layout.addWidget(o_icon)
+        trans_layout.addWidget(self.opaque_icon_label)
         toolbar.addWidget(trans_widget)
         
         toolbar.addSeparator()
@@ -662,6 +669,18 @@ class AnnotationWindow(BaseCanvas):
 
         return toolbar
 
+    def refresh_scaling(self):
+        """Refresh annotation-window elements that depend on the selected UI scale."""
+        self._placeholder_label.setStyleSheet(
+            app_theme.scale_qss(
+                f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; background-color: transparent; font-size: 14px; padding: 16px;"
+            )
+        )
+        if hasattr(self, 'transparent_icon_label'):
+            self.transparent_icon_label.setPixmap(get_icon("transparent.svg").pixmap(app_theme.scale_size(16)))
+        if hasattr(self, 'opaque_icon_label'):
+            self.opaque_icon_label.setPixmap(get_icon("opaque.svg").pixmap(app_theme.scale_size(16)))
+
     def create_bottom_toolbar(self) -> QToolBar:
         """Create the bottom toolbar with mouse position, image/view dimensions, 
         scale, and z-channel info.
@@ -671,14 +690,14 @@ class AnnotationWindow(BaseCanvas):
         
         container = QWidget()
         layout = QHBoxLayout(container)
-        layout.setContentsMargins(6, 2, 6, 2)
-        layout.setSpacing(12)
+        layout.setContentsMargins(app_theme.scale_int(4), app_theme.scale_int(2), app_theme.scale_int(4), app_theme.scale_int(2))
+        layout.setSpacing(app_theme.scale_int(8))
         
         def make_group(*widgets):
             g = QWidget()
             l = QHBoxLayout(g)
             l.setContentsMargins(0, 0, 0, 0)
-            l.setSpacing(6)
+            l.setSpacing(app_theme.scale_int(4))
             for w in widgets: l.addWidget(w)
             return g
             

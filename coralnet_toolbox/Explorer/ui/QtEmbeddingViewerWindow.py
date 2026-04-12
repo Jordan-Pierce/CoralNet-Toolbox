@@ -364,13 +364,25 @@ class EmbeddingViewerWindow(QWidget):
             "No embedding data available\nRun embedding to see visualizations."
         )
         self.placeholder_label.setStyleSheet(
-            f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; background-color: transparent; font-size: 14px; padding: 16px;"
+            app_theme.scale_qss(
+                f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; background-color: transparent; font-size: 14px; padding: 16px;"
+            )
         )
         self.placeholder_label.setAlignment(Qt.AlignCenter)
         self.placeholder_label.setAutoFillBackground(True)
         self._show_placeholder()
 
         layout.addWidget(self.placeholder_label)
+
+    def refresh_scaling(self):
+        """Refresh the placeholder styling after a UI scale change."""
+        self.graphics_view.setStyleSheet(f"background-color: {app_theme.BACKGROUND_COLOR.name()};")
+        self.graphics_scene.setBackgroundBrush(QColor(app_theme.BACKGROUND_COLOR))
+        self.placeholder_label.setStyleSheet(
+            app_theme.scale_qss(
+                f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; background-color: transparent; font-size: 14px; padding: 16px;"
+            )
+        )
         
     # -------------------------------------------------------------------------
     # Public API

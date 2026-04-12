@@ -14,7 +14,7 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                              QFormLayout, QComboBox, QSpinBox, QDoubleSpinBox, 
                              QLineEdit, QWidget, QScrollArea, QFrame, QMessageBox, QTabWidget)
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -151,7 +151,7 @@ class Base(QDialog):
         super().__init__(parent)
         self.main_window = main_window
 
-        self.setWindowIcon(get_icon("coralnet.svg"))
+        self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowTitle("Pre-train Encoder (Self-Supervised Learning)")
         self.resize(900, 600)  
 

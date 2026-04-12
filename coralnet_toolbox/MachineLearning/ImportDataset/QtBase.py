@@ -18,7 +18,7 @@ from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotati
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.utilities import rasterio_open
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -244,7 +244,7 @@ class Base(QDialog):
         self.annotation_window = main_window.annotation_window
         self.image_window = main_window.image_window
 
-        self.setWindowIcon(get_icon("coralnet.svg"))
+        self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowTitle("Import Dataset")
         self.resize(500, 350)
 

@@ -2,9 +2,20 @@ import warnings
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtCore import pyqtSignal, QPropertyAnimation, QEventLoop
-from PyQt5.QtWidgets import QProgressBar, QVBoxLayout, QDialog, QPushButton, QApplication, QLabel
+from PyQt5.QtWidgets import (
+    QProgressBar,
+    QVBoxLayout,
+    QHBoxLayout,
+    QDialog,
+    QPushButton,
+    QApplication,
+    QLabel,
+    QFrame,
+    QSizePolicy,
+)
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
+from coralnet_toolbox import theme as app_theme
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -32,10 +43,15 @@ class ProgressBar(QDialog):
         """
         super().__init__(parent)
 
+        self._busy_text = "Processing..."
+        self._status_text = "Ready"
+
         # Setup the window properties
+        self.setObjectName("ProgressDialog")
         self.setWindowTitle(title)
         self.setModal(True)
-        self.resize(350, 100)
+        self.setMinimumWidth(app_theme.scale_int(420))
+        self.resize(app_theme.scale_int(460), app_theme.scale_int(180))
         
         # This tells Qt to delete the widget when it receives a close event.
         self.setAttribute(Qt.WA_DeleteOnClose, True)
@@ -47,37 +63,190 @@ class ProgressBar(QDialog):
                 if icon is not None and not icon.isNull():
                     self.setWindowIcon(icon)
                 else:
-                    self.setWindowIcon(get_icon("coralnet.svg"))
+                    self.setWindowIcon(get_window_icon("coralnet.svg"))
             else:
-                self.setWindowIcon(get_icon("coralnet.svg"))
+                self.setWindowIcon(get_window_icon("coralnet.svg"))
         except Exception:
             # Be robust in case parent doesn't expose windowIcon()
             try:
-                self.setWindowIcon(get_icon("coralnet.svg"))
+                self.setWindowIcon(get_window_icon("coralnet.svg"))
             except Exception:
                 pass
 
+        # Setup layout
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(app_theme.scale_int(12), app_theme.scale_int(12), app_theme.scale_int(12), app_theme.scale_int(12))
+        self.layout.setSpacing(0)
+
+        self.card = QFrame(self)
+        self.card.setObjectName("ProgressCard")
+        self.card_layout = QVBoxLayout(self.card)
+        self.card_layout.setContentsMargins(app_theme.scale_int(14), app_theme.scale_int(12), app_theme.scale_int(14), app_theme.scale_int(12))
+        self.card_layout.setSpacing(app_theme.scale_int(10))
+
+        self.accent_bar = QFrame(self.card)
+        self.accent_bar.setObjectName("ProgressAccent")
+        self.accent_bar.setFixedHeight(app_theme.scale_int(4))
+        self.card_layout.addWidget(self.accent_bar)
+
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setSpacing(app_theme.scale_int(10))
+
+        self.icon_label = QLabel(self.card)
+        self.icon_label.setFixedSize(app_theme.scale_int(32), app_theme.scale_int(32))
+        self.icon_label.setAlignment(Qt.AlignCenter)
+        try:
+            icon_pixmap = self.windowIcon().pixmap(app_theme.scale_int(28), app_theme.scale_int(28))
+            self.icon_label.setPixmap(icon_pixmap)
+        except Exception:
+            pass
+
+        title_column = QVBoxLayout()
+        title_column.setContentsMargins(0, 0, 0, 0)
+        title_column.setSpacing(app_theme.scale_int(2))
+
+        self.title_label = QLabel(title, self.card)
+        self.title_label.setObjectName("ProgressTitle")
+        self.title_label.setWordWrap(False)
+
+        self.status_label = QLabel("Ready", self.card)
+        self.status_label.setObjectName("ProgressStatus")
+        self.status_label.setWordWrap(False)
+
+        title_column.addWidget(self.title_label)
+        title_column.addWidget(self.status_label)
+
+        header_row.addWidget(self.icon_label)
+        header_row.addLayout(title_column)
+        header_row.addStretch(1)
+        self.card_layout.addLayout(header_row)
+
         # Create progress bar widget
-        self.progress_bar = QProgressBar(self)
+        self.progress_bar = QProgressBar(self.card)
         self.progress_bar.setRange(0, 100)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setAlignment(Qt.AlignCenter)
+        self.progress_bar.setFormat("%p%")
+        self.progress_bar.setObjectName("ProgressBar")
+        self.progress_bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.card_layout.addWidget(self.progress_bar)
+
+        footer_row = QHBoxLayout()
+        footer_row.setContentsMargins(0, 0, 0, 0)
+        footer_row.setSpacing(app_theme.scale_int(8))
+
+        self.detail_label = QLabel("Ready", self.card)
+        self.detail_label.setObjectName("ProgressDetail")
+        self.detail_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         # Create cancel button
-        self.cancel_button = QPushButton("Cancel", self)
+        self.cancel_button = QPushButton("Cancel", self.card)
+        self.cancel_button.setObjectName("ProgressCancelButton")
+        self.cancel_button.setIcon(get_icon("remove.svg"))
+        self.cancel_button.setIconSize(app_theme.scale_size(14))
+        self.cancel_button.setCursor(Qt.PointingHandCursor)
         self.cancel_button.setEnabled(False)
         self.cancel_button.clicked.connect(self.cancel)
 
-        # Setup layout
-        self.layout = QVBoxLayout(self)
-        self.layout.addWidget(self.progress_bar)
-        self.layout.addWidget(self.cancel_button)
+        footer_row.addWidget(self.detail_label)
+        footer_row.addStretch(1)
+        footer_row.addWidget(self.cancel_button)
+        self.card_layout.addLayout(footer_row)
+
+        self.layout.addWidget(self.card)
+
+        self.setStyleSheet(
+            app_theme.scale_qss(
+                f"""
+QDialog#ProgressDialog {{
+    background-color: {app_theme.BACKGROUND_COLOR.name()};
+}}
+QFrame#ProgressCard {{
+    background-color: {app_theme.SURFACE_ELEVATED_COLOR.name()};
+    border: 1px solid {app_theme.SURFACE_BORDER_COLOR.name()};
+    border-radius: 14px;
+}}
+QFrame#ProgressAccent {{
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 {app_theme.ACCENT_COLOR.name()},
+        stop:0.55 {app_theme.ACCENT_HOVER_COLOR.name()},
+        stop:1 {app_theme.ACCENT_SOFT_COLOR.name()});
+    border-radius: 2px;
+}}
+QLabel#ProgressTitle {{
+    color: {app_theme.TEXT_PRIMARY_COLOR.name()};
+    font-family: "{app_theme.APP_FONT_FAMILY}";
+    font-size: 12px;
+    font-weight: 700;
+}}
+QLabel#ProgressStatus {{
+    color: {app_theme.TEXT_SECONDARY_COLOR.name()};
+    font-family: "{app_theme.APP_FONT_FAMILY}";
+    font-size: 10px;
+}}
+QLabel#ProgressDetail {{
+    color: {app_theme.TEXT_SECONDARY_COLOR.name()};
+    font-family: "{app_theme.APP_FONT_FAMILY}";
+    font-size: 10px;
+}}
+QProgressBar {{
+    background-color: {app_theme.BACKGROUND_COLOR.name()};
+    border: 1px solid {app_theme.SURFACE_BORDER_COLOR.name()};
+    border-radius: 10px;
+    color: {app_theme.TEXT_PRIMARY_COLOR.name()};
+    text-align: center;
+    min-height: {app_theme.scale_int(24)}px;
+    padding: {app_theme.scale_int(2)}px;
+    font-family: "{app_theme.APP_FONT_FAMILY}";
+    font-weight: 700;
+}}
+QProgressBar::chunk {{
+    border-radius: 9px;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 {app_theme.ACCENT_COLOR.name()},
+        stop:0.55 {app_theme.ACCENT_HOVER_COLOR.name()},
+        stop:1 {app_theme.ACCENT_COLOR.name()});
+}}
+QPushButton#ProgressCancelButton {{
+    background-color: {app_theme.SURFACE_COLOR.name()};
+    color: {app_theme.TEXT_PRIMARY_COLOR.name()};
+    border: 1px solid {app_theme.SURFACE_BORDER_COLOR.name()};
+    border-radius: {app_theme.scale_int(8)}px;
+    padding: {app_theme.scale_int(6)}px {app_theme.scale_int(12)}px;
+    min-width: {app_theme.scale_int(90)}px;
+    font-family: "{app_theme.APP_FONT_FAMILY}";
+    font-weight: 600;
+}}
+QPushButton#ProgressCancelButton:hover {{
+    background-color: {app_theme.SURFACE_ELEVATED_COLOR.name()};
+    border-color: {app_theme.ACCENT_COLOR.name()};
+}}
+QPushButton#ProgressCancelButton:pressed {{
+    background-color: {app_theme.ACCENT_SOFT_COLOR.name()};
+}}
+QPushButton#ProgressCancelButton:disabled {{
+    color: {app_theme.TEXT_MUTED_COLOR.name()};
+    background-color: {app_theme.BACKGROUND_ALT_COLOR.name()};
+}}
+"""
+            )
+        )
 
         # Initialize state variables
         self.value = 0
         self.max_value = 100
         self.canceled = False
+        self._update_status_text()
 
         # Connect signal
         self.progress_updated.connect(self.update_progress)
+
+    def setWindowTitle(self, title):
+        """Keep the dialog title label in sync with the actual window title."""
+        super().setWindowTitle(title)
+        if hasattr(self, "title_label"):
+            self.title_label.setText(title)
         
     def set_title(self, title):
         """
@@ -91,6 +260,7 @@ class ProgressBar(QDialog):
         self.value = 0
         self.canceled = False
         self.progress_bar.setValue(0)
+        self._update_status_text()
         QApplication.processEvents()
         
     def set_busy_mode(self, busy_text="Processing..."):
@@ -98,11 +268,14 @@ class ProgressBar(QDialog):
         Sets the progress bar to an indeterminate "busy" state for tasks
         of unknown duration.
         """
+        self._busy_text = busy_text
         # Update the title to reflect the current task
         self.set_title(busy_text)
         
         # Setting the min and max to 0 enables the busy/indeterminate mode
         self.progress_bar.setRange(0, 0)
+        self.progress_bar.setTextVisible(False)
+        self._update_status_text(busy_text)
         QApplication.processEvents()
 
     def start_progress(self, max_value):
@@ -116,6 +289,9 @@ class ProgressBar(QDialog):
         self.max_value = max_value
         self.canceled = False
         self.progress_bar.setRange(0, max_value)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setFormat("%p%")
+        self._update_status_text()
 
     def set_value(self, value):
         """
@@ -127,6 +303,7 @@ class ProgressBar(QDialog):
         if 0 <= value <= self.max_value:
             self.value = value
             self.progress_bar.setValue(self.value)
+            self._update_status_text()
             if self.value >= self.max_value:
                 self.stop_progress()
         elif value > self.max_value:
@@ -160,6 +337,7 @@ class ProgressBar(QDialog):
 
         if is_update_step or is_last_step:
             self.progress_bar.setValue(self.value)
+            self._update_status_text()
             
             # This is crucial. It processes pending events, allowing the GUI to
             # redraw with the new progress value and to respond to user input,
@@ -215,6 +393,7 @@ class ProgressBar(QDialog):
 
         # Finally, update our internal state variable to match the final progress.
         self.value = self.max_value
+        self._update_status_text()
 
     def stop_progress(self):
         """
@@ -222,6 +401,24 @@ class ProgressBar(QDialog):
         """
         self.value = self.max_value
         self.progress_bar.setValue(self.value)
+        self._update_status_text()
+
+    def _update_status_text(self, busy_text=None):
+        """Update the descriptive text shown beneath the progress bar."""
+        if not hasattr(self, "status_label") or not hasattr(self, "detail_label"):
+            return
+
+        if self.progress_bar.maximum() == 0:
+            text = busy_text or self._busy_text
+            self.status_label.setText(text)
+            self.detail_label.setText(text)
+            return
+
+        maximum = max(1, self.max_value)
+        percentage = int((self.value / maximum) * 100)
+        text = f"{self.value} / {self.max_value} ({percentage}%)"
+        self.status_label.setText(text)
+        self.detail_label.setText(text)
 
     def cancel(self):
         """

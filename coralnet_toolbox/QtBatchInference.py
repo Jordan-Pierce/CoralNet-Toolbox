@@ -10,7 +10,7 @@ from PyQt5.QtWidgets import (QApplication, QMessageBox, QVBoxLayout,
                              QFormLayout, QComboBox, QHBoxLayout, QCheckBox, QButtonGroup,
                              QSpinBox, QPushButton)
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 from coralnet_toolbox.Common import ThresholdsWidget
 from coralnet_toolbox.QtProgressBar import ProgressBar
 import numpy as np
@@ -270,7 +270,7 @@ class BatchInferenceDialog(QDialog):
         self.image_window = main_window.image_window
         self.annotation_window = main_window.annotation_window
 
-        self.setWindowIcon(get_icon("coralnet.svg"))
+        self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowTitle("Batch Inference")
         self.resize(500, 400)
         # Keep this dialog on top so users can update highlights while it is open

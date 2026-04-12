@@ -215,7 +215,9 @@ class MVATViewer(QFrame):
             "No 3D data loaded\nDrag a file here to load:\n• Point clouds (.ply, .pcd)\n• Meshes (.obj, .stl)"
         )
         self._placeholder_label.setStyleSheet(
-            f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; background-color: transparent; font-size: 14px; padding: 16px;"
+            app_theme.scale_qss(
+                f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; background-color: transparent; font-size: 14px; padding: 16px;"
+            )
         )
         self._placeholder_label.setAlignment(Qt.AlignCenter)
         self._placeholder_label.setAutoFillBackground(True)
@@ -238,6 +240,14 @@ class MVATViewer(QFrame):
         self.plotter.interactor.installEventFilter(self)
 
         # Configure Interaction (Delayed)
+
+    def refresh_scaling(self):
+        """Refresh the placeholder styling after a UI scale change."""
+        self._placeholder_label.setStyleSheet(
+            app_theme.scale_qss(
+                f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; background-color: transparent; font-size: 14px; padding: 16px;"
+            )
+        )
         # We run this on a timer to ensure it happens AFTER the parent window
         # has run its setup (like enable_point_picking), so we can override it.
         QTimer.singleShot(100, self._configure_interaction)

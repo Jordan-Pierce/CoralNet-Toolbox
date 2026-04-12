@@ -20,7 +20,7 @@ from coralnet_toolbox.MachineLearning.ExportDataset.QtBase import Base
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -43,7 +43,7 @@ class Semantic(Base):
     def __init__(self, main_window, parent=None):
         super(Semantic, self).__init__(main_window, parent)
         self.setWindowTitle("Export Semantic Segmentation Dataset")
-        self.setWindowIcon(get_icon("mask.svg"))
+        self.setWindowIcon(get_window_icon("mask.svg"))
         
         self._stats_cache = {} 
         self._project_labels = []

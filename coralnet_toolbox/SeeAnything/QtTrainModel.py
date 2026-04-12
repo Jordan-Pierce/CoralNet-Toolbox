@@ -20,7 +20,7 @@ from torch.cuda import empty_cache
 
 from coralnet_toolbox.MachineLearning.EvaluateModel.QtBase import EvaluateModelWorker
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -232,7 +232,7 @@ class TrainModelDialog(QDialog):
         super().__init__(parent)
         self.main_window = main_window
 
-        self.setWindowIcon(get_icon("eye.svg"))
+        self.setWindowIcon(get_window_icon("eye.svg"))
         self.setWindowTitle("Train YOLOE Model")
         self.resize(600, 800)  # Increased height for new parameters
 

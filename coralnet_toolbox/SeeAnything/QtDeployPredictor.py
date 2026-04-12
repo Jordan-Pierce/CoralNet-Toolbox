@@ -24,7 +24,7 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Common import ThresholdsWidget
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 from coralnet_toolbox.utilities import rasterio_to_numpy
 
@@ -43,7 +43,7 @@ class DeployPredictorDialog(QDialog):
         self.main_window = main_window
         self.annotation_window = main_window.annotation_window
 
-        self.setWindowIcon(get_icon("eye.svg"))
+        self.setWindowIcon(get_window_icon("eye.svg"))
         self.setWindowTitle("See Anything Deploy Model")
         self.resize(400, 325)
 

@@ -32,7 +32,7 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Common import ThresholdsWidget
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -58,7 +58,7 @@ class DeployGeneratorDialog(QDialog):
         self.annotation_window = main_window.annotation_window
         self.sam_dialog = None
 
-        self.setWindowIcon(get_icon("eye.svg"))
+        self.setWindowIcon(get_window_icon("eye.svg"))
         self.setWindowTitle("See Anything (YOLOE) Generator (Ctrl + 6)")
         self.resize(800, 800)  # Increased size to accommodate the horizontal layout
 

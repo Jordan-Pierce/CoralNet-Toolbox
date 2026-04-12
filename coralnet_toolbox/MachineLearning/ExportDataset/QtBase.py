@@ -18,7 +18,7 @@ from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -45,7 +45,7 @@ class Base(QDialog):
 
         self.resize(800, 800)
         self.setWindowTitle("Export Dataset")
-        self.setWindowIcon(get_icon("coralnet.svg"))
+        self.setWindowIcon(get_window_icon("coralnet.svg"))
 
         self.selected_labels = []
         self.selected_annotations = []
@@ -313,7 +313,16 @@ class Base(QDialog):
         """
         item = self.label_counts_table.item(row, column)
         if item is not None:
-            item.setBackground(QBrush(color))
+            background = QColor(color)
+            item.setBackground(QBrush(background))
+            item.setForeground(QBrush(self._foreground_for_background(background)))
+
+    @staticmethod
+    def _foreground_for_background(background):
+        """Return a readable text color for the given background."""
+        red, green, blue, _ = QColor(background).getRgb()
+        luminance = (0.299 * red + 0.587 * green + 0.114 * blue) / 255.0
+        return QColor(0, 0, 0) if luminance > 0.5 else QColor(255, 255, 255)
 
     def browse_output_dir(self):
         """

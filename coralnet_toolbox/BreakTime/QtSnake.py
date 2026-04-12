@@ -12,7 +12,7 @@ from PyQt5.QtGui import QPainter, QBrush, QColor, QFont
 from PyQt5.QtWidgets import (QMainWindow, QMessageBox, QDialog, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QLabel, QButtonGroup)
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -230,7 +230,7 @@ class SnakeGame(QMainWindow):
                             Qt.WindowCloseButtonHint)
 
         # Set the window icon
-        self.setWindowIcon(get_icon("snake.svg"))
+        self.setWindowIcon(get_window_icon("snake.svg"))
         # Set the window title
         self.title = "Coral Snake Game"
 

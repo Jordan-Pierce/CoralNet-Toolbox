@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (QFileDialog, QMessageBox, QVBoxLayout, QLabel, QDia
 
 from torch.cuda import empty_cache
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -38,7 +38,7 @@ class Base(QDialog):
         self.annotation_window = main_window.annotation_window
         self.sam_dialog = None
 
-        self.setWindowIcon(get_icon("coralnet.svg"))
+        self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowTitle("Deploy Model")
         self.resize(900, 200)
 
@@ -118,7 +118,7 @@ class Base(QDialog):
         self.labels_table = QTableWidget()
         # Removed disabled checkbox column (was unused). Use 3 columns: Status, Short Label, Long Label
         self.labels_table.setColumnCount(3)
-        self.labels_table.setHorizontalHeaderLabels(["Status", "Short Label", "Long Label"])
+        self.labels_table.setHorizontalHeaderLabels(["Status", "Short", "Long"])
         self.labels_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.labels_table.horizontalHeader().setStretchLastSection(True)
         self.labels_table.setColumnWidth(0, 50)

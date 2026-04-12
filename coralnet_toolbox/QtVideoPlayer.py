@@ -3,6 +3,9 @@ from PyQt5.QtGui import QPainter, QPen, QColor, QPixmap, QImage, QCursor
 from PyQt5.QtWidgets import (QWidget, QHBoxLayout, QPushButton, QSlider,
                              QLabel, QStyle, QSizePolicy, QStyleOptionSlider, QFrame, QApplication)
 
+from coralnet_toolbox import theme as app_theme
+from coralnet_toolbox.Icons import get_icon
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -108,6 +111,8 @@ class VideoPlayerWidget(QWidget):
     playClicked = pyqtSignal()
     pauseClicked = pyqtSignal()
     seekChanged = pyqtSignal(int)       # Emits the new frame index
+    firstFrameClicked = pyqtSignal()
+    lastFrameClicked = pyqtSignal()
     nextFrameClicked = pyqtSignal()
     prevFrameClicked = pyqtSignal()
     nextAnnotatedClicked = pyqtSignal()
@@ -120,6 +125,19 @@ class VideoPlayerWidget(QWidget):
         
         self.is_playing = False
         self.total_frames = 0
+
+        self.control_icon_tint = app_theme.TEXT_BRIGHT_COLOR
+
+        self.first_frame_icon = get_icon("skip-to-start.svg", tint=self.control_icon_tint)
+        self.prev_frame_icon = get_icon("rewind.svg", tint=self.control_icon_tint)
+        self.play_icon = get_icon("play.svg", tint=self.control_icon_tint)
+        self.pause_icon = get_icon("pause.svg", tint=self.control_icon_tint)
+        self.stop_icon = get_icon("stop.svg", tint=self.control_icon_tint)
+        self.next_frame_icon = get_icon("fast-forward.svg", tint=self.control_icon_tint)
+        self.last_frame_icon = get_icon("skip-to-end.svg", tint=self.control_icon_tint)
+
+        self.prev_annotated_icon = get_icon("left.svg", tint=self.control_icon_tint)
+        self.next_annotated_icon = get_icon("right.svg", tint=self.control_icon_tint)
         
         self.setup_ui()
 
@@ -142,47 +160,86 @@ class VideoPlayerWidget(QWidget):
         layout.setContentsMargins(5, 0, 5, 5) # Small margins
         layout.setSpacing(10)
 
-        # --- 1. Jump to Previous Annotated Frame Button ---
-        self.btn_prev_annotated = QPushButton()
-        self.btn_prev_annotated.setIcon(self.style().standardIcon(QStyle.SP_MediaSeekBackward))
-        self.btn_prev_annotated.setToolTip("Jump to Previous Annotated Frame")
-        self.btn_prev_annotated.setFixedWidth(30)
-        self.btn_prev_annotated.clicked.connect(self.prevAnnotatedClicked.emit)
-        layout.addWidget(self.btn_prev_annotated)
+        # --- 0. Jump to First Frame Button ---
+        self.btn_first = QPushButton()
+        self.btn_first.setIcon(self.first_frame_icon)
+        self.btn_first.setToolTip("Jump to First Frame")
+        self.btn_first.setFixedSize(app_theme.scale_int(30), app_theme.scale_int(30))
+        self.btn_first.setIconSize(app_theme.scale_size(18))
+        self.btn_first.clicked.connect(self.jump_to_first_frame)
+        layout.addWidget(self.btn_first)
 
-        # --- 2. Step Backward Button ---
+        # --- 1. Step Backward Button ---
         self.btn_prev = QPushButton()
-        self.btn_prev.setIcon(self.style().standardIcon(QStyle.SP_MediaSkipBackward))
+        self.btn_prev.setIcon(self.prev_frame_icon)
         self.btn_prev.setToolTip("Step Back 1 Frame")
-        self.btn_prev.setFixedWidth(30)
+        self.btn_prev.setFixedSize(app_theme.scale_int(30), app_theme.scale_int(30))
+        self.btn_prev.setIconSize(app_theme.scale_size(18))
         self.btn_prev.clicked.connect(self.prevFrameClicked.emit)
         layout.addWidget(self.btn_prev)
 
-        # --- 3. Play/Pause Button ---
+        # --- 2. Play/Pause Button ---
         self.btn_play = QPushButton()
-        self.btn_play.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
+        self.btn_play.setIcon(self.play_icon)
         self.btn_play.setToolTip("Play / Pause")
-        self.btn_play.setFixedWidth(30)
+        self.btn_play.setFixedSize(app_theme.scale_int(30), app_theme.scale_int(30))
+        self.btn_play.setIconSize(app_theme.scale_size(18))
         self.btn_play.clicked.connect(self.toggle_playback_state)
         layout.addWidget(self.btn_play)
 
+        # --- 3. Stop Button ---
+        self.btn_stop = QPushButton()
+        self.btn_stop.setIcon(self.stop_icon)
+        self.btn_stop.setToolTip("Stop Playback")
+        self.btn_stop.setFixedSize(app_theme.scale_int(30), app_theme.scale_int(30))
+        self.btn_stop.setIconSize(app_theme.scale_size(18))
+        self.btn_stop.clicked.connect(self.stop_playback)
+        layout.addWidget(self.btn_stop)
+
         # --- 4. Step Forward Button ---
         self.btn_next = QPushButton()
-        self.btn_next.setIcon(self.style().standardIcon(QStyle.SP_MediaSkipForward))
+        self.btn_next.setIcon(self.next_frame_icon)
         self.btn_next.setToolTip("Step Forward 1 Frame")
-        self.btn_next.setFixedWidth(30)
+        self.btn_next.setFixedSize(app_theme.scale_int(30), app_theme.scale_int(30))
+        self.btn_next.setIconSize(app_theme.scale_size(18))
         self.btn_next.clicked.connect(self.nextFrameClicked.emit)
         layout.addWidget(self.btn_next)
 
-        # --- 5. Jump to Next Annotated Frame Button ---
+        # --- 5. Jump to Last Frame Button ---
+        self.btn_last = QPushButton()
+        self.btn_last.setIcon(self.last_frame_icon)
+        self.btn_last.setToolTip("Jump to Last Frame")
+        self.btn_last.setFixedSize(app_theme.scale_int(30), app_theme.scale_int(30))
+        self.btn_last.setIconSize(app_theme.scale_size(18))
+        self.btn_last.clicked.connect(self.jump_to_last_frame)
+        layout.addWidget(self.btn_last)
+
+        # Add visual separator between step controls and scrubber
+        separator = QFrame()
+        separator.setStyleSheet("color: white;")
+        separator.setFrameShape(QFrame.VLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(separator)
+
+        # --- 6. Jump to Previous Annotated Frame Button ---
+        self.btn_prev_annotated = QPushButton()
+        self.btn_prev_annotated.setIcon(self.prev_annotated_icon)
+        self.btn_prev_annotated.setToolTip("Jump to Previous Annotated Frame")
+        self.btn_prev_annotated.setFixedSize(app_theme.scale_int(30), app_theme.scale_int(30))
+        self.btn_prev_annotated.setIconSize(app_theme.scale_size(18))
+        self.btn_prev_annotated.clicked.connect(self.prevAnnotatedClicked.emit)
+        layout.addWidget(self.btn_prev_annotated)
+
+        # --- 7. Jump to Next Annotated Frame Button ---
         self.btn_next_annotated = QPushButton()
-        self.btn_next_annotated.setIcon(self.style().standardIcon(QStyle.SP_MediaSeekForward))
+        self.btn_next_annotated.setIcon(self.next_annotated_icon)
         self.btn_next_annotated.setToolTip("Jump to Next Annotated Frame")
-        self.btn_next_annotated.setFixedWidth(30)
+        self.btn_next_annotated.setFixedSize(app_theme.scale_int(30), app_theme.scale_int(30))
+        self.btn_next_annotated.setIconSize(app_theme.scale_size(18))
         self.btn_next_annotated.clicked.connect(self.nextAnnotatedClicked.emit)
         layout.addWidget(self.btn_next_annotated)
 
-        # --- 6. Scrubber Slider (AnnotatedSlider draws per-frame annotation ticks) ---
+        # --- 8. Scrubber Slider (AnnotatedSlider draws per-frame annotation ticks) ---
         self.slider = AnnotatedSlider(Qt.Horizontal)
         self.slider.setToolTip("Seek Frame")
         self.slider.setMouseTracking(True)
@@ -194,7 +251,7 @@ class VideoPlayerWidget(QWidget):
         self.slider.valueChanged.connect(self._on_slider_value_changed)
         layout.addWidget(self.slider)
 
-        # --- 7. Frame Counter Label ---
+        # --- 9. Frame Counter Label ---
         self.lbl_frame = QLabel("0 / 0")
         self.lbl_frame.setToolTip("Current Frame / Total Frames")
         self.lbl_frame.setMinimumWidth(80)
@@ -363,21 +420,44 @@ class VideoPlayerWidget(QWidget):
     def set_playing(self):
         """Force UI to 'Playing' state."""
         self.is_playing = True
-        self.btn_play.setIcon(self.style().standardIcon(QStyle.SP_MediaPause))
+        self.btn_play.setIcon(self.pause_icon)
         # Disable step/jump buttons while playing to prevent conflicts
+        self.btn_first.setEnabled(False)
         self.btn_prev_annotated.setEnabled(False)
         self.btn_prev.setEnabled(False)
+        self.btn_stop.setEnabled(True)
         self.btn_next.setEnabled(False)
         self.btn_next_annotated.setEnabled(False)
+        self.btn_last.setEnabled(False)
 
     def set_paused(self):
         """Force UI to 'Paused' state."""
         self.is_playing = False
-        self.btn_play.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
+        self.btn_play.setIcon(self.play_icon)
+        self.btn_first.setEnabled(True)
         self.btn_prev_annotated.setEnabled(True)
         self.btn_prev.setEnabled(True)
+        self.btn_stop.setEnabled(True)
         self.btn_next.setEnabled(True)
         self.btn_next_annotated.setEnabled(True)
+        self.btn_last.setEnabled(True)
+
+    def stop_playback(self):
+        """Stop playback and return the widget to a paused state."""
+        self.set_paused()
+        self.pauseClicked.emit()
+
+    def jump_to_first_frame(self):
+        """Jump to the first frame in the clip."""
+        if self.total_frames <= 0:
+            return
+        self.seekChanged.emit(0)
+
+    def jump_to_last_frame(self):
+        """Jump to the last frame in the clip."""
+        if self.total_frames <= 0:
+            return
+        self.seekChanged.emit(max(0, self.total_frames - 1))
 
     def update_state(self, current_frame, total_frames):
         """

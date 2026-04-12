@@ -15,7 +15,7 @@ from PyQtAds import ads
 
 from PyQt5.QtGui import QMouseEvent
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize
-from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy,
+from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QActionGroup, QSizePolicy,
                              QMessageBox, QWidget, QVBoxLayout, QLabel, QHBoxLayout,
                              QSpinBox, QSlider, QDialog, QPushButton, QListWidget)
 
@@ -138,7 +138,7 @@ from coralnet_toolbox.BreakTime import (
     LightCycleGame
 )
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -167,8 +167,8 @@ class MainWindow(QMainWindow):
         self.pid = os.getpid()
 
         # Define icons
-        self.coralnet_icon = get_icon("coralnet.svg")
-        self.coral_icon = get_icon("coral.svg")
+        self.coralnet_icon = get_window_icon("coralnet.svg")
+        self.coral_icon = get_window_icon("coral.svg")
         self.select_icon = get_icon("select.svg")
         self.patch_icon = get_icon("patch.svg")
         self.rectangle_icon = get_icon("rectangle.svg")
@@ -198,17 +198,11 @@ class MainWindow(QMainWindow):
         self.unlock_icon = get_icon("unlock.svg")
         self.home_icon = get_icon("home.svg")
 
-        # Set the version
+        # Set the version and window icon used across dialogs and update prompts
         self.version = __version__
-
-        # Project path
         self.current_project_path = ""
-
-        # Update the project label
-        self.update_project_label()
-
-        # Set icon
         self.setWindowIcon(self.coralnet_icon)
+        self.update_project_label()
 
         # Set window flags for resizing, minimize, maximize, and customizing
         self.setWindowFlags(Qt.Window |
@@ -526,6 +520,7 @@ class MainWindow(QMainWindow):
         # Layout menu - for saving and loading dock configurations
         self.layout_menu = self.menu_bar.addMenu("Layout")
         self.dock_toggle_actions = {}
+        self.scale_actions = {}
         
         # ========== VIEW MENU ==========
         # Fetch the fully encapsulated menu from the MVAT Viewer and add it to the main menu bar
@@ -841,22 +836,24 @@ class MainWindow(QMainWindow):
     
         self.toolbar = QToolBar("Tools", self)
         self.toolbar.setOrientation(Qt.Vertical)
-        self.toolbar.setFixedWidth(40)
+        self.toolbar.setFixedWidth(app_theme.scale_int(48))
+        self.toolbar.setIconSize(app_theme.scale_size(24))
         self.toolbar.setMovable(False)  # Lock the toolbar in place
         self.addToolBar(Qt.LeftToolBarArea, self.toolbar)
 
         # Define spacer
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        spacer.setFixedHeight(10)  # Set a fixed height for the spacer
+        self.toolbar_spacer = QWidget()
+        self.toolbar_spacer.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.toolbar_spacer.setFixedHeight(app_theme.scale_int(12))  # Set a fixed height for the spacer
 
         # Define line separator
-        separator = QWidget()
-        separator.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        separator.setFixedHeight(1)  # Set a fixed height for the line separator
+        self.toolbar_separator = QWidget()
+        self.toolbar_separator.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.toolbar_separator.setFixedHeight(app_theme.scale_int(1))  # Set a fixed height for the line separator
 
         # Add a spacer before the first tool with a fixed height
-        self.toolbar.addWidget(spacer)
+        self.toolbar.addWidget(self.toolbar_spacer)
+        self.toolbar.addWidget(self.toolbar_separator)
 
         # Add tools here with icons
         self.select_tool_action = QAction(self.select_icon, "Select", self)
@@ -951,7 +948,7 @@ class MainWindow(QMainWindow):
         self.max_detections_spinbox.setValue(self.max_detections)
         self.max_detections_spinbox.valueChanged.connect(self.update_max_detections)
         max_detections_layout = QHBoxLayout()
-        max_detections_label = QLabel("Max Detections:")
+        max_detections_label = QLabel("")
         max_detections_layout.addWidget(max_detections_label)
         max_detections_layout.addWidget(self.max_detections_spinbox)
         max_detections_layout.addStretch()
@@ -1085,7 +1082,7 @@ class MainWindow(QMainWindow):
         if hasattr(self.image_window, 'create_info_toolbar'):
             self.rasters_dock.add_toolbar(self.image_window.create_info_toolbar())
         if hasattr(self.image_window, 'create_action_toolbar'):
-            self.rasters_dock.add_toolbar(self.image_window.create_action_toolbar())
+            self.rasters_dock.add_toolbar(self.image_window.create_action_toolbar(), Qt.BottomToolBarArea)
 
         # Setup Label Dock using DockWrapper
         self.labels_dock = DockWrapper("Labels", "LabelsDock",  self.label_window, self)
@@ -1206,6 +1203,10 @@ class MainWindow(QMainWindow):
         # Load Layout submenu
         self.load_layout_menu = self.layout_menu.addMenu("Load Layout")
         self.populate_load_layout_menu()
+
+        # Scale submenu
+        self.scale_menu = self.layout_menu.addMenu("Scale")
+        self.populate_scale_menu()
         
         # --------------------------------------------------
         # Restore layout from cache
@@ -2540,6 +2541,124 @@ class MainWindow(QMainWindow):
                 "Load Failed",
                 f"Failed to load layout '{layout_name}'."
             )
+
+    def populate_scale_menu(self):
+        """Populate the Scale submenu with auto and fixed percentage options."""
+        self.scale_menu.clear()
+        self.scale_action_group = QActionGroup(self)
+        self.scale_action_group.setExclusive(True)
+        self.scale_actions = {}
+
+        scale_options = [
+            ("Auto", app_theme.SCALE_MODE_AUTO, None),
+            ("100%", app_theme.SCALE_MODE_MANUAL, 1.0),
+            ("125%", app_theme.SCALE_MODE_MANUAL, 1.25),
+            ("150%", app_theme.SCALE_MODE_MANUAL, 1.5),
+            ("175%", app_theme.SCALE_MODE_MANUAL, 1.75),
+            ("200%", app_theme.SCALE_MODE_MANUAL, 2.0),
+        ]
+
+        for label, scale_mode, scale_factor in scale_options:
+            action = QAction(label, self, checkable=True)
+            action.triggered.connect(
+                lambda checked=False, selected_mode=scale_mode, selected_factor=scale_factor: self.apply_scale_selection(selected_mode, selected_factor)
+            )
+            self.scale_action_group.addAction(action)
+            self.scale_menu.addAction(action)
+            self.scale_actions[label] = action
+
+        self.sync_scale_menu_selection()
+
+    def apply_scale_selection(self, scale_mode: str, scale_factor: float | None = None):
+        """Apply a manual or automatic scale selection."""
+        app = QApplication.instance()
+        cursor_set = False
+
+        try:
+            if app is not None:
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+                QApplication.processEvents()
+                cursor_set = True
+
+            if scale_mode == app_theme.SCALE_MODE_AUTO:
+                app_theme.set_scale_mode(app_theme.SCALE_MODE_AUTO)
+            else:
+                app_theme.set_scale_factor(1.0 if scale_factor is None else scale_factor)
+
+            if app is not None:
+                app_theme.apply_theme(app)
+
+            self.refresh_scale_sensitive_ui()
+            self.sync_scale_menu_selection()
+        finally:
+            if cursor_set:
+                QApplication.restoreOverrideCursor()
+
+    def refresh_scale_sensitive_ui(self):
+        """Refresh widget sizes and styles that depend on the selected UI scale."""
+        self.dock_manager.setStyleSheet(app_theme.build_dock_stylesheet())
+
+        self.toolbar.setFixedWidth(app_theme.scale_int(48))
+        self.toolbar.setIconSize(app_theme.scale_size(24))
+        self.toolbar_spacer.setFixedHeight(app_theme.scale_int(12))
+        self.toolbar_separator.setFixedHeight(app_theme.scale_int(1))
+
+        dock_wrappers = [
+            self.annotation_dock,
+            self.rasters_dock,
+            self.labels_dock,
+            self.confidence_dock,
+            self.performance_dock,
+            self.timer_dock,
+            self.gallery_dock,
+            self.embeddings_dock,
+            self.mvat_dock,
+            self.context_dock,
+        ]
+
+        for dock_wrapper in dock_wrappers:
+            refresh = getattr(dock_wrapper, "refresh_scaling", None)
+            if callable(refresh):
+                refresh()
+
+        refresh_targets = [
+            self.annotation_window,
+            self.image_window,
+            self.label_window,
+            self.confidence_window,
+            self.performance_window,
+            self.timer_window,
+            self.annotation_viewer_window,
+            self.embedding_viewer_window,
+            self.mvat_viewer,
+            self.context_matrix,
+        ]
+
+        for target in refresh_targets:
+            refresh = getattr(target, "refresh_scaling", None)
+            if callable(refresh):
+                refresh()
+
+    def sync_scale_menu_selection(self):
+        """Check the current scale entry in the Scale submenu."""
+        current_mode = app_theme.get_scale_mode()
+        current_factor = app_theme.get_scale_factor()
+
+        for action in self.scale_actions.values():
+            action.setChecked(False)
+
+        if current_mode == app_theme.SCALE_MODE_AUTO:
+            auto_action = self.scale_actions.get("Auto")
+            if auto_action is not None:
+                auto_action.setChecked(True)
+            return
+
+        for label, scale_factor in (("100%", 1.0), ("125%", 1.25), ("150%", 1.5), ("175%", 1.75), ("200%", 2.0)):
+            if abs(current_factor - scale_factor) < 0.001:
+                action = self.scale_actions.get(label)
+                if action is not None:
+                    action.setChecked(True)
+                break
 
     def open_export_spatial_metrics_dialog(self):
         """Open the Export Spatial Metrics dialog to export spatial metrics."""

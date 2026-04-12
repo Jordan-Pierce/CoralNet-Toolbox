@@ -198,11 +198,11 @@ class AnnotationViewerWindow(QWidget):
         self._group_headers = []
         
         # Display options
-        self.current_widget_size = 96
+        self.current_widget_size = app_theme.scale_int(96)
         # Widget size limits and step for Ctrl+Scroll resizing
-        self._widget_size_min = 32
-        self._widget_size_max = 256
-        self._widget_size_step = 8
+        self._widget_size_min = app_theme.scale_int(32)
+        self._widget_size_max = app_theme.scale_int(256)
+        self._widget_size_step = max(1, app_theme.scale_int(8))
         
         # Selection blocking (for external wizards)
         self.selection_blocked = False
@@ -449,7 +449,7 @@ class AnnotationViewerWindow(QWidget):
         self.list_view.setViewMode(QListView.IconMode)
         self.list_view.setResizeMode(QListView.Adjust)
         self.list_view.setSelectionMode(QListView.ExtendedSelection)
-        self.list_view.setSpacing(5)
+        self.list_view.setSpacing(app_theme.scale_int(5))
         # Override key press events to support Ctrl+A selection
         self.list_view.keyPressEvent = self._list_view_key_press_event
         # Set background and rubber-band styling (cyan rubber band)
@@ -471,7 +471,9 @@ class AnnotationViewerWindow(QWidget):
             "No annotations available\nLoad annotations or adjust the gallery filters to display results."
         )
         self.placeholder_label.setStyleSheet(
-            f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; background-color: transparent; font-size: 14px; padding: 16px;"
+            app_theme.scale_qss(
+                f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; background-color: transparent; font-size: 14px; padding: 16px;"
+            )
         )
         self.placeholder_label.setAlignment(Qt.AlignCenter)
         self.placeholder_label.setAutoFillBackground(True)
@@ -484,6 +486,7 @@ class AnnotationViewerWindow(QWidget):
         # Setup model and delegate
         self.list_model = AnnotationListModel(self)
         self.list_delegate = AnnotationItemDelegate(item_size=self.current_widget_size)
+
         self.list_view.setModel(self.list_model)
         self.list_view.setItemDelegate(self.list_delegate)
         self.list_view.selectionModel().selectionChanged.connect(self._on_list_selection_changed)
@@ -545,6 +548,22 @@ class AnnotationViewerWindow(QWidget):
         except Exception:
             pass
 
+    def refresh_scaling(self):
+        """Refresh gallery sizing after a UI scale change."""
+        self.current_widget_size = app_theme.scale_int(96)
+        self._widget_size_min = app_theme.scale_int(32)
+        self._widget_size_max = app_theme.scale_int(256)
+        self._widget_size_step = max(1, app_theme.scale_int(8))
+        self.list_view.setSpacing(app_theme.scale_int(5))
+        self.placeholder_label.setStyleSheet(
+            app_theme.scale_qss(
+                f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; background-color: transparent; font-size: 14px; padding: 16px;"
+            )
+        )
+        if hasattr(self, 'list_delegate'):
+            self.list_delegate.item_size = self.current_widget_size
+        self.list_view.doItemsLayout()
+        self.list_view.update()
         
     # -------------------------------------------------------------------------
     # Public API

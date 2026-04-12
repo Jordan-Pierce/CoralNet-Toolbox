@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QWidget, QV
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -37,7 +37,7 @@ class Base(QDialog):
         """
         super().__init__(parent)
 
-        self.setWindowIcon(get_icon("coralnet.svg"))
+        self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowTitle("Merge Datasets")
         self.resize(500, 500)
 

@@ -250,13 +250,17 @@ class ImageWindow(QWidget):
     def _init_filter_widgets(self):
         """Set up the filter section widgets without adding to main layout."""
         self.filter_content_widget = QWidget()
+        self.filter_content_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.filter_layout = QVBoxLayout(self.filter_content_widget)
         self.filter_layout.setContentsMargins(4, 4, 4, 4) # Add slight padding for toolbar aesthetics
         
         self.search_layout = QFormLayout()
+        self.search_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        self.search_layout.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.search_layout.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self.search_layout.setHorizontalSpacing(app_theme.scale_int(8))
+        self.search_layout.setVerticalSpacing(app_theme.scale_int(6))
         self.filter_layout.addLayout(self.search_layout)
-
-        fixed_width = 125
 
         # --- Setup Filter ComboBox ---
         self.filter_combo = CheckableComboBox(self)
@@ -268,14 +272,8 @@ class ImageWindow(QWidget):
         self.filter_combo.filterChanged.connect(self.schedule_filter)
         self.filter_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-        # --- Create containers for search bars and buttons ---
-        self.image_search_container = QWidget()
-        self.image_search_layout = QHBoxLayout(self.image_search_container)
-        self.image_search_layout.setContentsMargins(0, 0, 0, 0)
-
-        self.label_search_container = QWidget()  
-        self.label_search_layout = QHBoxLayout(self.label_search_container)
-        self.label_search_layout.setContentsMargins(0, 0, 0, 0)
+        # Setup filter/search controls
+        self.search_layout.addRow("Filters:", self.filter_combo)
 
         # Setup image search
         self.search_bar_images = QComboBox(self)
@@ -283,14 +281,8 @@ class ImageWindow(QWidget):
         self.search_bar_images.setPlaceholderText("Type to search images")
         self.search_bar_images.setInsertPolicy(QComboBox.NoInsert)
         self.search_bar_images.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.search_bar_images.setFixedWidth(fixed_width)
         self.search_bar_images.editTextChanged.connect(self.schedule_filter)
-        self.image_search_layout.addWidget(self.search_bar_images)
-
-        self.image_search_button = QPushButton(self)
-        self.image_search_button.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
-        self.image_search_button.clicked.connect(self.filter_images)
-        self.image_search_layout.addWidget(self.image_search_button)
+        self.search_layout.addRow("Search Images:", self.search_bar_images)
 
         # Setup label search
         self.search_bar_labels = QComboBox(self)
@@ -298,41 +290,30 @@ class ImageWindow(QWidget):
         self.search_bar_labels.setPlaceholderText("Type to search labels")
         self.search_bar_labels.setInsertPolicy(QComboBox.NoInsert)
         self.search_bar_labels.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.search_bar_labels.setFixedWidth(fixed_width)
         self.search_bar_labels.editTextChanged.connect(self.schedule_filter)
-        self.label_search_layout.addWidget(self.search_bar_labels)
-
-
-        self.label_search_button = QPushButton(self)
-        self.label_search_button.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
-        self.label_search_button.clicked.connect(self.filter_images)
-        self.label_search_layout.addWidget(self.label_search_button)
-
-        # Add rows to form layout
-        self.search_layout.addRow("Filters:", self.filter_combo)
-        self.search_layout.addRow("Search Images:", self.image_search_container)
-        self.search_layout.addRow("Search Labels:", self.label_search_container)
+        self.search_layout.addRow("Search Labels:", self.search_bar_labels)
 
     def _init_info_widgets(self):
         """Instantiate info labels and home button."""
         self.home_button = QPushButton("", self)
         self.home_button.setToolTip("Center table on current image")
         self.home_button.setIcon(get_icon("home.svg"))  
-        self.home_button.setFixedSize(24, 24)             
+        self.home_button.setFixedSize(app_theme.scale_int(24), app_theme.scale_int(24))             
+        self.home_button.setIconSize(app_theme.scale_size(16))
         self.home_button.setFlat(True)    
         self.home_button.clicked.connect(self.center_table_on_current_image)
 
         self.current_image_index_label = QLabel("Current: None", self)
         self.current_image_index_label.setAlignment(Qt.AlignCenter)
-        self.current_image_index_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.current_image_index_label.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
 
         self.highlighted_count_label = QLabel("Highlighted: 0", self)
         self.highlighted_count_label.setAlignment(Qt.AlignCenter)
-        self.highlighted_count_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.highlighted_count_label.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
 
         self.image_count_label = QLabel("Total: 0", self)
         self.image_count_label.setAlignment(Qt.AlignCenter)
-        self.image_count_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.image_count_label.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
 
     def _init_table_widget(self):
         """Instantiate and configure the central table view."""
@@ -350,11 +331,12 @@ class ImageWindow(QWidget):
         
         self.tableView.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents) 
         self.tableView.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents) 
-        self.tableView.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch) 
-        self.tableView.setColumnWidth(3, 120) 
-        self.tableView.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)
+        self.tableView.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents) 
+        self.tableView.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         
-        self.tableView.horizontalHeader().setStyleSheet("""
+        self.tableView.horizontalHeader().setStyleSheet(
+            app_theme.scale_qss(
+                """
             QHeaderView::section {
             background-color: %s;
             padding: 4px;
@@ -362,6 +344,7 @@ class ImageWindow(QWidget):
             color: %s;
             }
         """ % (app_theme.SURFACE_COLOR.name(), app_theme.SURFACE_BORDER_COLOR.name(), app_theme.TEXT_PRIMARY_COLOR.name()))
+        )
         
         self.tableView.leftClicked.connect(self.on_table_pressed)
         self.tableView.doubleClicked.connect(self.on_table_double_clicked)
@@ -373,6 +356,22 @@ class ImageWindow(QWidget):
 
         self.unhighlight_all_button = QPushButton("Unhighlight All", self)
         self.unhighlight_all_button.clicked.connect(self.unhighlight_all_rows)
+
+    def refresh_scaling(self):
+        """Refresh scale-sensitive controls after the global UI scale changes."""
+        self.home_button.setFixedSize(app_theme.scale_int(24), app_theme.scale_int(24))
+        self.home_button.setIconSize(app_theme.scale_size(16))
+        self.tableView.horizontalHeader().setStyleSheet(
+            app_theme.scale_qss(
+                """
+            QHeaderView::section {
+            background-color: %s;
+            padding: 4px;
+            border: 1px solid %s;
+            color: %s;
+            }
+        """ % (app_theme.SURFACE_COLOR.name(), app_theme.SURFACE_BORDER_COLOR.name(), app_theme.TEXT_PRIMARY_COLOR.name()))
+        )
         
     # --- DOCK WRAPPER HOOKS ---
 
@@ -395,12 +394,13 @@ class ImageWindow(QWidget):
         container = QWidget()
         layout = QHBoxLayout(container)
         layout.setContentsMargins(4, 0, 4, 0)
-        layout.setSpacing(10)
+        layout.setSpacing(app_theme.scale_int(6))
 
         layout.addWidget(self.home_button)
         layout.addWidget(self.current_image_index_label)
         layout.addWidget(self.highlighted_count_label)
         layout.addWidget(self.image_count_label)
+        layout.addStretch(1)
 
         container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         toolbar.addWidget(container)
@@ -413,12 +413,12 @@ class ImageWindow(QWidget):
         toolbar.setMovable(False)
 
         container = QWidget()
-        layout = QHBoxLayout(container)
+        layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
 
-        self.highlight_all_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.unhighlight_all_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.highlight_all_button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self.unhighlight_all_button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
 
         layout.addWidget(self.highlight_all_button)
         layout.addWidget(self.unhighlight_all_button)
@@ -1778,7 +1778,9 @@ class ImagePreviewTooltip(QFrame):
         # Configure appearance
         self.setFrameShape(QFrame.StyledPanel)
         self.setFrameShadow(QFrame.Raised)
-        self.setStyleSheet("""
+        self.setStyleSheet(
+            app_theme.scale_qss(
+                """
             QFrame {
                 background-color: %s;
                 border: 1px solid %s;
@@ -1786,6 +1788,7 @@ class ImagePreviewTooltip(QFrame):
                 color: %s;
             }
         """ % (app_theme.SURFACE_COLOR.name(), app_theme.SURFACE_BORDER_COLOR.name(), app_theme.TEXT_PRIMARY_COLOR.name()))
+        )
         
         # Create layout
         self.layout = QVBoxLayout(self)

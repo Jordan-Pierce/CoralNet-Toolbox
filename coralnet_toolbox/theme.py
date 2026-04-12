@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import math
+import re
+from pathlib import Path
+
 # ── Must be set BEFORE QApplication ──────────────────────────────────────── #
 from PyQt5.QtGui import QSurfaceFormat
 
@@ -18,7 +22,7 @@ def _configure_surface_format():
 _configure_surface_format()
 # ──────────────────────────────────────────────────────────────────────────── #
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtGui import QColor, QFont, QPalette
 from PyQt5.QtWidgets import QApplication
 
@@ -47,6 +51,167 @@ FONT_STACK = '"JetBrains Mono", "Cascadia Code", "Fira Code", monospace'
 APP_FONT_FAMILY = "JetBrains Mono"
 APP_FONT_SIZE = 10
 ICON_DEFAULT_COLOR = TEXT_PRIMARY_COLOR
+ICON_DIR = Path(__file__).resolve().parent / "Icons"
+SPINBOX_UP_ARROW_ICON = (ICON_DIR / "spinbox-arrow-up.svg").as_posix()
+SPINBOX_DOWN_ARROW_ICON = (ICON_DIR / "spinbox-arrow-down.svg").as_posix()
+
+SCALE_MODE_AUTO = "auto"
+SCALE_MODE_MANUAL = "manual"
+SCALE_PRESETS = (1.0, 1.25, 1.5, 1.75, 2.0)
+SCALE_MIN = 1.0
+SCALE_MAX = 2.0
+SCALE_STEP = 0.25
+
+_scale_mode = SCALE_MODE_AUTO
+_scale_factor = 1.0
+
+_SCALEABLE_QSS_PROPERTIES = {
+    "font-size",
+    "padding",
+    "padding-left",
+    "padding-right",
+    "padding-top",
+    "padding-bottom",
+    "margin",
+    "margin-left",
+    "margin-right",
+    "margin-top",
+    "margin-bottom",
+    "min-width",
+    "min-height",
+    "max-width",
+    "max-height",
+    "width",
+    "height",
+    "spacing",
+    "border-radius",
+    "icon-size",
+    "letter-spacing",
+    "text-indent",
+}
+
+_QSS_DECLARATION_PATTERN = re.compile(r"^(\s*)([A-Za-z-]+)\s*:\s*(.+);\s*$")
+_QSS_LENGTH_PATTERN = re.compile(r"(-?\d+(?:\.\d+)?)px")
+
+
+def _clamp_scale_factor(scale_factor: float) -> float:
+    return max(SCALE_MIN, min(SCALE_MAX, float(scale_factor)))
+
+
+def _format_scaled_px(value: float) -> str:
+    return f"{max(1, int(math.floor(value + 0.5)))}px"
+
+
+def get_scale_mode() -> str:
+    return _scale_mode
+
+
+def get_scale_factor() -> float:
+    return _scale_factor
+
+
+def set_scale_mode(scale_mode: str) -> None:
+    if scale_mode not in (SCALE_MODE_AUTO, SCALE_MODE_MANUAL):
+        raise ValueError(f"Unsupported scale mode: {scale_mode}")
+
+    global _scale_mode
+    _scale_mode = scale_mode
+
+
+def set_scale_factor(scale_factor: float) -> float:
+    global _scale_factor, _scale_mode
+    _scale_factor = _clamp_scale_factor(scale_factor)
+    _scale_mode = SCALE_MODE_MANUAL
+    return _scale_factor
+
+
+def scale_int(value: float) -> int:
+    return max(1, int(math.floor(value * get_scale_factor() + 0.5)))
+
+
+def scale_size(width: float, height: float | None = None) -> QSize:
+    scaled_width = scale_int(width)
+    scaled_height = scale_int(width if height is None else height)
+    return QSize(scaled_width, scaled_height)
+
+
+def scale_font(point_size: int | None = None, family: str | None = None, bold: bool | None = None) -> QFont:
+    scaled_point_size = scale_int(point_size if point_size is not None else APP_FONT_SIZE)
+    font = QFont(family or APP_FONT_FAMILY, scaled_point_size)
+    if bold is not None:
+        font.setBold(bold)
+    return font
+
+
+def resolve_auto_scale_factor(app: QApplication | None = None, widget=None) -> float:
+    screen = None
+
+    if widget is not None:
+        try:
+            window_handle = widget.windowHandle()
+            if window_handle is not None:
+                screen = window_handle.screen()
+        except Exception:
+            screen = None
+
+    if screen is None and app is not None:
+        try:
+            screen = app.primaryScreen()
+        except Exception:
+            screen = None
+
+        if screen is None:
+            try:
+                screens = app.screens()
+                screen = screens[0] if screens else None
+            except Exception:
+                screen = None
+
+    if screen is None:
+        return 1.0
+
+    try:
+        dpi_scale = screen.logicalDotsPerInch() / 96.0
+    except Exception:
+        dpi_scale = 1.0
+
+    try:
+        geometry = screen.availableGeometry()
+        width_scale = geometry.width() / 1920.0
+        height_scale = geometry.height() / 1080.0
+        resolution_scale = min(width_scale, height_scale)
+    except Exception:
+        resolution_scale = 1.0
+
+    raw_scale = max(1.0, dpi_scale, resolution_scale)
+    snapped_scale = math.ceil(raw_scale / SCALE_STEP) * SCALE_STEP
+    return _clamp_scale_factor(snapped_scale)
+
+
+def scale_qss(qss: str, scale_factor: float | None = None) -> str:
+    factor = get_scale_factor() if scale_factor is None else _clamp_scale_factor(scale_factor)
+    if factor == 1.0:
+        return qss
+
+    scaled_lines: list[str] = []
+    for line in qss.splitlines():
+        match = _QSS_DECLARATION_PATTERN.match(line)
+        if not match:
+            scaled_lines.append(line)
+            continue
+
+        indent, property_name, value = match.groups()
+        if property_name.lower() not in _SCALEABLE_QSS_PROPERTIES:
+            scaled_lines.append(line)
+            continue
+
+        scaled_value = _QSS_LENGTH_PATTERN.sub(
+            lambda value_match: _format_scaled_px(float(value_match.group(1)) * factor),
+            value,
+        )
+        scaled_lines.append(f"{indent}{property_name}: {scaled_value};")
+
+    return "\n".join(scaled_lines)
 
 
 # ─────────────────────────────────────────────────────────────────────────── #
@@ -341,8 +506,35 @@ QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox {{
     border: 1px solid {SURFACE_BORDER_COLOR.name()};
     border-radius: 5px;
     padding: 4px 8px;
+    padding-right: 24px;
     selection-background-color: {ACCENT_SOFT_COLOR.name()};
     selection-color: {TEXT_BRIGHT_COLOR.name()};
+}}
+QSpinBox::up-button, QDoubleSpinBox::up-button {{
+    subcontrol-origin: border;
+    subcontrol-position: top right;
+    width: 18px;
+    border-left: 1px solid {SURFACE_BORDER_COLOR.name()};
+    border-top-right-radius: 5px;
+    background-color: {SURFACE_COLOR.name()};
+}}
+QSpinBox::down-button, QDoubleSpinBox::down-button {{
+    subcontrol-origin: border;
+    subcontrol-position: bottom right;
+    width: 18px;
+    border-left: 1px solid {SURFACE_BORDER_COLOR.name()};
+    border-bottom-right-radius: 5px;
+    background-color: {SURFACE_COLOR.name()};
+}}
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{
+    image: url("{SPINBOX_UP_ARROW_ICON}");
+    width: 8px;
+    height: 8px;
+}}
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{
+    image: url("{SPINBOX_DOWN_ARROW_ICON}");
+    width: 8px;
+    height: 8px;
 }}
 QLineEdit:read-only, QTextEdit:read-only, QPlainTextEdit:read-only {{
     background-color: {SURFACE_COLOR.name()};
@@ -380,6 +572,7 @@ QToolBar {{
     border-bottom: 1px solid {SURFACE_BORDER_COLOR.name()};
     spacing: 4px;
     padding: 3px 4px;
+    icon-size: 18px;
 }}
 QToolButton {{
     background: transparent;
@@ -425,12 +618,12 @@ QToolTip {{
 APP_STYLESHEET = STYLESHEET + EXTRA_STYLESHEET
 
 
-def build_stylesheet() -> str:
-    return APP_STYLESHEET
+def build_stylesheet(scale_factor: float | None = None) -> str:
+    return scale_qss(APP_STYLESHEET, scale_factor)
 
 
-def build_dock_stylesheet() -> str:
-    return f"""
+def build_dock_stylesheet(scale_factor: float | None = None) -> str:
+    stylesheet = f"""
 ads--CDockAreaTabBar {{
     background-color: {BACKGROUND_COLOR.name()};
     border-bottom: 1px solid {SURFACE_BORDER_COLOR.name()};
@@ -497,10 +690,11 @@ ads--CDockArea {{
     border: 1px solid {SURFACE_BORDER_COLOR.name()};
 }}
 """
+    return scale_qss(stylesheet, scale_factor)
 
 
-def build_panel_stylesheet() -> str:
-    return f"""
+def build_panel_stylesheet(scale_factor: float | None = None) -> str:
+    stylesheet = f"""
 QMenuBar {{
     background-color: {BACKGROUND_ALT_COLOR.name()};
     color: {TEXT_PRIMARY_COLOR.name()};
@@ -514,6 +708,7 @@ QToolBar {{
     background-color: {BACKGROUND_ALT_COLOR.name()};
     border: none;
     padding: 2px;
+    icon-size: 18px;
 }}
 QMenu {{
     background-color: {SURFACE_COLOR.name()};
@@ -525,10 +720,15 @@ QMenu::item:selected {{
     color: {TEXT_BRIGHT_COLOR.name()};
 }}
 """
+    return scale_qss(stylesheet, scale_factor)
 
 
 def apply_theme(app: QApplication) -> None:
+    if get_scale_mode() == SCALE_MODE_AUTO:
+        global _scale_factor
+        _scale_factor = resolve_auto_scale_factor(app)
+
     app.setStyle("Fusion")
     app.setPalette(build_palette())
-    app.setFont(QFont(APP_FONT_FAMILY, APP_FONT_SIZE))
+    app.setFont(scale_font(APP_FONT_SIZE))
     app.setStyleSheet(build_stylesheet())

@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (QVBoxLayout, QLabel, QGroupBox, QFormLayout,
                              QDialog, QListWidget, QPushButton, QFileDialog,
                              QGraphicsView)
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -24,7 +24,7 @@ class UpdateImagePaths(QDialog):
     def __init__(self, image_paths, parent=None):
         super().__init__(parent)
         
-        self.setWindowIcon(get_icon("coral"))
+        self.setWindowIcon(get_window_icon("coral"))
         self.setWindowTitle("Update Image Paths")
         self.resize(400, 300)
         

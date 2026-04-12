@@ -14,7 +14,7 @@ from coralnet_toolbox.Common.QtMarginInput import MarginInput
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -40,7 +40,7 @@ class WorkAreaManager(QDialog):
         
         self.animation_manager = main_window.animation_manager
 
-        self.setWindowIcon(get_icon("tile.svg"))
+        self.setWindowIcon(get_window_icon("tile.svg"))
         self.setWindowTitle("Work Area Manager")
         self.resize(400, 600)
         

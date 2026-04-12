@@ -22,7 +22,7 @@ from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.WorkArea import WorkArea
 from coralnet_toolbox.Common.QtMarginInput import MarginInput
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 from coralnet_toolbox.utilities import convert_scale_units
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -73,7 +73,7 @@ class RugosityDialog(QDialog):
         self.last_calculated_color = (128, 128, 128)  # Default to gray for grid lines
 
         self.setWindowTitle("Rugosity")
-        self.setWindowIcon(get_icon("spatial.svg"))  # use the spatial icon
+        self.setWindowIcon(get_window_icon("spatial.svg"))  # use the spatial icon
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
         self.resize(450, 300)
         self.setModal(False)
@@ -1065,7 +1065,7 @@ class ProfilePlotDialog(QDialog):
     def __init__(self, profiles_list, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Elevation Profile")
-        self.setWindowIcon(get_icon("spatial.svg"))
+        self.setWindowIcon(get_window_icon("spatial.svg"))
         self.setMinimumSize(800, 700)
 
         # Set a white background for plots

@@ -25,8 +25,8 @@ class RasterTableModel(QAbstractTableModel):
     # Column indices
     CHECKBOX_COL = 0
     Z_COL = 1
-    FILENAME_COL = 2
-    ANNOTATION_COUNT_COL = 3
+    ANNOTATION_COUNT_COL = 2
+    FILENAME_COL = 3
     
     # Row colors
     HIGHLIGHTED_COLOR = QColor(173, 216, 230)  # Light blue
@@ -44,10 +44,10 @@ class RasterTableModel(QAbstractTableModel):
         self.raster_manager = raster_manager
         self.filtered_paths: List[str] = []
         
-        self.column_headers = ["\u2713", "Z", "Image", "Annotations"]
+        self.column_headers = ["\u2713", "Z", "#", "Image"]
         
         # Column widths
-        self.column_widths = [30, 30, -1, 120]  # -1 means stretch
+        self.column_widths = [30, 30, 80, -1]  # -1 means stretch
         
         # Connect to manager signals
         self.raster_manager.rasterAdded.connect(self.on_raster_added)

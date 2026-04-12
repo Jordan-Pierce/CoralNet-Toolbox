@@ -21,7 +21,7 @@ from coralnet_toolbox.Common.QtMarginInput import MarginInput
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -138,7 +138,7 @@ class PatchSamplingDialog(QDialog):
         self.animation_manager = self.annotation_window.animation_manager
 
         self.setWindowTitle("Sample Annotations")
-        self.setWindowIcon(get_icon("coralnet.svg"))
+        self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
 
         self.layout = QVBoxLayout(self)

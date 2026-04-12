@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (QApplication, QComboBox, QFormLayout, QHBoxLayout,
 from coralnet_toolbox.Common.QtCollapsibleSection import CollapsibleSection
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 import torch
 
@@ -695,7 +695,7 @@ class DeployModelDialog(CollapsibleSection):
         """
         msg = QMessageBox()
         msg.setIcon(QMessageBox.Warning)
-        msg.setWindowIcon(get_icon("z.svg"))
+        msg.setWindowIcon(get_window_icon("z.svg"))
         
         # Set minimum width for the dialog
         msg.setStyleSheet("QMessageBox { min-width: 500px; }")

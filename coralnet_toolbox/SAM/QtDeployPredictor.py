@@ -18,7 +18,7 @@ from ultralytics.models.sam import SAM2Predictor, SAM3Predictor
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Common import ThresholdsWidget
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -35,7 +35,7 @@ class DeployPredictorDialog(QDialog):
         self.main_window = main_window
         self.annotation_window = main_window.annotation_window
 
-        self.setWindowIcon(get_icon("wizard.svg"))
+        self.setWindowIcon(get_window_icon("wizard.svg"))
         self.setWindowTitle("SAM Deploy Model")
         self.resize(400, 325)
 

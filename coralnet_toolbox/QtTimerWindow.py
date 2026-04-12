@@ -92,9 +92,11 @@ class TimerWindow(QWidget):
 
         # Time display (more readable/default styling)
         self.time_label = QLabel("00:00:00")
-        self.time_label.setFont(QFont(app_theme.APP_FONT_FAMILY, 10, QFont.Bold))
+        self.time_label.setFont(app_theme.scale_font(10, bold=True))
         self.time_label.setStyleSheet(
-            f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; padding: 6px; background-color: {app_theme.SURFACE_COLOR.name()}; border: 1px solid {app_theme.SURFACE_BORDER_COLOR.name()}; border-radius: 4px;"
+            app_theme.scale_qss(
+                f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; padding: 6px; background-color: {app_theme.SURFACE_COLOR.name()}; border: 1px solid {app_theme.SURFACE_BORDER_COLOR.name()}; border-radius: 4px;"
+            )
         )
         self.time_label.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         layout.addWidget(self.time_label)
@@ -123,6 +125,15 @@ class TimerWindow(QWidget):
 
         # Make the widget request a reasonable minimum height but allow growth
         self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Preferred)
+
+    def refresh_scaling(self):
+        """Refresh the timer label when the global UI scale changes."""
+        self.time_label.setFont(app_theme.scale_font(10, bold=True))
+        self.time_label.setStyleSheet(
+            app_theme.scale_qss(
+                f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; padding: 6px; background-color: {app_theme.SURFACE_COLOR.name()}; border: 1px solid {app_theme.SURFACE_BORDER_COLOR.name()}; border-radius: 4px;"
+            )
+        )
         
     def stop_threads(self):
         """Stop the worker threads safely."""

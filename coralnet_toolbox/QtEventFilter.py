@@ -3,7 +3,7 @@ import warnings
 from PyQt5.QtCore import Qt, QObject, QEvent
 from PyQt5.QtWidgets import QApplication, QMessageBox, QLineEdit
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -203,7 +203,7 @@ class GlobalEventFilter(QObject):
         msg_box.setIcon(QMessageBox.Question)
         
         # Set the custom icon
-        msg_box.setWindowIcon(get_icon("coralnet.svg"))
+        msg_box.setWindowIcon(get_window_icon("coralnet.svg"))
         msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         msg_box.setDefaultButton(QMessageBox.No)
         reply = msg_box.exec_()

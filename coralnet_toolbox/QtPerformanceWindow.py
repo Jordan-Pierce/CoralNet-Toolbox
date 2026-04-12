@@ -193,9 +193,9 @@ class PerformanceWindow(QWidget):
         """
         # --- Layout ---
         # Apply the layout directly to 'self'
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(8)
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(app_theme.scale_int(6), app_theme.scale_int(6), app_theme.scale_int(6), app_theme.scale_int(6))
+        self.main_layout.setSpacing(app_theme.scale_int(8))
 
         # --- Styling (light background with bold black text; neon graph colors) ---
         light_bg_hex = app_theme.BACKGROUND_COLOR.name()
@@ -207,9 +207,9 @@ class PerformanceWindow(QWidget):
 
         # --- Compact Header (CPU / Memory / GPU) ---
         header = QWidget()
-        header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(12)
+        self.header_layout = QHBoxLayout(header)
+        self.header_layout.setContentsMargins(0, 0, 0, 0)
+        self.header_layout.setSpacing(app_theme.scale_int(12))
 
         # hardware info, small labels
         cpu_info = platform.processor() or "CPU"
@@ -220,39 +220,32 @@ class PerformanceWindow(QWidget):
         except Exception:
             gpu_info = "No GPU"
 
-        info_label_style = (
-            f"color: {app_theme.TEXT_PRIMARY_COLOR.name()};"
-            "font-size: 10pt;"
-            f"font-family: '{app_theme.APP_FONT_FAMILY}', 'Consolas', 'Courier New', monospace;"
-            "font-weight: bold;"
-        )
-
         self.cpu_info_label = QLabel(f"{cpu_info}")
-        self.cpu_info_label.setStyleSheet(info_label_style)
+        self.cpu_info_label.setFont(app_theme.scale_font(10, bold=True))
         self.mem_info_label = QLabel(f"{total_memory:.1f} GB")
-        self.mem_info_label.setStyleSheet(info_label_style)
+        self.mem_info_label.setFont(app_theme.scale_font(10, bold=True))
         self.gpu_info_label = QLabel(f"{gpu_info}")
-        self.gpu_info_label.setStyleSheet(info_label_style)
+        self.gpu_info_label.setFont(app_theme.scale_font(10, bold=True))
 
         # Helper for compact metric widget
+        self.metric_title_labels = []
+        self.metric_value_labels = []
+        self.metric_sparks = []
+
         def make_compact_metric(name, initial_value, color):
             w = QWidget()
             v = QVBoxLayout(w)
-            v.setContentsMargins(4, 2, 4, 2)
-            v.setSpacing(2)
+            v.setContentsMargins(app_theme.scale_int(4), app_theme.scale_int(2), app_theme.scale_int(4), app_theme.scale_int(2))
+            v.setSpacing(app_theme.scale_int(2))
             title = QLabel(name)
-            title.setStyleSheet(
-                f"font-weight:700; font-size:10pt; color: {app_theme.TEXT_PRIMARY_COLOR.name()}; font-family: '{app_theme.APP_FONT_FAMILY}', monospace;"
-            )
+            title.setFont(app_theme.scale_font(10, bold=True))
             val = QLabel(initial_value)
-            val.setStyleSheet(
-                f"font-weight:800; font-size:12pt; color: {app_theme.TEXT_PRIMARY_COLOR.name()}; font-family: '{app_theme.APP_FONT_FAMILY}', monospace;"
-            )
+            val.setFont(app_theme.scale_font(12, bold=True))
 
             # tiny sparkline
             spark = pg.PlotWidget()
             spark.setBackground(light_bg_hex)
-            spark.setFixedHeight(36)
+            spark.setFixedHeight(app_theme.scale_int(36))
             spark.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             spark.getPlotItem().hideAxis('left')
             spark.getPlotItem().hideAxis('bottom')
@@ -260,6 +253,10 @@ class PerformanceWindow(QWidget):
             spark.setMenuEnabled(False)
             # curve pen color will be provided by caller via `color` argument
             curve = spark.plot([0] * self.history_size, pen=pg.mkPen(color, width=1.5))
+
+            self.metric_title_labels.append(title)
+            self.metric_value_labels.append(val)
+            self.metric_sparks.append(spark)
 
             v.addWidget(title)
             v.addWidget(val)
@@ -275,12 +272,29 @@ class PerformanceWindow(QWidget):
         mem_widget, self.mem_value_label, self.mem_curve = make_compact_metric("Memory", "0%", mem_color)
         gpu_widget, self.gpu_value_label, self.gpu_curve = make_compact_metric("GPU", "0%", gpu_color)
 
-        header_layout.addWidget(cpu_widget)
-        header_layout.addWidget(mem_widget)
-        header_layout.addWidget(gpu_widget)
+        self.header_layout.addWidget(cpu_widget)
+        self.header_layout.addWidget(mem_widget)
+        self.header_layout.addWidget(gpu_widget)
 
         # No advanced area: keep UI minimal (CPU / Memory / GPU only)
-        layout.addWidget(header)
+        self.main_layout.addWidget(header)
+
+    def refresh_scaling(self):
+        """Refresh metric fonts and sparkline sizing after a UI scale change."""
+        self.main_layout.setContentsMargins(app_theme.scale_int(6), app_theme.scale_int(6), app_theme.scale_int(6), app_theme.scale_int(6))
+        self.main_layout.setSpacing(app_theme.scale_int(8))
+        self.header_layout.setSpacing(app_theme.scale_int(12))
+
+        self.cpu_info_label.setFont(app_theme.scale_font(10, bold=True))
+        self.mem_info_label.setFont(app_theme.scale_font(10, bold=True))
+        self.gpu_info_label.setFont(app_theme.scale_font(10, bold=True))
+
+        for title in self.metric_title_labels:
+            title.setFont(app_theme.scale_font(10, bold=True))
+        for value in self.metric_value_labels:
+            value.setFont(app_theme.scale_font(12, bold=True))
+        for spark in self.metric_sparks:
+            spark.setFixedHeight(app_theme.scale_int(36))
 
     def update_plots(self):
         """

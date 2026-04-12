@@ -179,15 +179,15 @@ class ConfidenceWindow(QWidget):
         # Get and store the icons
         self.user_icon = get_icon("user.svg")
         self.machine_icon = get_icon("machine.svg")
-        self.prev_icon = self.style().standardIcon(QStyle.SP_ArrowLeft)
-        self.next_icon = self.style().standardIcon(QStyle.SP_ArrowRight)
+        self.prev_icon = get_icon("left.svg")
+        self.next_icon = get_icon("right.svg")
         
         self.top_k_icons = {
-            "1": get_icon("1.svg").pixmap(12, 12),
-            "2": get_icon("2.svg").pixmap(12, 12),
-            "3": get_icon("3.svg").pixmap(12, 12),
-            "4": get_icon("4.svg").pixmap(12, 12),
-            "5": get_icon("5.svg").pixmap(12, 12)
+            "1": get_icon("1.svg").pixmap(app_theme.scale_size(12)),
+            "2": get_icon("2.svg").pixmap(app_theme.scale_size(12)),
+            "3": get_icon("3.svg").pixmap(app_theme.scale_size(12)),
+            "4": get_icon("4.svg").pixmap(app_theme.scale_size(12)),
+            "5": get_icon("5.svg").pixmap(app_theme.scale_size(12))
         }
 
         # 1. Initialize the Image View (Top)
@@ -196,12 +196,14 @@ class ConfidenceWindow(QWidget):
         # 2. Create the Unified Control Bar (Middle)
         self.prev_button = QPushButton(self.prev_icon, "")
         self.prev_button.setToolTip("Select an annotation to enable navigation")
-        self.prev_button.setFixedSize(28, 24) # Made them compact icon buttons
+        self.prev_button.setFixedSize(app_theme.scale_int(28), app_theme.scale_int(24)) # Made them compact icon buttons
+        self.prev_button.setIconSize(app_theme.scale_size(16))
         self.prev_button.clicked.connect(self.on_prev_clicked)
         
         self.next_button = QPushButton(self.next_icon, "")
         self.next_button.setToolTip("Select an annotation to enable navigation")
-        self.next_button.setFixedSize(28, 24)
+        self.next_button.setFixedSize(app_theme.scale_int(28), app_theme.scale_int(24))
+        self.next_button.setIconSize(app_theme.scale_size(16))
         self.next_button.clicked.connect(self.on_next_clicked)
 
         self.dimensions_label = QLabel(self)
@@ -209,7 +211,8 @@ class ConfidenceWindow(QWidget):
         self.dimensions_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
         self.toggle_button = QPushButton(self)
-        self.toggle_button.setFixedSize(24, 24)
+        self.toggle_button.setFixedSize(app_theme.scale_int(24), app_theme.scale_int(24))
+        self.toggle_button.setIconSize(app_theme.scale_size(16))
         self.toggle_state = False  # False = user, True = machine
         self.toggle_button.setIcon(self.user_icon)
         self.toggle_button.clicked.connect(self.toggle_user_machine_confidence_icon)
@@ -343,6 +346,28 @@ class ConfidenceWindow(QWidget):
         self.toggle_button.setToolTip("Viewing Machine Confidences")
         self.toggle_button.setEnabled(enabled)
         self.toggle_state = True
+
+    def refresh_scaling(self):
+        """Refresh icon and control sizes after a UI scale change."""
+        self.prev_button.setFixedSize(app_theme.scale_int(28), app_theme.scale_int(24))
+        self.prev_button.setIconSize(app_theme.scale_size(16))
+        self.next_button.setFixedSize(app_theme.scale_int(28), app_theme.scale_int(24))
+        self.next_button.setIconSize(app_theme.scale_size(16))
+        self.toggle_button.setFixedSize(app_theme.scale_int(24), app_theme.scale_int(24))
+        self.toggle_button.setIconSize(app_theme.scale_size(16))
+
+        self.top_k_icons = {
+            "1": get_icon("1.svg").pixmap(app_theme.scale_size(12)),
+            "2": get_icon("2.svg").pixmap(app_theme.scale_size(12)),
+            "3": get_icon("3.svg").pixmap(app_theme.scale_size(12)),
+            "4": get_icon("4.svg").pixmap(app_theme.scale_size(12)),
+            "5": get_icon("5.svg").pixmap(app_theme.scale_size(12))
+        }
+
+        if self.toggle_state:
+            self.set_machine_icon(self.toggle_button.isEnabled())
+        else:
+            self.set_user_icon(self.toggle_button.isEnabled())
 
     def update_blank_pixmap(self):
         """Update the graphics view with a blank transparent pixmap."""
