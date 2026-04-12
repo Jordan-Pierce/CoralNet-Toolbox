@@ -8,7 +8,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (QFileDialog, QMessageBox, QVBoxLayout, QLabel, QDialog,
                              QPushButton, QGroupBox, QHBoxLayout, QTableWidget, 
-                             QTableWidgetItem)
+                             QTableWidgetItem, QHeaderView, QSizePolicy)
 
 from torch.cuda import empty_cache
 
@@ -40,7 +40,7 @@ class Base(QDialog):
 
         self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowTitle("Deploy Model")
-        self.resize(900, 200)
+        self.resize(1100, 240)
 
         # Initialize variables
         self.imgsz = 1024
@@ -92,7 +92,7 @@ class Base(QDialog):
         # Add left column to main layout (more balanced ratio)
         main_layout.addLayout(left_layout, stretch=2)
         # Add right column to main layout (labels panel)
-        main_layout.addLayout(right_layout, stretch=1)
+        main_layout.addLayout(right_layout, stretch=2)
 
     def setup_info_layout(self):
         """Set up the layout and widgets for the info layout."""
@@ -120,10 +120,11 @@ class Base(QDialog):
         self.labels_table.setColumnCount(3)
         self.labels_table.setHorizontalHeaderLabels(["Status", "Short", "Long"])
         self.labels_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.labels_table.horizontalHeader().setStretchLastSection(True)
-        self.labels_table.setColumnWidth(0, 50)
-        self.labels_table.setColumnWidth(1, 90)
-        layout.addWidget(self.labels_table)
+        self.labels_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        header = self.labels_table.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(QHeaderView.Stretch)
+        layout.addWidget(self.labels_table, 1)
 
         # Add status label
         self.labels_status_label = QLabel("No model file selected")

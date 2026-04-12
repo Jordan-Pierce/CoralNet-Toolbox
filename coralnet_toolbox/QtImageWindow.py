@@ -6,6 +6,7 @@ from contextlib import contextmanager
 import rasterio
 
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint, QItemSelectionModel, QModelIndex, QEvent
+from PyQt5.QtGui import QKeyEvent
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QWidget, QVBoxLayout, QLabel, 
                              QComboBox, QHBoxLayout, QTableView, QHeaderView, QApplication, 
                              QMenu, QPushButton, QStyle, QFormLayout, QFrame, 
@@ -47,7 +48,7 @@ class NoArrowKeyTableView(QTableView):
             return
         elif event.key() == Qt.Key_A and event.modifiers() & Qt.ControlModifier:
             # Handle Ctrl+A to highlight all rows in addition to selecting all
-            self.image_window.highlight_all_rows()
+            self.image_window.highlight_all_rows(select_rows=False)
             # Fall through to let the default selection behavior happen
         super().keyPressEvent(event)
 
@@ -295,25 +296,27 @@ class ImageWindow(QWidget):
 
     def _init_info_widgets(self):
         """Instantiate info labels and home button."""
+        home_button_size = app_theme.scale_int(26)
         self.home_button = QPushButton("", self)
         self.home_button.setToolTip("Center table on current image")
         self.home_button.setIcon(get_icon("home.svg"))  
-        self.home_button.setFixedSize(app_theme.scale_int(24), app_theme.scale_int(24))             
+        self.home_button.setFixedSize(home_button_size, home_button_size)
+        self.home_button.setStyleSheet("padding: 0px; margin: 0px;")
         self.home_button.setIconSize(app_theme.scale_size(16))
         self.home_button.setFlat(True)    
         self.home_button.clicked.connect(self.center_table_on_current_image)
 
         self.current_image_index_label = QLabel("Current: None", self)
         self.current_image_index_label.setAlignment(Qt.AlignCenter)
-        self.current_image_index_label.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        self.current_image_index_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         self.highlighted_count_label = QLabel("Highlighted: 0", self)
         self.highlighted_count_label.setAlignment(Qt.AlignCenter)
-        self.highlighted_count_label.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        self.highlighted_count_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         self.image_count_label = QLabel("Total: 0", self)
         self.image_count_label.setAlignment(Qt.AlignCenter)
-        self.image_count_label.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        self.image_count_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
     def _init_table_widget(self):
         """Instantiate and configure the central table view."""
@@ -352,14 +355,25 @@ class ImageWindow(QWidget):
     def _init_action_widgets(self):
         """Instantiate bulk action buttons."""
         self.highlight_all_button = QPushButton("Highlight All", self)
-        self.highlight_all_button.clicked.connect(self.highlight_all_rows)
+        self.highlight_all_button.clicked.connect(self.trigger_highlight_all_shortcut)
 
         self.unhighlight_all_button = QPushButton("Unhighlight All", self)
         self.unhighlight_all_button.clicked.connect(self.unhighlight_all_rows)
 
+    def trigger_highlight_all_shortcut(self):
+        """Invoke the same Ctrl+A shortcut path used by the table view."""
+        if not self.table_model.filtered_paths:
+            return
+
+        self.tableView.setFocus(Qt.ShortcutFocusReason)
+        key_event = QKeyEvent(QEvent.KeyPress, Qt.Key_A, Qt.ControlModifier, "a")
+        QApplication.sendEvent(self.tableView, key_event)
+
     def refresh_scaling(self):
         """Refresh scale-sensitive controls after the global UI scale changes."""
-        self.home_button.setFixedSize(app_theme.scale_int(24), app_theme.scale_int(24))
+        home_button_size = app_theme.scale_int(26)
+        self.home_button.setFixedSize(home_button_size, home_button_size)
+        self.home_button.setStyleSheet("padding: 0px; margin: 0px;")
         self.home_button.setIconSize(app_theme.scale_size(16))
         self.tableView.horizontalHeader().setStyleSheet(
             app_theme.scale_qss(
@@ -396,11 +410,10 @@ class ImageWindow(QWidget):
         layout.setContentsMargins(4, 0, 4, 0)
         layout.setSpacing(app_theme.scale_int(6))
 
-        layout.addWidget(self.home_button)
-        layout.addWidget(self.current_image_index_label)
-        layout.addWidget(self.highlighted_count_label)
-        layout.addWidget(self.image_count_label)
-        layout.addStretch(1)
+        layout.addWidget(self.home_button, 0)
+        layout.addWidget(self.current_image_index_label, 1)
+        layout.addWidget(self.highlighted_count_label, 1)
+        layout.addWidget(self.image_count_label, 1)
 
         container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         toolbar.addWidget(container)
@@ -1132,8 +1145,8 @@ class ImageWindow(QWidget):
         # Load the next image
         self.load_image_by_path(self.table_model.get_path_at_row(next_index))
         
-    def highlight_all_rows(self):
-        """Highlight all rows in the filtered view."""
+    def highlight_all_rows(self, select_rows: bool = True):
+        """Highlight all rows in the filtered view and optionally select them."""
         # Batch highlight all filtered paths for better performance
         self.table_model.set_highlighted_paths(self.table_model.filtered_paths)
         
@@ -1143,12 +1156,24 @@ class ImageWindow(QWidget):
             
         # Update the highlighted count label
         self.update_highlighted_count_label()
+
+        if select_rows and self.table_model.filtered_paths:
+            self.tableView.setFocus(Qt.OtherFocusReason)
+            self.tableView.selectAll()
         
     def unhighlight_all_rows(self):
         """Clear all highlights."""
+        selection_model = self.tableView.selectionModel()
+        if selection_model:
+            selection_model.clearSelection()
+
         self.table_model.clear_highlights()
         self.last_highlighted_row = -1
         
+        if self.selected_image_path:
+            self.table_model.set_selected_path(self.selected_image_path)
+            self.select_row_for_path(self.selected_image_path)
+
         # Update the highlighted count label
         self.update_highlighted_count_label()
         

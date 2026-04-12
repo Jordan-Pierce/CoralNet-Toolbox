@@ -234,6 +234,10 @@ def build_palette() -> QPalette:
     pal.setColor(QPalette.Link, ACCENT_COLOR)
     pal.setColor(QPalette.Highlight, ACCENT_COLOR)
     pal.setColor(QPalette.HighlightedText, TEXT_BRIGHT_COLOR)
+    pal.setColor(QPalette.Disabled, QPalette.Window, BACKGROUND_ALT_COLOR)
+    pal.setColor(QPalette.Disabled, QPalette.Base, BACKGROUND_ALT_COLOR)
+    pal.setColor(QPalette.Disabled, QPalette.Button, SURFACE_COLOR)
+    pal.setColor(QPalette.Disabled, QPalette.WindowText, DISABLED_COLOR)
     pal.setColor(QPalette.Disabled, QPalette.Text, DISABLED_COLOR)
     pal.setColor(QPalette.Disabled, QPalette.ButtonText, DISABLED_COLOR)
     return pal
@@ -309,6 +313,12 @@ QPushButton:hover {
 QPushButton:pressed {
     background-color: #1a1f30;
     border-color: #3d7aed;
+}
+QPushButton:disabled,
+QToolButton:disabled {
+    background-color: #151923;
+    color: #6b738b;
+    border-color: #252b3c;
 }
 
 QPushButton#primaryBtn {
@@ -387,6 +397,24 @@ QComboBox QAbstractItemView {
     color: #d4d8e8;
     outline: none;
 }
+QComboBox:disabled,
+QLineEdit:disabled,
+QTextEdit:disabled,
+QPlainTextEdit:disabled,
+QSpinBox:disabled,
+QDoubleSpinBox:disabled {
+    background-color: #151923;
+    color: #6b738b;
+    border: 1px solid #252b3c;
+}
+QComboBox:disabled::drop-down,
+QSpinBox:disabled::up-button,
+QSpinBox:disabled::down-button,
+QDoubleSpinBox:disabled::up-button,
+QDoubleSpinBox:disabled::down-button {
+    background-color: #11151e;
+    border-color: #252b3c;
+}
 
 /* ── CheckBox ───────────────────────────────────────────────── */
 QCheckBox {
@@ -406,6 +434,15 @@ QCheckBox::indicator:checked {
 }
 QCheckBox::indicator:hover {
     border-color: #5090ff;
+}
+QCheckBox:disabled,
+QRadioButton:disabled {
+    color: #6b738b;
+}
+QCheckBox:disabled::indicator,
+QRadioButton:disabled::indicator {
+    background: #11151e;
+    border-color: #252b3c;
 }
 
 /* ── Labels ─────────────────────────────────────────────────── */
@@ -435,6 +472,9 @@ QLabel#helpText {
     font-size: 11px;
     line-height: 1.7;
 }
+QLabel:disabled {
+    color: #6b738b;
+}
 
 /* ── ScrollBar ──────────────────────────────────────────────── */
 QScrollBar:vertical {
@@ -455,12 +495,12 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 /* ── Status bar ─────────────────────────────────────────────── */
 QStatusBar {
     background: #0c0e15;
-    color: #4a5470;
+    color: #d4d8e8;
     font-size: 11px;
     border-top: 1px solid #1e2130;
 }
 QStatusBar QLabel {
-    color: #4a5470;
+    color: #d4d8e8;
 }
 
 /* ── Menu bar ───────────────────────────────────────────────── */
@@ -482,6 +522,15 @@ QMenu {
 QMenu::item:selected {
     background: #1e3a6e;
     color: #e0eaff;
+}
+QMenu::item:disabled {
+    color: #6b738b;
+}
+QMenu::separator {
+    height: 1px;
+    margin: 6px 10px;
+    background: #3d5aad;
+    border-top: 1px solid #6b738b;
 }
 
 /* ── Separator ──────────────────────────────────────────────── */

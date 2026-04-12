@@ -190,20 +190,25 @@ class ConfidenceWindow(QWidget):
             "5": get_icon("5.svg").pixmap(app_theme.scale_size(12))
         }
 
+        self.icon_button_size = app_theme.scale_int(26)
+        self.icon_button_icon_size = 16
+
         # 1. Initialize the Image View (Top)
         self.init_graphics_view()
 
         # 2. Create the Unified Control Bar (Middle)
         self.prev_button = QPushButton(self.prev_icon, "")
         self.prev_button.setToolTip("Select an annotation to enable navigation")
-        self.prev_button.setFixedSize(app_theme.scale_int(28), app_theme.scale_int(24)) # Made them compact icon buttons
-        self.prev_button.setIconSize(app_theme.scale_size(16))
+        self.prev_button.setFixedSize(self.icon_button_size, self.icon_button_size)
+        self.prev_button.setStyleSheet("padding: 0px; margin: 0px;")
+        self.prev_button.setIconSize(app_theme.scale_size(self.icon_button_icon_size))
         self.prev_button.clicked.connect(self.on_prev_clicked)
         
         self.next_button = QPushButton(self.next_icon, "")
         self.next_button.setToolTip("Select an annotation to enable navigation")
-        self.next_button.setFixedSize(app_theme.scale_int(28), app_theme.scale_int(24))
-        self.next_button.setIconSize(app_theme.scale_size(16))
+        self.next_button.setFixedSize(self.icon_button_size, self.icon_button_size)
+        self.next_button.setStyleSheet("padding: 0px; margin: 0px;")
+        self.next_button.setIconSize(app_theme.scale_size(self.icon_button_icon_size))
         self.next_button.clicked.connect(self.on_next_clicked)
 
         self.dimensions_label = QLabel(self)
@@ -211,8 +216,9 @@ class ConfidenceWindow(QWidget):
         self.dimensions_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
         self.toggle_button = QPushButton(self)
-        self.toggle_button.setFixedSize(app_theme.scale_int(24), app_theme.scale_int(24))
-        self.toggle_button.setIconSize(app_theme.scale_size(16))
+        self.toggle_button.setFixedSize(self.icon_button_size, self.icon_button_size)
+        self.toggle_button.setStyleSheet("padding: 0px; margin: 0px;")
+        self.toggle_button.setIconSize(app_theme.scale_size(self.icon_button_icon_size))
         self.toggle_state = False  # False = user, True = machine
         self.toggle_button.setIcon(self.user_icon)
         self.toggle_button.clicked.connect(self.toggle_user_machine_confidence_icon)
@@ -349,12 +355,18 @@ class ConfidenceWindow(QWidget):
 
     def refresh_scaling(self):
         """Refresh icon and control sizes after a UI scale change."""
-        self.prev_button.setFixedSize(app_theme.scale_int(28), app_theme.scale_int(24))
-        self.prev_button.setIconSize(app_theme.scale_size(16))
-        self.next_button.setFixedSize(app_theme.scale_int(28), app_theme.scale_int(24))
-        self.next_button.setIconSize(app_theme.scale_size(16))
-        self.toggle_button.setFixedSize(app_theme.scale_int(24), app_theme.scale_int(24))
-        self.toggle_button.setIconSize(app_theme.scale_size(16))
+        self.icon_button_size = app_theme.scale_int(26)
+        self.icon_button_icon_size = 16
+
+        self.prev_button.setFixedSize(self.icon_button_size, self.icon_button_size)
+        self.prev_button.setStyleSheet("padding: 0px; margin: 0px;")
+        self.prev_button.setIconSize(app_theme.scale_size(self.icon_button_icon_size))
+        self.next_button.setFixedSize(self.icon_button_size, self.icon_button_size)
+        self.next_button.setStyleSheet("padding: 0px; margin: 0px;")
+        self.next_button.setIconSize(app_theme.scale_size(self.icon_button_icon_size))
+        self.toggle_button.setFixedSize(self.icon_button_size, self.icon_button_size)
+        self.toggle_button.setStyleSheet("padding: 0px; margin: 0px;")
+        self.toggle_button.setIconSize(app_theme.scale_size(self.icon_button_icon_size))
 
         self.top_k_icons = {
             "1": get_icon("1.svg").pixmap(app_theme.scale_size(12)),

@@ -234,7 +234,7 @@ class TrainModelDialog(QDialog):
 
         self.setWindowIcon(get_window_icon("eye.svg"))
         self.setWindowTitle("Train YOLOE Model")
-        self.resize(600, 800)  # Increased height for new parameters
+        self.resize(1100, 800)
 
         # Set window settings
         self.setWindowFlags(Qt.Window |
@@ -265,7 +265,13 @@ class TrainModelDialog(QDialog):
         self._close_mosaic = 0  # Default for linear-probing
 
         # Create the layout
-        self.layout = QVBoxLayout(self)
+        main_layout = QHBoxLayout(self)
+        left_layout = QVBoxLayout()
+        right_layout = QVBoxLayout()
+
+        self.layout = left_layout  # Keep backward compatibility for helper methods
+        self.left_layout = left_layout
+        self.right_layout = right_layout
 
         # Create the info layout
         self.setup_info_layout()
@@ -279,6 +285,11 @@ class TrainModelDialog(QDialog):
         self.setup_parameters_layout()
         # Create the buttons layout
         self.setup_buttons_layout()
+
+        # Keep the left column compact and give the parameters panel more width.
+        self.left_layout.addStretch()
+        main_layout.addLayout(left_layout, stretch=2)
+        main_layout.addLayout(right_layout, stretch=3)
 
     def setup_info_layout(self):
         """
@@ -430,13 +441,14 @@ class TrainModelDialog(QDialog):
         # Create a widget to hold the form layout
         form_widget = QWidget()
         form_layout = QFormLayout(form_widget)
+        form_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
 
         # Create the scroll area
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setWidget(form_widget)
         
-        group_layout.addWidget(scroll_area)
+        group_layout.addWidget(scroll_area, 1)
 
         # Fine-tune or Linear Probing
         self.training_mode = QComboBox()
@@ -581,7 +593,7 @@ class TrainModelDialog(QDialog):
         self.remove_param_button.setEnabled(False)  # Disabled until at least one parameter is added
         form_layout.addRow("", self.remove_param_button)
 
-        self.layout.addWidget(group_box)
+        self.right_layout.addWidget(group_box)
 
     def add_parameter_pair(self):
         """
