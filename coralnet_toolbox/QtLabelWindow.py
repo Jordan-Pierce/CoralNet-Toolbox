@@ -1762,6 +1762,31 @@ class LabelWindow(QWidget):
             
             # Update the scene once
             self.annotation_window.update_scene()
+
+            # Match per-label behavior: refresh phantom annotations, repaint viewport,
+            # and restore focus so visibility changes appear immediately.
+            try:
+                self.annotation_window.refresh_phantom_annotations()
+            except Exception:
+                pass
+
+            try:
+                vp = self.annotation_window.viewport()
+                if vp is not None:
+                    vp.repaint()
+            except Exception:
+                pass
+
+            try:
+                self.annotation_window.setFocus(Qt.OtherFocusReason)
+            except Exception:
+                pass
+
+            # Update annotation counts to reflect visibility changes
+            try:
+                self.update_annotation_count()
+            except Exception:
+                pass
             
         finally:
             # Restore cursor
