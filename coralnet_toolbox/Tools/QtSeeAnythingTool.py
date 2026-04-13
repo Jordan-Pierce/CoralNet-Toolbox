@@ -710,55 +710,77 @@ class SeeAnythingTool(Tool):
         """
         Confirm the annotations and clear the working area.
         """
-        # Make cursor busy
+        # Confirm annotations, using a bulk path for large batches to avoid O(N^2) UI work.
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        progress_bar = ProgressBar(self.annotation_window, "Confirming Annotations")
-        progress_bar.show()
-        progress_bar.start_progress(len(self.annotations))
-            
-        total = len(self.annotations)
-        for idx, annotation in enumerate(self.annotations):
-            # Allow canceling from the progress dialog
-            if progress_bar.wasCanceled():
-                break
 
-            # The add_annotation_from_tool will re-bind it
-            # and it will animate normally if selected.
-            annotation.deanimate()
+        try:
+            total = len(self.annotations)
+            if total == 0:
+                return
 
-            # Create cropped image if not already done
-            if not annotation.cropped_image and self.annotation_window.rasterio_image:
-                annotation.create_cropped_image(self.annotation_window.rasterio_image)
+            # Threshold for switching to the optimized, bulk path.
+            BATCH_THRESHOLD = 10
 
-            # Add the annotation using the add_annotation_from_tool method
-            self.annotation_window.add_annotation_from_tool(annotation)
+            # Fast path for many annotations: batch-crop and add them in one operation.
+            if total >= BATCH_THRESHOLD:
+                # Disable animations for all items first (cheap O(N)).
+                for ann in self.annotations:
+                    ann.deanimate()
+    
+                # Batch-crop all annotations (shows its own progress UI).
+                self.annotation_window.crop_annotations(image_path=self.image_path,
+                                                        annotations=self.annotations,
+                                                        verbose=True)
+                
+                # Add them using the optimized bulk method which updates the UI once.
+                self.annotation_window.add_annotations(self.annotations)
 
-            # Update progress bar every ~10% to avoid excessive UI updates
-            if total > 10:
-                if idx % (total // 10) == 0:
-                    progress_bar.update_progress_percentage((idx / total) * 100)
             else:
-                progress_bar.update_progress_percentage((idx / total) * 100)
-            
-        # Update the scene to reflect deanimation
-        self.annotation_window.scene.update()
+                # Small-number path: keep per-item feedback so UX remains immediate.
+                progress_bar = ProgressBar(self.annotation_window, "Confirming Annotations")
+                progress_bar.show()
+                progress_bar.start_progress(total)
 
-        # Make cursor normal
-        QApplication.restoreOverrideCursor()
-        progress_bar.finish_progress()
-        progress_bar.stop_progress()
-        progress_bar.close()
-        progress_bar = None
+                for idx, annotation in enumerate(self.annotations):
+                    # Allow canceling from the progress dialog
+                    if progress_bar.wasCanceled():
+                        break
 
-        # Clear all rectangles explicitly before clearing the working area
-        self.clear_all_rectangles()
+                    # The add_annotation_from_tool will re-bind it and show per-item feedback.
+                    annotation.deanimate()
+                    
+                    if not annotation.cropped_image and self.annotation_window.rasterio_image:
+                        annotation.create_cropped_image(self.annotation_window.rasterio_image)
+                    
+                    self.annotation_window.add_annotation_from_tool(annotation)
 
-        # Clear the working area
-        self.cancel_working_area()
+                    # Update progress bar every ~10% to avoid excessive UI updates
+                    if total > 10:
+                        if idx % (total // 10) == 0:
+                            progress_bar.update_progress_percentage((idx / total) * 100)
+                    else:
+                        progress_bar.update_progress_percentage((idx / total) * 100)
 
-        # Clear the annotations list
-        self.annotations = []
-        self.results = None
+                # Update the scene to reflect deanimation
+                self.annotation_window.scene.update()
+
+                # Tear down progress UI
+                progress_bar.finish_progress()
+                progress_bar.stop_progress()
+                progress_bar.close()
+   
+
+        finally:
+            # Ensure cleanup happens regardless of the path taken
+            QApplication.restoreOverrideCursor()
+
+            # Clear all rectangles explicitly before clearing the working area
+            self.clear_all_rectangles()
+            self.cancel_working_area()
+
+            # Clear the annotations list and results cache
+            self.annotations = []
+            self.results = None
 
     def apply_sam_model(self):
         """Uses the Results with SAM predictor to create polygons instead of confirming the
