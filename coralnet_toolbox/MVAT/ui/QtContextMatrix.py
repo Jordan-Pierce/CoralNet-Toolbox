@@ -8,18 +8,18 @@ Features include:
 - Dynamic object pool of BaseCanvas instances.
 - Auto-flow layout adaptation based on panel width and a user-controlled camera count.
 - Image loading from RasterManager.
-- Viewer-only camera navigation from clicks and arrow buttons.
+- Viewer-only camera navigation from clicks.
 """
 
 import warnings
 import numpy as np
 from typing import List, Optional, Dict
 
-from PyQt5.QtCore import Qt, pyqtSignal, QSize, QRect, QPoint
+from PyQt5.QtCore import Qt, pyqtSignal, QSize, QRect, QPoint, QVariantAnimation, QEasingCurve
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QToolBar, QToolButton, QSizePolicy, QFrame,
-    QScrollArea, QLayout, QLayoutItem
+    QScrollArea, QLayout, QLayoutItem, QGraphicsOpacityEffect
 )
 
 from coralnet_toolbox.Icons import get_icon
@@ -167,8 +167,8 @@ class ContextMatrixWidget(QWidget):
         self._canvas_count_min = 1
         self._canvas_tile_size = 240
         self._canvas_tile_step = 32
-        self._canvas_tile_min = 160
-        self._canvas_tile_max = 400
+        self._canvas_tile_min = 32
+        self._canvas_tile_max = 2048
 
         # Camera Data State
         self._camera_paths: List[str] = []
@@ -196,6 +196,9 @@ class ContextMatrixWidget(QWidget):
         # Canvas pool
         self._canvas_pool: List[BaseCanvas] = []
         self._visible_canvases: List[BaseCanvas] = []
+        self._canvas_animations: List[QVariantAnimation] = []
+        self._canvas_animation_duration = 180
+        self._canvas_intro_scale = 0.88
 
         # Scrollable flow-layout gallery
         self._canvas_host_widget = QWidget(self)
@@ -251,6 +254,144 @@ class ContextMatrixWidget(QWidget):
             canvas.mousePressEvent = self._make_canvas_mouse_press_handler(canvas)
             self._canvas_pool.append(canvas)
 
+    def _update_canvas_size_bounds(self, camera_objects: Optional[List] = None):
+        """Derive the maximum tile size from loaded camera dimensions."""
+        max_tile_size = self._canvas_tile_max
+        if camera_objects:
+            observed_max = 0
+            for camera in camera_objects:
+                width = int(getattr(camera, 'width', 0) or 0)
+                height = int(getattr(camera, 'height', 0) or 0)
+                if width > 0 and height > 0:
+                    observed_max = max(observed_max, width, height)
+
+            if observed_max > 0:
+                max_tile_size = max(self._canvas_tile_min, observed_max)
+
+        self._canvas_tile_max = max(self._canvas_tile_min, max_tile_size)
+        if self._canvas_tile_size > self._canvas_tile_max:
+            self._set_canvas_tile_size(self._canvas_tile_max)
+        else:
+            self._update_canvas_size_controls()
+
+    def _ensure_canvas_opacity_effect(self, canvas: BaseCanvas) -> QGraphicsOpacityEffect:
+        effect = canvas.graphicsEffect()
+        if not isinstance(effect, QGraphicsOpacityEffect):
+            effect = QGraphicsOpacityEffect(canvas)
+            effect.setOpacity(1.0)
+            canvas.setGraphicsEffect(effect)
+        return effect
+
+    def _release_canvas_animation(self, canvas: BaseCanvas, animation: QVariantAnimation):
+        if getattr(canvas, '_context_animation', None) is animation:
+            canvas._context_animation = None
+        try:
+            if animation in self._canvas_animations:
+                self._canvas_animations.remove(animation)
+        except Exception:
+            pass
+        try:
+            animation.deleteLater()
+        except Exception:
+            pass
+
+    def _stop_canvas_animation(self, canvas: BaseCanvas):
+        animation = getattr(canvas, '_context_animation', None)
+        if animation is None:
+            return
+
+        try:
+            animation.stop()
+        except Exception:
+            pass
+        self._release_canvas_animation(canvas, animation)
+
+    def _animate_canvas_transition(
+        self,
+        canvas: BaseCanvas,
+        start_size: int,
+        end_size: int,
+        start_opacity: float,
+        end_opacity: float,
+        duration: int = None,
+        on_finished=None,
+    ):
+        self._stop_canvas_animation(canvas)
+        effect = self._ensure_canvas_opacity_effect(canvas)
+        animation = QVariantAnimation(self)
+        animation.setDuration(duration or self._canvas_animation_duration)
+        animation.setStartValue(0.0)
+        animation.setEndValue(1.0)
+        animation.setEasingCurve(QEasingCurve.OutCubic)
+        canvas._context_animation = animation
+        self._canvas_animations.append(animation)
+        canvas.show()
+
+        def _apply(progress):
+            value = float(progress)
+            size = int(round(start_size + (end_size - start_size) * value))
+            opacity = start_opacity + (end_opacity - start_opacity) * value
+            canvas.setFixedSize(max(1, size), max(1, size))
+            effect.setOpacity(max(0.0, min(1.0, opacity)))
+            self._flow_widget.updateGeometry()
+
+        def _finish():
+            _apply(1.0)
+            if on_finished is not None:
+                try:
+                    on_finished()
+                except Exception:
+                    pass
+            self._release_canvas_animation(canvas, animation)
+
+        animation.valueChanged.connect(_apply)
+        animation.finished.connect(_finish)
+        _apply(0.0)
+        animation.start()
+        return animation
+
+    def _animate_canvas_removal(self, canvases: List[BaseCanvas], on_finished=None):
+        if not canvases:
+            if on_finished is not None:
+                on_finished()
+            return
+
+        pending = {"count": len(canvases)}
+
+        def _one_finished():
+            pending["count"] -= 1
+            if pending["count"] > 0:
+                return
+
+            for canvas in canvases:
+                try:
+                    canvas.hide()
+                except Exception:
+                    pass
+                try:
+                    effect = canvas.graphicsEffect()
+                    if isinstance(effect, QGraphicsOpacityEffect):
+                        effect.setOpacity(1.0)
+                except Exception:
+                    pass
+
+            if on_finished is not None:
+                try:
+                    on_finished()
+                except Exception:
+                    pass
+
+        for canvas in canvases:
+            current_size = max(1, canvas.width() or self._canvas_tile_size)
+            self._animate_canvas_transition(
+                canvas,
+                current_size,
+                current_size,
+                1.0,
+                0.0,
+                on_finished=_one_finished,
+            )
+
     def _make_canvas_mouse_press_handler(self, canvas: BaseCanvas):
         """Intercept left clicks for viewer-only navigation while preserving native canvas interactions."""
         def handler(event):
@@ -303,8 +444,9 @@ class ContextMatrixWidget(QWidget):
             count = self._canvas_count_min
 
         self.target_camera_count = max(self._canvas_count_min, count)
-        self._evaluate_auto_layout()
-        self._refresh_visible_canvases()
+        layout_ready = self._evaluate_auto_layout()
+        if layout_ready:
+            self._refresh_visible_canvases()
 
     def increase_canvas_count(self):
         self.set_target_camera_count(self.target_camera_count + self._canvas_count_step)
@@ -320,14 +462,12 @@ class ContextMatrixWidget(QWidget):
         effective_target = min(available, self.target_camera_count) if available > 0 else 0
 
         if effective_target != self._last_rebuilt_count:
-            self._rebuild_layout(effective_target)
+            return self._rebuild_layout(effective_target)
         else:
             self._update_empty_state_visibility(effective_target > 0)
+            return True
 
-    def _rebuild_layout(self, count: int):
-        """Rebuild the flow layout with the requested number of visible canvases."""
-        self._last_rebuilt_count = count
-
+    def _apply_layout_state(self, count: int, previous_visible_count: int = 0):
         while self._flow_layout.count():
             item = self._flow_layout.takeAt(0)
             if item and item.widget():
@@ -340,6 +480,9 @@ class ContextMatrixWidget(QWidget):
 
         if count <= 0:
             self._update_empty_state_visibility(False)
+            self._flow_widget.updateGeometry()
+            self._canvas_host_widget.adjustSize()
+            self._update_canvas_count_controls()
             return
 
         self._ensure_canvas_pool_size(count)
@@ -347,12 +490,59 @@ class ContextMatrixWidget(QWidget):
         for index in range(count):
             canvas = self._canvas_pool[index]
             self._flow_layout.addWidget(canvas)
-            canvas.show()
             self._visible_canvases.append(canvas)
+
+            effect = self._ensure_canvas_opacity_effect(canvas)
+            canvas.show()
+
+            if index >= previous_visible_count:
+                intro_size = max(self._canvas_tile_min, int(round(self._canvas_tile_size * self._canvas_intro_scale)))
+                canvas.setFixedSize(intro_size, intro_size)
+                effect.setOpacity(0.0)
+                self._animate_canvas_transition(
+                    canvas,
+                    intro_size,
+                    self._canvas_tile_size,
+                    0.0,
+                    1.0,
+                )
+            else:
+                canvas.setFixedSize(self._canvas_tile_size, self._canvas_tile_size)
+                effect.setOpacity(1.0)
 
         self._update_empty_state_visibility(True)
         self._flow_widget.updateGeometry()
         self._canvas_host_widget.adjustSize()
+        self._update_canvas_count_controls()
+
+    def _finalize_layout_refresh(self, count: int, previous_visible_count: int = 0):
+        self._apply_layout_state(count, previous_visible_count)
+        self._refresh_visible_canvases()
+
+    def _rebuild_layout(self, count: int):
+        """Rebuild the flow layout with the requested number of visible canvases."""
+        previous_visible = list(self._visible_canvases)
+        previous_count = len(previous_visible)
+        self._last_rebuilt_count = count
+
+        if count <= 0:
+            if previous_visible:
+                self._animate_canvas_removal(previous_visible, lambda: self._finalize_layout_refresh(0, 0))
+            else:
+                self._finalize_layout_refresh(0, 0)
+            return False
+
+        if count < previous_count:
+            removed_canvases = previous_visible[count:]
+            if removed_canvases:
+                self._animate_canvas_removal(
+                    removed_canvases,
+                    lambda target_count=count: self._finalize_layout_refresh(target_count, target_count),
+                )
+                return False
+
+        self._apply_layout_state(count, previous_count)
+        return True
 
     def resizeEvent(self, event):
         """Auto-adjust layout on resize without changing camera count."""
@@ -366,16 +556,19 @@ class ContextMatrixWidget(QWidget):
 
     def set_camera_data(self, camera_objects: List, ordered_paths: List[str]):
         self._camera_paths = list(ordered_paths)
-        self._evaluate_auto_layout()
-        self._refresh_visible_canvases()
+        self._update_canvas_size_bounds(camera_objects)
+        layout_ready = self._evaluate_auto_layout()
+        if layout_ready:
+            self._refresh_visible_canvases()
 
     def set_camera_order(self, ordered_paths: List[str], active_path: str = None):
         paths = list(ordered_paths)
         if active_path and active_path in paths and paths and paths[0] != active_path:
             paths = [active_path] + [path for path in paths if path != active_path]
         self._camera_paths = paths
-        self._evaluate_auto_layout()
-        self._refresh_visible_canvases()
+        layout_ready = self._evaluate_auto_layout()
+        if layout_ready:
+            self._refresh_visible_canvases()
 
     def get_camera_order(self) -> List[str]:
         return list(self._camera_paths)
@@ -451,9 +644,19 @@ class ContextMatrixWidget(QWidget):
             self._update_canvas_size_controls()
             return
 
+        previous_size = self._canvas_tile_size
         self._canvas_tile_size = clamped_size
         for canvas in self._canvas_pool:
-            self._apply_canvas_tile_size_to_canvas(canvas)
+            if canvas in self._visible_canvases and canvas.isVisible():
+                self._animate_canvas_transition(
+                    canvas,
+                    max(1, canvas.width() or previous_size),
+                    self._canvas_tile_size,
+                    1.0,
+                    1.0,
+                )
+            else:
+                self._apply_canvas_tile_size_to_canvas(canvas)
 
         self._flow_widget.updateGeometry()
         self._canvas_host_widget.adjustSize()
@@ -512,7 +715,7 @@ class ContextMatrixWidget(QWidget):
     # ==================== Toolbar (Context Matrix) ====================
 
     def create_top_toolbar(self) -> QToolBar:
-        """Create a compact toolbar for camera loading, navigation, size, and count controls."""
+        """Create a compact toolbar for camera loading, size, and count controls."""
         toolbar = QToolBar("Context Matrix Tools")
         toolbar.setMovable(False)
         toolbar.setIconSize(app_theme.scale_size(16))
@@ -533,25 +736,6 @@ class ContextMatrixWidget(QWidget):
         sep0.setFrameShape(QFrame.VLine)
         sep0.setFrameShadow(QFrame.Sunken)
         layout.addWidget(sep0)
-
-        self.previous_btn = QToolButton()
-        self.previous_btn.setIcon(get_icon("left.svg"))
-        self.previous_btn.setToolTip("Previous camera")
-        self.previous_btn.setAutoRaise(True)
-        self.previous_btn.clicked.connect(lambda _checked=False: self.previousCameraRequested.emit())
-        layout.addWidget(self.previous_btn)
-
-        self.next_btn = QToolButton()
-        self.next_btn.setIcon(get_icon("right.svg"))
-        self.next_btn.setToolTip("Next camera")
-        self.next_btn.setAutoRaise(True)
-        self.next_btn.clicked.connect(lambda _checked=False: self.nextCameraRequested.emit())
-        layout.addWidget(self.next_btn)
-
-        sep1 = QFrame()
-        sep1.setFrameShape(QFrame.VLine)
-        sep1.setFrameShadow(QFrame.Sunken)
-        layout.addWidget(sep1)
 
         self.size_down_btn = QToolButton()
         self.size_down_btn.setIcon(get_icon("remove.svg"))
