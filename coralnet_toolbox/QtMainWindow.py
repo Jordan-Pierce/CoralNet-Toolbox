@@ -46,7 +46,6 @@ from coralnet_toolbox.MVAT import MVATManager
 from coralnet_toolbox.MVAT import ContextMatrixWidget
 
 # Other Dialogs
-from coralnet_toolbox.QtBatchInference import BatchInferenceDialog
 from coralnet_toolbox.WorkArea import WorkAreaManager as WorkAreaManagerDialog
 
 # Import Dialogs
@@ -88,6 +87,7 @@ from coralnet_toolbox.MachineLearning import (
     DeployDetect as DetectDeployModelDialog,
     DeploySegment as SegmentDeployModelDialog,
     DeploySemantic as SemanticDeployModelDialog,
+    BatchInference as BatchInferenceDialog,
     ImportDetect as DetectImportDatasetDialog,
     ImportSegment as SegmentImportDatasetDialog,
     ExportClassify as ClassifyExportDatasetDialog,
@@ -309,18 +309,6 @@ class MainWindow(QMainWindow):
         self.detect_deploy_model_dialog = DetectDeployModelDialog(self)
         self.segment_deploy_model_dialog = SegmentDeployModelDialog(self)
         self.semantic_deploy_model_dialog = SemanticDeployModelDialog(self)
-
-        # Create dialogs (SAM)
-        self.sam_deploy_predictor_dialog = SAMDeployPredictorDialog(self)
-        self.sam_deploy_generator_dialog = SAMDeployGeneratorDialog(self)
-
-        # Create dialogs (See Anything)
-        self.see_anything_train_model_dialog = SeeAnythingTrainModelDialog(self)
-        self.see_anything_deploy_predictor_dialog = SeeAnythingDeployPredictorDialog(self)
-        self.see_anything_deploy_generator_dialog = SeeAnythingDeployGeneratorDialog(self)
-
-        # Create dialogs (Batch Inference - Consolidated)
-        # This is accessed via ImageWindow right-click context menu
         self.batch_inference_dialog = BatchInferenceDialog(self)
 
         # Keep the BatchInferenceDialog updated when image highlights change
@@ -334,6 +322,15 @@ class MainWindow(QMainWindow):
         except Exception:
             # If connection fails for some reason, continue without breaking startup
             pass
+
+        # Create dialogs (SAM)
+        self.sam_deploy_predictor_dialog = SAMDeployPredictorDialog(self)
+        self.sam_deploy_generator_dialog = SAMDeployGeneratorDialog(self)
+
+        # Create dialogs (See Anything)
+        self.see_anything_train_model_dialog = SeeAnythingTrainModelDialog(self)
+        self.see_anything_deploy_predictor_dialog = SeeAnythingDeployPredictorDialog(self)
+        self.see_anything_deploy_generator_dialog = SeeAnythingDeployGeneratorDialog(self)
 
         # Create dialogs (Work Areas)
         self.tile_manager_dialog = WorkAreaManagerDialog(self)
@@ -666,6 +663,9 @@ class MainWindow(QMainWindow):
         self.ml_optimize_model_action = QAction("Optimize Model", self)
         self.ml_optimize_model_action.triggered.connect(self.open_optimize_model_dialog)
         self.ml_menu.addAction(self.ml_optimize_model_action)
+
+        # Add a separator
+        self.ml_menu.addSeparator()
         
         # Deploy Model submenu
         self.ml_deploy_model_menu = self.ml_menu.addMenu("Deploy Model")
@@ -681,15 +681,16 @@ class MainWindow(QMainWindow):
         self.ml_segment_deploy_model_action = QAction("Segment", self)
         self.ml_segment_deploy_model_action.triggered.connect(self.open_segment_deploy_model_dialog)
         self.ml_deploy_model_menu.addAction(self.ml_segment_deploy_model_action)
+
         # Deploy Semantic Segmentation Model
         self.ml_semantic_deploy_model_action = QAction("Semantic", self)
         self.ml_semantic_deploy_model_action.triggered.connect(self.open_semantic_deploy_model_dialog)
         self.ml_deploy_model_menu.addAction(self.ml_semantic_deploy_model_action)
-        
-        # Add a separator
-        self.ml_menu.addSeparator()
 
-        # TODO Batch Inference submenu (not yet implemented)
+        # Batch Inference action 
+        self.ml_batch_inference_action = QAction("Batch Inference", self)
+        self.ml_batch_inference_action.triggered.connect(self.open_batch_inference_dialog)
+        self.ml_menu.addAction(self.ml_batch_inference_action)
 
         # ========== CORALNET MENU ==========
         # CoralNet menu
@@ -2975,6 +2976,40 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.semantic_deploy_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_batch_inference_dialog(self):
+        """Open the Batch Inference dialog to perform batch inference on images."""
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "Batch Inference",
+                                "No images are present in the project.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            # Ensure the dialog knows about current model availability
+            batch_dialog = self.batch_inference_dialog
+            batch_dialog.update_model_availability()
+
+            # Initialize with currently highlighted image paths so the dialog
+            # can reflect selection state even when opened from the Main menu
+            try:
+                highlighted = self.image_window.table_model.get_highlighted_paths()
+            except Exception:
+                highlighted = []
+
+            batch_dialog.update_highlighted_images(highlighted)
+
+            # Make dialog modeless so users can adjust highlights while it is open
+            try:
+                batch_dialog.setModal(False)
+            except Exception:
+                pass
+            batch_dialog.show()
+            batch_dialog.raise_()
+            batch_dialog.activateWindow()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

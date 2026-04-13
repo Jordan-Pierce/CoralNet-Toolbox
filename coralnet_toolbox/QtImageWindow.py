@@ -353,12 +353,12 @@ class ImageWindow(QWidget):
         self.tableView.doubleClicked.connect(self.on_table_double_clicked)
 
     def _init_action_widgets(self):
-        """Instantiate bulk action buttons."""
-        self.highlight_all_button = QPushButton("Highlight All", self)
-        self.highlight_all_button.clicked.connect(self.trigger_highlight_all_shortcut)
-
-        self.unhighlight_all_button = QPushButton("Unhighlight All", self)
-        self.unhighlight_all_button.clicked.connect(self.unhighlight_all_rows)
+        """Instantiate bulk action buttons. Replaced two buttons with a single toggle button."""
+        self.toggle_highlight_button = QPushButton("Toggle Highlighted", self)
+        self.toggle_highlight_button.setToolTip("Highlight all filtered images or unhighlight if all highlighted")
+        self.toggle_highlight_button.clicked.connect(self.toggle_highlighted)
+        # Disabled by default until there are filtered rows
+        self.toggle_highlight_button.setEnabled(False)
 
     def trigger_highlight_all_shortcut(self):
         """Invoke the same Ctrl+A shortcut path used by the table view."""
@@ -368,6 +368,25 @@ class ImageWindow(QWidget):
         self.tableView.setFocus(Qt.ShortcutFocusReason)
         key_event = QKeyEvent(QEvent.KeyPress, Qt.Key_A, Qt.ControlModifier, "a")
         QApplication.sendEvent(self.tableView, key_event)
+
+    def toggle_highlighted(self):
+        """Toggle highlight state: highlight all if any unhighlighted, unhighlight all if all highlighted."""
+        # No-op if there are no filtered paths
+        filtered = getattr(self.table_model, 'filtered_paths', [])
+        if not filtered:
+            return
+
+        # Use the model API to get currently highlighted paths
+        try:
+            highlighted = self.table_model.get_highlighted_paths()
+        except Exception:
+            highlighted = []
+
+        # If all filtered rows are highlighted, unhighlight all; otherwise highlight all
+        if highlighted and len(highlighted) == len(filtered):
+            self.unhighlight_all_rows()
+        else:
+            self.highlight_all_rows(select_rows=True)
 
     def refresh_scaling(self):
         """Refresh scale-sensitive controls after the global UI scale changes."""
@@ -430,11 +449,10 @@ class ImageWindow(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
 
-        self.highlight_all_button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        self.unhighlight_all_button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-
-        layout.addWidget(self.highlight_all_button)
-        layout.addWidget(self.unhighlight_all_button)
+        # Use the new toggle button in place of separate highlight/unhighlight buttons
+        if hasattr(self, 'toggle_highlight_button'):
+            self.toggle_highlight_button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+            layout.addWidget(self.toggle_highlight_button)
 
         container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         toolbar.addWidget(container)
@@ -728,6 +746,13 @@ class ImageWindow(QWidget):
         self.update_current_image_index_label()
         self.update_highlighted_count_label()  # Update highlighted count
         self.filterChanged.emit(len(filtered_paths))
+
+        # Enable/disable the toggle highlight button based on whether there are filtered rows
+        try:
+            if hasattr(self, 'toggle_highlight_button'):
+                self.toggle_highlight_button.setEnabled(bool(filtered_paths))
+        except Exception:
+            pass
         
         # Restore selection if possible
         if self.selected_image_path in filtered_paths:
@@ -1206,7 +1231,8 @@ class ImageWindow(QWidget):
         count = len(highlighted_paths)
         
         # Add the check/uncheck action
-        raster_under_cursor = self.raster_manager.get_raster(path_at_cursor)
+        target_path = path_at_cursor if path_at_cursor is not None else (highlighted_paths[0] if highlighted_paths else None)
+        raster_under_cursor = self.raster_manager.get_raster(target_path) if target_path is not None else None
         if raster_under_cursor:
             is_checked = raster_under_cursor.checkbox_state
             if is_checked:
@@ -1214,7 +1240,7 @@ class ImageWindow(QWidget):
             else:
                 action_text = f"Check {count} Highlighted Raster{'s' if count > 1 else ''}"
             toggle_check_action = context_menu.addAction(action_text)
-            toggle_check_action.triggered.connect(lambda: self.on_toggle(not is_checked))
+            toggle_check_action.triggered.connect(lambda checked=False, state=not is_checked: self.on_toggle(state))
 
         context_menu.addSeparator()
         

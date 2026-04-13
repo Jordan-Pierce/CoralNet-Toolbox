@@ -14,6 +14,8 @@ from .DeployModel.QtDetect import Detect as DeployDetect
 from .DeployModel.QtSegment import Segment as DeploySegment
 from .DeployModel.QtSemantic import Semantic as DeploySemantic
 
+from .BatchInference.QtBatchInference import BatchInferenceDialog as BatchInference
+
 from .ImportDataset.QtDetect import Detect as ImportDetect
 from .ImportDataset.QtSegment import Segment as ImportSegment
 
@@ -47,6 +49,7 @@ __all__ = [
     'DeployDetect', 
     'DeploySegment', 
     'DeploySemantic',
+    'BatchInference',
     'ImportDetect', 
     'ImportSegment',
     'ExportClassify', 
