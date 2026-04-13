@@ -62,8 +62,8 @@ SCALE_MIN = 1.0
 SCALE_MAX = 2.0
 SCALE_STEP = 0.25
 
-_scale_mode = SCALE_MODE_AUTO
-_scale_factor = 1.0
+_scale_mode = SCALE_MODE_MANUAL
+_scale_factor = 0.75
 
 _SCALEABLE_QSS_PROPERTIES = {
     "font-size",

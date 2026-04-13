@@ -2550,7 +2550,7 @@ class MainWindow(QMainWindow):
         self.scale_actions = {}
 
         scale_options = [
-            ("Auto", app_theme.SCALE_MODE_AUTO, None),
+            ("75%", app_theme.SCALE_MODE_MANUAL, 0.75),
             ("100%", app_theme.SCALE_MODE_MANUAL, 1.0),
             ("125%", app_theme.SCALE_MODE_MANUAL, 1.25),
             ("150%", app_theme.SCALE_MODE_MANUAL, 1.5),
@@ -2641,19 +2641,12 @@ class MainWindow(QMainWindow):
 
     def sync_scale_menu_selection(self):
         """Check the current scale entry in the Scale submenu."""
-        current_mode = app_theme.get_scale_mode()
         current_factor = app_theme.get_scale_factor()
 
         for action in self.scale_actions.values():
             action.setChecked(False)
 
-        if current_mode == app_theme.SCALE_MODE_AUTO:
-            auto_action = self.scale_actions.get("Auto")
-            if auto_action is not None:
-                auto_action.setChecked(True)
-            return
-
-        for label, scale_factor in (("100%", 1.0), ("125%", 1.25), ("150%", 1.5), ("175%", 1.75), ("200%", 2.0)):
+        for label, scale_factor in (("75%", 0.75), ("100%", 1.0), ("125%", 1.25), ("150%", 1.5), ("175%", 1.75), ("200%", 2.0)):
             if abs(current_factor - scale_factor) < 0.001:
                 action = self.scale_actions.get(label)
                 if action is not None:
