@@ -78,6 +78,13 @@ class MousePositionBridge(QObject):
             self.manager.viewer.clear_ray()
             return
 
+        visible_cameras = self.manager._get_visible_context_cameras()
+        visible_paths = {cam.image_path for cam in visible_cameras}
+        if camera.image_path not in visible_paths:
+            self.clear_all_markers()
+            self.manager.viewer.clear_ray()
+            return
+
         primary_target = self.manager.viewer.scene_context.get_primary_target()
 
         # --- Path A: Index Map (preferred) ---
@@ -132,15 +139,13 @@ class MousePositionBridge(QObject):
                 default_depth=default_depth,
             )
 
-        highlighted_cameras = self.manager.highlighted_cameras
-        rays_with_colors = [(ray, RAY_COLOR_SELECTED if ray.has_accurate_depth else RAY_COLOR_INVALID)]
+        primary_ray_valid = ray.has_accurate_depth or ray.element_id > -1
+        rays_with_colors = [(ray, RAY_COLOR_SELECTED if primary_ray_valid else RAY_COLOR_INVALID)]
         
         # --- Short-Circuit Invalid Primary Rays ---
-        # If the primary ray did not hit real scene geometry, skip secondary rays entirely
-        # (no secondary rays should project into an arbitrary guessed point in empty space).
-        primary_ray_valid = ray.has_accurate_depth or ray.element_id > -1
+        # If the primary ray did not hit real scene geometry, skip secondary rays entirely.
         if not primary_ray_valid:
-            # Primary ray is invalid: send only the invalid primary ray (RED), clear markers, and return
+            # Primary ray is invalid: keep only the selected-camera ray, clear markers, and return.
             self.manager.viewer.show_rays(rays_with_colors)
             self.clear_all_markers()
             return
@@ -148,6 +153,7 @@ class MousePositionBridge(QObject):
         # --- Primary ray is valid: proceed with secondary rays ---
         visibility_status = {}
         accuracies = {camera.image_path: ray.has_accurate_depth}
+        highlighted_cameras = visible_cameras
 
         for target_cam in highlighted_cameras:
             if target_cam.image_path == camera.image_path:
@@ -210,7 +216,6 @@ class MousePositionBridge(QObject):
                 # -----------------------------------------------------------------------
 
                 if is_visible:
-                    ray_color = RAY_COLOR_HIGHLIGHTED
                     target_terminal = ray.terminal_point
                     is_occluded = False
                     accuracies[target_cam.image_path] = True
@@ -227,21 +232,22 @@ class MousePositionBridge(QObject):
                 # Legacy fallback: depth-based occlusion test
                 is_occluded = target_cam.is_point_occluded_depth_based(
                     ray.terminal_point, depth_threshold=0.15)
-                ray_color = RAY_COLOR_HIGHLIGHTED if not is_occluded else RAY_COLOR_INVALID
                 accuracies[target_cam.image_path] = target_cam._raster.z_channel is not None
 
             visibility_status[target_cam.image_path] = is_occluded
+            ray_color = RAY_COLOR_HIGHLIGHTED if (accuracies.get(target_cam.image_path, False) and not is_occluded) else RAY_COLOR_INVALID
 
             # Build secondary ray directly
             t_origin = target_cam.position.copy()
             t_direction = target_terminal - t_origin
             t_norm = np.linalg.norm(t_direction)
             t_direction = t_direction / t_norm if t_norm > 0 else target_cam.R.T @ np.array([0, 0, 1])
+            is_ray_accurate = accuracies.get(target_cam.image_path, False) and not is_occluded
             target_ray = CameraRay(
                 origin=t_origin,
                 direction=t_direction,
                 terminal_point=target_terminal,
-                has_accurate_depth=(ray_color == RAY_COLOR_HIGHLIGHTED),
+                has_accurate_depth=is_ray_accurate,
                 source_camera=target_cam,
                 element_id=found_id,
             )
@@ -293,6 +299,7 @@ class MVATManager(QObject):
         self.highlighted_cameras = []
         self.hovered_camera = None
         self.current_focal_point = None
+        self._context_view_path = None
         
         # Data Settings
         self.compute_depth_maps_enabled = True
@@ -361,15 +368,15 @@ class MVATManager(QObject):
             self.image_window.imageLoaded.connect(self._on_main_image_loaded)
         # 6. Context Matrix Signals
         if self.context_matrix is not None:
-            # Promote (double-click) -> load image as active camera
-            self.context_matrix.contextImagePromoted.connect(self._on_camera_selected)
             # Toolbar buttons
             self.context_matrix.loadCamerasRequested.connect(self.load_cameras)
             self.context_matrix.clearSelectionsRequested.connect(self.selection_model.clear_selections)
+            self.context_matrix.previousCameraRequested.connect(self._on_previous_camera_requested)
+            self.context_matrix.nextCameraRequested.connect(self._on_next_camera_requested)
+            self.context_matrix.visibleCamerasChanged.connect(self._on_context_visible_cameras_changed)
             # Selection intent signals -> SelectionModel (source of truth)
             self.context_matrix.selection_requested.connect(self.selection_model.set_selections)
             self.context_matrix.toggle_requested.connect(self.selection_model.toggle)
-            self.context_matrix.active_requested.connect(self.selection_model.set_active)
             self.context_matrix.camera_highlighted_single.connect(self._on_camera_highlighted_single)
             # Phase 5 / multi-annotate
             self.context_matrix.set_mvat_manager(self)
@@ -499,10 +506,6 @@ class MVATManager(QObject):
 
         if self.context_matrix is not None:
             try:
-                self.context_matrix.update_stats(len(perspective_cameras), 0)
-            except Exception:
-                pass
-            try:
                 all_ordered = list(perspective_cameras.keys())
                 self.context_matrix.set_camera_data(list(perspective_cameras.values()), all_ordered)
             except Exception:
@@ -534,13 +537,17 @@ class MVATManager(QObject):
             QApplication.restoreOverrideCursor()
             
         self.viewer.add_axes()
-        highlighted = self.selection_model.get_selected_list()
+        visible_paths = self._get_visible_context_camera_paths()
+        selected_path = None
+        if self.selected_camera and self.selected_camera.image_path in visible_paths:
+            selected_path = self.selected_camera.image_path
         
         self.viewer.add_frustums(
             self.cameras,
-            selected_camera=self.selected_camera,
-            highlighted_paths=highlighted,
-            hovered_camera=self.hovered_camera
+            selected_camera=self.selected_camera if selected_path else None,
+            highlighted_paths=visible_paths,
+            hovered_camera=self.hovered_camera,
+            context_highlighted_paths=visible_paths,
         )
 
     # --- Signal Handlers ---
@@ -730,14 +737,7 @@ class MVATManager(QObject):
                 # Double-click to set active: animate
                 self.viewer.match_camera_perspective(camera, animate=True)
             self._reorder_cameras(path)
-
-            if self.context_matrix is not None:
-                try:
-                    self.context_matrix.sync_selection_borders(
-                        path, self.selection_model.selected_paths
-                    )
-                except Exception:
-                    pass
+            self._context_view_path = path
 
             try:
                 self.image_window.load_image_by_path(path)
@@ -770,17 +770,57 @@ class MVATManager(QObject):
             print(f"Failed to load selected image '{path}': {e}")
 
     def _on_camera_highlighted_single(self, path: str):
-        """Handle single-camera highlight intent (e.g., plain click).
+        """Handle viewer-only camera navigation from the context matrix."""
+        self._focus_context_camera(path, animate=True)
 
-        This updates the viewer perspective to match the clicked camera with
-        smooth animation when supported.
-        """
+    def _get_context_camera_order(self) -> list:
+        ordered_paths = []
+        if self.context_matrix is not None and hasattr(self.context_matrix, 'get_camera_order'):
+            try:
+                ordered_paths = list(self.context_matrix.get_camera_order())
+            except Exception:
+                ordered_paths = []
+
+        if not ordered_paths:
+            ordered_paths = list(self.cameras.keys())
+
+        return [path for path in ordered_paths if path in self.cameras]
+
+    def _focus_context_camera(self, path: str, animate: bool = True):
+        camera = self.cameras.get(path)
+        if camera is None:
+            return
+
+        self._context_view_path = path
+        if hasattr(self.viewer, 'match_camera_perspective'):
+            self.viewer.match_camera_perspective(camera, animate=animate)
+
+    def _cycle_active_camera(self, step: int):
+        """Cycle the current context-view camera through the proximity order."""
+        ordered_paths = self._get_context_camera_order()
+        if not ordered_paths:
+            return
+
+        current_path = self._context_view_path
+        if current_path not in ordered_paths:
+            if self.selected_camera and self.selected_camera.image_path in ordered_paths:
+                current_path = self.selected_camera.image_path
+            else:
+                current_path = ordered_paths[0]
+
         try:
-            cam = self.cameras.get(path)
-            if cam and hasattr(self.viewer, 'match_camera_perspective'):
-                self.viewer.match_camera_perspective(cam, animate=True)
-        except Exception:
-            pass
+            current_index = ordered_paths.index(current_path)
+        except ValueError:
+            current_index = 0
+
+        target_path = ordered_paths[(current_index + step) % len(ordered_paths)]
+        self._focus_context_camera(target_path, animate=True)
+
+    def _on_previous_camera_requested(self):
+        self._cycle_active_camera(-1)
+
+    def _on_next_camera_requested(self):
+        self._cycle_active_camera(1)
 
     def _on_selections_changed(self, selected_paths):
         """
@@ -805,18 +845,6 @@ class MVATManager(QObject):
 
         self.highlighted_cameras = [self.cameras.get(path) for path in selected_paths if path in self.cameras]
         self._update_frustum_states()
-        
-        if self.context_matrix is not None:
-            try:
-                active_path = self.selection_model.active_path or ""
-                active_label = ""
-                if active_path:
-                    from pathlib import Path
-                    active_label = Path(active_path).stem
-                self.context_matrix.sync_selection_borders(active_path, selected_paths)
-                self.context_matrix.update_selection_labels(active_label, len(selected_paths))
-            except Exception:
-                pass
 
         self.viewer.clear_ray()
         self._update_visibility_filter(list(selected_paths))
@@ -866,13 +894,20 @@ class MVATManager(QObject):
         Errors are caught and ignored to avoid destabilizing the UI for
         non-critical failures.
         """
-        selected_path = self.selected_camera.image_path if self.selected_camera else None
-        highlighted_paths = [cam.image_path for cam in self.highlighted_cameras]
+        highlighted_paths = self._get_visible_context_camera_paths()
+        selected_path = None
+        if self.selected_camera and self.selected_camera.image_path in highlighted_paths:
+            selected_path = self.selected_camera.image_path
         
         # Update wireframe state scalars (colors based on selection/highlight)
         try:
             if hasattr(self.viewer, 'update_frustum_states'):
-                self.viewer.update_frustum_states(selected_path, highlighted_paths, self.hovered_camera)
+                self.viewer.update_frustum_states(
+                    selected_path,
+                    highlighted_paths,
+                    self.hovered_camera,
+                    context_highlighted_paths=highlighted_paths,
+                )
         except Exception: 
             pass
         
@@ -907,6 +942,7 @@ class MVATManager(QObject):
         Compute visibility index maps for the supplied highlighted cameras.
         Intercepts and loads from disk cache if available before using the worker.
         """
+        highlighted_paths = set(self._get_visible_context_camera_paths())
         if not self.viewer.scene_context.has_any_product():
             return
         if not self.compute_index_maps_enabled:
@@ -1587,26 +1623,57 @@ class MVATManager(QObject):
         """Return the context canvas currently displaying image_path, or None."""
         if self.context_matrix is None:
             return None
-        for row in self.context_matrix._visible_canvases:
-            for canvas in row:
-                if canvas is not None and canvas.current_image_path == image_path:
-                    return canvas
+        for canvas in self.context_matrix._visible_canvases:
+            if canvas is not None and canvas.current_image_path == image_path:
+                return canvas
         return None
+
+    def _get_visible_context_camera_paths(self) -> list:
+        """Return the ordered list of image paths currently visible in the context matrix."""
+        if self.context_matrix is None:
+            return []
+        if hasattr(self.context_matrix, 'get_visible_camera_paths'):
+            try:
+                return list(self.context_matrix.get_visible_camera_paths())
+            except Exception:
+                pass
+
+        visible_paths = []
+        for canvas in self.context_matrix._visible_canvases:
+            if canvas and canvas.active_image and canvas.current_image_path:
+                visible_paths.append(canvas.current_image_path)
+        return visible_paths
+
+    def _get_visible_context_cameras(self) -> list:
+        """Return the Camera objects currently visible in the context matrix."""
+        return [self.cameras[path] for path in self._get_visible_context_camera_paths() if path in self.cameras]
+
+    def _get_visible_context_target_paths(self) -> set:
+        """Return visible context camera paths excluding the active annotation camera."""
+        paths = set(self._get_visible_context_camera_paths())
+        if self.selected_camera and self.selected_camera.image_path in paths:
+            paths.discard(self.selected_camera.image_path)
+        return paths
 
     def _get_visible_context_paths(self) -> set:
         """Return the set of image paths currently visible in the context matrix."""
-        paths = set()
-        if self.context_matrix is None:
-            return paths
-        for row in self.context_matrix._visible_canvases:
-            for canvas in row:
-                if canvas and canvas.active_image and canvas.current_image_path:
-                    paths.add(canvas.current_image_path)
-        return paths
+        return set(self._get_visible_context_camera_paths())
+
+    def _on_context_visible_cameras_changed(self, visible_paths):
+        """Refresh viewer state when the ContextMatrix changes its visible cameras."""
+        try:
+            self.viewer.clear_ray()
+        except Exception:
+            pass
+
+        self._update_frustum_states()
+        self._update_visibility_filter(list(visible_paths))
 
     def _build_projection(self, px: int, py: int) -> dict:
         """Cast a ray from the selected camera at (px, py) and return projections.
 
+        highlighted_paths = set(highlighted_paths or [])
+        highlighted_paths.update(self._get_visible_context_paths())
         Returns:
             dict mapping image_path -> (u, v, is_valid), or empty dict on failure.
         """
@@ -1693,9 +1760,7 @@ class MVATManager(QObject):
         px = int(annotation.center_xy.x())
         py = int(annotation.center_xy.y())
 
-        selected_paths = set(self.selection_model.selected_paths)
-        if self.selected_camera and self.selected_camera.image_path in selected_paths:
-            selected_paths.discard(self.selected_camera.image_path)
+        selected_paths = self._get_visible_context_target_paths()
 
         # Quick exit: nothing to propagate to
         if not selected_paths:
@@ -1995,9 +2060,7 @@ class MVATManager(QObject):
         px = int(scene_pos.x())
         py = int(scene_pos.y())
 
-        selected_paths = set(self.selection_model.selected_paths)
-        if self.selected_camera and self.selected_camera.image_path in selected_paths:
-            selected_paths.discard(self.selected_camera.image_path)
+        selected_paths = self._get_visible_context_target_paths()
         project_labels = list(self.main_window.label_window.labels)
 
         # Quick exit: nothing to propagate to
@@ -2165,9 +2228,7 @@ class MVATManager(QObject):
         px = int(scene_pos.x())
         py = int(scene_pos.y())
         
-        selected_paths = set(self.selection_model.selected_paths)
-        if self.selected_camera and self.selected_camera.image_path in selected_paths:
-            selected_paths.discard(self.selected_camera.image_path)
+        selected_paths = self._get_visible_context_target_paths()
         project_labels = list(self.main_window.label_window.labels)
         
         source_label = next((lbl for lbl in project_labels if lbl.id == label_id), None)
@@ -2354,9 +2415,7 @@ class MVATManager(QObject):
             return
 
         px, py = int(scene_pos.x()), int(scene_pos.y())
-        selected_paths = set(self.selection_model.selected_paths)
-        if self.selected_camera and self.selected_camera.image_path in selected_paths:
-            selected_paths.discard(self.selected_camera.image_path)
+        selected_paths = self._get_visible_context_target_paths()
 
         # Quick exit: nothing to propagate to
         if not selected_paths:
@@ -2490,9 +2549,7 @@ class MVATManager(QObject):
         px = int(scene_pos.x())
         py = int(scene_pos.y())
 
-        selected_paths = set(self.selection_model.selected_paths)
-        if self.selected_camera and self.selected_camera.image_path in selected_paths:
-            selected_paths.discard(self.selected_camera.image_path)
+        selected_paths = self._get_visible_context_target_paths()
         project_labels = list(self.main_window.label_window.labels)
 
         source_label = next((lbl for lbl in project_labels if lbl.id == label_id), None)

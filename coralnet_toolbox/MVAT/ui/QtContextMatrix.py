@@ -1,35 +1,32 @@
 """
-Context Matrix Widget for MVAT (Unified Grid)
+Context Matrix Widget for MVAT (Unified Flow Gallery)
 
-Displays a dynamic, auto-flowing grid of interactive BaseCanvas viewports.
+Displays a dynamic, auto-flowing gallery of interactive BaseCanvas viewports.
 Replaces the legacy CameraGrid.
 
 Features include:
 - Dynamic object pool of BaseCanvas instances.
-- Auto-flow layout adaptation based on aspect ratio and target count.
-- Ctrl + Shift + Wheel to dynamically increase/decrease the number of visible cameras.
+- Auto-flow layout adaptation based on panel width and a user-controlled camera count.
 - Image loading from RasterManager.
-- Double-click "Promote to Main" interaction.
+- Viewer-only camera navigation from clicks and arrow buttons.
 """
 
 import warnings
-import math
 import numpy as np
 from typing import List, Optional, Dict
 
-from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QSize, QEvent
+from PyQt5.QtCore import Qt, pyqtSignal, QSize, QRect, QPoint
 from PyQt5.QtWidgets import (
-    QWidget, QGridLayout, QVBoxLayout, QHBoxLayout,
-    QLabel, QToolBar, QPushButton, QToolButton, QSizePolicy, QFrame, QApplication
+    QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QToolBar, QToolButton, QSizePolicy, QFrame,
+    QScrollArea, QLayout, QLayoutItem
 )
 
+from coralnet_toolbox.Icons import get_icon
 from coralnet_toolbox.QtBaseCanvas import BaseCanvas
 from coralnet_toolbox.MVAT.core.constants import (
-    MARKER_COLOR_SELECTED,
     MARKER_COLOR_HIGHLIGHTED,
     MARKER_COLOR_INVALID,
-    SELECT_COLOR,
-    HIGHLIGHT_COLOR,
 )
 
 from coralnet_toolbox import theme as app_theme
@@ -42,17 +39,105 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 
+class FlowLayout(QLayout):
+    """Wrap child widgets across rows."""
+
+    def __init__(self, parent=None, margin: int = 0, h_spacing: int = -1, v_spacing: int = -1):
+        super().__init__(parent)
+        self._item_list: List[QLayoutItem] = []
+        self._h_spacing = h_spacing
+        self._v_spacing = v_spacing
+        if margin >= 0:
+            self.setContentsMargins(margin, margin, margin, margin)
+
+    def addItem(self, item: QLayoutItem):
+        self._item_list.append(item)
+
+    def count(self):
+        return len(self._item_list)
+
+    def itemAt(self, index: int):
+        if 0 <= index < len(self._item_list):
+            return self._item_list[index]
+        return None
+
+    def takeAt(self, index: int):
+        if 0 <= index < len(self._item_list):
+            return self._item_list.pop(index)
+        return None
+
+    def expandingDirections(self):
+        return Qt.Orientations()
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width: int):
+        return self._do_layout(QRect(0, 0, width, 0), True)
+
+    def setGeometry(self, rect: QRect):
+        super().setGeometry(rect)
+        self._do_layout(rect, False)
+
+    def sizeHint(self):
+        return self.minimumSize()
+
+    def minimumSize(self):
+        size = QSize()
+        for item in self._item_list:
+            size = size.expandedTo(item.minimumSize())
+        margins = self.contentsMargins()
+        size += QSize(margins.left() + margins.right(), margins.top() + margins.bottom())
+        return size
+
+    def _horizontal_spacing(self) -> int:
+        return self._h_spacing if self._h_spacing >= 0 else max(8, self.spacing())
+
+    def _vertical_spacing(self) -> int:
+        return self._v_spacing if self._v_spacing >= 0 else max(8, self.spacing())
+
+    def _do_layout(self, rect: QRect, test_only: bool):
+        margins = self.contentsMargins()
+        effective_rect = rect.adjusted(+margins.left(), +margins.top(), -margins.right(), -margins.bottom())
+        if not self._item_list:
+            return rect.height() + margins.top() + margins.bottom()
+
+        x = effective_rect.x()
+        y = effective_rect.y()
+        line_height = 0
+        space_x = self._horizontal_spacing()
+        space_y = self._vertical_spacing()
+
+        for item in self._item_list:
+            item_size = item.sizeHint()
+            next_x = x + item_size.width() + space_x
+            if next_x - space_x > effective_rect.right() and line_height > 0:
+                x = effective_rect.x()
+                y = y + line_height + space_y
+                next_x = x + item_size.width() + space_x
+                line_height = 0
+
+            if not test_only:
+                item.setGeometry(QRect(QPoint(x, y), item_size))
+
+            x = next_x
+            line_height = max(line_height, item_size.height())
+
+        return y + line_height - rect.y() + margins.bottom()
+
+
 class ContextMatrixWidget(QWidget):
     """
-    Interactive grid of BaseCanvas viewports for multi-camera context viewing.
+    Interactive flow gallery of BaseCanvas viewports for multi-camera context viewing.
     Unified replacement for the legacy CameraGrid widget.
 
     Signals:
-        contextImagePromoted: Emitted when user double-clicks a context canvas (camera_path)
+        contextImagePromoted: Legacy compatibility signal; not emitted by the current viewer-only interaction model.
         rankIndicatorUpdated: Emitted when rank indicator changes (start, end, total)
         multiAnnotateToggled: Emitted when multi-annotate mode is toggled (bool)
         loadCamerasRequested: Emitted when the Load Cameras button is clicked
-        clearSelectionsRequested: Emitted when the Clear button is clicked
+        clearSelectionsRequested: Legacy compatibility signal; kept for future workflows.
+        visibleCamerasChanged: Emitted when the visible canvas set changes.
     """
 
     contextImagePromoted = pyqtSignal(str)            # camera_path
@@ -62,26 +147,31 @@ class ContextMatrixWidget(QWidget):
     # Migrated from legacy CameraGrid
     loadCamerasRequested = pyqtSignal()
     clearSelectionsRequested = pyqtSignal()
+    previousCameraRequested = pyqtSignal()
+    nextCameraRequested = pyqtSignal()
+    visibleCamerasChanged = pyqtSignal(list)
 
     # Selection intent signals (mirror CameraGrid's paradigm)
     selection_requested = pyqtSignal(list)   # request to set highlight selection (list of paths)
     toggle_requested = pyqtSignal(str)       # request to toggle a single path (Ctrl+Click)
-    active_requested = pyqtSignal(str)       # request to set active camera (Double-Click)
+    active_requested = pyqtSignal(str)       # legacy compatibility signal; unused by the current UI
     camera_highlighted_single = pyqtSignal(str)  # single plain-click -> jump 3D view
 
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        # Grid State
-        self.target_camera_count = 1
-        self.max_cameras = 36  # Upper limit to prevent memory blowout
-        self.current_rows = 1
-        self.current_cols = 1
+        # Matrix state
+        self.target_camera_count = 10
         self._last_rebuilt_count = 0
+        self._canvas_count_step = 1
+        self._canvas_count_min = 1
+        self._canvas_tile_size = 240
+        self._canvas_tile_step = 32
+        self._canvas_tile_min = 160
+        self._canvas_tile_max = 400
 
         # Camera Data State
         self._camera_paths: List[str] = []
-        self._current_offset = 0
         self._raster_manager = None
         self._loading_flag = False
 
@@ -90,7 +180,7 @@ class ContextMatrixWidget(QWidget):
         self._cameras_ref: Optional[Dict] = None
 
         # Target-lock sync state (Phase 5)
-        self.target_lock_enabled = False
+        self.target_lock_enabled = True
         self._mvat_manager = None
 
         # Multi-camera annotation state
@@ -105,21 +195,49 @@ class ContextMatrixWidget(QWidget):
 
         # Canvas pool
         self._canvas_pool: List[BaseCanvas] = []
-        self._visible_canvases: List[List[Optional[BaseCanvas]]] = []
+        self._visible_canvases: List[BaseCanvas] = []
+
+        # Scrollable flow-layout gallery
+        self._canvas_host_widget = QWidget(self)
+        self._canvas_host_layout = QVBoxLayout(self._canvas_host_widget)
+        self._canvas_host_layout.setContentsMargins(0, 0, 0, 0)
+        self._canvas_host_layout.setSpacing(0)
+
+        self._placeholder_label = QLabel(
+            "No cameras available\nLoad camera lists to populate the matrix.",
+            self._canvas_host_widget,
+        )
+        self._placeholder_label.setAlignment(Qt.AlignCenter)
+        self._placeholder_label.setWordWrap(True)
+        self._placeholder_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._placeholder_label.setStyleSheet(
+            f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; background-color: transparent; font-size: 14px; padding: 16px;"
+        )
+
+        self._flow_widget = QWidget(self._canvas_host_widget)
+        self._flow_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
+        self._flow_layout = FlowLayout(self._flow_widget, margin=4, h_spacing=8, v_spacing=8)
+        self._flow_layout.setSizeConstraint(QLayout.SetMinAndMaxSize)
+        self._flow_widget.setLayout(self._flow_layout)
+
+        self._canvas_host_layout.addWidget(self._placeholder_label)
+        self._canvas_host_layout.addWidget(self._flow_widget)
+
+        self._scroll_area = QScrollArea(self)
+        self._scroll_area.setWidgetResizable(True)
+        self._scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._scroll_area.setWidget(self._canvas_host_widget)
 
         # UI Setup
         self._main_layout = QVBoxLayout(self)
         self._main_layout.setContentsMargins(0, 0, 0, 0)
         self._main_layout.setSpacing(0)
 
-        self._grid_layout: Optional[QGridLayout] = None
-        self._canvas_container: Optional[QWidget] = None
-
-        # Catch Ctrl+Shift+Wheel on the widget itself
-        self.installEventFilter(self)
+        self._main_layout.addWidget(self._scroll_area)
 
         # Create initial layout
-        self.set_target_camera_count(1)
+        self._evaluate_auto_layout()
 
     # ==================== Canvas Pool Management ====================
 
@@ -128,14 +246,13 @@ class ContextMatrixWidget(QWidget):
         while len(self._canvas_pool) < size:
             canvas = BaseCanvas(parent=self)
             canvas.hide()
-            canvas.setStyleSheet("border: 1px solid #444444;")
+            canvas.setFixedSize(self._canvas_tile_size, self._canvas_tile_size)
             canvas.mouseDoubleClickEvent = self._make_canvas_double_click_handler(canvas)
             canvas.mousePressEvent = self._make_canvas_mouse_press_handler(canvas)
-            canvas.installEventFilter(self)  # Catch scroll events hovering over the canvas
             self._canvas_pool.append(canvas)
 
     def _make_canvas_mouse_press_handler(self, canvas: BaseCanvas):
-        """Intercept left clicks for selection while preserving native canvas interactions."""
+        """Intercept left clicks for viewer-only navigation while preserving native canvas interactions."""
         def handler(event):
             if event.button() == Qt.LeftButton:
                 path = canvas.current_image_path
@@ -157,8 +274,7 @@ class ContextMatrixWidget(QWidget):
                             pass
 
                     else:
-                        # Plain click: only update the 3D view (no selection/highlight changes)
-                        # User must use Ctrl or Ctrl+Shift or the Clear button to modify selections
+                        # Plain click: update the 3D viewer only.
                         self.camera_highlighted_single.emit(path)
 
                     self._last_clicked_path = path
@@ -168,139 +284,80 @@ class ContextMatrixWidget(QWidget):
         return handler
 
     def _make_canvas_double_click_handler(self, canvas: BaseCanvas):
-        """Double-click loads a context camera image without clearing selections.
-        
-        Emits both active_requested (to set the active camera) and contextImagePromoted
-        (to load the image). Selections/highlights are preserved—users must use
-        Ctrl+Click or the Clear button to modify them.
-        """
+        """Double-click updates the 3D viewer only."""
         def handler(event):
             if event.button() == Qt.LeftButton:
                 path = canvas.current_image_path
                 if path:
-                    # Set as active and load the image without clearing selections
-                    self.active_requested.emit(path)
-                    self.contextImagePromoted.emit(path)
+                    self.camera_highlighted_single.emit(path)
             BaseCanvas.mouseDoubleClickEvent(canvas, event)
         return handler
 
     # ==================== Input / Scroll Events ====================
 
-    def eventFilter(self, source, event):
-        """Capture Ctrl+Shift+Wheel to dynamically resize the camera grid."""
-        if event.type() == QEvent.Wheel:
-            modifiers = event.modifiers()
-            if modifiers == (Qt.ControlModifier | Qt.ShiftModifier):
-                delta = event.angleDelta().y()
-                if delta > 0:
-                    # Scroll Up -> Fewer cameras (Zoom in)
-                    self.set_target_camera_count(self.target_camera_count - 1)
-                elif delta < 0:
-                    # Scroll Down -> More cameras (Zoom out)
-                    self.set_target_camera_count(self.target_camera_count + 1)
-                return True
-        return super().eventFilter(source, event)
-
     def set_target_camera_count(self, count: int):
-        """Update the target number of visible cameras and re-evaluate layout."""
-        self.target_camera_count = max(1, min(count, self.max_cameras))
+        """Update the desired number of visible context canvases."""
+        try:
+            count = int(count)
+        except Exception:
+            count = self._canvas_count_min
+
+        self.target_camera_count = max(self._canvas_count_min, count)
         self._evaluate_auto_layout()
+        self._refresh_visible_canvases()
+
+    def increase_canvas_count(self):
+        self.set_target_camera_count(self.target_camera_count + self._canvas_count_step)
+
+    def decrease_canvas_count(self):
+        self.set_target_camera_count(self.target_camera_count - self._canvas_count_step)
 
     # ==================== Layout Rebuilding ====================
 
     def _evaluate_auto_layout(self):
-        """Automatically choose grid dimensions based on aspect ratio and target count."""
-        # Cap N to the number of available camera paths so we don't show blank canvases
+        """Rebuild the flow layout for the current camera count target."""
         available = len(self._camera_paths)
-        if available > 0:
-            effective_target = min(self.target_camera_count, available)
+        effective_target = min(available, self.target_camera_count) if available > 0 else 0
+
+        if effective_target != self._last_rebuilt_count:
+            self._rebuild_layout(effective_target)
         else:
-            effective_target = self.target_camera_count
+            self._update_empty_state_visibility(effective_target > 0)
 
-        if not self.isVisible() or self.width() <= 0 or self.height() <= 0:
-            rows = 1
-            cols = 1
-            N = effective_target
-            if N != self._last_rebuilt_count:
-                self._rebuild_layout(rows, cols, N)
-            return
-
-        aspect = self.width() / self.height()
-        N = effective_target
-
-        if N == 1:
-            rows, cols = 1, 1
-        else:
-            # Optimal grid calculation for aspect ratio
-            cols = max(1, int(round(math.sqrt(N * aspect))))
-            rows = math.ceil(N / cols)
-
-            # Squeeze empty rows/cols to minimal bounding grid
-            while (rows - 1) * cols >= N:
-                rows -= 1
-            while rows * (cols - 1) >= N:
-                cols -= 1
-
-        if rows != self.current_rows or cols != self.current_cols or N != self._last_rebuilt_count:
-            self._rebuild_layout(rows, cols, N)
-
-    def _rebuild_layout(self, rows: int, cols: int, count: int):
-        """Rebuild the grid layout with specified rows, cols, and active cells."""
-        self.current_rows = rows
-        self.current_cols = cols
+    def _rebuild_layout(self, count: int):
+        """Rebuild the flow layout with the requested number of visible canvases."""
         self._last_rebuilt_count = count
 
-        self._ensure_canvas_pool_size(count)
-
-        # Clamp offset
-        max_offset = max(0, len(self._camera_paths) - count)
-        self._current_offset = min(self._current_offset, max_offset)
-
-        if self._grid_layout is not None:
-            while self._grid_layout.count():
-                item = self._grid_layout.takeAt(0)
-                if item.widget():
-                    item.widget().hide()
+        while self._flow_layout.count():
+            item = self._flow_layout.takeAt(0)
+            if item and item.widget():
+                item.widget().hide()
 
         for canvas in self._canvas_pool:
             canvas.hide()
-            canvas.setParent(self)
 
-        if self._canvas_container:
-            self._main_layout.removeWidget(self._canvas_container)
-            self._canvas_container.deleteLater()
+        self._visible_canvases = []
 
-        self._canvas_container = QWidget()
-        self._grid_layout = QGridLayout(self._canvas_container)
-        self._grid_layout.setContentsMargins(2, 2, 2, 2)
-        self._grid_layout.setSpacing(2)
+        if count <= 0:
+            self._update_empty_state_visibility(False)
+            return
 
-        self._visible_canvases = [[None for _ in range(cols)] for _ in range(rows)]
+        self._ensure_canvas_pool_size(count)
 
-        canvas_index = 0
-        for row in range(rows):
-            for col in range(cols):
-                if canvas_index < count:
-                    canvas = self._canvas_pool[canvas_index]
-                    canvas.show()
-                    self._grid_layout.addWidget(canvas, row, col)
-                    self._visible_canvases[row][col] = canvas
-                    canvas_index += 1
-                else:
-                    self._visible_canvases[row][col] = None
+        for index in range(count):
+            canvas = self._canvas_pool[index]
+            self._flow_layout.addWidget(canvas)
+            canvas.show()
+            self._visible_canvases.append(canvas)
 
-        for row in range(rows):
-            self._grid_layout.setRowStretch(row, 1)
-        for col in range(cols):
-            self._grid_layout.setColumnStretch(col, 1)
-
-        self._main_layout.addWidget(self._canvas_container, 1)
-        self.shift_offset(0)
+        self._update_empty_state_visibility(True)
+        self._flow_widget.updateGeometry()
+        self._canvas_host_widget.adjustSize()
 
     def resizeEvent(self, event):
         """Auto-adjust layout on resize without changing camera count."""
         super().resizeEvent(event)
-        self._evaluate_auto_layout()
+        self._flow_widget.updateGeometry()
 
     # ==================== Data Feed ====================
 
@@ -308,40 +365,55 @@ class ContextMatrixWidget(QWidget):
         self._raster_manager = raster_manager
 
     def set_camera_data(self, camera_objects: List, ordered_paths: List[str]):
-        self._camera_paths = ordered_paths
-        self._current_offset = 0
+        self._camera_paths = list(ordered_paths)
         self._evaluate_auto_layout()
         self._refresh_visible_canvases()
 
     def set_camera_order(self, ordered_paths: List[str], active_path: str = None):
-        if active_path:
-            self._camera_paths = [p for p in ordered_paths if p != active_path]
-        else:
-            self._camera_paths = list(ordered_paths)
-        self._current_offset = 0
+        paths = list(ordered_paths)
+        if active_path and active_path in paths and paths and paths[0] != active_path:
+            paths = [active_path] + [path for path in paths if path != active_path]
+        self._camera_paths = paths
         self._evaluate_auto_layout()
         self._refresh_visible_canvases()
-        self._update_rank_label()
+
+    def get_camera_order(self) -> List[str]:
+        return list(self._camera_paths)
+
+    def get_visible_camera_paths(self) -> List[str]:
+        return [
+            canvas.current_image_path
+            for canvas in self._visible_canvases
+            if canvas and canvas.active_image and canvas.current_image_path
+        ]
+
+    def _emit_visible_cameras_changed(self):
+        self.visibleCamerasChanged.emit(self.get_visible_camera_paths())
+
+    def _update_empty_state_visibility(self, has_cameras: bool):
+        self._placeholder_label.setVisible(not has_cameras)
+        self._flow_widget.setVisible(has_cameras)
 
     def _refresh_visible_canvases(self):
-        if not self._raster_manager or not self._camera_paths:
-            for row in self._visible_canvases:
-                for canvas in row:
-                    if canvas:
-                        canvas._show_placeholder("No cameras loaded")
+        if not self._camera_paths:
+            for canvas in self._canvas_pool:
+                canvas.hide()
+                canvas._show_placeholder("No cameras loaded")
+            self._visible_canvases = []
+            self._update_empty_state_visibility(False)
+            self._update_canvas_count_controls()
+            self._emit_visible_cameras_changed()
             return
 
-        for i, canvas_row in enumerate(self._visible_canvases):
-            for j, canvas in enumerate(canvas_row):
-                if canvas:
-                    canvas_index = i * self.current_cols + j
-                    offset_index = self._current_offset + canvas_index
+        self._update_empty_state_visibility(True)
 
-                    if offset_index < len(self._camera_paths):
-                        camera_path = self._camera_paths[offset_index]
-                        self._load_canvas_image(canvas, camera_path)
-                    else:
-                        canvas.clear_scene()
+        visible_paths = self._camera_paths[:self._last_rebuilt_count]
+        for index, canvas in enumerate(self._visible_canvases):
+            if index < len(visible_paths):
+                self._load_canvas_image(canvas, visible_paths[index])
+            else:
+                canvas.clear_scene()
+                canvas.hide()
 
         if self._last_focal_point is not None and self._cameras_ref is not None:
             self.update_static_markers_from_3d(self._last_focal_point, self._cameras_ref)
@@ -349,8 +421,49 @@ class ContextMatrixWidget(QWidget):
         if self.target_lock_enabled and self._mvat_manager:
             self._request_sync_from_main_view()
 
+        self._update_canvas_count_controls()
+        self._emit_visible_cameras_changed()
+
     def _get_visible_capacity(self) -> int:
         return self._last_rebuilt_count
+
+    def _apply_canvas_tile_size_to_canvas(self, canvas: BaseCanvas):
+        canvas.setFixedSize(self._canvas_tile_size, self._canvas_tile_size)
+
+    def _update_canvas_size_controls(self):
+        if hasattr(self, 'size_down_btn'):
+            self.size_down_btn.setEnabled(self._canvas_tile_size > self._canvas_tile_min)
+        if hasattr(self, 'size_up_btn'):
+            self.size_up_btn.setEnabled(self._canvas_tile_size < self._canvas_tile_max)
+
+    def _update_canvas_count_controls(self):
+        available = len(self._camera_paths)
+        can_decrease = available > 0 and self.target_camera_count > self._canvas_count_min
+        can_increase = available > 0 and self.target_camera_count < available
+        if hasattr(self, 'count_down_btn'):
+            self.count_down_btn.setEnabled(can_decrease)
+        if hasattr(self, 'count_up_btn'):
+            self.count_up_btn.setEnabled(can_increase)
+
+    def _set_canvas_tile_size(self, size: int):
+        clamped_size = max(self._canvas_tile_min, min(self._canvas_tile_max, size))
+        if clamped_size == self._canvas_tile_size:
+            self._update_canvas_size_controls()
+            return
+
+        self._canvas_tile_size = clamped_size
+        for canvas in self._canvas_pool:
+            self._apply_canvas_tile_size_to_canvas(canvas)
+
+        self._flow_widget.updateGeometry()
+        self._canvas_host_widget.adjustSize()
+        self._update_canvas_size_controls()
+
+    def increase_canvas_size(self):
+        self._set_canvas_tile_size(self._canvas_tile_size + self._canvas_tile_step)
+
+    def decrease_canvas_size(self):
+        self._set_canvas_tile_size(self._canvas_tile_size - self._canvas_tile_step)
 
     def _load_canvas_image(self, canvas: BaseCanvas, camera_path: str):
         if canvas.current_image_path == camera_path and canvas.active_image:
@@ -385,21 +498,23 @@ class ContextMatrixWidget(QWidget):
             canvas._show_placeholder(f"Error: {str(e)[:20]}")
 
     def reset_offset(self):
-        self._current_offset = 0
-        self._refresh_visible_canvases()
+        scrollbar = self._scroll_area.verticalScrollBar()
+        if scrollbar is not None:
+            scrollbar.setValue(scrollbar.minimum())
 
     def shift_offset(self, delta: int):
-        visible_capacity = self._get_visible_capacity()
-        max_offset = max(0, len(self._camera_paths) - visible_capacity)
-        self._current_offset = max(0, min(self._current_offset + delta, max_offset))
-        self._refresh_visible_canvases()
-        self._update_rank_label()
+        scrollbar = self._scroll_area.verticalScrollBar()
+        if scrollbar is None:
+            return
+        step = scrollbar.singleStep() or 20
+        scrollbar.setValue(max(scrollbar.minimum(), min(scrollbar.maximum(), scrollbar.value() + delta * step)))
 
-    # ==================== Toolbar (Unified Grid + Matrix) ====================
+    # ==================== Toolbar (Context Matrix) ====================
 
     def create_top_toolbar(self) -> QToolBar:
-        """Create toolbar unifying legacy grid stats and matrix options."""
-        toolbar = QToolBar("Grid Context Tools")
+        """Create a compact toolbar for camera loading, navigation, size, and count controls."""
+        toolbar = QToolBar("Context Matrix Tools")
+        toolbar.setMovable(False)
         toolbar.setIconSize(app_theme.scale_size(16))
         self.toolbar = toolbar
 
@@ -408,89 +523,85 @@ class ContextMatrixWidget(QWidget):
         layout.setContentsMargins(5, 5, 5, 5)
         layout.setSpacing(5)
 
-        # Load Cameras button (moved to far left)
         self.load_btn = QToolButton()
         self.load_btn.setText("Load Cameras")
-        self.load_btn.clicked.connect(self.loadCamerasRequested.emit)
+        self.load_btn.setAutoRaise(True)
+        self.load_btn.clicked.connect(lambda _checked=False: self.loadCamerasRequested.emit())
         layout.addWidget(self.load_btn)
 
-        # Separator after Load Cameras
         sep0 = QFrame()
         sep0.setFrameShape(QFrame.VLine)
         sep0.setFrameShadow(QFrame.Sunken)
         layout.addWidget(sep0)
 
-        # Camera count stats (migrated from CameraGrid)
-        self.stats_label = QLabel("Cameras: 0")
-        self.stats_label.setStyleSheet("color: #333;")
-        layout.addWidget(self.stats_label)
+        self.previous_btn = QToolButton()
+        self.previous_btn.setIcon(get_icon("left.svg"))
+        self.previous_btn.setToolTip("Previous camera")
+        self.previous_btn.setAutoRaise(True)
+        self.previous_btn.clicked.connect(lambda _checked=False: self.previousCameraRequested.emit())
+        layout.addWidget(self.previous_btn)
+
+        self.next_btn = QToolButton()
+        self.next_btn.setIcon(get_icon("right.svg"))
+        self.next_btn.setToolTip("Next camera")
+        self.next_btn.setAutoRaise(True)
+        self.next_btn.clicked.connect(lambda _checked=False: self.nextCameraRequested.emit())
+        layout.addWidget(self.next_btn)
 
         sep1 = QFrame()
         sep1.setFrameShape(QFrame.VLine)
         sep1.setFrameShadow(QFrame.Sunken)
         layout.addWidget(sep1)
 
-        self.selected_label = QLabel("None selected")
-        self.selected_label.setStyleSheet("color: #666;")
-        layout.addWidget(self.selected_label)
+        self.size_down_btn = QToolButton()
+        self.size_down_btn.setIcon(get_icon("remove.svg"))
+        self.size_down_btn.setToolTip("Smaller cameras")
+        self.size_down_btn.setAutoRaise(True)
+        self.size_down_btn.clicked.connect(lambda _checked=False: self.decrease_canvas_size())
+        layout.addWidget(self.size_down_btn)
+
+        self.size_up_btn = QToolButton()
+        self.size_up_btn.setIcon(get_icon("add.svg"))
+        self.size_up_btn.setToolTip("Larger cameras")
+        self.size_up_btn.setAutoRaise(True)
+        self.size_up_btn.clicked.connect(lambda _checked=False: self.increase_canvas_size())
+        layout.addWidget(self.size_up_btn)
 
         sep2 = QFrame()
         sep2.setFrameShape(QFrame.VLine)
         sep2.setFrameShadow(QFrame.Sunken)
         layout.addWidget(sep2)
 
-        self.selection_label = QLabel("0 highlighted")
-        self.selection_label.setStyleSheet("color: #666;")
-        layout.addWidget(self.selection_label)
+        self.count_down_btn = QToolButton()
+        self.count_down_btn.setIcon(get_icon("remove.svg"))
+        self.count_down_btn.setToolTip("Show fewer cameras")
+        self.count_down_btn.setAutoRaise(True)
+        self.count_down_btn.clicked.connect(lambda _checked=False: self.decrease_canvas_count())
+        layout.addWidget(self.count_down_btn)
 
-        sep3 = QFrame()
-        sep3.setFrameShape(QFrame.VLine)
-        sep3.setFrameShadow(QFrame.Sunken)
-        layout.addWidget(sep3)
-
-        # Rank indicator
-        self._rank_label = QLabel("\u2014")
-        self._rank_label.setStyleSheet("color: #888; font-size: 11px;")
-        layout.addWidget(self._rank_label)
+        self.count_up_btn = QToolButton()
+        self.count_up_btn.setIcon(get_icon("add.svg"))
+        self.count_up_btn.setToolTip("Show more cameras")
+        self.count_up_btn.setAutoRaise(True)
+        self.count_up_btn.clicked.connect(lambda _checked=False: self.increase_canvas_count())
+        layout.addWidget(self.count_up_btn)
 
         layout.addStretch(1)
 
-        # Target-Lock Sync
-        self._sync_btn = QPushButton("Sync")
-        self._sync_btn.setCheckable(True)
-        self._sync_btn.setChecked(False)
-        self._sync_btn.setToolTip("Target-Lock Sync (disabled)")
-        self._sync_btn.toggled.connect(self._on_sync_toggled)
-        layout.addWidget(self._sync_btn)
-
         # Multi-Camera Annotation
-        self._multi_annotate_btn = QPushButton("Multi-Annotate")
+        self._multi_annotate_btn = QToolButton()
+        self._multi_annotate_btn.setText("Multi-Annotate")
         self._multi_annotate_btn.setCheckable(True)
         self._multi_annotate_btn.setChecked(False)
         self._multi_annotate_btn.setToolTip("Multi-Camera Annotation")
+        self._multi_annotate_btn.setAutoRaise(True)
         self._multi_annotate_btn.toggled.connect(self._on_multi_annotate_toggled)
         layout.addWidget(self._multi_annotate_btn)
 
-        sep4 = QFrame()
-        sep4.setFrameShape(QFrame.VLine)
-        sep4.setFrameShadow(QFrame.Sunken)
-        layout.addWidget(sep4)
-
-        # Select All button
-        self.select_all_btn = QToolButton()
-        self.select_all_btn.setText("Select All")
-        self.select_all_btn.setToolTip("Highlight all cameras (even if not visible in grid)")
-        self.select_all_btn.clicked.connect(self._on_select_all)
-        layout.addWidget(self.select_all_btn)
-
-        # Clear button
-        self.clear_btn = QToolButton()
-        self.clear_btn.setText("Clear")
-        self.clear_btn.setToolTip("Clear all selections (Escape)")
-        self.clear_btn.clicked.connect(self.clearSelectionsRequested.emit)
-        layout.addWidget(self.clear_btn)
-
         toolbar.addWidget(container)
+
+        self._update_canvas_size_controls()
+        self._update_canvas_count_controls()
         return toolbar
 
     def refresh_scaling(self):
@@ -499,90 +610,22 @@ class ContextMatrixWidget(QWidget):
             self.toolbar.setIconSize(app_theme.scale_size(16))
 
     def update_stats(self, perspective_count: int):
-        """Update the overall camera count labels."""
-        if not hasattr(self, 'stats_label'):
-            return
-        self.stats_label.setText(f"Cameras: {perspective_count} perspective")
+        return
 
     def update_selection_labels(self, active_label: str, highlighted_count: int):
-        """Update the labels indicating selected/highlighted cameras."""
-        if not hasattr(self, 'selection_label'):
-            return
-        self.selection_label.setText(f"{highlighted_count} highlighted")
-        if active_label:
-            self.selected_label.setText(f"Selected: {active_label}")
-        else:
-            self.selected_label.setText("None selected")
-
-    def _on_sync_toggled(self, checked):
-        self.target_lock_enabled = checked
-        self._sync_btn.setToolTip("Target-Lock Sync (enabled)" if checked else "Target-Lock Sync (disabled)")
-        if checked:
-            self._request_sync_from_main_view()
-
-    def _on_select_all(self):
-        """Highlight only cameras currently visible in the grid."""
-        # Set busy cursor
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        
-        try:
-            # Collect only visible camera paths from the currently displayed grid
-            visible_paths = []
-            for row in self._visible_canvases:
-                for canvas in row:
-                    if canvas and canvas.current_image_path:
-                        visible_paths.append(canvas.current_image_path)
-            
-            if visible_paths:
-                self.selection_requested.emit(visible_paths)
-        finally:
-            # Always restore cursor
-            QApplication.restoreOverrideCursor()
+        return
 
     def _on_multi_annotate_toggled(self, checked: bool):
         self.multi_annotate_enabled = checked
         self.multiAnnotateToggled.emit(checked)
 
-    # ==================== Selection Visuals ====================
-
-    def sync_selection_borders(self, active_path: str, selected_paths: set):
-        """Apply CSS borders to canvases based on active/highlighted status.
-        
-        Resets rotation for any canvas that is not both selected and synced.
-        Only synced+selected canvases maintain their synchronized rotation.
-
-        Args:
-            active_path: Image path of the currently active (green-bordered) camera.
-            selected_paths: Set of image paths that are highlighted (cyan-bordered).
-        """
-        # Convert QColor objects to hex for CSS
-        active_color = SELECT_COLOR.name()
-        highlight_color = HIGHLIGHT_COLOR.name()
-        
-        for canvas in self._canvas_pool:
-            if not canvas.isVisible() or not canvas.current_image_path:
-                continue
-            path = canvas.current_image_path
-            if path == active_path:
-                canvas.setStyleSheet(f"border: 6px dashed {active_color};")   # Active camera (SELECT_COLOR), dashed
-            elif path in selected_paths:
-                canvas.setStyleSheet(f"border: 5px dashed {highlight_color};")   # Highlighted cameras (HIGHLIGHT_COLOR), dashed
-            else:
-                canvas.setStyleSheet("border: 3px solid #000000;")   # Default, solid black
-            
-            # Reset rotation unless the canvas is BOTH selected AND synced
-            if not self.target_lock_enabled or path not in selected_paths:
-                canvas.rotation_angle = 0.0
-                canvas._set_absolute_rotation(0.0)
-
     # ==================== Marker Routing (Phase 4) ====================
 
     def _get_canvas_camera_map(self) -> Dict[str, 'BaseCanvas']:
         result = {}
-        for row in self._visible_canvases:
-            for canvas in row:
-                if canvas and canvas.current_image_path and canvas.active_image:
-                    result[canvas.current_image_path] = canvas
+        for canvas in self._visible_canvases:
+            if canvas and canvas.current_image_path and canvas.active_image:
+                result[canvas.current_image_path] = canvas
         return result
 
     def update_dynamic_markers(self, projections: dict, accuracies: dict,
@@ -641,7 +684,7 @@ class ContextMatrixWidget(QWidget):
             # Occlusion testing (is_point_occluded_depth_based) produces false-positives
             # for MVATViewer picks due to depth-buffer floating-point imprecision and is
             # only appropriate for dynamic hover markers, not for static focal-point marks.
-            canvas.update_static_marker(u, v, color=MARKER_COLOR_SELECTED)
+            canvas.update_static_marker(u, v, color=MARKER_COLOR_HIGHLIGHTED)
 
     def clear_all_static_markers(self):
         self._last_focal_point = None
@@ -756,17 +799,7 @@ class ContextMatrixWidget(QWidget):
     # ==================== Rank Indicator ====================
 
     def _update_rank_label(self):
-        if not hasattr(self, '_rank_label'):
-            return
-        total = len(self._camera_paths)
-        if total == 0:
-            self._rank_label.setText("\u2014")
-            return
-        capacity = self._get_visible_capacity()
-        start = self._current_offset + 1
-        end = min(self._current_offset + capacity, total)
-        self._rank_label.setText(f"Neighbors {start}\u2013{end} of {total}")
-        self.rankIndicatorUpdated.emit(start, end, total)
+        return
 
     # ==================== Annotation Visualization (Phase 6) ====================
 
@@ -806,26 +839,24 @@ class ContextMatrixWidget(QWidget):
     def _refresh_annotations_for_path(self, image_path: str = None):
         if not self._annotation_manager:
             return
-        for row in self._visible_canvases:
-            for canvas in row:
-                if canvas and canvas.active_image and canvas.current_image_path:
-                    if image_path is None or canvas.current_image_path == image_path:
-                        annotations = self._annotation_manager.get_image_annotations(canvas.current_image_path)
-                        canvas._render_annotations_readonly(annotations)
-                        if self._raster_manager:
-                            raster = self._raster_manager.get_raster(canvas.current_image_path)
-                            if raster is not None and raster.mask_annotation is not None:
-                                canvas.set_mask_overlay(raster.mask_annotation)
+        for canvas in self._visible_canvases:
+            if canvas and canvas.active_image and canvas.current_image_path:
+                if image_path is None or canvas.current_image_path == image_path:
+                    annotations = self._annotation_manager.get_image_annotations(canvas.current_image_path)
+                    canvas._render_annotations_readonly(annotations)
+                    if self._raster_manager:
+                        raster = self._raster_manager.get_raster(canvas.current_image_path)
+                        if raster is not None and raster.mask_annotation is not None:
+                            canvas.set_mask_overlay(raster.mask_annotation)
 
     def _on_selection_changed(self, selected_ids):
         selected_set = set(selected_ids) if selected_ids else set()
-        for row in self._visible_canvases:
-            for canvas in row:
-                if canvas and canvas.active_image:
-                    for item in canvas._readonly_annotation_items:
-                        ann_id = getattr(item, '_source_annotation_id', None)
-                        if ann_id:
-                            canvas._highlight_readonly_annotation(ann_id, ann_id in selected_set)
+        for canvas in self._visible_canvases:
+            if canvas and canvas.active_image:
+                for item in canvas._readonly_annotation_items:
+                    ann_id = getattr(item, '_source_annotation_id', None)
+                    if ann_id:
+                        canvas._highlight_readonly_annotation(ann_id, ann_id in selected_set)
 
     # ==================== Cursor Preview (Tool Propagation) ====================
 

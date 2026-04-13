@@ -238,6 +238,7 @@ class MVATViewer(QFrame):
         self.rotate_speed = 0.25        # degrees per key press
         
         self.plotter.interactor.installEventFilter(self)
+        QTimer.singleShot(100, self._configure_interaction)
 
         # Configure Interaction (Delayed)
 
@@ -1571,7 +1572,8 @@ class MVATViewer(QFrame):
     
     def add_frustums(self, cameras: dict, frustum_scale: float = None,
                      show_thumbnails: bool = None, selected_camera=None,
-                     highlighted_paths: list = None, hovered_camera: str = None):
+                     highlighted_paths: list = None, hovered_camera: str = None,
+                     context_highlighted_paths: list = None):
         """
         Build and add batched frustums (wireframes) to the plotter.
 
@@ -1623,7 +1625,12 @@ class MVATViewer(QFrame):
                     self._frustum_manager.add_to_plotter(self.plotter, line_width=1.5)
                     selected_path = selected_camera.image_path if selected_camera else None
                     highlighted_paths = highlighted_paths or []
-                    self._frustum_manager.update_camera_states(selected_path, highlighted_paths, hovered_camera)
+                    self._frustum_manager.update_camera_states(
+                        selected_path,
+                        highlighted_paths,
+                        hovered_camera,
+                        context_highlighted_paths=context_highlighted_paths,
+                    )
                     self._frustum_manager.mark_modified()
                     print(f"   ✅ Frustums added to plotter successfully")
                 else:
@@ -2040,12 +2047,18 @@ class MVATViewer(QFrame):
         except Exception:
             pass
 
-    def update_frustum_states(self, selected_path, highlighted_paths, hovered_camera):
+    def update_frustum_states(self, selected_path, highlighted_paths, hovered_camera,
+                              context_highlighted_paths=None):
         """Update frustum manager camera states and mark modified."""
         try:
             if hasattr(self, '_frustum_manager') and self._frustum_manager is not None:
                 try:
-                    self._frustum_manager.update_camera_states(selected_path, highlighted_paths, hovered_camera)
+                    self._frustum_manager.update_camera_states(
+                        selected_path,
+                        highlighted_paths,
+                        hovered_camera,
+                        context_highlighted_paths=context_highlighted_paths,
+                    )
                     self._frustum_manager.mark_modified()
                 except Exception:
                     pass
