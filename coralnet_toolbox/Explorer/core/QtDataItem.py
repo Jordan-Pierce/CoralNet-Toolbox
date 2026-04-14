@@ -3,8 +3,14 @@ import warnings
 import os
 
 from PyQt5.QtCore import Qt, QRectF
-from PyQt5.QtGui import QPen, QColor, QPainter, QFont, QBrush
-from PyQt5.QtWidgets import QGraphicsObject, QStyle, QWidget, QGraphicsItem
+from PyQt5.QtGui import QPen, QColor, QPainter
+from PyQt5.QtWidgets import QGraphicsObject, QStyle, QGraphicsItem
+
+from coralnet_toolbox.Explorer.core.confidence_sorting import (
+    confidence_bucket_label,
+    confidence_bucket_sort_key,
+    confidence_value,
+)
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -396,29 +402,27 @@ class AnnotationDataItem:
 
         return "<br>".join(tooltip_parts)
 
+    def get_confidence_value(self) -> float:
+        """Return the annotation confidence used for display and sorting.
+
+        Verified annotations use user confidence. Unverified annotations use
+        machine confidence.
+        """
+        return confidence_value(self.annotation)
+
+    def get_confidence_bucket_label(self) -> str:
+        """Return the gallery bucket label for the annotation confidence."""
+        return confidence_bucket_label(self.annotation)
+
+    def get_confidence_bucket_sort_key(self):
+        """Return a sort key that puts confidence bins before Verified."""
+        return confidence_bucket_sort_key(self.annotation)
+
     def get_effective_confidence(self):
         """
-        Get the effective confidence value with proper priority:
-        1. sklearn predictions (from Auto-Annotation Wizard, session-only)
-        2. External machine_confidence (from MainWindow, permanent)
-        3. Verified status (1.0 if verified)
-        4. Default (1.0)
-        
-        Returns:
-            float: Confidence value between 0 and 1
+        Return the annotation confidence value used by the gallery.
+
+        Verified annotations use user confidence. Unverified annotations use
+        machine confidence.
         """
-        # Priority 1: sklearn predictions from Auto-Annotation Wizard (session-only)
-        # if hasattr(self, 'sklearn_prediction') and self.sklearn_prediction is not None:
-        #     if isinstance(self.sklearn_prediction, dict) and 'confidence' in self.sklearn_prediction:
-        #         return float(self.sklearn_prediction['confidence'])
-        
-        # Priority 2: External machine_confidence (from CoralNet or other tools)
-        if hasattr(self.annotation, 'machine_confidence') and self.annotation.machine_confidence:
-            return list(self.annotation.machine_confidence.values())[0]
-        
-        # Priority 3: Verified status
-        if self.annotation.verified:
-            return 1.0
-            
-        # Default
-        return 1.0
+        return self.get_confidence_value()

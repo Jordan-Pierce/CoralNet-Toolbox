@@ -209,7 +209,9 @@ class ChangeLabelAction(Action):
         if annotation:
             try:
                 annotation.update_user_confidence(self.new_label)
-                annotation.create_cropped_image(self.annotation_window.rasterio_image)
+                raster_source = self._get_raster_source(annotation)
+                if raster_source is not None:
+                    annotation.create_cropped_image(raster_source)
                 try:
                     self.annotation_window.main_window.confidence_window.display_cropped_image(annotation)
                 except Exception:
@@ -222,13 +224,29 @@ class ChangeLabelAction(Action):
         if annotation:
             try:
                 annotation.update_user_confidence(self.old_label)
-                annotation.create_cropped_image(self.annotation_window.rasterio_image)
+                raster_source = self._get_raster_source(annotation)
+                if raster_source is not None:
+                    annotation.create_cropped_image(raster_source)
                 try:
                     self.annotation_window.main_window.confidence_window.display_cropped_image(annotation)
                 except Exception:
                     pass
             except Exception:
                 pass
+
+    def _get_raster_source(self, annotation):
+        try:
+            image_window = getattr(self.annotation_window.main_window, 'image_window', None)
+            raster_manager = getattr(image_window, 'raster_manager', None) if image_window else None
+            if raster_manager and hasattr(raster_manager, 'get_raster'):
+                raster = raster_manager.get_raster(annotation.image_path)
+                if raster:
+                    if getattr(raster, '_rasterio_src', None) is None and hasattr(raster, 'load_rasterio'):
+                        raster.load_rasterio()
+                    return getattr(raster, '_rasterio_src', None)
+        except Exception:
+            pass
+        return getattr(self.annotation_window, 'rasterio_image', None)
 
 
 class ChangeLabelsAction(Action):
@@ -245,6 +263,9 @@ class ChangeLabelsAction(Action):
             if ann:
                 try:
                     ann.update_user_confidence(new_label)
+                    raster_source = self._get_raster_source(ann)
+                    if raster_source is not None:
+                        ann.create_cropped_image(raster_source)
                 except Exception:
                     pass
 
@@ -254,8 +275,25 @@ class ChangeLabelsAction(Action):
             if ann:
                 try:
                     ann.update_user_confidence(old_label)
+                    raster_source = self._get_raster_source(ann)
+                    if raster_source is not None:
+                        ann.create_cropped_image(raster_source)
                 except Exception:
                     pass
+
+    def _get_raster_source(self, annotation):
+        try:
+            image_window = getattr(self.annotation_window.main_window, 'image_window', None)
+            raster_manager = getattr(image_window, 'raster_manager', None) if image_window else None
+            if raster_manager and hasattr(raster_manager, 'get_raster'):
+                raster = raster_manager.get_raster(annotation.image_path)
+                if raster:
+                    if getattr(raster, '_rasterio_src', None) is None and hasattr(raster, 'load_rasterio'):
+                        raster.load_rasterio()
+                    return getattr(raster, '_rasterio_src', None)
+        except Exception:
+            pass
+        return getattr(self.annotation_window, 'rasterio_image', None)
 
 
 class CutAnnotationAction(Action):

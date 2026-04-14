@@ -769,6 +769,11 @@ class AnnotationWindow(BaseCanvas):
         if (updated_annotation.image_path == self.current_image_path and 
             updated_annotation.is_graphics_item_valid()):
             updated_annotation.update_graphics_item()
+
+        try:
+            self.annotationModified.emit(updated_annotation.id)
+        except Exception:
+            pass
             
     def set_incoming_marker(self, u, v, color):
         """Set the incoming marker (focal point) position and color from MVAT.
@@ -1526,15 +1531,62 @@ class AnnotationWindow(BaseCanvas):
         # Collect changes for action stack
         changes = []  # list of (annotation_id, old_label, new_label)
 
+        # Prefer the global selection manager when available so label changes
+        # can apply to gallery-selected annotations even if they are not in the
+        # current canvas image.
+        target_annotations = []
+        try:
+            selection_manager = getattr(self.main_window, 'selection_manager', None)
+            selected_ids = []
+            if selection_manager and hasattr(selection_manager, 'get_selected_ids'):
+                selected_ids = list(selection_manager.get_selected_ids() or [])
+
+            if selected_ids:
+                annotations_dict = getattr(self, 'annotations_dict', {})
+                for ann_id in selected_ids:
+                    ann = annotations_dict.get(ann_id)
+                    if ann:
+                        target_annotations.append(ann)
+            else:
+                target_annotations = list(self.selected_annotations)
+        except Exception:
+            target_annotations = list(self.selected_annotations)
+
+        if not target_annotations:
+            QApplication.restoreOverrideCursor()
+            return
+
+        def _get_raster_source_for_annotation(annotation):
+            try:
+                image_window = getattr(self.main_window, 'image_window', None)
+                raster_manager = getattr(image_window, 'raster_manager', None) if image_window else None
+                if raster_manager and hasattr(raster_manager, 'get_raster'):
+                    raster = raster_manager.get_raster(annotation.image_path)
+                    if raster:
+                        if getattr(raster, '_rasterio_src', None) is None and hasattr(raster, 'load_rasterio'):
+                            raster.load_rasterio()
+                        return getattr(raster, '_rasterio_src', None)
+            except Exception:
+                pass
+            return getattr(self, 'rasterio_image', None)
+
         # Handle both valid labels and None (no label selected)
         if label is not None:
 
-            for annotation in self.selected_annotations:
+            for annotation in target_annotations:
                 if annotation.label.id != label.id:
                     old_label = annotation.label
                     annotation.update_user_confidence(self.selected_label)
-                    annotation.create_cropped_image(self.rasterio_image)
-                    self.main_window.confidence_window.display_cropped_image(annotation)
+                    raster_source = _get_raster_source_for_annotation(annotation)
+                    if raster_source is not None:
+                        try:
+                            annotation.create_cropped_image(raster_source)
+                        except Exception:
+                            pass
+                    try:
+                        self.main_window.confidence_window.display_cropped_image(annotation)
+                    except Exception:
+                        pass
                     changes.append((annotation.id, old_label, self.selected_label))
 
             if self.cursor_annotation:
@@ -1553,7 +1605,10 @@ class AnnotationWindow(BaseCanvas):
                     action = ChangeLabelAction(self, ann_id, old_label, new_label)
                     self.action_stack.push(action)
                     try:
-                        self.annotationLabelChanged.emit(ann_id, new_label.id if hasattr(new_label, 'id') else str(new_label))
+                        self.annotationLabelChanged.emit(
+                            ann_id,
+                            new_label.id if hasattr(new_label, 'id') else str(new_label)
+                        )
                     except Exception:
                         pass
                 else:
@@ -1887,7 +1942,7 @@ class AnnotationWindow(BaseCanvas):
         self.fit_to_image()
         # Reset rotation to default
         self.rotation_angle = 0.0
-        self._set_absolute_rotation(self.rotation_angle )  # Apply the rotation transform reset
+        self._set_absolute_rotation(self.rotation_angle)  # Apply the rotation transform reset
         self.viewChanged.emit(*self.get_image_dimensions())
         
         # If MVAT viewer is active, sync 3D view to current image's perspective
@@ -2373,10 +2428,10 @@ class AnnotationWindow(BaseCanvas):
 
         # Step 3: Map ratio to padding factor (smaller annotation = more padding)
         import math
-        min_padding = 0.15  # 15% (relaxed from 10%)
-        max_padding = 0.35  # 35% (relaxed from 50%)
+        min_padding = 0.30  # More surrounding context than before
+        max_padding = 0.70  # Allow up to ~2x the previous framing context
         if relative_area > 0:
-            padding_factor = max(min(0.35 * (1 / math.sqrt(relative_area)), max_padding), min_padding)
+            padding_factor = max(min(0.70 * (1 / math.sqrt(relative_area)), max_padding), min_padding)
         else:
             padding_factor = min_padding
 

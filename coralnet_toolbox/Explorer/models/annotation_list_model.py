@@ -2,7 +2,7 @@ from collections import OrderedDict
 
 from PyQt5 import QtCore, QtGui, QtWidgets
 
-from coralnet_toolbox.Explorer.core.QtDataItem import AnnotationDataItem
+from coralnet_toolbox import theme as app_theme
 
 
 class AnnotationListModel(QtCore.QAbstractListModel):
@@ -114,7 +114,11 @@ class AnnotationItemDelegate(QtWidgets.QStyledItemDelegate):
         rect = option.rect
         if data.get("type") == "header":
             color = data.get("color")
-            bg = QtGui.QColor('#333333') if color is None else (QtGui.QColor(color) if not isinstance(color, QtGui.QColor) else color)
+            bg = (
+                QtGui.QColor('#333333')
+                if color is None
+                else (QtGui.QColor(color) if not isinstance(color, QtGui.QColor) else color)
+            )
             painter.fillRect(rect, bg)
 
             # Determine readable text color based on luminance
@@ -157,7 +161,11 @@ class AnnotationItemDelegate(QtWidgets.QStyledItemDelegate):
                     source_pixmap = ann.get_cropped_image()
 
                 if source_pixmap and not source_pixmap.isNull():
-                    pix = source_pixmap.scaled(rect.size(), QtCore.Qt.KeepAspectRatioByExpanding, QtCore.Qt.SmoothTransformation)
+                    pix = source_pixmap.scaled(
+                        rect.size(),
+                        QtCore.Qt.KeepAspectRatioByExpanding,
+                        QtCore.Qt.SmoothTransformation,
+                    )
                 else:
                     pix = QtGui.QPixmap(rect.size())
                     pix.fill(QtGui.QColor('#222'))
@@ -192,12 +200,24 @@ class AnnotationItemDelegate(QtWidgets.QStyledItemDelegate):
         # nametag with readable text color
         label = None
         try:
-            label = item.effective_label.short_label_code if hasattr(item, 'effective_label') else (item.annotation.label.short_label_code if item.annotation and item.annotation.label else None)
+            if hasattr(item, 'effective_label'):
+                label = item.effective_label.short_label_code
+            elif item.annotation and item.annotation.label:
+                label = item.annotation.label.short_label_code
+            else:
+                label = None
         except Exception:
             label = None
 
         if label:
-            tag_rect = QtCore.QRect(rect.right() - 60, rect.bottom() - 20, 58, 18)
+            tag_margin = max(4, int(self.item_size * 0.06))
+            tag_height = max(18, int(self.item_size * 0.18))
+            tag_rect = QtCore.QRect(
+                rect.left() + tag_margin,
+                rect.bottom() - tag_height - tag_margin,
+                max(24, rect.width() - (tag_margin * 2)),
+                tag_height,
+            )
             bg = item.effective_color if hasattr(item, 'effective_color') else QtGui.QColor('#000000')
             painter.fillRect(tag_rect, bg)
             # choose text color with sufficient contrast
@@ -207,8 +227,15 @@ class AnnotationItemDelegate(QtWidgets.QStyledItemDelegate):
                 text_color = QtGui.QColor('#000000') if luminance > 0.5 else QtGui.QColor('#ffffff')
             except Exception:
                 text_color = QtGui.QColor('#ffffff')
+            font = painter.font()
+            font.setBold(True)
+            base_point_size = max(6, app_theme.scale_int(7))
+            font.setPointSize(max(base_point_size, min(16, int(self.item_size * 0.12))))
+            painter.setFont(font)
             painter.setPen(QtGui.QPen(text_color))
-            painter.drawText(tag_rect, QtCore.Qt.AlignCenter, str(label))
+            metrics = QtGui.QFontMetrics(font)
+            display_text = metrics.elidedText(str(label), QtCore.Qt.ElideRight, tag_rect.width() - 8)
+            painter.drawText(tag_rect, QtCore.Qt.AlignCenter, display_text)
 
     def editorEvent(self, event, model, option, index):
         # Toggle group on header click
@@ -264,6 +291,11 @@ class AnnotationItemDelegate(QtWidgets.QStyledItemDelegate):
                                 try:
                                     if hasattr(viewer.annotation_window, 'center_on_annotation'):
                                         viewer.annotation_window.center_on_annotation(ann)
+                                except Exception:
+                                    pass
+                                try:
+                                    if hasattr(viewer.main_window, 'confidence_window'):
+                                        viewer.main_window.confidence_window.display_cropped_image(ann)
                                 except Exception:
                                     pass
                                 return True
