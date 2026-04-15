@@ -1134,6 +1134,8 @@ class MainWindow(QMainWindow):
         
         if hasattr(self.context_matrix, 'create_top_toolbar'):
             self.context_dock.add_toolbar(self.context_matrix.create_top_toolbar())
+        if hasattr(self.context_matrix, 'create_bottom_toolbar'):
+            self.context_dock.add_toolbar(self.context_matrix.create_bottom_toolbar(), Qt.BottomToolBarArea)
 
         # --------------------------------------------------
         # 3. Explicitly arrange the docks using PyQtADS

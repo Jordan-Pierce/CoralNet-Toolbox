@@ -788,6 +788,29 @@ class ContextMatrixWidget(QWidget):
         self._update_canvas_count_controls()
         return toolbar
 
+    def create_bottom_toolbar(self) -> QToolBar:
+        """Create a bottom toolbar strictly for camera statistics."""
+        toolbar = QToolBar("Context Matrix Stats")
+        toolbar.setMovable(False)
+        toolbar.setIconSize(app_theme.scale_size(16))
+
+        # Left-aligned label showing the number of visible cameras in the matrix
+        # and the number of cameras overlapping the active camera. This stays as a
+        # lightweight UI readout so the manager can update it whenever selection or
+        # visibility state changes.
+        self.stats_label = QLabel("Cameras 0 / 0")
+        self.stats_label.setStyleSheet(
+            f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; padding: 0px 8px; font-weight: bold;"
+        )
+
+        toolbar.addWidget(self.stats_label)
+        return toolbar
+
+    def update_stats_label(self, visible_count: int, overlapping_count: int):
+        """Updates the bottom toolbar text."""
+        if hasattr(self, 'stats_label'):
+            self.stats_label.setText(f"Cameras {visible_count} / {overlapping_count}")
+
     def refresh_scaling(self):
         """Refresh toolbar sizing after a UI scale change."""
         if hasattr(self, 'toolbar'):

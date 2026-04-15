@@ -744,6 +744,9 @@ class MVATManager(QObject):
             except Exception:
                 pass
 
+            # Update the N / M stat when the active camera changes.
+            self._update_context_stats()
+
     def _on_camera_selected(self, path: str):
         """Handle camera_selected from the grid (context menu 'Select Image').
 
@@ -1668,6 +1671,64 @@ class MVATManager(QObject):
 
         self._update_frustum_states()
         self._update_visibility_filter(list(visible_paths))
+
+        # Update the N / M stat when the visible count changes.
+        self._update_context_stats()
+
+    def count_overlapping_cameras(self, active_camera):
+        """
+        Calculates how many cameras share a view of the same 3D geometry.
+        Uses proximity scoring as a fast-reject to keep UI thread performance high.
+
+        TODO (Threading): If this begins to block the UI on extreme datasets
+        (e.g., >10M polygons and >1,000 cameras), move this loop into
+        self._propagation_executor.submit(). Have the thread return the
+        overlap_count and emit a PyQt signal back to the main thread to
+        safely call self.context_matrix.update_stats_label().
+        """
+        overlap_count = 0
+        min_shared_elements = 50  # Threshold for "meaningful" overlap
+        active_indices = active_camera.visible_indices
+
+        for path, cam in self.cameras.items():
+            if path == active_camera.image_path:
+                overlap_count += 1  # Always counts itself
+                continue
+
+            # OPTIMIZATION 1: Fast Reject.
+            # If the proximity score is 0 (facing away, or too far), they don't overlap.
+            # Skip the expensive array math entirely!
+            score = self._calculate_camera_proximity_score(active_camera, cam)
+            if score == 0.0:
+                continue
+
+            # OPTIMIZATION 2: True Geometric Overlap
+            if active_indices is not None and cam.visible_indices is not None:
+                # Both arrays are pre-sorted and unique thanks to VisibilityWorker.
+                # assume_unique=True makes this incredibly fast.
+                shared = np.intersect1d(active_indices, cam.visible_indices, assume_unique=True)
+
+                if len(shared) > min_shared_elements:
+                    overlap_count += 1
+            else:
+                # Fallback if visibility hasn't been computed yet.
+                if score > 0.1:
+                    overlap_count += 1
+
+        return overlap_count
+
+    def _update_context_stats(self):
+        """Calculates overlap and pushes the string to the ContextMatrix UI."""
+        if self.context_matrix is None or self.selected_camera is None:
+            return
+
+        # N: Total cameras visible in the matrix right now.
+        n_visible = len(self._get_visible_context_camera_paths())
+
+        # M: Total cameras in the whole project that overlap with the selected camera.
+        m_overlapping = self.count_overlapping_cameras(self.selected_camera)
+
+        self.context_matrix.update_stats_label(n_visible, m_overlapping)
 
     def _build_projection(self, px: int, py: int) -> dict:
         """Cast a ray from the selected camera at (px, py) and return projections.
