@@ -10,6 +10,7 @@ Customized interaction style:
 """
 
 import os
+import re
 import time
 import traceback
 
@@ -20,7 +21,9 @@ from PyQt5.QtCore import Qt, QEvent, QTimer, QObject, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication, QFrame, QVBoxLayout,
     QWidget, QHBoxLayout, QLabel, QSpinBox, QComboBox,
-    QToolBar, QToolButton, QMenu, QAction, QActionGroup, QStackedLayout
+    QToolBar, QToolButton, QMenu, QAction, QActionGroup, QStackedLayou,
+    QDialog, QGridLayout, QLineEdit, QPushButton, QVBoxLayout, QLabel, QHBoxLayout,
+    QStackedLayout
 )
 
 from coralnet_toolbox.MVAT.core.Ray import CameraRay, BatchedRayManager
@@ -31,6 +34,11 @@ from coralnet_toolbox.MVAT.core.SceneProduct import AbstractSceneProduct
 from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED
 from coralnet_toolbox.MVAT.ui.CameraAnimator import CameraAnimator
 from coralnet_toolbox import theme as app_theme
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Classes
+# ----------------------------------------------------------------------------------------------------------------------
 
 
 class _CameraInertiaController(QObject):
@@ -364,14 +372,6 @@ class _CameraInertiaController(QObject):
                 self._zoom_velocity = 0.0
 
 
-# ----------------------------------------------------------------------------------------------------------------------
-# Classes
-# ----------------------------------------------------------------------------------------------------------------------
-
-
-import re
-from PyQt5.QtWidgets import QDialog, QGridLayout, QLineEdit, QPushButton, QVBoxLayout, QLabel, QHBoxLayout
-
 class TransformInputDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -379,7 +379,8 @@ class TransformInputDialog(QDialog):
         self.setMinimumWidth(600)
         
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Enter the 4x4 chunk_transform matrix:\n(You can paste the entire terminal log block directly into the top-left box)"))
+        layout.addWidget(QLabel("Enter the 4x4 chunk_transform matrix:\n" 
+                                "(You can paste the entire terminal log block directly into the top-left box)"))
         
         grid_layout = QGridLayout()
         self.inputs = []
