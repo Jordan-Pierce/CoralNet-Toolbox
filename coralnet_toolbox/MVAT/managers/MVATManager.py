@@ -301,7 +301,6 @@ class MVATManager(QObject):
         self.hovered_camera = None
         self.current_focal_point = None
         self._context_view_path = None
-        self._suppress_active_camera_image_load = False
         
         # Data Settings
         self.compute_depth_maps_enabled = True
@@ -737,9 +736,6 @@ class MVATManager(QObject):
         """
         camera = self.cameras.get(path)
         if camera:
-            if self.context_matrix is not None and hasattr(self.context_matrix, 'set_camera_count_cap'):
-                self.context_matrix.set_camera_count_cap(1)
-
             self.viewer.clear_ray()
             self._select_camera(path, camera)
             if hasattr(self.viewer, 'match_camera_perspective'):
@@ -748,11 +744,10 @@ class MVATManager(QObject):
             self._reorder_cameras(path)
             self._context_view_path = path
 
-            if not self._suppress_active_camera_image_load:
-                try:
-                    self.image_window.load_image_by_path(path)
-                except Exception:
-                    pass
+            try:
+                self.image_window.load_image_by_path(path)
+            except Exception:
+                pass
 
             # Update the N / M stat when the active camera changes.
             self._update_context_stats()
@@ -765,8 +760,6 @@ class MVATManager(QObject):
         Fall back to older image_window loader if the method isn't present.
         """
         try:
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            self._suppress_active_camera_image_load = True
             # Make this the sole selection: set active and clear other highlights
             try:
                 self.selection_model.set_active(path)
@@ -783,9 +776,6 @@ class MVATManager(QObject):
             # Note: status message moved to AnnotationWindow.set_image
         except Exception as e:
             print(f"Failed to load selected image '{path}': {e}")
-        finally:
-            self._suppress_active_camera_image_load = False
-            QApplication.restoreOverrideCursor()
 
     def _on_camera_highlighted_single(self, path: str):
         """Handle viewer-only camera navigation from the context matrix."""

@@ -433,20 +433,6 @@ class ContextMatrixWidget(QWidget):
         if layout_ready:
             self._refresh_visible_canvases()
 
-    def set_camera_count_cap(self, cap: int | None):
-        """Clamp the live display count without changing the user's requested count."""
-        if cap is None:
-            self._camera_count_cap = None
-        else:
-            try:
-                self._camera_count_cap = max(self._canvas_count_min, int(cap))
-            except Exception:
-                self._camera_count_cap = self._canvas_count_min
-
-        layout_ready = self._evaluate_auto_layout()
-        if layout_ready:
-            self._refresh_visible_canvases()
-
     def increase_canvas_count(self):
         self.set_target_camera_count(self.target_camera_count + self._canvas_count_step)
 
