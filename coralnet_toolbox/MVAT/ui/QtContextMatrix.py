@@ -151,11 +151,9 @@ class ContextMatrixWidget(QWidget):
     nextCameraRequested = pyqtSignal()
     visibleCamerasChanged = pyqtSignal(list)
 
-    # Selection intent signals (mirror CameraGrid's paradigm)
-    selection_requested = pyqtSignal(list)   # request to set highlight selection (list of paths)
-    toggle_requested = pyqtSignal(str)       # request to toggle a single path (Ctrl+Click)
-    active_requested = pyqtSignal(str)       # legacy compatibility signal; unused by the current UI
+    # Click intent signals
     camera_highlighted_single = pyqtSignal(str)  # single plain-click -> jump 3D view
+    main_camera_requested = pyqtSignal(str)      # Ctrl+Click -> jump main image
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -190,9 +188,6 @@ class ContextMatrixWidget(QWidget):
 
         # Annotation visualization state (Phase 6)
         self._annotation_manager = None
-
-        # Selection tracking for Shift+Click range selection
-        self._last_clicked_path: Optional[str] = None
 
         # Canvas pool
         self._canvas_pool: List[BaseCanvas] = []
@@ -399,27 +394,12 @@ class ContextMatrixWidget(QWidget):
             if event.button() == Qt.LeftButton:
                 path = canvas.current_image_path
                 if path:
-                    modifiers = event.modifiers()
-
-                    if modifiers == Qt.ControlModifier:
-                        # Ctrl+Click: toggle highlight
-                        self.toggle_requested.emit(path)
-
-                    elif modifiers == Qt.ShiftModifier and self._last_clicked_path:
-                        # Shift+Click: range select
-                        try:
-                            start_idx = self._camera_paths.index(self._last_clicked_path)
-                            end_idx = self._camera_paths.index(path)
-                            start, end = min(start_idx, end_idx), max(start_idx, end_idx)
-                            self.selection_requested.emit(self._camera_paths[start:end + 1])
-                        except ValueError:
-                            pass
-
+                    if event.modifiers() & Qt.ControlModifier:
+                        # Ctrl+Click: update main AnnotationWindow image.
+                        self.main_camera_requested.emit(path)
                     else:
                         # Plain click: update the 3D viewer only.
                         self.camera_highlighted_single.emit(path)
-
-                    self._last_clicked_path = path
 
             # CRITICAL: pass through so drawing/panning tools still work
             BaseCanvas.mousePressEvent(canvas, event)
@@ -700,6 +680,11 @@ class ContextMatrixWidget(QWidget):
             if q_image:
                 canvas.load_visuals(q_image, camera_path, raster)
                 canvas.fit_to_image()
+
+                # Fresh load should always restore full visibility for this canvas.
+                effect = self._ensure_canvas_opacity_effect(canvas)
+                effect.setOpacity(1.0)
+
                 if self._annotation_manager:
                     annotations = self._annotation_manager.get_image_annotations(camera_path)
                     if annotations:
@@ -980,6 +965,10 @@ class ContextMatrixWidget(QWidget):
                     canvas.set_zoom_level(absolute_zoom)
                     canvas._set_absolute_rotation(total_angle)
 
+                    # Dim to indicate the focal target is out of this camera's FOV.
+                    effect = self._ensure_canvas_opacity_effect(canvas)
+                    effect.setOpacity(0.25)
+
     def sync_to_targets(self, targets: dict, zoom_factor: float, reference_path: str = None, base_rotation: float = 0.0):
         if not self.target_lock_enabled or not self._mvat_manager:
             return
@@ -1018,6 +1007,10 @@ class ContextMatrixWidget(QWidget):
 
                     # Snap to target with the synchronized rotation
                     canvas.snap_to_target(target_x, target_y, zoom_factor, angle_degrees=total_angle)
+
+                    # Restore full opacity because target is visible in this canvas.
+                    effect = self._ensure_canvas_opacity_effect(canvas)
+                    effect.setOpacity(1.0)
 
     def _request_sync_from_main_view(self):
         if not self._mvat_manager:

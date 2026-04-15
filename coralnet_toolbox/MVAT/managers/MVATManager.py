@@ -362,6 +362,7 @@ class MVATManager(QObject):
         
         # 4. Viewer Signals
         self.viewer.focalPointChanged.connect(self._on_focal_point_changed)
+        self.viewer.bestCameraRequested.connect(self._on_best_camera_requested)
         self.viewer.computeIndexMapsToggled.connect(self._on_compute_index_maps_toggled)
         self.viewer.computeDepthMapsToggled.connect(self._on_compute_depth_maps_toggled)
         self.viewer.visibilityQualityChanged.connect(self._on_visibility_quality_changed)
@@ -379,10 +380,9 @@ class MVATManager(QObject):
             self.context_matrix.previousCameraRequested.connect(self._on_previous_camera_requested)
             self.context_matrix.nextCameraRequested.connect(self._on_next_camera_requested)
             self.context_matrix.visibleCamerasChanged.connect(self._on_context_visible_cameras_changed)
-            # Selection intent signals -> SelectionModel (source of truth)
-            self.context_matrix.selection_requested.connect(self.selection_model.set_selections)
-            self.context_matrix.toggle_requested.connect(self.selection_model.toggle)
+            # Canvas click intents
             self.context_matrix.camera_highlighted_single.connect(self._on_camera_highlighted_single)
+            self.context_matrix.main_camera_requested.connect(self._on_camera_selected)
             # Phase 5 / multi-annotate
             self.context_matrix.set_mvat_manager(self)
             self.context_matrix.multiAnnotateToggled.connect(self._on_multi_annotate_toggled)
@@ -780,6 +780,44 @@ class MVATManager(QObject):
     def _on_camera_highlighted_single(self, path: str):
         """Handle viewer-only camera navigation from the context matrix."""
         self._focus_context_camera(path, animate=True)
+
+    def _on_best_camera_requested(self, point_3d):
+        """Find the best project camera for a clicked 3D point and switch the main image."""
+        if point_3d is None:
+            return
+
+        point_3d = np.asarray(point_3d, dtype=float)
+        best_cam_path = None
+        best_dist = float('inf')
+
+        # Search ALL loaded project cameras, not just visible context canvases.
+        for path, cam in self.cameras.items():
+            try:
+                pixel = cam.project(point_3d)
+            except Exception:
+                continue
+
+            if pixel is None or np.isnan(pixel).any():
+                continue
+
+            u, v = float(pixel[0]), float(pixel[1])
+            if not (0 <= u < cam.width and 0 <= v < cam.height):
+                continue
+
+            try:
+                if cam.is_point_occluded_depth_based(point_3d):
+                    continue
+            except Exception:
+                # If occlusion check fails for a camera, skip it conservatively.
+                continue
+
+            dist = np.linalg.norm(cam.position - point_3d)
+            if dist < best_dist:
+                best_dist = dist
+                best_cam_path = path
+
+        if best_cam_path:
+            self._on_camera_selected(best_cam_path)
 
     def _get_context_camera_order(self) -> list:
         ordered_paths = []
