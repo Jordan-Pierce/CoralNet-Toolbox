@@ -463,7 +463,6 @@ class TransformInputDialog(QDialog):
 
 class MVATViewer(QFrame):
     focalPointChanged = pyqtSignal(np.ndarray)  # Emits 3D point when focal point is set
-    bestCameraRequested = pyqtSignal(np.ndarray)  # Emits 3D point when Ctrl+Left Click requests best camera
     pointSizeChanged = pyqtSignal(int)
     computeIndexMapsToggled = pyqtSignal(bool)
     computeDepthMapsToggled = pyqtSignal(bool)
@@ -965,23 +964,12 @@ class MVATViewer(QFrame):
         return super().eventFilter(obj, event)
 
     def _on_left_press(self, obj, event):
-        """Handle Left Click to detect Double Clicks and Ctrl+Clicks."""
+        """Handle Left Click to detect Double Clicks."""
         # Get current time in milliseconds
         current_time = time.time() * 1000
         
         # Get system double click interval
         dc_interval = QApplication.doubleClickInterval()
-
-        # Ctrl+Left Click requests the best camera for the clicked 3D point.
-        modifiers = QApplication.keyboardModifiers()
-        if modifiers & Qt.ControlModifier:
-            try:
-                picked = self.plotter.pick_mouse_position()
-                if picked is not None:
-                    self.bestCameraRequested.emit(np.asarray(picked, dtype=float))
-            except Exception:
-                pass
-            return
         
         # Check if this click happened close enough to the last one
         if (current_time - self._last_click_time) < dc_interval:

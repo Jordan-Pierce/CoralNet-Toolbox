@@ -362,7 +362,6 @@ class MVATManager(QObject):
         
         # 4. Viewer Signals
         self.viewer.focalPointChanged.connect(self._on_focal_point_changed)
-        self.viewer.bestCameraRequested.connect(self._on_best_camera_requested)
         self.viewer.computeIndexMapsToggled.connect(self._on_compute_index_maps_toggled)
         self.viewer.computeDepthMapsToggled.connect(self._on_compute_depth_maps_toggled)
         self.viewer.visibilityQualityChanged.connect(self._on_visibility_quality_changed)
@@ -780,44 +779,6 @@ class MVATManager(QObject):
     def _on_camera_highlighted_single(self, path: str):
         """Handle viewer-only camera navigation from the context matrix."""
         self._focus_context_camera(path, animate=True)
-
-    def _on_best_camera_requested(self, point_3d):
-        """Find the best project camera for a clicked 3D point and switch the main image."""
-        if point_3d is None:
-            return
-
-        point_3d = np.asarray(point_3d, dtype=float)
-        best_cam_path = None
-        best_dist = float('inf')
-
-        # Search ALL loaded project cameras, not just visible context canvases.
-        for path, cam in self.cameras.items():
-            try:
-                pixel = cam.project(point_3d)
-            except Exception:
-                continue
-
-            if pixel is None or np.isnan(pixel).any():
-                continue
-
-            u, v = float(pixel[0]), float(pixel[1])
-            if not (0 <= u < cam.width and 0 <= v < cam.height):
-                continue
-
-            try:
-                if cam.is_point_occluded_depth_based(point_3d):
-                    continue
-            except Exception:
-                # If occlusion check fails for a camera, skip it conservatively.
-                continue
-
-            dist = np.linalg.norm(cam.position - point_3d)
-            if dist < best_dist:
-                best_dist = dist
-                best_cam_path = path
-
-        if best_cam_path:
-            self._on_camera_selected(best_cam_path)
 
     def _get_context_camera_order(self) -> list:
         ordered_paths = []
