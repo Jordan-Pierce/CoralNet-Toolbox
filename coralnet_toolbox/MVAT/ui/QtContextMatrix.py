@@ -162,6 +162,7 @@ class ContextMatrixWidget(QWidget):
 
         # Matrix state
         self.target_camera_count = 10
+        self._camera_count_cap = None
         self._last_rebuilt_count = 0
         self._canvas_count_step = 1
         self._canvas_count_min = 1
@@ -443,6 +444,10 @@ class ContextMatrixWidget(QWidget):
         except Exception:
             count = self._canvas_count_min
 
+        max_count = self._camera_count_cap if self._camera_count_cap is not None else None
+        if max_count is not None:
+            count = min(count, max_count)
+
         self.target_camera_count = max(self._canvas_count_min, count)
         layout_ready = self._evaluate_auto_layout()
         if layout_ready:
@@ -459,7 +464,12 @@ class ContextMatrixWidget(QWidget):
     def _evaluate_auto_layout(self):
         """Rebuild the flow layout for the current camera count target."""
         available = len(self._camera_paths)
-        effective_target = min(available, self.target_camera_count) if available > 0 else 0
+        if available <= 0:
+            effective_target = 0
+        else:
+            effective_target = min(available, self.target_camera_count)
+            if self._camera_count_cap is not None:
+                effective_target = min(effective_target, self._camera_count_cap)
 
         if effective_target != self._last_rebuilt_count:
             return self._rebuild_layout(effective_target)
@@ -631,8 +641,12 @@ class ContextMatrixWidget(QWidget):
 
     def _update_canvas_count_controls(self):
         available = len(self._camera_paths)
+        max_allowed = available
+        if self._camera_count_cap is not None:
+            max_allowed = min(max_allowed, self._camera_count_cap)
+        max_allowed = max(self._canvas_count_min, max_allowed) if available > 0 else 0
         can_decrease = available > 0 and self.target_camera_count > self._canvas_count_min
-        can_increase = available > 0 and self.target_camera_count < available
+        can_increase = available > 0 and self.target_camera_count < max_allowed
         if hasattr(self, 'count_down_btn'):
             self.count_down_btn.setEnabled(can_decrease)
         if hasattr(self, 'count_up_btn'):
@@ -810,6 +824,20 @@ class ContextMatrixWidget(QWidget):
         """Updates the bottom toolbar text."""
         if hasattr(self, 'stats_label'):
             self.stats_label.setText(f"Cameras {visible_count} / {overlapping_count}")
+
+        try:
+            overlapping_count = int(overlapping_count)
+        except Exception:
+            overlapping_count = self._canvas_count_min
+
+        self._camera_count_cap = max(self._canvas_count_min, overlapping_count)
+
+        if self.target_camera_count > self._camera_count_cap:
+            self.target_camera_count = self._camera_count_cap
+            if self._evaluate_auto_layout():
+                self._refresh_visible_canvases()
+
+        self._update_canvas_count_controls()
 
     def refresh_scaling(self):
         """Refresh toolbar sizing after a UI scale change."""
