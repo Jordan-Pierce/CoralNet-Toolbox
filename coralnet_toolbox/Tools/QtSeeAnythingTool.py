@@ -706,7 +706,7 @@ class SeeAnythingTool(Tool):
             
             self.annotations.append(annotation)
 
-    def confirm_annotations(self):
+    def confirm_annotations(self, crop_annotations=False):
         """
         Confirm the annotations and clear the working area.
         """
@@ -727,10 +727,11 @@ class SeeAnythingTool(Tool):
                 for ann in self.annotations:
                     ann.deanimate()
     
-                # Batch-crop all annotations (shows its own progress UI).
-                self.annotation_window.crop_annotations(image_path=self.image_path,
-                                                        annotations=self.annotations,
-                                                        verbose=True)
+                # Batch-crop all annotations (shows its own progress UI) if requested.
+                if crop_annotations:
+                    self.annotation_window.crop_annotations(image_path=self.image_path,
+                                                            annotations=self.annotations,
+                                                            verbose=True)
                 
                 # Add them using the optimized bulk method which updates the UI once.
                 self.annotation_window.add_annotations(self.annotations)
@@ -749,7 +750,7 @@ class SeeAnythingTool(Tool):
                     # The add_annotation_from_tool will re-bind it and show per-item feedback.
                     annotation.deanimate()
                     
-                    if not annotation.cropped_image and self.annotation_window.rasterio_image:
+                    if crop_annotations and not annotation.cropped_image and self.annotation_window.rasterio_image:
                         annotation.create_cropped_image(self.annotation_window.rasterio_image)
                     
                     self.annotation_window.add_annotation_from_tool(annotation)
@@ -769,7 +770,6 @@ class SeeAnythingTool(Tool):
                 progress_bar.stop_progress()
                 progress_bar.close()
    
-
         finally:
             # Ensure cleanup happens regardless of the path taken
             QApplication.restoreOverrideCursor()

@@ -144,42 +144,49 @@ class DeployGeneratorDialog(QDialog):
 
         # Block signals to prevent setChecked from triggering the ImageWindow's
         # own filtering logic. We want to be in complete control.
-        iw.filter_combo.blockSignals(True)
+        if hasattr(iw, 'filter_combo'):
+            iw.filter_combo.blockSignals(True)
 
         # Disable and set filter checkboxes
         # Set only "Has Annotations" checked
-        for i in range(iw.filter_combo.count()):
-            item = iw.filter_combo.model().item(i)
-            if item.text() == "Has Annotations":
-                item.setCheckState(Qt.Checked)
-            else:
-                item.setCheckState(Qt.Unchecked)
-        
-        iw.filter_combo.setEnabled(False)
+        if hasattr(iw, 'filter_combo'):
+            for i in range(iw.filter_combo.count()):
+                item = iw.filter_combo.model().item(i)
+                if item.text() == "Has Annotations":
+                    item.setCheckState(Qt.Checked)
+                else:
+                    item.setCheckState(Qt.Unchecked)
+
+            iw.filter_combo.setEnabled(False)
 
         # Unblock signals now that we're done.
-        iw.filter_combo.blockSignals(False)
+        if hasattr(iw, 'filter_combo'):
+            iw.filter_combo.blockSignals(False)
 
         # Disable search UI elements
-        iw.home_button.setEnabled(False)
-        iw.image_search_button.setEnabled(False)
-        iw.label_search_button.setEnabled(False)
-        iw.search_bar_images.setEnabled(False)
-        iw.search_bar_labels.setEnabled(False)
+        if hasattr(iw, 'home_button'):
+            iw.home_button.setEnabled(False)
+        if hasattr(iw, 'search_bar_images'):
+            iw.search_bar_images.setEnabled(False)
+        if hasattr(iw, 'search_bar_labels'):
+            iw.search_bar_labels.setEnabled(False)
         
         # Hide the "Current" label as it is not applicable in this dialog
-        iw.current_image_index_label.hide()
+        if hasattr(iw, 'current_image_index_label'):
+            iw.current_image_index_label.hide()
 
         # Disconnect the double-click signal to prevent it from loading an image
         # in the main window, as this dialog is for selection only.
-        try:
-            iw.tableView.doubleClicked.disconnect()
-        except TypeError:
-            pass
+        if hasattr(iw, 'tableView'):
+            try:
+                iw.tableView.doubleClicked.disconnect()
+            except TypeError:
+                pass
         
         # CRITICAL: Override the load_first_filtered_image method to prevent auto-loading
         # This is the key fix to prevent unwanted load_image_by_path calls
-        iw.load_first_filtered_image = lambda: None
+        if hasattr(iw, 'load_first_filtered_image'):
+            iw.load_first_filtered_image = lambda: None
 
     def showEvent(self, event):
         """
