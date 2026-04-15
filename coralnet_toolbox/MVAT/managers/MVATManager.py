@@ -1713,8 +1713,9 @@ class MVATManager(QObject):
         safely call self.context_matrix.update_stats_label().
         """
         overlap_count = 0
-        min_shared_elements = 50  # Threshold for "meaningful" overlap
+        min_overlap_ratio = 0.20  # Secondary camera must cover at least 20% of the active camera's view
         active_indices = active_camera.visible_indices
+        active_visible_count = len(active_indices) if active_indices is not None else 0
         camera_items = camera_items if camera_items is not None else self.cameras.items()
 
         for path, cam in camera_items:
@@ -1735,7 +1736,7 @@ class MVATManager(QObject):
                 # assume_unique=True makes this incredibly fast.
                 shared = np.intersect1d(active_indices, cam.visible_indices, assume_unique=True)
 
-                if len(shared) > min_shared_elements:
+                if active_visible_count > 0 and (len(shared) / active_visible_count) >= min_overlap_ratio:
                     overlap_count += 1
 
         return overlap_count
