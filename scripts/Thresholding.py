@@ -125,11 +125,24 @@ class CVAnnotatorV2(QWidget):
         self.mode_combo.currentIndexChanged.connect(self.process_pipeline)
         form_layout.addRow("Output Mode:", self.mode_combo)
 
-        self.tol_slider = QSlider(Qt.Horizontal)
-        self.tol_slider.setRange(5, 100)
-        self.tol_slider.setValue(25)
-        self.tol_slider.valueChanged.connect(self.process_pipeline)
-        form_layout.addRow("Color Tolerance:", self.tol_slider)
+        # Split tolerances for H, S, V
+        self.h_tol_slider = QSlider(Qt.Horizontal)
+        self.h_tol_slider.setRange(1, 90)
+        self.h_tol_slider.setValue(10)
+        self.h_tol_slider.valueChanged.connect(self.process_pipeline)
+        form_layout.addRow("Hue Tol:", self.h_tol_slider)
+
+        self.s_tol_slider = QSlider(Qt.Horizontal)
+        self.s_tol_slider.setRange(1, 128)
+        self.s_tol_slider.setValue(40)
+        self.s_tol_slider.valueChanged.connect(self.process_pipeline)
+        form_layout.addRow("Sat Tol:", self.s_tol_slider)
+
+        self.v_tol_slider = QSlider(Qt.Horizontal)
+        self.v_tol_slider.setRange(1, 128)
+        self.v_tol_slider.setValue(40)
+        self.v_tol_slider.valueChanged.connect(self.process_pipeline)
+        form_layout.addRow("Val Tol:", self.v_tol_slider)
 
         self.min_area_slider = QSlider(Qt.Horizontal)
         self.min_area_slider.setRange(0, 10000)
@@ -185,11 +198,11 @@ class CVAnnotatorV2(QWidget):
             
         self.process_pipeline()
 
-    def build_color_mask(self, color_list, tol):
+    def build_color_mask(self, color_list, h_tol, s_tol, v_tol):
         mask = np.zeros(self.hsv_img.shape[:2], dtype=np.uint8)
         for color in color_list:
-            lower = np.array([max(0, color[0] - tol), max(0, color[1] - tol*2), max(0, color[2] - tol*2)])
-            upper = np.array([min(179, color[0] + tol), min(255, color[1] + tol*2), min(255, color[2] + tol*2)])
+            lower = np.array([max(0, color[0] - h_tol), max(0, color[1] - s_tol), max(0, color[2] - v_tol)])
+            upper = np.array([min(179, color[0] + h_tol), min(255, color[1] + s_tol), min(255, color[2] + v_tol)])
             current_mask = cv2.inRange(self.hsv_img, lower, upper)
             mask = cv2.bitwise_or(mask, current_mask)
         return mask
@@ -199,14 +212,16 @@ class CVAnnotatorV2(QWidget):
             self.update_view(self.original_img)
             return
 
-        tol = self.tol_slider.value()
+        h_tol = self.h_tol_slider.value()
+        s_tol = self.s_tol_slider.value()
+        v_tol = self.v_tol_slider.value()
         
         # 1. Build Positive Mask
-        pos_mask = self.build_color_mask(self.pos_colors, tol)
+        pos_mask = self.build_color_mask(self.pos_colors, h_tol, s_tol, v_tol)
         
         # 2. Apply Negative Reinforcement (Subtractive)
         if self.neg_colors:
-            neg_mask = self.build_color_mask(self.neg_colors, tol)
+            neg_mask = self.build_color_mask(self.neg_colors, h_tol, s_tol, v_tol)
             pos_mask = cv2.bitwise_and(pos_mask, cv2.bitwise_not(neg_mask))
 
         # Cleanup
@@ -221,17 +236,22 @@ class CVAnnotatorV2(QWidget):
         
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
+        filtered_contours = []
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if min_area <= area <= max_area:
+                filtered_contours.append(cnt)
+
         if mode == "Semantic Mask":
+            # Create a blank mask and draw only the filtered contours filled in
+            clean_mask = np.zeros_like(mask)
+            cv2.drawContours(clean_mask, filtered_contours, -1, 255, thickness=cv2.FILLED)
+            
             green_overlay = np.zeros_like(output_img)
-            green_overlay[mask == 255] = [0, 255, 0]
+            green_overlay[clean_mask == 255] = [0, 255, 0]
             output_img = cv2.addWeighted(output_img, 0.7, green_overlay, 0.3, 0)
         else:
-            for cnt in contours:
-                area = cv2.contourArea(cnt)
-                # Filter by dynamic size heuristics
-                if area < min_area or area > max_area:
-                    continue
-                
+            for cnt in filtered_contours:
                 if mode == "Bounding Box":
                     x, y, w, h = cv2.boundingRect(cnt)
                     cv2.rectangle(output_img, (x, y), (x+w, y+h), (0, 255, 0), 2)

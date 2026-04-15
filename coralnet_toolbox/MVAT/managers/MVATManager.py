@@ -562,6 +562,7 @@ class MVATManager(QObject):
         """
         if path in self.cameras:
             self.selection_model.set_active(path)
+            self._update_context_stats()
 
     def _on_focal_point_changed(self, point_3d):
         """
@@ -1709,10 +1710,6 @@ class MVATManager(QObject):
                 shared = np.intersect1d(active_indices, cam.visible_indices, assume_unique=True)
 
                 if len(shared) > min_shared_elements:
-                    overlap_count += 1
-            else:
-                # Fallback if visibility hasn't been computed yet.
-                if score > 0.1:
                     overlap_count += 1
 
         return overlap_count
