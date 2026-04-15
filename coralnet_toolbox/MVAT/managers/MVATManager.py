@@ -281,6 +281,7 @@ class MVATManager(QObject):
     Core Controller for the MVAT Workspace.
     """
     cameraSelectedInMVAT = pyqtSignal(str)
+    contextStatsComputed = pyqtSignal(int, str, int, int)
     
     def __init__(self, main_window, viewer):
         super().__init__()
@@ -311,6 +312,8 @@ class MVATManager(QObject):
         self._is_computing_visibility = False
         # Track active worker threads to prevent GC
         self._active_workers = []
+        self._context_stats_request_id = 0
+        self._latest_context_stats_request_id = 0
 
         # Multi-camera annotation state
         self.multi_annotate_enabled = False
@@ -336,6 +339,8 @@ class MVATManager(QObject):
 
         # Overlay actor handle (tiny actor swapped during painting)
         self._label_overlay_actor = None
+
+        self.contextStatsComputed.connect(self._on_context_stats_computed)
 
         self._setup_connections()
 
@@ -562,7 +567,6 @@ class MVATManager(QObject):
         """
         if path in self.cameras:
             self.selection_model.set_active(path)
-            self._update_context_stats()
 
     def _on_focal_point_changed(self, point_3d):
         """
@@ -1289,7 +1293,7 @@ class MVATManager(QObject):
                 print(f"⚠️ Failed to extract face centers for {primary_target.label}: {e}")
                 return None, None, 'face'
 
-    def _calculate_camera_proximity_score(self, reference_camera, candidate_camera):
+    def _calculate_camera_proximity_score(self, reference_camera, candidate_camera, scene_size=None):
         """
         Calculate a scalar proximity score between two cameras used for
         ordering the camera grid.
@@ -1308,12 +1312,21 @@ class MVATManager(QObject):
         
         view_alignment = np.dot(ref_view_dir, cand_view_dir)
         
-        try:
-            bounds = self.viewer.get_bounds()
-            scene_size = np.sqrt((bounds[1] - bounds[0])**2 + (bounds[3] - bounds[2])**2 + (bounds[5] - bounds[4])**2)
-            normalized_distance = spatial_distance / (scene_size + 1e-6)
-        except Exception:
+        if scene_size is None:
+            try:
+                bounds = self.viewer.get_bounds()
+                scene_size = np.sqrt(
+                    (bounds[1] - bounds[0])**2
+                    + (bounds[3] - bounds[2])**2
+                    + (bounds[5] - bounds[4])**2
+                )
+            except Exception:
+                scene_size = None
+
+        if scene_size is None:
             normalized_distance = spatial_distance / 10.0
+        else:
+            normalized_distance = spatial_distance / (scene_size + 1e-6)
             
         distance_score = np.exp(-2.0 * normalized_distance)
         view_score = (view_alignment + 1.0) / 2.0
@@ -1676,7 +1689,19 @@ class MVATManager(QObject):
         # Update the N / M stat when the visible count changes.
         self._update_context_stats()
 
-    def count_overlapping_cameras(self, active_camera):
+    def _get_scene_size_snapshot(self):
+        """Capture the viewer scene size on the main thread for background proximity checks."""
+        try:
+            bounds = self.viewer.get_bounds()
+            return float(np.sqrt(
+                (bounds[1] - bounds[0])**2
+                + (bounds[3] - bounds[2])**2
+                + (bounds[5] - bounds[4])**2
+            ))
+        except Exception:
+            return None
+
+    def count_overlapping_cameras(self, active_camera, camera_items=None, scene_size=None):
         """
         Calculates how many cameras share a view of the same 3D geometry.
         Uses proximity scoring as a fast-reject to keep UI thread performance high.
@@ -1690,8 +1715,9 @@ class MVATManager(QObject):
         overlap_count = 0
         min_shared_elements = 50  # Threshold for "meaningful" overlap
         active_indices = active_camera.visible_indices
+        camera_items = camera_items if camera_items is not None else self.cameras.items()
 
-        for path, cam in self.cameras.items():
+        for path, cam in camera_items:
             if path == active_camera.image_path:
                 overlap_count += 1  # Always counts itself
                 continue
@@ -1699,7 +1725,7 @@ class MVATManager(QObject):
             # OPTIMIZATION 1: Fast Reject.
             # If the proximity score is 0 (facing away, or too far), they don't overlap.
             # Skip the expensive array math entirely!
-            score = self._calculate_camera_proximity_score(active_camera, cam)
+            score = self._calculate_camera_proximity_score(active_camera, cam, scene_size=scene_size)
             if score == 0.0:
                 continue
 
@@ -1714,6 +1740,27 @@ class MVATManager(QObject):
 
         return overlap_count
 
+    def _count_overlapping_cameras_async(self, request_id: int, active_path: str, visible_count: int, active_camera, camera_items, scene_size):
+        """Background worker wrapper for overlap counting."""
+        try:
+            overlap_count = self.count_overlapping_cameras(active_camera, camera_items=camera_items, scene_size=scene_size)
+        except Exception as e:
+            print(f"Failed to count overlapping cameras for {active_path}: {e}")
+            return
+
+        self.contextStatsComputed.emit(request_id, active_path, visible_count, overlap_count)
+
+    def _on_context_stats_computed(self, request_id: int, active_path: str, visible_count: int, overlap_count: int):
+        """Apply async overlap counts only if they belong to the latest active image."""
+        if request_id != self._latest_context_stats_request_id:
+            return
+
+        if self.selected_camera is None or self.selected_camera.image_path != active_path:
+            return
+
+        if self.context_matrix is not None:
+            self.context_matrix.update_stats_label(visible_count, overlap_count)
+
     def _update_context_stats(self):
         """Calculates overlap and pushes the string to the ContextMatrix UI."""
         if self.context_matrix is None or self.selected_camera is None:
@@ -1722,10 +1769,31 @@ class MVATManager(QObject):
         # N: Total cameras visible in the matrix right now.
         n_visible = len(self._get_visible_context_camera_paths())
 
-        # M: Total cameras in the whole project that overlap with the selected camera.
-        m_overlapping = self.count_overlapping_cameras(self.selected_camera)
+        self._context_stats_request_id += 1
+        request_id = self._context_stats_request_id
+        self._latest_context_stats_request_id = request_id
 
-        self.context_matrix.update_stats_label(n_visible, m_overlapping)
+        active_camera = self.selected_camera
+        active_path = active_camera.image_path
+        camera_items = tuple(self.cameras.items())
+        scene_size = self._get_scene_size_snapshot()
+
+        try:
+            future = self._propagation_executor.submit(
+                self._count_overlapping_cameras_async,
+                request_id,
+                active_path,
+                n_visible,
+                active_camera,
+                camera_items,
+                scene_size,
+            )
+        except Exception:
+            try:
+                m_overlapping = self.count_overlapping_cameras(active_camera, camera_items=camera_items, scene_size=scene_size)
+            except Exception:
+                return
+            self.contextStatsComputed.emit(request_id, active_path, n_visible, m_overlapping)
 
     def _build_projection(self, px: int, py: int) -> dict:
         """Cast a ray from the selected camera at (px, py) and return projections.
