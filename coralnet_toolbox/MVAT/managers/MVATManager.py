@@ -754,9 +754,8 @@ class MVATManager(QObject):
     def _on_camera_selected(self, path: str):
         """Handle camera_selected from the grid (context menu 'Select Image').
 
-        Preferred entry point to change the displayed image in the annotation
-        window is `annotation_window.set_image(path)` per project convention.
-        Fall back to older image_window loader if the method isn't present.
+        Selection state is the source of truth; the active-camera change
+        handler performs the actual image load.
         """
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
@@ -767,13 +766,6 @@ class MVATManager(QObject):
                 self.selection_model.set_selections([path])
             except Exception:
                 pass
-
-            if hasattr(self.annotation_window, 'set_image'):
-                self.annotation_window.set_image(path)
-            else:
-                # Legacy fallback
-                self.image_window.load_image_by_path(path)
-            # Note: status message moved to AnnotationWindow.set_image
         except Exception as e:
             print(f"Failed to load selected image '{path}': {e}")
         finally:
