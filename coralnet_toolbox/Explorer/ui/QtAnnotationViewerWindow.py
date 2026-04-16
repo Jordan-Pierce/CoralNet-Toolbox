@@ -349,9 +349,13 @@ class AnnotationViewerWindow(QWidget):
                 for path in raster_manager.image_paths:
                     image_name = os.path.basename(path)
                     opts.append((image_name, image_name))
-        # set options (MultiSelectCombo expects list of tuples)
+        
         try:
+            # Set options (MultiSelectCombo expects list of tuples)
             self.image_filter_combo.set_options(opts)
+            current_image_path = getattr(self.annotation_window, 'current_image_path', None)
+            current_image_name = os.path.basename(current_image_path) if current_image_path else None
+            self.image_filter_combo.set_highlighted_value(current_image_name)
         except Exception:
             pass
     
