@@ -21,9 +21,8 @@ from PyQt5.QtCore import Qt, QEvent, QTimer, QObject, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication, QFrame, QVBoxLayout,
     QWidget, QHBoxLayout, QLabel, QSpinBox, QComboBox,
-    QToolBar, QToolButton, QMenu, QAction, QActionGroup, QStackedLayou,
-    QDialog, QGridLayout, QLineEdit, QPushButton, QVBoxLayout, QLabel, QHBoxLayout,
-    QStackedLayout
+    QToolBar, QToolButton, QMenu, QAction, QActionGroup, QStackedLayout,
+    QDialog, QGridLayout, QLineEdit, QPushButton, QVBoxLayout, QLabel, QHBoxLayout
 )
 
 from coralnet_toolbox.MVAT.core.Ray import CameraRay, BatchedRayManager
@@ -981,8 +980,8 @@ class MVATViewer(QFrame):
 
     def _handle_double_click(self):
         """
-        Perform a pick against the scene geometry and animate the focal point
-        to the picked world coordinate.
+        Perform a pick against the scene geometry and set the focal point to
+        the picked world coordinate.
 
         Silently does nothing if no geometry is under the cursor (background click).
         """
@@ -1013,7 +1012,7 @@ class MVATViewer(QFrame):
             except Exception:
                 pass  # validation failed — proceed optimistically
 
-            self._animate_focal_point(picked)
+            self.set_focal_point(picked)
         except Exception:
             pass
         

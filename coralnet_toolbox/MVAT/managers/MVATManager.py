@@ -758,6 +758,7 @@ class MVATManager(QObject):
         window is `annotation_window.set_image(path)` per project convention.
         Fall back to older image_window loader if the method isn't present.
         """
+        QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             # Make this the sole selection: set active and clear other highlights
             try:
@@ -775,6 +776,8 @@ class MVATManager(QObject):
             # Note: status message moved to AnnotationWindow.set_image
         except Exception as e:
             print(f"Failed to load selected image '{path}': {e}")
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def _on_camera_highlighted_single(self, path: str):
         """Handle viewer-only camera navigation from the context matrix."""
