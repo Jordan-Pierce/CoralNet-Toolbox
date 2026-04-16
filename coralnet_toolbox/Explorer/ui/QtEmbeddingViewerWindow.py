@@ -28,12 +28,13 @@ except ImportError:
 from PyQt5.QtCore import Qt, QTimer, QRectF, QPointF, pyqtSignal, pyqtSlot, QSignalBlocker
 from PyQt5.QtGui import QColor, QPen, QPainter, QBrush, QPainterPath, QMouseEvent
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QToolBar, QComboBox,
-    QLabel, QPushButton, QGraphicsView, QGraphicsScene,
+    QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QToolBar, QComboBox,
+    QLabel, QPushButton, QSpinBox, QSlider, QStackedWidget, QGraphicsView, QGraphicsScene,
     QGraphicsRectItem, QSizePolicy, QMessageBox, QApplication
 )
 
 from coralnet_toolbox import theme as app_theme
+from coralnet_toolbox.Common.QtCollapsibleSection import CollapsibleSection
 
 from coralnet_toolbox.Explorer.core.QtDataItem import EmbeddingPointItem, POINT_SIZE, SPRITE_SIZE
 from coralnet_toolbox.Explorer.core.QtDataItem import AnnotationDataItem
@@ -120,6 +121,20 @@ class EmbeddingViewerWindow(QWidget):
         # Device and image size settings
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.imgsz = 224
+
+        # Advanced embedding settings UI state
+        self.embedding_settings_section = None
+        self.perform_pca_before_combo = None
+        self.pca_components_spin = None
+        self.technique_settings_stack = None
+        self.umap_n_neighbors_row = None
+        self.umap_n_neighbors_slider = None
+        self.umap_min_dist_row = None
+        self.umap_min_dist_slider = None
+        self.tsne_perplexity_row = None
+        self.tsne_perplexity_slider = None
+        self.tsne_exaggeration_row = None
+        self.tsne_exaggeration_slider = None
         
         # Points tracking
         self.points_by_id = {}
@@ -276,6 +291,7 @@ class EmbeddingViewerWindow(QWidget):
             
         self.technique_combo = QComboBox()
         self.technique_combo.addItems(available_techniques)
+        self.technique_combo.currentTextChanged.connect(self._on_technique_changed)
         toolbar.addWidget(self.technique_combo)
         
         # Dimensions
@@ -285,6 +301,15 @@ class EmbeddingViewerWindow(QWidget):
         self.dimensions_combo = QComboBox()
         self.dimensions_combo.addItems(["2D", "3D"])
         toolbar.addWidget(self.dimensions_combo)
+
+        # Advanced settings stay hidden behind a popup so the toolbar remains compact.
+        self.embedding_settings_section = CollapsibleSection(
+            "Advanced",
+            "parameters.svg",
+            position='topright'
+        )
+        self._setup_embedding_settings_section()
+        toolbar.addWidget(self.embedding_settings_section)
         
         # Spacer
         spacer = QWidget()
@@ -305,6 +330,7 @@ class EmbeddingViewerWindow(QWidget):
 
         # Initialize model combo based on default category
         self._on_category_changed(self.category_combo.currentText())
+        self._on_technique_changed(self.technique_combo.currentText())
         
         return toolbar
     
@@ -323,6 +349,160 @@ class EmbeddingViewerWindow(QWidget):
             self.model_combo.setEnabled(True)
             for name in TRANSFORMER_MODELS.keys():
                 self.model_combo.addItem(name)
+
+    def _create_slider_row(self, minimum, maximum, value, formatter, tooltip, value_width=42):
+        """Create a slider row with a live value label."""
+        row_widget = QWidget()
+        row_layout = QHBoxLayout(row_widget)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(8)
+
+        slider = QSlider(Qt.Horizontal)
+        slider.setRange(minimum, maximum)
+        slider.setValue(value)
+        slider.setToolTip(tooltip)
+
+        value_label = QLabel(formatter(value))
+        value_label.setMinimumWidth(value_width)
+
+        row_layout.addWidget(slider)
+        row_layout.addWidget(value_label)
+
+        slider.valueChanged.connect(
+            lambda current_value, label=value_label, value_formatter=formatter: label.setText(value_formatter(current_value))
+        )
+
+        return row_widget, slider, value_label
+
+    def _setup_embedding_settings_section(self):
+        """Build the compact advanced settings popup for embedding controls."""
+        advanced_widget = QWidget()
+        advanced_layout = QVBoxLayout(advanced_widget)
+        advanced_layout.setContentsMargins(0, 0, 0, 0)
+        advanced_layout.setSpacing(8)
+
+        general_group = QWidget()
+        general_form = QFormLayout(general_group)
+        general_form.setContentsMargins(0, 0, 0, 0)
+        general_form.setSpacing(6)
+
+        self.perform_pca_before_combo = QComboBox()
+        self.perform_pca_before_combo.addItems(["True", "False"])
+        self.perform_pca_before_combo.setCurrentText("True")
+        self.perform_pca_before_combo.setToolTip(
+            "Apply PCA before the final reduction step.\n"
+            "Disabled for PCA because PCA is already the final reducer."
+        )
+        general_form.addRow("PCA before:", self.perform_pca_before_combo)
+
+        self.pca_components_spin = QSpinBox()
+        self.pca_components_spin.setRange(1, 1000)
+        self.pca_components_spin.setValue(50)
+        self.pca_components_spin.setToolTip(
+            "Number of PCA components used before TSNE, UMAP, or LDA.\n"
+            "Lower values can speed up reduction on high-dimensional features."
+        )
+        general_form.addRow("PCA components:", self.pca_components_spin)
+
+        advanced_layout.addWidget(general_group)
+
+        self.technique_settings_stack = QStackedWidget()
+
+        default_page = QWidget()
+        default_layout = QVBoxLayout(default_page)
+        default_layout.setContentsMargins(0, 0, 0, 0)
+        default_layout.setSpacing(0)
+        default_label = QLabel("No additional settings for this technique.")
+        default_label.setWordWrap(True)
+        default_label.setStyleSheet("color: gray;")
+        default_layout.addWidget(default_label)
+        self.technique_settings_stack.addWidget(default_page)
+
+        umap_page = QWidget()
+        umap_form = QFormLayout(umap_page)
+        umap_form.setContentsMargins(0, 0, 0, 0)
+        umap_form.setSpacing(6)
+
+        umap_n_neighbors_tooltip = (
+            "Number of neighbors used by UMAP.\n"
+            "Higher values capture more global structure; lower values focus on local structure."
+        )
+        self.umap_n_neighbors_row, self.umap_n_neighbors_slider, _ = self._create_slider_row(
+            2, 150, 15,
+            lambda current_value: str(current_value),
+            umap_n_neighbors_tooltip,
+            value_width=36
+        )
+        umap_form.addRow("n_neighbors:", self.umap_n_neighbors_row)
+
+        umap_min_dist_tooltip = (
+            "Minimum distance between points in the UMAP embedding.\n"
+            "Smaller values pack points more tightly."
+        )
+        self.umap_min_dist_row, self.umap_min_dist_slider, _ = self._create_slider_row(
+            0, 99, 10,
+            lambda current_value: f"{current_value / 100.0:.2f}",
+            umap_min_dist_tooltip,
+            value_width=42
+        )
+        umap_form.addRow("min_dist:", self.umap_min_dist_row)
+
+        self.technique_settings_stack.addWidget(umap_page)
+
+        tsne_page = QWidget()
+        tsne_form = QFormLayout(tsne_page)
+        tsne_form.setContentsMargins(0, 0, 0, 0)
+        tsne_form.setSpacing(6)
+
+        tsne_perplexity_tooltip = (
+            "Effective number of neighbors considered by t-SNE.\n"
+            "Typical values range from 5 to 50."
+        )
+        self.tsne_perplexity_row, self.tsne_perplexity_slider, _ = self._create_slider_row(
+            5, 50, 30,
+            lambda current_value: str(current_value),
+            tsne_perplexity_tooltip,
+            value_width=36
+        )
+        tsne_form.addRow("Perplexity:", self.tsne_perplexity_row)
+
+        tsne_exaggeration_tooltip = (
+            "Controls how tightly clusters are separated in t-SNE.\n"
+            "Larger values make clusters more distinct."
+        )
+        self.tsne_exaggeration_row, self.tsne_exaggeration_slider, _ = self._create_slider_row(
+            50, 600, 120,
+            lambda current_value: f"{current_value / 10.0:.1f}",
+            tsne_exaggeration_tooltip,
+            value_width=42
+        )
+        tsne_form.addRow("Exaggeration:", self.tsne_exaggeration_row)
+
+        self.technique_settings_stack.addWidget(tsne_page)
+
+        advanced_layout.addWidget(self.technique_settings_stack)
+        advanced_layout.addStretch(1)
+
+        self.embedding_settings_section.add_widget(advanced_widget, "Embedding Options")
+
+    def _on_technique_changed(self, technique):
+        """Update advanced controls when the reduction technique changes."""
+        if self.perform_pca_before_combo is None:
+            return
+
+        use_general_pca_controls = technique != "PCA"
+        self.perform_pca_before_combo.setEnabled(use_general_pca_controls)
+        self.pca_components_spin.setEnabled(use_general_pca_controls)
+
+        if technique == "UMAP":
+            self.technique_settings_stack.setCurrentIndex(1)
+        elif technique == "TSNE":
+            self.technique_settings_stack.setCurrentIndex(2)
+        else:
+            self.technique_settings_stack.setCurrentIndex(0)
+
+        if hasattr(self.embedding_settings_section, 'popup') and self.embedding_settings_section.popup.isVisible():
+            self.embedding_settings_section.popup.adjustSize()
     
     # -------------------------------------------------------------------------
     # UI Setup
@@ -911,19 +1091,32 @@ class EmbeddingViewerWindow(QWidget):
     
     def _get_embedding_parameters(self):
         """Get current embedding parameters from UI."""
+        technique = self.technique_combo.currentText()
+
+        perform_pca_before = True
+        if self.perform_pca_before_combo is not None:
+            perform_pca_before = self.perform_pca_before_combo.currentText() == "True"
+
+        pca_components = 50
+        if self.pca_components_spin is not None:
+            pca_components = self.pca_components_spin.value()
+
         params = {
-            'technique': self.technique_combo.currentText(),
+            'technique': technique,
             'dimensions': 3 if self.dimensions_combo.currentText() == "3D" else 2,
-            'perform_pca_before': True,
-            'pca_components': 50,
+            'perform_pca_before': perform_pca_before,
+            'pca_components': pca_components,
         }
-        # Default parameters for techniques
-        if params['technique'] == 'UMAP':
-            params['n_neighbors'] = 15
-            params['min_dist'] = 0.1
-        elif params['technique'] == 'TSNE':
-            params['perplexity'] = 30
-            params['early_exaggeration'] = 12.0
+
+        if technique == 'PCA':
+            params['perform_pca_before'] = False
+        elif technique == 'UMAP':
+            params['n_neighbors'] = self.umap_n_neighbors_slider.value() if self.umap_n_neighbors_slider is not None else 15
+            params['min_dist'] = self.umap_min_dist_slider.value() / 100.0 if self.umap_min_dist_slider is not None else 0.1
+        elif technique == 'TSNE':
+            params['perplexity'] = self.tsne_perplexity_slider.value() if self.tsne_perplexity_slider is not None else 30
+            params['early_exaggeration'] = self.tsne_exaggeration_slider.value() / 10.0 if self.tsne_exaggeration_slider is not None else 12.0
+
         return params
     
     def _ensure_cropped_images(self, annotations):
