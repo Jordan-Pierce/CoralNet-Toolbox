@@ -274,6 +274,7 @@ class EmbeddingViewerWindow(QWidget):
         
         # Model Selection (dynamically populated)
         self.model_combo = QComboBox()
+        self.model_combo.setMinimumWidth(100)
         toolbar.addWidget(self.model_combo)
         
         toolbar.addSeparator()
@@ -375,7 +376,7 @@ class EmbeddingViewerWindow(QWidget):
                         )
                 else:
                     self.model_combo.setEnabled(False)
-                    self.model_combo.addItem("No loaded YOLO models", "")
+                    self.model_combo.addItem("None loaded", "")
             else:
                 self.model_combo.setEnabled(False)
                 self.model_combo.addItem("N/A", "")
