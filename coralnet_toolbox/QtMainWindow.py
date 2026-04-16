@@ -39,6 +39,7 @@ from coralnet_toolbox.QtLabelWindow import LabelWindow
 from coralnet_toolbox.Explorer import AnnotationViewerWindow
 from coralnet_toolbox.Explorer import EmbeddingViewerWindow
 from coralnet_toolbox.Explorer import SelectionManager
+from coralnet_toolbox.Explorer.models.yolo_models import LIVE_YOLO_MODEL_PREFIX
 
 # MVAT Windows
 from coralnet_toolbox.MVAT import MVATViewer
@@ -310,18 +311,6 @@ class MainWindow(QMainWindow):
         self.segment_deploy_model_dialog = SegmentDeployModelDialog(self)
         self.semantic_deploy_model_dialog = SemanticDeployModelDialog(self)
         self.batch_inference_dialog = BatchInferenceDialog(self)
-
-        # Keep the BatchInferenceDialog updated when image highlights change
-        try:
-            # Connect the table-model highlight change signal to update the dialog's highlighted list
-            self.image_window.table_model.rowsChanged.connect(
-                lambda: self.batch_inference_dialog.update_highlighted_images(
-                    self.image_window.table_model.get_highlighted_paths()
-                )
-            )
-        except Exception:
-            # If connection fails for some reason, continue without breaking startup
-            pass
 
         # Create dialogs (SAM)
         self.sam_deploy_predictor_dialog = SAMDeployPredictorDialog(self)
@@ -1334,6 +1323,32 @@ class MainWindow(QMainWindow):
         #   update the embedding viewer's working set so embeddings reflect
         #   the current gallery filter.
         # ---------------------------------------------------------------------
+
+        try:
+            for dialog in (
+                self.classify_deploy_model_dialog,
+                self.detect_deploy_model_dialog,
+                self.segment_deploy_model_dialog,
+                self.semantic_deploy_model_dialog,
+            ):
+                if hasattr(dialog, 'model_state_changed'):
+                    dialog.model_state_changed.connect(self.embedding_viewer_window.refresh_model_options)
+        except Exception:
+            pass
+
+        # Keep the BatchInferenceDialog updated when image highlights change
+        try:
+            # Connect the table-model highlight change signal to update the dialog's highlighted list
+            self.image_window.table_model.rowsChanged.connect(
+                lambda: self.batch_inference_dialog.update_highlighted_images(
+                    self.image_window.table_model.get_highlighted_paths()
+                )
+            )
+        except Exception:
+            # If connection fails for some reason, continue without breaking startup
+            pass
+
+
         self.annotation_viewer_window.annotations_filtered.connect(
             self.embedding_viewer_window.set_working_set)
 
@@ -1420,6 +1435,41 @@ class MainWindow(QMainWindow):
         if not hasattr(self, 'annotation_window') or self.annotation_window is None:
             return None
         return self.annotation_window.transparency_slider.value()
+
+    def get_loaded_yolo_models(self):
+        """Return the currently loaded YOLO deploy models."""
+        loaded_models = []
+        dialog_specs = (
+            ('classify', 'Classify', 'classify_deploy_model_dialog'),
+            ('detect', 'Detect', 'detect_deploy_model_dialog'),
+            ('segment', 'Segment', 'segment_deploy_model_dialog'),
+            ('semantic', 'Semantic', 'semantic_deploy_model_dialog'),
+        )
+
+        for dialog_key, label, dialog_attr in dialog_specs:
+            dialog = getattr(self, dialog_attr, None)
+            if dialog is None:
+                continue
+
+            model = getattr(dialog, 'loaded_model', None)
+            model_path = getattr(dialog, 'model_path', None)
+            if model is None or not model_path:
+                continue
+
+            normalized_model_path = os.path.normcase(os.path.abspath(model_path))
+            loaded_models.append({
+                'dialog_key': dialog_key,
+                'dialog_label': label,
+                'display_name': label,
+                'task': getattr(dialog, 'task', ''),
+                'model_path': model_path,
+                'normalized_model_path': normalized_model_path,
+                'model': model,
+                'dialog': dialog,
+                'source_key': f'{LIVE_YOLO_MODEL_PREFIX}{dialog_key}::{getattr(dialog, "task", "")}::{normalized_model_path}',
+            })
+
+        return loaded_models
 
     # Redirect widget references for ScaleTool, ZImportDialog, etc.
     @property

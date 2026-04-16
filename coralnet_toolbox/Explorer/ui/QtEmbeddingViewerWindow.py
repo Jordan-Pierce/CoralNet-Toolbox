@@ -7,6 +7,8 @@ that integrates directly with MainWindow as a dockable widget. It combines
 the scatter plot visualization with built-in ML pipeline controls.
 """
 
+import hashlib
+from functools import partial
 import os
 import warnings
 import time
@@ -39,7 +41,9 @@ from coralnet_toolbox.Common.QtCollapsibleSection import CollapsibleSection
 from coralnet_toolbox.Explorer.core.QtDataItem import EmbeddingPointItem, POINT_SIZE, SPRITE_SIZE
 from coralnet_toolbox.Explorer.core.QtDataItem import AnnotationDataItem
 from coralnet_toolbox.Explorer.managers.QtCacheManager import CacheManager
-from coralnet_toolbox.Explorer.models.yolo_models import YOLO_MODELS, is_yolo_model
+from coralnet_toolbox.Explorer.models.yolo_models import YOLO_MODELS
+from coralnet_toolbox.Explorer.models.yolo_models import is_live_yolo_model
+from coralnet_toolbox.Explorer.models.yolo_models import is_yolo_model
 from coralnet_toolbox.Explorer.models.transformer_models import TRANSFORMER_MODELS, is_transformer_model
 from coralnet_toolbox.Explorer.workers import EmbeddingPipelineWorker
 
@@ -264,13 +268,12 @@ class EmbeddingViewerWindow(QWidget):
         toolbar.addWidget(category_label)
         
         self.category_combo = QComboBox()
-        self.category_combo.addItems(["Color Features", "YOLO", "Transformer"])
+        self.category_combo.addItems(["Color Features", "YOLO", "Transformer", "Live Models"])
         self.category_combo.currentTextChanged.connect(self._on_category_changed)
         toolbar.addWidget(self.category_combo)
         
         # Model Selection (dynamically populated)
         self.model_combo = QComboBox()
-        self.model_combo.setMinimumWidth(150)
         toolbar.addWidget(self.model_combo)
         
         toolbar.addSeparator()
@@ -333,22 +336,60 @@ class EmbeddingViewerWindow(QWidget):
         self._on_technique_changed(self.technique_combo.currentText())
         
         return toolbar
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.refresh_model_options()
+
+    def refresh_model_options(self):
+        """Refresh the model combo while preserving the current selection when possible."""
+        current_category = self.category_combo.currentText()
+        selected_data = self.model_combo.currentData() if self.model_combo.count() else None
+        self._populate_model_combo(current_category, selected_data)
+
+    def _populate_model_combo(self, category, selected_data=None):
+        """Populate the model combo for the active category."""
+        self.model_combo.blockSignals(True)
+        try:
+            self.model_combo.clear()
+
+            if category == "Color Features":
+                self.model_combo.setEnabled(False)
+                self.model_combo.addItem("N/A", "Color Features")
+            elif category == "YOLO":
+                self.model_combo.setEnabled(True)
+                for display_name, model_name in YOLO_MODELS.items():
+                    self.model_combo.addItem(display_name, model_name)
+            elif category == "Transformer":
+                self.model_combo.setEnabled(True)
+                for display_name, model_name in TRANSFORMER_MODELS.items():
+                    self.model_combo.addItem(display_name, model_name)
+            elif category == "Live Models":
+                live_models = self._get_loaded_yolo_models()
+                if live_models:
+                    self.model_combo.setEnabled(True)
+                    for source in live_models:
+                        self.model_combo.addItem(
+                            source.get("display_name", "Live Model"),
+                            source.get("source_key", "")
+                        )
+                else:
+                    self.model_combo.setEnabled(False)
+                    self.model_combo.addItem("No loaded YOLO models", "")
+            else:
+                self.model_combo.setEnabled(False)
+                self.model_combo.addItem("N/A", "")
+
+            if selected_data is not None:
+                index = self.model_combo.findData(selected_data)
+                if index >= 0:
+                    self.model_combo.setCurrentIndex(index)
+        finally:
+            self.model_combo.blockSignals(False)
     
     def _on_category_changed(self, category):
         """Update model combo based on selected category."""
-        self.model_combo.clear()
-        
-        if category == "Color Features":
-            self.model_combo.setEnabled(False)
-            self.model_combo.addItem("N/A")
-        elif category == "YOLO":
-            self.model_combo.setEnabled(True)
-            for name in YOLO_MODELS.keys():
-                self.model_combo.addItem(name)
-        elif category == "Transformer":
-            self.model_combo.setEnabled(True)
-            for name in TRANSFORMER_MODELS.keys():
-                self.model_combo.addItem(name)
+        self._populate_model_combo(category)
 
     def _create_slider_row(self, minimum, maximum, value, formatter, tooltip, value_width=42):
         """Create a slider row with a live value label."""
@@ -928,7 +969,17 @@ class EmbeddingViewerWindow(QWidget):
             data_items.append(self.data_item_cache[ann.id])
         
         # Get model settings
+        self.refresh_model_options()
         model_name = self._get_selected_model()
+        if not model_name:
+            QMessageBox.information(
+                self,
+                "No Model Selected",
+                "No model is available for the selected category.",
+            )
+            return
+
+        live_model = self._resolve_live_yolo_model(model_name)
         embedding_params = self._get_embedding_parameters()
         
         # Block LDA if only one class/label is selected in the annotation viewer
@@ -974,12 +1025,7 @@ class EmbeddingViewerWindow(QWidget):
             pass
 
         # Generate model key for caching
-        if os.path.sep in model_name or '/' in model_name:
-            sanitized_model_name = os.path.basename(model_name)
-        else:
-            sanitized_model_name = model_name
-        sanitized_model_name = sanitized_model_name.replace(' ', '_').replace('/', '_')
-        model_key = sanitized_model_name
+        model_key = self._get_model_cache_key(model_name)
         
         # Create worker with callable extractors
         self._pipeline_worker = EmbeddingPipelineWorker(
@@ -988,7 +1034,7 @@ class EmbeddingViewerWindow(QWidget):
             model_key=model_key,
             embedding_params=embedding_params,
             cache_manager=self.cache_manager,
-            feature_extractor_fn=self._extract_features_for_worker,
+            feature_extractor_fn=partial(self._extract_features_for_worker, live_model=live_model),
             dim_reduction_fn=self._run_dimensionality_reduction
         )
         
@@ -1007,7 +1053,7 @@ class EmbeddingViewerWindow(QWidget):
         self._disable_analysis_buttons()
         self._pipeline_worker.start()
         
-    def _extract_features_for_worker(self, model_name, data_items):
+    def _extract_features_for_worker(self, model_name, data_items, live_model=None):
         """
         Wrapper for _extract_features that works with the worker thread.
         Note: This runs in the worker thread.
@@ -1019,7 +1065,7 @@ class EmbeddingViewerWindow(QWidget):
         Returns:
             tuple: (features_array, valid_items_list)
         """
-        return self._extract_features(data_items, model_name, progress_bar=None)
+        return self._extract_features(data_items, model_name, progress_bar=None, live_model=live_model)
     
     def _on_pipeline_progress(self, message):
         """Handle progress updates from the worker."""
@@ -1077,17 +1123,81 @@ class EmbeddingViewerWindow(QWidget):
     
     def _get_selected_model(self):
         """Get the currently selected model name/path."""
-        category = self.category_combo.currentText()
-        
-        if category == "Color Features":
-            return "Color Features"
-        elif category == "YOLO":
-            display_name = self.model_combo.currentText()
-            return YOLO_MODELS.get(display_name, display_name)
-        elif category == "Transformer":
-            display_name = self.model_combo.currentText()
-            return TRANSFORMER_MODELS.get(display_name, display_name)
+        current_data = self.model_combo.currentData()
+        if current_data not in (None, ""):
+            return current_data
         return ""
+
+    def _decode_live_yolo_source(self, model_name):
+        """Decode a live YOLO source string into its parts."""
+        if not is_live_yolo_model(model_name):
+            return None
+
+        parts = model_name.split("::", 3)
+        if len(parts) != 4:
+            return None
+
+        _, dialog_key, task, model_path = parts
+        if not dialog_key or not task or not model_path:
+            return None
+
+        return {
+            "dialog_key": dialog_key,
+            "task": task,
+            "model_path": model_path,
+            "normalized_model_path": self._normalize_model_path(model_path),
+        }
+
+    def _normalize_model_path(self, model_path):
+        """Normalize a model path for comparisons and cache keys."""
+        if not model_path:
+            return ""
+
+        try:
+            return os.path.normcase(os.path.abspath(model_path))
+        except Exception:
+            return os.path.normcase(os.path.normpath(model_path))
+
+    def _get_loaded_yolo_models(self):
+        """Return the currently loaded YOLO deploy models from MainWindow."""
+        accessor = getattr(self.main_window, 'get_loaded_yolo_models', None)
+        if not callable(accessor):
+            return []
+
+        try:
+            return accessor() or []
+        except Exception:
+            return []
+
+    def _resolve_live_yolo_model(self, model_name):
+        """Resolve a live YOLO source to the in-memory model object."""
+        if not is_live_yolo_model(model_name):
+            return None
+
+        for source in self._get_loaded_yolo_models():
+            if source.get('source_key') == model_name:
+                return source.get('model')
+
+        return None
+
+    def _get_model_cache_key(self, model_name):
+        """Build a stable cache key for the selected model source."""
+        live_source = self._decode_live_yolo_source(model_name)
+        if live_source:
+            cache_token = (
+                f"{live_source['dialog_key']}|{live_source['task']}|"
+                f"{live_source['normalized_model_path']}"
+            )
+            digest = hashlib.sha1(cache_token.encode('utf-8')).hexdigest()[:16]
+            return f"live_{live_source['dialog_key']}_{digest}"
+
+        if os.path.sep in model_name or '/' in model_name:
+            sanitized_model_name = os.path.basename(model_name)
+        else:
+            sanitized_model_name = model_name
+
+        sanitized_model_name = sanitized_model_name.replace(' ', '_').replace('/', '_')
+        return sanitized_model_name
     
     def _get_embedding_parameters(self):
         """Get current embedding parameters from UI."""
@@ -1132,12 +1242,12 @@ class EmbeddingViewerWindow(QWidget):
     # Feature Extraction
     # -------------------------------------------------------------------------
     
-    def _extract_features(self, data_items, model_name, progress_bar=None):
+    def _extract_features(self, data_items, model_name, progress_bar=None, live_model=None):
         """Dispatch to appropriate feature extraction method."""
         if model_name == "Color Features":
             return self._extract_color_features(data_items, progress_bar)
         elif is_yolo_model(model_name):
-            return self._extract_yolo_features(data_items, model_name, progress_bar)
+            return self._extract_yolo_features(data_items, model_name, progress_bar, live_model=live_model)
         elif is_transformer_model(model_name):
             return self._extract_transformer_features(data_items, model_name, progress_bar)
         return np.array([]), []
@@ -1188,9 +1298,9 @@ class EmbeddingViewerWindow(QWidget):
         
         return np.array(features), valid_items
     
-    def _extract_yolo_features(self, data_items, model_name, progress_bar=None):
+    def _extract_yolo_features(self, data_items, model_name, progress_bar=None, live_model=None):
         """Extract features using YOLO model."""
-        model = self._load_yolo_model(model_name)
+        model = self._load_yolo_model(model_name, live_model=live_model)
         if model is None:
             return np.array([]), []
         
@@ -1318,16 +1428,26 @@ class EmbeddingViewerWindow(QWidget):
         
         return images, valid_items
     
-    def _load_yolo_model(self, model_name):
+    def _load_yolo_model(self, model_name, live_model=None):
         """Load YOLO model with caching."""
-        if self._cached_yolo_model_name == model_name and self._cached_yolo_model:
+        live_source = self._decode_live_yolo_source(model_name)
+        cache_allowed = live_source is None
+
+        if live_source and live_model is not None:
+            return live_model
+
+        if live_source:
+            model_name = live_source['model_path']
+
+        if cache_allowed and self._cached_yolo_model_name == model_name and self._cached_yolo_model:
             return self._cached_yolo_model
         
         try:
             from ultralytics import YOLO
             model = YOLO(model_name)
-            self._cached_yolo_model = model
-            self._cached_yolo_model_name = model_name
+            if cache_allowed:
+                self._cached_yolo_model = model
+                self._cached_yolo_model_name = model_name
             return model
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to load YOLO model: {e}")

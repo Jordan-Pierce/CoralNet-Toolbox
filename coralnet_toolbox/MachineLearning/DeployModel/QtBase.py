@@ -23,6 +23,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 
+from PyQt5.QtCore import Qt, pyqtSignal
 class Base(QDialog):
     """
     Base class for deploying machine learning models.
@@ -30,6 +31,8 @@ class Base(QDialog):
     :param main_window: MainWindow object
     :param parent: Parent widget
     """
+    model_state_changed = pyqtSignal()
+
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.main_window = main_window
@@ -491,3 +494,4 @@ class Base(QDialog):
         self.status_bar.setText("No model loaded")
         self.labels_status_label.setText("No model file selected")
         self.labels_table.setRowCount(0)
+        self.model_state_changed.emit()

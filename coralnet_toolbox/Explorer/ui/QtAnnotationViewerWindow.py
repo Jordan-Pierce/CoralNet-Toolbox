@@ -251,7 +251,7 @@ class AnnotationViewerWindow(QWidget):
         self.isolate_button.setToolTip("Show only selected annotations (double-click to exit)")
         self.isolate_button.clicked.connect(self._isolate_selection)
         self.isolate_button.setEnabled(False)
-        toolbar.addWidget(self.isolate_button)
+        # toolbar.addWidget(self.isolate_button)
         
         toolbar.addSeparator()
         
