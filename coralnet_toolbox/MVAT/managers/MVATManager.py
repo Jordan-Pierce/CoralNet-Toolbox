@@ -1539,16 +1539,20 @@ class MVATManager(QObject):
             return
         if not self.context_matrix.target_lock_enabled:
             return
-        if self.selected_camera is None:
-            return
+        base_rotation = getattr(self.annotation_window, 'rotation_angle', 0.0)
+
+        # Ortho path: derive world point via z-channel instead of index-map ray
         if self.ortho_camera is not None:
             current_path = getattr(self.annotation_window, 'current_image_path', None)
             if current_path == self.ortho_camera.image_path:
+                self._on_ortho_view_navigated(center_x, center_y, zoom_factor, base_rotation)
                 return
 
-        # NEW: Fetch reference path and current rotation from the Annotation Window
+        if self.selected_camera is None:
+            return
+
+        # Fetch reference path and current rotation from the Annotation Window
         reference_path = self.selected_camera.image_path
-        base_rotation = getattr(self.annotation_window, 'rotation_angle', 0.0)
 
         # Step 1: Get the 3D world point at the viewport center
         world_point = self._get_world_point_at_pixel(
@@ -1615,6 +1619,59 @@ class MVATManager(QObject):
             # Fallback if ContextMatrix hasn't been updated to accept kwargs yet
             self.context_matrix.request_sync(targets_with_center, relative_zoom)
             self.context_matrix.request_zoom_only(zoom_only, relative_zoom)
+
+    def _on_ortho_view_navigated(self, center_x: float, center_y: float, zoom_factor: float, base_rotation: float):
+        """Sync context canvases when the user pans/zooms the OrthoRaster view.
+
+        Mirrors _on_main_view_navigated but resolves the world point via
+        z-channel lookup (O(1)) rather than an index-map / ray-trace.
+        """
+        ortho_camera = self.ortho_camera
+        cx, cy = int(round(center_x)), int(round(center_y))
+
+        X, Y = ortho_camera.pixel_to_geo(cx, cy)
+        Z = ortho_camera._raster.get_z_value(cx, cy)
+        if Z is None:
+            return
+        world_point = ortho_camera.geo_to_world(X, Y, Z)
+
+        # Compute relative zoom (same logic as perspective path)
+        min_zoom = getattr(self.annotation_window, '_min_zoom', 0)
+        relative_zoom = (zoom_factor / min_zoom) if min_zoom > 0 else 1.0
+
+        targets_with_center = {}
+        zoom_only = set()
+        capacity = self.context_matrix._get_visible_capacity()
+
+        for i in range(capacity):
+            canvas = self.context_matrix._canvas_pool[i]
+            if not canvas.isVisible() or not canvas.current_image_path:
+                continue
+            camera = self.cameras.get(canvas.current_image_path)
+            if not camera:
+                continue
+            try:
+                pixel = camera.project(world_point)
+            except Exception:
+                zoom_only.add(i)
+                continue
+            if np.isnan(pixel).any():
+                zoom_only.add(i)
+                continue
+            u, v = float(pixel[0]), float(pixel[1])
+            if 0 <= u < camera.width and 0 <= v < camera.height:
+                targets_with_center[i] = (u, v)
+            else:
+                zoom_only.add(i)
+
+        self.context_matrix.request_sync(
+            targets_with_center, relative_zoom,
+            reference_path=None, base_rotation=base_rotation
+        )
+        self.context_matrix.request_zoom_only(
+            zoom_only, relative_zoom,
+            reference_path=None, base_rotation=base_rotation
+        )
 
     def _get_world_point_at_pixel(self, camera, px, py):
         """Get the 3D world point at a specific pixel coordinate.

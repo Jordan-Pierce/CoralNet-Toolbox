@@ -853,6 +853,43 @@ class ContextMatrixWidget(QWidget):
                 result[canvas.current_image_path] = canvas
         return result
 
+    def reorder_canvases_by_visibility(self, visible_paths: set):
+        """Move canvases whose camera is in *visible_paths* to the front of the
+        flow layout, pushing dim/out-of-FOV canvases to the end.
+
+        Only reorders when the current order differs from the desired order so
+        the layout is not needlessly invalidated on every navigation event.
+        """
+        if not self._visible_canvases:
+            return
+
+        front = [c for c in self._visible_canvases if c.current_image_path in visible_paths]
+        back  = [c for c in self._visible_canvases if c.current_image_path not in visible_paths]
+        desired = front + back
+
+        if desired == self._visible_canvases:
+            return
+
+        # Drain the layout's item list, keeping the existing QLayoutItems so we
+        # don't create duplicate QWidgetItems (addWidget on an already-managed
+        # widget appends a second item without removing the first).
+        items = {}
+        while self._flow_layout.count():
+            item = self._flow_layout.takeAt(0)
+            if item and item.widget():
+                items[item.widget()] = item
+
+        for canvas in desired:
+            item = items.get(canvas)
+            if item is not None:
+                self._flow_layout.addItem(item)
+
+        self._visible_canvases = desired
+
+        # Force an immediate re-layout pass so positions update this frame.
+        self._flow_layout.invalidate()
+        self._flow_layout.activate()
+
     def update_dynamic_markers(self, projections: dict, accuracies: dict,
                                 visibility_status: dict):
         canvas_map = self._get_canvas_camera_map()
@@ -972,6 +1009,8 @@ class ContextMatrixWidget(QWidget):
 
         ref_cam = self._mvat_manager.cameras.get(reference_path) if reference_path else None
 
+        visible_paths = set()
+
         for i, (target_x, target_y) in targets.items():
             if i < len(self._canvas_pool):
                 canvas = self._canvas_pool[i]
@@ -999,6 +1038,12 @@ class ContextMatrixWidget(QWidget):
                     # Restore full opacity because target is visible in this canvas.
                     effect = self._ensure_canvas_opacity_effect(canvas)
                     effect.setOpacity(1.0)
+
+                    if canvas.current_image_path:
+                        visible_paths.add(canvas.current_image_path)
+
+        # Float fully-visible canvases to the front of the layout.
+        self.reorder_canvases_by_visibility(visible_paths)
 
     def _request_sync_from_main_view(self):
         if not self._mvat_manager:
