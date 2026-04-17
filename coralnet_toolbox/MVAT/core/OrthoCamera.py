@@ -87,6 +87,16 @@ class OrthoCamera:
             for v in [self.ortho_left, self.ortho_top, self.resolution_x, self.resolution_y]
         )
 
+    @property
+    def visible_indices(self):
+        """
+        Get the visible point indices for this camera.
+
+        Returns:
+            np.ndarray or None: 1D array of visible point IDs, or None if not computed
+        """
+        return self._raster.visible_indices
+
     # ------------------------------------------------------------------
     # Coordinate transforms
     # ------------------------------------------------------------------
@@ -129,6 +139,63 @@ class OrthoCamera:
         z_world = (self._T_inv @ (self._proj_mat_inv @ z_crs))[:3]
         norm = np.linalg.norm(z_world)
         return z_world / norm if norm > 1e-12 else np.array([0.0, 0.0, 1.0])
+
+    # ------------------------------------------------------------------
+    # Selection and highlighting
+    # ------------------------------------------------------------------
+
+    def select(self):
+        """Mark as selected."""
+        pass  # OrthoCamera is a geometric object without UI frustum
+
+    def deselect(self):
+        """Mark as deselected."""
+        pass  # OrthoCamera is a geometric object without UI frustum
+
+    def highlight(self):
+        """Mark as highlighted."""
+        pass  # OrthoCamera is a geometric object without UI frustum
+
+    def unhighlight(self):
+        """Mark as not highlighted."""
+        pass  # OrthoCamera is a geometric object without UI frustum
+
+    # ------------------------------------------------------------------
+    # Serialization
+    # ------------------------------------------------------------------
+
+    def to_dict(self) -> dict:
+        """
+        Serialize OrthoCamera state to a dictionary.
+
+        Returns:
+            dict with keys: 'chunk_transform', 'ortho_projection_matrix'
+        """
+        return {
+            'chunk_transform': self._chunk_transform.tolist(),
+            'ortho_projection_matrix': self._proj_mat.tolist(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict, raster: 'OrthoRaster') -> 'OrthoCamera':
+        """
+        Deserialize OrthoCamera from a dictionary.
+
+        Args:
+            data: dict with 'chunk_transform' and 'ortho_projection_matrix'
+            raster: OrthoRaster instance to associate with the camera
+
+        Returns:
+            OrthoCamera instance with state restored from data
+        """
+        chunk_transform = np.asarray(data.get('chunk_transform', np.eye(4)), dtype=np.float64)
+        camera = cls(raster, chunk_transform)
+
+        if 'ortho_projection_matrix' in data:
+            proj_mat = np.asarray(data['ortho_projection_matrix'], dtype=np.float64)
+            camera.update_ortho_projection_matrix(proj_mat)
+
+        return camera
 
     # ------------------------------------------------------------------
     # Mutators
