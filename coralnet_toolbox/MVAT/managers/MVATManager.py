@@ -65,13 +65,35 @@ class MousePositionBridge(QObject):
         self.manager = manager
         self.enabled = True
         self._last_update_time = 0
-        
+        self._last_mouse_x = -1
+        self._last_mouse_y = -1
+
     def on_mouse_moved(self, x: int, y: int):
         if not self.enabled:
             return
+        # Skip duplicate pixels (Qt can fire multiple events for the same position)
+        if x == self._last_mouse_x and y == self._last_mouse_y:
+            return
+        # Time-gate: cap at ~60 fps to avoid flooding the ortho ray-trace / perspective
+        # projection loop on every raw mouse event.
+        now = time.monotonic()
+        if now - self._last_update_time < 0.016:
+            return
+        self._last_update_time = now
+        self._last_mouse_x = x
+        self._last_mouse_y = y
         self._process_pending_position(x, y)
             
     def _process_pending_position(self, x: int, y: int):
+        # --- Ortho path: route to ortho handler when OrthoRaster is displayed ---
+        ortho_camera = self.manager.ortho_camera
+        if ortho_camera is not None:
+            current_path = getattr(self.manager.annotation_window, 'current_image_path', None)
+            if current_path == ortho_camera.image_path:
+                self._process_ortho_position(x, y, ortho_camera)
+                return
+
+
         camera = self.manager.selected_camera
         if camera is None or not (0 <= x < camera.width and 0 <= y < camera.height):
             self.clear_all_markers()
@@ -254,7 +276,10 @@ class MousePositionBridge(QObject):
             rays_with_colors.append((target_ray, ray_color))
 
         self.manager.viewer.show_rays(rays_with_colors)
-        projections = ray.project_to_cameras(self.manager.cameras)
+        # Project only into visible cameras — avoids O(all_cameras) work per frame
+        visible_cam_dict = {cam.image_path: cam for cam in highlighted_cameras}
+        visible_cam_dict[camera.image_path] = camera  # include the primary camera
+        projections = ray.project_to_cameras(visible_cam_dict)
 
         # Update context matrix canvases (Phase 4)
         if self.manager.context_matrix is not None:
@@ -265,13 +290,80 @@ class MousePositionBridge(QObject):
             except Exception:
                 self.manager.context_matrix.clear_all_dynamic_markers()
                 
+    def _process_ortho_position(self, x: int, y: int, ortho_camera):
+        """
+        Handle mouse-move events when the AnnotationWindow is showing an OrthoRaster.
+
+        Resolves the 3D world point via z-channel lookup (O(1)) instead of mesh
+        ray tracing.  The z-channel is stored at full ortho resolution so pixel
+        coords map directly; the raw CRS elevation is fed into geo_to_world.
+        """
+        _t0 = time.monotonic()
+
+        if not (0 <= x < ortho_camera.width and 0 <= y < ortho_camera.height):
+            self.clear_all_markers()
+            return
+
+        # Geo XY from affine transform
+        X, Y = ortho_camera.pixel_to_geo(x, y)
+        _t1 = time.monotonic()
+
+        # CRS elevation from z-channel (stored at full ortho resolution, raw units)
+        Z = ortho_camera._raster.get_z_value(x, y)
+        _t2 = time.monotonic()
+        if Z is None:
+            self.clear_all_markers()
+            return
+
+        world_pt = ortho_camera.geo_to_world(X, Y, Z)
+        _t3 = time.monotonic()
+
+        # Project to all visible context cameras and build marker dicts
+        projections = {}
+        accuracies = {}
+        visibility_status = {}
+
+        for cam in self.manager._get_visible_context_cameras():
+            try:
+                proj = cam.project(world_pt)
+                if np.isnan(proj).any():
+                    continue
+                u = float(proj[0])
+                v = float(proj[1])
+                in_bounds = 0 <= u < cam.width and 0 <= v < cam.height
+                projections[cam.image_path] = (u, v, in_bounds)
+                accuracies[cam.image_path] = True
+                visibility_status[cam.image_path] = False
+            except Exception:
+                pass
+        _t4 = time.monotonic()
+
+        if self.manager.context_matrix is not None:
+            try:
+                self.manager.context_matrix.update_dynamic_markers(
+                    projections, accuracies, visibility_status
+                )
+            except Exception:
+                self.manager.context_matrix.clear_all_dynamic_markers()
+        _t5 = time.monotonic()
+
+        print(
+            f"[ORTHO TIMING] "
+            f"pixel→geo: {(_t1-_t0)*1000:.2f}ms | "
+            f"z_channel: {(_t2-_t1)*1000:.2f}ms | "
+            f"geo→world: {(_t3-_t2)*1000:.2f}ms | "
+            f"project_cams: {(_t4-_t3)*1000:.2f}ms | "
+            f"update_markers: {(_t5-_t4)*1000:.2f}ms | "
+            f"TOTAL: {(_t5-_t0)*1000:.2f}ms"
+        )
+
     def clear_all_markers(self):
         if self.manager.context_matrix is not None:
             try:
                 self.manager.context_matrix.clear_all_dynamic_markers()
             except Exception:
                 pass
-            
+
     def cleanup(self):
         self.clear_all_markers()
 
@@ -318,6 +410,11 @@ class MVATManager(QObject):
         # Multi-camera annotation state
         self.multi_annotate_enabled = False
         self._propagating_annotation = False
+
+        # Ortho state: chunk transform T and OrthoCamera (set during load_cameras
+        # when an OrthoRaster is present in the project)
+        self._chunk_transform = None  # 4x4 Metashape chunk transform matrix
+        self.ortho_camera = None      # OrthoCamera instance
 
         # Internal Managers
         self.selection_model = SelectionManager(self)
@@ -411,12 +508,18 @@ class MVATManager(QObject):
             self.main_window.status_bar.showMessage("Loading cameras...", 0)
 
             valid_count = 0
-            
+            ortho_rasters = []
+
             for path in all_paths:
                 raster = self.raster_manager.get_raster(path)
                 if not raster:
                     continue
-                
+
+                # Collect OrthoRasters for separate handling below
+                if getattr(raster, 'raster_type', '') == 'OrthoRaster':
+                    ortho_rasters.append(raster)
+                    continue
+
                 # CREATE PERSPECTIVE CAMERA
                 if raster.intrinsics is not None and raster.extrinsics is not None:
                     try:
@@ -432,15 +535,49 @@ class MVATManager(QObject):
                 QApplication.restoreOverrideCursor()
             except Exception:
                 pass
-            
+
             self.main_window.status_bar.showMessage(
                 f"Loaded {valid_count} cameras",
                 3000
             )
-            
-        if valid_count == 0:
+
+        if valid_count == 0 and not ortho_rasters:
             QMessageBox.information(self.main_window, "No Camera Data", "No valid camera parameters found.")
             return
+
+        # =====================================================================
+        # OrthoRaster: prompt for chunk transform T, then build OrthoCamera
+        # =====================================================================
+        if ortho_rasters:
+            from PyQt5.QtWidgets import QDialog
+            from coralnet_toolbox.MVAT.ui.QtMVATViewer import TransformInputDialog
+            from coralnet_toolbox.MVAT.core.OrthoCamera import OrthoCamera
+
+            dialog = TransformInputDialog(self.main_window)
+            dialog.setWindowTitle("Metashape Chunk Transform (T)")
+            # Pre-fill with existing transform when re-running load_cameras
+            if self._chunk_transform is not None:
+                for i in range(4):
+                    for j in range(4):
+                        dialog.inputs[i][j].setText(str(self._chunk_transform[i, j]))
+
+            if dialog.exec_() == QDialog.Accepted:
+                self._chunk_transform = dialog.get_matrix()
+                self.ortho_camera = None
+                for raster in ortho_rasters:
+                    oc = OrthoCamera(raster, self._chunk_transform)
+                    if oc.is_valid:
+                        self.ortho_camera = oc
+                        print(
+                            f"OrthoCamera ready: {raster.basename} "
+                            f"(left={oc.ortho_left:.4f}, top={oc.ortho_top:.4f}, "
+                            f"res_x={oc.resolution_x:.6f}, res_y={oc.resolution_y:.6f})"
+                        )
+                        break
+                    else:
+                        print(f"⚠️ OrthoRaster {raster.basename} missing geo transform — skipping.")
+            else:
+                print("Chunk transform dialog cancelled; OrthoCamera not created.")
         
         # =====================================================================
         # Pre-computation Cache Check and Dialog
@@ -560,12 +697,40 @@ class MVATManager(QObject):
         """
         Handler for when the main image window loads a new image.
 
-        If the image corresponds to a camera known to the MVAT manager, set
-        that camera as the active camera in the selection model so the
-        manager and views synchronize.
+        For a perspective camera: sets it as the active camera so the manager
+        and views synchronise (proximity reorder, frustum highlight, etc.).
+
+        For the OrthoRaster: clears the active perspective selection and fills
+        the ContextMatrix with every loaded camera (the ortho shares a view
+        with all of them), leaving the ordering unchanged.
         """
         if path in self.cameras:
             self.selection_model.set_active(path)
+        else:
+            # Check if this path is an OrthoRaster (works whether or not ortho_camera has been set)
+            _raster = self.raster_manager.get_raster(path)
+            _is_ortho = getattr(_raster, 'raster_type', '') == 'OrthoRaster'
+            if _is_ortho or (self.ortho_camera is not None and path == self.ortho_camera.image_path):
+                # Deselect any active perspective camera
+                self.selection_model.set_active(None)
+                self.viewer.clear_ray()
+                # Show all cameras in the context matrix
+                if self.context_matrix is not None and self.cameras:
+                    all_paths = list(self.cameras.keys())
+                    try:
+                        self.context_matrix.update_stats_label(len(all_paths), len(all_paths))
+                    except Exception:
+                        pass
+                    try:
+                        self.context_matrix.set_target_camera_count(len(all_paths))
+                    except Exception:
+                        pass
+                    try:
+                        self.context_matrix.set_camera_order(all_paths)
+                    except Exception:
+                        pass
+                # Switch viewer to top-down orthographic projection
+                self.viewer.set_ortho_top_view()
 
     def _on_focal_point_changed(self, point_3d):
         """
@@ -732,7 +897,14 @@ class MVATManager(QObject):
         instructs the viewer to match the selected camera perspective (when
         supported), reorders the grid to prioritize nearby cameras, and asks
         the image window to load the selected image.
+
+        When path is None or empty (e.g. when switching to the OrthoRaster),
+        the selected camera is cleared without any further perspective logic.
         """
+        if not path:
+            self.selected_camera = None
+            return
+
         camera = self.cameras.get(path)
         if camera:
             self.viewer.clear_ray()
@@ -1369,6 +1541,10 @@ class MVATManager(QObject):
             return
         if self.selected_camera is None:
             return
+        if self.ortho_camera is not None:
+            current_path = getattr(self.annotation_window, 'current_image_path', None)
+            if current_path == self.ortho_camera.image_path:
+                return
 
         # NEW: Fetch reference path and current rotation from the Annotation Window
         reference_path = self.selected_camera.image_path

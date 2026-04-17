@@ -401,16 +401,19 @@ class TransformInputDialog(QDialog):
         layout.addLayout(grid_layout)
         
         btn_layout = QHBoxLayout()
+        reset_btn = QPushButton("Reset to Identity")
         ok_btn = QPushButton("Apply")
         cancel_btn = QPushButton("Cancel")
-        
+
+        reset_btn.clicked.connect(self._reset_to_identity)
         ok_btn.clicked.connect(self.accept)
         cancel_btn.clicked.connect(self.reject)
-        
+
+        btn_layout.addWidget(reset_btn)
         btn_layout.addStretch()
         btn_layout.addWidget(cancel_btn)
         btn_layout.addWidget(ok_btn)
-        
+
         layout.addLayout(btn_layout)
 
     def _try_smart_paste(self, text):
@@ -459,6 +462,12 @@ class TransformInputDialog(QDialog):
                     print(f"Failed to parse value at {i},{j}. Defaulting to 0.0")
                     matrix[i, j] = 0.0
         return matrix
+
+    def _reset_to_identity(self):
+        """Fill every cell with the identity matrix values."""
+        for i in range(4):
+            for j in range(4):
+                self.inputs[i][j].setText("1.0" if i == j else "0.0")
 
 
 class MVATViewer(QFrame):
@@ -716,6 +725,11 @@ class MVATViewer(QFrame):
                 self._action_ortho.blockSignals(False)
         except Exception:
             pass
+
+    def set_ortho_top_view(self):
+        """Switch to a top-down orthographic view for orthomosaic display."""
+        self.view_top()
+        self.toggle_orthographic(True)
         
     # --------------------------------------------------------------------------
     # DockWrapper Hooks
@@ -1969,7 +1983,7 @@ class MVATViewer(QFrame):
         self._ray_manager.remove_from_plotter(self.plotter)
         self._ray_manager.clear()
         self.plotter.render()
-            
+
     def set_ray_visible(self, visible: bool):
         """
         Toggle ray visualization visibility.

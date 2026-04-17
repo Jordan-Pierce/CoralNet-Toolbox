@@ -1254,22 +1254,45 @@ class ImageWindow(QWidget):
         
         context_menu.addSeparator()
 
-        # Cameras submenu (Import / Remove)
-        cameras_menu = context_menu.addMenu("Cameras...")
+        # Cameras / projection submenu — content differs for OrthoRasters vs perspective images
+        menu_title = "Projection..." if (
+            count == 1
+            and getattr(
+                self.raster_manager.get_raster(highlighted_paths[0]), 'raster_type', ''
+            ) == 'OrthoRaster'
+        ) else "Cameras..."
+        cameras_menu = context_menu.addMenu(menu_title)
 
-        # Add import cameras action
-        import_cameras_action = cameras_menu.addAction(
-            f"Import Cameras for {count} Highlighted Raster{'s' if count > 1 else ''}"
+        _single_ortho = (
+            count == 1
+            and getattr(
+                self.raster_manager.get_raster(highlighted_paths[0]), 'raster_type', ''
+            ) == 'OrthoRaster'
         )
-        import_cameras_action.triggered.connect(lambda: self._open_import_cameras_for_highlighted(highlighted_paths))
 
-        cameras_menu.addSeparator()
+        if _single_ortho:
+            # OrthoRasters share a view with all cameras but don't carry their own
+            # perspective calibration, so expose the projection matrix option here.
+            _ortho_path = highlighted_paths[0]
+            set_proj_action = cameras_menu.addAction("Set Matrix")
+            set_proj_action.triggered.connect(
+                lambda checked=False, p=_ortho_path: self._set_ortho_projection_matrix(p)
+            )
+        else:
+            # Normal perspective images: import / remove camera calibration
+            import_cameras_action = cameras_menu.addAction(
+                f"Import Cameras for {count} Highlighted Raster{'s' if count > 1 else ''}"
+            )
+            import_cameras_action.triggered.connect(
+                lambda: self._open_import_cameras_for_highlighted(highlighted_paths)
+            )
 
-        # Add remove cameras action
-        remove_cameras_action = cameras_menu.addAction(
-            f"Remove Cameras from {count} Highlighted Raster{'s' if count > 1 else ''}"
-        )
-        remove_cameras_action.triggered.connect(lambda: self.remove_cameras_highlighted_images())
+            cameras_menu.addSeparator()
+
+            remove_cameras_action = cameras_menu.addAction(
+                f"Remove Cameras from {count} Highlighted Raster{'s' if count > 1 else ''}"
+            )
+            remove_cameras_action.triggered.connect(lambda: self.remove_cameras_highlighted_images())
 
         # Create Z-Channel sub-menu
         z_channel_menu = context_menu.addMenu("Z-Channel...")
@@ -1311,7 +1334,50 @@ class ImageWindow(QWidget):
         delete_annotations_action.triggered.connect(
             lambda: self.delete_highlighted_images_annotations()
         )
+
         context_menu.exec_(self.tableView.viewport().mapToGlobal(position))
+
+    def _set_ortho_projection_matrix(self, path: str):
+        """
+        Show a 4×4 matrix dialog so the user can supply the Metashape orthomosaic
+        projection matrix for a local-coordinate-system project.
+
+        The matrix is stored on the OrthoRaster and, if an OrthoCamera has already
+        been built by MVATManager, its inverse is updated immediately so that
+        subsequent mouse-move events use the new projection.
+        """
+        from PyQt5.QtWidgets import QDialog
+        from coralnet_toolbox.MVAT.ui.QtMVATViewer import TransformInputDialog
+
+        raster = self.raster_manager.get_raster(path)
+        if raster is None or getattr(raster, 'raster_type', '') != 'OrthoRaster':
+            return
+
+        dialog = TransformInputDialog(self)
+        dialog.setWindowTitle("Ortho Projection Matrix")
+        # Replace the label text with ortho-specific guidance
+        lbl = dialog.layout().itemAt(0).widget()
+        if lbl is not None:
+            lbl.setText(
+                "Enter the 4×4 orthomosaic projection matrix:\n"
+                "(Leave as identity for local coordinate systems without a separate projection)"
+            )
+        # Pre-fill with any existing matrix
+        existing = getattr(raster, 'ortho_projection_matrix', None)
+        if existing is not None:
+            for i in range(4):
+                for j in range(4):
+                    dialog.inputs[i][j].setText(str(existing[i, j]))
+
+        if dialog.exec_() == QDialog.Accepted:
+            import numpy as np
+            mat = dialog.get_matrix()
+            raster.ortho_projection_matrix = mat
+            # Propagate to live OrthoCamera if available
+            mvat_manager = getattr(self.main_window, 'mvat_manager', None)
+            if mvat_manager is not None and mvat_manager.ortho_camera is not None:
+                if mvat_manager.ortho_camera.image_path == path:
+                    mvat_manager.ortho_camera.update_ortho_projection_matrix(mat)
 
     def open_batch_inference_dialog(self, highlighted_image_paths):
         """

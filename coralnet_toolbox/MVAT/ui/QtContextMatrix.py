@@ -181,6 +181,11 @@ class ContextMatrixWidget(QWidget):
         # Target-lock sync state (Phase 5)
         self.target_lock_enabled = True
         self._mvat_manager = None
+        # Camera roll cache: (ref_path, ctx_path) -> roll_degrees
+        # Camera orientations are fixed after loading, so the roll between any two
+        # cameras is constant.  Caching avoids repeating the matrix+arctan2 work
+        # on every navigation event.
+        self._roll_cache: dict = {}
 
         # Multi-camera annotation state
         self.multi_annotate_enabled = False
@@ -915,6 +920,7 @@ class ContextMatrixWidget(QWidget):
 
     def set_mvat_manager(self, manager):
         self._mvat_manager = manager
+        self._roll_cache.clear()  # camera set changed; invalidate cached roll angles
 
     def request_sync(self, targets: dict, zoom_factor: float, reference_path: str = None, base_rotation: float = 0.0):
         self.sync_to_targets(targets, zoom_factor, reference_path, base_rotation)
@@ -928,40 +934,31 @@ class ContextMatrixWidget(QWidget):
         """
         if not self.target_lock_enabled:
             return
-        
+
         ref_cam = self._mvat_manager.cameras.get(reference_path) if (reference_path and self._mvat_manager) else None
-        
+
         for i in canvas_indices:
             if i < len(self._canvas_pool):
                 canvas = self._canvas_pool[i]
                 if canvas.isVisible() and canvas.active_image:
                     absolute_zoom = canvas._min_zoom * zoom_factor
-                    
+
                     total_angle = base_rotation
-                    
-                    # NEW: Calculate relative 3D camera roll using the "Up" vector
+
                     if ref_cam is not None:
                         ctx_cam = self._mvat_manager.cameras.get(canvas.current_image_path)
                         if ctx_cam is not None:
-                            
-                            # 1. Reference camera's "Up" direction (-Y axis in image space)
-                            up_ref_cam = np.array([0.0, -1.0, 0.0])
-                            
-                            # 2. Map to World space (R.T maps camera -> world)
-                            up_world = ref_cam.R.T @ up_ref_cam
-                            
-                            # 3. Project World "Up" into the Context camera's frame
-                            up_ctx_cam = ctx_cam.R @ up_world
-                            
-                            # 4. Find the angle of this vector in the Context image plane
-                            alpha = np.degrees(np.arctan2(up_ctx_cam[1], up_ctx_cam[0]))
-                            
-                            # 5. We want this vector to point "Up" on the screen (-90 degrees).
-                            # The required rotation is the difference between -90 and its current angle.
-                            camera_roll = -90.0 - alpha
-                            
+                            cache_key = (reference_path, canvas.current_image_path)
+                            camera_roll = self._roll_cache.get(cache_key)
+                            if camera_roll is None:
+                                up_ref_cam = np.array([0.0, -1.0, 0.0])
+                                up_world = ref_cam.R.T @ up_ref_cam
+                                up_ctx_cam = ctx_cam.R @ up_world
+                                alpha = np.degrees(np.arctan2(up_ctx_cam[1], up_ctx_cam[0]))
+                                camera_roll = -90.0 - alpha
+                                self._roll_cache[cache_key] = camera_roll
                             total_angle = base_rotation + camera_roll
-                    
+
                     canvas.set_zoom_level(absolute_zoom)
                     canvas._set_absolute_rotation(total_angle)
 
@@ -979,30 +976,21 @@ class ContextMatrixWidget(QWidget):
             if i < len(self._canvas_pool):
                 canvas = self._canvas_pool[i]
                 if canvas.isVisible() and canvas.active_image:
-                    
+
                     total_angle = base_rotation
-                    
-                    # NEW: Calculate relative 3D camera roll using the "Up" vector
+
                     if ref_cam is not None:
                         ctx_cam = self._mvat_manager.cameras.get(canvas.current_image_path)
                         if ctx_cam is not None:
-                            
-                            # 1. Reference camera's "Up" direction (-Y axis in image space)
-                            up_ref_cam = np.array([0.0, -1.0, 0.0])
-                            
-                            # 2. Map to World space (R.T maps camera -> world)
-                            up_world = ref_cam.R.T @ up_ref_cam
-                            
-                            # 3. Project World "Up" into the Context camera's frame
-                            up_ctx_cam = ctx_cam.R @ up_world
-                            
-                            # 4. Find the angle of this vector in the Context image plane
-                            alpha = np.degrees(np.arctan2(up_ctx_cam[1], up_ctx_cam[0]))
-                            
-                            # 5. We want this vector to point "Up" on the screen (-90 degrees).
-                            # The required rotation is the difference between -90 and its current angle.
-                            camera_roll = -90.0 - alpha
-                            
+                            cache_key = (reference_path, canvas.current_image_path)
+                            camera_roll = self._roll_cache.get(cache_key)
+                            if camera_roll is None:
+                                up_ref_cam = np.array([0.0, -1.0, 0.0])
+                                up_world = ref_cam.R.T @ up_ref_cam
+                                up_ctx_cam = ctx_cam.R @ up_world
+                                alpha = np.degrees(np.arctan2(up_ctx_cam[1], up_ctx_cam[0]))
+                                camera_roll = -90.0 - alpha
+                                self._roll_cache[cache_key] = camera_roll
                             total_angle = base_rotation + camera_roll
 
                     # Snap to target with the synchronized rotation
