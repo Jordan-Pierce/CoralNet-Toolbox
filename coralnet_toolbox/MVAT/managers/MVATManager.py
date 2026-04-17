@@ -570,47 +570,47 @@ class MVATManager(QObject):
             return
 
         # =====================================================================
-        # OrthoRaster: prompt for chunk transform T, then build OrthoCamera
+        # OrthoRaster: build OrthoCamera from stored chunk transform state
         # =====================================================================
         if ortho_rasters:
-            from PyQt5.QtWidgets import QDialog
-            from coralnet_toolbox.MVAT.ui.QtMVATViewer import TransformInputDialog
             from coralnet_toolbox.MVAT.core.OrthoCamera import OrthoCamera
 
-            dialog = TransformInputDialog(self.main_window)
-            dialog.setWindowTitle("Metashape Chunk Transform (T)")
-            # Pre-fill with existing transform when re-running load_cameras
-            if self._chunk_transform is not None:
-                for i in range(4):
-                    for j in range(4):
-                        dialog.inputs[i][j].setText(str(self._chunk_transform[i, j]))
+            chunk_transform = getattr(ortho_rasters[0], 'chunk_transform_matrix', None)
+            if chunk_transform is None:
+                chunk_transform = self._chunk_transform
+            if chunk_transform is None:
+                chunk_transform = np.eye(4, dtype=np.float64)
 
-            if dialog.exec_() == QDialog.Accepted:
-                self._chunk_transform = dialog.get_matrix()
-                self.ortho_camera = None
-                for raster in ortho_rasters:
-                    oc = OrthoCamera(raster, self._chunk_transform)
-                    if oc.is_valid:
-                        self.ortho_camera = oc
-                        print(
-                            f"OrthoCamera ready: {raster.basename} "
-                            f"(left={oc.ortho_left:.4f}, top={oc.ortho_top:.4f}, "
-                            f"res_x={oc.resolution_x:.6f}, res_y={oc.resolution_y:.6f})"
-                        )
-                        print(
-                            f"[ORTHO DEBUG] ortho_meta: width={raster.width}, height={raster.height}, "
-                            f"left={oc.ortho_left}, top={oc.ortho_top}, "
-                            f"res_x={oc.resolution_x}, res_y={oc.resolution_y}, "
-                            f"crs={getattr(getattr(getattr(raster, '_rasterio_src', None), 'crs', None), 'name', None)}"
-                        )
-                        print(f"[ORTHO DEBUG] chunk_transform:\n{self._chunk_transform}")
-                        print(
-                            f"[ORTHO DEBUG] ortho_projection_matrix:\n"
-                            f"{getattr(raster, 'ortho_projection_matrix', None)}"
-                        )
-                        break
-                    else:
-                        print(f"⚠️ OrthoRaster {raster.basename} missing geo transform — skipping.")
+            self._chunk_transform = np.asarray(chunk_transform, dtype=np.float64)
+            self.ortho_camera = None
+            for raster in ortho_rasters:
+                raster_transform = getattr(raster, 'chunk_transform_matrix', None)
+                if raster_transform is None:
+                    raster_transform = self._chunk_transform
+
+                raster.chunk_transform_matrix = np.asarray(raster_transform, dtype=np.float64).copy()
+                oc = OrthoCamera(raster, raster.chunk_transform_matrix)
+                if oc.is_valid:
+                    self.ortho_camera = oc
+                    print(
+                        f"OrthoCamera ready: {raster.basename} "
+                        f"(left={oc.ortho_left:.4f}, top={oc.ortho_top:.4f}, "
+                        f"res_x={oc.resolution_x:.6f}, res_y={oc.resolution_y:.6f})"
+                    )
+                    print(
+                        f"[ORTHO DEBUG] ortho_meta: width={raster.width}, height={raster.height}, "
+                        f"left={oc.ortho_left}, top={oc.ortho_top}, "
+                        f"res_x={oc.resolution_x}, res_y={oc.resolution_y}, "
+                        f"crs={getattr(getattr(getattr(raster, '_rasterio_src', None), 'crs', None), 'name', None)}"
+                    )
+                    print(f"[ORTHO DEBUG] chunk_transform:\n{raster.chunk_transform_matrix}")
+                    print(
+                        f"[ORTHO DEBUG] ortho_projection_matrix:\n"
+                        f"{getattr(raster, 'ortho_projection_matrix', None)}"
+                    )
+                    break
+                else:
+                    print(f"⚠️ OrthoRaster {raster.basename} missing geo transform — skipping.")
             else:
                 print("Chunk transform dialog cancelled; OrthoCamera not created.")
         
@@ -735,9 +735,9 @@ class MVATManager(QObject):
         For a perspective camera: sets it as the active camera so the manager
         and views synchronise (proximity reorder, frustum highlight, etc.).
 
-        For the OrthoRaster: clears the active perspective selection and fills
-        the ContextMatrix with every loaded camera (the ortho shares a view
-        with all of them), leaving the ordering unchanged.
+        For the OrthoRaster: sets selected_camera to ortho_camera so that
+        multi-annotation can project cursor previews and paint operations
+        into visible context cameras.
         """
         if path in self.cameras:
             self.selection_model.set_active(path)
@@ -746,8 +746,10 @@ class MVATManager(QObject):
             _raster = self.raster_manager.get_raster(path)
             _is_ortho = getattr(_raster, 'raster_type', '') == 'OrthoRaster'
             if _is_ortho or (self.ortho_camera is not None and path == self.ortho_camera.image_path):
-                # Deselect any active perspective camera
+                # Deselect any active perspective camera from selection model
                 self.selection_model.set_active(None)
+                # BUT: set selected_camera to ortho_camera so that painting/preview works
+                self.selected_camera = self.ortho_camera
                 self.viewer.clear_ray()
                 # Show all cameras in the context matrix
                 if self.context_matrix is not None and self.cameras:
@@ -1865,6 +1867,10 @@ class MVATManager(QObject):
     def _on_cursor_preview_moved(self, scene_pos, item_factory):
         """Project the cursor position into visible context cameras and show previews.
 
+        When on an OrthoCamera (orthomosaic), projects the cursor into all visible
+        perspective cameras. When on a perspective camera, projects into all visible
+        context cameras.
+
         Uses the blazingly fast center-point projection to display brush previews
         in all visible context cameras. The tool factory already draws the correct
         brush size visually; we just need to tell it where the center is.
@@ -1873,7 +1879,14 @@ class MVATManager(QObject):
             return
 
         px, py = int(scene_pos.x()), int(scene_pos.y())
-        visible_paths = self._get_visible_context_paths()
+
+        # Determine which cameras should show previews
+        if self.ortho_camera is not None and self.selected_camera == self.ortho_camera:
+            # When on orthomosaic: show previews in all visible perspective cameras
+            visible_paths = self._get_ortho_target_cameras()
+        else:
+            # When on perspective camera: show previews in visible context cameras
+            visible_paths = self._get_visible_context_paths()
 
         # Use the blazingly fast center-point projection
         projections = self._build_projection(px, py)
@@ -1885,12 +1898,16 @@ class MVATManager(QObject):
             self.context_matrix.clear_all_cursor_previews()
 
     def _on_live_stroke_applied(self, scene_pos, size, shape, color):
-        """Instantly projects the center of the brush to context cameras for a live trail."""
+        """Instantly projects the center of the brush to context cameras for a live trail.
+
+        When on an OrthoCamera (orthomosaic), projects into all visible perspective cameras.
+        When on a perspective camera, projects into visible context cameras.
+        """
         if self.selected_camera is None or self.context_matrix is None:
             return
 
         px, py = int(scene_pos.x()), int(scene_pos.y())
-        
+
         # We already have a blazingly fast center-point projector!
         projections = self._build_projection(px, py)
         try:
@@ -1937,6 +1954,20 @@ class MVATManager(QObject):
     def _get_visible_context_paths(self) -> set:
         """Return the set of image paths currently visible in the context matrix."""
         return set(self._get_visible_context_camera_paths())
+
+    def _get_ortho_target_cameras(self) -> set:
+        """Get target camera paths when painting on OrthoCamera.
+
+        Returns the set of visible perspective camera paths that should receive
+        multi-annotations when painting on an orthomosaic. This is the same as
+        the visible context target paths, since we want to paint all visible cameras
+        that can see the orthomosaic's geometry.
+        """
+        if self.ortho_camera is None:
+            return set()
+        # When on orthomosaic, propagate to all visible context cameras
+        # (the ContextMatrix handles filtering for which cameras are viewable)
+        return self._get_visible_context_target_paths()
 
     def _on_context_visible_cameras_changed(self, visible_paths):
         """Refresh viewer state when the ContextMatrix changes its visible cameras."""
@@ -2061,8 +2092,10 @@ class MVATManager(QObject):
     def _build_projection(self, px: int, py: int) -> dict:
         """Cast a ray from the selected camera at (px, py) and return projections.
 
-        highlighted_paths = set(highlighted_paths or [])
-        highlighted_paths.update(self._get_visible_context_paths())
+        Handles both perspective cameras and OrthoCamera (orthomosaic):
+        - For perspective cameras: uses existing ray-projection logic
+        - For OrthoCamera: converts orthomosaic pixel → geo → world space
+
         Returns:
             dict mapping image_path -> (u, v, is_valid), or empty dict on failure.
         """
@@ -2073,65 +2106,107 @@ class MVATManager(QObject):
         primary_target = self.viewer.scene_context.get_primary_target()
         ray = None
 
-        # --- PLAN A: Index Map (Flawless 3D Coordinate) ---
-        index_map = camera._raster.index_map
-        if index_map is not None and primary_target is not None:
+        # Special handling for OrthoCamera (orthomosaic)
+        if self.ortho_camera is not None and camera == self.ortho_camera:
             try:
-                # Ensure we are inside the image bounds
-                if 0 <= px < camera.width and 0 <= py < camera.height:
+                if not camera.is_valid:
+                    return {}
+
+                # Convert orthomosaic pixel → geo → world space
+                X, Y = camera.pixel_to_geo(px, py)
+                Z = camera._raster.get_z_value(px, py)
+                if Z is None or np.isnan(Z):
+                    Z = 0.0
+
+                world_pt = camera.geo_to_world(X, Y, Z)
+
+                # Get element ID if index_map is available
+                element_id = None
+                index_map = camera._raster.index_map
+                if index_map is not None and 0 <= px < camera.width and 0 <= py < camera.height:
                     candidate_id = int(index_map[py, px])
                     if candidate_id > -1:
-                        coord = primary_target.get_element_coordinate(candidate_id)
-                        if coord is not None:
-                            origin = camera.position.copy()
-                            direction = coord - origin
-                            norm = np.linalg.norm(direction)
-                            direction = direction / norm if norm > 0 else camera.R.T @ np.array([0, 0, 1])
+                        element_id = candidate_id
 
-                            ray = CameraRay(
-                                origin=origin,
-                                direction=direction,
-                                terminal_point=coord,
-                                has_accurate_depth=True,
-                                pixel_coord=(px, py),
-                                source_camera=camera,
-                                element_id=candidate_id
-                            )
-            except Exception:
-                pass
+                # Construct a vertical ray from the orthomosaic
+                # The ray origin is slightly above the world point, direction points down
+                vertical_dir = camera.get_vertical_direction_world()
+                ray_origin = world_pt - vertical_dir * 0.1  # Slightly above the surface
+                ray_direction = vertical_dir
 
-        # --- PLAN B: Depth Map / Scene Median Fallback ---
-        if ray is None:
-            depth = None
-            try:
-                raster = camera._raster
-                if raster.z_channel is not None and raster.z_data_type == 'depth':
-                    depth = raster.get_z_value(px, py)
-            except Exception:
-                pass
-
-            # Cache median depth per camera — only recompute when active camera changes
-            cache_key = id(camera)
-            if getattr(self, '_median_depth_cache_key', None) != cache_key:
-                try:
-                    self._cached_median_depth = self.viewer.get_scene_median_depth(camera.position)
-                except Exception:
-                    self._cached_median_depth = 10.0
-                self._median_depth_cache_key = cache_key
-
-            default_depth = self._cached_median_depth or 10.0
-
-            try:
-                ray = CameraRay.from_pixel_and_camera(
-                    pixel_xy=(px, py),
-                    camera=camera,
-                    depth=depth,
-                    default_depth=default_depth,
+                ray = CameraRay(
+                    origin=ray_origin,
+                    direction=ray_direction,
+                    terminal_point=world_pt,
+                    has_accurate_depth=True,
+                    pixel_coord=(px, py),
+                    source_camera=camera,
+                    element_id=element_id
                 )
-            except Exception:
+            except Exception as e:
+                print(f"Error building ortho projection: {e}")
                 return {}
+        else:
+            # Standard perspective camera logic
+            # --- PLAN A: Index Map (Flawless 3D Coordinate) ---
+            index_map = camera._raster.index_map
+            if index_map is not None and primary_target is not None:
+                try:
+                    # Ensure we are inside the image bounds
+                    if 0 <= px < camera.width and 0 <= py < camera.height:
+                        candidate_id = int(index_map[py, px])
+                        if candidate_id > -1:
+                            coord = primary_target.get_element_coordinate(candidate_id)
+                            if coord is not None:
+                                origin = camera.position.copy()
+                                direction = coord - origin
+                                norm = np.linalg.norm(direction)
+                                direction = direction / norm if norm > 0 else camera.R.T @ np.array([0, 0, 1])
 
-        return ray.project_to_cameras(self.cameras)
+                                ray = CameraRay(
+                                    origin=origin,
+                                    direction=direction,
+                                    terminal_point=coord,
+                                    has_accurate_depth=True,
+                                    pixel_coord=(px, py),
+                                    source_camera=camera,
+                                    element_id=candidate_id
+                                )
+                except Exception:
+                    pass
+
+            # --- PLAN B: Depth Map / Scene Median Fallback ---
+            if ray is None:
+                depth = None
+                try:
+                    raster = camera._raster
+                    if raster.z_channel is not None and raster.z_data_type == 'depth':
+                        depth = raster.get_z_value(px, py)
+                except Exception:
+                    pass
+
+                # Cache median depth per camera — only recompute when active camera changes
+                cache_key = id(camera)
+                if getattr(self, '_median_depth_cache_key', None) != cache_key:
+                    try:
+                        self._cached_median_depth = self.viewer.get_scene_median_depth(camera.position)
+                    except Exception:
+                        self._cached_median_depth = 10.0
+                    self._median_depth_cache_key = cache_key
+
+                default_depth = self._cached_median_depth or 10.0
+
+                try:
+                    ray = CameraRay.from_pixel_and_camera(
+                        pixel_xy=(px, py),
+                        camera=camera,
+                        depth=depth,
+                        default_depth=default_depth,
+                    )
+                except Exception:
+                    return {}
+
+        return ray.project_to_cameras(self.cameras) if ray is not None else {}
 
     def _on_patch_annotation_created(self, annotation_id: str):
         """Propagate a newly created PatchAnnotation into all visible context cameras."""
@@ -2430,6 +2505,9 @@ class MVATManager(QObject):
     def _on_brush_stroke_applied(self, scene_pos, label_id: str, brush_mask):
         """Propagate a brush stroke into all visible context cameras.
 
+        When painting on an OrthoRaster/OrthoCamera, applies the brush to all visible
+        perspective cameras that can see the same 3D geometry.
+
         Uses True 3D Mapping when the source camera's index map is available:
         1. Extract the element IDs painted under the brush using the source
            camera's index_map.
@@ -2440,7 +2518,7 @@ class MVATManager(QObject):
         Falls back to the legacy 2D center-stamp when the index map is absent
         (e.g., visibility not yet computed) or when no scene geometry was hit.
         """
-        
+
         if self._propagating_annotation:
             return
         if self.selected_camera is None:
@@ -2449,7 +2527,14 @@ class MVATManager(QObject):
         px = int(scene_pos.x())
         py = int(scene_pos.y())
 
-        selected_paths = self._get_visible_context_target_paths()
+        # Determine target cameras based on source camera type
+        if self.ortho_camera is not None and self.selected_camera == self.ortho_camera:
+            # When painting on orthomosaic: propagate to all visible perspective cameras
+            selected_paths = self._get_ortho_target_cameras()
+        else:
+            # When painting on perspective camera: propagate to visible context cameras
+            selected_paths = self._get_visible_context_target_paths()
+
         project_labels = list(self.main_window.label_window.labels)
 
         # Quick exit: nothing to propagate to
@@ -2481,7 +2566,7 @@ class MVATManager(QObject):
             except Exception as e:
                 print(f"⚠️ Dense mesh hit test failed: {e}. Falling back to index_map.")
                 painted_ids = None
-        
+
         # If mesh hit test didn't work, try index_map fallback
         if painted_ids is None:
             # PointCloud (or non-mesh) target: use the pre-computed index_map.
@@ -2519,7 +2604,7 @@ class MVATManager(QObject):
                     painted_ids = unique_ids[unique_ids > -1]  # filter background
 
         # Whether the source camera has valid 3D geometry hits to propagate
-        use_3d = painted_ids is not None and len(painted_ids) > 0 
+        use_3d = painted_ids is not None and len(painted_ids) > 0
 
         # ------------------------------------------------------------------
         # Paint the 3D Model directly
@@ -2529,11 +2614,11 @@ class MVATManager(QObject):
             if primary_target and hasattr(primary_target, 'apply_labels'):
                 # 1. Convert QColor to RGB tuple
                 target_color = (source_label.color.red(), source_label.color.green(), source_label.color.blue())
-                
+
                 # 2. Get the integer class_id mapped to this label from the source mask
                 source_raster = self.raster_manager.get_raster(self.selected_camera.image_path)
                 source_mask = source_raster.get_mask_annotation(project_labels) if source_raster else None
-                
+
                 if source_mask:
                     source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
                     # Sync if it's a brand new label
@@ -2599,31 +2684,41 @@ class MVATManager(QObject):
 
     def _on_fill_stroke_applied(self, scene_pos, label_id: str, fill_mask=None):
         """Propagate a fill operation into all visible context cameras.
-        
+
+        When painting on an OrthoRaster/OrthoCamera, applies the fill to all visible
+        perspective cameras that can see the same 3D geometry.
+
         Uses True 3D Mapping when the source camera's index map is available:
         1. Extract all element IDs under the filled region using the source
            camera's index_map and the fill_mask.
         2. Update the 3D Scene Product directly with the new Class ID and Color.
         3. Query each target camera's inverted index for the same IDs.
         4. Fill the connected regions in the target masks.
-        
+
         Falls back to the legacy 2D center-point projection when the index map is absent.
         """
         if self._propagating_annotation:
             return
         if self.selected_camera is None:
             return
-        
+
         px = int(scene_pos.x())
         py = int(scene_pos.y())
-        
-        selected_paths = self._get_visible_context_target_paths()
+
+        # Determine target cameras based on source camera type
+        if self.ortho_camera is not None and self.selected_camera == self.ortho_camera:
+            # When painting on orthomosaic: propagate to all visible perspective cameras
+            selected_paths = self._get_ortho_target_cameras()
+        else:
+            # When painting on perspective camera: propagate to visible context cameras
+            selected_paths = self._get_visible_context_target_paths()
+
         project_labels = list(self.main_window.label_window.labels)
-        
+
         source_label = next((lbl for lbl in project_labels if lbl.id == label_id), None)
         if source_label is None:
             return
-        
+
         # ------------------------------------------------------------------
         # Phase 1: Source ID Extraction (2D → 3D)
         # ------------------------------------------------------------------
@@ -2789,6 +2884,9 @@ class MVATManager(QObject):
     def _on_erase_stroke_applied(self, scene_pos, label_id: str, brush_mask: np.ndarray):
         """Propagate an erase operation into all visible context cameras.
 
+        When painting on an OrthoRaster/OrthoCamera, applies the erase to all visible
+        perspective cameras that can see the same 3D geometry.
+
         Uses True 3D Mapping when the source camera's index map is available:
         1. Extract the element IDs beneath the eraser brush using the source
            camera's index_map.
@@ -2804,7 +2902,14 @@ class MVATManager(QObject):
             return
 
         px, py = int(scene_pos.x()), int(scene_pos.y())
-        selected_paths = self._get_visible_context_target_paths()
+
+        # Determine target cameras based on source camera type
+        if self.ortho_camera is not None and self.selected_camera == self.ortho_camera:
+            # When erasing on orthomosaic: propagate to all visible perspective cameras
+            selected_paths = self._get_ortho_target_cameras()
+        else:
+            # When erasing on perspective camera: propagate to visible context cameras
+            selected_paths = self._get_visible_context_target_paths()
 
         # Quick exit: nothing to propagate to
         if not selected_paths:
@@ -2915,6 +3020,9 @@ class MVATManager(QObject):
     def _on_sam_prediction_applied(self, scene_pos, label_id: str, binary_mask: np.ndarray):
         """Propagate a final SAM mask prediction into all visible context cameras.
 
+        When painting on an OrthoRaster/OrthoCamera, applies the SAM prediction to all visible
+        perspective cameras that can see the same 3D geometry.
+
         Uses True 3D Mapping when the source camera's index map is available:
         1. Extract the element IDs beneath the predicted binary_mask using the
            source camera's index_map (the mask is a crop centred at scene_pos).
@@ -2938,7 +3046,14 @@ class MVATManager(QObject):
         px = int(scene_pos.x())
         py = int(scene_pos.y())
 
-        selected_paths = self._get_visible_context_target_paths()
+        # Determine target cameras based on source camera type
+        if self.ortho_camera is not None and self.selected_camera == self.ortho_camera:
+            # When applying SAM on orthomosaic: propagate to all visible perspective cameras
+            selected_paths = self._get_ortho_target_cameras()
+        else:
+            # When applying SAM on perspective camera: propagate to visible context cameras
+            selected_paths = self._get_visible_context_target_paths()
+
         project_labels = list(self.main_window.label_window.labels)
 
         source_label = next((lbl for lbl in project_labels if lbl.id == label_id), None)

@@ -6,10 +6,12 @@ from .QtTileSizeInput import TileSizeInput
 from .QtUpdateImagePaths import UpdateImagePaths
 from .QtThresholdsWidget import ThresholdsWidget
 from .QtCollapsibleSection import CollapsibleSection
+from .QtTransformInput import TransformInputDialog
 
 __all__ = ["MarginInput",
            "OverlapInput",
            "TileSizeInput",
            "UpdateImagePaths",
            "ThresholdsWidget",
-           "CollapsibleSection"]
+           "CollapsibleSection",
+           "TransformInputDialog"]

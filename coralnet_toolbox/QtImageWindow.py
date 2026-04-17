@@ -1254,31 +1254,24 @@ class ImageWindow(QWidget):
         
         context_menu.addSeparator()
 
-        # Cameras / projection submenu — content differs for OrthoRasters vs perspective images
-        menu_title = "Projection..." if (
-            count == 1
-            and getattr(
-                self.raster_manager.get_raster(highlighted_paths[0]), 'raster_type', ''
-            ) == 'OrthoRaster'
-        ) else "Cameras..."
-        cameras_menu = context_menu.addMenu(menu_title)
-
-        _single_ortho = (
-            count == 1
-            and getattr(
-                self.raster_manager.get_raster(highlighted_paths[0]), 'raster_type', ''
-            ) == 'OrthoRaster'
-        )
+        highlighted_rasters = [self.raster_manager.get_raster(path) for path in highlighted_paths]
+        has_ortho = any(getattr(raster, 'raster_type', '') == 'OrthoRaster' for raster in highlighted_rasters if raster is not None)
+        _single_ortho = count == 1 and has_ortho
 
         if _single_ortho:
-            # OrthoRasters share a view with all cameras but don't carry their own
-            # perspective calibration, so expose the projection matrix option here.
+            transforms_menu = context_menu.addMenu("Transforms...")
             _ortho_path = highlighted_paths[0]
-            set_proj_action = cameras_menu.addAction("Set Matrix")
+            set_proj_action = transforms_menu.addAction("Set Projection Matrix")
             set_proj_action.triggered.connect(
                 lambda checked=False, p=_ortho_path: self._set_ortho_projection_matrix(p)
             )
-        else:
+
+            set_chunk_action = transforms_menu.addAction("Set Chunk Tranform")
+            set_chunk_action.triggered.connect(
+                lambda checked=False, p=_ortho_path: self._set_ortho_chunk_transform(p)
+            )
+        elif not has_ortho:
+            cameras_menu = context_menu.addMenu("Cameras...")
             # Normal perspective images: import / remove camera calibration
             import_cameras_action = cameras_menu.addAction(
                 f"Import Cameras for {count} Highlighted Raster{'s' if count > 1 else ''}"
@@ -1347,30 +1340,26 @@ class ImageWindow(QWidget):
         subsequent mouse-move events use the new projection.
         """
         from PyQt5.QtWidgets import QDialog
-        from coralnet_toolbox.MVAT.ui.QtMVATViewer import TransformInputDialog
+        from coralnet_toolbox.Common.QtTransformInput import TransformInputDialog
 
         raster = self.raster_manager.get_raster(path)
         if raster is None or getattr(raster, 'raster_type', '') != 'OrthoRaster':
             return
 
-        dialog = TransformInputDialog(self)
-        dialog.setWindowTitle("Ortho Projection Matrix")
-        # Replace the label text with ortho-specific guidance
-        lbl = dialog.layout().itemAt(0).widget()
-        if lbl is not None:
-            lbl.setText(
-                "Enter the 4×4 orthomosaic projection matrix:\n"
+        dialog = TransformInputDialog(
+            self,
+            title="Ortho Projection Matrix",
+            prompt_text=(
+                "Enter the 4x4 orthomosaic projection matrix:\n"
                 "(Leave as identity for local coordinate systems without a separate projection)"
-            )
-        # Pre-fill with any existing matrix
+            ),
+        )
+
         existing = getattr(raster, 'ortho_projection_matrix', None)
         if existing is not None:
-            for i in range(4):
-                for j in range(4):
-                    dialog.inputs[i][j].setText(str(existing[i, j]))
+            dialog.set_matrix(existing)
 
         if dialog.exec_() == QDialog.Accepted:
-            import numpy as np
             mat = dialog.get_matrix()
             raster.ortho_projection_matrix = mat
             # Propagate to live OrthoCamera if available
@@ -1378,6 +1367,47 @@ class ImageWindow(QWidget):
             if mvat_manager is not None and mvat_manager.ortho_camera is not None:
                 if mvat_manager.ortho_camera.image_path == path:
                     mvat_manager.ortho_camera.update_ortho_projection_matrix(mat)
+            try:
+                self.raster_manager.rasterUpdated.emit(path)
+            except Exception:
+                pass
+
+    def _set_ortho_chunk_transform(self, path: str):
+        """Show a 4x4 matrix dialog for the OrthoRaster chunk transform."""
+        from PyQt5.QtWidgets import QDialog
+        from coralnet_toolbox.Common.QtTransformInput import TransformInputDialog
+
+        raster = self.raster_manager.get_raster(path)
+        if raster is None or getattr(raster, 'raster_type', '') != 'OrthoRaster':
+            return
+
+        dialog = TransformInputDialog(
+            self,
+            title="Metashape Chunk Transform",
+            prompt_text=(
+                "Enter the 4x4 chunk transform matrix:\n"
+                "(Leave as identity for local coordinate systems without a chunk transform)"
+            ),
+        )
+
+        existing = getattr(raster, 'chunk_transform_matrix', None)
+        if existing is not None:
+            dialog.set_matrix(existing)
+
+        if dialog.exec_() == QDialog.Accepted:
+            mat = dialog.get_matrix()
+            raster.chunk_transform_matrix = mat
+
+            mvat_manager = getattr(self.main_window, 'mvat_manager', None)
+            if mvat_manager is not None:
+                mvat_manager._chunk_transform = mat
+                if mvat_manager.ortho_camera is not None and mvat_manager.ortho_camera.image_path == path:
+                    mvat_manager.ortho_camera.update_chunk_transform(mat)
+
+            try:
+                self.raster_manager.rasterUpdated.emit(path)
+            except Exception:
+                pass
 
     def open_batch_inference_dialog(self, highlighted_image_paths):
         """

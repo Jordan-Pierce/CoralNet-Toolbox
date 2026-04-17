@@ -33,6 +33,10 @@ class OrthoRaster(Raster):
         # Mirrors Metashape's orthomosaic.projection.matrix for local CRS projects.
         self.ortho_projection_matrix: np.ndarray = np.eye(4, dtype=np.float64)
 
+        # User-settable 4×4 chunk transform matrix (identity by default).
+        # Stored so orthomosaic-specific edits can persist alongside the raster.
+        self.chunk_transform_matrix: np.ndarray = np.eye(4, dtype=np.float64)
+
         # Extract geo extent from rasterio affine transform
         self._init_geo_metadata()
 
@@ -68,6 +72,8 @@ class OrthoRaster(Raster):
         data['raster_type'] = 'OrthoRaster'
         if self.ortho_projection_matrix is not None:
             data['ortho_projection_matrix'] = self.ortho_projection_matrix.tolist()
+        if self.chunk_transform_matrix is not None:
+            data['chunk_transform_matrix'] = self.chunk_transform_matrix.tolist()
         return data
 
     @classmethod
@@ -78,4 +84,7 @@ class OrthoRaster(Raster):
         proj_mat = raster_dict.get('ortho_projection_matrix')
         if proj_mat is not None:
             raster.ortho_projection_matrix = np.array(proj_mat, dtype=np.float64)
+        chunk_mat = raster_dict.get('chunk_transform_matrix')
+        if chunk_mat is not None:
+            raster.chunk_transform_matrix = np.array(chunk_mat, dtype=np.float64)
         return raster

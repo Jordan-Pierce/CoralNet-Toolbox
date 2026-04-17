@@ -10,7 +10,6 @@ Customized interaction style:
 """
 
 import os
-import re
 import time
 import traceback
 
@@ -22,7 +21,7 @@ from PyQt5.QtWidgets import (
     QApplication, QFrame, QVBoxLayout,
     QWidget, QHBoxLayout, QLabel, QSpinBox, QComboBox,
     QToolBar, QToolButton, QMenu, QAction, QActionGroup, QStackedLayout,
-    QDialog, QGridLayout, QLineEdit, QPushButton, QVBoxLayout, QLabel, QHBoxLayout
+    QVBoxLayout, QLabel, QHBoxLayout
 )
 
 from coralnet_toolbox.MVAT.core.Ray import CameraRay, BatchedRayManager
@@ -369,105 +368,6 @@ class _CameraInertiaController(QObject):
             self._zoom_velocity *= self._ZOOM_DECAY
             if abs(self._zoom_velocity) <= self._MIN_ZOOM_VEL:
                 self._zoom_velocity = 0.0
-
-
-class TransformInputDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Input Chunk Transform Matrix")
-        self.setMinimumWidth(600)
-        
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Enter the 4x4 chunk_transform matrix:\n" 
-                                "(You can paste the entire terminal log block directly into the top-left box)"))
-        
-        grid_layout = QGridLayout()
-        self.inputs = []
-        
-        # Create 4x4 grid of inputs
-        for i in range(4):
-            row_inputs = []
-            for j in range(4):
-                line_edit = QLineEdit()
-                # Default to Identity matrix
-                line_edit.setText("1.0" if i == j else "0.0")
-                grid_layout.addWidget(line_edit, i, j)
-                row_inputs.append(line_edit)
-            self.inputs.append(row_inputs)
-            
-        # Hook up the smart paste listener to the very first box
-        self.inputs[0][0].textChanged.connect(self._try_smart_paste)
-            
-        layout.addLayout(grid_layout)
-        
-        btn_layout = QHBoxLayout()
-        reset_btn = QPushButton("Reset to Identity")
-        ok_btn = QPushButton("Apply")
-        cancel_btn = QPushButton("Cancel")
-
-        reset_btn.clicked.connect(self._reset_to_identity)
-        ok_btn.clicked.connect(self.accept)
-        cancel_btn.clicked.connect(self.reject)
-
-        btn_layout.addWidget(reset_btn)
-        btn_layout.addStretch()
-        btn_layout.addWidget(cancel_btn)
-        btn_layout.addWidget(ok_btn)
-
-        layout.addLayout(btn_layout)
-
-    def _try_smart_paste(self, text):
-        """
-        Detects if a matrix string was pasted, strips out log prefixes (like dates/times),
-        extracts exactly 16 floats from inside the brackets, and auto-fills the grid.
-        """
-        if '[' not in text or ']' not in text:
-            return
-            
-        # Extract contents strictly within brackets to avoid matching dates/times in the log prefix
-        floats = []
-        blocks = re.findall(r'\[(.*?)\]', text)
-        for block in blocks:
-            for val in block.split(','):
-                val = val.strip()
-                if val:
-                    try:
-                        floats.append(float(val))
-                    except ValueError:
-                        pass
-        
-        # If we successfully parsed exactly a 4x4 matrix
-        if len(floats) == 16:
-            # Disconnect temporarily to avoid infinite recursive triggering
-            self.inputs[0][0].textChanged.disconnect(self._try_smart_paste)
-            
-            for i in range(4):
-                for j in range(4):
-                    # Inject the parsed floats into their respective boxes
-                    self.inputs[i][j].setText(str(floats[i * 4 + j]))
-                    
-            # Reconnect the listener
-            self.inputs[0][0].textChanged.connect(self._try_smart_paste)
-        
-    def get_matrix(self):
-        import numpy as np
-        matrix = np.eye(4, dtype=np.float64)
-        for i in range(4):
-            for j in range(4):
-                try:
-                    # Strip any accidental brackets or commas if someone pastes a single value
-                    val_str = self.inputs[i][j].text().strip('[], ')
-                    matrix[i, j] = float(val_str)
-                except ValueError:
-                    print(f"Failed to parse value at {i},{j}. Defaulting to 0.0")
-                    matrix[i, j] = 0.0
-        return matrix
-
-    def _reset_to_identity(self):
-        """Fill every cell with the identity matrix values."""
-        for i in range(4):
-            for j in range(4):
-                self.inputs[i][j].setText("1.0" if i == j else "0.0")
 
 
 class MVATViewer(QFrame):

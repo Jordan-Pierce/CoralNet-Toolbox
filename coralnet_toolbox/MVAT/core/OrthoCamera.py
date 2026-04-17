@@ -47,6 +47,7 @@ class OrthoCamera:
         # Chunk transform T and its inverse
         self._chunk_transform = np.asarray(chunk_transform, dtype=np.float64)
         self._T_inv = self._safe_inv(self._chunk_transform)
+        self._raster.chunk_transform_matrix = self._chunk_transform.copy()
 
         # Ortho projection matrix (user-overridable; defaults to identity)
         proj_mat = getattr(raster, 'ortho_projection_matrix', None)
@@ -137,6 +138,7 @@ class OrthoCamera:
         """Replace the chunk transform and recompute its inverse."""
         self._chunk_transform = np.asarray(T, dtype=np.float64)
         self._T_inv = self._safe_inv(self._chunk_transform)
+        self._raster.chunk_transform_matrix = self._chunk_transform.copy()
 
     def update_ortho_projection_matrix(self, proj_mat: np.ndarray):
         """Replace the ortho projection matrix, sync back to the raster, recompute inverse."""
