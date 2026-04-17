@@ -517,6 +517,7 @@ class MVATViewer(QFrame):
         self._show_rays_enabled = show_rays
         self._ray_visible = True
         self._ray_manager = BatchedRayManager()
+        self._ortho_ray_manager = BatchedRayManager()
         # Frustum and thumbnail management
         self._frustum_manager = BatchedFrustumManager()
         self._camera_animator = CameraAnimator(self.plotter, duration_ms=400)
@@ -1977,9 +1978,86 @@ class MVATViewer(QFrame):
         
         # Update display
         self.plotter.render()
+
+    def show_ortho_ray(self, world_point: np.ndarray, ortho_direction: np.ndarray,
+                       color: tuple = RAY_COLOR_SELECTED):
+        """Display the orthomosaic debug ray as a single cached line actor."""
+        if world_point is None:
+            self.clear_ortho_ray()
+            return
+
+        world_point = np.asarray(world_point, dtype=np.float64)
+        ortho_direction = np.asarray(ortho_direction, dtype=np.float64)
+        direction_norm = np.linalg.norm(ortho_direction)
+        if not np.isfinite(direction_norm) or direction_norm <= 1e-12:
+            ortho_direction = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+        else:
+            ortho_direction = ortho_direction / direction_norm
+
+        bounds = None
+        try:
+            if self.scene_context is not None and self.scene_context.has_any_product():
+                bounds = self.scene_context.unified_bounds()
+        except Exception:
+            bounds = None
+
+        if bounds is None:
+            bounds = self.get_bounds()
+
+        if bounds is not None:
+            try:
+                scene_size = float(np.sqrt(
+                    (bounds[1] - bounds[0]) ** 2
+                    + (bounds[3] - bounds[2]) ** 2
+                    + (bounds[5] - bounds[4]) ** 2
+                ))
+                ray_length = scene_size if np.isfinite(scene_size) and scene_size > 1e-6 else 100.0
+            except Exception:
+                ray_length = 100.0
+        else:
+            ray_length = 100.0
+
+        sky_origin = world_point + (ortho_direction * ray_length)
+        ortho_ray = CameraRay(
+            origin=sky_origin,
+            direction=world_point - sky_origin,
+            terminal_point=world_point,
+            has_accurate_depth=True,
+            pixel_coord=None,
+            source_camera=None,
+        )
+
+        rays_with_colors = [(ortho_ray, color)]
+        if self._ortho_ray_manager.ray_actor is not None and self._ortho_ray_manager._num_rays == 1:
+            self._ortho_ray_manager.update_ray_endpoints(rays_with_colors)
+        else:
+            self._ortho_ray_manager.build_ray_batch(rays_with_colors)
+            self._ortho_ray_manager.add_to_plotter(self.plotter, line_width=4)
+
+        self._ortho_ray_manager.set_visibility(self._ray_visible)
+        self.plotter.render()
+
+    def clear_ortho_ray(self):
+        """Hide the orthomosaic debug ray without destroying its cached actor."""
+        actor = self._ortho_ray_manager.ray_actor
+        if actor is None:
+            return
+
+        try:
+            if actor.GetVisibility():
+                self._ortho_ray_manager.set_visibility(False)
+                self.plotter.render()
+        except Exception:
+            try:
+                self._ortho_ray_manager.set_visibility(False)
+                self.plotter.render()
+            except Exception:
+                pass
         
     def clear_ray(self):
         """Remove any displayed ray visualization."""
+        if self._ray_manager.ray_actor is None and self._ray_manager.ray_mesh is None:
+            return
         self._ray_manager.remove_from_plotter(self.plotter)
         self._ray_manager.clear()
         self.plotter.render()
@@ -1993,6 +2071,7 @@ class MVATViewer(QFrame):
         """
         self._ray_visible = visible
         self._ray_manager.set_visibility(visible)
+        self._ortho_ray_manager.set_visibility(visible)
         self.plotter.render()
         
     def get_scene_median_depth(self, camera_position: np.ndarray) -> float:
@@ -2532,6 +2611,12 @@ class MVATViewer(QFrame):
         # Clean up ray manager
         if hasattr(self, '_ray_manager'):
             self._ray_manager.clear()
+        if hasattr(self, '_ortho_ray_manager'):
+            try:
+                self._ortho_ray_manager.remove_from_plotter(self.plotter)
+            except Exception:
+                pass
+            self._ortho_ray_manager.clear()
 
         try:
             self._cancel_camera_motion()

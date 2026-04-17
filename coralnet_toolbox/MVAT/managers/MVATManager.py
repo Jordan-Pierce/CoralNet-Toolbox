@@ -90,9 +90,11 @@ class MousePositionBridge(QObject):
         if ortho_camera is not None:
             current_path = getattr(self.manager.annotation_window, 'current_image_path', None)
             if current_path == ortho_camera.image_path:
+                self.manager.viewer.clear_ray()
                 self._process_ortho_position(x, y, ortho_camera)
                 return
 
+        self.manager.viewer.clear_ortho_ray()
 
         camera = self.manager.selected_camera
         if camera is None or not (0 <= x < camera.width and 0 <= y < camera.height):
@@ -301,6 +303,7 @@ class MousePositionBridge(QObject):
         _t0 = time.monotonic()
 
         if not (0 <= x < ortho_camera.width and 0 <= y < ortho_camera.height):
+            self.manager.viewer.clear_ortho_ray()
             self.clear_all_markers()
             return
 
@@ -312,11 +315,32 @@ class MousePositionBridge(QObject):
         Z = ortho_camera._raster.get_z_value(x, y)
         _t2 = time.monotonic()
         if Z is None:
+            print(
+                f"[ORTHO DEBUG] pixel=({x}, {y}) "
+                f"ortho=({X:.6f}, {Y:.6f}) Z=None "
+                f"image={ortho_camera.image_path}"
+            )
+            self.manager.viewer.clear_ortho_ray()
             self.clear_all_markers()
             return
 
         world_pt = ortho_camera.geo_to_world(X, Y, Z)
         _t3 = time.monotonic()
+
+        print(
+            f"[ORTHO DEBUG] pixel=({x}, {y}) "
+            f"ortho=({X:.6f}, {Y:.6f}, {Z:.6f}) "
+            f"world={np.array2string(world_pt, precision=6, separator=', ')} "
+            f"image={ortho_camera.image_path}"
+        )
+
+        try:
+            self.manager.viewer.show_ortho_ray(
+                world_pt,
+                ortho_camera.get_vertical_direction_world(),
+            )
+        except Exception:
+            pass
 
         # Project to all visible context cameras and build marker dicts
         projections = {}
@@ -572,6 +596,17 @@ class MVATManager(QObject):
                             f"OrthoCamera ready: {raster.basename} "
                             f"(left={oc.ortho_left:.4f}, top={oc.ortho_top:.4f}, "
                             f"res_x={oc.resolution_x:.6f}, res_y={oc.resolution_y:.6f})"
+                        )
+                        print(
+                            f"[ORTHO DEBUG] ortho_meta: width={raster.width}, height={raster.height}, "
+                            f"left={oc.ortho_left}, top={oc.ortho_top}, "
+                            f"res_x={oc.resolution_x}, res_y={oc.resolution_y}, "
+                            f"crs={getattr(getattr(getattr(raster, '_rasterio_src', None), 'crs', None), 'name', None)}"
+                        )
+                        print(f"[ORTHO DEBUG] chunk_transform:\n{self._chunk_transform}")
+                        print(
+                            f"[ORTHO DEBUG] ortho_projection_matrix:\n"
+                            f"{getattr(raster, 'ortho_projection_matrix', None)}"
                         )
                         break
                     else:
