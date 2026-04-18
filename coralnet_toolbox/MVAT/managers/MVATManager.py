@@ -300,7 +300,6 @@ class MousePositionBridge(QObject):
         ray tracing.  The z-channel is stored at full ortho resolution so pixel
         coords map directly; the raw CRS elevation is fed into geo_to_world.
         """
-        _t0 = time.monotonic()
 
         if not (0 <= x < ortho_camera.width and 0 <= y < ortho_camera.height):
             self.manager.viewer.clear_ortho_ray()
@@ -309,30 +308,15 @@ class MousePositionBridge(QObject):
 
         # Geo XY from affine transform
         X, Y = ortho_camera.pixel_to_geo(x, y)
-        _t1 = time.monotonic()
 
         # CRS elevation from z-channel (stored at full ortho resolution, raw units)
         Z = ortho_camera._raster.get_z_value(x, y)
-        _t2 = time.monotonic()
         if Z is None:
-            print(
-                f"[ORTHO DEBUG] pixel=({x}, {y}) "
-                f"ortho=({X:.6f}, {Y:.6f}) Z=None "
-                f"image={ortho_camera.image_path}"
-            )
             self.manager.viewer.clear_ortho_ray()
             self.clear_all_markers()
             return
 
         world_pt = ortho_camera.geo_to_world(X, Y, Z)
-        _t3 = time.monotonic()
-
-        print(
-            f"[ORTHO DEBUG] pixel=({x}, {y}) "
-            f"ortho=({X:.6f}, {Y:.6f}, {Z:.6f}) "
-            f"world={np.array2string(world_pt, precision=6, separator=', ')} "
-            f"image={ortho_camera.image_path}"
-        )
 
         try:
             self.manager.viewer.show_ortho_ray(
@@ -360,7 +344,6 @@ class MousePositionBridge(QObject):
                 visibility_status[cam.image_path] = False
             except Exception:
                 pass
-        _t4 = time.monotonic()
 
         if self.manager.context_matrix is not None:
             try:
@@ -369,17 +352,6 @@ class MousePositionBridge(QObject):
                 )
             except Exception:
                 self.manager.context_matrix.clear_all_dynamic_markers()
-        _t5 = time.monotonic()
-
-        print(
-            f"[ORTHO TIMING] "
-            f"pixel→geo: {(_t1-_t0)*1000:.2f}ms | "
-            f"z_channel: {(_t2-_t1)*1000:.2f}ms | "
-            f"geo→world: {(_t3-_t2)*1000:.2f}ms | "
-            f"project_cams: {(_t4-_t3)*1000:.2f}ms | "
-            f"update_markers: {(_t5-_t4)*1000:.2f}ms | "
-            f"TOTAL: {(_t5-_t0)*1000:.2f}ms"
-        )
 
     def clear_all_markers(self):
         if self.manager.context_matrix is not None:
@@ -398,6 +370,7 @@ class MVATManager(QObject):
     """
     cameraSelectedInMVAT = pyqtSignal(str)
     contextStatsComputed = pyqtSignal(int, str, int, int)
+    _orthoIndexMapReady  = pyqtSignal(object)  # internal: carries result dict from worker thread
     
     def __init__(self, main_window, viewer):
         super().__init__()
@@ -439,6 +412,7 @@ class MVATManager(QObject):
         # when an OrthoRaster is present in the project)
         self._chunk_transform = None  # 4x4 Metashape chunk transform matrix
         self.ortho_camera = None      # OrthoCamera instance
+        self._computing_ortho_index_map = False  # guard against concurrent builds
 
         # Internal Managers
         self.selection_model = SelectionManager(self)
@@ -486,6 +460,8 @@ class MVATManager(QObject):
         self.viewer.computeIndexMapsToggled.connect(self._on_compute_index_maps_toggled)
         self.viewer.computeDepthMapsToggled.connect(self._on_compute_depth_maps_toggled)
         self.viewer.visibilityQualityChanged.connect(self._on_visibility_quality_changed)
+        self.viewer.primaryTargetChanged.connect(self._on_primary_target_changed)
+        self._orthoIndexMapReady.connect(self._on_ortho_index_map_computed)
         
         # 5. Main Window Sync
         if hasattr(self.annotation_window, 'mouseMoved'):
@@ -592,28 +568,14 @@ class MVATManager(QObject):
                 oc = OrthoCamera(raster, raster.chunk_transform_matrix)
                 if oc.is_valid:
                     self.ortho_camera = oc
-                    print(
-                        f"OrthoCamera ready: {raster.basename} "
-                        f"(left={oc.ortho_left:.4f}, top={oc.ortho_top:.4f}, "
-                        f"res_x={oc.resolution_x:.6f}, res_y={oc.resolution_y:.6f})"
-                    )
-                    print(
-                        f"[ORTHO DEBUG] ortho_meta: width={raster.width}, height={raster.height}, "
-                        f"left={oc.ortho_left}, top={oc.ortho_top}, "
-                        f"res_x={oc.resolution_x}, res_y={oc.resolution_y}, "
-                        f"crs={getattr(getattr(getattr(raster, '_rasterio_src', None), 'crs', None), 'name', None)}"
-                    )
-                    print(f"[ORTHO DEBUG] chunk_transform:\n{raster.chunk_transform_matrix}")
-                    print(
-                        f"[ORTHO DEBUG] ortho_projection_matrix:\n"
-                        f"{getattr(raster, 'ortho_projection_matrix', None)}"
-                    )
+                    # Trigger ortho index map build if the mesh is already loaded
+                    self._maybe_compute_ortho_index_map()
                     break
                 else:
                     print(f"⚠️ OrthoRaster {raster.basename} missing geo transform — skipping.")
             else:
                 print("Chunk transform dialog cancelled; OrthoCamera not created.")
-        
+
         # =====================================================================
         # Pre-computation Cache Check and Dialog
         # =====================================================================
@@ -859,6 +821,79 @@ class MVATManager(QObject):
             self._is_computing_visibility = False
             self.main_window.status_bar.showMessage("Visibility maps updated.", 3000)
             QApplication.restoreOverrideCursor()
+
+        # After perspective maps are done, build the ortho index map if needed
+        self._maybe_compute_ortho_index_map()
+
+    def _on_primary_target_changed(self, product_id: str):
+        """A new 3D model was loaded — clear stale ortho index map and rebuild."""
+        self._computing_ortho_index_map = False  # reset any in-flight build
+        if self.ortho_camera is not None:
+            self.ortho_camera._raster.index_map = None
+            self.ortho_camera._raster.index_map_scale_factor = None
+        self._maybe_compute_ortho_index_map()
+
+    def _maybe_compute_ortho_index_map(self):
+        """Build the ortho face-ID index map if ortho camera + mesh are both ready."""
+        if self._computing_ortho_index_map:
+            return
+        if self.ortho_camera is None or not self.ortho_camera.is_valid:
+            return
+        if not self.compute_index_maps_enabled:
+            return
+
+        primary_target = self.viewer.scene_context.get_primary_target()
+        if primary_target is None or not isinstance(primary_target, MeshProduct):
+            return
+
+        # Skip if already built for this raster
+        if self.ortho_camera._raster.index_map is not None:
+            return
+
+        self._computing_ortho_index_map = True
+        self.main_window.status_bar.showMessage("Building ortho index map…")
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
+        ortho_camera   = self.ortho_camera
+        mesh_product   = primary_target
+
+        def _build():
+            from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
+            return VisibilityManager.compute_ortho_index_map_vtk(ortho_camera, mesh_product)
+
+        def _done(future):
+            # Called on the thread-pool thread — only emit a Qt signal (thread-safe)
+            try:
+                result = future.result()
+                self._orthoIndexMapReady.emit(result)
+            except Exception as e:
+                print(f"⚠️ Ortho index map build failed: {e}")
+                self._computing_ortho_index_map = False
+
+        future = self._propagation_executor.submit(_build)
+        future.add_done_callback(_done)
+
+    def _on_ortho_index_map_computed(self, result: dict):
+        """Store the completed ortho index map on the OrthoRaster (runs on main thread via signal)."""
+        try:
+            index_map = result.get('index_map')
+            if index_map is None:
+                return
+            visible_indices = result.get('visible_indices')
+            # scale_factor is derived automatically inside OrthoRaster.add_index_map
+            self.ortho_camera._raster.add_index_map(
+                index_map,
+                visible_indices=visible_indices,
+                element_type='face',
+            )
+            sf = self.ortho_camera._raster.index_map_scale_factor
+            print(f"✅ Ortho index map stored: {index_map.shape}, scale_factor={sf:.4f}")
+        except Exception as e:
+            print(f"⚠️ Failed to store ortho index map: {e}")
+        finally:
+            self._computing_ortho_index_map = False
+            QApplication.restoreOverrideCursor()
+            self.main_window.status_bar.showMessage("Ortho index map ready.", 3000)
 
     def _process_visibility_results(self, results: dict, target_file_path: str):
         """
@@ -2124,7 +2159,12 @@ class MVATManager(QObject):
                 element_id = None
                 index_map = camera._raster.index_map
                 if index_map is not None and 0 <= px < camera.width and 0 <= py < camera.height:
-                    candidate_id = int(index_map[py, px])
+                    sf = getattr(camera._raster, 'index_map_scale_factor', None)
+                    map_px = int(px * sf) if sf else px
+                    map_py = int(py * sf) if sf else py
+                    map_px = min(map_px, index_map.shape[1] - 1)
+                    map_py = min(map_py, index_map.shape[0] - 1)
+                    candidate_id = int(index_map[map_py, map_px])
                     if candidate_id > -1:
                         element_id = candidate_id
 
@@ -2573,34 +2613,50 @@ class MVATManager(QObject):
             # Use the in-memory raster index_map to avoid triggering lazy disk loads.
             source_index_map = self.selected_camera._raster.index_map
             if source_index_map is not None:
-                # Bounding box of the brush in source image coordinates
-                x0 = px - brush_w // 2
-                y0 = py - brush_h // 2
-                x1 = x0 + brush_w
-                y1 = y0 + brush_h
+                # OrthoRaster index maps are stored at reduced resolution to avoid
+                # multi-GB allocations.  Scale native pixel coords to map coords.
+                sf = getattr(self.selected_camera._raster, 'index_map_scale_factor', None)
+                if sf is not None and sf != 1.0:
+                    map_px = int(px * sf)
+                    map_py = int(py * sf)
+                    map_bw = max(1, int(brush_w * sf))
+                    map_bh = max(1, int(brush_h * sf))
+                else:
+                    map_px, map_py = px, py
+                    map_bw, map_bh = brush_w, brush_h
+
+                # Bounding box of the brush in index_map coordinates
+                x0 = map_px - map_bw // 2
+                y0 = map_py - map_bh // 2
+                x1 = x0 + map_bw
+                y1 = y0 + map_bh
 
                 img_h, img_w = source_index_map.shape
 
-                # Only proceed if the brush overlaps the image at all
+                # Only proceed if the brush overlaps the index map at all
                 if x0 < img_w and y0 < img_h and x1 > 0 and y1 > 0:
-                    # Clip to image bounds
+                    # Clip to index map bounds
                     cx0 = max(x0, 0)
                     cy0 = max(y0, 0)
                     cx1 = min(x1, img_w)
                     cy1 = min(y1, img_h)
 
-                    # Corresponding slice of the brush mask
-                    bx0 = cx0 - x0
-                    by0 = cy0 - y0
-                    bx1 = bx0 + (cx1 - cx0)
-                    by1 = by0 + (cy1 - cy0)
-
                     index_slice = source_index_map[cy0:cy1, cx0:cx1]
-                    brush_clip  = brush_mask[by0:by1, bx0:bx1]
 
-                    # Extract the 3D Face IDs perfectly using the VTK raster
-                    raw_ids = index_slice[brush_clip.astype(bool)]
-                    unique_ids = np.unique(raw_ids)
+                    if sf is not None and sf != 1.0:
+                        # At reduced scale, take all face IDs in the region —
+                        # brush shape detail is irrelevant at this resolution
+                        raw_ids = index_slice.ravel()
+                    else:
+                        # Full-resolution: apply the brush mask for accuracy
+                        bx0 = cx0 - x0
+                        by0 = cy0 - y0
+                        bx1 = bx0 + (cx1 - cx0)
+                        by1 = by0 + (cy1 - cy0)
+                        brush_clip = brush_mask[by0:by1, bx0:bx1]
+                        raw_ids    = index_slice[brush_clip.astype(bool)]
+
+                    unique_ids  = np.unique(raw_ids)
                     painted_ids = unique_ids[unique_ids > -1]  # filter background
 
         # Whether the source camera has valid 3D geometry hits to propagate

@@ -902,6 +902,157 @@ class VisibilityManager:
         camera.SetExplicitProjectionTransformMatrix(mat)
 
     @classmethod
+    def compute_ortho_index_map_vtk(cls,
+                                    ortho_camera,
+                                    mesh_product: 'AbstractSceneProduct',
+                                    max_render_size: int = 4096) -> dict:
+        """Build a downsampled face-ID index map for an OrthoCamera.
+
+        Renders the mesh off-screen with VTK orthographic projection looking
+        straight down over the ortho's world-space extent.  The result is stored
+        at reduced resolution (capped at max_render_size) so that even very large
+        orthomosaics produce a manageable (H_r × W_r) int32 index map.
+
+        Args:
+            ortho_camera:    OrthoCamera instance (must be is_valid).
+            mesh_product:    MeshProduct whose faces are being indexed.
+            max_render_size: Maximum dimension of the rendered index map.
+
+        Returns:
+            dict with keys:
+                'index_map'      – (H_r, W_r) int32 face-ID map (-1 = no face)
+                'visible_indices'– 1-D int32 array of unique visible face IDs
+                'scale_factor'   – float, render_h / ortho_height
+        """
+        import pyvista as pv
+        import time
+
+        start = time.time()
+        print(f"\n{'='*50}")
+        print(f"🗺️  VTK ORTHO INDEX MAP RASTERIZATION")
+        print(f"{'='*50}")
+
+        if not ortho_camera.is_valid:
+            print("   ⚠️ OrthoCamera has no valid geo metadata — aborting.")
+            return {'index_map': None, 'visible_indices': np.array([], dtype=np.int32), 'scale_factor': 1.0}
+
+        mesh = mesh_product.get_mesh()
+        if mesh is None or mesh.n_cells == 0:
+            print("   ⚠️ Mesh has no cells — aborting.")
+            return {'index_map': None, 'visible_indices': np.array([], dtype=np.int32), 'scale_factor': 1.0}
+
+        n_cells = mesh.n_cells
+        ortho_w, ortho_h = ortho_camera.width, ortho_camera.height
+
+        # Cap render dimensions while preserving aspect ratio
+        scale = min(1.0, max_render_size / max(ortho_w, ortho_h))
+        render_w = max(1, int(ortho_w * scale))
+        render_h = max(1, int(ortho_h * scale))
+        print(f"   Ortho: {ortho_w}×{ortho_h}  →  render: {render_w}×{render_h}  (scale={scale:.4f})")
+        print(f"   Mesh: {n_cells:,} cells")
+
+        # --- 1. Encode face IDs as RGB (same scheme as perspective pipeline) ---
+        face_ids    = np.arange(n_cells, dtype=np.int32)
+        encoded_ids = face_ids + 1                          # 0 reserved for background
+        r = (encoded_ids % 256).astype(np.uint8)
+        g = ((encoded_ids // 256) % 256).astype(np.uint8)
+        b = ((encoded_ids // 65536) % 256).astype(np.uint8)
+        rgb_colors = np.column_stack([r, g, b])
+
+        mesh_with_ids = mesh.copy()
+        mesh_with_ids.cell_data['FaceID_RGB'] = rgb_colors
+
+        # --- 2. Off-screen plotter ---
+        plotter = pv.Plotter(off_screen=True, window_size=(render_w, render_h))
+        plotter.set_background('black')
+        plotter.disable_anti_aliasing()
+        plotter.add_mesh(
+            mesh_with_ids,
+            scalars='FaceID_RGB',
+            rgb=True,
+            lighting=False,
+            interpolate_before_map=False,
+            show_edges=False,
+            style='surface',
+        )
+        del mesh_with_ids
+        import gc; gc.collect()
+
+        # --- 3. Configure orthographic camera ---
+        cls._configure_vtk_camera_ortho(plotter, ortho_camera, mesh.bounds)
+
+        # --- 4. Render and decode ---
+        plotter.render()
+        screenshot = plotter.screenshot(return_img=True)
+        if screenshot.shape[2] == 4:
+            screenshot = screenshot[:, :, :3]
+
+        decoded   = (screenshot[:, :, 0].astype(np.int32)
+                     + screenshot[:, :, 1].astype(np.int32) * 256
+                     + screenshot[:, :, 2].astype(np.int32) * 65536)
+        index_map = (decoded - 1).astype(np.int32)
+        plotter.close()
+
+        visible_indices = np.unique(index_map[index_map >= 0]).astype(np.int32)
+        total = time.time() - start
+        n_vis = len(visible_indices)
+        cov   = np.sum(index_map >= 0) / (render_w * render_h) * 100
+        print(f"   ✅ Done in {total:.2f}s — {n_vis:,} visible faces, {cov:.1f}% coverage")
+        print(f"{'='*50}\n")
+
+        return cls._normalize_result_dict({
+            'index_map':       index_map,
+            'visible_indices': visible_indices,
+            'depth_map':       None,
+            'inverted_index':  None,
+            'scale_factor':    scale,
+        }, compute_depth_map=False)
+
+    @classmethod
+    def _configure_vtk_camera_ortho(cls, plotter, ortho_camera, bounds: tuple) -> None:
+        """Configure a PyVista plotter for a nadir orthographic view matching OrthoCamera.
+
+        The camera looks straight down along OrthoCamera.get_vertical_direction_world(),
+        covers the full ortho extent, and has parallel (orthographic) projection.
+        """
+        W, H = ortho_camera.width, ortho_camera.height
+
+        # World-space corners at Z=0 CRS base plane
+        TL = ortho_camera.pixel_to_xy_world(0,     0    )
+        TR = ortho_camera.pixel_to_xy_world(W - 1, 0    )
+        BL = ortho_camera.pixel_to_xy_world(0,     H - 1)
+        BR = ortho_camera.pixel_to_xy_world(W - 1, H - 1)
+
+        if any(c is None for c in [TL, TR, BL, BR]):
+            return
+
+        center       = (TL + TR + BL + BR) * 0.25
+        top_center   = (TL + TR) * 0.5
+        bot_center   = (BL + BR) * 0.5
+
+        # View-up = direction from bottom-centre to top-centre (ortho "north")
+        vu = top_center - bot_center
+        vu_len = np.linalg.norm(vu)
+        view_up = vu / vu_len if vu_len > 1e-12 else np.array([0., 1., 0.])
+
+        # Parallel scale = half the world-space height of the ortho
+        parallel_scale = vu_len * 0.5
+
+        # Camera position: lift above scene along the vertical direction
+        vertical_dir  = ortho_camera.get_vertical_direction_world()
+        z_range       = max(abs(bounds[5] - bounds[4]), 1.0)
+        lift          = z_range * 5.0
+        cam_pos       = center - vertical_dir * lift
+
+        camera = plotter.camera
+        camera.position        = cam_pos.tolist()
+        camera.focal_point     = center.tolist()
+        camera.up              = view_up.tolist()
+        camera.parallel_projection = True
+        camera.parallel_scale  = float(parallel_scale)
+        camera.clipping_range  = (lift * 0.05, lift + z_range * 4.0)
+
+    @classmethod
     def _compute_mesh_visibility_fallback(cls,
                                           mesh_product: 'AbstractSceneProduct',
                                           K: np.ndarray,
