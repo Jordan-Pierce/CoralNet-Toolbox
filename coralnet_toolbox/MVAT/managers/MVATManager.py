@@ -3117,20 +3117,23 @@ class MVATManager(QObject):
             # Catch the results on the Main Thread and repaint
             for future in as_completed(futures):
                 target_path, did_update = future.result()
-                
+
                 if did_update:
                     target_raster = self.raster_manager.get_raster(target_path)
                     if target_raster and target_raster.mask_annotation:
                         target_mask = target_raster.mask_annotation
-                        
-                        # Trigger the Qt repaint on the Main Thread
-                        target_mask.update_graphics_item()
-                        
+
+                        # The silent update in _propagate_to_camera already wrote to
+                        # colored_mask, so only a lightweight Qt repaint is needed here —
+                        # not a full _update_full_canvas() rebuild.
+                        if target_mask.graphics_item is not None:
+                            target_mask.graphics_item.update()
+
                         # Mount the overlay if it isn't already attached
                         context_canvas = self._get_context_canvas_for_path(target_path)
                         if context_canvas is not None and context_canvas._mask_overlay_item is None:
                             context_canvas.set_mask_overlay(target_mask)
-                            
+
         except Exception as e:
             print(f"Error in multi-annotate erase: {e}")
         finally:
