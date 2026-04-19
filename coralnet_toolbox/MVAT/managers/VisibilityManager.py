@@ -990,7 +990,7 @@ class VisibilityManager:
         decoded   = (screenshot[:, :, 0].astype(np.int32)
                      + screenshot[:, :, 1].astype(np.int32) * 256
                      + screenshot[:, :, 2].astype(np.int32) * 65536)
-        index_map = (decoded - 1).astype(np.int32)
+        index_map = np.fliplr((decoded - 1).astype(np.int32))
         plotter.close()
 
         visible_indices = np.unique(index_map[index_map >= 0]).astype(np.int32)
