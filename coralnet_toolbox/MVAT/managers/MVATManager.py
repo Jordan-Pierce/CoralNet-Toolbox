@@ -492,63 +492,83 @@ class MVATManager(QObject):
         Extract camera parameters from the RasterManager, construct Camera
         objects, and push them into the Grid and Viewer.
 
-        Shows a progress dialog during load and reports if no valid camera
-        parameters are found. After loading it synchronizes the active camera
-        with the AnnotationWindow's currently displayed image (when possible)
-        and triggers an initial frustum render and viewer fit.
+        Idempotent: cameras that are already loaded are skipped so that calling
+        this method a second time (with no project changes) is effectively a
+        no-op.  New cameras added to the project mid-session are detected and
+        added incrementally without disturbing existing state (selected camera,
+        hovered camera, frustum highlights, etc.).
+
+        On the very first call (cameras dict was empty) the viewer is also
+        fit-to-view and the active camera is synchronised with the annotation
+        window.  On subsequent calls with new cameras, the frustums are
+        refreshed but the view is not reset.
         """
         all_paths = self.raster_manager.image_paths
         if not all_paths:
             return
-            
-        # Indicate busy state via cursor and status bar (no modal progress)
+
+        # ------------------------------------------------------------------
+        # Partition paths: already-loaded perspective cameras, new perspective
+        # cameras, and OrthoRasters (handled separately).
+        # ------------------------------------------------------------------
+        first_load = len(self.cameras) == 0
+        new_perspective_rasters: list = []   # [(path, raster), ...]
+        ortho_rasters: list = []
+
+        for path in all_paths:
+            raster = self.raster_manager.get_raster(path)
+            if not raster:
+                continue
+
+            if getattr(raster, 'raster_type', '') == 'OrthoRaster':
+                ortho_rasters.append(raster)
+                continue
+
+            # Skip cameras that have already been successfully loaded.
+            if path in self.cameras:
+                continue
+
+            if raster.intrinsics is not None and raster.extrinsics is not None:
+                new_perspective_rasters.append((path, raster))
+
+        need_ortho = bool(ortho_rasters) and self.ortho_camera is None
+
+        # Nothing genuinely new to do — report and exit cleanly.
+        if not new_perspective_rasters and not need_ortho:
+            self.main_window.status_bar.showMessage("All cameras already loaded.", 3000)
+            return
+
+        # ------------------------------------------------------------------
+        # Build Camera objects only for new perspective cameras.
+        # ------------------------------------------------------------------
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        
+        valid_count = 0
         try:
             self.main_window.status_bar.showMessage("Loading cameras...", 0)
-
-            valid_count = 0
-            ortho_rasters = []
-
-            for path in all_paths:
-                raster = self.raster_manager.get_raster(path)
-                if not raster:
-                    continue
-
-                # Collect OrthoRasters for separate handling below
-                if getattr(raster, 'raster_type', '') == 'OrthoRaster':
-                    ortho_rasters.append(raster)
-                    continue
-
-                # CREATE PERSPECTIVE CAMERA
-                if raster.intrinsics is not None and raster.extrinsics is not None:
-                    try:
-                        self.cameras[path] = Camera(raster)
-                        valid_count += 1
-                    except Exception as e:
-                        # Log full exception and traceback to aid diagnosis
-                        print(f"❌ Failed to load perspective camera {raster.basename}: {e}")
-                        print(traceback.format_exc())
-                        pass
+            for path, raster in new_perspective_rasters:
+                try:
+                    self.cameras[path] = Camera(raster)
+                    valid_count += 1
+                except Exception as e:
+                    print(f"❌ Failed to load perspective camera {raster.basename}: {e}")
+                    print(traceback.format_exc())
         finally:
             try:
                 QApplication.restoreOverrideCursor()
             except Exception:
                 pass
-
             self.main_window.status_bar.showMessage(
-                f"Loaded {valid_count} cameras",
-                3000
+                f"Loaded {valid_count} new camera(s)", 3000
             )
 
-        if valid_count == 0 and not ortho_rasters:
+        if valid_count == 0 and not need_ortho:
             QMessageBox.information(self.main_window, "No Camera Data", "No valid camera parameters found.")
             return
 
         # =====================================================================
-        # OrthoRaster: build OrthoCamera from stored chunk transform state
+        # OrthoRaster: build OrthoCamera only when one hasn't been created yet.
         # =====================================================================
-        if ortho_rasters:
+        if need_ortho:
             from coralnet_toolbox.MVAT.core.OrthoCamera import OrthoCamera
 
             chunk_transform = getattr(ortho_rasters[0], 'chunk_transform_matrix', None)
@@ -558,7 +578,6 @@ class MVATManager(QObject):
                 chunk_transform = np.eye(4, dtype=np.float64)
 
             self._chunk_transform = np.asarray(chunk_transform, dtype=np.float64)
-            self.ortho_camera = None
             for raster in ortho_rasters:
                 raster_transform = getattr(raster, 'chunk_transform_matrix', None)
                 if raster_transform is None:
@@ -568,36 +587,34 @@ class MVATManager(QObject):
                 oc = OrthoCamera(raster, raster.chunk_transform_matrix)
                 if oc.is_valid:
                     self.ortho_camera = oc
-                    # Trigger ortho index map build if the mesh is already loaded
                     self._maybe_compute_ortho_index_map()
                     break
                 else:
                     print(f"⚠️ OrthoRaster {raster.basename} missing geo transform — skipping.")
-            else:
-                print("Chunk transform dialog cancelled; OrthoCamera not created.")
 
         # =====================================================================
-        # Pre-computation Cache Check and Dialog
+        # Pre-computation Cache Check — only for cameras that are new this call.
         # =====================================================================
         primary_target = self.viewer.scene_context.get_primary_target()
-        
-        # We can only pre-compute if a 3D model is loaded FIRST.
-        if primary_target is not None and self.cache_manager is not None and self.compute_index_maps_enabled:
+        newly_added_cameras = [self.cameras[p] for p, _ in new_perspective_rasters if p in self.cameras]
+
+        if (primary_target is not None
+                and self.cache_manager is not None
+                and self.compute_index_maps_enabled
+                and newly_added_cameras):
             target_path = primary_target.file_path
             element_type = primary_target.get_element_type()
             uncached_cameras = []
-            
-            for path, cam in self.cameras.items():
+
+            for cam in newly_added_cameras:
                 cache_key = cam._raster.extrinsics
                 extra = (cam._raster.dist_coeffs.tobytes()
                          if cam.is_distorted
                          and cam._raster.dist_coeffs is not None else None)
                 cache_path = self.cache_manager.get_cache_path(cache_key, target_path, element_type, extra)
-                
-                # Check if the cache file exists on disk
                 if not os.path.exists(cache_path):
                     uncached_cameras.append(cam)
-            
+
             if uncached_cameras:
                 reply = QMessageBox.question(
                     self.main_window,
@@ -608,9 +625,8 @@ class MVATManager(QObject):
                     QMessageBox.Yes | QMessageBox.No,
                     QMessageBox.No
                 )
-                
+
                 if reply == QMessageBox.Yes:
-                    # Prompt for quality level
                     from PyQt5.QtWidgets import QInputDialog
                     qualities = ["Highest (100%)", "High (75%)", "Medium (50%)", "Low (25%)", "Lowest (10%)"]
                     quality_map = dict(zip(qualities, [1.0, 0.75, 0.50, 0.25, 0.10]))
@@ -633,27 +649,29 @@ class MVATManager(QObject):
                     if ok and choice:
                         self.visibility_scale_factor = quality_map[choice]
                         self._compute_visibility_async(primary_target, uncached_cameras)
-        
-        # FILTER: Only pass perspective cameras to grid UI
-        perspective_cameras = self.cameras    
 
+        # ------------------------------------------------------------------
+        # Update the context matrix with the full (now-extended) camera set.
+        # ------------------------------------------------------------------
         if self.context_matrix is not None:
             try:
-                all_ordered = list(perspective_cameras.keys())
-                self.context_matrix.set_camera_data(list(perspective_cameras.values()), all_ordered)
+                all_ordered = list(self.cameras.keys())
+                self.context_matrix.set_camera_data(list(self.cameras.values()), all_ordered)
             except Exception:
                 pass
-        
-        # Generate and load 3D elevation
-        self._render_frustums()  
-        self.viewer.fit_to_view()
-        
-        # Initial Synchronization
-        current_image_path = getattr(self.annotation_window, 'current_image_path', None)
-        if current_image_path and current_image_path in self.cameras:
-            self.selection_model.set_active(current_image_path)
-        elif self.cameras:
-            self.selection_model.set_active(next(iter(self.cameras)))
+
+        self._render_frustums()
+
+        # Fit to view only on the very first load so we don't reset the user's
+        # current pan/zoom when cameras are added incrementally.
+        if first_load:
+            self.viewer.fit_to_view()
+            # Sync the active camera with whatever image is open in the annotation window.
+            current_image_path = getattr(self.annotation_window, 'current_image_path', None)
+            if current_image_path and current_image_path in self.cameras:
+                self.selection_model.set_active(current_image_path)
+            elif self.cameras:
+                self.selection_model.set_active(next(iter(self.cameras)))
 
     def _render_frustums(self):
         """
