@@ -2365,17 +2365,13 @@ class AnnotationWindow(BaseCanvas):
 
         # Restore anchor back to previous behavior when animations finish
         def _on_finished():
-            try:
-                self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
-            except Exception:
-                pass
+            self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
             # Clean up references
             self._active_view_animations = []
             # Emit a viewChanged signal for status updates
-            try:
-                self.viewChanged.emit(*self.get_image_dimensions())
-            except Exception:
-                pass
+            self.viewChanged.emit(*self.get_image_dimensions())
+            # Emit the standard navigation signal after the final animated view is in place.
+            self._emit_view_navigated()
 
         # Connect last animation finished to cleanup
         z_anim.finished.connect(_on_finished)
