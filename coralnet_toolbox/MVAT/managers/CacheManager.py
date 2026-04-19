@@ -84,6 +84,137 @@ class CacheManager:
         """
         cache_key = self._generate_cache_key(extrinsics, point_cloud_path, element_type, extra_hash_data)
         return os.path.join(self.cache_dir, f"{cache_key}.npz")
+
+    def _generate_ortho_cache_key(self,
+                                  ortho_image_path: str,
+                                  mesh_path: str,
+                                  chunk_transform: np.ndarray,
+                                  ortho_projection_matrix: Optional[np.ndarray],
+                                  native_size: Tuple[int, int],
+                                  element_type: str = 'face') -> str:
+        """Generate a cache key for an orthomosaic index map."""
+        hash_obj = hashlib.md5()
+        hash_obj.update(str(ortho_image_path).encode('utf-8'))
+        hash_obj.update(str(mesh_path).encode('utf-8'))
+        hash_obj.update(np.asarray(chunk_transform, dtype=np.float64).tobytes())
+        if ortho_projection_matrix is not None:
+            hash_obj.update(np.asarray(ortho_projection_matrix, dtype=np.float64).tobytes())
+        hash_obj.update(np.asarray(native_size, dtype=np.int32).tobytes())
+        hash_obj.update(element_type.encode('utf-8'))
+        return hash_obj.hexdigest()
+
+    def get_ortho_index_map_cache_path(self,
+                                       ortho_image_path: str,
+                                       mesh_path: str,
+                                       chunk_transform: np.ndarray,
+                                       ortho_projection_matrix: Optional[np.ndarray],
+                                       scale_factor: float,
+                                       native_size: Tuple[int, int],
+                                       element_type: str = 'face') -> str:
+        """Get the cache path for an orthomosaic index map."""
+        cache_key = self._generate_ortho_cache_key(
+            ortho_image_path,
+            mesh_path,
+            chunk_transform,
+            ortho_projection_matrix,
+            native_size,
+            element_type,
+        )
+        return os.path.join(self.cache_dir, f"ortho_{cache_key}.npz")
+
+    def load_ortho_index_map(self,
+                             ortho_image_path: str,
+                             mesh_path: str,
+                             chunk_transform: np.ndarray,
+                             ortho_projection_matrix: Optional[np.ndarray],
+                             scale_factor: float,
+                             native_size: Tuple[int, int],
+                             element_type: str = 'face') -> Optional[Dict]:
+        """Load a cached orthomosaic index map if present."""
+        cache_path = self.get_ortho_index_map_cache_path(
+            ortho_image_path,
+            mesh_path,
+            chunk_transform,
+            ortho_projection_matrix,
+            scale_factor,
+            native_size,
+            element_type,
+        )
+
+        if not os.path.exists(cache_path):
+            return None
+
+        try:
+            data = np.load(cache_path, allow_pickle=True)
+            result = {
+                'index_map': data['index_map'].astype(np.int32, copy=False),
+                'visible_indices': np.asarray(data['visible_indices']).astype(np.int32, copy=False),
+                'scale_factor': float(data['scale_factor']) if 'scale_factor' in data else float(scale_factor),
+                'element_type': str(data['element_type']) if 'element_type' in data else element_type,
+                'cache_path': cache_path,
+            }
+            return result
+        except Exception as e:
+            print(f"Warning: Failed to load ortho index map cache from {cache_path}: {e}")
+            return None
+
+    def save_ortho_index_map(self,
+                             ortho_image_path: str,
+                             mesh_path: str,
+                             chunk_transform: np.ndarray,
+                             ortho_projection_matrix: Optional[np.ndarray],
+                             scale_factor: float,
+                             native_size: Tuple[int, int],
+                             index_map: np.ndarray,
+                             visible_indices: np.ndarray,
+                             element_type: str = 'face',
+                             compressed: bool = True) -> Optional[str]:
+        """Save an orthomosaic index map to cache."""
+        cache_path = self.get_ortho_index_map_cache_path(
+            ortho_image_path,
+            mesh_path,
+            chunk_transform,
+            ortho_projection_matrix,
+            scale_factor,
+            native_size,
+            element_type,
+        )
+
+        try:
+            os.makedirs(self.cache_dir, exist_ok=True)
+        except Exception as e:
+            print(f"Warning: Failed to create cache directory {self.cache_dir}: {e}")
+            return None
+
+        try:
+            index_map = np.asarray(index_map).astype(np.int32, copy=False)
+            visible_indices = np.asarray(visible_indices).astype(np.int32, copy=False)
+        except Exception:
+            pass
+
+        save_dict = {
+            'index_map': index_map,
+            'visible_indices': visible_indices,
+            'scale_factor': float(scale_factor),
+            'element_type': element_type,
+        }
+
+        temp_path = os.path.splitext(cache_path)[0] + '_tmp.npz'
+        try:
+            if compressed:
+                np.savez_compressed(temp_path, **save_dict)
+            else:
+                np.savez(temp_path, **save_dict)
+            os.replace(temp_path, cache_path)
+            return cache_path
+        except Exception as e:
+            try:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except Exception:
+                pass
+            print(f"Warning: Failed to save ortho index map cache to {cache_path}: {e}")
+            return None
     
     def load_visibility(self, extrinsics: np.ndarray, point_cloud_path: str,
                          element_type: str = 'point',

@@ -460,7 +460,6 @@ class MVATManager(QObject):
         self.viewer.focalPointChanged.connect(self._on_focal_point_changed)
         self.viewer.computeIndexMapsToggled.connect(self._on_compute_index_maps_toggled)
         self.viewer.computeDepthMapsToggled.connect(self._on_compute_depth_maps_toggled)
-        self.viewer.visibilityQualityChanged.connect(self._on_visibility_quality_changed)
         self.viewer.primaryTargetChanged.connect(self._on_primary_target_changed)
         self._orthoIndexMapReady.connect(self._on_ortho_index_map_computed)
         
@@ -633,11 +632,6 @@ class MVATManager(QObject):
 
                     if ok and choice:
                         self.visibility_scale_factor = quality_map[choice]
-                        # Sync the View menu checkmark
-                        for action in self.viewer._quality_action_group.actions():
-                            if action.text() == choice:
-                                action.setChecked(True)
-                                break
                         self._compute_visibility_async(primary_target, uncached_cameras)
         
         # FILTER: Only pass perspective cameras to grid UI
@@ -729,7 +723,7 @@ class MVATManager(QObject):
                         self.context_matrix.set_camera_order(all_paths)
                     except Exception:
                         pass
-                # Switch viewer to top-down orthographic projection
+                # Fit the scene and snap to the canonical top perspective view.
                 self.viewer.set_ortho_top_view()
 
     def _on_focal_point_changed(self, point_3d):
@@ -743,9 +737,15 @@ class MVATManager(QObject):
         fails, hide the marker.
         """
         self.current_focal_point = point_3d
-        if self.selected_camera and self.selected_camera.image_path in self.cameras:
-            pixel = self.selected_camera.project(point_3d)
-            if not np.isnan(pixel).any():
+        if self.selected_camera is not None:
+            if hasattr(self.selected_camera, 'world_to_pixel'):
+                pixel = self.selected_camera.world_to_pixel(point_3d)
+            elif self.selected_camera.image_path in self.cameras:
+                pixel = self.selected_camera.project(point_3d)
+            else:
+                pixel = None
+
+            if pixel is not None and not np.isnan(pixel).any():
                 u, v = pixel[0], pixel[1]
                 # Show green whenever the point projects within the camera's FOV.
                 # A depth-validity check caused false reds for MVATViewer double-clicks
@@ -804,11 +804,6 @@ class MVATManager(QObject):
         self.compute_index_maps_enabled = state
         self.main_window.status_bar.showMessage("Compute Index Maps: ON" if state else "Compute Index Maps: OFF", 2000)
 
-    def _on_visibility_quality_changed(self, scale_factor: float):
-        """Store the user-selected visibility resolution scale factor."""
-        self.visibility_scale_factor = scale_factor
-        print(f"Visibility quality scale set to {scale_factor}")
-
     def _on_visibility_computed(self, results: dict):
         """Handle results emitted from VisibilityWorker (runs on main thread)."""
         try:
@@ -832,6 +827,7 @@ class MVATManager(QObject):
         if self.ortho_camera is not None:
             self.ortho_camera._raster.index_map = None
             self.ortho_camera._raster.index_map_scale_factor = None
+            self.ortho_camera._raster.index_map_path = None
         self._maybe_compute_ortho_index_map()
 
     def _maybe_compute_ortho_index_map(self):
@@ -847,20 +843,55 @@ class MVATManager(QObject):
         if primary_target is None or not isinstance(primary_target, MeshProduct):
             return
 
-        # Skip if already built for this raster
-        if self.ortho_camera._raster.index_map is not None:
+        ortho_raster = self.ortho_camera._raster
+
+        current_scale = float(self.visibility_scale_factor)
+
+        if ortho_raster.index_map is not None:
             return
 
+        if self.cache_manager is not None:
+            try:
+                cached = self.cache_manager.load_ortho_index_map(
+                    self.ortho_camera.image_path,
+                    primary_target.file_path,
+                    self.ortho_camera._chunk_transform,
+                    getattr(self.ortho_camera, '_proj_mat', None),
+                    current_scale,
+                    (self.ortho_camera.width, self.ortho_camera.height),
+                    element_type='face',
+                )
+                if cached is not None and cached.get('index_map') is not None:
+                    ortho_raster.add_index_map(
+                        cached['index_map'],
+                        index_map_path=cached.get('cache_path'),
+                        visible_indices=cached.get('visible_indices'),
+                        element_type=cached.get('element_type', 'face'),
+                    )
+                    sf = getattr(ortho_raster, 'index_map_scale_factor', None)
+                    print(f"💽 Loaded ortho index map from cache: {ortho_raster.index_map.shape}, scale_factor={sf:.4f}")
+                    self.main_window.status_bar.showMessage("Loaded ortho index map from cache.", 3000)
+                    return
+            except Exception as e:
+                print(f"⚠️ Failed to load ortho index map cache: {e}")
+
         self._computing_ortho_index_map = True
-        self.main_window.status_bar.showMessage("Building ortho index map…")
+        self.main_window.status_bar.showMessage(f"Building ortho index map at {current_scale:.0%} quality…")
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
         ortho_camera   = self.ortho_camera
         mesh_product   = primary_target
+        requested_scale = current_scale
 
         def _build():
             from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
-            return VisibilityManager.compute_ortho_index_map_vtk(ortho_camera, mesh_product)
+            result = VisibilityManager.compute_ortho_index_map_vtk(
+                ortho_camera,
+                mesh_product,
+                scale_factor=requested_scale,
+            )
+            result['scale_factor'] = requested_scale
+            return result
 
         def _done(future):
             # Called on the thread-pool thread — only emit a Qt signal (thread-safe)
@@ -877,18 +908,48 @@ class MVATManager(QObject):
     def _on_ortho_index_map_computed(self, result: dict):
         """Store the completed ortho index map on the OrthoRaster (runs on main thread via signal)."""
         try:
+            result_scale = float(result.get('scale_factor', self.visibility_scale_factor))
+            if not np.isclose(result_scale, float(self.visibility_scale_factor)):
+                print(
+                    f"⚠️ Discarding stale ortho index map at scale {result_scale:.4f}; "
+                    f"current quality is {self.visibility_scale_factor:.4f}"
+                )
+                return
+
             index_map = result.get('index_map')
             if index_map is None:
                 return
             visible_indices = result.get('visible_indices')
             # scale_factor is derived automatically inside OrthoRaster.add_index_map
-            self.ortho_camera._raster.add_index_map(
+            ortho_raster = self.ortho_camera._raster
+            ortho_raster.add_index_map(
                 index_map,
+                index_map_path=result.get('cache_path'),
                 visible_indices=visible_indices,
                 element_type='face',
             )
-            sf = self.ortho_camera._raster.index_map_scale_factor
+            sf = ortho_raster.index_map_scale_factor
             print(f"✅ Ortho index map stored: {index_map.shape}, scale_factor={sf:.4f}")
+
+            if self.cache_manager is not None:
+                try:
+                    primary_target = self.viewer.scene_context.get_primary_target()
+                    target_path = primary_target.file_path if primary_target is not None else ""
+                    cache_path = self.cache_manager.save_ortho_index_map(
+                        self.ortho_camera.image_path,
+                        target_path,
+                        self.ortho_camera._chunk_transform,
+                        getattr(self.ortho_camera, '_proj_mat', None),
+                        result_scale,
+                        (self.ortho_camera.width, self.ortho_camera.height),
+                        index_map,
+                        visible_indices if visible_indices is not None else np.array([], dtype=np.int32),
+                        element_type='face',
+                    )
+                    if cache_path is not None:
+                        ortho_raster.index_map_path = cache_path
+                except Exception as e:
+                    print(f"⚠️ Failed to save ortho index map cache: {e}")
         except Exception as e:
             print(f"⚠️ Failed to store ortho index map: {e}")
         finally:

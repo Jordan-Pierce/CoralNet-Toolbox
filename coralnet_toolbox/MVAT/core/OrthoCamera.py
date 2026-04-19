@@ -116,6 +116,38 @@ class OrthoCamera:
         geo_hom = np.array([X, Y, Z, 1.0], dtype=np.float64)
         return self._dehom(self._T_inv @ (self._proj_mat_inv @ geo_hom))
 
+    def world_to_geo(self, world_point: np.ndarray) -> Optional[np.ndarray]:
+        """Convert a 3D world point back to geographic coordinates."""
+        try:
+            world = np.asarray(world_point, dtype=np.float64).reshape(-1)
+            if world.size < 3:
+                return None
+
+            world_hom = np.array([world[0], world[1], world[2], 1.0], dtype=np.float64)
+            geo_hom = self._proj_mat @ (self._chunk_transform @ world_hom)
+            geo = self._dehom(geo_hom)
+            return geo[:3]
+        except Exception:
+            return None
+
+    def world_to_pixel(self, world_point: np.ndarray) -> Optional[np.ndarray]:
+        """Convert a 3D world point to orthomosaic pixel coordinates."""
+        geo = self.world_to_geo(world_point)
+        if geo is None:
+            return None
+
+        if self.ortho_left is None or self.ortho_top is None:
+            return None
+        if self.resolution_x is None or self.resolution_y is None:
+            return None
+        if abs(self.resolution_x) < 1e-12 or abs(self.resolution_y) < 1e-12:
+            return None
+
+        X, Y = float(geo[0]), float(geo[1])
+        u = (X - self.ortho_left) / self.resolution_x
+        v = (self.ortho_top - Y) / self.resolution_y
+        return np.array([u, v], dtype=np.float64)
+
     def pixel_to_xy_world(self, x: int, y: int) -> Optional[np.ndarray]:
         """
         Convert pixel (x, y) to a world-space base point with Z = 0 in the CRS.

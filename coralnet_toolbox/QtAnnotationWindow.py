@@ -904,9 +904,12 @@ class AnnotationWindow(BaseCanvas):
         if mvat_manager is None:
             super().mouseDoubleClickEvent(event)
             return
+
+        ortho_camera = getattr(mvat_manager, 'ortho_camera', None)
+        is_ortho_image = ortho_camera is not None and self.current_image_path == ortho_camera.image_path
         
         # Check if current image has camera data
-        if not self.current_image_path or self.current_image_path not in mvat_manager.cameras:
+        if not self.current_image_path or (self.current_image_path not in mvat_manager.cameras and not is_ortho_image):
             super().mouseDoubleClickEvent(event)
             return
         
@@ -915,60 +918,80 @@ class AnnotationWindow(BaseCanvas):
         x, y = int(scene_pos.x()), int(scene_pos.y())
         
         # Check if position is within image bounds
-        camera = mvat_manager.cameras[self.current_image_path]
-        if not (0 <= x < camera.width and 0 <= y < camera.height):
+        camera = mvat_manager.cameras.get(self.current_image_path)
+        if camera is not None and not (0 <= x < camera.width and 0 <= y < camera.height):
             super().mouseDoubleClickEvent(event)
             return
         
         terminal_point = None
 
-        # --- PLAN A: Index Map (Flawless 3D Coordinate) ---
-        try:
-            primary_target = mvat_manager.viewer.scene_context.get_primary_target()
-            if primary_target is not None:
-                candidate_id = camera.get_index_at_pixel(x, y)
-                if candidate_id is not None and int(candidate_id) > -1:
-                    raw_coord = primary_target.get_element_coordinate(int(candidate_id))
-                    if raw_coord is not None:
-                        # ---> Safely cast PyTorch Tensor to NumPy! <---
-                        if hasattr(raw_coord, 'cpu'):
-                            terminal_point = raw_coord.cpu().numpy().astype(np.float64)
-                        else:
-                            terminal_point = np.asarray(raw_coord, dtype=np.float64)
-        except Exception:
-            pass
-
-        # --- PLAN B: Depth Map / Scene Median Fallback ---
-        if terminal_point is None:
-            raster = camera._raster
-            depth = None
-            
-            if raster.z_channel is not None and raster.z_data_type == 'depth':
-                try:
-                    depth = raster.get_z_value(x, y)
-                except Exception:
-                    pass
-            
-            # Get default depth from scene if no depth available
-            if depth is None or depth <= 0 or np.isnan(depth):
-                try:
-                    default_depth = mvat_manager.viewer.get_scene_median_depth(camera.position)
-                except Exception:
-                    default_depth = 10.0
-            else:
-                default_depth = depth
-            
-            # Create ray from pixel position to get 3D world point
+        if is_ortho_image:
             try:
-                ray = CameraRay.from_pixel_and_camera(
-                    pixel_xy=(x, y),
-                    camera=camera,
-                    depth=depth,
-                    default_depth=default_depth
-                )
-                terminal_point = ray.terminal_point
+                if not (0 <= x < ortho_camera.width and 0 <= y < ortho_camera.height):
+                    super().mouseDoubleClickEvent(event)
+                    return
+
+                X, Y = ortho_camera.pixel_to_geo(x, y)
+                Z = ortho_camera._raster.get_z_value(x, y)
+                if Z is None:
+                    super().mouseDoubleClickEvent(event)
+                    return
+
+                terminal_point = ortho_camera.geo_to_world(X, Y, Z)
             except Exception as e:
-                print(f"Warning: Could not set focal point from double-click: {e}")
+                print(f"Warning: Could not set ortho focal point from double-click: {e}")
+                super().mouseDoubleClickEvent(event)
+                return
+        else:
+            camera = mvat_manager.cameras[self.current_image_path]
+
+            # --- PLAN A: Index Map (Flawless 3D Coordinate) ---
+            try:
+                primary_target = mvat_manager.viewer.scene_context.get_primary_target()
+                if primary_target is not None:
+                    candidate_id = camera.get_index_at_pixel(x, y)
+                    if candidate_id is not None and int(candidate_id) > -1:
+                        raw_coord = primary_target.get_element_coordinate(int(candidate_id))
+                        if raw_coord is not None:
+                            # ---> Safely cast PyTorch Tensor to NumPy! <---
+                            if hasattr(raw_coord, 'cpu'):
+                                terminal_point = raw_coord.cpu().numpy().astype(np.float64)
+                            else:
+                                terminal_point = np.asarray(raw_coord, dtype=np.float64)
+            except Exception:
+                pass
+
+            # --- PLAN B: Depth Map / Scene Median Fallback ---
+            if terminal_point is None:
+                raster = camera._raster
+                depth = None
+                
+                if raster.z_channel is not None and raster.z_data_type == 'depth':
+                    try:
+                        depth = raster.get_z_value(x, y)
+                    except Exception:
+                        pass
+                
+                # Get default depth from scene if no depth available
+                if depth is None or depth <= 0 or np.isnan(depth):
+                    try:
+                        default_depth = mvat_manager.viewer.get_scene_median_depth(camera.position)
+                    except Exception:
+                        default_depth = 10.0
+                else:
+                    default_depth = depth
+                
+                # Create ray from pixel position to get 3D world point
+                try:
+                    ray = CameraRay.from_pixel_and_camera(
+                        pixel_xy=(x, y),
+                        camera=camera,
+                        depth=depth,
+                        default_depth=default_depth
+                    )
+                    terminal_point = ray.terminal_point
+                except Exception as e:
+                    print(f"Warning: Could not set focal point from double-click: {e}")
         
         # Trigger projection to all context cameras
         if terminal_point is not None:

@@ -460,9 +460,9 @@ class VisibilityManager:
                 'depth_map': depth_map,
                 'inverted_index': None,
             })
-            results[-1] = cls._normalize_result_dict(results[-1], compute_depth_map)
+            results[-1] = cls._normalize_result_dict(results[-1], compute_depth_maps)
             # Normalize dtypes for consistency and memory savings
-            results[-1] = cls._normalize_result_dict(results[-1], compute_depth_map)
+            results[-1] = cls._normalize_result_dict(results[-1], compute_depth_maps)
             
         raycast_time = time.time() - raycast_start_time
         total_time = time.time() - start_time
@@ -905,18 +905,18 @@ class VisibilityManager:
     def compute_ortho_index_map_vtk(cls,
                                     ortho_camera,
                                     mesh_product: 'AbstractSceneProduct',
-                                    max_render_size: int = 4096) -> dict:
+                                    scale_factor: float = 1.0) -> dict:
         """Build a downsampled face-ID index map for an OrthoCamera.
 
         Renders the mesh off-screen with VTK orthographic projection looking
         straight down over the ortho's world-space extent.  The result is stored
-        at reduced resolution (capped at max_render_size) so that even very large
-        orthomosaics produce a manageable (H_r × W_r) int32 index map.
+        at a resolution derived from the shared MVAT quality scale factor, where
+        1.0 means full-resolution and lower values trade fidelity for speed.
 
         Args:
             ortho_camera:    OrthoCamera instance (must be is_valid).
             mesh_product:    MeshProduct whose faces are being indexed.
-            max_render_size: Maximum dimension of the rendered index map.
+            scale_factor:    Quality scale factor in the range (0, 1].
 
         Returns:
             dict with keys:
@@ -944,10 +944,13 @@ class VisibilityManager:
         n_cells = mesh.n_cells
         ortho_w, ortho_h = ortho_camera.width, ortho_camera.height
 
-        # Cap render dimensions while preserving aspect ratio
-        scale = min(1.0, max_render_size / max(ortho_w, ortho_h))
-        render_w = max(1, int(ortho_w * scale))
-        render_h = max(1, int(ortho_h * scale))
+        # Quality scales directly from the native orthomosaic resolution.
+        scale = float(scale_factor)
+        if not np.isfinite(scale) or scale <= 0:
+            scale = 1.0
+        scale = min(1.0, scale)
+        render_w = max(1, int(round(ortho_w * scale)))
+        render_h = max(1, int(round(ortho_h * scale)))
         print(f"   Ortho: {ortho_w}×{ortho_h}  →  render: {render_w}×{render_h}  (scale={scale:.4f})")
         print(f"   Mesh: {n_cells:,} cells")
 
