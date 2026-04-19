@@ -1,7 +1,7 @@
 import warnings
 import numpy as np
 
-from PyQt5.QtGui import QColor, QPen, QBrush
+from PyQt5.QtGui import QColor, QPen
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtWidgets import QGraphicsEllipseItem, QGraphicsRectItem, QApplication
 
@@ -83,28 +83,17 @@ class EraseTool(BrushTool):
         self._last_shape = self.shape
 
     def _apply_brush(self, event):
-        """Draw a lightweight eraser scratchpad and accumulate points."""
-        # Reuse the brush scratchpad path but style it for erasing so users get instant feedback
+        """Accumulate points for the math worker; no scratchpad trail for the eraser.
+
+        The parent builds a cumulative QPainterPath that shows every circle drawn
+        during a stroke.  For the brush that looks like paint building up, but for
+        the eraser (transparent fill + outline) it leaves stale circles all over the
+        image until the stroke ends.  We skip the path-drawing step entirely and just
+        queue the point so the streaming worker can do its job.
+        """
         scene_pos = self.annotation_window.mapToScene(event.pos())
-        # Let the parent append the point and update the path (if available)
-        try:
-            super()._apply_brush(event)
-        except Exception:
-            # Fallback to manual accumulation if super fails
-            self._accumulated_points.append(scene_pos)
+        self._accumulated_points.append(scene_pos)
 
-        # If the parent created a scratchpad item, restyle it as an eraser (transparent fill + outline)
-        try:
-            if self.scratchpad_item:
-                self.scratchpad_item.setBrush(QBrush(QColor(0, 0, 0, 0)))
-                pen = QPen(QColor(0, 0, 0, 160), 2)
-                pen.setCosmetic(True)
-                pen.setStyle(Qt.SolidLine)
-                self.scratchpad_item.setPen(pen)
-        except Exception:
-            pass
-
-        # Stream a lightweight live stroke to MVAT (if hooked). Use a semi-transparent red to indicate erasing.
         if hasattr(self, 'live_stroke_callback') and callable(self.live_stroke_callback):
             try:
                 eraser_color = QColor(255, 0, 0, 120)
