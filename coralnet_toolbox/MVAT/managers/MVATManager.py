@@ -2428,7 +2428,7 @@ class MVATManager(QObject):
         return ray.project_to_cameras(self.cameras) if ray is not None else {}
 
     def _on_patch_annotation_created(self, annotation_id: str):
-        """Propagate a newly created PatchAnnotation into all visible context cameras."""
+        """Propagate a newly created PatchAnnotation into all target cameras (perspective and ortho-aware)."""
         if self._propagating_annotation:
             return
 
@@ -2443,7 +2443,7 @@ class MVATManager(QObject):
         px = int(annotation.center_xy.x())
         py = int(annotation.center_xy.y())
 
-        selected_paths = self._get_visible_context_target_paths()
+        selected_paths = self._get_annotation_target_paths()
 
         # Quick exit: nothing to propagate to
         if not selected_paths:
@@ -2454,14 +2454,20 @@ class MVATManager(QObject):
         try:
             # Try True 3D mapping: get the element id at source pixel (if index map present)
             # Use the in-memory raster index_map to avoid triggering lazy disk loads.
-            source_index_map = self.selected_camera._raster.index_map
+            source_raster = getattr(self.selected_camera, '_raster', None)
+            source_index_map = source_raster.index_map if source_raster is not None else None
             element_id = None
             use_3d = False
             if source_index_map is not None:
                 try:
+                    sf = getattr(source_raster, 'index_map_scale_factor', None)
+                    map_px = int(px * sf) if sf else px
+                    map_py = int(py * sf) if sf else py
                     img_h, img_w = source_index_map.shape
-                    if 0 <= px < img_w and 0 <= py < img_h:
-                        eid = int(source_index_map[py, px])
+                    map_px = min(map_px, img_w - 1)
+                    map_py = min(map_py, img_h - 1)
+                    if 0 <= map_px < img_w and 0 <= map_py < img_h:
+                        eid = int(source_index_map[map_py, map_px])
                         if eid > -1:
                             element_id = eid
                             use_3d = True
