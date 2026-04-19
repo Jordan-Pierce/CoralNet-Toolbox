@@ -10,6 +10,7 @@ import os
 import time
 import numpy as np
 import traceback
+from typing import Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from PyQt5.QtCore import QObject, QTimer, pyqtSignal, Qt, QThread, QPointF
@@ -1541,6 +1542,12 @@ class MVATManager(QObject):
         score (dot product between viewing directions). Cameras behind the
         reference (negative alignment) are given a score of 0.
         """
+        if (getattr(reference_camera, 'position', None) is None or
+                getattr(reference_camera, 'R', None) is None or
+                getattr(candidate_camera, 'position', None) is None or
+                getattr(candidate_camera, 'R', None) is None):
+            return 0.0
+
         spatial_distance = np.linalg.norm(reference_camera.position - candidate_camera.position)
         ref_view_dir = reference_camera.R.T @ np.array([0, 0, 1])
         cand_view_dir = candidate_camera.R.T @ np.array([0, 0, 1])
@@ -1986,6 +1993,109 @@ class MVATManager(QObject):
             paths.discard(self.selected_camera.image_path)
         return paths
 
+    def _is_ortho_annotation_source(self) -> bool:
+        """Return True when the active annotation source is the ortho view."""
+        return self.ortho_camera is not None and self.selected_camera == self.ortho_camera
+
+    def _get_annotation_target_paths(self) -> set:
+        """Return the target camera paths for the current annotation source."""
+        if self._is_ortho_annotation_source():
+            return self._get_ortho_target_cameras()
+        return self._get_visible_context_target_paths()
+
+    def _extract_source_ids_from_crop_mask(self,
+                                           source_camera,
+                                           source_mask: np.ndarray,
+                                           px: int,
+                                           py: int) -> Optional[np.ndarray]:
+        """Extract visible element IDs from a crop-centred binary mask."""
+        raster = getattr(source_camera, '_raster', None)
+        if raster is None or source_mask is None:
+            return None
+
+        source_index_map = getattr(raster, 'index_map', None)
+        if source_index_map is None:
+            return None
+
+        source_mask = np.asarray(source_mask)
+        mask_h, mask_w = source_mask.shape
+        scale_factor = getattr(raster, 'index_map_scale_factor', None)
+
+        if scale_factor is not None and scale_factor != 1.0:
+            map_px = int(px * scale_factor)
+            map_py = int(py * scale_factor)
+            map_bw = max(1, int(mask_w * scale_factor))
+            map_bh = max(1, int(mask_h * scale_factor))
+        else:
+            map_px, map_py = px, py
+            map_bw, map_bh = mask_w, mask_h
+
+        x0 = map_px - map_bw // 2
+        y0 = map_py - map_bh // 2
+        x1 = x0 + map_bw
+        y1 = y0 + map_bh
+
+        img_h, img_w = source_index_map.shape
+        if x0 >= img_w or y0 >= img_h or x1 <= 0 or y1 <= 0:
+            return np.array([], dtype=np.int64)
+
+        cx0 = max(x0, 0)
+        cy0 = max(y0, 0)
+        cx1 = min(x1, img_w)
+        cy1 = min(y1, img_h)
+        index_slice = source_index_map[cy0:cy1, cx0:cx1]
+
+        if scale_factor is not None and scale_factor != 1.0:
+            raw_ids = index_slice.ravel()
+        else:
+            bx0 = cx0 - x0
+            by0 = cy0 - y0
+            bx1 = bx0 + (cx1 - cx0)
+            by1 = by0 + (cy1 - cy0)
+            mask_clip = source_mask[by0:by1, bx0:bx1]
+            raw_ids = index_slice[mask_clip.astype(bool)]
+
+        unique_ids = np.unique(raw_ids)
+        return unique_ids[unique_ids > -1].astype(np.int64, copy=False)
+
+    def _extract_source_ids_from_full_mask(self,
+                                           source_camera,
+                                           source_mask: np.ndarray) -> Optional[np.ndarray]:
+        """Extract visible element IDs from a full-frame binary mask."""
+        raster = getattr(source_camera, '_raster', None)
+        if raster is None or source_mask is None:
+            return None
+
+        source_index_map = getattr(raster, 'index_map', None)
+        if source_index_map is None:
+            return None
+
+        source_mask = np.asarray(source_mask)
+        if source_mask.ndim != 2:
+            return None
+
+        needs_resize = (
+            source_mask.shape != source_index_map.shape or
+            (getattr(raster, 'index_map_scale_factor', None) not in (None, 1.0))
+        )
+
+        if needs_resize:
+            import cv2
+            mask_bool = cv2.resize(
+                source_mask.astype(np.uint8),
+                (source_index_map.shape[1], source_index_map.shape[0]),
+                interpolation=cv2.INTER_NEAREST,
+            ).astype(bool)
+        else:
+            mask_bool = source_mask.astype(bool)
+
+        if not np.any(mask_bool):
+            return np.array([], dtype=np.int64)
+
+        raw_ids = source_index_map[mask_bool]
+        unique_ids = np.unique(raw_ids)
+        return unique_ids[unique_ids > -1].astype(np.int64, copy=False)
+
     def _get_visible_context_paths(self) -> set:
         """Return the set of image paths currently visible in the context matrix."""
         return set(self._get_visible_context_camera_paths())
@@ -2042,9 +2152,17 @@ class MVATManager(QObject):
         """
         overlap_count = 0
         min_overlap_ratio = 0.20  # Secondary camera must cover at least 20% of the active camera's view
+        camera_items = tuple(camera_items if camera_items is not None else self.cameras.items())
         active_indices = active_camera.visible_indices
         active_visible_count = len(active_indices) if active_indices is not None else 0
-        camera_items = camera_items if camera_items is not None else self.cameras.items()
+
+        # OrthoCamera (and any other non-pose camera) does not expose a
+        # perspective center / orientation. In ortho mode the UI already treats
+        # the orthomosaic as overlapping with every loaded context camera, so we
+        # return that count directly instead of running perspective heuristics.
+        if (getattr(active_camera, 'position', None) is None or
+                getattr(active_camera, 'R', None) is None):
+            return len(camera_items)
 
         for path, cam in camera_items:
             if path == active_camera.image_path:
@@ -2361,6 +2479,8 @@ class MVATManager(QObject):
     # TODO Note: dense mesh hit fills in the face IDs when the quality of index map < Highest; otherwise VTK does this fine.
     # If we can find a way to not use Open3D always, then we don't need to calculate a BVH, which takes times to build.
     # Figure out how we can allow the user to use lower quality index maps, but still fill in the gaps.
+    # 
+    # Leagcy code; do not delete
     def _dense_mesh_hit_test(self, source_camera, pixel_mask: np.ndarray, px: int, py: int, mesh_product) -> np.ndarray:
         """Cast rays through every True pixel in pixel_mask against the mesh surface.
 
@@ -2567,13 +2687,7 @@ class MVATManager(QObject):
         px = int(scene_pos.x())
         py = int(scene_pos.y())
 
-        # Determine target cameras based on source camera type
-        if self.ortho_camera is not None and self.selected_camera == self.ortho_camera:
-            # When painting on orthomosaic: propagate to all visible perspective cameras
-            selected_paths = self._get_ortho_target_cameras()
-        else:
-            # When painting on perspective camera: propagate to visible context cameras
-            selected_paths = self._get_visible_context_target_paths()
+        selected_paths = self._get_annotation_target_paths()
 
         project_labels = list(self.main_window.label_window.labels)
 
@@ -2590,74 +2704,12 @@ class MVATManager(QObject):
         # ------------------------------------------------------------------
         # Phase 1: Source ID Extraction (2D → 3D)
         # ------------------------------------------------------------------
-        painted_ids = None
-        _p1_target = self.viewer.scene_context.get_primary_target()
-        if isinstance(_p1_target, MeshProduct) and False: # now fast
-            try:
-                # Dense ray casting: cast through every True pixel in the brush mask
-                # to intersect the full triangle surface area rather than relying on
-                # the downsampled index_map (which only captures face centres at reduced
-                # resolution, missing small or oblique triangles).
-                painted_ids = self._dense_mesh_hit_test(
-                    self.selected_camera, brush_mask, px, py, _p1_target
-                )
-                if painted_ids is None:
-                    painted_ids = np.array([], dtype=np.int32)
-            except Exception as e:
-                print(f"⚠️ Dense mesh hit test failed: {e}. Falling back to index_map.")
-                painted_ids = None
-
-        # If mesh hit test didn't work, try index_map fallback
-        if painted_ids is None:
-            # PointCloud (or non-mesh) target: use the pre-computed index_map.
-            # Use the in-memory raster index_map to avoid triggering lazy disk loads.
-            source_index_map = self.selected_camera._raster.index_map
-            if source_index_map is not None:
-                # OrthoRaster index maps are stored at reduced resolution to avoid
-                # multi-GB allocations.  Scale native pixel coords to map coords.
-                sf = getattr(self.selected_camera._raster, 'index_map_scale_factor', None)
-                if sf is not None and sf != 1.0:
-                    map_px = int(px * sf)
-                    map_py = int(py * sf)
-                    map_bw = max(1, int(brush_w * sf))
-                    map_bh = max(1, int(brush_h * sf))
-                else:
-                    map_px, map_py = px, py
-                    map_bw, map_bh = brush_w, brush_h
-
-                # Bounding box of the brush in index_map coordinates
-                x0 = map_px - map_bw // 2
-                y0 = map_py - map_bh // 2
-                x1 = x0 + map_bw
-                y1 = y0 + map_bh
-
-                img_h, img_w = source_index_map.shape
-
-                # Only proceed if the brush overlaps the index map at all
-                if x0 < img_w and y0 < img_h and x1 > 0 and y1 > 0:
-                    # Clip to index map bounds
-                    cx0 = max(x0, 0)
-                    cy0 = max(y0, 0)
-                    cx1 = min(x1, img_w)
-                    cy1 = min(y1, img_h)
-
-                    index_slice = source_index_map[cy0:cy1, cx0:cx1]
-
-                    if sf is not None and sf != 1.0:
-                        # At reduced scale, take all face IDs in the region —
-                        # brush shape detail is irrelevant at this resolution
-                        raw_ids = index_slice.ravel()
-                    else:
-                        # Full-resolution: apply the brush mask for accuracy
-                        bx0 = cx0 - x0
-                        by0 = cy0 - y0
-                        bx1 = bx0 + (cx1 - cx0)
-                        by1 = by0 + (cy1 - cy0)
-                        brush_clip = brush_mask[by0:by1, bx0:bx1]
-                        raw_ids    = index_slice[brush_clip.astype(bool)]
-
-                    unique_ids  = np.unique(raw_ids)
-                    painted_ids = unique_ids[unique_ids > -1]  # filter background
+        painted_ids = self._extract_source_ids_from_crop_mask(
+            self.selected_camera,
+            brush_mask,
+            px,
+            py,
+        )
 
         # Whether the source camera has valid 3D geometry hits to propagate
         use_3d = painted_ids is not None and len(painted_ids) > 0
@@ -2761,13 +2813,7 @@ class MVATManager(QObject):
         px = int(scene_pos.x())
         py = int(scene_pos.y())
 
-        # Determine target cameras based on source camera type
-        if self.ortho_camera is not None and self.selected_camera == self.ortho_camera:
-            # When painting on orthomosaic: propagate to all visible perspective cameras
-            selected_paths = self._get_ortho_target_cameras()
-        else:
-            # When painting on perspective camera: propagate to visible context cameras
-            selected_paths = self._get_visible_context_target_paths()
+        selected_paths = self._get_annotation_target_paths()
 
         project_labels = list(self.main_window.label_window.labels)
 
@@ -2779,30 +2825,8 @@ class MVATManager(QObject):
         # Phase 1: Source ID Extraction (2D → 3D)
         # ------------------------------------------------------------------
         painted_ids = None
-        _p1_target = self.viewer.scene_context.get_primary_target()
-        if fill_mask is not None and isinstance(_p1_target, MeshProduct) and False:
-            # Dense ray casting: fill_mask is full image-sized, so pass center coords
-            # that produce a zero offset (x0=0, y0=0) aligning the mask to image space.
-            mask_h_fill, mask_w_fill = fill_mask.shape
-            painted_ids = self._dense_mesh_hit_test(
-                self.selected_camera, fill_mask.astype(bool),
-                mask_w_fill // 2, mask_h_fill // 2, _p1_target
-            )
-        else:
-            # PointCloud (or non-mesh) target: use the pre-computed index_map.
-            # Use the in-memory raster index_map to avoid triggering lazy disk loads.
-            source_index_map = self.selected_camera._raster.index_map
-            if source_index_map is not None and fill_mask is not None:
-                try:
-                    img_h, img_w = source_index_map.shape
-                    # Get all element IDs where fill_mask is True
-                    if fill_mask.shape == (img_h, img_w):
-                        element_ids = source_index_map[fill_mask]
-                        # Get unique element IDs (excluding -1 which means background)
-                        painted_ids = np.unique(element_ids[element_ids > -1])
-                        painted_ids = np.array(painted_ids, dtype=np.int64)
-                except Exception:
-                    pass
+        if fill_mask is not None:
+            painted_ids = self._extract_source_ids_from_full_mask(self.selected_camera, fill_mask)
 
         use_3d = painted_ids is not None and len(painted_ids) > 0
         
@@ -2959,13 +2983,7 @@ class MVATManager(QObject):
 
         px, py = int(scene_pos.x()), int(scene_pos.y())
 
-        # Determine target cameras based on source camera type
-        if self.ortho_camera is not None and self.selected_camera == self.ortho_camera:
-            # When erasing on orthomosaic: propagate to all visible perspective cameras
-            selected_paths = self._get_ortho_target_cameras()
-        else:
-            # When erasing on perspective camera: propagate to visible context cameras
-            selected_paths = self._get_visible_context_target_paths()
+        selected_paths = self._get_annotation_target_paths()
 
         # Quick exit: nothing to propagate to
         if not selected_paths:
@@ -2976,43 +2994,7 @@ class MVATManager(QObject):
         # ------------------------------------------------------------------
         # Phase 1: Source ID Extraction (2D → 3D)
         # ------------------------------------------------------------------
-        painted_ids = None
-        _p1_target = self.viewer.scene_context.get_primary_target()
-        if isinstance(_p1_target, MeshProduct) and False:
-            # Dense ray casting: cast through every True pixel in the eraser mask
-            # to intersect the full triangle surface area, matching the brush approach.
-            painted_ids = self._dense_mesh_hit_test(
-                self.selected_camera, brush_mask, px, py, _p1_target
-            )
-        else:
-            # PointCloud (or non-mesh) target: use the pre-computed index_map.
-            # Use the in-memory raster index_map to avoid triggering lazy disk loads.
-            source_index_map = self.selected_camera._raster.index_map
-            if source_index_map is not None:
-                x0 = px - brush_w // 2
-                y0 = py - brush_h // 2
-                x1 = x0 + brush_w
-                y1 = y0 + brush_h
-
-                img_h, img_w = source_index_map.shape
-
-                if x0 < img_w and y0 < img_h and x1 > 0 and y1 > 0:
-                    cx0 = max(x0, 0)
-                    cy0 = max(y0, 0)
-                    cx1 = min(x1, img_w)
-                    cy1 = min(y1, img_h)
-
-                    bx0 = cx0 - x0
-                    by0 = cy0 - y0
-                    bx1 = bx0 + (cx1 - cx0)
-                    by1 = by0 + (cy1 - cy0)
-
-                    index_slice = source_index_map[cy0:cy1, cx0:cx1]
-                    brush_clip = brush_mask[by0:by1, bx0:bx1]
-
-                    raw_ids = index_slice[brush_clip.astype(bool)]
-                    unique_ids = np.unique(raw_ids)
-                    painted_ids = unique_ids[unique_ids > -1]
+        painted_ids = self._extract_source_ids_from_crop_mask(self.selected_camera, brush_mask, px, py)
 
         use_3d = painted_ids is not None and len(painted_ids) > 0
 
@@ -3102,13 +3084,7 @@ class MVATManager(QObject):
         px = int(scene_pos.x())
         py = int(scene_pos.y())
 
-        # Determine target cameras based on source camera type
-        if self.ortho_camera is not None and self.selected_camera == self.ortho_camera:
-            # When applying SAM on orthomosaic: propagate to all visible perspective cameras
-            selected_paths = self._get_ortho_target_cameras()
-        else:
-            # When applying SAM on perspective camera: propagate to visible context cameras
-            selected_paths = self._get_visible_context_target_paths()
+        selected_paths = self._get_annotation_target_paths()
 
         project_labels = list(self.main_window.label_window.labels)
 
@@ -3122,14 +3098,12 @@ class MVATManager(QObject):
         # Phase 1: Source ID Extraction (2D → 3D)
         # ------------------------------------------------------------------
         painted_ids = None
-        _p1_target = self.viewer.scene_context.get_primary_target()
-        if isinstance(_p1_target, MeshProduct) and False:
-            # Dense ray casting: cast through every True pixel in the SAM binary_mask
-            # to intersect the full triangle surface area rather than relying on
-            # the downsampled index_map (which only captures face centres at reduced
-            # resolution, missing small or oblique triangles).
-            painted_ids = self._dense_mesh_hit_test(
-                self.selected_camera, binary_mask.astype(bool), px, py, _p1_target
+        if self._is_ortho_annotation_source():
+            painted_ids = self._extract_source_ids_from_crop_mask(
+                self.selected_camera,
+                binary_mask.astype(bool),
+                px,
+                py,
             )
         else:
             import cv2
@@ -3162,7 +3136,6 @@ class MVATManager(QObject):
                     source_depth_map = self.selected_camera._raster.z_channel
 
                     if source_depth_map is not None:
-                        import cv2
                         depth_slice = source_depth_map[cy0:cy1, cx0:cx1]
 
                         # ----------------------------------------------------------
