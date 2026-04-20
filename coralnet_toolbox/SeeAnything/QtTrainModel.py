@@ -265,13 +265,11 @@ class TrainModelDialog(QDialog):
         self._close_mosaic = 0  # Default for linear-probing
 
         # Create the layout
-        main_layout = QHBoxLayout(self)
-        left_layout = QVBoxLayout()
-        right_layout = QVBoxLayout()
+        main_layout = QVBoxLayout(self)
 
-        self.layout = left_layout  # Keep backward compatibility for helper methods
-        self.left_layout = left_layout
-        self.right_layout = right_layout
+        self.layout = main_layout  # Keep backward compatibility for helper methods
+        self.left_layout = main_layout
+        self.right_layout = None
 
         # Create the info layout
         self.setup_info_layout()
@@ -281,15 +279,12 @@ class TrainModelDialog(QDialog):
         self.setup_model_layout()
         # Create the output parameters layout
         self.setup_output_parameters_layout()
+        # Reserve space so the parameters section lands below the main setup fields.
+        self.layout.addStretch(1)
         # Create and set up the parameters layout
         self.setup_parameters_layout()
         # Create the buttons layout
         self.setup_buttons_layout()
-
-        # Keep the left column compact and give the parameters panel more width.
-        self.left_layout.addStretch()
-        main_layout.addLayout(left_layout, stretch=2)
-        main_layout.addLayout(right_layout, stretch=3)
 
     def setup_info_layout(self):
         """
@@ -593,7 +588,7 @@ class TrainModelDialog(QDialog):
         self.remove_param_button.setEnabled(False)  # Disabled until at least one parameter is added
         form_layout.addRow("", self.remove_param_button)
 
-        self.right_layout.addWidget(group_box)
+        self.layout.addWidget(group_box)
 
     def add_parameter_pair(self):
         """
