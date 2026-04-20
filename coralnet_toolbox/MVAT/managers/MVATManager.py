@@ -2470,24 +2470,41 @@ class MVATManager(QObject):
         from PyQt5.QtCore import QPointF
         self._propagating_annotation = True
         try:
-            # Try True 3D mapping: get the element id at source pixel (if index map present)
-            # Use the in-memory raster index_map to avoid triggering lazy disk loads.
+            # ------------------------------------------------------------------
+            # Source element-ID extraction: sample a sparse grid within the
+            # annotation bounding box so that get_pixels_for_elements has many
+            # IDs to work with — not just the single center pixel.  More IDs
+            # dramatically reduces stride false-negatives in the target cameras.
+            # ------------------------------------------------------------------
             source_raster = getattr(self.selected_camera, '_raster', None)
             source_index_map = source_raster.index_map if source_raster is not None else None
-            element_id = None
+            source_element_ids = None   # list[int] — passed to get_pixels_for_elements
+            element_id = None           # center-pixel ID — used by _build_projection ray
             use_3d = False
+
             if source_index_map is not None:
                 try:
-                    sf = getattr(source_raster, 'index_map_scale_factor', None)
-                    map_px = int(px * sf) if sf else px
-                    map_py = int(py * sf) if sf else py
+                    sf = getattr(source_raster, 'index_map_scale_factor', None) or 1.0
                     img_h, img_w = source_index_map.shape
-                    map_px = min(map_px, img_w - 1)
-                    map_py = min(map_py, img_h - 1)
-                    if 0 <= map_px < img_w and 0 <= map_py < img_h:
-                        eid = int(source_index_map[map_py, map_px])
-                        if eid > -1:
-                            element_id = eid
+                    ann_size = annotation.annotation_size   # half-extent in image pixels
+
+                    # Clamp the annotation bounding box to the index-map bounds
+                    # (coordinates scaled by sf to match the index-map resolution).
+                    x0 = max(0,       int((px - ann_size) * sf))
+                    x1 = min(img_w,   int((px + ann_size) * sf) + 1)
+                    y0 = max(0,       int((py - ann_size) * sf))
+                    y1 = min(img_h,   int((py + ann_size) * sf) + 1)
+
+                    if x0 < x1 and y0 < y1:
+                        patch = source_index_map[y0:y1, x0:x1].ravel()
+                        valid = patch[patch > -1]
+                        if valid.size > 0:
+                            source_element_ids = list(np.unique(valid).tolist())
+                            # Prefer the exact center-pixel ID for the ray direction
+                            cx = min(int(px * sf), img_w - 1)
+                            cy = min(int(py * sf), img_h - 1)
+                            center_eid = int(source_index_map[cy, cx])
+                            element_id = center_eid if center_eid > -1 else source_element_ids[0]
                             use_3d = True
                 except Exception:
                     pass
@@ -2502,32 +2519,44 @@ class MVATManager(QObject):
                     continue
 
                 try:
-                    # 3D centroid mapping if both source hit and target index map exist
-                    target_has_index = getattr(target_camera, '_raster', None) is not None and target_camera._raster.index_map is not None
-                    if use_3d and target_has_index and element_id is not None:
-                        flat = target_camera.get_pixels_for_elements(np.array([element_id], dtype=np.int64))
-                        if flat.size == 0:
-                            # occluded in this view
-                            continue
-                        v_arr, u_arr = np.divmod(flat, target_camera.width)
-                        u_centroid = float(np.mean(u_arr))
-                        v_centroid = float(np.mean(v_arr))
-                        if not (0 <= u_centroid < target_camera.width and 0 <= v_centroid < target_camera.height):
-                            continue
+                    placed = False
 
-                        new_annotation = PatchAnnotation(
-                            center_xy=QPointF(u_centroid, v_centroid),
-                            annotation_size=annotation.annotation_size,
-                            label=annotation.label,
-                            image_path=target_path,
-                            transparency=annotation.transparency,
+                    # ----------------------------------------------------------
+                    # 3D centroid path: look up every sampled element ID in the
+                    # target's index map and use the resulting pixel centroid.
+                    # Falls through to 2D when the lookup returns empty (element
+                    # too small / edge-on in target, or stride miss) rather than
+                    # hard-skipping the camera.
+                    # ----------------------------------------------------------
+                    target_has_index = (getattr(target_camera, '_raster', None) is not None
+                                        and target_camera._raster.index_map is not None)
+                    if use_3d and target_has_index and source_element_ids:
+                        flat = target_camera.get_pixels_for_elements(
+                            np.array(source_element_ids, dtype=np.int64)
                         )
-                        try:
-                            self.annotation_window.add_annotation(new_annotation, record_action=True)
-                        except Exception:
-                            pass
-                    else:
-                        # 2D center-stamp fallback: per-target projection (lazy)
+                        if flat.size > 0:
+                            v_arr, u_arr = np.divmod(flat, target_camera.width)
+                            u_centroid = float(np.mean(u_arr))
+                            v_centroid = float(np.mean(v_arr))
+                            if 0 <= u_centroid < target_camera.width and 0 <= v_centroid < target_camera.height:
+                                new_annotation = PatchAnnotation(
+                                    center_xy=QPointF(u_centroid, v_centroid),
+                                    annotation_size=annotation.annotation_size,
+                                    label=annotation.label,
+                                    image_path=target_path,
+                                    transparency=annotation.transparency,
+                                )
+                                try:
+                                    self.annotation_window.add_annotation(new_annotation, record_action=True)
+                                    placed = True
+                                except Exception:
+                                    pass
+
+                    # ----------------------------------------------------------
+                    # 2D fallback: used when no index map is available OR when
+                    # the 3D lookup returned empty (element occluded / missed).
+                    # ----------------------------------------------------------
+                    if not placed:
                         if projections is None:
                             projections = self._build_projection(px, py)
                         proj = projections.get(target_path)
