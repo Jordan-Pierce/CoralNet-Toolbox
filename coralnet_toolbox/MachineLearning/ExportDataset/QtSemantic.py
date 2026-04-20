@@ -307,8 +307,7 @@ class Semantic(Base):
         progress_bar.show()
         progress_bar.start_progress(len(unique_annotations_list))
 
-        update_interval = max(1, len(unique_annotations_list) // 200)
-        for i, annotation in enumerate(unique_annotations_list):
+        for annotation in unique_annotations_list:
             image_path = annotation.image_path
 
             # --- Read from the cache ---
@@ -336,8 +335,7 @@ class Semantic(Base):
                             label_counts[label_code] = 1
                             label_image_counts[label_code] = {image_path}
 
-            if i % update_interval == 0:
-                progress_bar.update_progress(update_interval)
+            progress_bar.update_progress()
 
         # If no annotations are found, populate with all available project labels
         if not label_counts:

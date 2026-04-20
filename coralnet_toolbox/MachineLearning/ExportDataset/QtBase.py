@@ -446,9 +446,7 @@ class Base(QDialog):
         label_counts = {}
         label_image_counts = {}
         # Count the occurrences of each label and unique images per label
-        annotations_list = list(self.annotation_window.annotations_dict.values())
-        update_interval = max(1, len(annotations_list) // 200)
-        for i, annotation in enumerate(annotations_list):
+        for annotation in self.annotation_window.annotations_dict.values():
             label = annotation.label.short_label_code
             image_path = annotation.image_path
             if label != 'Review':
@@ -459,8 +457,7 @@ class Base(QDialog):
                     label_counts[label] = 1
                     label_image_counts[label] = {image_path}
 
-            if i % update_interval == 0:
-                progress_bar.update_progress(update_interval)
+            progress_bar.update_progress()
             
         # Sort the labels by their counts in descending order
         sorted_label_counts = sorted(label_counts.items(), key=lambda item: item[1], reverse=True)
