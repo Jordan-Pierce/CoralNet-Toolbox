@@ -759,22 +759,13 @@ class BaseCanvas(QGraphicsView):
         """
         for item in self._readonly_annotation_items:
             if getattr(item, '_source_annotation_id', None) == annotation_id:
-                try:
-                    if highlighted:
-                        pen = QPen(QColor(255, 255, 0), 3)
-                        pen.setCosmetic(True)
-                        item.setPen(pen)
-                        item.setZValue(6)
-                    else:
-                        # Restore original style from annotation data
-                        original_color = item.brush().color()
-                        original_color.setAlpha(255)
-                        pen = QPen(original_color, 1)
-                        pen.setCosmetic(True)
-                        item.setPen(pen)
-                        item.setZValue(5)
-                except Exception:
-                    pass
+                # Restore original style from annotation data
+                original_color = item.brush().color()
+                original_color.setAlpha(255)
+                pen = QPen(original_color, 1)
+                pen.setCosmetic(True)
+                item.setPen(pen)
+                item.setZValue(5)
                 break
     
     # ==================== Z-Channel Visualization ====================
