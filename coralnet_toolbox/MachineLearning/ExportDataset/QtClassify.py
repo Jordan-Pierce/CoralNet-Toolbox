@@ -84,9 +84,12 @@ class Classify(Base):
             self.test_annotations = self.selected_annotations[val_split:]
         else:
             # Original logic: split by images
-            self.train_annotations = [a for a in self.selected_annotations if a.image_path in self.train_images]
-            self.val_annotations = [a for a in self.selected_annotations if a.image_path in self.val_images]
-            self.test_annotations = [a for a in self.selected_annotations if a.image_path in self.test_images]
+            train_set = set(self.train_images)
+            val_set = set(self.val_images)
+            test_set = set(self.test_images)
+            self.train_annotations = [a for a in self.selected_annotations if a.image_path in train_set]
+            self.val_annotations = [a for a in self.selected_annotations if a.image_path in val_set]
+            self.test_annotations = [a for a in self.selected_annotations if a.image_path in test_set]
 
     def accept(self):
         """

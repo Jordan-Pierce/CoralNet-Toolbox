@@ -135,15 +135,20 @@ class Detect(Base):
         progress_bar.show()
         progress_bar.start_progress(len(image_paths))
 
+        # Group annotations by image path and precompute label→index once
+        annotations_by_image = {}
+        for a in annotations:
+            annotations_by_image.setdefault(a.image_path, []).append(a)
+        label_to_index = {label: i for i, label in enumerate(self.selected_labels)}
+
         for image_path in image_paths:
             yolo_annotations = []
             image_height, image_width = rasterio_open(image_path).shape
-            # Filter the annotations passed to this function to get only those for the current image
-            image_annotations = [a for a in annotations if a.image_path == image_path]
+            image_annotations = annotations_by_image.get(image_path, [])
 
             for image_annotation in image_annotations:
                 class_label, annotation = image_annotation.to_yolo_detection(image_width, image_height)
-                class_number = self.selected_labels.index(class_label)
+                class_number = label_to_index[class_label]
                 yolo_annotations.append(f"{class_number} {annotation}")
 
             # Save the annotations to a text file

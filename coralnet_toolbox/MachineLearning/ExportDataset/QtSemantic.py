@@ -256,26 +256,25 @@ class Semantic(Base):
                 if self.mask_contains_selected_labels(mask):
                     annotations.append(mask)
 
-        # Get and filter VECTOR annotations based on selected types
-        # This re-implements the logic from the base class to work here
-        vector_annotations = []
-        all_vectors = list(self.annotation_window.annotations_dict.values())
-        
-        # Filter by annotation type
+        # Get and filter VECTOR annotations in a single pass
+        allowed_types = set()
         if self.include_patches_checkbox.isChecked():
-            vector_annotations.extend([a for a in all_vectors if a.__class__.__name__ == 'PatchAnnotation'])
+            allowed_types.add('PatchAnnotation')
         if self.include_rectangles_checkbox.isChecked():
-            vector_annotations.extend([a for a in all_vectors if a.__class__.__name__ == 'RectangleAnnotation'])
+            allowed_types.add('RectangleAnnotation')
         if self.include_polygons_checkbox.isChecked():
-            vector_annotations.extend([a for a in all_vectors if a.__class__.__name__ == 'PolygonAnnotation'])
-        
-        # Filter vector annotations by selected labels
-        filtered_vectors = [a for a in vector_annotations if a.label.short_label_code in self.selected_labels]
+            allowed_types.add('PolygonAnnotation')
 
-        # Filter by image source (all vs. filtered)
-        if self.filtered_images_radio.isChecked():
-            filtered_image_paths = set(self.image_window.table_model.filtered_paths)
-            filtered_vectors = [a for a in filtered_vectors if a.image_path in filtered_image_paths]
+        selected_set = set(self.selected_labels)
+        filtered_image_paths = (set(self.image_window.table_model.filtered_paths)
+                                if self.filtered_images_radio.isChecked() else None)
+
+        filtered_vectors = [
+            a for a in self.annotation_window.annotations_dict.values()
+            if a.__class__.__name__ in allowed_types
+            and a.label.short_label_code in selected_set
+            and (filtered_image_paths is None or a.image_path in filtered_image_paths)
+        ]
 
         annotations.extend(filtered_vectors)
             
@@ -302,17 +301,19 @@ class Semantic(Base):
         all_annotations = (list(self.annotation_window.annotations_dict.values()) + self.get_mask_annotations())
         unique_annotations = {anno.id: anno for anno in all_annotations}.values()
 
+        unique_annotations_list = list(unique_annotations)
         # Create a progress bar
         progress_bar = ProgressBar(self, "Populating Class Lists")
         progress_bar.show()
-        progress_bar.start_progress(len(unique_annotations))
-        
-        for annotation in unique_annotations:
+        progress_bar.start_progress(len(unique_annotations_list))
+
+        update_interval = max(1, len(unique_annotations_list) // 200)
+        for i, annotation in enumerate(unique_annotations_list):
             image_path = annotation.image_path
-            
+
             # --- Read from the cache ---
             class_stats = self._stats_cache.get(annotation.id, {})
-            
+
             # Handle MaskAnnotation: iterate through its internal labels
             if annotation.__class__.__name__ == 'MaskAnnotation':
                 for label_code, stats in class_stats.items():
@@ -323,10 +324,9 @@ class Semantic(Base):
                         else:
                             label_counts[label_code] = 1
                             label_image_counts[label_code] = {image_path}
-            
+
             # Handle Vector Annotations
             else:
-                # The stats dict for a vector just has one key
                 for label_code in class_stats.keys():
                     if label_code != 'Review':
                         if label_code in label_counts:
@@ -335,9 +335,9 @@ class Semantic(Base):
                         else:
                             label_counts[label_code] = 1
                             label_image_counts[label_code] = {image_path}
-                            
-            # Update progress
-            progress_bar.update_progress()
+
+            if i % update_interval == 0:
+                progress_bar.update_progress(update_interval)
 
         # If no annotations are found, populate with all available project labels
         if not label_counts:
@@ -359,6 +359,7 @@ class Semantic(Base):
                                                            "Images"])
         self.label_counts_table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
 
+        self.label_counts_table.setUpdatesEnabled(False)
         row = 0
         for label, count in sorted_label_counts:
             include_checkbox = QCheckBox()
@@ -388,6 +389,7 @@ class Semantic(Base):
             self.label_counts_table.setItem(row, 5, test_item)
             self.label_counts_table.setItem(row, 6, images_item)
             row += 1
+        self.label_counts_table.setUpdatesEnabled(True)
             
         # Restore the cursor to the default cursor
         QApplication.restoreOverrideCursor()
@@ -428,19 +430,34 @@ class Semantic(Base):
         # Split the data by annotations
         self.determine_splits()
 
+        # Precompute label→annotation count in a single pass each — O(n) instead of O(labels × n)
+        def _label_counts_from(annotation_list):
+            counts = {}
+            for anno in annotation_list:
+                for lbl in self._stats_cache.get(anno.id, {}):
+                    counts[lbl] = counts.get(lbl, 0) + 1
+            return counts
+
+        selected_counts = _label_counts_from(self.selected_annotations)
+        train_counts = _label_counts_from(self.train_annotations)
+        val_counts = _label_counts_from(self.val_annotations)
+        test_counts = _label_counts_from(self.test_annotations)
+
+        red = QColor(255, 220, 220)
+        green = QColor(220, 255, 220)
+
         # Update the label counts table
+        self.label_counts_table.setUpdatesEnabled(False)
         for row in range(self.label_counts_table.rowCount()):
             container = self.label_counts_table.cellWidget(row, 0)
             include_checkbox = container.findChild(QCheckBox)
             label = self.label_counts_table.item(row, 1).text()
-            
-            # --- Read from the cache ---
-            total_count = sum(1 for anno in self.selected_annotations if label in self._stats_cache.get(anno.id, {}))
-            
+
+            total_count = selected_counts.get(label, 0)
             if include_checkbox.isChecked():
-                train_count = sum(1 for anno in self.train_annotations if label in self._stats_cache.get(anno.id, {}))
-                val_count = sum(1 for anno in self.val_annotations if label in self._stats_cache.get(anno.id, {}))
-                test_count = sum(1 for anno in self.test_annotations if label in self._stats_cache.get(anno.id, {}))
+                train_count = train_counts.get(label, 0)
+                val_count = val_counts.get(label, 0)
+                test_count = test_counts.get(label, 0)
             else:
                 train_count = 0
                 val_count = 0
@@ -451,10 +468,6 @@ class Semantic(Base):
             self.label_counts_table.item(row, 4).setText(str(val_count))
             self.label_counts_table.item(row, 5).setText(str(test_count))
 
-            # Set cell colors based on the counts and ratios
-            red = QColor(255, 220, 220)
-            green = QColor(220, 255, 220)
-
             if include_checkbox.isChecked():
                 self.set_cell_color(row, 3, red if train_count == 0 and self.train_ratio > 0 else green)
                 self.set_cell_color(row, 4, red if val_count == 0 and self.val_ratio > 0 else green)
@@ -463,6 +476,7 @@ class Semantic(Base):
                 self.set_cell_color(row, 3, green)
                 self.set_cell_color(row, 4, green)
                 self.set_cell_color(row, 5, green)
+        self.label_counts_table.setUpdatesEnabled(True)
 
         # This call will NOW BE FAST, as it uses the cache
         self.ready_status = self.check_label_distribution()

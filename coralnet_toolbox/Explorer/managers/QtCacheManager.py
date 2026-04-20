@@ -174,17 +174,45 @@ class CacheManager:
         Removes an annotation's feature metadata from the SQLite database.
         This effectively orphans the vector in the FAISS index, invalidating it.
         """
+        self.remove_features_for_annotations([annotation_id])
+
+    def remove_features_for_annotations(self, annotation_ids):
+        """
+        Removes multiple annotations' feature metadata in a single SQLite transaction.
+
+        This is the fast path for bulk deletes. The FAISS vectors themselves are
+        still left in place and become unreachable once their metadata rows are removed.
+        """
+        unique_ids = list(dict.fromkeys(annotation_ids))
+        if not unique_ids:
+            return
+
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cur = conn.cursor()
-                cur.execute(
-                    "DELETE FROM features WHERE annotation_id = ?",
-                    (annotation_id,)
-                )
+
+                # SQLite limits the number of bind parameters per statement, so chunk
+                # larger bulk deletes into safe batches.
+                max_bind_params = 900
+                for start in range(0, len(unique_ids), max_bind_params):
+                    chunk = unique_ids[start:start + max_bind_params]
+                    placeholders = ','.join('?' for _ in chunk)
+                    cur.execute(
+                        f"DELETE FROM features WHERE annotation_id IN ({placeholders})",
+                        chunk,
+                    )
+
                 conn.commit()
-            print(f"Invalidated features for annotation_id: {annotation_id}")
+
+            if len(unique_ids) == 1:
+                print(f"Invalidated features for annotation_id: {unique_ids[0]}")
+            else:
+                print(f"Invalidated features for {len(unique_ids)} annotations")
         except sqlite3.Error as e:
-            print(f"Error removing feature for annotation {annotation_id}: {e}")
+            if len(unique_ids) == 1:
+                print(f"Error removing feature for annotation {unique_ids[0]}: {e}")
+            else:
+                print(f"Error removing features for annotations {unique_ids}: {e}")
 
     def close(self):
         """Closes the database connection."""

@@ -713,10 +713,10 @@ class EmbeddingViewerWindow(QWidget):
                 self.data_item_cache.pop(ann_id, None)
                 if ann_id in self.working_set_ids:
                     self.working_set_ids.remove(ann_id)
-                
-                # Invalidate cached ML features for deleted items (guarded)
-                if self.cache_manager and self._should_modify_cache():
-                    self.cache_manager.remove_features_for_annotation(ann_id)
+
+            # Invalidate cached ML features for deleted items in one transaction.
+            if self.cache_manager and self._should_modify_cache():
+                self.cache_manager.remove_features_for_annotations(annotation_ids)
 
         finally:
             # 5. Re-enable updates and perform ONE consolidated refresh
@@ -859,9 +859,10 @@ class EmbeddingViewerWindow(QWidget):
         original_ids = merge_data['original_ids']
         
         # Remove originals from cache (guarded by visibility)
+        if self.cache_manager and self._should_modify_cache():
+            self.cache_manager.remove_features_for_annotations(original_ids)
+
         for ann_id in original_ids:
-            if self.cache_manager and self._should_modify_cache():
-                self.cache_manager.remove_features_for_annotation(ann_id)
             if ann_id in self.data_item_cache:
                 del self.data_item_cache[ann_id]
             

@@ -2,6 +2,7 @@ import warnings
 
 import os
 import random
+from collections import Counter
 import ujson as json
 
 from PyQt5.QtCore import Qt
@@ -405,23 +406,25 @@ class Base(QDialog):
         Returns:
             list: List of filtered annotations.
         """
-        annotations = list(self.annotation_window.annotations_dict.values())
-        filtered_annotations = []
-
+        allowed_types = set()
         if self.include_patches_checkbox.isChecked():
-            filtered_annotations += [a for a in annotations if isinstance(a, PatchAnnotation)]
+            allowed_types.add(PatchAnnotation)
         if self.include_rectangles_checkbox.isChecked():
-            filtered_annotations += [a for a in annotations if isinstance(a, RectangleAnnotation)]
+            allowed_types.add(RectangleAnnotation)
         if self.include_polygons_checkbox.isChecked():
-            filtered_annotations += [a for a in annotations if isinstance(a, PolygonAnnotation)]
+            allowed_types.add(PolygonAnnotation)
 
-        # Filter annotations based on the selected labels
-        annotations = [a for a in filtered_annotations if a.label.short_label_code in self.selected_labels]
+        selected_set = set(self.selected_labels)
+        # Single pass: type check + label check
+        annotations = [
+            a for a in self.annotation_window.annotations_dict.values()
+            if type(a) in allowed_types and a.label.short_label_code in selected_set
+        ]
 
         # Filter annotations based on the selected image option
         if self.filtered_images_radio.isChecked():
-            # Use the table_model's filtered_paths instead of filtered_image_paths
-            annotations = [a for a in annotations if a.image_path in self.image_window.table_model.filtered_paths]
+            filtered_set = set(self.image_window.table_model.filtered_paths)
+            annotations = [a for a in annotations if a.image_path in filtered_set]
 
         return annotations
 
@@ -443,20 +446,21 @@ class Base(QDialog):
         label_counts = {}
         label_image_counts = {}
         # Count the occurrences of each label and unique images per label
-        for annotation in self.annotation_window.annotations_dict.values():
+        annotations_list = list(self.annotation_window.annotations_dict.values())
+        update_interval = max(1, len(annotations_list) // 200)
+        for i, annotation in enumerate(annotations_list):
             label = annotation.label.short_label_code
             image_path = annotation.image_path
             if label != 'Review':
                 if label in label_counts:
                     label_counts[label] += 1
-                    if image_path not in label_image_counts[label]:
-                        label_image_counts[label].add(image_path)
+                    label_image_counts[label].add(image_path)
                 else:
                     label_counts[label] = 1
                     label_image_counts[label] = {image_path}
-            
-            # Update progress
-            progress_bar.update_progress()
+
+            if i % update_interval == 0:
+                progress_bar.update_progress(update_interval)
             
         # Sort the labels by their counts in descending order
         sorted_label_counts = sorted(label_counts.items(), key=lambda item: item[1], reverse=True)
@@ -472,6 +476,7 @@ class Base(QDialog):
                                                            "Images"])
 
         # Populate the label counts table with labels and their counts
+        self.label_counts_table.setUpdatesEnabled(False)
         row = 0
         for label, count in sorted_label_counts:
             include_checkbox = QCheckBox()
@@ -502,6 +507,7 @@ class Base(QDialog):
             self.label_counts_table.setItem(row, 6, images_item)
 
             row += 1
+        self.label_counts_table.setUpdatesEnabled(True)
             
         # Restore the cursor to the default cursor
         QApplication.restoreOverrideCursor()
@@ -550,9 +556,12 @@ class Base(QDialog):
         """
         Determine the splits for train, validation, and test annotations.
         """
-        self.train_annotations = [a for a in self.selected_annotations if a.image_path in self.train_images]
-        self.val_annotations = [a for a in self.selected_annotations if a.image_path in self.val_images]
-        self.test_annotations = [a for a in self.selected_annotations if a.image_path in self.test_images]
+        train_set = set(self.train_images)
+        val_set = set(self.val_images)
+        test_set = set(self.test_images)
+        self.train_annotations = [a for a in self.selected_annotations if a.image_path in train_set]
+        self.val_annotations = [a for a in self.selected_annotations if a.image_path in val_set]
+        self.test_annotations = [a for a in self.selected_annotations if a.image_path in test_set]
 
     def check_label_distribution(self):
         """
@@ -596,31 +605,17 @@ class Base(QDialog):
         if not allowed:
             return False
     
-        # Initialize dictionaries to store label counts for each split
-        train_label_counts = {}
-        val_label_counts = {}
-        test_label_counts = {}
-    
-        # Count annotations for each label in each split
-        for annotation in self.train_annotations:
-            label = annotation.label.short_label_code
-            train_label_counts[label] = train_label_counts.get(label, 0) + 1
-    
-        for annotation in self.val_annotations:
-            label = annotation.label.short_label_code
-            val_label_counts[label] = val_label_counts.get(label, 0) + 1
-    
-        for annotation in self.test_annotations:
-            label = annotation.label.short_label_code
-            test_label_counts[label] = test_label_counts.get(label, 0) + 1
-    
+        train_label_counts = Counter(a.label.short_label_code for a in self.train_annotations)
+        val_label_counts = Counter(a.label.short_label_code for a in self.val_annotations)
+        test_label_counts = Counter(a.label.short_label_code for a in self.test_annotations)
+
         # Check the conditions for each split
         for label in self.selected_labels:
-            if train_ratio > 0 and (label not in train_label_counts or train_label_counts[label] == 0):
+            if train_ratio > 0 and train_label_counts[label] == 0:
                 return False
-            if val_ratio > 0 and (label not in val_label_counts or val_label_counts[label] == 0):
+            if val_ratio > 0 and val_label_counts[label] == 0:
                 return False
-            if test_ratio > 0 and (label not in test_label_counts or test_label_counts[label] == 0):
+            if test_ratio > 0 and test_label_counts[label] == 0:
                 return False
     
         # Additional checks to ensure no empty splits
@@ -670,16 +665,26 @@ class Base(QDialog):
         # Split the data by annotations
         self.determine_splits()
 
+        # Precompute counts in a single pass each — O(n) instead of O(labels × n)
+        selected_counts = Counter(a.label.short_label_code for a in self.selected_annotations)
+        train_counts = Counter(a.label.short_label_code for a in self.train_annotations)
+        val_counts = Counter(a.label.short_label_code for a in self.val_annotations)
+        test_counts = Counter(a.label.short_label_code for a in self.test_annotations)
+
+        red = QColor(255, 220, 220)
+        green = QColor(220, 255, 220)
+
         # Update the label counts table
+        self.label_counts_table.setUpdatesEnabled(False)
         for row in range(self.label_counts_table.rowCount()):
             container = self.label_counts_table.cellWidget(row, 0)
             include_checkbox = container.findChild(QCheckBox)
             label = self.label_counts_table.item(row, 1).text()
-            anno_count = sum(1 for a in self.selected_annotations if a.label.short_label_code == label)
+            anno_count = selected_counts.get(label, 0)
             if include_checkbox.isChecked():
-                train_count = sum(1 for a in self.train_annotations if a.label.short_label_code == label)
-                val_count = sum(1 for a in self.val_annotations if a.label.short_label_code == label)
-                test_count = sum(1 for a in self.test_annotations if a.label.short_label_code == label)
+                train_count = train_counts.get(label, 0)
+                val_count = val_counts.get(label, 0)
+                test_count = test_counts.get(label, 0)
             else:
                 train_count = 0
                 val_count = 0
@@ -690,10 +695,6 @@ class Base(QDialog):
             self.label_counts_table.item(row, 4).setText(str(val_count))
             self.label_counts_table.item(row, 5).setText(str(test_count))
 
-            # Set cell colors based on the counts and ratios
-            red = QColor(255, 220, 220)
-            green = QColor(220, 255, 220)
-
             if include_checkbox.isChecked():
                 self.set_cell_color(row, 3, red if train_count == 0 and self.train_ratio > 0 else green)
                 self.set_cell_color(row, 4, red if val_count == 0 and self.val_ratio > 0 else green)
@@ -702,6 +703,7 @@ class Base(QDialog):
                 self.set_cell_color(row, 3, green)
                 self.set_cell_color(row, 4, green)
                 self.set_cell_color(row, 5, green)
+        self.label_counts_table.setUpdatesEnabled(True)
 
         self.ready_status = self.check_label_distribution()
         self.split_status = abs(self.train_ratio + self.val_ratio + self.test_ratio - 1.0) < 1e-9
