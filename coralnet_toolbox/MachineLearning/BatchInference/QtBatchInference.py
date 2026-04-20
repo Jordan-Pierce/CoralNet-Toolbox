@@ -281,13 +281,7 @@ class BatchInferenceDialog(QDialog):
             self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
 
         # Initialize references to various deployment dialogs
-        self.classify_dialog = getattr(main_window, 'classify_deploy_model_dialog', None)
-        self.detect_dialog = getattr(main_window, 'detect_deploy_model_dialog', None)
-        self.segment_dialog = getattr(main_window, 'segment_deploy_model_dialog', None)
-        self.semantic_dialog = getattr(main_window, 'semantic_deploy_model_dialog', None)
-        self.sam_dialog = getattr(main_window, 'sam_deploy_generator_dialog', None)
-        self.see_anything_dialog = getattr(main_window, 'see_anything_deploy_generator_dialog', None)
-        self.z_dialog = getattr(main_window, 'z_deploy_model_dialog', None)
+            self._refresh_model_dialog_references()
 
         # Dictionary to store available model dialogs
         self.model_dialogs = {}
@@ -309,6 +303,16 @@ class BatchInferenceDialog(QDialog):
         self.setup_task_specific_layout()
         self.setup_thresholds_layout()
         self.setup_buttons_layout()
+
+    def _refresh_model_dialog_references(self):
+        """Refresh cached dialog references from MainWindow."""
+        self.classify_dialog = getattr(self.main_window, 'classify_deploy_model_dialog', None)
+        self.detect_dialog = getattr(self.main_window, 'detect_deploy_model_dialog', None)
+        self.segment_dialog = getattr(self.main_window, 'segment_deploy_model_dialog', None)
+        self.semantic_dialog = getattr(self.main_window, 'semantic_deploy_model_dialog', None)
+        self.sam_dialog = getattr(self.main_window, 'sam_deploy_generator_dialog', None)
+        self.see_anything_dialog = getattr(self.main_window, 'see_anything_deploy_generator_dialog', None)
+        self.z_dialog = getattr(self.main_window, 'z_deploy_model_dialog', None)
 
     def _update_worker_thresholds(self, *args):
         """Safely pass updated global thresholds from MainWindow to the active worker.
@@ -681,6 +685,7 @@ class BatchInferenceDialog(QDialog):
         """
         Check which models are loaded and populate the model dialog dictionary.
         """
+        self._refresh_model_dialog_references()
         self.model_dialogs = {}
 
         if self.classify_dialog and getattr(self.classify_dialog, "loaded_model", None):
@@ -1299,6 +1304,8 @@ class BatchInferenceDialog(QDialog):
         Classify, Semantic, SAM, SeeAnything, and Z-Inference use their own
         synchronous predict() paths unchanged.
         """
+        self._refresh_model_dialog_references()
+
         # Determine the selected model type
         idx = self.model_combo.currentIndex()
         if idx < 0 or idx >= len(self.model_keys):
