@@ -3310,8 +3310,23 @@ class AnnotationWindow(BaseCanvas):
 
     def delete_selected_annotations(self):
         """Delete all currently selected annotations in a single batch."""
-        # Get the selected annotations
-        selected_annotations = self.selected_annotations.copy()
+        # Start with canvas-visible selected annotations (current image)
+        selected_set = {ann.id: ann for ann in self.selected_annotations}
+
+        # Include cross-image annotations tracked by SelectionManager so that
+        # annotations selected via the Explorer (embedding/gallery) across
+        # multiple images are also deleted.
+        selection_manager = getattr(self.main_window, 'selection_manager', None)
+        if selection_manager and hasattr(selection_manager, 'get_selected_ids'):
+            all_ids = selection_manager.get_selected_ids() or []
+            annotations_dict = getattr(self, 'annotations_dict', {})
+            for ann_id in all_ids:
+                if ann_id not in selected_set:
+                    ann = annotations_dict.get(ann_id)
+                    if ann:
+                        selected_set[ann_id] = ann
+
+        selected_annotations = list(selected_set.values())
         # Unselect them first to clean up confidence window connections
         self.unselect_annotations()
         # Call the bulk delete method to trigger the optimized viewer slots

@@ -161,7 +161,12 @@ class GlobalEventFilter(QObject):
                                 return True
 
                         # Proceed with deletion if there are selected annotations
-                        if self.annotation_window.selected_annotations:
+                        # Also check SelectionManager for cross-image selections
+                        _sel_mgr = getattr(self.main_window, 'selection_manager', None)
+                        _has_selection = bool(self.annotation_window.selected_annotations)
+                        if not _has_selection and _sel_mgr:
+                            _has_selection = bool(_sel_mgr.get_selected_ids())
+                        if _has_selection:
                             self.annotation_window.delete_selected_annotations()
                             return True
 
