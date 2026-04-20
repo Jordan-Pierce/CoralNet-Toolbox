@@ -1450,7 +1450,7 @@ class LabelWindow(QWidget):
             return
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        self.main_window.showMessage(f"Bulk merging {len(source_labels)} labels into '{target_label.short_label_code}'...", 5000)
+        self.main_window.status_bar.showMessage(f"Bulk merging {len(source_labels)} labels into '{target_label.short_label_code}'...", 5000)
 
         # Update all rasters once
         for raster in self.main_window.image_window.raster_manager.rasters.values():
