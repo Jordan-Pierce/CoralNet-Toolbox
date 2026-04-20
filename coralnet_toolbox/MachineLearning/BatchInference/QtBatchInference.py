@@ -831,26 +831,10 @@ class BatchInferenceDialog(QDialog):
                 enable_iou=False,
                 enable_area=False
             )
-        # Detect and Segment use max_detections, uncertainty, iou, and area
-        elif model_name in ("Detect", "Segment"):
+        # Detect, Segment, SAM, and See Anything use max_detections, uncertainty, iou, and area
+        elif model_name in ("Detect", "Segment", "SAM", "See Anything"):
             self.configure_thresholds(
                 enable_max_detections=True,
-                enable_uncertainty=True,
-                enable_iou=True,
-                enable_area=True
-            )
-        # SAM uses uncertainty only
-        elif model_name == "SAM":
-            self.configure_thresholds(
-                enable_max_detections=False,
-                enable_uncertainty=True,
-                enable_iou=True,
-                enable_area=True
-            )
-        # See Anything uses uncertainty only
-        elif model_name == "See Anything":
-            self.configure_thresholds(
-                enable_max_detections=False,
                 enable_uncertainty=True,
                 enable_iou=True,
                 enable_area=True
