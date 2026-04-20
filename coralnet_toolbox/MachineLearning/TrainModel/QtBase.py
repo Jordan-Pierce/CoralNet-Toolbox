@@ -258,7 +258,7 @@ class Base(QDialog):
 
         self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowTitle("Train Model")
-        self.resize(1100, 750)
+        self.resize(450, 750)
 
         # Set window settings
         self.setWindowFlags(Qt.Window |

@@ -234,7 +234,7 @@ class TrainModelDialog(QDialog):
 
         self.setWindowIcon(get_window_icon("eye.svg"))
         self.setWindowTitle("Train YOLOE Model")
-        self.resize(1100, 800)
+        self.resize(450, 750)
 
         # Set window settings
         self.setWindowFlags(Qt.Window |
