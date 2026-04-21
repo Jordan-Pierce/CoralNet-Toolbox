@@ -44,11 +44,15 @@ class FastImageItem(QGraphicsItem):
         self.setCacheMode(QGraphicsItem.NoCache)
 
     def set_image(self, qimage):
+        """Set the image to be drawn by this item, keeping a reference to the original QImage."""
         if qimage is not None and not qimage.isNull():
             self._image = qimage.copy()
         else:
             self._image = qimage
-        self.update()
+        try:
+            self.update()
+        except RuntimeError:
+            pass
 
     def set_mask_image(self, qimage, opacity=1.0):
         """Provide a mask image to be drawn natively on top of the base image."""
@@ -58,19 +62,27 @@ class FastImageItem(QGraphicsItem):
         else:
             self._mask_image = None
         self._mask_opacity = opacity
-        self.update()
+        try:
+            self.update()
+        except RuntimeError:
+            pass
 
     def set_readonly_annotations(self, paths_data):
         """Pass a list of ready-to-draw paths: (QPainterPath, QColor, opacity)"""
         self._readonly_paths = paths_data
-        self.update()
+        try:
+            self.update()
+        except RuntimeError:
+            pass
 
     def boundingRect(self):
+        """Return the bounding rectangle of the image for proper redraw regions."""
         if self._image is None or self._image.isNull():
             return QRectF(0, 0, 100, 100) # Fallback safe rect
         return QRectF(0, 0, self._image.width(), self._image.height())
 
     def paint(self, painter, option, widget):
+        """Custom paint method to draw the image, mask, and annotations in a single pass."""
         # 1. Draw the video frame directly from RAM to the OpenGL Viewport
         if self._image is not None and not self._image.isNull():
             painter.drawImage(0, 0, self._image)
@@ -1119,16 +1131,27 @@ class BaseCanvas(QGraphicsView):
         """Create marker graphics items (hidden by default) and add to the scene."""
         try:
             # remove existing if leftover
-            if self._static_marker is not None and self._static_marker.scene() == self.scene:
+            if self._static_marker is not None:
                 try:
-                    self.scene.removeItem(self._static_marker)
-                except Exception:
+                    if self._static_marker.scene() == self.scene:
+                        try:
+                            self.scene.removeItem(self._static_marker)
+                        except Exception:
+                            pass
+                except RuntimeError:
                     pass
-            if self._dynamic_marker is not None and self._dynamic_marker.scene() == self.scene:
+                self._static_marker = None
+                
+            if self._dynamic_marker is not None:
                 try:
-                    self.scene.removeItem(self._dynamic_marker)
-                except Exception:
+                    if self._dynamic_marker.scene() == self.scene:
+                        try:
+                            self.scene.removeItem(self._dynamic_marker)
+                        except Exception:
+                            pass
+                except RuntimeError:
                     pass
+                self._dynamic_marker = None
 
             # Static crosshair group
             self._static_marker = QGraphicsItemGroup()

@@ -1,5 +1,6 @@
 import warnings
 
+import gc
 import os
 from contextlib import contextmanager
 
@@ -1888,10 +1889,12 @@ class ImageWindow(QWidget):
                     self.annotation_window.delete_image(path)
                     
                     # Remove from raster manager
-                    self.raster_manager.remove_raster(path)
+                    self.raster_manager.remove_raster(path, collect_garbage=False)
                     
                     # Update progress
                     progress_bar.update_progress()
+
+                gc.collect()
                     
                 # Update UI
                 if next_image:

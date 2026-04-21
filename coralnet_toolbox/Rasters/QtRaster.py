@@ -1655,7 +1655,7 @@ class Raster(QObject):
         
         # Note: z_channel data is not loaded from dictionary as it's typically stored separately
 
-    def cleanup(self):
+    def cleanup(self, collect_garbage: bool = True):
         """Release all resources associated with this raster."""
         # Close and clean up rasterio resources
         if self._rasterio_src is not None:
@@ -1689,8 +1689,10 @@ class Raster(QObject):
         self.index_map_path = None
         self.visible_indices = None
         
-        # Force garbage collection
-        gc.collect()
+        # Force garbage collection when requested. Batch callers can defer this
+        # to avoid paying the cost once per raster.
+        if collect_garbage:
+            gc.collect()
         
     def __del__(self):
         """Destructor to ensure resources are cleaned up."""

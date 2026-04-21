@@ -555,7 +555,7 @@ class VideoRaster(Raster):
     # Cleanup
     # ------------------------------------------------------------------
 
-    def cleanup(self):
+    def cleanup(self, collect_garbage: bool = True):
         """Release cv2 resources before parent cleanup."""
         # Stop the background decode worker first so its cap is released before ours
         self.stop_decode_worker()
@@ -587,7 +587,8 @@ class VideoRaster(Raster):
             self.intrinsics = None
             self.extrinsics = None
             self.z_channel = None
-            gc.collect()
+            if collect_garbage:
+                gc.collect()
         except Exception:
             pass
 

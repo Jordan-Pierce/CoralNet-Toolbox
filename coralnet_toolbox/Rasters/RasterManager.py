@@ -157,7 +157,7 @@ class RasterManager(QObject):
             print(f"Error adding ortho raster {ortho_path}: {str(e)}")
             return False
     
-    def remove_raster(self, image_path: str) -> bool:
+    def remove_raster(self, image_path: str, collect_garbage: bool = True) -> bool:
         """
         Remove a raster from the manager.
         
@@ -172,7 +172,7 @@ class RasterManager(QObject):
             
         try:
             # Clean up resources
-            self.rasters[image_path].cleanup()
+            self.rasters[image_path].cleanup(collect_garbage=collect_garbage)
             
             # Remove from collections
             del self.rasters[image_path]
@@ -181,8 +181,9 @@ class RasterManager(QObject):
             # Emit signal
             self.rasterRemoved.emit(image_path)
             
-            # Force garbage collection
-            gc.collect()
+            # Force garbage collection when requested.
+            if collect_garbage:
+                gc.collect()
             
             return True
             
@@ -307,7 +308,10 @@ class RasterManager(QObject):
         paths = list(self.image_paths)
         
         for path in paths:
-            self.remove_raster(path)
+            self.remove_raster(path, collect_garbage=False)
+
+        if paths:
+            gc.collect()
             
     def __len__(self):
         """Get the number of rasters in the manager."""
