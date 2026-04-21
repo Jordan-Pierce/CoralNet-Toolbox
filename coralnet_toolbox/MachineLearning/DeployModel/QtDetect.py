@@ -105,6 +105,8 @@ class Detect(Base):
                 # If SAM is wanted but not available, revert the dropdown and do nothing else.
                 # The 'is_sam_model_deployed' function already handles showing an error message.
                 self.use_sam_dropdown.setCurrentText("False")
+        else:
+            self.task = 'detect'
 
         # If use_sam_dropdown is "False", do nothing. Let self.task be whatever the user set.
 

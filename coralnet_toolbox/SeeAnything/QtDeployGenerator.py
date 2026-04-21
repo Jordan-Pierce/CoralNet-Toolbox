@@ -584,9 +584,17 @@ class DeployGeneratorDialog(QDialog):
         self.sam_dialog = self.main_window.sam_deploy_predictor_dialog
 
         if not self.sam_dialog.loaded_model:
-            self.use_sam_dropdown.setCurrentText("False")
+            if self.use_sam_dropdown.currentText() != "False":
+                self.use_sam_dropdown.blockSignals(True)
+                self.use_sam_dropdown.setCurrentText("False")
+                self.use_sam_dropdown.blockSignals(False)
+            if hasattr(self, 'update_sam_task_state'):
+                self.update_sam_task_state()
             QMessageBox.critical(self, "Error", "Please deploy the SAM model first.")
             return False
+
+        if hasattr(self, 'update_sam_task_state'):
+            self.update_sam_task_state()
 
         return True
 
@@ -613,6 +621,8 @@ class DeployGeneratorDialog(QDialog):
                 # If SAM is wanted but not available, revert the dropdown and do nothing else.
                 # The 'is_sam_model_deployed' function already handles showing an error message.
                 self.use_sam_dropdown.setCurrentText("False")
+        else:
+            self.task = self.use_task_dropdown.currentText()
 
         # If use_sam_dropdown is "False", do nothing. Let self.task be whatever the user set.
             

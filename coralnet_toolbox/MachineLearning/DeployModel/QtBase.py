@@ -207,9 +207,17 @@ class Base(QDialog):
         self.sam_dialog = self.main_window.sam_deploy_predictor_dialog
 
         if not self.sam_dialog.loaded_model:
-            self.use_sam_dropdown.setCurrentText("False")
+            if self.use_sam_dropdown.currentText() != "False":
+                self.use_sam_dropdown.blockSignals(True)
+                self.use_sam_dropdown.setCurrentText("False")
+                self.use_sam_dropdown.blockSignals(False)
+            if hasattr(self, 'update_sam_task_state'):
+                self.update_sam_task_state()
             QMessageBox.critical(self, "Error", "Please deploy the SAM model first.")
             return False
+
+        if hasattr(self, 'update_sam_task_state'):
+            self.update_sam_task_state()
 
         return True
 
