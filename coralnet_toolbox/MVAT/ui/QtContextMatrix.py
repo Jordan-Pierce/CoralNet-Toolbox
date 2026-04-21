@@ -716,19 +716,48 @@ class ContextMatrixWidget(QWidget):
         step = scrollbar.singleStep() or 20
         scrollbar.setValue(max(scrollbar.minimum(), min(scrollbar.maximum(), scrollbar.value() + delta * step)))
 
+    def _sync_context_toolbar_scaling(self):
+        icon_size = app_theme.scale_size(16)
+        margin = app_theme.scale_int(5)
+        spacing = app_theme.scale_int(5)
+
+        if hasattr(self, 'toolbar'):
+            self.toolbar.setIconSize(icon_size)
+        if hasattr(self, 'bottom_toolbar'):
+            self.bottom_toolbar.setIconSize(icon_size)
+
+        if hasattr(self, '_top_toolbar_layout'):
+            self._top_toolbar_layout.setContentsMargins(margin, margin, margin, margin)
+            self._top_toolbar_layout.setSpacing(spacing)
+        if hasattr(self, '_bottom_toolbar_layout'):
+            self._bottom_toolbar_layout.setContentsMargins(margin, margin, margin, margin)
+            self._bottom_toolbar_layout.setSpacing(spacing)
+
+        for button_name in ('size_up_btn', 'size_down_btn', 'count_down_btn', 'count_up_btn'):
+            button = getattr(self, button_name, None)
+            if button is not None:
+                button.setIconSize(icon_size)
+
+        if hasattr(self, 'stats_label'):
+            self.stats_label.setStyleSheet(
+                f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; padding: 0px {app_theme.scale_int(8)}px; font-weight: bold;"
+            )
+
     # ==================== Toolbar (Context Matrix) ====================
 
     def create_top_toolbar(self) -> QToolBar:
-        """Create a compact toolbar for camera loading, size, and count controls."""
+        """Create a compact toolbar for camera loading, annotation, and size controls."""
         toolbar = QToolBar("Context Matrix Tools")
         toolbar.setMovable(False)
         toolbar.setIconSize(app_theme.scale_size(16))
         self.toolbar = toolbar
 
         container = QWidget()
+        container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         layout = QHBoxLayout(container)
-        layout.setContentsMargins(5, 5, 5, 5)
-        layout.setSpacing(5)
+        self._top_toolbar_layout = layout
+        layout.setContentsMargins(app_theme.scale_int(5), app_theme.scale_int(5), app_theme.scale_int(5), app_theme.scale_int(5))
+        layout.setSpacing(app_theme.scale_int(5))
 
         self.load_btn = QToolButton()
         self.load_btn.setText("Load Cameras")
@@ -740,6 +769,22 @@ class ContextMatrixWidget(QWidget):
         sep0.setFrameShape(QFrame.VLine)
         sep0.setFrameShadow(QFrame.Sunken)
         layout.addWidget(sep0)
+
+        self._multi_annotate_btn = QToolButton()
+        self._multi_annotate_btn.setText("Multi-Annotate")
+        self._multi_annotate_btn.setCheckable(True)
+        self._multi_annotate_btn.setChecked(False)
+        self._multi_annotate_btn.setToolTip("Multi-Camera Annotation")
+        self._multi_annotate_btn.setAutoRaise(True)
+        self._multi_annotate_btn.toggled.connect(self._on_multi_annotate_toggled)
+        layout.addWidget(self._multi_annotate_btn)
+
+        layout.addStretch(1)
+
+        sep1 = QFrame()
+        sep1.setFrameShape(QFrame.VLine)
+        sep1.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(sep1)
 
         self.size_up_btn = QToolButton()
         self.size_up_btn.setIcon(get_icon("up_chevron.svg"))
@@ -755,10 +800,38 @@ class ContextMatrixWidget(QWidget):
         self.size_down_btn.clicked.connect(lambda _checked=False: self.decrease_canvas_size())
         layout.addWidget(self.size_down_btn)
 
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.VLine)
-        sep2.setFrameShadow(QFrame.Sunken)
-        layout.addWidget(sep2)
+        toolbar.addWidget(container)
+
+        self._sync_context_toolbar_scaling()
+        self._update_canvas_size_controls()
+        return toolbar
+
+    def create_bottom_toolbar(self) -> QToolBar:
+        """Create a bottom toolbar for camera statistics and count controls."""
+        toolbar = QToolBar("Context Matrix Stats")
+        toolbar.setMovable(False)
+        toolbar.setIconSize(app_theme.scale_size(16))
+        self.bottom_toolbar = toolbar
+
+        container = QWidget()
+        container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        layout = QHBoxLayout(container)
+        self._bottom_toolbar_layout = layout
+        layout.setContentsMargins(app_theme.scale_int(5), app_theme.scale_int(5), app_theme.scale_int(5), app_theme.scale_int(5))
+        layout.setSpacing(app_theme.scale_int(5))
+
+        self.stats_label = QLabel("Cameras 0 / 0")
+        self.stats_label.setStyleSheet(
+            f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; padding: 0px {app_theme.scale_int(8)}px; font-weight: bold;"
+        )
+
+        layout.addWidget(self.stats_label)
+        layout.addStretch(1)
+
+        sep0 = QFrame()
+        sep0.setFrameShape(QFrame.VLine)
+        sep0.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(sep0)
 
         self.count_down_btn = QToolButton()
         self.count_down_btn.setIcon(get_icon("left_chevron.svg"))
@@ -774,40 +847,10 @@ class ContextMatrixWidget(QWidget):
         self.count_up_btn.clicked.connect(lambda _checked=False: self.increase_canvas_count())
         layout.addWidget(self.count_up_btn)
 
-        layout.addStretch(1)
-
-        # Multi-Camera Annotation
-        self._multi_annotate_btn = QToolButton()
-        self._multi_annotate_btn.setText("Multi-Annotate")
-        self._multi_annotate_btn.setCheckable(True)
-        self._multi_annotate_btn.setChecked(False)
-        self._multi_annotate_btn.setToolTip("Multi-Camera Annotation")
-        self._multi_annotate_btn.setAutoRaise(True)
-        self._multi_annotate_btn.toggled.connect(self._on_multi_annotate_toggled)
-        layout.addWidget(self._multi_annotate_btn)
-
         toolbar.addWidget(container)
 
-        self._update_canvas_size_controls()
+        self._sync_context_toolbar_scaling()
         self._update_canvas_count_controls()
-        return toolbar
-
-    def create_bottom_toolbar(self) -> QToolBar:
-        """Create a bottom toolbar strictly for camera statistics."""
-        toolbar = QToolBar("Context Matrix Stats")
-        toolbar.setMovable(False)
-        toolbar.setIconSize(app_theme.scale_size(16))
-
-        # Left-aligned label showing the number of visible cameras in the matrix
-        # and the number of cameras overlapping the active camera. This stays as a
-        # lightweight UI readout so the manager can update it whenever selection or
-        # visibility state changes.
-        self.stats_label = QLabel("Cameras 0 / 0")
-        self.stats_label.setStyleSheet(
-            f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; padding: 0px 8px; font-weight: bold;"
-        )
-
-        toolbar.addWidget(self.stats_label)
         return toolbar
 
     def update_stats_label(self, visible_count: int, overlapping_count: int):
@@ -831,8 +874,7 @@ class ContextMatrixWidget(QWidget):
 
     def refresh_scaling(self):
         """Refresh toolbar sizing after a UI scale change."""
-        if hasattr(self, 'toolbar'):
-            self.toolbar.setIconSize(app_theme.scale_size(16))
+        self._sync_context_toolbar_scaling()
 
     def update_stats(self, perspective_count: int):
         return
