@@ -1902,6 +1902,11 @@ class ImageWindow(QWidget):
                 elif not self.raster_manager.image_paths:
                     self.selected_image_path = None
                     self.annotation_window.clear_scene()
+
+                self.update_search_bars()
+                self.update_image_count_label(len(self.table_model.filtered_paths))
+                self.update_current_image_index_label()
+                self.update_highlighted_count_label()
                     
             finally:
                 # Restore signals
@@ -1911,10 +1916,6 @@ class ImageWindow(QWidget):
                 # Close progress bar
                 progress_bar.stop_progress()
                 progress_bar.close()
-                
-            # Update search bars and reapply filters once after all deletions
-            self.update_search_bars()
-            self.filter_images()
 
 
 class ImagePreviewTooltip(QFrame):
