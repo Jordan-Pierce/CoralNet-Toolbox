@@ -1592,6 +1592,22 @@ class MainWindow(QMainWindow):
         # Save layout configuration before closing
         if hasattr(self, 'dock_manager'):
             QtLayoutManager.save_and_close(self.dock_manager, layout_name='default')
+
+        # Stop the always-on UI animation timer before widgets begin tearing down.
+        if hasattr(self, 'animation_manager') and self.animation_manager:
+            try:
+                self.animation_manager.stop_timer()
+            except Exception:
+                pass
+
+        # Stop the performance monitor worker explicitly; it may be embedded in a dock,
+        # so its own closeEvent is not guaranteed to run during application shutdown.
+        if hasattr(self, 'performance_window') and self.performance_window:
+            try:
+                if hasattr(self.performance_window, 'worker') and self.performance_window.worker:
+                    self.performance_window.worker.stop(wait=True)
+            except Exception:
+                pass
         
         if hasattr(self, 'mvat_manager') and self.mvat_manager:
             self.mvat_manager.cleanup()
