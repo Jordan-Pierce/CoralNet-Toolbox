@@ -1,7 +1,7 @@
 import sys
 import traceback
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QCoreApplication
 from PyQt5.QtWidgets import QApplication
 
 from coralnet_toolbox.QtMainWindow import MainWindow
@@ -25,10 +25,11 @@ def run():
     try:
         # Install the exception hook (initial setup without main_window)
         sys.excepthook = except_hook
+
+        QCoreApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+        QCoreApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
         
         app = QApplication(sys.argv)
-        app.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-        app.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
 
         apply_theme(app)
         

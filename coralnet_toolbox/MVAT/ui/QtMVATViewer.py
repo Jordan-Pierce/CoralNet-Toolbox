@@ -464,9 +464,8 @@ class MVATViewer(QFrame):
         self._placeholder_label.setAlignment(Qt.AlignCenter)
         self._placeholder_label.setAutoFillBackground(True)
         self._placeholder_label.setWordWrap(True)
-        self._show_placeholder()  # Show placeholder initially        
         self._stack.addWidget(self._placeholder_label)
-        self._stack.setCurrentWidget(self._placeholder_label)
+        self._show_placeholder()  # Show placeholder initially
         self.layout.addWidget(self._stack_container)
 
         # Point size hint (spinbox removed; use Ctrl + mouse wheel)
@@ -812,7 +811,6 @@ class MVATViewer(QFrame):
             inertia_style = interactor
         if hasattr(self, '_camera_inertia') and self._camera_inertia is not None:
             self._camera_inertia.bind(inertia_style)
-        print("MVATViewer: Custom trackball style enabled (Right=Pan).")
 
     def eventFilter(self, obj, event):
         """Intercept key press events."""
@@ -1757,7 +1755,7 @@ class MVATViewer(QFrame):
         try:
             if text:
                 self._placeholder_label.setText(text)
-            if hasattr(self, '_stack'):
+            if hasattr(self, '_stack') and self._stack.indexOf(self._placeholder_label) >= 0:
                 self._stack.setCurrentWidget(self._placeholder_label)
         except Exception:
             pass
@@ -1765,7 +1763,7 @@ class MVATViewer(QFrame):
     def _hide_placeholder(self):
         """Hide the placeholder and show the plotter interactor."""
         try:
-            if hasattr(self, '_stack'):
+            if hasattr(self, '_stack') and self._stack.indexOf(self.plotter.interactor) >= 0:
                 self._stack.setCurrentWidget(self.plotter.interactor)
         except Exception:
             pass
