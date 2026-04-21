@@ -3348,6 +3348,8 @@ class AnnotationWindow(BaseCanvas):
 
     def delete_image_annotations(self, image_path):
         """Delete all annotations associated with a specific image path (Bulk Optimized)."""
+        raster = self.main_window.image_window.raster_manager.get_raster(image_path)
+
         # For VideoRaster base paths, annotations live under ::frame_ virtual keys.
         # Recurse over every frame key so the caller doesn't need to know about them.
         if image_path not in self.image_annotations_dict:
@@ -3361,6 +3363,8 @@ class AnnotationWindow(BaseCanvas):
                     self.current_image_path and
                     self.current_image_path.startswith(prefix)):
                 self._display_video_frame(self._current_frame_idx)
+            if raster:
+                raster.delete_mask_annotation()
             return
 
         # 1. Access label lock state once
@@ -3377,9 +3381,8 @@ class AnnotationWindow(BaseCanvas):
         if annotations_to_delete:
             # 3. Use bulk delete to handle internal dictionaries and viewer updates
             self.delete_annotations(annotations_to_delete)
-            
+
         # 4. Handle Mask/Semantic Reset
-        raster = self.main_window.image_window.raster_manager.get_raster(image_path)
         if raster:
             raster.delete_mask_annotation()
         
