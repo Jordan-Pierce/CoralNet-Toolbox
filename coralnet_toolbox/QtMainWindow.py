@@ -502,16 +502,21 @@ class MainWindow(QMainWindow):
         self.save_project_action.triggered.connect(self.open_save_project_dialog)
         self.file_menu.addAction(self.save_project_action)
         
-        # ========== LAYOUT MENU ==========
-        # Layout menu - for saving and loading dock configurations
-        self.layout_menu = self.menu_bar.addMenu("Layout")
+        # ========== VIEW MENU ==========
+        # View menu groups Windows, Layout, and 3D Viewer submenus.
+        self.view_menu = self.menu_bar.addMenu("View")
         self.dock_toggle_actions = {}
         self.scale_actions = {}
+
+        self.windows_menu = self.view_menu.addMenu("Windows")
+        self.layout_menu = self.view_menu.addMenu("Layout")
+        self.scale_menu = self.view_menu.addMenu("Scale")
+        self.view_menu.addSeparator()
         
-        # ========== VIEW MENU ==========
-        # Fetch the fully encapsulated menu from the MVAT Viewer and add it to the main menu bar
-        self.view_menu = self.mvat_viewer.create_view_menu()
-        self.menu_bar.addMenu(self.view_menu)
+        # 3D Viewer submenu
+        # Fetch the fully encapsulated menu from the MVAT Viewer and add it under View.
+        self.viewer_menu = self.mvat_viewer.create_view_menu()
+        self.view_menu.addMenu(self.viewer_menu)
 
         # ========== UTILITIES MENU ==========
         # Utilities menu
@@ -1162,42 +1167,40 @@ class MainWindow(QMainWindow):
         
         # Populate the Windows menu with dock toggle actions
         dock_windows = [
-            ("Annotation", self.annotation_dock),
-            ("Rasters", self.rasters_dock),
-            ("Labels", self.labels_dock),
-            ("Confidence", self.confidence_dock),
-            ("Performance", self.performance_dock),
-            ("Timer", self.timer_dock),
-            ("Gallery", self.gallery_dock),
-            ("Embeddings", self.embeddings_dock),
-            ("3D Viewer", self.mvat_dock),
-            ("Context", self.context_dock),
+            ("Annotation", self.annotation_dock, False),
+            ("Rasters", self.rasters_dock, False),
+            ("Labels", self.labels_dock, False),
+            ("Confidence", self.confidence_dock, True),
+            ("Gallery", self.gallery_dock, False),
+            ("Embeddings", self.embeddings_dock, True),
+            ("3D Viewer", self.mvat_dock, False),
+            ("Context", self.context_dock, True),
+            ("Performance", self.performance_dock, False),
+            ("Timer", self.timer_dock, False),
         ]
 
-        for dock_name, dock_widget in dock_windows:
+        for dock_name, dock_widget, add_separator in dock_windows:
             action = QAction(dock_name, self, checkable=True)
             action.setChecked(dock_widget.isVisible())
             # Connect the action to toggle the dock visibility
             action.triggered.connect(lambda checked, dw=dock_widget: dw.toggleView(checked))
             # Also update the action when the dock visibility changes
             dock_widget.visibilityChanged.connect(lambda visible, act=action: act.setChecked(visible))
-            self.layout_menu.addAction(action)
+            self.windows_menu.addAction(action)
             self.dock_toggle_actions[dock_name] = action
 
-        # Add separator before layout actions
-        self.layout_menu.addSeparator()
+            if add_separator:
+                self.windows_menu.addSeparator()
 
-        # Save Layout action
-        self.save_layout_action = QAction("Save Layout", self)
+        # Save action
+        self.save_layout_action = QAction("Save", self)
         self.save_layout_action.triggered.connect(self.on_save_layout)
         self.layout_menu.addAction(self.save_layout_action)
 
-        # Load Layout submenu
-        self.load_layout_menu = self.layout_menu.addMenu("Load Layout")
+        # Load submenu
+        self.load_layout_menu = self.layout_menu.addMenu("Load")
         self.populate_load_layout_menu()
 
-        # Scale submenu
-        self.scale_menu = self.layout_menu.addMenu("Scale")
         self.populate_scale_menu()
         
         # --------------------------------------------------

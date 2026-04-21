@@ -656,7 +656,7 @@ class MVATViewer(QFrame):
 
     def create_view_menu(self) -> QMenu:
         """Create a standalone QMenu for the viewer that can be attached to a menubar or dock."""
-        view_menu = QMenu("View")
+        view_menu = QMenu("3D Viewer")
 
         # Top actions: Fit and Reset
         action_fit = QAction("Fit All", self)
