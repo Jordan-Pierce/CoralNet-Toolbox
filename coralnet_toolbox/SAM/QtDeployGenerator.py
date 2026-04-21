@@ -536,7 +536,6 @@ class DeployGeneratorDialog(QDialog):
                 try:
                     aw.current_image_path = image_path
                     aw._base_image_item.set_image(q_img)
-                    aw.fit_to_image()
                 except Exception:
                     pass
 
