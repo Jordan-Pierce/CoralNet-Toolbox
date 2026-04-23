@@ -431,11 +431,11 @@ class BaseCanvas(QGraphicsView):
     # ==================== Canvas Perimeter Overlay ====================
 
     def _sync_perimeter_overlay_geometry(self):
-        """Keep the perimeter overlay aligned with the viewport."""
+        """Keep the perimeter overlay aligned with the canvas widget."""
         if self._perimeter_overlay is None:
             return
 
-        self._perimeter_overlay.setGeometry(self.viewport().rect())
+        self._perimeter_overlay.setGeometry(self.rect())
         self._perimeter_overlay.raise_()
 
     def clear_perimeter_overlay(self):
@@ -459,7 +459,7 @@ class BaseCanvas(QGraphicsView):
             return
 
         if self._perimeter_overlay is None:
-            self._perimeter_overlay = QFrame(self.viewport())
+            self._perimeter_overlay = QFrame(self)
             self._perimeter_overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
             self._perimeter_overlay.setFrameShape(QFrame.NoFrame)
             self._perimeter_overlay.setAutoFillBackground(False)
@@ -477,6 +477,7 @@ class BaseCanvas(QGraphicsView):
         """Clear the graphics scene and reset related variables."""
         # Stop any pending dynamic range update
         self._dynamic_range_timer.stop()
+        self.clear_perimeter_overlay()
         
         # Clean up scene items
         if self.scene:

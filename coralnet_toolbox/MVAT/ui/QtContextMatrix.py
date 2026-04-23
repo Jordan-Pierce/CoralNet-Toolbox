@@ -25,6 +25,7 @@ from PyQt5.QtWidgets import (
 from coralnet_toolbox.Icons import get_icon
 from coralnet_toolbox.QtBaseCanvas import BaseCanvas
 from coralnet_toolbox.MVAT.core.constants import (
+    SELECT_COLOR,
     MARKER_COLOR_HIGHLIGHTED,
     MARKER_COLOR_INVALID,
 )
@@ -152,8 +153,8 @@ class ContextMatrixWidget(QWidget):
     visibleCamerasChanged = pyqtSignal(list)
 
     # Click intent signals
-    camera_highlighted_single = pyqtSignal(str)  # single plain-click -> jump 3D view
-    main_camera_requested = pyqtSignal(str)      # Ctrl+Click -> jump main image
+    camera_highlighted_single = pyqtSignal(str)         # single plain-click -> jump 3D view
+    new_active_camera_requested = pyqtSignal(str)       # Ctrl+Click -> jump main image
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -190,6 +191,7 @@ class ContextMatrixWidget(QWidget):
         # Multi-camera annotation state
         self.multi_annotate_enabled = False
         self._pending_sync = None
+        self._active_camera_path = None
 
         # Annotation visualization state (Phase 6)
         self._annotation_manager = None
@@ -401,7 +403,7 @@ class ContextMatrixWidget(QWidget):
                 if path:
                     if event.modifiers() & Qt.ControlModifier:
                         # Ctrl+Click: update main AnnotationWindow image.
-                        self.main_camera_requested.emit(path)
+                        self.new_active_camera_requested.emit(path)
                     else:
                         # Plain click: update the 3D viewer only.
                         self.camera_highlighted_single.emit(path)
@@ -547,28 +549,36 @@ class ContextMatrixWidget(QWidget):
     # ==================== Data Feed ====================
 
     def set_raster_manager(self, raster_manager):
+        """Provide a RasterManager instance for image loading."""
         self._raster_manager = raster_manager
 
     def set_camera_data(self, camera_objects: List, ordered_paths: List[str]):
+        """Update the camera list and refresh the layout.  Camera objects are used to derive tile size bounds."""
         self._camera_paths = list(ordered_paths)
+        if self._active_camera_path not in self._camera_paths:
+            self._active_camera_path = None
         self._update_canvas_size_bounds(camera_objects)
         layout_ready = self._evaluate_auto_layout()
         if layout_ready:
             self._refresh_visible_canvases()
 
     def set_camera_order(self, ordered_paths: List[str], active_path: str = None):
+        """Update the camera order and refresh the layout.  Active path is prioritized to the front if present."""
         paths = list(ordered_paths)
         if active_path and active_path in paths and paths and paths[0] != active_path:
             paths = [active_path] + [path for path in paths if path != active_path]
         self._camera_paths = paths
+        self._active_camera_path = active_path if active_path in paths else None
         layout_ready = self._evaluate_auto_layout()
         if layout_ready:
             self._refresh_visible_canvases()
 
     def get_camera_order(self) -> List[str]:
+        """Return the current ordered list of camera paths."""
         return list(self._camera_paths)
 
     def get_visible_camera_paths(self) -> List[str]:
+        """Return the list of camera paths currently visible in the matrix."""
         return [
             canvas.current_image_path
             for canvas in self._visible_canvases
@@ -576,13 +586,18 @@ class ContextMatrixWidget(QWidget):
         ]
 
     def _emit_visible_cameras_changed(self):
+        """Emit the visibleCamerasChanged signal with the current visible camera paths."""
         self.visibleCamerasChanged.emit(self.get_visible_camera_paths())
 
     def _update_empty_state_visibility(self, has_cameras: bool):
+        """Toggle visibility of the placeholder message and the flow layout based on whether cameras are available."""
         self._placeholder_label.setVisible(not has_cameras)
         self._flow_widget.setVisible(has_cameras)
 
     def _refresh_visible_canvases(self):
+        """Load images into visible canvases and update marker states."""
+        self._clear_canvas_perimeters()
+
         if not self._camera_paths:
             for canvas in self._canvas_pool:
                 canvas.hide()
@@ -609,10 +624,13 @@ class ContextMatrixWidget(QWidget):
         if self.target_lock_enabled and self._mvat_manager:
             self._request_sync_from_main_view()
 
+        self._apply_active_canvas_perimeter()
+
         self._update_canvas_count_controls()
         self._emit_visible_cameras_changed()
 
     def _get_visible_capacity(self) -> int:
+        """Return the current number of visible canvas slots in the layout."""
         return self._last_rebuilt_count
 
     def _apply_canvas_tile_size_to_canvas(self, canvas: BaseCanvas):
@@ -703,6 +721,27 @@ class ContextMatrixWidget(QWidget):
                 canvas._show_placeholder("Failed to load image")
         except Exception as e:
             canvas._show_placeholder(f"Error: {str(e)[:20]}")
+
+    def _clear_canvas_perimeters(self):
+        for canvas in self._canvas_pool:
+            try:
+                canvas.clear_perimeter_overlay()
+            except Exception:
+                pass
+
+    def _apply_active_canvas_perimeter(self):
+        active_path = self._active_camera_path
+        if not active_path:
+            return
+
+        for canvas in self._visible_canvases:
+            try:
+                if canvas and canvas.active_image and canvas.current_image_path == active_path:
+                    canvas.set_perimeter_overlay(SELECT_COLOR, 1)
+                else:
+                    canvas.clear_perimeter_overlay()
+            except Exception:
+                pass
 
     def reset_offset(self):
         scrollbar = self._scroll_area.verticalScrollBar()

@@ -478,7 +478,7 @@ class MVATManager(QObject):
             self.context_matrix.visibleCamerasChanged.connect(self._on_context_visible_cameras_changed)
             # Canvas click intents
             self.context_matrix.camera_highlighted_single.connect(self._on_camera_highlighted_single)
-            self.context_matrix.main_camera_requested.connect(self._on_camera_selected)
+            self.context_matrix.new_active_camera_requested.connect(self._on_camera_selected)
             # Phase 5 / multi-annotate
             self.context_matrix.set_mvat_manager(self)
             self.context_matrix.multiAnnotateToggled.connect(self._on_multi_annotate_toggled)
