@@ -2,16 +2,18 @@ import warnings
 
 import os
 import yaml
-import shutil
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel, QApplication)
 
 from coralnet_toolbox.MachineLearning.ExportDataset.QtBase import Base
+from coralnet_toolbox.MachineLearning.ExportDataset.export_dataset_utils import (
+    build_sample_export_name,
+    materialize_sample_image,
+    sample_dimensions,
+)
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
-
-from coralnet_toolbox.utilities import rasterio_open
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -22,6 +24,8 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 
 class Segment(Base):
+    supports_unlabeled_video_frames = True
+
     def __init__(self, parent=None):
         super(Segment, self).__init__(parent)
         self.setWindowTitle("Export Segmentation Dataset")
@@ -143,7 +147,7 @@ class Segment(Base):
 
         for image_path in image_paths:
             yolo_annotations = []
-            image_height, image_width = rasterio_open(image_path).shape
+            image_height, image_width, _ = sample_dimensions(image_path, self.image_window.raster_manager)
             image_annotations = annotations_by_image.get(image_path, [])
 
             for image_annotation in image_annotations:
@@ -152,8 +156,7 @@ class Segment(Base):
                 yolo_annotations.append(f"{class_number} {annotation}")
 
             # Save the annotations to a text file
-            file_ext = os.path.splitext(image_path)[1]
-            text_file = os.path.basename(image_path).replace(file_ext, ".txt")
+            text_file = build_sample_export_name(image_path, ".txt")
             text_path = os.path.join(f"{split_dir}/labels", text_file)
 
             # Write the annotations to the text file (creates an empty file for negatives)
@@ -162,7 +165,9 @@ class Segment(Base):
                     f.write(annotation + '\n')
 
             # Copy the image to the split directory
-            shutil.copy(image_path, f"{split_dir}/images/{os.path.basename(image_path)}")
+            output_image_path = os.path.join(f"{split_dir}/images", build_sample_export_name(image_path))
+            if not materialize_sample_image(image_path, self.image_window.raster_manager, output_image_path):
+                raise RuntimeError(f"Failed to export image sample: {image_path}")
 
             progress_bar.update_progress()
 

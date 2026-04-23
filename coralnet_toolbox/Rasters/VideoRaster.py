@@ -388,6 +388,27 @@ class VideoRaster(Raster):
         self._current_frame_idx = frame_idx
         return bgr
 
+    def save_frame(self, frame_idx: int, output_path: str, write_params: Optional[list] = None) -> bool:
+        """Save a specific frame to disk and return True on success."""
+        frame = self.get_bgr_frame(frame_idx)
+        if frame is None:
+            return False
+
+        if write_params is None:
+            extension = os.path.splitext(output_path)[1].lower()
+            if extension in ('.jpg', '.jpeg'):
+                write_params = [cv2.IMWRITE_JPEG_QUALITY, 95]
+            elif extension == '.png':
+                write_params = [cv2.IMWRITE_PNG_COMPRESSION, 3]
+            else:
+                write_params = []
+
+        output_dir = os.path.dirname(output_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+
+        return bool(cv2.imwrite(output_path, frame, write_params))
+
     def update_shim_for_frame(self, frame_idx: int):
         """Update the shim's current BGR data without returning a QImage."""
         if not self._cap or not self._cap.isOpened():

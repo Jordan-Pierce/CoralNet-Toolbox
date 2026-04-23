@@ -2,7 +2,6 @@ import warnings
 
 import os
 import gc
-import shutil
 import yaml
 
 import numpy as np
@@ -17,6 +16,14 @@ from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel, QApplication, QChec
                              QWidget, QHBoxLayout, QRadioButton)
 
 from coralnet_toolbox.MachineLearning.ExportDataset.QtBase import Base
+from coralnet_toolbox.MachineLearning.ExportDataset.export_dataset_utils import (
+    build_sample_export_name,
+    frame_matches_stride,
+    materialize_sample_image,
+    normalize_source_path,
+    resolve_sample_source,
+    sample_dimensions,
+)
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -39,6 +46,8 @@ class Semantic(Base):
     mask annotations that contain pixel-level class information. The table shows 
     boolean presence or counts of class labels within mask annotations.
     """
+
+    supports_unlabeled_video_frames = True
     
     def __init__(self, main_window, parent=None):
         super(Semantic, self).__init__(main_window, parent)
@@ -247,13 +256,15 @@ class Semantic(Base):
             list: List of filtered annotations (both mask and vector types).
         """
         annotations = []
+        selected_sources = set(self.get_selected_source_paths())
+        frame_stride = self._frame_stride()
         
         # Get and filter MASK annotations if selected
         if self.include_masks_checkbox.isChecked():
             mask_annotations = self.get_mask_annotations()  # Gets ALL masks
             # This call now uses the FAST, cached version
             for mask in mask_annotations:
-                if self.mask_contains_selected_labels(mask):
+                if normalize_source_path(mask.image_path) in selected_sources and self.mask_contains_selected_labels(mask):
                     annotations.append(mask)
 
         # Get and filter VECTOR annotations in a single pass
@@ -266,14 +277,13 @@ class Semantic(Base):
             allowed_types.add('PolygonAnnotation')
 
         selected_set = set(self.selected_labels)
-        filtered_image_paths = (set(self.image_window.table_model.filtered_paths)
-                                if self.filtered_images_radio.isChecked() else None)
 
         filtered_vectors = [
             a for a in self.annotation_window.annotations_dict.values()
             if a.__class__.__name__ in allowed_types
             and a.label.short_label_code in selected_set
-            and (filtered_image_paths is None or a.image_path in filtered_image_paths)
+            and normalize_source_path(a.image_path) in selected_sources
+            and frame_matches_stride(a.image_path, frame_stride)
         ]
 
         annotations.extend(filtered_vectors)
@@ -446,6 +456,7 @@ class Semantic(Base):
 
         # Update the label counts table
         self.label_counts_table.setUpdatesEnabled(False)
+        allow_unlabeled_video_export = self.allows_unlabeled_video_export() and self.include_negatives_radio.isChecked()
         for row in range(self.label_counts_table.rowCount()):
             container = self.label_counts_table.cellWidget(row, 0)
             include_checkbox = container.findChild(QCheckBox)
@@ -467,9 +478,14 @@ class Semantic(Base):
             self.label_counts_table.item(row, 5).setText(str(test_count))
 
             if include_checkbox.isChecked():
-                self.set_cell_color(row, 3, red if train_count == 0 and self.train_ratio > 0 else green)
-                self.set_cell_color(row, 4, red if val_count == 0 and self.val_ratio > 0 else green)
-                self.set_cell_color(row, 5, red if test_count == 0 and self.test_ratio > 0 else green)
+                if allow_unlabeled_video_export:
+                    self.set_cell_color(row, 3, red if self.train_ratio > 0 and len(self.train_images) == 0 else green)
+                    self.set_cell_color(row, 4, red if self.val_ratio > 0 and len(self.val_images) == 0 else green)
+                    self.set_cell_color(row, 5, red if self.test_ratio > 0 and len(self.test_images) == 0 else green)
+                else:
+                    self.set_cell_color(row, 3, red if train_count == 0 and self.train_ratio > 0 else green)
+                    self.set_cell_color(row, 4, red if val_count == 0 and self.val_ratio > 0 else green)
+                    self.set_cell_color(row, 5, red if test_count == 0 and self.test_ratio > 0 else green)
             else:
                 self.set_cell_color(row, 3, green)
                 self.set_cell_color(row, 4, green)
@@ -580,6 +596,15 @@ class Semantic(Base):
         if test_ratio > 0 and len(self.test_annotations) == 0:
             return False
     
+        if self.allows_unlabeled_video_export() and self.include_negatives_radio.isChecked():
+            if train_ratio > 0 and len(self.train_images) == 0:
+                return False
+            if val_ratio > 0 and len(self.val_images) == 0:
+                return False
+            if test_ratio > 0 and len(self.test_images) == 0:
+                return False
+            return True
+
         return True
 
     def create_dataset(self, output_dir_path):
@@ -665,7 +690,7 @@ class Semantic(Base):
         vector_annotations = [ann for ann in annotations if ann.__class__.__name__ in vector_annotation_types]
         
         # Create mappings by image path
-        image_to_mask = {ann.image_path: ann for ann in mask_annotations}
+        image_to_mask = {normalize_source_path(ann.image_path): ann for ann in mask_annotations}
         
         # Group vector annotations by image path
         image_to_vectors = {}
@@ -676,23 +701,22 @@ class Semantic(Base):
         
         for i, image_path in enumerate(image_paths):
             try:
-                # Copy original image
-                image_filename = os.path.basename(image_path)
-                image_name, image_ext = os.path.splitext(image_filename)
-                
-                # Copy image to images directory
+                source_path, frame_idx, raster = resolve_sample_source(image_path, self.image_window.raster_manager)
+
+                # Copy or materialize the image into the export directory.
+                image_filename = build_sample_export_name(image_path)
                 image_output_path = os.path.join(images_dir, image_filename)
-                if not os.path.exists(image_output_path):
-                    shutil.copy2(image_path, image_output_path)
+                if not materialize_sample_image(image_path, self.image_window.raster_manager, image_output_path):
+                    raise RuntimeError(f"Failed to export image sample: {image_path}")
                 
                 # Create semantic segmentation mask
-                mask_output_path = os.path.join(labels_dir, f"{image_name}.png")
+                mask_output_path = os.path.join(labels_dir, build_sample_export_name(image_path, ".png"))
                 
                 # Combine mask and vector annotations for this image
                 self.create_combined_semantic_mask(
                     image_path,
-                    image_to_mask.get(image_path),
-                    image_to_vectors.get(image_path, []),
+                    image_to_mask.get(normalize_source_path(image_path)),
+                    image_to_vectors.get(image_path, image_to_vectors.get(source_path, [])),
                     mask_output_path
                 )
                 
@@ -748,9 +772,7 @@ class Semantic(Base):
             output_path (str): Path to save the combined mask
         """
         try:
-            from coralnet_toolbox.utilities import rasterio_open
-            with rasterio_open(image_path) as src:
-                height, width = src.shape
+            height, width, _ = sample_dimensions(image_path, self.image_window.raster_manager)
             
             # Determine fill value and index offset
             treat_as_background = getattr(self, 'background_radio', None) and self.background_radio.isChecked()
@@ -795,9 +817,7 @@ class Semantic(Base):
             output_path (str): Path to save the empty mask
         """
         try:
-            from coralnet_toolbox.utilities import rasterio_open
-            with rasterio_open(image_path) as src:
-                height, width = src.shape
+            height, width, _ = sample_dimensions(image_path, self.image_window.raster_manager)
             
             # Check toggle for background vs ignore
             treat_as_background = getattr(self, 'background_radio', None) and self.background_radio.isChecked()
@@ -823,9 +843,7 @@ class Semantic(Base):
             np.ndarray: Semantic mask with rasterized annotations
         """
         try:
-            from coralnet_toolbox.utilities import rasterio_open
-            with rasterio_open(image_path) as src:
-                height, width = src.shape
+            height, width, _ = sample_dimensions(image_path, self.image_window.raster_manager)
             
             # Determine fill value and index offset
             treat_as_background = getattr(self, 'background_radio', None) and self.background_radio.isChecked()

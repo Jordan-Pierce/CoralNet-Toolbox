@@ -64,6 +64,7 @@ from coralnet_toolbox.utilities import convert_scale_units
 
 from coralnet_toolbox.QtVideoPlayer import VideoPlayerWidget
 from coralnet_toolbox import theme as app_theme
+from coralnet_toolbox.MachineLearning.ExportDataset.export_dataset_utils import parse_frame_path
 
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -2981,6 +2982,8 @@ class AnnotationWindow(BaseCanvas):
         if not image_path:
             image_path = self.current_image_path
 
+        source_path, frame_idx = parse_frame_path(image_path)
+
         if annotations is None:
             annotations = self.get_image_annotations(image_path)
 
@@ -2994,7 +2997,16 @@ class AnnotationWindow(BaseCanvas):
             progress_bar.show()
             progress_bar.start_progress(len(annotations))
 
-        rasterio_image = rasterio_open(image_path)
+        rasterio_image = None
+        if frame_idx is not None:
+            raster = self.main_window.image_window.raster_manager.get_raster(source_path)
+            if raster is not None and hasattr(raster, 'update_shim_for_frame'):
+                raster.update_shim_for_frame(frame_idx)
+                rasterio_image = raster.rasterio_src
+
+        if rasterio_image is None:
+            rasterio_image = rasterio_open(source_path)
+
         for annotation in annotations:
             try:
                 # Only crop if not already cropped
