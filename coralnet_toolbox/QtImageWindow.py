@@ -877,8 +877,20 @@ class ImageWindow(QWidget):
                     all_annotations.extend(anns)
             self.raster_manager.update_annotation_info(video_path, all_annotations)
         else:
-            annotations = self.annotation_window.get_image_annotations(image_path)
-            self.raster_manager.update_annotation_info(image_path, annotations)
+            # Check if this is a bare VideoRaster path (all frame annotations are stored
+            # under virtual ::frame_ keys, so get_image_annotations() would return [] for
+            # the bare path, which would reset the count to 0).
+            raster = self.raster_manager.get_raster(image_path)
+            if raster is not None and getattr(raster, 'raster_type', '') == 'VideoRaster':
+                prefix = image_path + '::frame_'
+                all_annotations = []
+                for key, anns in self.annotation_window.image_annotations_dict.items():
+                    if key.startswith(prefix):
+                        all_annotations.extend(anns)
+                self.raster_manager.update_annotation_info(image_path, all_annotations)
+            else:
+                annotations = self.annotation_window.get_image_annotations(image_path)
+                self.raster_manager.update_annotation_info(image_path, annotations)
         
         if update_counts:
             self.main_window.label_window.update_annotation_count()
