@@ -17,7 +17,7 @@ from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QSize, QObject
 from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, 
                              QGraphicsItemGroup, QGraphicsEllipseItem, QGraphicsLineItem,
                              QGraphicsItem, QGraphicsPathItem, QLabel, QApplication,
-                             QOpenGLWidget)
+                             QOpenGLWidget, QFrame)
 
 from coralnet_toolbox import theme as app_theme
 
@@ -226,6 +226,7 @@ class BaseCanvas(QGraphicsView):
         self._dynamic_marker = None
         self._cursor_preview_item = None  # Preview rect for tool cursor propagation
         self._mask_overlay_item = None    # Read-only MaskAnnotation overlay for brush propagation
+        self._perimeter_overlay = None    # Viewport border overlay
 
         # Read-only annotation overlays (Phase 6)
         self._readonly_annotation_items = []
@@ -402,6 +403,11 @@ class BaseCanvas(QGraphicsView):
                 self._placeholder_label.setGeometry(self.viewport().rect())
         except Exception:
             pass
+
+        try:
+            self._sync_perimeter_overlay_geometry()
+        except Exception:
+            pass
     
     # ==================== Placeholder Management ====================
     
@@ -421,6 +427,49 @@ class BaseCanvas(QGraphicsView):
             self._placeholder_label.hide()
         except Exception:
             pass
+
+    # ==================== Canvas Perimeter Overlay ====================
+
+    def _sync_perimeter_overlay_geometry(self):
+        """Keep the perimeter overlay aligned with the viewport."""
+        if self._perimeter_overlay is None:
+            return
+
+        self._perimeter_overlay.setGeometry(self.viewport().rect())
+        self._perimeter_overlay.raise_()
+
+    def clear_perimeter_overlay(self):
+        """Clear any perimeter border from the canvas."""
+        if self._perimeter_overlay is None:
+            return
+
+        try:
+            self._perimeter_overlay.hide()
+            self._perimeter_overlay.setStyleSheet("background: transparent; border: none;")
+        except Exception:
+            pass
+
+    def set_perimeter_overlay(self, color, width):
+        """Draw a perimeter around the canvas using the given color and width."""
+        self.clear_perimeter_overlay()
+
+        border_color = QColor(color)
+        border_width = max(0, int(round(width)))
+        if not border_color.isValid() or border_width <= 0:
+            return
+
+        if self._perimeter_overlay is None:
+            self._perimeter_overlay = QFrame(self.viewport())
+            self._perimeter_overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            self._perimeter_overlay.setFrameShape(QFrame.NoFrame)
+            self._perimeter_overlay.setAutoFillBackground(False)
+
+        self._sync_perimeter_overlay_geometry()
+        self._perimeter_overlay.setStyleSheet(
+            f"background: transparent; border: {border_width}px solid {border_color.name()};"
+        )
+        self._perimeter_overlay.show()
+        self._perimeter_overlay.raise_()
     
     # ==================== Scene Management ====================
     

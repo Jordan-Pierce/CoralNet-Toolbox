@@ -148,6 +148,13 @@ class OrthoCamera:
         v = (self.ortho_top - Y) / self.resolution_y
         return np.array([u, v], dtype=np.float64)
 
+    def project(self, world_point: np.ndarray) -> np.ndarray:
+        """Project a world-space point into orthomosaic pixel coordinates."""
+        pixel = self.world_to_pixel(world_point)
+        if pixel is None:
+            return np.array([np.nan, np.nan], dtype=np.float64)
+        return np.asarray(pixel, dtype=np.float64)
+
     def pixel_to_xy_world(self, x: int, y: int) -> Optional[np.ndarray]:
         """
         Convert pixel (x, y) to a world-space base point with Z = 0 in the CRS.

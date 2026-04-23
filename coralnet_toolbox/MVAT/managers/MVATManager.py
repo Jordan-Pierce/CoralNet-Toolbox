@@ -503,8 +503,11 @@ class MVATManager(QObject):
         window.  On subsequent calls with new cameras, the frustums are
         refreshed but the view is not reset.
         """
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        QApplication.processEvents()
         all_paths = self.raster_manager.image_paths
         if not all_paths:
+            QApplication.restoreOverrideCursor()
             return
 
         # ------------------------------------------------------------------
@@ -536,12 +539,12 @@ class MVATManager(QObject):
         # Nothing genuinely new to do — report and exit cleanly.
         if not new_perspective_rasters and not need_ortho:
             self.main_window.status_bar.showMessage("All cameras already loaded.", 3000)
+            QApplication.restoreOverrideCursor()
             return
 
         # ------------------------------------------------------------------
         # Build Camera objects only for new perspective cameras.
         # ------------------------------------------------------------------
-        QApplication.setOverrideCursor(Qt.WaitCursor)
         valid_count = 0
         try:
             self.main_window.status_bar.showMessage("Loading cameras...", 0)
@@ -553,16 +556,13 @@ class MVATManager(QObject):
                     print(f"❌ Failed to load perspective camera {raster.basename}: {e}")
                     print(traceback.format_exc())
         finally:
-            try:
-                QApplication.restoreOverrideCursor()
-            except Exception:
-                pass
             self.main_window.status_bar.showMessage(
                 f"Loaded {valid_count} new camera(s)", 3000
             )
 
         if valid_count == 0 and not need_ortho:
             QMessageBox.information(self.main_window, "No Camera Data", "No valid camera parameters found.")
+            QApplication.restoreOverrideCursor()
             return
 
         # =====================================================================
@@ -672,6 +672,8 @@ class MVATManager(QObject):
                 self.selection_model.set_active(current_image_path)
             elif self.cameras:
                 self.selection_model.set_active(next(iter(self.cameras)))
+
+        QApplication.restoreOverrideCursor()
 
     def _render_frustums(self):
         """
@@ -1940,6 +1942,9 @@ class MVATManager(QObject):
             # so True 3D mapping will be available when the user paints or applies SAM.
             try:
                 visible = list(self._get_visible_context_paths())
+                target_paths = set(visible)
+                if self.ortho_camera is not None and not self._is_ortho_annotation_source():
+                    target_paths.add(self.ortho_camera.image_path)
                 if visible and self.compute_index_maps_enabled:
                     self.main_window.status_bar.showMessage("Preparing context visibility maps...", 2000)
                     # Ask the visibility system to compute index maps for these visible cameras
@@ -1949,7 +1954,7 @@ class MVATManager(QObject):
                 # --- Force Mask Canvas Allocation NOW ---
                 # Don't wait for the first brush stroke to allocate canvases!
                 project_labels = list(self.main_window.label_window.labels)
-                for path in visible:
+                for path in target_paths:
                     raster = self.raster_manager.get_raster(path)
                     if raster and raster.mask_annotation is None:
                         raster.get_mask_annotation(project_labels)
@@ -2002,12 +2007,7 @@ class MVATManager(QObject):
         px, py = int(scene_pos.x()), int(scene_pos.y())
 
         # Determine which cameras should show previews
-        if self.ortho_camera is not None and self.selected_camera == self.ortho_camera:
-            # When on orthomosaic: show previews in all visible perspective cameras
-            visible_paths = self._get_ortho_target_cameras()
-        else:
-            # When on perspective camera: show previews in visible context cameras
-            visible_paths = self._get_visible_context_paths()
+        visible_paths = self._get_annotation_target_paths()
 
         # Use the blazingly fast center-point projection
         projections = self._build_projection(px, py)
@@ -2080,7 +2080,10 @@ class MVATManager(QObject):
         """Return the target camera paths for the current annotation source."""
         if self._is_ortho_annotation_source():
             return self._get_ortho_target_cameras()
-        return self._get_visible_context_target_paths()
+        target_paths = self._get_visible_context_target_paths()
+        if self.ortho_camera is not None:
+            target_paths.add(self.ortho_camera.image_path)
+        return target_paths
 
     def _extract_source_ids_from_crop_mask(self,
                                            source_camera,
@@ -2192,6 +2195,15 @@ class MVATManager(QObject):
         # When on orthomosaic, propagate to all visible context cameras
         # (the ContextMatrix handles filtering for which cameras are viewable)
         return self._get_visible_context_target_paths()
+
+    def _get_camera_for_path(self, image_path: str):
+        """Return the loaded camera object for a path, including the orthocamera."""
+        if self.ortho_camera is not None and image_path == self.ortho_camera.image_path:
+            return self.ortho_camera
+        return self.cameras.get(image_path)
+
+    def _is_ortho_path(self, image_path: str) -> bool:
+        return self.ortho_camera is not None and image_path == self.ortho_camera.image_path
 
     def _on_context_visible_cameras_changed(self, visible_paths):
         """Refresh viewer state when the ContextMatrix changes its visible cameras."""
@@ -2443,7 +2455,15 @@ class MVATManager(QObject):
                 except Exception:
                     return {}
 
-        return ray.project_to_cameras(self.cameras) if ray is not None else {}
+        if ray is None:
+            return {}
+
+        cameras_for_projection = self.cameras
+        if self.ortho_camera is not None and camera != self.ortho_camera:
+            cameras_for_projection = dict(self.cameras)
+            cameras_for_projection[self.ortho_camera.image_path] = self.ortho_camera
+
+        return ray.project_to_cameras(cameras_for_projection)
 
     def _on_patch_annotation_created(self, annotation_id: str):
         """Propagate a newly created PatchAnnotation into all target cameras (perspective and ortho-aware)."""
@@ -2514,7 +2534,7 @@ class MVATManager(QObject):
 
             for target_path in selected_paths:
 
-                target_camera = self.cameras.get(target_path)
+                target_camera = self._get_camera_for_path(target_path)
                 if target_camera is None:
                     continue
 
@@ -2530,7 +2550,8 @@ class MVATManager(QObject):
                     # ----------------------------------------------------------
                     target_has_index = (getattr(target_camera, '_raster', None) is not None
                                         and target_camera._raster.index_map is not None)
-                    if use_3d and target_has_index and source_element_ids:
+                    target_is_ortho = target_camera is self.ortho_camera
+                    if use_3d and target_has_index and source_element_ids and not target_is_ortho:
                         flat = target_camera.get_pixels_for_elements(
                             np.array(source_element_ids, dtype=np.int64)
                         )
@@ -2725,7 +2746,7 @@ class MVATManager(QObject):
     def _propagate_to_camera(self, target_path, painted_ids, target_class_id_map,
                               projections, brush_w, brush_h, brush_mask, use_3d):
         """Single-camera propagation — runs in thread pool, no Qt calls."""
-        target_camera = self.cameras.get(target_path)
+        target_camera = self._get_camera_for_path(target_path)
         if target_camera is None:
             return target_path, False
 
@@ -2743,7 +2764,7 @@ class MVATManager(QObject):
 
         target_has_index = target_camera._raster.index_map is not None
 
-        if use_3d and target_has_index:
+        if use_3d and target_has_index and target_camera is not self.ortho_camera:
             proj = projections.get(target_path)
             bbox = None
             if proj is not None and proj[2]:
@@ -2860,6 +2881,7 @@ class MVATManager(QObject):
             # (avoids repeated dict lookups and sync_label_map calls inside threads)
             target_class_id_map = {}
             for target_path in selected_paths:
+                target_camera = self._get_camera_for_path(target_path)
                 target_raster = self.raster_manager.get_raster(target_path)
                 if target_raster is None:
                     continue
@@ -2979,7 +3001,7 @@ class MVATManager(QObject):
             target_cameras_2d = []
 
             for target_path in selected_paths:
-                target_camera = self.cameras.get(target_path)
+                target_camera = self._get_camera_for_path(target_path)
                 if not target_camera: continue
                 
                 target_raster = self.raster_manager.get_raster(target_path)
@@ -3000,7 +3022,8 @@ class MVATManager(QObject):
                 target_class_id_map[target_path] = target_class_id
                 
                 target_has_index = target_camera._raster is not None and target_camera._raster.index_map is not None
-                if use_3d and target_has_index:
+                target_is_ortho = target_camera is self.ortho_camera
+                if use_3d and target_has_index and not target_is_ortho:
                     target_cameras_3d.append((target_path, target_camera))
                 else:
                     target_cameras_2d.append((target_path, target_camera))
@@ -3351,7 +3374,7 @@ class MVATManager(QObject):
             target_cameras_2d = []
 
             for target_path in selected_paths:
-                target_camera = self.cameras.get(target_path)
+                target_camera = self._get_camera_for_path(target_path)
                 if not target_camera: continue
                 
                 target_raster = self.raster_manager.get_raster(target_path)
@@ -3372,7 +3395,8 @@ class MVATManager(QObject):
                 target_class_id_map[target_path] = target_class_id
                 
                 target_has_index = target_camera._raster is not None and target_camera._raster.index_map is not None
-                if use_3d and target_has_index:
+                target_is_ortho = target_camera is self.ortho_camera
+                if use_3d and target_has_index and not target_is_ortho:
                     target_cameras_3d.append((target_path, target_camera))
                 else:
                     target_cameras_2d.append((target_path, target_camera))
