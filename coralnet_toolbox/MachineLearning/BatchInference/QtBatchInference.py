@@ -60,7 +60,8 @@ class BatchInferenceWorker(QThread):
     error = pyqtSignal(str)
 
     def __init__(self, model, items, initial_thresholds,
-                 device=None, task='detect', batch_size=16, is_semantic=False, parent=None):
+                 device=None, task='detect', batch_size=16, is_semantic=False,
+                 sam_enabled=False, parent=None):
         super().__init__(parent)
         self.model = model
         self.items = list(items)
@@ -68,6 +69,10 @@ class BatchInferenceWorker(QThread):
         self._task = task
         self._batch_size = max(1, int(batch_size))
         self._is_semantic = is_semantic
+        # When SAM is enabled, skip tile→full-image remap in the worker so
+        # _apply_sam_to_cache can run SAM on the tile crop (tile-space boxes
+        # + tile orig_img) and then remap boxes and masks together afterwards.
+        self._sam_enabled = bool(sam_enabled)
         self._is_running = True
         self._waiting_for_ui = False
         self._mutex = QMutex()
@@ -193,7 +198,13 @@ class BatchInferenceWorker(QThread):
                         # Skipped for semantic: we paint the tile-sized mask at the offset
                         # ourselves in on_item_processed, so orig_shape and masks.data must
                         # stay consistent at tile dimensions.
-                        if item.work_area is not None and not self._is_semantic:
+                        # Skipped when SAM is enabled: _apply_sam_to_cache needs
+                        # tile-space boxes + tile orig_img so SAM's ViT encoder
+                        # runs on the small crop instead of the full raster; it
+                        # remaps boxes and masks together after SAM completes.
+                        if (item.work_area is not None
+                                and not self._is_semantic
+                                and not self._sam_enabled):
                             from coralnet_toolbox.Results.MapResults import MapResults
                             result = MapResults().map_results_from_work_area(
                                 result,
@@ -1370,6 +1381,13 @@ class BatchInferenceDialog(QDialog):
                     if hasattr(self.annotation_window, 'batch_results_cache'):
                         self.annotation_window.batch_results_cache = {}
 
+                sam_enabled = (
+                    hasattr(model_dialog, 'use_sam_dropdown')
+                    and model_dialog.use_sam_dropdown.currentText() == "True"
+                    and getattr(model_dialog, 'sam_dialog', None) is not None
+                    and getattr(model_dialog.sam_dialog, 'loaded_model', None) is not None
+                )
+
                 self._batch_worker = BatchInferenceWorker(
                     model=model_dialog.loaded_model,
                     items=items,
@@ -1377,6 +1395,7 @@ class BatchInferenceDialog(QDialog):
                     device=getattr(self.main_window, 'device', None),
                     task=task,
                     batch_size=batch_size,
+                    sam_enabled=sam_enabled,
                 )
 
                 try:
@@ -1850,7 +1869,13 @@ class BatchInferenceDialog(QDialog):
                         inf_result.yolo_result.path = inf_result.batch_key
                         cache[inf_result.batch_key] = inf_result.yolo_result
                 else:
-                    # Image / tile: accumulate into a list keyed by image_path
+                    # Image / tile: accumulate into a list keyed by image_path.
+                    # Stash the tile work_area so _apply_sam_to_cache can run SAM
+                    # on the tile crop when SAM is enabled.
+                    try:
+                        inf_result.yolo_result._tile_work_area = inf_result.work_area
+                    except Exception:
+                        pass
                     if inf_result.batch_key not in cache:
                         cache[inf_result.batch_key] = []
                     cache[inf_result.batch_key].append(inf_result.yolo_result)
@@ -1931,10 +1956,16 @@ class BatchInferenceDialog(QDialog):
     def _apply_sam_to_cache(self):
         """Run SAM over every image in the cache that holds list-style results.
 
-        SAM is called once per image after all tiles have been mapped to
-        full-image coordinates, so the heavy ViT image encoder fires only
-        once per source image regardless of tile count.  Video frames are
-        skipped (they use the raw YOLO detections).
+        For tile results (work_area != None) SAM runs on the tile crop — boxes
+        are in tile-space, orig_img is the tile BGR the worker already stashed.
+        After SAM, the result is remapped to full-image coordinates so boxes
+        and masks land in the same reference frame.  This keeps SAM's ViT
+        encoder bounded by tile size instead of the full raster size.
+
+        For whole-image results SAM runs once on the existing orig_img — no
+        remap needed.
+
+        Video frames are skipped (they use the raw YOLO detections).
         """
         active_dialog = getattr(self, '_active_model_dialog', None)
         if active_dialog is None:
@@ -1965,6 +1996,55 @@ class BatchInferenceDialog(QDialog):
         if not image_paths_for_sam:
             return
 
+        from coralnet_toolbox.Results.MapResults import MapResults
+        from torch.cuda import empty_cache as _empty_cache
+        import gc as _gc
+
+        # Mark as segmentation up front so any downstream baking uses the
+        # correct processor path even if individual images fail SAM.
+        try:
+            active_dialog.task = 'segment'
+        except Exception:
+            pass
+
+        # Inline baking per image: converts masks → annotation objects and
+        # immediately drops the cache entry so full-image mask tensors don't
+        # accumulate across the batch.  Without this, peak RAM scales with
+        # total_images × per_image_masks; with it, peak is one image's worth.
+        results_processor = getattr(self, '_results_processor', None)
+
+        def _bake_and_drop(image_path, results_list):
+            try:
+                self.annotation_window.is_streaming_inference = True
+            except Exception:
+                pass
+            try:
+                if results_processor is not None:
+                    results_processor.process_segmentation_results(results_list)
+            except Exception as e:
+                print(f"_apply_sam_to_cache bake error for {image_path}: {e}")
+            try:
+                self.image_window.update_image_annotations(
+                    image_path, update_counts=False)
+            except Exception:
+                pass
+            try:
+                if image_path in cache:
+                    del cache[image_path]
+            except Exception:
+                pass
+            # Explicitly drop per-result references; masks can be huge.
+            try:
+                for r in results_list:
+                    try:
+                        r.masks = None
+                        r.orig_img = None
+                    except Exception:
+                        pass
+                results_list.clear()
+            except Exception:
+                pass
+
         sam_pb = ProgressBar(None, title="Applying SAM...")
         sam_pb.setWindowFlags(sam_pb.windowFlags() | Qt.WindowStaysOnTopHint)
         sam_pb.show()
@@ -1972,50 +2052,89 @@ class BatchInferenceDialog(QDialog):
         QApplication.processEvents()
 
         for path in image_paths_for_sam:
-            cached = cache.get(path)
+            cached = cache.get(path) or []
             if not cached:
                 sam_pb.update_progress()
                 continue
 
-            try:
-                # Load the full-image BGR array so all tile results share the
-                # same orig_img; this lets SAM skip the encoder on every tile
-                # after the first.
-                full_bgr = None
-                try:
-                    raster = raster_manager.get_raster(path) if raster_manager else None
-                    if raster is not None:
-                        numpy_arr = raster.get_numpy()
-                        if numpy_arr is not None:
-                            import cv2
-                            full_bgr = cv2.cvtColor(numpy_arr, cv2.COLOR_RGB2BGR)
-                except Exception:
-                    pass
+            raster = raster_manager.get_raster(path) if raster_manager else None
 
-                if full_bgr is not None:
-                    for r in cached:
+            # Determine whether any tiles are present; if all work_areas are
+            # None we can batch the full-image SAM call into a single ViT pass.
+            tile_mode = any(getattr(r, '_tile_work_area', None) is not None
+                            for r in cached)
+
+            updated = []
+            try:
+                if tile_mode:
+                    # Per-tile: each tile has a unique orig_img (tile crop), so
+                    # the ViT re-encode happens per tile regardless of call
+                    # shape.  We call SAM per result to keep the remap tied to
+                    # the correct work_area.
+                    for result in cached:
+                        wa = getattr(result, '_tile_work_area', None)
                         try:
-                            r.orig_img = full_bgr
+                            if (wa is not None
+                                    and result.boxes is not None
+                                    and len(result.boxes)):
+                                sam_out = sam_dialog.predict_from_results(
+                                    [result], path)
+                                if sam_out and sam_out[0] is not None:
+                                    result = sam_out[0]
+                            if wa is not None and raster is not None:
+                                result = MapResults().map_results_from_work_area(
+                                    result, raster, wa,
+                                    map_masks=True,
+                                    task='segment',
+                                )
+                        except Exception as e:
+                            print(f"_apply_sam_to_cache tile error for {path}: {e}")
+                        # Drop tile BGR + work_area ref so they can be reclaimed
+                        try:
+                            result.orig_img = None
                         except Exception:
                             pass
+                        try:
+                            result._tile_work_area = None
+                        except Exception:
+                            pass
+                        updated.append(result)
+                else:
+                    # Whole-image results: orig_img was set by YOLO to the full
+                    # image during inference, so SAM can run in a single batched
+                    # call (ViT fires once thanks to the identity cache).
+                    try:
+                        sam_results = sam_dialog.predict_from_results(cached, path)
+                    except Exception as e:
+                        print(f"_apply_sam_to_cache full-image error for {path}: {e}")
+                        sam_results = [None] * len(cached)
+                    for r, s in zip(cached, sam_results):
+                        out = s if s is not None else r
+                        try:
+                            out.orig_img = None
+                        except Exception:
+                            pass
+                        try:
+                            out._tile_work_area = None
+                        except Exception:
+                            pass
+                        updated.append(out)
 
-                # Run SAM – ViT encoder fires once (same orig_img for all)
-                sam_results = sam_dialog.predict_from_results(cached, path)
-                cache[path] = [
-                    s if s is not None else r
-                    for r, s in zip(cached, sam_results)
-                ]
-                # Mark as segmentation so baking uses the correct processor path
+                # Drop the pre-SAM references held in `cached` so the only
+                # live refs to the updated results are in `updated`.
                 try:
-                    active_dialog.task = 'segment'
+                    cached.clear()
                 except Exception:
                     pass
+
+                _bake_and_drop(path, updated)
 
             except Exception as e:
                 print(f"_apply_sam_to_cache error for {path}: {e}")
+                # Leave the entry in the cache so _bake_cached_annotations can
+                # make a second attempt; do not lose data on a failure path.
+                cache[path] = updated
             finally:
-                from torch.cuda import empty_cache as _empty_cache
-                import gc as _gc
                 _gc.collect()
                 _empty_cache()
 
@@ -2080,42 +2199,44 @@ class BatchInferenceDialog(QDialog):
             return
 
         cache = getattr(self.annotation_window, 'batch_results_cache', {})
-        if not cache:
-            return
 
-        bake_pb = ProgressBar(None, title="Saving Annotations to Project...")
-        bake_pb.setWindowFlags(bake_pb.windowFlags() | Qt.WindowStaysOnTopHint)
-        bake_pb.show()
-        bake_pb.start_progress(len(cache))
-        QApplication.processEvents()  # ensure bar is painted before first heavy bake call
+        # Fall through even when cache is empty so the final master sync still
+        # fires — _apply_sam_to_cache may have baked (and dropped) every entry
+        # inline to keep peak RAM bounded to one image's worth of masks.
+        if cache:
+            bake_pb = ProgressBar(None, title="Saving Annotations to Project...")
+            bake_pb.setWindowFlags(bake_pb.windowFlags() | Qt.WindowStaysOnTopHint)
+            bake_pb.show()
+            bake_pb.start_progress(len(cache))
+            QApplication.processEvents()  # ensure bar is painted before first heavy bake call
 
-        # Suppress O(N²) UI updates during the loop
-        self.annotation_window.is_streaming_inference = True
+            # Suppress O(N²) UI updates during the loop
+            self.annotation_window.is_streaming_inference = True
 
-        is_segmentation = getattr(self._active_model_dialog, 'task', '') == 'segment'
+            is_segmentation = getattr(self._active_model_dialog, 'task', '') == 'segment'
 
-        for path, cached_results in cache.items():
-            # Skip non-Results overlay entries (e.g., dict overlays for masks)
-            if isinstance(cached_results, dict):
-                # Count it as processed for the progress bar and continue
+            for path, cached_results in cache.items():
+                # Skip non-Results overlay entries (e.g., dict overlays for masks)
+                if isinstance(cached_results, dict):
+                    # Count it as processed for the progress bar and continue
+                    bake_pb.update_progress()
+                    QApplication.processEvents()
+                    continue
+
+                # Normalise: images store lists, video frames store single Results objects
+                results_to_process = cached_results if isinstance(cached_results, list) else [cached_results]
+                try:
+                    if is_segmentation:
+                        self._results_processor.process_segmentation_results(results_to_process)
+                    else:
+                        self._results_processor.process_detection_results(results_to_process)
+                except Exception as e:
+                    print(f"Error hydrating cached results for {path}: {e}")
+
                 bake_pb.update_progress()
-                QApplication.processEvents()
-                continue
+                QApplication.processEvents()  # Keep UI responsive
 
-            # Normalise: images store lists, video frames store single Results objects
-            results_to_process = cached_results if isinstance(cached_results, list) else [cached_results]
-            try:
-                if is_segmentation:
-                    self._results_processor.process_segmentation_results(results_to_process)
-                else:
-                    self._results_processor.process_detection_results(results_to_process)
-            except Exception as e:
-                print(f"Error hydrating cached results for {path}: {e}")
-
-            bake_pb.update_progress()
-            QApplication.processEvents()  # Keep UI responsive
-
-        bake_pb.close()
+            bake_pb.close()
 
         # Re-enable UI updates and trigger one final master sync
         self.annotation_window.is_streaming_inference = False

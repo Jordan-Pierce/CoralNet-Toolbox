@@ -517,25 +517,56 @@ class DeployPredictorDialog(QDialog):
                             raise e
                 
                 if all_sam_masks:
-                    # Concatenate the boolean masks (now on CPU), then cast back to
-                    # float to satisfy Ultralytics and attach to the Results object.
-                    combined_masks = torch.cat(all_sam_masks, dim=0).float()
+                    # Keep masks as bool on CPU — 4× smaller than float32 and
+                    # Ultralytics' Masks.xy normalises via .astype('uint8') before
+                    # cv2.findContours, so bool input is accepted downstream.
+                    combined_masks = torch.cat(all_sam_masks, dim=0)
                     results.update(masks=combined_masks)
-                    # Free any lingering GPU fragmentation now that masks are offloaded
+                    del all_sam_masks, combined_masks
                     gc.collect()
                     if torch.cuda.is_available():
                         try:
-                            # `empty_cache` was imported at module top
                             empty_cache()
                         except Exception:
-                            # Best-effort: ignore if GPU cache flush isn't available
                             pass
-                
+
                 output_results.append(results)
-            
+
             return output_results
-            
+
         finally:
+            # Release SAM's cached features + original image so RAM and VRAM
+            # don't accumulate across a long batch of images.  Interactive
+            # point/box prompts go through predict_from_prompts, which holds
+            # its own active session, so this cleanup only affects the batch
+            # post-processing callers.
+            try:
+                self.original_image = None
+                self.image_path = None
+                # reset_image() zeros both .im (preprocessed tensor, GPU) and
+                # .features (ViT output, GPU); covers SAM / SAM2 / SAM3.
+                if hasattr(self.loaded_model, 'reset_image'):
+                    try:
+                        self.loaded_model.reset_image()
+                    except Exception:
+                        pass
+                for attr in ('features', 'im', 'interm_features', 'prompts', 'dataset'):
+                    if hasattr(self.loaded_model, attr):
+                        try:
+                            cur = getattr(self.loaded_model, attr)
+                            if isinstance(cur, dict):
+                                cur.clear()
+                            else:
+                                setattr(self.loaded_model, attr, None)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            gc.collect()
+            try:
+                empty_cache()
+            except Exception:
+                pass
             QApplication.restoreOverrideCursor()
 
     def deactivate_model(self):

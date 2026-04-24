@@ -987,11 +987,13 @@ class DeployGeneratorDialog(QDialog):
         progress_bar = ProgressBar(self.annotation_window, title="Running Inference")
         progress_bar.show()
 
-        cache = {}  # image_path → [Results, …]
+        # Bake per-image so full-resolution mask tensors don't accumulate
+        # across the whole batch — peak RAM stays at one image's worth.
+        processed_paths = []
 
         try:
             for img_idx, image_path in enumerate(image_paths):
-                
+
                 # --- 2. Get Raster and Work Items ---
                 raster = self.image_window.raster_manager.get_raster(image_path)
                 if raster is None:
@@ -1026,11 +1028,11 @@ class DeployGeneratorDialog(QDialog):
 
                 results_for_this_image = []
                 is_segmentation = self.task == 'segment' or self.use_sam_dropdown.currentText() == "True"
-                
+
                 try:
                     # --- Loop over the data in mini-batches ---
                     for i in range(0, len(work_items_data), BATCH_SIZE):
-                        
+
                         # Get the mini-batch chunks
                         data_chunk = work_items_data[i: i + BATCH_SIZE]
                         area_chunk = work_areas[i: i + BATCH_SIZE]
@@ -1039,13 +1041,16 @@ class DeployGeneratorDialog(QDialog):
                         for wa in area_chunk:
                             if wa is not None:
                                 wa.highlight()
-                        
+
                         # --- 4a. Apply Model (Batched) ---
                         # Returns a flat list: [res1, res2, ...]
                         batch_results_list = self._apply_model(data_chunk)
-                        
+
                         # --- 4b. Apply SAM (Batched) ---
-                        # Takes a flat list, returns a flat list
+                        # Takes a flat list, returns a flat list.  SAM sees the
+                        # tile crop (YOLOE set orig_img to the input ndarray)
+                        # with tile-space boxes, so its ViT encoder is bounded
+                        # by tile size instead of full-raster size.
                         sam_results_list = self._apply_sam(batch_results_list, image_path)
 
                         # Safety check
@@ -1056,7 +1061,7 @@ class DeployGeneratorDialog(QDialog):
                                     wa.unhighlight()
                                 progress_bar.update_progress()
                             continue
-                            
+
                         # --- 4c. Post-process ---
                         for results_obj, work_area in zip(sam_results_list, area_chunk):
 
@@ -1076,11 +1081,18 @@ class DeployGeneratorDialog(QDialog):
                             else:
                                 mapped_result = results_obj
 
+                            # Release tile/full BGR reference; downstream baking
+                            # only needs boxes + masks.xy, not orig_img.
+                            try:
+                                mapped_result.orig_img = None
+                            except Exception:
+                                pass
+
                             # --- 4e. Append to list ---
                             results_for_this_image.append(mapped_result)
 
                             progress_bar.update_progress()
-                            
+
                             if work_area:
                                 work_area.unhighlight()
 
@@ -1093,9 +1105,9 @@ class DeployGeneratorDialog(QDialog):
                     import traceback
                     traceback.print_exc()
 
-                # --- 5. Process All Results for This Image at Once ---
+                # --- 5. Bake this image's results immediately ---
                 if results_for_this_image:
-                    # Remap multi-prototype class IDs → 0 before rendering
+                    # Remap multi-prototype class IDs → 0 before rendering/baking
                     target_label_name = self.reference_label.short_label_code
                     for r in results_for_this_image:
                         if r is not None and r.boxes is not None and len(r.boxes) > 0:
@@ -1104,8 +1116,8 @@ class DeployGeneratorDialog(QDialog):
                             r.boxes = type(r.boxes)(new_data, r.boxes.orig_shape)
                             r.names = {0: target_label_name}
 
-                    cache[image_path] = results_for_this_image
-
+                    # Fast render must happen before baking — baking clears the
+                    # per-result tensors that generate_fast_render_paths reads.
                     if image_path == self.annotation_window.current_image_path:
                         try:
                             self._fast_render_image(
@@ -1113,33 +1125,51 @@ class DeployGeneratorDialog(QDialog):
                         except Exception as e:
                             print(f"SeeAnything.predict: fast render failed: {e}")
 
+                    try:
+                        self.annotation_window.is_streaming_inference = True
+                    except Exception:
+                        pass
+                    try:
+                        self._process_results(
+                            results_processor, results_for_this_image, image_path)
+                        processed_paths.append(image_path)
+                    except Exception as e:
+                        print(f"Error baking results for {image_path}: {e}")
+                    try:
+                        self.image_window.update_image_annotations(
+                            image_path, update_counts=False)
+                    except Exception:
+                        pass
+
+                    # Explicit drop: null masks + orig_img so the huge tensors
+                    # can be reclaimed before the next image runs.
+                    for r in results_for_this_image:
+                        try:
+                            r.masks = None
+                        except Exception:
+                            pass
+                        try:
+                            r.orig_img = None
+                        except Exception:
+                            pass
+                    results_for_this_image.clear()
+                    gc.collect()
+                    empty_cache()
+
         except Exception as e:
             print(f"A fatal error occurred during the prediction workflow: {e}")
         finally:
-            if cache:
-                is_segmentation = self.task == 'segment' or self.use_sam_dropdown.currentText() == "True"
-                self.annotation_window.is_streaming_inference = True
-                progress_bar.set_title("Saving Annotations...")
-                progress_bar.start_progress(len(cache))
-
-                for path, results_list in cache.items():
-                    try:
-                        self._process_results(results_processor, results_list, path)
-                    except Exception as e:
-                        print(f"Error baking results for {path}: {e}")
-                    progress_bar.update_progress()
-                    QApplication.processEvents()
-
-                self.annotation_window.is_streaming_inference = False
-
+            if processed_paths:
+                try:
+                    self.annotation_window.is_streaming_inference = False
+                except Exception:
+                    pass
                 try:
                     self.annotation_window.refresh_phantom_annotations()
                 except Exception:
                     pass
                 try:
                     self.main_window.label_window.update_annotation_count()
-                    for path in cache:
-                        self.image_window.update_image_annotations(path, update_counts=False)
                 except Exception:
                     pass
 
