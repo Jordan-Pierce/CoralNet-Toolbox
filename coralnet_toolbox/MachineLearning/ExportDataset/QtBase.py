@@ -247,6 +247,8 @@ class Base(QDialog):
         group_box = QGroupBox("Video Frames")
         layout = QHBoxLayout()
 
+        layout.addStretch(1)
+
         self.split_by_source_checkbox = QCheckBox("Split by source video")
         self.split_by_source_checkbox.setChecked(True)
         self.split_by_source_checkbox.setToolTip(
@@ -255,16 +257,27 @@ class Base(QDialog):
         self.split_by_source_checkbox.stateChanged.connect(self.update_summary_statistics)
         layout.addWidget(self.split_by_source_checkbox)
 
+        layout.addStretch(1)
+
+        stride_widget = QWidget()
+        stride_layout = QHBoxLayout(stride_widget)
+        stride_layout.setContentsMargins(0, 0, 0, 0)
+        stride_layout.setSpacing(6)
+
         stride_label = QLabel("Frame stride:")
         stride_label.setToolTip("Only export every Nth frame from a video source.")
-        layout.addWidget(stride_label)
+        stride_layout.addWidget(stride_label)
 
         self.frame_stride_spinbox = QSpinBox()
         self.frame_stride_spinbox.setRange(1, 999999)
         self.frame_stride_spinbox.setValue(1)
         self.frame_stride_spinbox.setToolTip("Only export every Nth frame from a video source.")
         self.frame_stride_spinbox.valueChanged.connect(self.update_summary_statistics)
-        layout.addWidget(self.frame_stride_spinbox)
+        stride_layout.addWidget(self.frame_stride_spinbox)
+
+        layout.addWidget(stride_widget)
+
+        layout.addStretch(1)
 
         self.export_unlabeled_video_frames_checkbox = QCheckBox("Export unlabeled video frames")
         self.export_unlabeled_video_frames_checkbox.setChecked(False)
@@ -274,7 +287,7 @@ class Base(QDialog):
         self.export_unlabeled_video_frames_checkbox.stateChanged.connect(self.update_summary_statistics)
         layout.addWidget(self.export_unlabeled_video_frames_checkbox)
 
-        layout.addStretch()
+        layout.addStretch(1)
 
         group_box.setLayout(layout)
         group_box.setVisible(self.has_video_rasters())
