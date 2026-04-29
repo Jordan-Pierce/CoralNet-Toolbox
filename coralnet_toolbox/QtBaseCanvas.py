@@ -6,9 +6,48 @@ Z-channel visualization, and marker slots. It is designed to be inherited by Ann
 and reused in Phase 2's context matrix for multi-viewport displays.
 """
 
+import time
 import warnings
 import traceback
 import numpy as np
+
+
+# ---------------------------------------------------------------------------
+# Lightweight timing instrumentation. Set PROFILE_VIEWPORT = False to silence.
+# Counters accumulate per-second and print one summary line, so the prints
+# don't dominate the very thing they're trying to measure.
+# ---------------------------------------------------------------------------
+PROFILE_VIEWPORT = True
+_PROFILE_BUCKETS = {}
+_PROFILE_LAST_FLUSH = time.perf_counter()
+
+
+def _profile_record(key, dt):
+    """Record one timed sample under `key` (seconds). Flushes once per second."""
+    if not PROFILE_VIEWPORT:
+        return
+    bucket = _PROFILE_BUCKETS.setdefault(key, [0, 0.0, 0.0])  # count, total, max
+    bucket[0] += 1
+    bucket[1] += dt
+    if dt > bucket[2]:
+        bucket[2] = dt
+
+    global _PROFILE_LAST_FLUSH
+    now = time.perf_counter()
+    if now - _PROFILE_LAST_FLUSH >= 1.0:
+        parts = []
+        for name in sorted(_PROFILE_BUCKETS):
+            cnt, tot, mx = _PROFILE_BUCKETS[name]
+            if cnt == 0:
+                continue
+            parts.append(
+                f"{name}: {cnt}x avg={tot / cnt * 1000:.2f}ms "
+                f"max={mx * 1000:.2f}ms tot={tot * 1000:.1f}ms"
+            )
+            _PROFILE_BUCKETS[name] = [0, 0.0, 0.0]
+        if parts:
+            print("[PROF]", " | ".join(parts))
+        _PROFILE_LAST_FLUSH = now
 
 import pyqtgraph as pg
 from PyQt5.QtGui import (QMouseEvent, QPixmap, QImage, QBrush, QColor, QPen, 
@@ -34,12 +73,17 @@ class FastImageItem(QGraphicsItem):
     def __init__(self):
         super().__init__()
         self._image = None
-        self._readonly_paths = [] 
-        
+        self._readonly_paths = []
+        # Cached QImage of all readonly paths rendered at base-image resolution.
+        # Built lazily on first paint after set_readonly_annotations() so that the
+        # per-frame paint cost is one drawImage call instead of 14K drawPaths.
+        self._readonly_cache = None
+        self._readonly_dirty = False
+
         # --- CRITICAL: Initialize the mask variables here! ---
         self._mask_image = None
         self._mask_opacity = 1.0
-        
+
         # Optimize for rapidly changing content
         self.setCacheMode(QGraphicsItem.NoCache)
 
@@ -49,6 +93,10 @@ class FastImageItem(QGraphicsItem):
             self._image = qimage.copy()
         else:
             self._image = qimage
+        # Image dimensions changed — invalidate the readonly cache so it rebuilds
+        # at the correct resolution on next paint.
+        self._readonly_cache = None
+        self._readonly_dirty = bool(self._readonly_paths)
         try:
             self.update()
         except RuntimeError:
@@ -68,12 +116,63 @@ class FastImageItem(QGraphicsItem):
             pass
 
     def set_readonly_annotations(self, paths_data):
-        """Pass a list of ready-to-draw paths: (QPainterPath, QColor, opacity)"""
+        """Pass a list of ready-to-draw paths: (QPainterPath, QColor, opacity).
+
+        The paths are stored verbatim and rendered into a QImage cache lazily on
+        the next paint(); subsequent paints just blit the cache, so pan/zoom no
+        longer pays the per-path dispatch cost.
+        """
         self._readonly_paths = paths_data
+        self._readonly_cache = None  # Free old cache immediately
+        self._readonly_dirty = bool(paths_data)
         try:
             self.update()
         except RuntimeError:
             pass
+
+    def _build_readonly_cache(self):
+        """Render all readonly paths into a single QImage at base-image resolution.
+
+        Pen widths become fixed image-pixel widths (no cosmetic scaling), so
+        outlines look slightly thinner at extreme zoom-out, but the fill carries
+        the visual signal there anyway.
+        """
+        self._readonly_dirty = False
+        if self._image is None or self._image.isNull() or not self._readonly_paths:
+            self._readonly_cache = None
+            return
+
+        img = QImage(self._image.size(), QImage.Format_ARGB32_Premultiplied)
+        img.fill(Qt.transparent)
+
+        painter = QPainter(img)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        # Shadow pen is constant — build once. Width is in image pixels.
+        shadow_pen = QPen(QColor(0, 0, 0, 130), 4.0, Qt.SolidLine)
+        shadow_pen.setCapStyle(Qt.RoundCap)
+        shadow_pen.setJoinStyle(Qt.RoundJoin)
+
+        for path, color_val, transparency in self._readonly_paths:
+            # PASS 1: fill + dark halo
+            fill_color = QColor(color_val)
+            fill_color.setAlpha(transparency)
+            painter.setBrush(QBrush(fill_color))
+            painter.setPen(shadow_pen)
+            painter.drawPath(path)
+
+            # PASS 2: crisp colored inner border
+            painter.setBrush(Qt.NoBrush)
+            pen_color = QColor(color_val)
+            pen_color.setAlpha(255)
+            main_pen = QPen(pen_color, 2.0, Qt.SolidLine)
+            main_pen.setCapStyle(Qt.RoundCap)
+            main_pen.setJoinStyle(Qt.RoundJoin)
+            painter.setPen(main_pen)
+            painter.drawPath(path)
+
+        painter.end()
+        self._readonly_cache = img
 
     def boundingRect(self):
         """Return the bounding rectangle of the image for proper redraw regions."""
@@ -83,6 +182,7 @@ class FastImageItem(QGraphicsItem):
 
     def paint(self, painter, option, widget):
         """Custom paint method to draw the image, mask, and annotations in a single pass."""
+        _t0 = time.perf_counter()
         # 1. Draw the video frame directly from RAM to the OpenGL Viewport
         if self._image is not None and not self._image.isNull():
             painter.drawImage(0, 0, self._image)
@@ -94,46 +194,19 @@ class FastImageItem(QGraphicsItem):
             painter.drawImage(0, 0, mask)
             painter.setOpacity(1.0) # Reset opacity
 
-        # 3. Draw all annotations in a single ultra-fast pass
+        # 3. Draw all readonly annotations as a single pre-rendered QImage blit.
         if self._readonly_paths:
-            painter.setRenderHint(QPainter.Antialiasing, True)
-            
-            for path, color_val, transparency in self._readonly_paths:
-                # --- PASS 1: FILL AND SHADOW BORDER ---
-                # 1a. Set up the translucent fill
-                fill_color = QColor(color_val)
-                fill_color.setAlpha(transparency)
-                painter.setBrush(QBrush(fill_color))
-                
-                # 1b. Set up a thicker, semi-transparent dark "halo" pen
-                shadow_pen = QPen(QColor(0, 0, 0, 130), 4.0, Qt.SolidLine)
-                shadow_pen.setCapStyle(Qt.RoundCap)
-                shadow_pen.setJoinStyle(Qt.RoundJoin)
-                shadow_pen.setCosmetic(True)
-                
-                painter.setPen(shadow_pen)
-                
-                # Draw the path (this drops the fill and the dark 4px border)
-                painter.drawPath(path)
-                
-                
-                # --- PASS 2: CRISP COLORED INNER BORDER ---
-                # 2a. Turn off the brush so we don't double-stack the transparency
-                painter.setBrush(Qt.NoBrush)
-                
-                # 2b. Set up the vibrant 2px colored pen
-                pen_color = QColor(color_val)
-                pen_color.setAlpha(255)  
-                
-                main_pen = QPen(pen_color, 2.0, Qt.SolidLine)
-                main_pen.setCapStyle(Qt.RoundCap)
-                main_pen.setJoinStyle(Qt.RoundJoin)
-                main_pen.setCosmetic(True)
-                
-                painter.setPen(main_pen)
-                
-                # Draw the path again (this drops the crisp 2px colored line right inside the shadow)
-                painter.drawPath(path)
+            if self._readonly_dirty or self._readonly_cache is None:
+                _t_build = time.perf_counter()
+                self._build_readonly_cache()
+                _profile_record(
+                    f"FastImage.paint_buildCache(n={len(self._readonly_paths)})",
+                    time.perf_counter() - _t_build,
+                )
+            if self._readonly_cache is not None:
+                painter.drawImage(0, 0, self._readonly_cache)
+
+        _profile_record("FastImage.paint_total", time.perf_counter() - _t0)
 
 
 class BaseCanvas(QGraphicsView):
@@ -160,19 +233,17 @@ class BaseCanvas(QGraphicsView):
         """Initialize the base canvas."""
         super().__init__(parent)
         
-        if False:
-            # Causes a lag, leaving commented out for now.
-            # --- PHASE 2: ENABLE HARDWARE ACCELERATION ---
-            gl_widget = QOpenGLWidget()
-            
-            # Enable Anti-Aliasing (4x MSAA) for smooth vector drawing
-            format_gl = QSurfaceFormat()
-            format_gl.setSamples(4) 
-            gl_widget.setFormat(format_gl)
-            
-            # Set the hardware-accelerated widget as the viewport
-            self.setViewport(gl_widget)
-            # ---------------------------------------------
+        # --- HARDWARE ACCELERATION ---
+        gl_widget = QOpenGLWidget()
+
+        # Enable Anti-Aliasing (4x MSAA) for smooth vector drawing
+        format_gl = QSurfaceFormat()
+        format_gl.setSamples(4)
+        gl_widget.setFormat(format_gl)
+
+        # Set the hardware-accelerated widget as the viewport
+        self.setViewport(gl_widget)
+        # -----------------------------
         
         # Create and set the scene
         self.scene = QGraphicsScene(self)
@@ -264,9 +335,16 @@ class BaseCanvas(QGraphicsView):
     
     def wheelEvent(self, event: QMouseEvent):
         """Handle mouse wheel events for zooming."""
+        _t0 = time.perf_counter()
+        try:
+            self._wheel_event_impl(event)
+        finally:
+            _profile_record("BaseCanvas.wheelEvent", time.perf_counter() - _t0)
+
+    def _wheel_event_impl(self, event: QMouseEvent):
         if not self.active_image:
             return
-        
+
         # Determine zoom direction
         if event.angleDelta().y() > 0:
             factor = 1.1  # Zoom in
@@ -334,6 +412,13 @@ class BaseCanvas(QGraphicsView):
     
     def mouseMoveEvent(self, event: QMouseEvent):
         """Handle mouse move events for rotation, panning, and hover tracking."""
+        _t0 = time.perf_counter()
+        try:
+            self._mouse_move_event_impl(event)
+        finally:
+            _profile_record("BaseCanvas.mouseMoveEvent", time.perf_counter() - _t0)
+
+    def _mouse_move_event_impl(self, event: QMouseEvent):
         # Handle rotation
         if self._rotate_active and self.active_image:
             center = self.viewport().rect().center()
