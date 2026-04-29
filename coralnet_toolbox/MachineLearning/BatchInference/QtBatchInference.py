@@ -90,7 +90,7 @@ class BatchInferenceWorker(QThread):
         """Called by the main thread after painting a video frame."""
         self._waiting_for_ui = False
 
-    def update_thresholds(self, conf=None, iou=None, max_det=None):
+    def update_thresholds(self, conf=None, iou=None, max_det=None, boundary_tolerance=None):
         """Thread-safe update of inference thresholds."""
         locker = QMutexLocker(self._mutex)
         try:
@@ -100,6 +100,8 @@ class BatchInferenceWorker(QThread):
                 self._thresholds['iou'] = iou
             if max_det is not None:
                 self._thresholds['max_det'] = max_det
+            if boundary_tolerance is not None:
+                self._thresholds['boundary_tolerance'] = boundary_tolerance
         finally:
             del locker
 
@@ -142,6 +144,7 @@ class BatchInferenceWorker(QThread):
                     conf = self._thresholds.get('conf', 0.25)
                     iou = self._thresholds.get('iou', 0.7)
                     max_det = self._thresholds.get('max_det', 300)
+                    boundary_tolerance = self._thresholds.get('boundary_tolerance', False)
                 finally:
                     del locker
 
@@ -212,6 +215,7 @@ class BatchInferenceWorker(QThread):
                                 item.work_area,
                                 map_masks=(self._task == 'segment'),
                                 task=self._task,
+                                boundary_tolerance=boundary_tolerance,
                             )
 
                         # Build a QImage from the raw BGR frame (video items only)
@@ -329,7 +333,7 @@ class BatchInferenceDialog(QDialog):
         """Safely pass updated global thresholds from MainWindow to the active worker.
 
         This slot listens to MainWindow signals (`uncertaintyChanged`, `iouChanged`,
-        `maxDetectionsChanged`) and forwards the latest values to the running
+        `maxDetectionsChanged`, `boundaryToleranceChanged`) and forwards the latest values to the running
         BatchInferenceWorker (if present). Connecting to MainWindow avoids
         creating duplicate anonymous lambda handlers on every run.
         """
@@ -340,7 +344,8 @@ class BatchInferenceDialog(QDialog):
             conf = self.main_window.get_uncertainty_thresh() if hasattr(self.main_window, 'get_uncertainty_thresh') else None
             iou = self.main_window.get_iou_thresh() if hasattr(self.main_window, 'get_iou_thresh') else None
             max_det = self.main_window.get_max_detections() if hasattr(self.main_window, 'get_max_detections') else None
-            worker.update_thresholds(conf=conf, iou=iou, max_det=max_det)
+            boundary_tolerance = self.main_window.get_boundary_tolerance() if hasattr(self.main_window, 'get_boundary_tolerance') else None
+            worker.update_thresholds(conf=conf, iou=iou, max_det=max_det, boundary_tolerance=boundary_tolerance)
         except Exception:
             pass
 
@@ -351,6 +356,8 @@ class BatchInferenceDialog(QDialog):
                 self.main_window.uncertaintyChanged.connect(self._update_worker_thresholds)
                 self.main_window.iouChanged.connect(self._update_worker_thresholds)
                 self.main_window.maxDetectionsChanged.connect(self._update_worker_thresholds)
+                if hasattr(self.main_window, 'boundaryToleranceChanged'):
+                    self.main_window.boundaryToleranceChanged.connect(self._update_worker_thresholds)
                 self._thresholds_connected = True
         except Exception:
             pass
@@ -1361,6 +1368,7 @@ class BatchInferenceDialog(QDialog):
                             'conf':    self.thresholds_widget.get_uncertainty_thresh(),
                             'iou':     self.thresholds_widget.get_iou_thresh(),
                             'max_det': self.thresholds_widget.get_max_detections(),
+                            'boundary_tolerance': self.thresholds_widget.get_boundary_tolerance(),
                         }
                     except Exception:
                         pass
@@ -1554,6 +1562,7 @@ class BatchInferenceDialog(QDialog):
                             'conf':    self.thresholds_widget.get_uncertainty_thresh(),
                             'iou':     self.thresholds_widget.get_iou_thresh(),
                             'max_det': self.thresholds_widget.get_max_detections(),
+                            'boundary_tolerance': self.thresholds_widget.get_boundary_tolerance(),
                         }
                     except Exception:
                         pass
@@ -2086,6 +2095,7 @@ class BatchInferenceDialog(QDialog):
                                     result, raster, wa,
                                     map_masks=True,
                                     task='segment',
+                                    boundary_tolerance=self.thresholds_widget.get_boundary_tolerance(),
                                 )
                         except Exception as e:
                             print(f"_apply_sam_to_cache tile error for {path}: {e}")

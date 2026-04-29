@@ -1076,7 +1076,8 @@ class DeployGeneratorDialog(QDialog):
                             # --- 4d. Map Result ---
                             if work_area:
                                 mapped_result = MapResults().map_results_from_work_area(
-                                    results_obj, raster, work_area, is_segmentation
+                                    results_obj, raster, work_area, is_segmentation,
+                                    boundary_tolerance=self.thresholds_widget.get_boundary_tolerance()
                                 )
                             else:
                                 mapped_result = results_obj

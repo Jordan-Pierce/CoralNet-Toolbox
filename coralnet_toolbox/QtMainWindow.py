@@ -17,7 +17,7 @@ from PyQt5.QtGui import QMouseEvent
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QActionGroup, QSizePolicy,
                              QMessageBox, QWidget, QVBoxLayout, QLabel, QHBoxLayout,
-                             QSpinBox, QSlider, QDialog, QPushButton, QListWidget)
+                             QSpinBox, QComboBox, QSlider, QDialog, QPushButton, QListWidget)
 
 from coralnet_toolbox import theme as app_theme
 
@@ -156,6 +156,7 @@ class MainWindow(QMainWindow):
     uncertaintyChanged = pyqtSignal(float)  # Signal to emit the current uncertainty threshold
     iouChanged = pyqtSignal(float)  # Signal to emit the current IoU threshold
     areaChanged = pyqtSignal(float, float)  # Signal to emit the current area threshold
+    boundaryToleranceChanged = pyqtSignal(bool)  # Signal to emit whether to keep detections on boundaries
 
     def __init__(self, __version__):
         super().__init__()
@@ -218,6 +219,7 @@ class MainWindow(QMainWindow):
         self.uncertainty_thresh = 0.20
         self.area_thresh_min = 0.00
         self.area_thresh_max = 0.70
+        self.boundary_tolerance = False
 
         # Create the central annotation data store (before AnnotationWindow)
         self.annotation_manager = AnnotationManager(self)
@@ -942,6 +944,10 @@ class MainWindow(QMainWindow):
         self.max_detections_spinbox.setRange(1, 10000)
         self.max_detections_spinbox.setValue(self.max_detections)
         self.max_detections_spinbox.valueChanged.connect(self.update_max_detections)
+        self.max_detections_spinbox.setToolTip(
+            "Maximum number of detections kept after Ultralytics non-max suppression. Lower values "
+            "reduce clutter and processing time; higher values allow more candidates to survive into "
+            "annotation creation.")
         max_detections_layout = QHBoxLayout()
         max_detections_label = QLabel("")
         max_detections_layout.addWidget(max_detections_label)
@@ -951,6 +957,26 @@ class MainWindow(QMainWindow):
         max_detections_widget.setLayout(max_detections_layout)
         self.parameters_section.add_widget(max_detections_widget, "Max Detections")
 
+        # Boundary detections (keep/remove)
+        self.boundary_tolerance_combo = QComboBox()
+        self.boundary_tolerance_combo.addItems([
+            "Keep",
+            "Ignore",
+        ])
+        self.boundary_tolerance_combo.setCurrentIndex(0 if self.boundary_tolerance else 1)
+        self.boundary_tolerance_combo.currentIndexChanged.connect(self.update_boundary_tolerance)
+        self.boundary_tolerance_combo.setToolTip(
+            "Choose whether detections that touch a work-area edge should be preserved. Keep retains "
+            "cut-off objects, while Ignore removes them to reduce seam duplicates across tiles.")
+        boundary_tolerance_layout = QHBoxLayout()
+        boundary_tolerance_label = QLabel("")
+        boundary_tolerance_layout.addWidget(boundary_tolerance_label)
+        boundary_tolerance_layout.addWidget(self.boundary_tolerance_combo)
+        boundary_tolerance_layout.addStretch()
+        boundary_tolerance_widget = QWidget()
+        boundary_tolerance_widget.setLayout(boundary_tolerance_layout)
+        self.parameters_section.add_widget(boundary_tolerance_widget, "Boundary Detections")
+
         # Uncertainty threshold
         self.uncertainty_thresh_slider = QSlider(Qt.Horizontal)
         self.uncertainty_thresh_slider.setRange(0, 100)
@@ -959,6 +985,12 @@ class MainWindow(QMainWindow):
         self.uncertainty_thresh_slider.setTickInterval(10)
         self.uncertainty_value_label = QLabel(f"{self.uncertainty_thresh:.2f}")
         self.uncertainty_thresh_slider.valueChanged.connect(self.update_uncertainty_label)
+        self.uncertainty_thresh_slider.setToolTip(
+            "Minimum confidence required before a prediction is accepted as a normal annotation. "
+            "Predictions below this value are treated as Review and can be surfaced for manual "
+            "inspection.")
+        self.uncertainty_value_label.setToolTip(
+            "Current uncertainty threshold value, shown as a 0.00 to 1.00 confidence cutoff.")
         uncertainty_layout = QHBoxLayout()
         uncertainty_layout.addWidget(self.uncertainty_thresh_slider)
         uncertainty_layout.addWidget(self.uncertainty_value_label)
@@ -974,6 +1006,11 @@ class MainWindow(QMainWindow):
         self.iou_thresh_slider.setTickInterval(10)
         self.iou_value_label = QLabel(f"{self.iou_thresh:.2f}")
         self.iou_thresh_slider.valueChanged.connect(self.update_iou_label)
+        self.iou_thresh_slider.setToolTip(
+            "Intersection-over-Union threshold used by non-max suppression. Higher values keep more "
+            "overlapping detections; lower values remove duplicates more aggressively.")
+        self.iou_value_label.setToolTip(
+            "Current IoU threshold value used for non-max suppression.")
         iou_layout = QHBoxLayout()
         iou_layout.addWidget(self.iou_thresh_slider)
         iou_layout.addWidget(self.iou_value_label)
@@ -991,6 +1028,9 @@ class MainWindow(QMainWindow):
         self.area_threshold_min_slider.setTickInterval(10)
         self.area_threshold_min_slider.setValue(int(min_val * 100))
         self.area_threshold_min_slider.valueChanged.connect(self.update_area_label)
+        self.area_threshold_min_slider.setToolTip(
+            "Lower bound of the normalized annotation area filter. Objects smaller than this fraction "
+            "of the image area are removed after confidence and IoU filtering.")
         self.area_threshold_max_slider = QSlider(Qt.Horizontal)
         self.area_threshold_max_slider.setMinimum(0)
         self.area_threshold_max_slider.setMaximum(100)
@@ -998,7 +1038,12 @@ class MainWindow(QMainWindow):
         self.area_threshold_max_slider.setTickInterval(10)
         self.area_threshold_max_slider.setValue(int(max_val * 100))
         self.area_threshold_max_slider.valueChanged.connect(self.update_area_label)
+        self.area_threshold_max_slider.setToolTip(
+            "Upper bound of the normalized annotation area filter. Objects larger than this fraction "
+            "of the image area are removed after confidence and IoU filtering.")
         self.area_threshold_label = QLabel(f"{min_val:.2f} - {max_val:.2f}")
+        self.area_threshold_label.setToolTip(
+            "Current area filter range, shown as normalized fractions of the image area.")
         area_thresh_layout = QVBoxLayout()
         area_thresh_layout.addWidget(self.area_threshold_min_slider)
         area_thresh_layout.addWidget(self.area_threshold_max_slider)
@@ -1580,6 +1625,25 @@ class MainWindow(QMainWindow):
         self.area_thresh_max = max_val / 100.0
         self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
         self.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
+
+    def get_boundary_tolerance(self):
+        """Get whether detections on boundaries should be kept"""
+        return self.boundary_tolerance
+
+    def update_boundary_tolerance(self, value):
+        """Update the boundary detection handling mode"""
+        if isinstance(value, bool):
+            keep_boundary_detections = value
+        else:
+            keep_boundary_detections = int(value) == 0
+
+        if self.boundary_tolerance != keep_boundary_detections:
+            self.boundary_tolerance = keep_boundary_detections
+            if hasattr(self, 'boundary_tolerance_combo'):
+                self.boundary_tolerance_combo.blockSignals(True)
+                self.boundary_tolerance_combo.setCurrentIndex(0 if keep_boundary_detections else 1)
+                self.boundary_tolerance_combo.blockSignals(False)
+            self.boundaryToleranceChanged.emit(keep_boundary_detections)
 
     def showEvent(self, event):
         """Show the main window maximized."""

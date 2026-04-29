@@ -290,6 +290,7 @@ class Detect(Base):
                                 map_masks=True,
                                 task='segment' if (use_sam or self.task == 'segment')
                                       else self.task,
+                                boundary_tolerance=self.thresholds_widget.get_boundary_tolerance(),
                             )
                             try:
                                 result.orig_img = None

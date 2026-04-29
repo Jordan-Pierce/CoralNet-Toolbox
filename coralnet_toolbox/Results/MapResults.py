@@ -22,7 +22,8 @@ class MapResults:
     def __init__(self):
         pass
     
-    def _is_box_on_boundary(self, xmin, ymin, xmax, ymax, wa_x, wa_y, wa_x_max, wa_y_max):
+    def _is_box_on_boundary(self, xmin, ymin, xmax, ymax, wa_x, wa_y, wa_x_max, wa_y_max,
+                            boundary_tolerance):
         """
         Check if a bounding box touches or extends beyond the work area boundary.
         
@@ -35,13 +36,14 @@ class MapResults:
             bool: True if box touches or crosses boundary, False otherwise
         """
         return (
-            (xmin <= wa_x + self.BOUNDARY_TOLERANCE) or
-            (ymin <= wa_y + self.BOUNDARY_TOLERANCE) or
-            (xmax >= wa_x_max - self.BOUNDARY_TOLERANCE) or
-            (ymax >= wa_y_max - self.BOUNDARY_TOLERANCE)
+            (xmin <= wa_x + boundary_tolerance) or
+            (ymin <= wa_y + boundary_tolerance) or
+            (xmax >= wa_x_max - boundary_tolerance) or
+            (ymax >= wa_y_max - boundary_tolerance)
         )
     
-    def _is_polygon_on_boundary(self, points_xy, wa_x, wa_y, wa_x_max, wa_y_max):
+    def _is_polygon_on_boundary(self, points_xy, wa_x, wa_y, wa_x_max, wa_y_max,
+                                boundary_tolerance):
         """
         Check if any vertex of a polygon touches or extends beyond the work area boundary.
         
@@ -59,16 +61,17 @@ class MapResults:
         for x, y in points_xy:
             x, y = float(x), float(y)
             if (
-                (x <= wa_x + self.BOUNDARY_TOLERANCE) or
-                (y <= wa_y + self.BOUNDARY_TOLERANCE) or
-                (x >= wa_x_max - self.BOUNDARY_TOLERANCE) or
-                (y >= wa_y_max - self.BOUNDARY_TOLERANCE)
+                (x <= wa_x + boundary_tolerance) or
+                (y <= wa_y + boundary_tolerance) or
+                (x >= wa_x_max - boundary_tolerance) or
+                (y >= wa_y_max - boundary_tolerance)
             ):
                 return True
         
         return False
         
-    def map_results_from_work_area(self, results, raster, work_area, map_masks=True, task='segment'):
+    def map_results_from_work_area(self, results, raster, work_area, map_masks=True,
+                                   task='segment', boundary_tolerance=None):
         """
         Maps coordinates in Results objects from work area to original image coordinates.
         
@@ -86,11 +89,25 @@ class MapResults:
                 
         # Handle list of results
         if isinstance(results, list):
-            return [self.map_results_from_work_area(r, raster, work_area) for r in results]
+            return [self.map_results_from_work_area(
+                r,
+                raster,
+                work_area,
+                map_masks=map_masks,
+                task=task,
+                boundary_tolerance=boundary_tolerance,
+            ) for r in results]
         
         # Get the raster object to get original image dimensions
         if raster is None:
             return results  # Return original results if raster not found
+
+        if boundary_tolerance is None:
+            keep_boundary_detections = False
+        elif isinstance(boundary_tolerance, bool):
+            keep_boundary_detections = boundary_tolerance
+        else:
+            keep_boundary_detections = False
         
         # Create a new Results object to avoid modifying the original
         mapped_results = copy.deepcopy(results)
@@ -106,10 +123,27 @@ class MapResults:
         wa_w, wa_h = int(work_area.rect.width()), int(work_area.rect.height())
         
         # Map each component separately
-        mapped_results = self._map_boxes(results, mapped_results, working_area_top_left, wa_w, wa_h)
+        mapped_results = self._map_boxes(
+            results,
+            mapped_results,
+            working_area_top_left,
+            wa_w,
+            wa_h,
+            keep_boundary_detections,
+        )
         
         if map_masks:
-            mapped_results = self._map_masks(results, mapped_results, raster, wa_x, wa_y, wa_w, wa_h, task=task)
+            mapped_results = self._map_masks(
+                results,
+                mapped_results,
+                raster,
+                wa_x,
+                wa_y,
+                wa_w,
+                wa_h,
+                task=task,
+                boundary_tolerance=keep_boundary_detections,
+            )
             
         mapped_results = self._map_probs(results, mapped_results)
         
@@ -117,7 +151,8 @@ class MapResults:
         
         return mapped_results
         
-    def _map_boxes(self, results, mapped_results, working_area_top_left, wa_w, wa_h):
+    def _map_boxes(self, results, mapped_results, working_area_top_left, wa_w, wa_h,
+                   keep_boundary_detections):
         """
         Maps bounding boxes from work area to original image coordinates.
         
@@ -161,35 +196,44 @@ class MapResults:
             # Create the updated boxes tensor 
             mapped_boxes = torch.cat([boxes_abs, conf, cls], dim=1)
             
-            # Decide which boxes touch the work-area border and drop them.
-            wa_x = int(working_area_top_left.x())
-            wa_y = int(working_area_top_left.y())
-            wa_x_max = wa_x + int(wa_w)
-            wa_y_max = wa_y + int(wa_h)
-            
-            # boxes_abs is CPU tensor (Nx4)
-            boxes_np = boxes_abs.detach().cpu().numpy()
-            touching_flags = []
-            for b in boxes_np:
-                xmin, ymin, xmax, ymax = float(b[0]), float(b[1]), float(b[2]), float(b[3])
-                touches = self._is_box_on_boundary(xmin, ymin, xmax, ymax, wa_x, wa_y, wa_x_max, wa_y_max)
-                touching_flags.append(bool(touches))
-            
-            # kept_indices = indices that do NOT touch the border
-            kept_indices = [i for i, t in enumerate(touching_flags) if not t]
+            if keep_boundary_detections:
+                kept_indices = list(range(len(boxes_abs)))
+            else:
+                # Decide which boxes touch the work-area border and drop them.
+                wa_x = int(working_area_top_left.x())
+                wa_y = int(working_area_top_left.y())
+                wa_x_max = wa_x + int(wa_w)
+                wa_y_max = wa_y + int(wa_h)
+
+                # boxes_abs is CPU tensor (Nx4)
+                boxes_np = boxes_abs.detach().cpu().numpy()
+                touching_flags = []
+                for b in boxes_np:
+                    xmin, ymin, xmax, ymax = float(b[0]), float(b[1]), float(b[2]), float(b[3])
+                    touches = self._is_box_on_boundary(
+                        xmin, ymin, xmax, ymax, wa_x, wa_y, wa_x_max, wa_y_max,
+                        self.BOUNDARY_TOLERANCE)
+                    touching_flags.append(bool(touches))
+
+                # kept_indices = indices that do NOT touch the border
+                kept_indices = [i for i, t in enumerate(touching_flags) if not t]
+
             mapped_results._kept_indices = kept_indices
             
             # Filter mapped_boxes to only kept indices (preserve downstream alignment)
             if len(kept_indices) == 0:
                 # create empty boxes tensor with correct number of columns
                 mapped_results.update(boxes=torch.empty((0, mapped_boxes.shape[1])))
+            elif keep_boundary_detections:
+                mapped_results.update(boxes=mapped_boxes)
             else:
                 idx_tensor = torch.tensor(kept_indices, dtype=torch.long)
                 mapped_results.update(boxes=mapped_boxes[idx_tensor])
             
         return mapped_results
     
-    def _map_masks(self, results, mapped_results, raster, wa_x, wa_y, wa_w, wa_h, task='segment'):
+    def _map_masks(self, results, mapped_results, raster, wa_x, wa_y, wa_w, wa_h,
+                    task='segment', boundary_tolerance=None):
         """
         Maps masks from work area to original image coordinates.
         
@@ -208,6 +252,9 @@ class MapResults:
             orig_h, orig_w = raster.height, raster.width
             device = results.masks.data.device
             kept_indices = getattr(mapped_results, "_kept_indices", None)
+
+            if boundary_tolerance is None:
+                boundary_tolerance = self.BOUNDARY_TOLERANCE
             
             # If the input masks already have polygon representations, use them directly
             if task == 'segment' and hasattr(results.masks, 'xy') and results.masks.xy:
@@ -237,7 +284,9 @@ class MapResults:
                         mapped_points_xy[:, 1] += wa_y
                         
                         # Check if polygon touches boundary
-                        if self._is_polygon_on_boundary(mapped_points_xy, wa_x, wa_y, wa_x_max, wa_y_max):
+                        if (not boundary_tolerance and self._is_polygon_on_boundary(
+                                    mapped_points_xy, wa_x, wa_y, wa_x_max, wa_y_max,
+                                    self.BOUNDARY_TOLERANCE)):
                             continue  # Skip this polygon
                         
                         segments_xy.append(mapped_points_xy)

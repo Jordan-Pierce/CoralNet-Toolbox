@@ -848,7 +848,8 @@ class SeeAnythingTool(Tool):
             processed_results,
             raster,
             self.working_area,
-            map_masks=True
+            map_masks=True,
+            boundary_tolerance=self.see_anything_dialog.thresholds_widget.get_boundary_tolerance(),
         )
 
         # Process the results

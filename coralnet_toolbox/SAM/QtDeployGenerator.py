@@ -465,6 +465,7 @@ class DeployGeneratorDialog(QDialog):
                                 result, raster, wa,
                                 map_masks=is_segmentation,
                                 task=self.task,
+                                boundary_tolerance=self.thresholds_widget.get_boundary_tolerance(),
                             )
                             wa.unhighlight()
 
