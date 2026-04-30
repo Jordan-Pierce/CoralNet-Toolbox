@@ -11,44 +11,6 @@ import warnings
 import traceback
 import numpy as np
 
-
-# ---------------------------------------------------------------------------
-# Lightweight timing instrumentation. Set PROFILE_VIEWPORT = False to silence.
-# Counters accumulate per-second and print one summary line, so the prints
-# don't dominate the very thing they're trying to measure.
-# ---------------------------------------------------------------------------
-PROFILE_VIEWPORT = True
-_PROFILE_BUCKETS = {}
-_PROFILE_LAST_FLUSH = time.perf_counter()
-
-
-def _profile_record(key, dt):
-    """Record one timed sample under `key` (seconds). Flushes once per second."""
-    if not PROFILE_VIEWPORT:
-        return
-    bucket = _PROFILE_BUCKETS.setdefault(key, [0, 0.0, 0.0])  # count, total, max
-    bucket[0] += 1
-    bucket[1] += dt
-    if dt > bucket[2]:
-        bucket[2] = dt
-
-    global _PROFILE_LAST_FLUSH
-    now = time.perf_counter()
-    if now - _PROFILE_LAST_FLUSH >= 1.0:
-        parts = []
-        for name in sorted(_PROFILE_BUCKETS):
-            cnt, tot, mx = _PROFILE_BUCKETS[name]
-            if cnt == 0:
-                continue
-            parts.append(
-                f"{name}: {cnt}x avg={tot / cnt * 1000:.2f}ms "
-                f"max={mx * 1000:.2f}ms tot={tot * 1000:.1f}ms"
-            )
-            _PROFILE_BUCKETS[name] = [0, 0.0, 0.0]
-        if parts:
-            print("[PROF]", " | ".join(parts))
-        _PROFILE_LAST_FLUSH = now
-
 import pyqtgraph as pg
 from PyQt5.QtGui import (QMouseEvent, QPixmap, QImage, QBrush, QColor, QPen, 
                          QPainterPath, QTransform, QSurfaceFormat, QPainter)
@@ -182,7 +144,6 @@ class FastImageItem(QGraphicsItem):
 
     def paint(self, painter, option, widget):
         """Custom paint method to draw the image, mask, and annotations in a single pass."""
-        _t0 = time.perf_counter()
         # 1. Draw the video frame directly from RAM to the OpenGL Viewport
         if self._image is not None and not self._image.isNull():
             painter.drawImage(0, 0, self._image)
@@ -197,16 +158,9 @@ class FastImageItem(QGraphicsItem):
         # 3. Draw all readonly annotations as a single pre-rendered QImage blit.
         if self._readonly_paths:
             if self._readonly_dirty or self._readonly_cache is None:
-                _t_build = time.perf_counter()
                 self._build_readonly_cache()
-                _profile_record(
-                    f"FastImage.paint_buildCache(n={len(self._readonly_paths)})",
-                    time.perf_counter() - _t_build,
-                )
             if self._readonly_cache is not None:
                 painter.drawImage(0, 0, self._readonly_cache)
-
-        _profile_record("FastImage.paint_total", time.perf_counter() - _t0)
 
 
 class BaseCanvas(QGraphicsView):
@@ -335,11 +289,7 @@ class BaseCanvas(QGraphicsView):
     
     def wheelEvent(self, event: QMouseEvent):
         """Handle mouse wheel events for zooming."""
-        _t0 = time.perf_counter()
-        try:
-            self._wheel_event_impl(event)
-        finally:
-            _profile_record("BaseCanvas.wheelEvent", time.perf_counter() - _t0)
+        self._wheel_event_impl(event)
 
     def _wheel_event_impl(self, event: QMouseEvent):
         if not self.active_image:
@@ -412,11 +362,7 @@ class BaseCanvas(QGraphicsView):
     
     def mouseMoveEvent(self, event: QMouseEvent):
         """Handle mouse move events for rotation, panning, and hover tracking."""
-        _t0 = time.perf_counter()
-        try:
-            self._mouse_move_event_impl(event)
-        finally:
-            _profile_record("BaseCanvas.mouseMoveEvent", time.perf_counter() - _t0)
+        self._mouse_move_event_impl(event)
 
     def _mouse_move_event_impl(self, event: QMouseEvent):
         # Handle rotation

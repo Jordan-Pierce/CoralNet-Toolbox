@@ -13,7 +13,7 @@ from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QSize, QObject
 from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QGraphicsPixmapItem, 
                              QSlider, QLabel, QHBoxLayout, QWidget, QComboBox, QToolButton, QToolBar, QSizePolicy)
 
-from coralnet_toolbox.QtBaseCanvas import BaseCanvas, _profile_record
+from coralnet_toolbox.QtBaseCanvas import BaseCanvas
 
 from coralnet_toolbox.MVAT.core.Ray import CameraRay
 
@@ -827,27 +827,17 @@ class AnnotationWindow(BaseCanvas):
 
     def wheelEvent(self, event: QMouseEvent):
         """Handle mouse wheel events for zooming."""
-        _t0 = time.perf_counter()
-
         # Handle zooming with the mouse wheel (pass to active tool if Ctrl+wheel)
         if self.selected_tool and event.modifiers() & Qt.ControlModifier:
-            _t_tool = time.perf_counter()
             self.tools[self.selected_tool].wheelEvent(event)
-            _profile_record(
-                f"AnnWin.wheel.tool({self.selected_tool})",
-                time.perf_counter() - _t_tool,
-            )
         else:
             # Let BaseCanvas handle native zoom via super()
             super().wheelEvent(event)
 
-        _t_emit = time.perf_counter()
         self.viewChanged.emit(*self.get_image_dimensions())
-        _profile_record("AnnWin.wheel.viewChangedEmit", time.perf_counter() - _t_emit)
 
         # Debounce dynamic Z-range update during zoom (prevents stuttering)
         self.schedule_dynamic_range_update()
-        _profile_record("AnnWin.wheelEvent_total", time.perf_counter() - _t0)
 
     def mousePressEvent(self, event: QMouseEvent):
         """Handle mouse press events for the active tool."""        
@@ -865,30 +855,18 @@ class AnnotationWindow(BaseCanvas):
 
     def mouseMoveEvent(self, event: QMouseEvent):
         """Handle mouse movement events for the active tool."""
-        _t0 = time.perf_counter()
-
         # Check if a tool is selected before proceeding
         if self.selected_tool:
-            _t_tool = time.perf_counter()
             self.tools[self.selected_tool].mouseMoveEvent(event)
-            _profile_record(
-                f"AnnWin.move.tool({self.selected_tool})",
-                time.perf_counter() - _t_tool,
-            )
 
-        _t_emit = time.perf_counter()
         scene_pos = self.mapToScene(event.pos())
         self.mouseMoved.emit(int(scene_pos.x()), int(scene_pos.y()))
-        _profile_record("AnnWin.move.mouseMovedEmit", time.perf_counter() - _t_emit)
 
-        _t_cursor = time.perf_counter()
         if not self.cursorInWindow(event.pos()):
             self.toggle_cursor_annotation()
-        _profile_record("AnnWin.move.cursorInWindow", time.perf_counter() - _t_cursor)
 
         # Let BaseCanvas handle native pan/zoom via super()
         super().mouseMoveEvent(event)
-        _profile_record("AnnWin.mouseMoveEvent_total", time.perf_counter() - _t0)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         """Handle mouse release events for the active tool."""
