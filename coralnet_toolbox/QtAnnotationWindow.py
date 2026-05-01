@@ -120,6 +120,7 @@ class AnnotationWindow(BaseCanvas):
         self.selected_label = None  # Flag to check if an active label is set
         self.selected_tool = None  # Store the current tool state
         self._syncing_selection = False  # Flag to prevent selection sync loops
+        self._skip_phantom_refresh = False  # Flag to coalesce phantom rebuilds
         # Streaming inference mode: when True, new annotations are saved to the
         # data model but heavy Qt graphics are skipped to keep playback smooth.
         self.is_streaming_inference = False
@@ -2544,7 +2545,10 @@ class AnnotationWindow(BaseCanvas):
             return
         
         if not multi_select:
+            # Suppress phantom rebuild in unselect_annotations; we'll do it once at the end.
+            self._skip_phantom_refresh = True
             self.unselect_annotations()
+            self._skip_phantom_refresh = False
             
         if annotation not in self.selected_annotations:
             self.selected_annotations.append(annotation)
@@ -2556,6 +2560,7 @@ class AnnotationWindow(BaseCanvas):
             # PHANTOM ARCHITECTURE: Build the Qt objects if they don't exist
             if not annotation.is_graphics_item_valid():
                 annotation.create_graphics_item(self.scene)
+            
             self.selected_label = annotation.label
             self.annotationSelected.emit(annotation.id)
             
@@ -2709,7 +2714,8 @@ class AnnotationWindow(BaseCanvas):
                     self.main_window.confidence_window.clear_display()
                 self.viewport().update()
                 # PHANTOM ARCHITECTURE: Re-render phantom layer to draw this annotation in it
-                self.refresh_phantom_annotations()
+                if not self._skip_phantom_refresh:
+                    self.refresh_phantom_annotations()
                 self._emit_selection_changed()
 
     def unselect_annotations(self):
@@ -2754,7 +2760,9 @@ class AnnotationWindow(BaseCanvas):
         self.main_window.confidence_window.clear_display()
         
         # PHANTOM ARCHITECTURE: Re-render phantom layer with all now-deselected annotations
-        self.refresh_phantom_annotations()
+        # Skip if caller will do its own rebuild (e.g. select_annotation coalescing)
+        if not self._skip_phantom_refresh:
+            self.refresh_phantom_annotations()
         
         # Update the viewport once for all changes
         self.viewport().update()
@@ -2935,7 +2943,7 @@ class AnnotationWindow(BaseCanvas):
         # If we don't have the FastImageItem active, bail out
         if getattr(self, '_base_image_item', None) is None:
             return
-            
+        
         annotations = self.get_image_annotations()
         paths_data = []
         
@@ -2946,7 +2954,7 @@ class AnnotationWindow(BaseCanvas):
                     paths_data.append((a.get_painter_path(), a.label.color, a.transparency))
                 except Exception:
                     pass
-                    
+        
         # Hand off to the fast C++ painter
         self._base_image_item.set_readonly_annotations(paths_data)
 
