@@ -144,10 +144,6 @@ class AnnotationWindow(BaseCanvas):
         # Just set up AnnotationWindow-specific debounce timer (BaseCanvas has generic one)
         self.dynamic_range_timer = self._dynamic_range_timer  # Reference BaseCanvas timer
         self.dynamic_range_update_delay = 100  # milliseconds
-        self._readonly_refresh_timer = QTimer(self)
-        self._readonly_refresh_timer.setSingleShot(True)
-        self._readonly_refresh_timer.timeout.connect(self.refresh_phantom_annotations)
-        self._readonly_refresh_delay = 120
 
         # Video playback state
         self._active_video_raster = None   # VideoRaster when a video is loaded
@@ -174,7 +170,6 @@ class AnnotationWindow(BaseCanvas):
         self.annotationModified.connect(self.annotation_manager.annotationModified)
         self.annotationLabelChanged.connect(self.annotation_manager.annotationLabelChanged)
         self.annotationSelectionChanged.connect(self.annotation_manager.selectionChanged)
-        self.viewNavigated.connect(self._schedule_readonly_annotation_refresh)
 
         # Keep video scrub-bar tick marks in sync with annotation changes
         # Connect both singular (for individual operations) and plural (for batch operations)
@@ -628,20 +623,6 @@ class AnnotationWindow(BaseCanvas):
         # Restore cursor
         QApplication.restoreOverrideCursor()
 
-    def _schedule_readonly_annotation_refresh(self, *_):
-        """Debounce read-only annotation rebuilds after view navigation."""
-        if self._skip_phantom_refresh or not self.active_image:
-            return
-
-        if getattr(self, "readonly_force_live_annotations", False):
-            return
-
-        try:
-            self._readonly_refresh_timer.stop()
-            self._readonly_refresh_timer.start(self._readonly_refresh_delay)
-        except Exception:
-            pass
-        
     # --- VIDEO TOOLBAR HOOK ---
     def create_video_toolbar(self) -> QToolBar:
         """Create the video player toolbar (hidden until a VideoRaster is loaded)."""
@@ -2961,11 +2942,6 @@ class AnnotationWindow(BaseCanvas):
         """
         if self._skip_phantom_refresh or not self.active_image:
             return
-
-        try:
-            self._readonly_refresh_timer.stop()
-        except Exception:
-            pass
         
         annotations = self.get_image_annotations()
         phantom_annotations = []
