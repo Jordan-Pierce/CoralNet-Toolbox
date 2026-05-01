@@ -18,7 +18,7 @@ from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QSize, QObject
 from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, 
                              QGraphicsItemGroup, QGraphicsEllipseItem, QGraphicsLineItem,
                              QGraphicsItem, QGraphicsPathItem, QLabel, QApplication,
-                             QOpenGLWidget, QFrame)
+                             QGraphicsDropShadowEffect, QOpenGLWidget, QFrame)
 
 from coralnet_toolbox import theme as app_theme
 
@@ -255,6 +255,10 @@ class BaseCanvas(QGraphicsView):
 
         # Read-only annotation overlays (Phase 6)
         self._readonly_annotation_items = []
+        self._readonly_render_mode = "cached"
+        self.readonly_force_live_annotations = True
+        self.readonly_live_relative_zoom_threshold = 0.0
+        self.readonly_live_annotation_limit = 0
         
         # Placeholder label for empty canvas
         self._placeholder_label = QLabel(
@@ -281,9 +285,13 @@ class BaseCanvas(QGraphicsView):
         # 2. Prevent Qt from saving/restoring the painter state for every single item.
         # This saves massive CPU overhead when rendering thousands of items.
         self.setOptimizationFlag(QGraphicsView.DontSavePainterState)
-        
-        # 3. Prevent Qt from doing sub-pixel antialiasing adjustments during fast pans.
-        self.setOptimizationFlag(QGraphicsView.DontAdjustForAntialiasing)
+
+        # Favor visual quality over raw interaction speed.
+        self.setRenderHints(
+            QPainter.Antialiasing |
+            QPainter.TextAntialiasing |
+            QPainter.SmoothPixmapTransform
+        )
     
     # ==================== Navigation Events ====================
     
@@ -530,6 +538,13 @@ class BaseCanvas(QGraphicsView):
         
         # Clear read-only annotation overlay references
         self._readonly_annotation_items = []
+        self._readonly_render_mode = "cached"
+        readonly_timer = getattr(self, "_readonly_refresh_timer", None)
+        if readonly_timer is not None:
+            try:
+                readonly_timer.stop()
+            except Exception:
+                pass
         
         # Clear Z-channel data
         self.z_data_raw = None
@@ -833,6 +848,12 @@ class BaseCanvas(QGraphicsView):
         item.setFlag(QGraphicsItem.ItemIsSelectable, False)
         item.setFlag(QGraphicsItem.ItemIsMovable, False)
         item.setAcceptHoverEvents(False)
+
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(10.0)
+        shadow.setOffset(0.0, 1.5)
+        shadow.setColor(QColor(0, 0, 0, 110))
+        item.setGraphicsEffect(shadow)
         
         # Z-value above base image but below markers
         item.setZValue(5)
@@ -860,6 +881,48 @@ class BaseCanvas(QGraphicsView):
                 item.setPen(pen)
                 item.setZValue(5)
                 break
+
+    def _compile_readonly_paths(self, annotations):
+        """Build fast-path painter data from annotation objects."""
+        from coralnet_toolbox.Annotations import MaskAnnotation
+
+        paths_data = []
+        for annotation in annotations or []:
+            if isinstance(annotation, MaskAnnotation):
+                continue
+
+            try:
+                path = annotation.get_painter_path()
+                if path is None or path.isEmpty():
+                    continue
+                paths_data.append((path, annotation.label.color, annotation.transparency))
+            except Exception:
+                continue
+
+        return paths_data
+
+    def _should_render_readonly_annotations_live(self, annotations):
+        """Return True when the view is stable enough for live vector overlays."""
+        if not self.active_image:
+            return False
+
+        if not annotations:
+            return False
+
+        if getattr(self, "readonly_force_live_annotations", False):
+            return True
+
+        if self._pan_active or self._rotate_active:
+            return False
+
+        annotation_limit = getattr(self, "readonly_live_annotation_limit", 0)
+        if annotation_limit and len(annotations) > annotation_limit:
+            return False
+
+        minimum_zoom = max(getattr(self, "_min_zoom", 1.0), 0.0001)
+        relative_zoom = self.zoom_factor / minimum_zoom
+        threshold = getattr(self, "readonly_live_relative_zoom_threshold", 1.4)
+        return relative_zoom >= threshold
     
     # ==================== Z-Channel Visualization ====================
     
@@ -1267,16 +1330,35 @@ class BaseCanvas(QGraphicsView):
     # ==================== Read-Only Annotations (Phase 6) ====================
 
     def render_readonly_annotations(self, annotation_data_list):
-        """
-        Render annotations as non-interactive visual overlays.
+        """Render read-only annotations using either the fast cache or live vectors.
 
-        Stub for Phase 6 implementation.
-
-        Args:
-            annotation_data_list: List of annotation data to render
+        The fast path compiles all paths into the base image item. The live path
+        uses individual QGraphicsPathItem overlays so the annotations stay crisp
+        when the view is zoomed in enough that the cached bitmap becomes ugly.
         """
-        # TODO: implement rendering of read-only annotations for context canvases
-        pass
+        if not self.active_image:
+            if isinstance(self._base_image_item, FastImageItem):
+                self._base_image_item.set_readonly_annotations([])
+            self._clear_readonly_annotations()
+            self._readonly_render_mode = "cached"
+            return
+
+        annotations = annotation_data_list or []
+        use_live_overlays = self._should_render_readonly_annotations_live(annotations)
+
+        if use_live_overlays:
+            if self._readonly_render_mode != "live" and isinstance(self._base_image_item, FastImageItem):
+                self._base_image_item.set_readonly_annotations([])
+            self._render_annotations_readonly(annotations)
+            self._readonly_render_mode = "live"
+            return
+
+        if self._readonly_render_mode == "live":
+            self._clear_readonly_annotations()
+        paths_data = self._compile_readonly_paths(annotations)
+        if isinstance(self._base_image_item, FastImageItem):
+            self._base_image_item.set_readonly_annotations(paths_data)
+        self._readonly_render_mode = "cached"
 
     # ==================== Cursor Preview (Tool Propagation) ====================
 
