@@ -22,7 +22,7 @@ from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotati
 from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -40,7 +40,7 @@ class ExportGeoJSONAnnotations(QDialog):
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
 
-        self.setWindowIcon(get_icon("coralnet.svg"))
+        self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowTitle("Export Annotations to GeoJSON")
         self.resize(400, 500)
 
@@ -408,11 +408,13 @@ class ExportGeoJSONAnnotations(QDialog):
             projected_coords.append((wx, wy))
 
         # 2. Source CRS to WGS84 (if requested)
-        if self.wgs84_checkbox.isChecked():
-            # Check if source CRS is valid
+        export_wgs84 = getattr(self, '_export_use_wgs84', self.wgs84_checkbox.isChecked())
+        if export_wgs84:
             if not src_crs:
-                raise ValueError("Cannot reproject: Source image has no CRS.")
-            
+                # World-file JPGs can have an affine transform but no CRS.
+                # Keep the affine/world coordinates instead of failing export.
+                return projected_coords
+
             # Unzip for batch processing
             xs, ys = zip(*projected_coords)
             
@@ -575,6 +577,31 @@ class ExportGeoJSONAnnotations(QDialog):
 
         # Get all images in project
         all_images = self.image_window.raster_manager.image_paths
+
+        # GeoJSON is only WGS84 if every exported raster actually has a CRS.
+        # JPGs with world files often provide affine georeferencing without CRS,
+        # so those exports must stay in world coordinates instead of reprojection.
+        export_wgs84 = self.wgs84_checkbox.isChecked()
+        if export_wgs84:
+            for image_path in all_images:
+                annotations = self.get_annotations_for_image(image_path, selected_label_codes)
+                if not annotations:
+                    continue
+
+                raster = self.image_window.raster_manager.get_raster(image_path)
+                if raster and raster.rasterio_src and raster.rasterio_src.crs is None:
+                    export_wgs84 = False
+                    break
+
+        self._export_use_wgs84 = export_wgs84
+
+        if self.wgs84_checkbox.isChecked() and not export_wgs84:
+            QMessageBox.warning(
+                self,
+                "GeoJSON Export",
+                "One or more selected rasters has no CRS (common for JPGs with world files). "
+                "GeoJSON will be exported using the raster/world coordinate system instead of WGS84."
+            )
         
         # Start Progress
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -593,7 +620,7 @@ class ExportGeoJSONAnnotations(QDialog):
         skipped_no_features = 0
         
         # Determine final CRS name for GeoJSON header
-        final_crs_name = "urn:ogc:def:crs:OGC:1.3:CRS84" if self.wgs84_checkbox.isChecked() else None
+        final_crs_name = "urn:ogc:def:crs:OGC:1.3:CRS84" if export_wgs84 else None
         # If forcing pixel coordinates, do not include any CRS in output
         if getattr(self, 'force_pixel_checkbox', None) and self.force_pixel_checkbox.isChecked():
             final_crs_name = None

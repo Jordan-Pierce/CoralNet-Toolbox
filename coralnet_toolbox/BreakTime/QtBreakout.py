@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (QMainWindow, QApplication, QDesktopWidget, QWidget,
                              QMessageBox, QDialog, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QLabel, QButtonGroup)
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -1259,7 +1259,7 @@ class BreakoutGame(QMainWindow):
                             Qt.WindowCloseButtonHint)
         
         # Set the window icon and title
-        self.setWindowIcon(get_icon("breakout.svg"))
+        self.setWindowIcon(get_window_icon("breakout.svg"))
         self.title = "Breakout Game"
         
         # Set the window opacity

@@ -63,6 +63,8 @@ from coralnet_toolbox.utilities import rasterio_open
 from coralnet_toolbox.utilities import convert_scale_units
 
 from coralnet_toolbox.QtVideoPlayer import VideoPlayerWidget
+from coralnet_toolbox import theme as app_theme
+from coralnet_toolbox.MachineLearning.ExportDataset.export_dataset_utils import parse_frame_path
 
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -118,6 +120,7 @@ class AnnotationWindow(BaseCanvas):
         self.selected_label = None  # Flag to check if an active label is set
         self.selected_tool = None  # Store the current tool state
         self._syncing_selection = False  # Flag to prevent selection sync loops
+        self._skip_phantom_refresh = False  # Flag to coalesce phantom rebuilds
         # Streaming inference mode: when True, new annotations are saved to the
         # data model but heavy Qt graphics are skipped to keep playback smooth.
         self.is_streaming_inference = False
@@ -129,7 +132,11 @@ class AnnotationWindow(BaseCanvas):
         self._placeholder_label.setText(
             "No image loaded\nImport or drag and drop an image or Project file."
         )
-        self._placeholder_label.setStyleSheet("color: white; background-color: #1e1e1e; font-size: 14px; padding: 16px;")
+        self._placeholder_label.setStyleSheet(
+            app_theme.scale_qss(
+                f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; background-color: transparent; font-size: 14px; padding: 16px;"
+            )
+        )
         self._placeholder_label.setWordWrap(True)
         self._placeholder_label.setAutoFillBackground(True)
         
@@ -217,20 +224,24 @@ class AnnotationWindow(BaseCanvas):
 
         # --- Positional/Dimensional Labels ---
         self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
-        self.mouse_position_label.setFixedWidth(150)
+        self.mouse_position_label.setMinimumWidth(app_theme.scale_int(150))
+        self.mouse_position_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.image_dimensions_label = QLabel("Image: 0 x 0")
-        self.image_dimensions_label.setFixedWidth(150)
+        self.image_dimensions_label.setMinimumWidth(app_theme.scale_int(150))
+        self.image_dimensions_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.view_dimensions_label = QLabel("View: 0 x 0")
-        self.view_dimensions_label.setFixedWidth(150)
+        self.view_dimensions_label.setMinimumWidth(app_theme.scale_int(150))
+        self.view_dimensions_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
 
         # --- Scale ---
         self.scaled_dimensions_label = QLabel("Scale: 0 x 0")
-        self.scaled_dimensions_label.setFixedWidth(220)
+        self.scaled_dimensions_label.setMinimumWidth(app_theme.scale_int(240))
+        self.scaled_dimensions_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.scaled_dimensions_label.setEnabled(False)
         self.scale_unit_dropdown = QComboBox()
         self.scale_unit_dropdown.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi'])
         self.scale_unit_dropdown.setCurrentIndex(2)
-        self.scale_unit_dropdown.setFixedWidth(72)
+        self.scale_unit_dropdown.setFixedWidth(app_theme.scale_int(72))
         self.scale_unit_dropdown.setEnabled(False)
         self.scale_unit_dropdown.currentTextChanged.connect(self.on_scale_unit_changed)
 
@@ -240,12 +251,13 @@ class AnnotationWindow(BaseCanvas):
         self.z_unit_dropdown.insertSeparator(self.z_unit_dropdown.count())
         self.z_unit_dropdown.addItem('px')
         self.z_unit_dropdown.setCurrentIndex(2)
-        self.z_unit_dropdown.setFixedWidth(72)
+        self.z_unit_dropdown.setFixedWidth(app_theme.scale_int(72))
         self.z_unit_dropdown.setEnabled(False)
         self.z_unit_dropdown.currentTextChanged.connect(self.on_z_unit_changed)
 
         self.z_label = QLabel("Z: -----")
-        self.z_label.setFixedWidth(140)
+        self.z_label.setMinimumWidth(app_theme.scale_int(140))
+        self.z_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.z_label.setEnabled(False)
 
         self.z_colormap_dropdown = ColorComboBox()
@@ -253,7 +265,7 @@ class AnnotationWindow(BaseCanvas):
         self.z_colormap_dropdown.setItemDelegate(delegate)
         self.z_colormap_dropdown.addItems(['None', 'Viridis', 'Plasma', 'Inferno', 'Magma', 'Cividis', 'Turbo'])
         self.z_colormap_dropdown.setCurrentIndex(0)
-        self.z_colormap_dropdown.setFixedWidth(100)
+        self.z_colormap_dropdown.setFixedWidth(app_theme.scale_int(100))
         self.z_colormap_dropdown.setEnabled(False)
         self.z_colormap_dropdown.currentTextChanged.connect(self.on_z_colormap_changed)
 
@@ -610,7 +622,7 @@ class AnnotationWindow(BaseCanvas):
 
         # Restore cursor
         QApplication.restoreOverrideCursor()
-        
+
     # --- VIDEO TOOLBAR HOOK ---
     def create_video_toolbar(self) -> QToolBar:
         """Create the video player toolbar (hidden until a VideoRaster is loaded)."""
@@ -634,13 +646,13 @@ class AnnotationWindow(BaseCanvas):
         trans_widget = QWidget()
         trans_layout = QHBoxLayout(trans_widget)
         trans_layout.setContentsMargins(4, 0, 4, 0)
-        t_icon = QLabel()
-        t_icon.setPixmap(get_icon("transparent.svg").pixmap(QSize(16, 16)))
-        o_icon = QLabel()
-        o_icon.setPixmap(get_icon("opaque.svg").pixmap(QSize(16, 16)))
-        trans_layout.addWidget(t_icon)
+        self.transparent_icon_label = QLabel()
+        self.transparent_icon_label.setPixmap(get_icon("transparent.svg").pixmap(app_theme.scale_size(16)))
+        self.opaque_icon_label = QLabel()
+        self.opaque_icon_label.setPixmap(get_icon("opaque.svg").pixmap(app_theme.scale_size(16)))
+        trans_layout.addWidget(self.transparent_icon_label)
         trans_layout.addWidget(self.transparency_slider)
-        trans_layout.addWidget(o_icon)
+        trans_layout.addWidget(self.opaque_icon_label)
         toolbar.addWidget(trans_widget)
         
         toolbar.addSeparator()
@@ -659,6 +671,18 @@ class AnnotationWindow(BaseCanvas):
 
         return toolbar
 
+    def refresh_scaling(self):
+        """Refresh annotation-window elements that depend on the selected UI scale."""
+        self._placeholder_label.setStyleSheet(
+            app_theme.scale_qss(
+                f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; background-color: transparent; font-size: 14px; padding: 16px;"
+            )
+        )
+        if hasattr(self, 'transparent_icon_label'):
+            self.transparent_icon_label.setPixmap(get_icon("transparent.svg").pixmap(app_theme.scale_size(16)))
+        if hasattr(self, 'opaque_icon_label'):
+            self.opaque_icon_label.setPixmap(get_icon("opaque.svg").pixmap(app_theme.scale_size(16)))
+
     def create_bottom_toolbar(self) -> QToolBar:
         """Create the bottom toolbar with mouse position, image/view dimensions, 
         scale, and z-channel info.
@@ -668,14 +692,14 @@ class AnnotationWindow(BaseCanvas):
         
         container = QWidget()
         layout = QHBoxLayout(container)
-        layout.setContentsMargins(6, 2, 6, 2)
-        layout.setSpacing(12)
+        layout.setContentsMargins(app_theme.scale_int(4), app_theme.scale_int(2), app_theme.scale_int(4), app_theme.scale_int(2))
+        layout.setSpacing(app_theme.scale_int(8))
         
         def make_group(*widgets):
             g = QWidget()
             l = QHBoxLayout(g)
             l.setContentsMargins(0, 0, 0, 0)
-            l.setSpacing(6)
+            l.setSpacing(app_theme.scale_int(4))
             for w in widgets: l.addWidget(w)
             return g
             
@@ -747,6 +771,11 @@ class AnnotationWindow(BaseCanvas):
         if (updated_annotation.image_path == self.current_image_path and 
             updated_annotation.is_graphics_item_valid()):
             updated_annotation.update_graphics_item()
+
+        try:
+            self.annotationModified.emit(updated_annotation.id)
+        except Exception:
+            pass
             
     def set_incoming_marker(self, u, v, color):
         """Set the incoming marker (focal point) position and color from MVAT.
@@ -807,7 +836,7 @@ class AnnotationWindow(BaseCanvas):
             super().wheelEvent(event)
 
         self.viewChanged.emit(*self.get_image_dimensions())
-        
+
         # Debounce dynamic Z-range update during zoom (prevents stuttering)
         self.schedule_dynamic_range_update()
 
@@ -829,13 +858,8 @@ class AnnotationWindow(BaseCanvas):
         """Handle mouse movement events for the active tool."""
         # Check if a tool is selected before proceeding
         if self.selected_tool:
-            # If the selected tool is a mask tool, delegate the event to it
-            if self.selected_tool in self.mask_tools:
-                self.tools[self.selected_tool].mouseMoveEvent(event)
-            # Otherwise, use the original logic for vector annotation tools
-            else:
-                self.tools[self.selected_tool].mouseMoveEvent(event)
-        
+            self.tools[self.selected_tool].mouseMoveEvent(event)
+
         scene_pos = self.mapToScene(event.pos())
         self.mouseMoved.emit(int(scene_pos.x()), int(scene_pos.y()))
 
@@ -877,9 +901,12 @@ class AnnotationWindow(BaseCanvas):
         if mvat_manager is None:
             super().mouseDoubleClickEvent(event)
             return
+
+        ortho_camera = getattr(mvat_manager, 'ortho_camera', None)
+        is_ortho_image = ortho_camera is not None and self.current_image_path == ortho_camera.image_path
         
         # Check if current image has camera data
-        if not self.current_image_path or self.current_image_path not in mvat_manager.cameras:
+        if not self.current_image_path or (self.current_image_path not in mvat_manager.cameras and not is_ortho_image):
             super().mouseDoubleClickEvent(event)
             return
         
@@ -888,60 +915,80 @@ class AnnotationWindow(BaseCanvas):
         x, y = int(scene_pos.x()), int(scene_pos.y())
         
         # Check if position is within image bounds
-        camera = mvat_manager.cameras[self.current_image_path]
-        if not (0 <= x < camera.width and 0 <= y < camera.height):
+        camera = mvat_manager.cameras.get(self.current_image_path)
+        if camera is not None and not (0 <= x < camera.width and 0 <= y < camera.height):
             super().mouseDoubleClickEvent(event)
             return
         
         terminal_point = None
 
-        # --- PLAN A: Index Map (Flawless 3D Coordinate) ---
-        try:
-            primary_target = mvat_manager.viewer.scene_context.get_primary_target()
-            if primary_target is not None:
-                candidate_id = camera.get_index_at_pixel(x, y)
-                if candidate_id is not None and int(candidate_id) > -1:
-                    raw_coord = primary_target.get_element_coordinate(int(candidate_id))
-                    if raw_coord is not None:
-                        # ---> Safely cast PyTorch Tensor to NumPy! <---
-                        if hasattr(raw_coord, 'cpu'):
-                            terminal_point = raw_coord.cpu().numpy().astype(np.float64)
-                        else:
-                            terminal_point = np.asarray(raw_coord, dtype=np.float64)
-        except Exception:
-            pass
-
-        # --- PLAN B: Depth Map / Scene Median Fallback ---
-        if terminal_point is None:
-            raster = camera._raster
-            depth = None
-            
-            if raster.z_channel is not None and raster.z_data_type == 'depth':
-                try:
-                    depth = raster.get_z_value(x, y)
-                except Exception:
-                    pass
-            
-            # Get default depth from scene if no depth available
-            if depth is None or depth <= 0 or np.isnan(depth):
-                try:
-                    default_depth = mvat_manager.viewer.get_scene_median_depth(camera.position)
-                except Exception:
-                    default_depth = 10.0
-            else:
-                default_depth = depth
-            
-            # Create ray from pixel position to get 3D world point
+        if is_ortho_image:
             try:
-                ray = CameraRay.from_pixel_and_camera(
-                    pixel_xy=(x, y),
-                    camera=camera,
-                    depth=depth,
-                    default_depth=default_depth
-                )
-                terminal_point = ray.terminal_point
+                if not (0 <= x < ortho_camera.width and 0 <= y < ortho_camera.height):
+                    super().mouseDoubleClickEvent(event)
+                    return
+
+                X, Y = ortho_camera.pixel_to_geo(x, y)
+                Z = ortho_camera._raster.get_z_value(x, y)
+                if Z is None:
+                    super().mouseDoubleClickEvent(event)
+                    return
+
+                terminal_point = ortho_camera.geo_to_world(X, Y, Z)
             except Exception as e:
-                print(f"Warning: Could not set focal point from double-click: {e}")
+                print(f"Warning: Could not set ortho focal point from double-click: {e}")
+                super().mouseDoubleClickEvent(event)
+                return
+        else:
+            camera = mvat_manager.cameras[self.current_image_path]
+
+            # --- PLAN A: Index Map (Flawless 3D Coordinate) ---
+            try:
+                primary_target = mvat_manager.viewer.scene_context.get_primary_target()
+                if primary_target is not None:
+                    candidate_id = camera.get_index_at_pixel(x, y)
+                    if candidate_id is not None and int(candidate_id) > -1:
+                        raw_coord = primary_target.get_element_coordinate(int(candidate_id))
+                        if raw_coord is not None:
+                            # ---> Safely cast PyTorch Tensor to NumPy! <---
+                            if hasattr(raw_coord, 'cpu'):
+                                terminal_point = raw_coord.cpu().numpy().astype(np.float64)
+                            else:
+                                terminal_point = np.asarray(raw_coord, dtype=np.float64)
+            except Exception:
+                pass
+
+            # --- PLAN B: Depth Map / Scene Median Fallback ---
+            if terminal_point is None:
+                raster = camera._raster
+                depth = None
+                
+                if raster.z_channel is not None and raster.z_data_type == 'depth':
+                    try:
+                        depth = raster.get_z_value(x, y)
+                    except Exception:
+                        pass
+                
+                # Get default depth from scene if no depth available
+                if depth is None or depth <= 0 or np.isnan(depth):
+                    try:
+                        default_depth = mvat_manager.viewer.get_scene_median_depth(camera.position)
+                    except Exception:
+                        default_depth = 10.0
+                else:
+                    default_depth = depth
+                
+                # Create ray from pixel position to get 3D world point
+                try:
+                    ray = CameraRay.from_pixel_and_camera(
+                        pixel_xy=(x, y),
+                        camera=camera,
+                        depth=depth,
+                        default_depth=default_depth
+                    )
+                    terminal_point = ray.terminal_point
+                except Exception as e:
+                    print(f"Warning: Could not set focal point from double-click: {e}")
         
         # Trigger projection to all context cameras
         if terminal_point is not None:
@@ -1504,15 +1551,62 @@ class AnnotationWindow(BaseCanvas):
         # Collect changes for action stack
         changes = []  # list of (annotation_id, old_label, new_label)
 
+        # Prefer the global selection manager when available so label changes
+        # can apply to gallery-selected annotations even if they are not in the
+        # current canvas image.
+        target_annotations = []
+        try:
+            selection_manager = getattr(self.main_window, 'selection_manager', None)
+            selected_ids = []
+            if selection_manager and hasattr(selection_manager, 'get_selected_ids'):
+                selected_ids = list(selection_manager.get_selected_ids() or [])
+
+            if selected_ids:
+                annotations_dict = getattr(self, 'annotations_dict', {})
+                for ann_id in selected_ids:
+                    ann = annotations_dict.get(ann_id)
+                    if ann:
+                        target_annotations.append(ann)
+            else:
+                target_annotations = list(self.selected_annotations)
+        except Exception:
+            target_annotations = list(self.selected_annotations)
+
+        if not target_annotations:
+            QApplication.restoreOverrideCursor()
+            return
+
+        def _get_raster_source_for_annotation(annotation):
+            try:
+                image_window = getattr(self.main_window, 'image_window', None)
+                raster_manager = getattr(image_window, 'raster_manager', None) if image_window else None
+                if raster_manager and hasattr(raster_manager, 'get_raster'):
+                    raster = raster_manager.get_raster(annotation.image_path)
+                    if raster:
+                        if getattr(raster, '_rasterio_src', None) is None and hasattr(raster, 'load_rasterio'):
+                            raster.load_rasterio()
+                        return getattr(raster, '_rasterio_src', None)
+            except Exception:
+                pass
+            return getattr(self, 'rasterio_image', None)
+
         # Handle both valid labels and None (no label selected)
         if label is not None:
 
-            for annotation in self.selected_annotations:
+            for annotation in target_annotations:
                 if annotation.label.id != label.id:
                     old_label = annotation.label
                     annotation.update_user_confidence(self.selected_label)
-                    annotation.create_cropped_image(self.rasterio_image)
-                    self.main_window.confidence_window.display_cropped_image(annotation)
+                    raster_source = _get_raster_source_for_annotation(annotation)
+                    if raster_source is not None:
+                        try:
+                            annotation.create_cropped_image(raster_source)
+                        except Exception:
+                            pass
+                    try:
+                        self.main_window.confidence_window.display_cropped_image(annotation)
+                    except Exception:
+                        pass
                     changes.append((annotation.id, old_label, self.selected_label))
 
             if self.cursor_annotation:
@@ -1531,7 +1625,10 @@ class AnnotationWindow(BaseCanvas):
                     action = ChangeLabelAction(self, ann_id, old_label, new_label)
                     self.action_stack.push(action)
                     try:
-                        self.annotationLabelChanged.emit(ann_id, new_label.id if hasattr(new_label, 'id') else str(new_label))
+                        self.annotationLabelChanged.emit(
+                            ann_id,
+                            new_label.id if hasattr(new_label, 'id') else str(new_label)
+                        )
                     except Exception:
                         pass
                 else:
@@ -1865,7 +1962,7 @@ class AnnotationWindow(BaseCanvas):
         self.fit_to_image()
         # Reset rotation to default
         self.rotation_angle = 0.0
-        self._set_absolute_rotation(self.rotation_angle )  # Apply the rotation transform reset
+        self._set_absolute_rotation(self.rotation_angle)  # Apply the rotation transform reset
         self.viewChanged.emit(*self.get_image_dimensions())
         
         # If MVAT viewer is active, sync 3D view to current image's perspective
@@ -2265,17 +2362,13 @@ class AnnotationWindow(BaseCanvas):
 
         # Restore anchor back to previous behavior when animations finish
         def _on_finished():
-            try:
-                self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
-            except Exception:
-                pass
+            self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
             # Clean up references
             self._active_view_animations = []
             # Emit a viewChanged signal for status updates
-            try:
-                self.viewChanged.emit(*self.get_image_dimensions())
-            except Exception:
-                pass
+            self.viewChanged.emit(*self.get_image_dimensions())
+            # Emit the standard navigation signal after the final animated view is in place.
+            self._emit_view_navigated()
 
         # Connect last animation finished to cleanup
         z_anim.finished.connect(_on_finished)
@@ -2351,10 +2444,10 @@ class AnnotationWindow(BaseCanvas):
 
         # Step 3: Map ratio to padding factor (smaller annotation = more padding)
         import math
-        min_padding = 0.15  # 15% (relaxed from 10%)
-        max_padding = 0.35  # 35% (relaxed from 50%)
+        min_padding = 0.30  # More surrounding context than before
+        max_padding = 0.70  # Allow up to ~2x the previous framing context
         if relative_area > 0:
-            padding_factor = max(min(0.35 * (1 / math.sqrt(relative_area)), max_padding), min_padding)
+            padding_factor = max(min(0.70 * (1 / math.sqrt(relative_area)), max_padding), min_padding)
         else:
             padding_factor = min_padding
 
@@ -2452,7 +2545,10 @@ class AnnotationWindow(BaseCanvas):
             return
         
         if not multi_select:
+            # Suppress phantom rebuild in unselect_annotations; we'll do it once at the end.
+            self._skip_phantom_refresh = True
             self.unselect_annotations()
+            self._skip_phantom_refresh = False
             
         if annotation not in self.selected_annotations:
             self.selected_annotations.append(annotation)
@@ -2464,6 +2560,7 @@ class AnnotationWindow(BaseCanvas):
             # PHANTOM ARCHITECTURE: Build the Qt objects if they don't exist
             if not annotation.is_graphics_item_valid():
                 annotation.create_graphics_item(self.scene)
+            
             self.selected_label = annotation.label
             self.annotationSelected.emit(annotation.id)
             
@@ -2617,7 +2714,8 @@ class AnnotationWindow(BaseCanvas):
                     self.main_window.confidence_window.clear_display()
                 self.viewport().update()
                 # PHANTOM ARCHITECTURE: Re-render phantom layer to draw this annotation in it
-                self.refresh_phantom_annotations()
+                if not self._skip_phantom_refresh:
+                    self.refresh_phantom_annotations()
                 self._emit_selection_changed()
 
     def unselect_annotations(self):
@@ -2662,7 +2760,9 @@ class AnnotationWindow(BaseCanvas):
         self.main_window.confidence_window.clear_display()
         
         # PHANTOM ARCHITECTURE: Re-render phantom layer with all now-deselected annotations
-        self.refresh_phantom_annotations()
+        # Skip if caller will do its own rebuild (e.g. select_annotation coalescing)
+        if not self._skip_phantom_refresh:
+            self.refresh_phantom_annotations()
         
         # Update the viewport once for all changes
         self.viewport().update()
@@ -2840,23 +2940,22 @@ class AnnotationWindow(BaseCanvas):
         Draws all unselected vector annotations using the ultra-fast readonly pass.
         This is called when selections change to update the phantom layer.
         """
-        # If we don't have the FastImageItem active, bail out
-        if getattr(self, '_base_image_item', None) is None:
+        if self._skip_phantom_refresh or not self.active_image:
             return
-            
+        
         annotations = self.get_image_annotations()
-        paths_data = []
+        phantom_annotations = []
         
         for a in annotations:
             # Only draw it as a Phantom if it's visible, NOT selected, and NOT a mask
             if getattr(a.label, 'is_visible', True) and not a.is_selected and not hasattr(a, 'mask_data'):
                 try:
-                    paths_data.append((a.get_painter_path(), a.label.color, a.transparency))
+                    phantom_annotations.append(a)
                 except Exception:
                     pass
-                    
-        # Hand off to the fast C++ painter
-        self._base_image_item.set_readonly_annotations(paths_data)
+        
+        # Hand off to the mode-aware canvas renderer.
+        self.render_readonly_annotations(phantom_annotations)
 
     def get_image_annotations(self, image_path=None):
         """Get all annotations for the specified image path or current image."""
@@ -2885,6 +2984,8 @@ class AnnotationWindow(BaseCanvas):
         if not image_path:
             image_path = self.current_image_path
 
+        source_path, frame_idx = parse_frame_path(image_path)
+
         if annotations is None:
             annotations = self.get_image_annotations(image_path)
 
@@ -2898,7 +2999,16 @@ class AnnotationWindow(BaseCanvas):
             progress_bar.show()
             progress_bar.start_progress(len(annotations))
 
-        rasterio_image = rasterio_open(image_path)
+        rasterio_image = None
+        if frame_idx is not None:
+            raster = self.main_window.image_window.raster_manager.get_raster(source_path)
+            if raster is not None and hasattr(raster, 'update_shim_for_frame'):
+                raster.update_shim_for_frame(frame_idx)
+                rasterio_image = raster.rasterio_src
+
+        if rasterio_image is None:
+            rasterio_image = rasterio_open(source_path)
+
         for annotation in annotations:
             try:
                 # Only crop if not already cropped
@@ -3214,8 +3324,23 @@ class AnnotationWindow(BaseCanvas):
 
     def delete_selected_annotations(self):
         """Delete all currently selected annotations in a single batch."""
-        # Get the selected annotations
-        selected_annotations = self.selected_annotations.copy()
+        # Start with canvas-visible selected annotations (current image)
+        selected_set = {ann.id: ann for ann in self.selected_annotations}
+
+        # Include cross-image annotations tracked by SelectionManager so that
+        # annotations selected via the Explorer (embedding/gallery) across
+        # multiple images are also deleted.
+        selection_manager = getattr(self.main_window, 'selection_manager', None)
+        if selection_manager and hasattr(selection_manager, 'get_selected_ids'):
+            all_ids = selection_manager.get_selected_ids() or []
+            annotations_dict = getattr(self, 'annotations_dict', {})
+            for ann_id in all_ids:
+                if ann_id not in selected_set:
+                    ann = annotations_dict.get(ann_id)
+                    if ann:
+                        selected_set[ann_id] = ann
+
+        selected_annotations = list(selected_set.values())
         # Unselect them first to clean up confidence window connections
         self.unselect_annotations()
         # Call the bulk delete method to trigger the optimized viewer slots
@@ -3237,6 +3362,8 @@ class AnnotationWindow(BaseCanvas):
 
     def delete_image_annotations(self, image_path):
         """Delete all annotations associated with a specific image path (Bulk Optimized)."""
+        raster = self.main_window.image_window.raster_manager.get_raster(image_path)
+
         # For VideoRaster base paths, annotations live under ::frame_ virtual keys.
         # Recurse over every frame key so the caller doesn't need to know about them.
         if image_path not in self.image_annotations_dict:
@@ -3250,6 +3377,8 @@ class AnnotationWindow(BaseCanvas):
                     self.current_image_path and
                     self.current_image_path.startswith(prefix)):
                 self._display_video_frame(self._current_frame_idx)
+            if raster:
+                raster.delete_mask_annotation()
             return
 
         # 1. Access label lock state once
@@ -3266,9 +3395,8 @@ class AnnotationWindow(BaseCanvas):
         if annotations_to_delete:
             # 3. Use bulk delete to handle internal dictionaries and viewer updates
             self.delete_annotations(annotations_to_delete)
-            
+
         # 4. Handle Mask/Semantic Reset
-        raster = self.main_window.image_window.raster_manager.get_raster(image_path)
         if raster:
             raster.delete_mask_annotation()
         

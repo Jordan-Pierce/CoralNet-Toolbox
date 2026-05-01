@@ -540,17 +540,23 @@ class ResultsProcessor:
         one Results object at a time.
         """
         all_new_annos = []
+        contributing_sources = 0
         image_path = None
-        
+
         for results in results_list:
             if not results or not results.boxes:
                 continue
             if image_path is None:
                 image_path = results.path.replace("\\", "/")
-                
+
             new_annos = self._process_single_result_set(results, 'segmentation')
-            all_new_annos.extend(new_annos)
-            
+            if new_annos:
+                all_new_annos.extend(new_annos)
+                contributing_sources += 1
+
+        if contributing_sources > 1 and len(all_new_annos) > 1:
+            all_new_annos = self._dedupe_cross_work_area(all_new_annos)
+
         if all_new_annos:
             self.annotation_window.add_annotations(all_new_annos)
             if self.annotation_window.current_image_path == image_path:
@@ -562,21 +568,53 @@ class ResultsProcessor:
         one Results object at a time.
         """
         all_new_annos = []
+        contributing_sources = 0
         image_path = None
-        
+
         for results in results_list:
             if not results or not results.boxes:
                 continue
             if image_path is None:
                 image_path = results.path.replace("\\", "/")
-                
+
             new_annos = self._process_single_result_set(results, 'detection')
-            all_new_annos.extend(new_annos)
-            
+            if new_annos:
+                all_new_annos.extend(new_annos)
+                contributing_sources += 1
+
+        if contributing_sources > 1 and len(all_new_annos) > 1:
+            all_new_annos = self._dedupe_cross_work_area(all_new_annos)
+
         if all_new_annos:
             self.annotation_window.add_annotations(all_new_annos)
             if self.annotation_window.current_image_path == image_path:
                 self.annotation_window.load_annotations()
+
+    def _dedupe_cross_work_area(self, new_annotations):
+        """Class-agnostic NMS across annotations produced by different work areas.
+
+        Per-work-area NMS in ``_process_single_result_set`` only sees pre-existing
+        annotations, not sibling new annotations from other work areas in the same
+        pass. Overlapping work areas can therefore each emit a box for the same
+        object. This pass reconciles the combined set, keeping the highest-confidence
+        survivor per cluster.
+        """
+        try:
+            bboxes = []
+            scores = []
+            for ann in new_annotations:
+                det = ann.to_nms_detection()
+                bboxes.append(det['bbox'])
+                scores.append(det['confidence'])
+
+            bbox_tensor = torch.tensor(bboxes, dtype=torch.float32)
+            score_tensor = torch.tensor(scores, dtype=torch.float32)
+
+            keep = TorchNMS.fast_nms(bbox_tensor, score_tensor, self._get_iou_thresh()).tolist()
+            return [new_annotations[i] for i in keep]
+        except Exception as e:
+            print(f"Warning: cross-work-area NMS failed: {e}")
+            return new_annotations
         
     def _post_process_new_annotation(self, annotation, cls_name, conf):
         """

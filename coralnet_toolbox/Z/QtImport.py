@@ -3,13 +3,13 @@ import os
 import difflib
 
 from PyQt5.QtCore import Qt, pyqtSignal, QMimeData, QSize
-from PyQt5.QtGui import QColor, QIcon, QDrag, QPixmap, QPainter
+from PyQt5.QtGui import QColor, QIcon, QDrag, QPixmap, QPainter, QBrush
 from PyQt5.QtWidgets import (QApplication, QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, 
                              QTableWidgetItem, QHeaderView, QLabel, QPushButton, QListWidget, 
                              QAbstractItemView, QFileDialog, QSplitter, QMessageBox,
                              QGroupBox, QFormLayout, QScrollArea, QMenu, QComboBox)
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 from coralnet_toolbox.utilities import (
     detect_z_channel_units_from_file,
     normalize_z_unit,
@@ -29,6 +29,23 @@ COLOR_MATCHED = QColor(220, 255, 220)   # Light Green
 COLOR_PARTIAL = QColor(255, 255, 220)   # Light Yellow
 COLOR_MISSING = QColor(255, 220, 220)   # Light Red
 COLOR_CONFLICT = QColor(255, 200, 150)  # Orange
+
+
+def _foreground_for_background(background):
+    """Return a readable foreground color for the given background."""
+    red, green, blue, _ = QColor(background).getRgb()
+    luminance = (0.299 * red + 0.587 * green + 0.114 * blue) / 255.0
+    return QColor(0, 0, 0) if luminance > 0.5 else QColor(255, 255, 255)
+
+
+def _apply_item_color(item, background):
+    """Apply a background color and a readable foreground color to a table/list item."""
+    if item is None:
+        return
+
+    background_color = QColor(background)
+    item.setBackground(QBrush(background_color))
+    item.setForeground(QBrush(_foreground_for_background(background_color)))
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -180,7 +197,7 @@ class ZImportDialog(QDialog):
         self.setModal(True)
         
         self.setWindowTitle("Z-Channel Import")
-        self.setWindowIcon(get_icon("z.svg"))
+        self.setWindowIcon(get_window_icon("z.svg"))
         self.resize(1150, 600)
         
         # Set busy cursor while loading and matching
@@ -512,7 +529,7 @@ class ZImportDialog(QDialog):
             row (int): Table row index
             status (str): Match status string
         """
-        color = Qt.white
+        color = QColor(Qt.white)
         if "Auto" in status:
             color = COLOR_MATCHED
         elif "Review" in status:
@@ -523,7 +540,7 @@ class ZImportDialog(QDialog):
             color = COLOR_CONFLICT
             
         for c in range(4):  # Color first 4 columns, not status
-            self.table.item(row, c).setBackground(color)
+            _apply_item_color(self.table.item(row, c), color)
     
     def update_z_file_colors(self):
         """
@@ -544,9 +561,9 @@ class ZImportDialog(QDialog):
             
             # Color the item based on whether it's in use
             if z_path in mapped_z_paths:
-                item.setBackground(COLOR_MATCHED)  # Light green for in-use files
+                _apply_item_color(item, COLOR_MATCHED)  # Light green for in-use files
             else:
-                item.setBackground(Qt.white)  # White for available files
+                _apply_item_color(item, Qt.white)  # White for available files
 
     def handle_manual_drop(self, row, z_path):
         """

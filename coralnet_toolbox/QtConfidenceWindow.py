@@ -11,6 +11,7 @@ from coralnet_toolbox.utilities import scale_pixmap
 from coralnet_toolbox.utilities import convert_scale_units
 
 from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox import theme as app_theme
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -178,16 +179,19 @@ class ConfidenceWindow(QWidget):
         # Get and store the icons
         self.user_icon = get_icon("user.svg")
         self.machine_icon = get_icon("machine.svg")
-        self.prev_icon = self.style().standardIcon(QStyle.SP_ArrowLeft)
-        self.next_icon = self.style().standardIcon(QStyle.SP_ArrowRight)
+        self.prev_icon = get_icon("left.svg")
+        self.next_icon = get_icon("right.svg")
         
         self.top_k_icons = {
-            "1": get_icon("1.svg").pixmap(12, 12),
-            "2": get_icon("2.svg").pixmap(12, 12),
-            "3": get_icon("3.svg").pixmap(12, 12),
-            "4": get_icon("4.svg").pixmap(12, 12),
-            "5": get_icon("5.svg").pixmap(12, 12)
+            "1": get_icon("1.svg").pixmap(app_theme.scale_size(12)),
+            "2": get_icon("2.svg").pixmap(app_theme.scale_size(12)),
+            "3": get_icon("3.svg").pixmap(app_theme.scale_size(12)),
+            "4": get_icon("4.svg").pixmap(app_theme.scale_size(12)),
+            "5": get_icon("5.svg").pixmap(app_theme.scale_size(12))
         }
+
+        self.icon_button_size = app_theme.scale_int(26)
+        self.icon_button_icon_size = 16
 
         # 1. Initialize the Image View (Top)
         self.init_graphics_view()
@@ -195,12 +199,16 @@ class ConfidenceWindow(QWidget):
         # 2. Create the Unified Control Bar (Middle)
         self.prev_button = QPushButton(self.prev_icon, "")
         self.prev_button.setToolTip("Select an annotation to enable navigation")
-        self.prev_button.setFixedSize(28, 24) # Made them compact icon buttons
+        self.prev_button.setFixedSize(self.icon_button_size, self.icon_button_size)
+        self.prev_button.setStyleSheet("padding: 0px; margin: 0px;")
+        self.prev_button.setIconSize(app_theme.scale_size(self.icon_button_icon_size))
         self.prev_button.clicked.connect(self.on_prev_clicked)
         
         self.next_button = QPushButton(self.next_icon, "")
         self.next_button.setToolTip("Select an annotation to enable navigation")
-        self.next_button.setFixedSize(28, 24)
+        self.next_button.setFixedSize(self.icon_button_size, self.icon_button_size)
+        self.next_button.setStyleSheet("padding: 0px; margin: 0px;")
+        self.next_button.setIconSize(app_theme.scale_size(self.icon_button_icon_size))
         self.next_button.clicked.connect(self.on_next_clicked)
 
         self.dimensions_label = QLabel(self)
@@ -208,7 +216,9 @@ class ConfidenceWindow(QWidget):
         self.dimensions_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
         self.toggle_button = QPushButton(self)
-        self.toggle_button.setFixedSize(24, 24)
+        self.toggle_button.setFixedSize(self.icon_button_size, self.icon_button_size)
+        self.toggle_button.setStyleSheet("padding: 0px; margin: 0px;")
+        self.toggle_button.setIconSize(app_theme.scale_size(self.icon_button_icon_size))
         self.toggle_state = False  # False = user, True = machine
         self.toggle_button.setIcon(self.user_icon)
         self.toggle_button.clicked.connect(self.toggle_user_machine_confidence_icon)
@@ -300,7 +310,9 @@ class ConfidenceWindow(QWidget):
     def init_graphics_view(self):
         """Initialize the graphics view for displaying the cropped image."""
         self.graphics_view = QGraphicsView(self)
-        self.graphics_view.setStyleSheet("QGraphicsView { border: 2px solid transparent; border-radius: 4px; }")
+        self.graphics_view.setStyleSheet(
+            f"QGraphicsView {{ border: 1px solid {app_theme.SURFACE_BORDER_COLOR.name()}; border-radius: 4px; background-color: {app_theme.BACKGROUND_COLOR.name()}; }}"
+        )
         self.scene = QGraphicsScene(self)
         self.graphics_view.setScene(self.scene)
         self.containerLayout.addWidget(self.graphics_view, 2)  # 2 for stretch factor
@@ -340,6 +352,34 @@ class ConfidenceWindow(QWidget):
         self.toggle_button.setToolTip("Viewing Machine Confidences")
         self.toggle_button.setEnabled(enabled)
         self.toggle_state = True
+
+    def refresh_scaling(self):
+        """Refresh icon and control sizes after a UI scale change."""
+        self.icon_button_size = app_theme.scale_int(26)
+        self.icon_button_icon_size = 16
+
+        self.prev_button.setFixedSize(self.icon_button_size, self.icon_button_size)
+        self.prev_button.setStyleSheet("padding: 0px; margin: 0px;")
+        self.prev_button.setIconSize(app_theme.scale_size(self.icon_button_icon_size))
+        self.next_button.setFixedSize(self.icon_button_size, self.icon_button_size)
+        self.next_button.setStyleSheet("padding: 0px; margin: 0px;")
+        self.next_button.setIconSize(app_theme.scale_size(self.icon_button_icon_size))
+        self.toggle_button.setFixedSize(self.icon_button_size, self.icon_button_size)
+        self.toggle_button.setStyleSheet("padding: 0px; margin: 0px;")
+        self.toggle_button.setIconSize(app_theme.scale_size(self.icon_button_icon_size))
+
+        self.top_k_icons = {
+            "1": get_icon("1.svg").pixmap(app_theme.scale_size(12)),
+            "2": get_icon("2.svg").pixmap(app_theme.scale_size(12)),
+            "3": get_icon("3.svg").pixmap(app_theme.scale_size(12)),
+            "4": get_icon("4.svg").pixmap(app_theme.scale_size(12)),
+            "5": get_icon("5.svg").pixmap(app_theme.scale_size(12))
+        }
+
+        if self.toggle_state:
+            self.set_machine_icon(self.toggle_button.isEnabled())
+        else:
+            self.set_user_icon(self.toggle_button.isEnabled())
 
     def update_blank_pixmap(self):
         """Update the graphics view with a blank transparent pixmap."""

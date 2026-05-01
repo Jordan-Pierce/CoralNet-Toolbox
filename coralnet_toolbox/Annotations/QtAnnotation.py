@@ -10,7 +10,7 @@ from PyQt5.QtGui import QColor, QPen, QBrush, QPainterPath, QFont, QPainter
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, pyqtProperty, QRectF
 from PyQt5.QtWidgets import (QMessageBox, QGraphicsRectItem, QGraphicsItem,
                              QGraphicsScene, QGraphicsItemGroup, QGraphicsSimpleTextItem, 
-                             QGraphicsPathItem, QStyleOptionGraphicsItem)
+                             QGraphicsPathItem)
 
 from coralnet_toolbox.QtLabelWindow import Label
 
@@ -127,6 +127,7 @@ class Annotation(QObject):
     colorChanged = pyqtSignal(QColor)
     annotationDeleted = pyqtSignal(object)
     annotationUpdated = pyqtSignal(object)
+    verifiedChanged = pyqtSignal(object)
 
     def __init__(self,
                  label: 'Label',
@@ -1290,6 +1291,14 @@ class Annotation(QObject):
         # Create the graphic
         self.update_graphics_item()
         self.show_message = False
+        try:
+            self.annotationUpdated.emit(self)
+        except Exception:
+            pass
+        try:
+            self.verifiedChanged.emit(self)
+        except Exception:
+            pass
         
     def update_machine_confidence(self, prediction: dict, from_import: bool = False):
         """Update annotation with machine-generated confidence scores."""
@@ -1317,12 +1326,29 @@ class Annotation(QObject):
             # Create the graphic
             self.update_graphics_item()
             self.show_message = True
+            try:
+                self.annotationUpdated.emit(self)
+            except Exception:
+                pass
+            try:
+                self.verifiedChanged.emit(self)
+            except Exception:
+                pass
 
     def set_verified(self, verified: bool):
         """Set the verified status of the annotation.
         This method is called on importing annotations to set the verified status."""
         # Update the verified status
-        self.verified = verified
+        if self.verified != verified:
+            self.verified = verified
+            try:
+                self.annotationUpdated.emit(self)
+            except Exception:
+                pass
+            try:
+                self.verifiedChanged.emit(self)
+            except Exception:
+                pass
 
     def update_verified(self, verified: bool):
         """Update the verified status of the annotation, and update user confidence if necessary.
@@ -1351,6 +1377,15 @@ class Annotation(QObject):
                 self.label = max(self.machine_confidence, key=self.machine_confidence.get)
             self.update_graphics_item()
             self.show_message = True
+
+        try:
+            self.annotationUpdated.emit(self)
+        except Exception:
+            pass
+        try:
+            self.verifiedChanged.emit(self)
+        except Exception:
+            pass
             
     def to_nms_detection(self):
         """Convert annotation to NMS-compatible detection format.

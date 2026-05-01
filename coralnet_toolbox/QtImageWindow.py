@@ -1,11 +1,13 @@
 import warnings
 
+import gc
 import os
 from contextlib import contextmanager
 
 import rasterio
 
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint, QItemSelectionModel, QModelIndex, QEvent
+from PyQt5.QtGui import QKeyEvent
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QWidget, QVBoxLayout, QLabel, 
                              QComboBox, QHBoxLayout, QTableView, QHeaderView, QApplication, 
                              QMenu, QPushButton, QStyle, QFormLayout, QFrame, 
@@ -22,6 +24,7 @@ from coralnet_toolbox.IO import ImportCameras
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox import theme as app_theme
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
@@ -46,7 +49,7 @@ class NoArrowKeyTableView(QTableView):
             return
         elif event.key() == Qt.Key_A and event.modifiers() & Qt.ControlModifier:
             # Handle Ctrl+A to highlight all rows in addition to selecting all
-            self.image_window.highlight_all_rows()
+            self.image_window.highlight_all_rows(select_rows=False)
             # Fall through to let the default selection behavior happen
         super().keyPressEvent(event)
 
@@ -249,13 +252,17 @@ class ImageWindow(QWidget):
     def _init_filter_widgets(self):
         """Set up the filter section widgets without adding to main layout."""
         self.filter_content_widget = QWidget()
+        self.filter_content_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.filter_layout = QVBoxLayout(self.filter_content_widget)
         self.filter_layout.setContentsMargins(4, 4, 4, 4) # Add slight padding for toolbar aesthetics
         
         self.search_layout = QFormLayout()
+        self.search_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        self.search_layout.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.search_layout.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self.search_layout.setHorizontalSpacing(app_theme.scale_int(8))
+        self.search_layout.setVerticalSpacing(app_theme.scale_int(6))
         self.filter_layout.addLayout(self.search_layout)
-
-        fixed_width = 125
 
         # --- Setup Filter ComboBox ---
         self.filter_combo = CheckableComboBox(self)
@@ -267,14 +274,8 @@ class ImageWindow(QWidget):
         self.filter_combo.filterChanged.connect(self.schedule_filter)
         self.filter_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-        # --- Create containers for search bars and buttons ---
-        self.image_search_container = QWidget()
-        self.image_search_layout = QHBoxLayout(self.image_search_container)
-        self.image_search_layout.setContentsMargins(0, 0, 0, 0)
-
-        self.label_search_container = QWidget()  
-        self.label_search_layout = QHBoxLayout(self.label_search_container)
-        self.label_search_layout.setContentsMargins(0, 0, 0, 0)
+        # Setup filter/search controls
+        self.search_layout.addRow("Filters:", self.filter_combo)
 
         # Setup image search
         self.search_bar_images = QComboBox(self)
@@ -282,14 +283,8 @@ class ImageWindow(QWidget):
         self.search_bar_images.setPlaceholderText("Type to search images")
         self.search_bar_images.setInsertPolicy(QComboBox.NoInsert)
         self.search_bar_images.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.search_bar_images.setFixedWidth(fixed_width)
         self.search_bar_images.editTextChanged.connect(self.schedule_filter)
-        self.image_search_layout.addWidget(self.search_bar_images)
-
-        self.image_search_button = QPushButton(self)
-        self.image_search_button.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
-        self.image_search_button.clicked.connect(self.filter_images)
-        self.image_search_layout.addWidget(self.image_search_button)
+        self.search_layout.addRow("Search Images:", self.search_bar_images)
 
         # Setup label search
         self.search_bar_labels = QComboBox(self)
@@ -297,27 +292,18 @@ class ImageWindow(QWidget):
         self.search_bar_labels.setPlaceholderText("Type to search labels")
         self.search_bar_labels.setInsertPolicy(QComboBox.NoInsert)
         self.search_bar_labels.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.search_bar_labels.setFixedWidth(fixed_width)
         self.search_bar_labels.editTextChanged.connect(self.schedule_filter)
-        self.label_search_layout.addWidget(self.search_bar_labels)
-
-
-        self.label_search_button = QPushButton(self)
-        self.label_search_button.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
-        self.label_search_button.clicked.connect(self.filter_images)
-        self.label_search_layout.addWidget(self.label_search_button)
-
-        # Add rows to form layout
-        self.search_layout.addRow("Filters:", self.filter_combo)
-        self.search_layout.addRow("Search Images:", self.image_search_container)
-        self.search_layout.addRow("Search Labels:", self.label_search_container)
+        self.search_layout.addRow("Search Labels:", self.search_bar_labels)
 
     def _init_info_widgets(self):
         """Instantiate info labels and home button."""
+        home_button_size = app_theme.scale_int(26)
         self.home_button = QPushButton("", self)
         self.home_button.setToolTip("Center table on current image")
         self.home_button.setIcon(get_icon("home.svg"))  
-        self.home_button.setFixedSize(24, 24)             
+        self.home_button.setFixedSize(home_button_size, home_button_size)
+        self.home_button.setStyleSheet("padding: 0px; margin: 0px;")
+        self.home_button.setIconSize(app_theme.scale_size(16))
         self.home_button.setFlat(True)    
         self.home_button.clicked.connect(self.center_table_on_current_image)
 
@@ -349,28 +335,77 @@ class ImageWindow(QWidget):
         
         self.tableView.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents) 
         self.tableView.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents) 
-        self.tableView.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch) 
-        self.tableView.setColumnWidth(3, 120) 
-        self.tableView.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)
+        self.tableView.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents) 
+        self.tableView.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         
-        self.tableView.horizontalHeader().setStyleSheet("""
+        self.tableView.horizontalHeader().setStyleSheet(
+            app_theme.scale_qss(
+                """
             QHeaderView::section {
-            background-color: #E0E0E0;
+            background-color: %s;
             padding: 4px;
-            border: 1px solid #D0D0D0;
+            border: 1px solid %s;
+            color: %s;
             }
-        """)
+        """ % (app_theme.SURFACE_COLOR.name(), app_theme.SURFACE_BORDER_COLOR.name(), app_theme.TEXT_PRIMARY_COLOR.name()))
+        )
         
         self.tableView.leftClicked.connect(self.on_table_pressed)
         self.tableView.doubleClicked.connect(self.on_table_double_clicked)
 
     def _init_action_widgets(self):
-        """Instantiate bulk action buttons."""
-        self.highlight_all_button = QPushButton("Highlight All", self)
-        self.highlight_all_button.clicked.connect(self.highlight_all_rows)
+        """Instantiate bulk action buttons. Replaced two buttons with a single toggle button."""
+        self.toggle_highlight_button = QPushButton("Toggle Highlighted", self)
+        self.toggle_highlight_button.setToolTip("Highlight all filtered images or unhighlight if all highlighted")
+        self.toggle_highlight_button.clicked.connect(self.toggle_highlighted)
+        # Disabled by default until there are filtered rows
+        self.toggle_highlight_button.setEnabled(False)
 
-        self.unhighlight_all_button = QPushButton("Unhighlight All", self)
-        self.unhighlight_all_button.clicked.connect(self.unhighlight_all_rows)
+    def trigger_highlight_all_shortcut(self):
+        """Invoke the same Ctrl+A shortcut path used by the table view."""
+        if not self.table_model.filtered_paths:
+            return
+
+        self.tableView.setFocus(Qt.ShortcutFocusReason)
+        key_event = QKeyEvent(QEvent.KeyPress, Qt.Key_A, Qt.ControlModifier, "a")
+        QApplication.sendEvent(self.tableView, key_event)
+
+    def toggle_highlighted(self):
+        """Toggle highlight state: highlight all if any unhighlighted, unhighlight all if all highlighted."""
+        # No-op if there are no filtered paths
+        filtered = getattr(self.table_model, 'filtered_paths', [])
+        if not filtered:
+            return
+
+        # Use the model API to get currently highlighted paths
+        try:
+            highlighted = self.table_model.get_highlighted_paths()
+        except Exception:
+            highlighted = []
+
+        # If all filtered rows are highlighted, unhighlight all; otherwise highlight all
+        if highlighted and len(highlighted) == len(filtered):
+            self.unhighlight_all_rows()
+        else:
+            self.highlight_all_rows(select_rows=True)
+
+    def refresh_scaling(self):
+        """Refresh scale-sensitive controls after the global UI scale changes."""
+        home_button_size = app_theme.scale_int(26)
+        self.home_button.setFixedSize(home_button_size, home_button_size)
+        self.home_button.setStyleSheet("padding: 0px; margin: 0px;")
+        self.home_button.setIconSize(app_theme.scale_size(16))
+        self.tableView.horizontalHeader().setStyleSheet(
+            app_theme.scale_qss(
+                """
+            QHeaderView::section {
+            background-color: %s;
+            padding: 4px;
+            border: 1px solid %s;
+            color: %s;
+            }
+        """ % (app_theme.SURFACE_COLOR.name(), app_theme.SURFACE_BORDER_COLOR.name(), app_theme.TEXT_PRIMARY_COLOR.name()))
+        )
         
     # --- DOCK WRAPPER HOOKS ---
 
@@ -393,12 +428,12 @@ class ImageWindow(QWidget):
         container = QWidget()
         layout = QHBoxLayout(container)
         layout.setContentsMargins(4, 0, 4, 0)
-        layout.setSpacing(10)
+        layout.setSpacing(app_theme.scale_int(6))
 
-        layout.addWidget(self.home_button)
-        layout.addWidget(self.current_image_index_label)
-        layout.addWidget(self.highlighted_count_label)
-        layout.addWidget(self.image_count_label)
+        layout.addWidget(self.home_button, 0)
+        layout.addWidget(self.current_image_index_label, 1)
+        layout.addWidget(self.highlighted_count_label, 1)
+        layout.addWidget(self.image_count_label, 1)
 
         container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         toolbar.addWidget(container)
@@ -411,15 +446,14 @@ class ImageWindow(QWidget):
         toolbar.setMovable(False)
 
         container = QWidget()
-        layout = QHBoxLayout(container)
+        layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
 
-        self.highlight_all_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.unhighlight_all_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
-        layout.addWidget(self.highlight_all_button)
-        layout.addWidget(self.unhighlight_all_button)
+        # Use the new toggle button in place of separate highlight/unhighlight buttons
+        if hasattr(self, 'toggle_highlight_button'):
+            self.toggle_highlight_button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+            layout.addWidget(self.toggle_highlight_button)
 
         container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         toolbar.addWidget(container)
@@ -713,6 +747,13 @@ class ImageWindow(QWidget):
         self.update_current_image_index_label()
         self.update_highlighted_count_label()  # Update highlighted count
         self.filterChanged.emit(len(filtered_paths))
+
+        # Enable/disable the toggle highlight button based on whether there are filtered rows
+        try:
+            if hasattr(self, 'toggle_highlight_button'):
+                self.toggle_highlight_button.setEnabled(bool(filtered_paths))
+        except Exception:
+            pass
         
         # Restore selection if possible
         if self.selected_image_path in filtered_paths:
@@ -836,8 +877,20 @@ class ImageWindow(QWidget):
                     all_annotations.extend(anns)
             self.raster_manager.update_annotation_info(video_path, all_annotations)
         else:
-            annotations = self.annotation_window.get_image_annotations(image_path)
-            self.raster_manager.update_annotation_info(image_path, annotations)
+            # Check if this is a bare VideoRaster path (all frame annotations are stored
+            # under virtual ::frame_ keys, so get_image_annotations() would return [] for
+            # the bare path, which would reset the count to 0).
+            raster = self.raster_manager.get_raster(image_path)
+            if raster is not None and getattr(raster, 'raster_type', '') == 'VideoRaster':
+                prefix = image_path + '::frame_'
+                all_annotations = []
+                for key, anns in self.annotation_window.image_annotations_dict.items():
+                    if key.startswith(prefix):
+                        all_annotations.extend(anns)
+                self.raster_manager.update_annotation_info(image_path, all_annotations)
+            else:
+                annotations = self.annotation_window.get_image_annotations(image_path)
+                self.raster_manager.update_annotation_info(image_path, annotations)
         
         if update_counts:
             self.main_window.label_window.update_annotation_count()
@@ -1130,8 +1183,8 @@ class ImageWindow(QWidget):
         # Load the next image
         self.load_image_by_path(self.table_model.get_path_at_row(next_index))
         
-    def highlight_all_rows(self):
-        """Highlight all rows in the filtered view."""
+    def highlight_all_rows(self, select_rows: bool = True):
+        """Highlight all rows in the filtered view and optionally select them."""
         # Batch highlight all filtered paths for better performance
         self.table_model.set_highlighted_paths(self.table_model.filtered_paths)
         
@@ -1141,12 +1194,24 @@ class ImageWindow(QWidget):
             
         # Update the highlighted count label
         self.update_highlighted_count_label()
+
+        if select_rows and self.table_model.filtered_paths:
+            self.tableView.setFocus(Qt.OtherFocusReason)
+            self.tableView.selectAll()
         
     def unhighlight_all_rows(self):
         """Clear all highlights."""
+        selection_model = self.tableView.selectionModel()
+        if selection_model:
+            selection_model.clearSelection()
+
         self.table_model.clear_highlights()
         self.last_highlighted_row = -1
         
+        if self.selected_image_path:
+            self.table_model.set_selected_path(self.selected_image_path)
+            self.select_row_for_path(self.selected_image_path)
+
         # Update the highlighted count label
         self.update_highlighted_count_label()
         
@@ -1179,7 +1244,8 @@ class ImageWindow(QWidget):
         count = len(highlighted_paths)
         
         # Add the check/uncheck action
-        raster_under_cursor = self.raster_manager.get_raster(path_at_cursor)
+        target_path = path_at_cursor if path_at_cursor is not None else (highlighted_paths[0] if highlighted_paths else None)
+        raster_under_cursor = self.raster_manager.get_raster(target_path) if target_path is not None else None
         if raster_under_cursor:
             is_checked = raster_under_cursor.checkbox_state
             if is_checked:
@@ -1187,7 +1253,7 @@ class ImageWindow(QWidget):
             else:
                 action_text = f"Check {count} Highlighted Raster{'s' if count > 1 else ''}"
             toggle_check_action = context_menu.addAction(action_text)
-            toggle_check_action.triggered.connect(lambda: self.on_toggle(not is_checked))
+            toggle_check_action.triggered.connect(lambda checked=False, state=not is_checked: self.on_toggle(state))
 
         context_menu.addSeparator()
         
@@ -1201,22 +1267,38 @@ class ImageWindow(QWidget):
         
         context_menu.addSeparator()
 
-        # Cameras submenu (Import / Remove)
-        cameras_menu = context_menu.addMenu("Cameras...")
+        highlighted_rasters = [self.raster_manager.get_raster(path) for path in highlighted_paths]
+        has_ortho = any(getattr(raster, 'raster_type', '') == 'OrthoRaster' for raster in highlighted_rasters if raster is not None)
+        _single_ortho = count == 1 and has_ortho
 
-        # Add import cameras action
-        import_cameras_action = cameras_menu.addAction(
-            f"Import Cameras for {count} Highlighted Raster{'s' if count > 1 else ''}"
-        )
-        import_cameras_action.triggered.connect(lambda: self._open_import_cameras_for_highlighted(highlighted_paths))
+        if _single_ortho:
+            transforms_menu = context_menu.addMenu("Transforms...")
+            _ortho_path = highlighted_paths[0]
+            set_proj_action = transforms_menu.addAction("Set Projection Matrix")
+            set_proj_action.triggered.connect(
+                lambda checked=False, p=_ortho_path: self._set_ortho_projection_matrix(p)
+            )
 
-        cameras_menu.addSeparator()
+            set_chunk_action = transforms_menu.addAction("Set Chunk Tranform")
+            set_chunk_action.triggered.connect(
+                lambda checked=False, p=_ortho_path: self._set_ortho_chunk_transform(p)
+            )
+        elif not has_ortho:
+            cameras_menu = context_menu.addMenu("Cameras...")
+            # Normal perspective images: import / remove camera calibration
+            import_cameras_action = cameras_menu.addAction(
+                f"Import Cameras for {count} Highlighted Raster{'s' if count > 1 else ''}"
+            )
+            import_cameras_action.triggered.connect(
+                lambda: self._open_import_cameras_for_highlighted(highlighted_paths)
+            )
 
-        # Add remove cameras action
-        remove_cameras_action = cameras_menu.addAction(
-            f"Remove Cameras from {count} Highlighted Raster{'s' if count > 1 else ''}"
-        )
-        remove_cameras_action.triggered.connect(lambda: self.remove_cameras_highlighted_images())
+            cameras_menu.addSeparator()
+
+            remove_cameras_action = cameras_menu.addAction(
+                f"Remove Cameras from {count} Highlighted Raster{'s' if count > 1 else ''}"
+            )
+            remove_cameras_action.triggered.connect(lambda: self.remove_cameras_highlighted_images())
 
         # Create Z-Channel sub-menu
         z_channel_menu = context_menu.addMenu("Z-Channel...")
@@ -1258,7 +1340,87 @@ class ImageWindow(QWidget):
         delete_annotations_action.triggered.connect(
             lambda: self.delete_highlighted_images_annotations()
         )
+
         context_menu.exec_(self.tableView.viewport().mapToGlobal(position))
+
+    def _set_ortho_projection_matrix(self, path: str):
+        """
+        Show a 4×4 matrix dialog so the user can supply the Metashape orthomosaic
+        projection matrix for a local-coordinate-system project.
+
+        The matrix is stored on the OrthoRaster and, if an OrthoCamera has already
+        been built by MVATManager, its inverse is updated immediately so that
+        subsequent mouse-move events use the new projection.
+        """
+        from PyQt5.QtWidgets import QDialog
+        from coralnet_toolbox.Common.QtTransformInput import TransformInputDialog
+
+        raster = self.raster_manager.get_raster(path)
+        if raster is None or getattr(raster, 'raster_type', '') != 'OrthoRaster':
+            return
+
+        dialog = TransformInputDialog(
+            self,
+            title="Ortho Projection Matrix",
+            prompt_text=(
+                "Enter the 4x4 orthomosaic projection matrix:\n"
+                "(Leave as identity for local coordinate systems without a separate projection)"
+            ),
+        )
+
+        existing = getattr(raster, 'ortho_projection_matrix', None)
+        if existing is not None:
+            dialog.set_matrix(existing)
+
+        if dialog.exec_() == QDialog.Accepted:
+            mat = dialog.get_matrix()
+            raster.ortho_projection_matrix = mat
+            # Propagate to live OrthoCamera if available
+            mvat_manager = getattr(self.main_window, 'mvat_manager', None)
+            if mvat_manager is not None and mvat_manager.ortho_camera is not None:
+                if mvat_manager.ortho_camera.image_path == path:
+                    mvat_manager.ortho_camera.update_ortho_projection_matrix(mat)
+            try:
+                self.raster_manager.rasterUpdated.emit(path)
+            except Exception:
+                pass
+
+    def _set_ortho_chunk_transform(self, path: str):
+        """Show a 4x4 matrix dialog for the OrthoRaster chunk transform."""
+        from PyQt5.QtWidgets import QDialog
+        from coralnet_toolbox.Common.QtTransformInput import TransformInputDialog
+
+        raster = self.raster_manager.get_raster(path)
+        if raster is None or getattr(raster, 'raster_type', '') != 'OrthoRaster':
+            return
+
+        dialog = TransformInputDialog(
+            self,
+            title="Metashape Chunk Transform",
+            prompt_text=(
+                "Enter the 4x4 chunk transform matrix:\n"
+                "(Leave as identity for local coordinate systems without a chunk transform)"
+            ),
+        )
+
+        existing = getattr(raster, 'chunk_transform_matrix', None)
+        if existing is not None:
+            dialog.set_matrix(existing)
+
+        if dialog.exec_() == QDialog.Accepted:
+            mat = dialog.get_matrix()
+            raster.chunk_transform_matrix = mat
+
+            mvat_manager = getattr(self.main_window, 'mvat_manager', None)
+            if mvat_manager is not None:
+                mvat_manager._chunk_transform = mat
+                if mvat_manager.ortho_camera is not None and mvat_manager.ortho_camera.image_path == path:
+                    mvat_manager.ortho_camera.update_chunk_transform(mat)
+
+            try:
+                self.raster_manager.rasterUpdated.emit(path)
+            except Exception:
+                pass
 
     def open_batch_inference_dialog(self, highlighted_image_paths):
         """
@@ -1739,10 +1901,12 @@ class ImageWindow(QWidget):
                     self.annotation_window.delete_image(path)
                     
                     # Remove from raster manager
-                    self.raster_manager.remove_raster(path)
+                    self.raster_manager.remove_raster(path, collect_garbage=False)
                     
                     # Update progress
                     progress_bar.update_progress()
+
+                gc.collect()
                     
                 # Update UI
                 if next_image:
@@ -1750,6 +1914,11 @@ class ImageWindow(QWidget):
                 elif not self.raster_manager.image_paths:
                     self.selected_image_path = None
                     self.annotation_window.clear_scene()
+
+                self.update_search_bars()
+                self.update_image_count_label(len(self.table_model.filtered_paths))
+                self.update_current_image_index_label()
+                self.update_highlighted_count_label()
                     
             finally:
                 # Restore signals
@@ -1759,10 +1928,6 @@ class ImageWindow(QWidget):
                 # Close progress bar
                 progress_bar.stop_progress()
                 progress_bar.close()
-                
-            # Update search bars and reapply filters once after all deletions
-            self.update_search_bars()
-            self.filter_images()
 
 
 class ImagePreviewTooltip(QFrame):
@@ -1776,13 +1941,17 @@ class ImagePreviewTooltip(QFrame):
         # Configure appearance
         self.setFrameShape(QFrame.StyledPanel)
         self.setFrameShadow(QFrame.Raised)
-        self.setStyleSheet("""
+        self.setStyleSheet(
+            app_theme.scale_qss(
+                """
             QFrame {
-                background-color: #f8f8f8;
-                border: 1px solid #aaaaaa;
-                border-radius: 4px;
+                background-color: %s;
+                border: 1px solid %s;
+                border-radius: 6px;
+                color: %s;
             }
-        """)
+        """ % (app_theme.SURFACE_COLOR.name(), app_theme.SURFACE_BORDER_COLOR.name(), app_theme.TEXT_PRIMARY_COLOR.name()))
+        )
         
         # Create layout
         self.layout = QVBoxLayout(self)

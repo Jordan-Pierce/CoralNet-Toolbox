@@ -2,7 +2,6 @@ import warnings
 
 import os
 import gc
-import shutil
 import yaml
 
 import numpy as np
@@ -17,10 +16,18 @@ from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel, QApplication, QChec
                              QWidget, QHBoxLayout, QRadioButton)
 
 from coralnet_toolbox.MachineLearning.ExportDataset.QtBase import Base
+from coralnet_toolbox.MachineLearning.ExportDataset.export_dataset_utils import (
+    build_sample_export_name,
+    frame_matches_stride,
+    materialize_sample_image,
+    normalize_source_path,
+    resolve_sample_source,
+    sample_dimensions,
+)
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -39,11 +46,13 @@ class Semantic(Base):
     mask annotations that contain pixel-level class information. The table shows 
     boolean presence or counts of class labels within mask annotations.
     """
+
+    supports_unlabeled_video_frames = True
     
     def __init__(self, main_window, parent=None):
         super(Semantic, self).__init__(main_window, parent)
         self.setWindowTitle("Export Semantic Segmentation Dataset")
-        self.setWindowIcon(get_icon("mask.svg"))
+        self.setWindowIcon(get_window_icon("mask.svg"))
         
         self._stats_cache = {} 
         self._project_labels = []
@@ -247,35 +256,35 @@ class Semantic(Base):
             list: List of filtered annotations (both mask and vector types).
         """
         annotations = []
+        selected_sources = set(self.get_selected_source_paths())
+        frame_stride = self._frame_stride()
         
         # Get and filter MASK annotations if selected
         if self.include_masks_checkbox.isChecked():
             mask_annotations = self.get_mask_annotations()  # Gets ALL masks
             # This call now uses the FAST, cached version
             for mask in mask_annotations:
-                if self.mask_contains_selected_labels(mask):
+                if normalize_source_path(mask.image_path) in selected_sources and self.mask_contains_selected_labels(mask):
                     annotations.append(mask)
 
-        # Get and filter VECTOR annotations based on selected types
-        # This re-implements the logic from the base class to work here
-        vector_annotations = []
-        all_vectors = list(self.annotation_window.annotations_dict.values())
-        
-        # Filter by annotation type
+        # Get and filter VECTOR annotations in a single pass
+        allowed_types = set()
         if self.include_patches_checkbox.isChecked():
-            vector_annotations.extend([a for a in all_vectors if a.__class__.__name__ == 'PatchAnnotation'])
+            allowed_types.add('PatchAnnotation')
         if self.include_rectangles_checkbox.isChecked():
-            vector_annotations.extend([a for a in all_vectors if a.__class__.__name__ == 'RectangleAnnotation'])
+            allowed_types.add('RectangleAnnotation')
         if self.include_polygons_checkbox.isChecked():
-            vector_annotations.extend([a for a in all_vectors if a.__class__.__name__ == 'PolygonAnnotation'])
-        
-        # Filter vector annotations by selected labels
-        filtered_vectors = [a for a in vector_annotations if a.label.short_label_code in self.selected_labels]
+            allowed_types.add('PolygonAnnotation')
 
-        # Filter by image source (all vs. filtered)
-        if self.filtered_images_radio.isChecked():
-            filtered_image_paths = set(self.image_window.table_model.filtered_paths)
-            filtered_vectors = [a for a in filtered_vectors if a.image_path in filtered_image_paths]
+        selected_set = set(self.selected_labels)
+
+        filtered_vectors = [
+            a for a in self.annotation_window.annotations_dict.values()
+            if a.__class__.__name__ in allowed_types
+            and a.label.short_label_code in selected_set
+            and normalize_source_path(a.image_path) in selected_sources
+            and frame_matches_stride(a.image_path, frame_stride)
+        ]
 
         annotations.extend(filtered_vectors)
             
@@ -302,17 +311,18 @@ class Semantic(Base):
         all_annotations = (list(self.annotation_window.annotations_dict.values()) + self.get_mask_annotations())
         unique_annotations = {anno.id: anno for anno in all_annotations}.values()
 
+        unique_annotations_list = list(unique_annotations)
         # Create a progress bar
         progress_bar = ProgressBar(self, "Populating Class Lists")
         progress_bar.show()
-        progress_bar.start_progress(len(unique_annotations))
-        
-        for annotation in unique_annotations:
+        progress_bar.start_progress(len(unique_annotations_list))
+
+        for annotation in unique_annotations_list:
             image_path = annotation.image_path
-            
+
             # --- Read from the cache ---
             class_stats = self._stats_cache.get(annotation.id, {})
-            
+
             # Handle MaskAnnotation: iterate through its internal labels
             if annotation.__class__.__name__ == 'MaskAnnotation':
                 for label_code, stats in class_stats.items():
@@ -323,10 +333,9 @@ class Semantic(Base):
                         else:
                             label_counts[label_code] = 1
                             label_image_counts[label_code] = {image_path}
-            
+
             # Handle Vector Annotations
             else:
-                # The stats dict for a vector just has one key
                 for label_code in class_stats.keys():
                     if label_code != 'Review':
                         if label_code in label_counts:
@@ -335,8 +344,7 @@ class Semantic(Base):
                         else:
                             label_counts[label_code] = 1
                             label_image_counts[label_code] = {image_path}
-                            
-            # Update progress
+
             progress_bar.update_progress()
 
         # If no annotations are found, populate with all available project labels
@@ -359,6 +367,7 @@ class Semantic(Base):
                                                            "Images"])
         self.label_counts_table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
 
+        self.label_counts_table.setUpdatesEnabled(False)
         row = 0
         for label, count in sorted_label_counts:
             include_checkbox = QCheckBox()
@@ -388,6 +397,7 @@ class Semantic(Base):
             self.label_counts_table.setItem(row, 5, test_item)
             self.label_counts_table.setItem(row, 6, images_item)
             row += 1
+        self.label_counts_table.setUpdatesEnabled(True)
             
         # Restore the cursor to the default cursor
         QApplication.restoreOverrideCursor()
@@ -428,19 +438,35 @@ class Semantic(Base):
         # Split the data by annotations
         self.determine_splits()
 
+        # Precompute label→annotation count in a single pass each — O(n) instead of O(labels × n)
+        def _label_counts_from(annotation_list):
+            counts = {}
+            for anno in annotation_list:
+                for lbl in self._stats_cache.get(anno.id, {}):
+                    counts[lbl] = counts.get(lbl, 0) + 1
+            return counts
+
+        selected_counts = _label_counts_from(self.selected_annotations)
+        train_counts = _label_counts_from(self.train_annotations)
+        val_counts = _label_counts_from(self.val_annotations)
+        test_counts = _label_counts_from(self.test_annotations)
+
+        red = QColor(255, 220, 220)
+        green = QColor(220, 255, 220)
+
         # Update the label counts table
+        self.label_counts_table.setUpdatesEnabled(False)
+        allow_unlabeled_video_export = self.allows_unlabeled_video_export() and self.include_negatives_radio.isChecked()
         for row in range(self.label_counts_table.rowCount()):
             container = self.label_counts_table.cellWidget(row, 0)
             include_checkbox = container.findChild(QCheckBox)
             label = self.label_counts_table.item(row, 1).text()
-            
-            # --- Read from the cache ---
-            total_count = sum(1 for anno in self.selected_annotations if label in self._stats_cache.get(anno.id, {}))
-            
+
+            total_count = selected_counts.get(label, 0)
             if include_checkbox.isChecked():
-                train_count = sum(1 for anno in self.train_annotations if label in self._stats_cache.get(anno.id, {}))
-                val_count = sum(1 for anno in self.val_annotations if label in self._stats_cache.get(anno.id, {}))
-                test_count = sum(1 for anno in self.test_annotations if label in self._stats_cache.get(anno.id, {}))
+                train_count = train_counts.get(label, 0)
+                val_count = val_counts.get(label, 0)
+                test_count = test_counts.get(label, 0)
             else:
                 train_count = 0
                 val_count = 0
@@ -451,18 +477,20 @@ class Semantic(Base):
             self.label_counts_table.item(row, 4).setText(str(val_count))
             self.label_counts_table.item(row, 5).setText(str(test_count))
 
-            # Set cell colors based on the counts and ratios
-            red = QColor(255, 220, 220)
-            green = QColor(220, 255, 220)
-
             if include_checkbox.isChecked():
-                self.set_cell_color(row, 3, red if train_count == 0 and self.train_ratio > 0 else green)
-                self.set_cell_color(row, 4, red if val_count == 0 and self.val_ratio > 0 else green)
-                self.set_cell_color(row, 5, red if test_count == 0 and self.test_ratio > 0 else green)
+                if allow_unlabeled_video_export:
+                    self.set_cell_color(row, 3, red if self.train_ratio > 0 and len(self.train_images) == 0 else green)
+                    self.set_cell_color(row, 4, red if self.val_ratio > 0 and len(self.val_images) == 0 else green)
+                    self.set_cell_color(row, 5, red if self.test_ratio > 0 and len(self.test_images) == 0 else green)
+                else:
+                    self.set_cell_color(row, 3, red if train_count == 0 and self.train_ratio > 0 else green)
+                    self.set_cell_color(row, 4, red if val_count == 0 and self.val_ratio > 0 else green)
+                    self.set_cell_color(row, 5, red if test_count == 0 and self.test_ratio > 0 else green)
             else:
                 self.set_cell_color(row, 3, green)
                 self.set_cell_color(row, 4, green)
                 self.set_cell_color(row, 5, green)
+        self.label_counts_table.setUpdatesEnabled(True)
 
         # This call will NOW BE FAST, as it uses the cache
         self.ready_status = self.check_label_distribution()
@@ -568,6 +596,15 @@ class Semantic(Base):
         if test_ratio > 0 and len(self.test_annotations) == 0:
             return False
     
+        if self.allows_unlabeled_video_export() and self.include_negatives_radio.isChecked():
+            if train_ratio > 0 and len(self.train_images) == 0:
+                return False
+            if val_ratio > 0 and len(self.val_images) == 0:
+                return False
+            if test_ratio > 0 and len(self.test_images) == 0:
+                return False
+            return True
+
         return True
 
     def create_dataset(self, output_dir_path):
@@ -653,7 +690,7 @@ class Semantic(Base):
         vector_annotations = [ann for ann in annotations if ann.__class__.__name__ in vector_annotation_types]
         
         # Create mappings by image path
-        image_to_mask = {ann.image_path: ann for ann in mask_annotations}
+        image_to_mask = {normalize_source_path(ann.image_path): ann for ann in mask_annotations}
         
         # Group vector annotations by image path
         image_to_vectors = {}
@@ -664,23 +701,22 @@ class Semantic(Base):
         
         for i, image_path in enumerate(image_paths):
             try:
-                # Copy original image
-                image_filename = os.path.basename(image_path)
-                image_name, image_ext = os.path.splitext(image_filename)
-                
-                # Copy image to images directory
+                source_path, frame_idx, raster = resolve_sample_source(image_path, self.image_window.raster_manager)
+
+                # Copy or materialize the image into the export directory.
+                image_filename = build_sample_export_name(image_path)
                 image_output_path = os.path.join(images_dir, image_filename)
-                if not os.path.exists(image_output_path):
-                    shutil.copy2(image_path, image_output_path)
+                if not materialize_sample_image(image_path, self.image_window.raster_manager, image_output_path):
+                    raise RuntimeError(f"Failed to export image sample: {image_path}")
                 
                 # Create semantic segmentation mask
-                mask_output_path = os.path.join(labels_dir, f"{image_name}.png")
+                mask_output_path = os.path.join(labels_dir, build_sample_export_name(image_path, ".png"))
                 
                 # Combine mask and vector annotations for this image
                 self.create_combined_semantic_mask(
                     image_path,
-                    image_to_mask.get(image_path),
-                    image_to_vectors.get(image_path, []),
+                    image_to_mask.get(normalize_source_path(image_path)),
+                    image_to_vectors.get(image_path, image_to_vectors.get(source_path, [])),
                     mask_output_path
                 )
                 
@@ -736,9 +772,7 @@ class Semantic(Base):
             output_path (str): Path to save the combined mask
         """
         try:
-            from coralnet_toolbox.utilities import rasterio_open
-            with rasterio_open(image_path) as src:
-                height, width = src.shape
+            height, width, _ = sample_dimensions(image_path, self.image_window.raster_manager)
             
             # Determine fill value and index offset
             treat_as_background = getattr(self, 'background_radio', None) and self.background_radio.isChecked()
@@ -783,9 +817,7 @@ class Semantic(Base):
             output_path (str): Path to save the empty mask
         """
         try:
-            from coralnet_toolbox.utilities import rasterio_open
-            with rasterio_open(image_path) as src:
-                height, width = src.shape
+            height, width, _ = sample_dimensions(image_path, self.image_window.raster_manager)
             
             # Check toggle for background vs ignore
             treat_as_background = getattr(self, 'background_radio', None) and self.background_radio.isChecked()
@@ -811,9 +843,7 @@ class Semantic(Base):
             np.ndarray: Semantic mask with rasterized annotations
         """
         try:
-            from coralnet_toolbox.utilities import rasterio_open
-            with rasterio_open(image_path) as src:
-                height, width = src.shape
+            height, width, _ = sample_dimensions(image_path, self.image_window.raster_manager)
             
             # Determine fill value and index offset
             treat_as_background = getattr(self, 'background_radio', None) and self.background_radio.isChecked()

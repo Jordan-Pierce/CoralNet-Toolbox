@@ -17,7 +17,7 @@ from coralnet_toolbox.Common.QtMarginInput import MarginInput
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -39,7 +39,7 @@ class Base(QDialog):
         super().__init__(parent)
         self.main_window = main_window
 
-        self.setWindowIcon(get_icon("tile.svg"))
+        self.setWindowIcon(get_window_icon("tile.svg"))
         self.setWindowTitle("Tile Dataset")
         self.resize(600, 550)
 

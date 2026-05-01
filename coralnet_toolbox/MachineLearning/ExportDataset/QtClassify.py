@@ -20,6 +20,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel, QMessageBox, QApplication)
 
 from coralnet_toolbox.MachineLearning.ExportDataset.QtBase import Base
+from coralnet_toolbox.MachineLearning.ExportDataset.export_dataset_utils import is_video_frame_path
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Icons import get_icon
 
@@ -71,22 +72,21 @@ class Classify(Base):
     def determine_splits(self):
         """
         Determine the splits for train, validation, and test annotations.
-        If all annotations come from a single image, split the annotations directly instead of by images.
+        Use the base image-path split logic unless this is a single static image.
         """
-        unique_images = set(a.image_path for a in self.selected_annotations)
-        if len(unique_images) == 1:
-            # Split annotations directly
+        unique_images = {a.image_path for a in self.selected_annotations}
+        contains_video_frames = any(is_video_frame_path(a.image_path) for a in self.selected_annotations)
+
+        if len(unique_images) == 1 and not contains_video_frames:
             random.shuffle(self.selected_annotations)
             train_split = int(len(self.selected_annotations) * self.train_ratio)
             val_split = int(len(self.selected_annotations) * (self.train_ratio + self.val_ratio))
             self.train_annotations = self.selected_annotations[:train_split]
             self.val_annotations = self.selected_annotations[train_split:val_split]
             self.test_annotations = self.selected_annotations[val_split:]
-        else:
-            # Original logic: split by images
-            self.train_annotations = [a for a in self.selected_annotations if a.image_path in self.train_images]
-            self.val_annotations = [a for a in self.selected_annotations if a.image_path in self.val_images]
-            self.test_annotations = [a for a in self.selected_annotations if a.image_path in self.test_images]
+            return
+
+        super().determine_splits()
 
     def accept(self):
         """
@@ -94,6 +94,19 @@ class Classify(Base):
         """
         if not self.is_ready():
             return
+
+        # Warn if the user disabled source grouping while exporting video frames.
+        split_by_source = getattr(self, 'split_by_source_checkbox', None)
+        if split_by_source is not None and not split_by_source.isChecked() and any(is_video_frame_path(a.image_path) for a in self.selected_annotations):
+            reply = QMessageBox.question(
+                self,
+                "Potential Data Contamination",
+                "Video frames are being split individually. This can leak near-duplicate frames across splits. "
+                "Do you want to proceed?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply == QMessageBox.No:
+                return
 
         # Check for single image and warn about potential data contamination
         unique_images = set(a.image_path for a in self.selected_annotations)
@@ -210,9 +223,11 @@ class Classify(Base):
     def process_annotations(self, annotations, split_dir, split):
         """Process annotations using parallel execution for cropping, then save them."""
         # Get unique image paths
-        image_paths = list(set(a.image_path for a in annotations))
+        image_paths = list(dict.fromkeys(a.image_path for a in annotations))
         if not image_paths:
             return
+
+        has_video_frames = any(is_video_frame_path(image_path) for image_path in image_paths)
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -222,42 +237,59 @@ class Classify(Base):
 
         # Group annotations by image path
         sorted_annotations = sorted(annotations, key=attrgetter('image_path'))
-        grouped_annotations = groupby(sorted_annotations, key=attrgetter('image_path'))
+        grouped_annotations = list(groupby(sorted_annotations, key=attrgetter('image_path')))
         
         cropped_annotations = []
         
         try:
-            # Use ThreadPoolExecutor for parallel processing with worker threads
-            with ThreadPoolExecutor(max_workers=os.cpu_count() // 2) as executor:
-                # Dictionary to track futures and their corresponding image paths
-                futures = {}
-                
-                # Process each group of annotations by image path
+            if has_video_frames:
                 for image_path, group in grouped_annotations:
-                    # Convert group iterator to list for reuse
                     image_annotations = list(group)
-                    
-                    # Submit cropping task asynchronously for each image
-                    future = executor.submit(self.annotation_window.crop_annotations, 
-                                             image_path, 
-                                             image_annotations, 
-                                             verbose=False)
-                    
-                    # Store image path for each future for error reporting
-                    futures[future] = image_path
-
-                # Process completed futures as they finish
-                for future in as_completed(futures):
                     try:
-                        # Get cropped patches from completed task
-                        cropped = future.result()
-                        # Add cropped patches to our collection
+                        cropped = self.annotation_window.crop_annotations(
+                            image_path,
+                            image_annotations,
+                            verbose=False,
+                        )
                         cropped_annotations.extend(cropped)
                     except Exception as e:
-                        print(f"{futures[future]} generated an exception: {e}")
+                        print(f"{image_path} generated an exception: {e}")
                     finally:
-                        # Update progress bar after each image is processed
                         progress_bar.update_progress()
+            else:
+                # Use ThreadPoolExecutor for parallel processing with worker threads
+                with ThreadPoolExecutor(max_workers=max(1, (os.cpu_count() or 1) // 2)) as executor:
+                    # Dictionary to track futures and their corresponding image paths
+                    futures = {}
+                    
+                    # Process each group of annotations by image path
+                    for image_path, group in grouped_annotations:
+                        # Convert group iterator to list for reuse
+                        image_annotations = list(group)
+                        
+                        # Submit cropping task asynchronously for each image
+                        future = executor.submit(
+                            self.annotation_window.crop_annotations,
+                            image_path,
+                            image_annotations,
+                            verbose=False,
+                        )
+                        
+                        # Store image path for each future for error reporting
+                        futures[future] = image_path
+
+                    # Process completed futures as they finish
+                    for future in as_completed(futures):
+                        try:
+                            # Get cropped patches from completed task
+                            cropped = future.result()
+                            # Add cropped patches to our collection
+                            cropped_annotations.extend(cropped)
+                        except Exception as e:
+                            print(f"{futures[future]} generated an exception: {e}")
+                        finally:
+                            # Update progress bar after each image is processed
+                            progress_bar.update_progress()
                         
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error processing annotations: {e}")

@@ -3,7 +3,7 @@ import warnings
 from PyQt5.QtCore import Qt, QObject, QEvent
 from PyQt5.QtWidgets import QApplication, QMessageBox, QLineEdit
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -161,7 +161,12 @@ class GlobalEventFilter(QObject):
                                 return True
 
                         # Proceed with deletion if there are selected annotations
-                        if self.annotation_window.selected_annotations:
+                        # Also check SelectionManager for cross-image selections
+                        _sel_mgr = getattr(self.main_window, 'selection_manager', None)
+                        _has_selection = bool(self.annotation_window.selected_annotations)
+                        if not _has_selection and _sel_mgr:
+                            _has_selection = bool(_sel_mgr.get_selected_ids())
+                        if _has_selection:
                             self.annotation_window.delete_selected_annotations()
                             return True
 
@@ -203,7 +208,7 @@ class GlobalEventFilter(QObject):
         msg_box.setIcon(QMessageBox.Question)
         
         # Set the custom icon
-        msg_box.setWindowIcon(get_icon("coralnet.svg"))
+        msg_box.setWindowIcon(get_window_icon("coralnet.svg"))
         msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         msg_box.setDefaultButton(QMessageBox.No)
         reply = msg_box.exec_()

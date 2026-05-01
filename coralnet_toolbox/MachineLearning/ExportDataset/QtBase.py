@@ -2,6 +2,7 @@ import warnings
 
 import os
 import random
+from collections import Counter
 import ujson as json
 
 from PyQt5.QtCore import Qt
@@ -10,6 +11,7 @@ from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QCheckBox,
                              QVBoxLayout, QLabel, QLineEdit, QDialog, QHBoxLayout,
                              QPushButton, QFormLayout, QDialogButtonBox, QDoubleSpinBox,
                              QGroupBox, QTableWidget, QTableWidgetItem, QButtonGroup, QRadioButton,
+                             QSpinBox,
                              QWidget)
 
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
@@ -18,7 +20,13 @@ from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
+from coralnet_toolbox.MachineLearning.ExportDataset.export_dataset_utils import (
+    build_export_sample_paths,
+    frame_matches_stride,
+    group_annotations_by_source,
+    normalize_source_path,
+)
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -30,6 +38,8 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 
 class Base(QDialog):
+    supports_unlabeled_video_frames = False
+
     def __init__(self, main_window, parent=None):
         """
         Initialize the ExportDatasetDialog class.
@@ -45,7 +55,7 @@ class Base(QDialog):
 
         self.resize(800, 800)
         self.setWindowTitle("Export Dataset")
-        self.setWindowIcon(get_icon("coralnet.svg"))
+        self.setWindowIcon(get_window_icon("coralnet.svg"))
 
         self.selected_labels = []
         self.selected_annotations = []
@@ -86,6 +96,7 @@ class Base(QDialog):
         """
         super().showEvent(event)
         self.update_annotation_type_checkboxes()
+        self.update_video_options()
         self.populate_class_filter_list()
         self.update_summary_statistics()
 
@@ -162,6 +173,9 @@ class Base(QDialog):
 
         self.layout.addLayout(options_layout)
 
+        self.video_options_group = self.create_video_options_layout()
+        self.layout.addWidget(self.video_options_group)
+
     def create_annotation_layout(self):
         """Creates the annotation type checkboxes layout group box."""
         group_box = QGroupBox("Annotation Types")
@@ -227,6 +241,105 @@ class Base(QDialog):
 
         group_box.setLayout(layout)
         return group_box
+
+    def create_video_options_layout(self):
+        """Create the optional video export controls."""
+        group_box = QGroupBox("Video Frames")
+        layout = QHBoxLayout()
+
+        layout.addStretch(1)
+
+        self.split_by_source_checkbox = QCheckBox("Split by source video")
+        self.split_by_source_checkbox.setChecked(True)
+        self.split_by_source_checkbox.setToolTip(
+            "Keep frames from the same source video together when splitting train, val, and test."
+        )
+        self.split_by_source_checkbox.stateChanged.connect(self.update_summary_statistics)
+        layout.addWidget(self.split_by_source_checkbox)
+
+        layout.addStretch(1)
+
+        stride_widget = QWidget()
+        stride_layout = QHBoxLayout(stride_widget)
+        stride_layout.setContentsMargins(0, 0, 0, 0)
+        stride_layout.setSpacing(6)
+
+        stride_label = QLabel("Frame stride:")
+        stride_label.setToolTip("Only export every Nth frame from a video source.")
+        stride_layout.addWidget(stride_label)
+
+        self.frame_stride_spinbox = QSpinBox()
+        self.frame_stride_spinbox.setRange(1, 999999)
+        self.frame_stride_spinbox.setValue(1)
+        self.frame_stride_spinbox.setToolTip("Only export every Nth frame from a video source.")
+        self.frame_stride_spinbox.valueChanged.connect(self.update_summary_statistics)
+        stride_layout.addWidget(self.frame_stride_spinbox)
+
+        layout.addWidget(stride_widget)
+
+        layout.addStretch(1)
+
+        self.export_unlabeled_video_frames_checkbox = QCheckBox("Export unlabeled video frames")
+        self.export_unlabeled_video_frames_checkbox.setChecked(False)
+        self.export_unlabeled_video_frames_checkbox.setToolTip(
+            "Also export video frames without annotations. Disabled for classification exports."
+        )
+        self.export_unlabeled_video_frames_checkbox.stateChanged.connect(self.update_summary_statistics)
+        layout.addWidget(self.export_unlabeled_video_frames_checkbox)
+
+        layout.addStretch(1)
+
+        group_box.setLayout(layout)
+        group_box.setVisible(self.has_video_rasters())
+        return group_box
+
+    def has_video_rasters(self):
+        """Return True when at least one loaded raster is a VideoRaster."""
+        for image_path in self.image_window.raster_manager.image_paths:
+            raster = self.image_window.raster_manager.get_raster(image_path)
+            if raster is not None and getattr(raster, 'raster_type', '') == 'VideoRaster':
+                return True
+        return False
+
+    def update_video_options(self):
+        """Refresh video option availability for the current project state."""
+        if not hasattr(self, 'video_options_group'):
+            return
+
+        has_video = self.has_video_rasters()
+        self.video_options_group.setVisible(has_video)
+        self.split_by_source_checkbox.setEnabled(has_video)
+        self.frame_stride_spinbox.setEnabled(has_video)
+        self.export_unlabeled_video_frames_checkbox.setEnabled(
+            has_video and self.supports_unlabeled_video_frames
+        )
+
+        if not self.supports_unlabeled_video_frames:
+            self.export_unlabeled_video_frames_checkbox.setChecked(False)
+
+    def get_selected_image_paths(self):
+        """Return the currently selected image paths from the project or the filtered table."""
+        if self.filtered_images_radio.isChecked():
+            return list(self.image_window.table_model.filtered_paths)
+        return list(self.image_window.raster_manager.image_paths)
+
+    def get_selected_source_paths(self):
+        """Return the selected paths normalized to their underlying source path."""
+        return list(dict.fromkeys(normalize_source_path(path) for path in self.get_selected_image_paths()))
+
+    def allows_unlabeled_video_export(self):
+        """Return True when unlabeled video-frame export is enabled for this dialog."""
+        return bool(
+            hasattr(self, 'export_unlabeled_video_frames_checkbox')
+            and self.export_unlabeled_video_frames_checkbox.isEnabled()
+            and self.export_unlabeled_video_frames_checkbox.isChecked()
+        )
+
+    def _frame_stride(self):
+        """Return the current video frame stride."""
+        if hasattr(self, 'frame_stride_spinbox'):
+            return max(1, int(self.frame_stride_spinbox.value()))
+        return 1
     
     def setup_unlabeled_handling_layout(self):
         """Setup the unlabeled handling options layout group box (for semantic segmentation)."""
@@ -313,7 +426,16 @@ class Base(QDialog):
         """
         item = self.label_counts_table.item(row, column)
         if item is not None:
-            item.setBackground(QBrush(color))
+            background = QColor(color)
+            item.setBackground(QBrush(background))
+            item.setForeground(QBrush(self._foreground_for_background(background)))
+
+    @staticmethod
+    def _foreground_for_background(background):
+        """Return a readable text color for the given background."""
+        red, green, blue, _ = QColor(background).getRgb()
+        luminance = (0.299 * red + 0.587 * green + 0.114 * blue) / 255.0
+        return QColor(0, 0, 0) if luminance > 0.5 else QColor(255, 255, 255)
 
     def browse_output_dir(self):
         """
@@ -396,25 +518,25 @@ class Base(QDialog):
         Returns:
             list: List of filtered annotations.
         """
-        annotations = list(self.annotation_window.annotations_dict.values())
-        filtered_annotations = []
-
+        allowed_types = set()
         if self.include_patches_checkbox.isChecked():
-            filtered_annotations += [a for a in annotations if isinstance(a, PatchAnnotation)]
+            allowed_types.add(PatchAnnotation)
         if self.include_rectangles_checkbox.isChecked():
-            filtered_annotations += [a for a in annotations if isinstance(a, RectangleAnnotation)]
+            allowed_types.add(RectangleAnnotation)
         if self.include_polygons_checkbox.isChecked():
-            filtered_annotations += [a for a in annotations if isinstance(a, PolygonAnnotation)]
+            allowed_types.add(PolygonAnnotation)
 
-        # Filter annotations based on the selected labels
-        annotations = [a for a in filtered_annotations if a.label.short_label_code in self.selected_labels]
+        selected_set = set(self.selected_labels)
+        selected_sources = set(self.get_selected_source_paths())
+        frame_stride = self.frame_stride_spinbox.value() if hasattr(self, 'frame_stride_spinbox') else 1
 
-        # Filter annotations based on the selected image option
-        if self.filtered_images_radio.isChecked():
-            # Use the table_model's filtered_paths instead of filtered_image_paths
-            annotations = [a for a in annotations if a.image_path in self.image_window.table_model.filtered_paths]
-
-        return annotations
+        return [
+            annotation for annotation in self.annotation_window.annotations_dict.values()
+            if type(annotation) in allowed_types
+            and annotation.label.short_label_code in selected_set
+            and normalize_source_path(annotation.image_path) in selected_sources
+            and frame_matches_stride(annotation.image_path, frame_stride)
+        ]
 
     def populate_class_filter_list(self):
         """
@@ -440,13 +562,11 @@ class Base(QDialog):
             if label != 'Review':
                 if label in label_counts:
                     label_counts[label] += 1
-                    if image_path not in label_image_counts[label]:
-                        label_image_counts[label].add(image_path)
+                    label_image_counts[label].add(image_path)
                 else:
                     label_counts[label] = 1
                     label_image_counts[label] = {image_path}
-            
-            # Update progress
+
             progress_bar.update_progress()
             
         # Sort the labels by their counts in descending order
@@ -463,6 +583,7 @@ class Base(QDialog):
                                                            "Images"])
 
         # Populate the label counts table with labels and their counts
+        self.label_counts_table.setUpdatesEnabled(False)
         row = 0
         for label, count in sorted_label_counts:
             include_checkbox = QCheckBox()
@@ -493,6 +614,7 @@ class Base(QDialog):
             self.label_counts_table.setItem(row, 6, images_item)
 
             row += 1
+        self.label_counts_table.setUpdatesEnabled(True)
             
         # Restore the cursor to the default cursor
         QApplication.restoreOverrideCursor()
@@ -508,42 +630,75 @@ class Base(QDialog):
         self.val_ratio = self.val_ratio_spinbox.value()
         self.test_ratio = self.test_ratio_spinbox.value()
 
-        # Get images, either filtered or all depending on radio button selection
-        if self.filtered_images_radio.isChecked():
-            images = self.image_window.table_model.filtered_paths
-        else:
-            images = self.image_window.raster_manager.image_paths
+        selected_source_paths = self.get_selected_source_paths()
+        annotations_by_source = group_annotations_by_source(self.selected_annotations)
+        frame_stride = self.frame_stride_spinbox.value() if hasattr(self, 'frame_stride_spinbox') else 1
+        split_by_source = not hasattr(self, 'split_by_source_checkbox') or self.split_by_source_checkbox.isChecked()
+        export_unlabeled_video_frames = self.allows_unlabeled_video_export() and self.include_negatives_radio.isChecked()
 
-        # If "Exclude Negatives" is checked, only use images that have selected annotations.
-        if self.exclude_negatives_radio.isChecked():
-            image_paths_with_annotations = {a.image_path for a in self.selected_annotations}
-            images = [img for img in images if img in image_paths_with_annotations]
+        source_entries = []
+        for source_path in selected_source_paths:
+            source_annotations = annotations_by_source.get(source_path, [])
 
-        random.shuffle(images)
+            if self.exclude_negatives_radio.isChecked() and not source_annotations:
+                continue
 
-        train_split = int(len(images) * self.train_ratio)
-        val_split = int(len(images) * (self.train_ratio + self.val_ratio))
+            sample_paths = build_export_sample_paths(
+                source_path,
+                source_annotations,
+                self.image_window.raster_manager,
+                frame_stride=frame_stride,
+                export_unlabeled_video_frames=export_unlabeled_video_frames,
+            )
+            if not sample_paths:
+                continue
 
-        # Initialize splits
+            source_entries.append((source_path, sample_paths, source_annotations))
+
         self.train_images = []
         self.val_images = []
         self.test_images = []
 
-        # Assign images to splits based on ratios
+        if not source_entries:
+            return
+
+        if split_by_source:
+            random.shuffle(source_entries)
+            train_split = int(len(source_entries) * self.train_ratio)
+            val_split = int(len(source_entries) * (self.train_ratio + self.val_ratio))
+
+            train_entries = source_entries[:train_split] if self.train_ratio > 0 else []
+            val_entries = source_entries[train_split:val_split] if self.val_ratio > 0 else []
+            test_entries = source_entries[val_split:] if self.test_ratio > 0 else []
+
+            self.train_images = [sample_path for _, sample_paths, _ in train_entries for sample_path in sample_paths]
+            self.val_images = [sample_path for _, sample_paths, _ in val_entries for sample_path in sample_paths]
+            self.test_images = [sample_path for _, sample_paths, _ in test_entries for sample_path in sample_paths]
+            return
+
+        sample_paths = [sample_path for _, sample_paths, _ in source_entries for sample_path in sample_paths]
+        random.shuffle(sample_paths)
+
+        train_split = int(len(sample_paths) * self.train_ratio)
+        val_split = int(len(sample_paths) * (self.train_ratio + self.val_ratio))
+
         if self.train_ratio > 0:
-            self.train_images = images[:train_split]
+            self.train_images = sample_paths[:train_split]
         if self.val_ratio > 0:
-            self.val_images = images[train_split:val_split]
+            self.val_images = sample_paths[train_split:val_split]
         if self.test_ratio > 0:
-            self.test_images = images[val_split:]
+            self.test_images = sample_paths[val_split:]
 
     def determine_splits(self):
         """
         Determine the splits for train, validation, and test annotations.
         """
-        self.train_annotations = [a for a in self.selected_annotations if a.image_path in self.train_images]
-        self.val_annotations = [a for a in self.selected_annotations if a.image_path in self.val_images]
-        self.test_annotations = [a for a in self.selected_annotations if a.image_path in self.test_images]
+        train_set = set(self.train_images)
+        val_set = set(self.val_images)
+        test_set = set(self.test_images)
+        self.train_annotations = [a for a in self.selected_annotations if a.image_path in train_set]
+        self.val_annotations = [a for a in self.selected_annotations if a.image_path in val_set]
+        self.test_annotations = [a for a in self.selected_annotations if a.image_path in test_set]
 
     def check_label_distribution(self):
         """
@@ -586,32 +741,27 @@ class Base(QDialog):
 
         if not allowed:
             return False
+
+        if self.allows_unlabeled_video_export() and self.include_negatives_radio.isChecked():
+            if train_ratio > 0 and len(self.train_images) == 0:
+                return False
+            if val_ratio > 0 and len(self.val_images) == 0:
+                return False
+            if test_ratio > 0 and len(self.test_images) == 0:
+                return False
+            return True
     
-        # Initialize dictionaries to store label counts for each split
-        train_label_counts = {}
-        val_label_counts = {}
-        test_label_counts = {}
-    
-        # Count annotations for each label in each split
-        for annotation in self.train_annotations:
-            label = annotation.label.short_label_code
-            train_label_counts[label] = train_label_counts.get(label, 0) + 1
-    
-        for annotation in self.val_annotations:
-            label = annotation.label.short_label_code
-            val_label_counts[label] = val_label_counts.get(label, 0) + 1
-    
-        for annotation in self.test_annotations:
-            label = annotation.label.short_label_code
-            test_label_counts[label] = test_label_counts.get(label, 0) + 1
-    
+        train_label_counts = Counter(a.label.short_label_code for a in self.train_annotations)
+        val_label_counts = Counter(a.label.short_label_code for a in self.val_annotations)
+        test_label_counts = Counter(a.label.short_label_code for a in self.test_annotations)
+
         # Check the conditions for each split
         for label in self.selected_labels:
-            if train_ratio > 0 and (label not in train_label_counts or train_label_counts[label] == 0):
+            if train_ratio > 0 and train_label_counts[label] == 0:
                 return False
-            if val_ratio > 0 and (label not in val_label_counts or val_label_counts[label] == 0):
+            if val_ratio > 0 and val_label_counts[label] == 0:
                 return False
-            if test_ratio > 0 and (label not in test_label_counts or test_label_counts[label] == 0):
+            if test_ratio > 0 and test_label_counts[label] == 0:
                 return False
     
         # Additional checks to ensure no empty splits
@@ -661,16 +811,27 @@ class Base(QDialog):
         # Split the data by annotations
         self.determine_splits()
 
+        # Precompute counts in a single pass each — O(n) instead of O(labels × n)
+        selected_counts = Counter(a.label.short_label_code for a in self.selected_annotations)
+        train_counts = Counter(a.label.short_label_code for a in self.train_annotations)
+        val_counts = Counter(a.label.short_label_code for a in self.val_annotations)
+        test_counts = Counter(a.label.short_label_code for a in self.test_annotations)
+        unlabeled_video_export = self.allows_unlabeled_video_export() and self.include_negatives_radio.isChecked()
+
+        red = QColor(255, 220, 220)
+        green = QColor(220, 255, 220)
+
         # Update the label counts table
+        self.label_counts_table.setUpdatesEnabled(False)
         for row in range(self.label_counts_table.rowCount()):
             container = self.label_counts_table.cellWidget(row, 0)
             include_checkbox = container.findChild(QCheckBox)
             label = self.label_counts_table.item(row, 1).text()
-            anno_count = sum(1 for a in self.selected_annotations if a.label.short_label_code == label)
+            anno_count = selected_counts.get(label, 0)
             if include_checkbox.isChecked():
-                train_count = sum(1 for a in self.train_annotations if a.label.short_label_code == label)
-                val_count = sum(1 for a in self.val_annotations if a.label.short_label_code == label)
-                test_count = sum(1 for a in self.test_annotations if a.label.short_label_code == label)
+                train_count = train_counts.get(label, 0)
+                val_count = val_counts.get(label, 0)
+                test_count = test_counts.get(label, 0)
             else:
                 train_count = 0
                 val_count = 0
@@ -681,18 +842,20 @@ class Base(QDialog):
             self.label_counts_table.item(row, 4).setText(str(val_count))
             self.label_counts_table.item(row, 5).setText(str(test_count))
 
-            # Set cell colors based on the counts and ratios
-            red = QColor(255, 220, 220)
-            green = QColor(220, 255, 220)
-
             if include_checkbox.isChecked():
-                self.set_cell_color(row, 3, red if train_count == 0 and self.train_ratio > 0 else green)
-                self.set_cell_color(row, 4, red if val_count == 0 and self.val_ratio > 0 else green)
-                self.set_cell_color(row, 5, red if test_count == 0 and self.test_ratio > 0 else green)
+                if unlabeled_video_export:
+                    self.set_cell_color(row, 3, red if (self.train_ratio > 0 and len(self.train_images) == 0) else green)
+                    self.set_cell_color(row, 4, red if (self.val_ratio > 0 and len(self.val_images) == 0) else green)
+                    self.set_cell_color(row, 5, red if (self.test_ratio > 0 and len(self.test_images) == 0) else green)
+                else:
+                    self.set_cell_color(row, 3, red if train_count == 0 and self.train_ratio > 0 else green)
+                    self.set_cell_color(row, 4, red if val_count == 0 and self.val_ratio > 0 else green)
+                    self.set_cell_color(row, 5, red if test_count == 0 and self.test_ratio > 0 else green)
             else:
                 self.set_cell_color(row, 3, green)
                 self.set_cell_color(row, 4, green)
                 self.set_cell_color(row, 5, green)
+        self.label_counts_table.setUpdatesEnabled(True)
 
         self.ready_status = self.check_label_distribution()
         self.split_status = abs(self.train_ratio + self.val_ratio + self.test_ratio - 1.0) < 1e-9

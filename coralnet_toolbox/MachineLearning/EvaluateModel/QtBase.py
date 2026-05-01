@@ -18,7 +18,7 @@ from PyQt5.QtWidgets import (QFileDialog, QMessageBox, QVBoxLayout,
 from coralnet_toolbox.MachineLearning.Callbacks import EvaluationSignalEmitter
 from coralnet_toolbox.MachineLearning.ConfusionMatrix import ConfusionMatrixMetrics
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -109,7 +109,7 @@ class Base(QDialog):
         super().__init__(parent)
         self.main_window = main_window
         
-        self.setWindowIcon(get_icon("coralnet.svg"))
+        self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowTitle("Evaluate Model")
         self.resize(400, 600)  # Increased height for additional parameters
         

@@ -1,4 +1,56 @@
-from PyQt5 import QtCore, QtWidgets
+from PyQt5 import QtCore, QtGui, QtWidgets
+
+
+class _PersistentMenu(QtWidgets.QMenu):
+    def mouseReleaseEvent(self, event):
+        action = self.actionAt(event.pos())
+        owner = self.parentWidget()
+
+        if action is not None and action.isEnabled() and owner is not None and hasattr(owner, "_handle_menu_action"):
+            owner._handle_menu_action(action)
+            self.setActiveAction(action)
+
+        event.accept()
+
+    def keyPressEvent(self, event):
+        if event.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter, QtCore.Qt.Key_Space):
+            owner = self.parentWidget()
+            action = self.activeAction()
+            if action is not None and owner is not None and hasattr(owner, "_handle_menu_action"):
+                owner._handle_menu_action(action)
+                event.accept()
+                return
+
+        super().keyPressEvent(event)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+
+        owner = self.parentWidget()
+        if owner is None or not hasattr(owner, "_current_highlight_action"):
+            return
+
+        action = owner._current_highlight_action()
+        if action is None:
+            return
+
+        rect = self.actionGeometry(action)
+        if not rect.isValid() or rect.isEmpty():
+            return
+
+        border_color = self.palette().color(QtGui.QPalette.Highlight)
+        border_color.setAlpha(110)
+
+        painter = QtGui.QPainter(self)
+        try:
+            painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+            pen = QtGui.QPen(border_color)
+            pen.setWidth(1)
+            painter.setPen(pen)
+            painter.setBrush(QtCore.Qt.NoBrush)
+            painter.drawRoundedRect(rect.adjusted(2, 1, -2, -1), 4, 4)
+        finally:
+            painter.end()
 
 
 class MultiSelectCombo(QtWidgets.QWidget):
@@ -8,11 +60,12 @@ class MultiSelectCombo(QtWidgets.QWidget):
         super().__init__(parent)
         self._options = []
         self._actions = []
+        self._highlighted_value = None
 
         self.button = QtWidgets.QToolButton(self)
         self.button.setText('All')
         self.button.setPopupMode(QtWidgets.QToolButton.InstantPopup)
-        self.menu = QtWidgets.QMenu(self)
+        self.menu = _PersistentMenu(self)
         self.button.setMenu(self.menu)
 
         layout = QtWidgets.QVBoxLayout(self)
@@ -32,7 +85,6 @@ class MultiSelectCombo(QtWidgets.QWidget):
         all_action = QtWidgets.QAction('All', self.menu)
         all_action.setCheckable(True)
         all_action.setChecked(True)
-        all_action.triggered.connect(self._on_all_toggled)
         self.menu.addAction(all_action)
         self._actions.append((all_action, None))
 
@@ -40,11 +92,65 @@ class MultiSelectCombo(QtWidgets.QWidget):
             act = QtWidgets.QAction(text, self.menu)
             act.setCheckable(True)
             act.setData(value)
-            act.toggled.connect(self._on_option_toggled)
             self.menu.addAction(act)
             self._actions.append((act, value))
 
+        self._refresh_action_styles()
         self._update_button_text()
+
+    def set_highlighted_value(self, value):
+        """Mark one option as the current context without changing selection."""
+        self._highlighted_value = value
+        self._refresh_action_styles()
+        self.menu.update()
+
+    def _refresh_action_styles(self):
+        if not self._actions:
+            return
+
+        for action, value in self._actions[1:]:
+            is_current = value == self._highlighted_value
+            action.setToolTip("Current image in AnnotationWindow" if is_current else "")
+
+    def _current_highlight_action(self):
+        if not self._actions:
+            return None
+
+        for action, value in self._actions[1:]:
+            if value == self._highlighted_value:
+                return action
+
+        return None
+
+    def _handle_menu_action(self, action):
+        if not self._actions:
+            return
+
+        all_action = self._actions[0][0]
+
+        if action is all_action:
+            self._select_all()
+            return
+
+        action.setChecked(not action.isChecked())
+
+        any_checked = any(act.isChecked() for act, val in self._actions[1:])
+        all_action.setChecked(not any_checked)
+
+        self._update_button_text()
+        self.selection_changed.emit(self.selected_values())
+
+    def _select_all(self):
+        if not self._actions:
+            return
+
+        all_action = self._actions[0][0]
+        all_action.setChecked(True)
+        for act, val in self._actions[1:]:
+            act.setChecked(False)
+
+        self._update_button_text()
+        self.selection_changed.emit(self.selected_values())
 
     # Compatibility helpers to mimic QComboBox API for legacy callers
     def currentData(self):
@@ -71,26 +177,7 @@ class MultiSelectCombo(QtWidgets.QWidget):
         # reset to All
         if not self._actions:
             return
-        # check the All action and uncheck others
-        self._actions[0][0].setChecked(True)
-        for act, val in self._actions[1:]:
-            act.setChecked(False)
-        self._update_button_text()
-
-    def _on_all_toggled(self, checked):
-        if checked:
-            # uncheck all others
-            for act, val in self._actions[1:]:
-                act.setChecked(False)
-        self._update_button_text()
-        self.selection_changed.emit(self.selected_values())
-
-    def _on_option_toggled(self, checked):
-        # if any option checked, uncheck All
-        any_checked = any(act.isChecked() for act, val in self._actions[1:])
-        self._actions[0][0].setChecked(not any_checked)
-        self._update_button_text()
-        self.selection_changed.emit(self.selected_values())
+        self._select_all()
 
     def _update_button_text(self):
         vals = self.selected_values()

@@ -10,6 +10,7 @@ import os
 import time
 import numpy as np
 import traceback
+from typing import Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from PyQt5.QtCore import QObject, QTimer, pyqtSignal, Qt, QThread, QPointF
@@ -65,15 +66,46 @@ class MousePositionBridge(QObject):
         self.manager = manager
         self.enabled = True
         self._last_update_time = 0
-        
+        self._last_mouse_x = -1
+        self._last_mouse_y = -1
+
     def on_mouse_moved(self, x: int, y: int):
         if not self.enabled:
             return
+        # Skip duplicate pixels (Qt can fire multiple events for the same position)
+        if x == self._last_mouse_x and y == self._last_mouse_y:
+            return
+        # Time-gate: cap at ~60 fps to avoid flooding the ortho ray-trace / perspective
+        # projection loop on every raw mouse event.
+        now = time.monotonic()
+        if now - self._last_update_time < 0.016:
+            return
+        self._last_update_time = now
+        self._last_mouse_x = x
+        self._last_mouse_y = y
         self._process_pending_position(x, y)
             
     def _process_pending_position(self, x: int, y: int):
+        # --- Ortho path: route to ortho handler when OrthoRaster is displayed ---
+        ortho_camera = self.manager.ortho_camera
+        if ortho_camera is not None:
+            current_path = getattr(self.manager.annotation_window, 'current_image_path', None)
+            if current_path == ortho_camera.image_path:
+                self.manager.viewer.clear_ray()
+                self._process_ortho_position(x, y, ortho_camera)
+                return
+
+        self.manager.viewer.clear_ortho_ray()
+
         camera = self.manager.selected_camera
         if camera is None or not (0 <= x < camera.width and 0 <= y < camera.height):
+            self.clear_all_markers()
+            self.manager.viewer.clear_ray()
+            return
+
+        visible_cameras = self.manager._get_visible_context_cameras()
+        visible_paths = {cam.image_path for cam in visible_cameras}
+        if camera.image_path not in visible_paths:
             self.clear_all_markers()
             self.manager.viewer.clear_ray()
             return
@@ -132,15 +164,13 @@ class MousePositionBridge(QObject):
                 default_depth=default_depth,
             )
 
-        highlighted_cameras = self.manager.highlighted_cameras
-        rays_with_colors = [(ray, RAY_COLOR_SELECTED if ray.has_accurate_depth else RAY_COLOR_INVALID)]
+        primary_ray_valid = ray.has_accurate_depth or ray.element_id > -1
+        rays_with_colors = [(ray, RAY_COLOR_SELECTED if primary_ray_valid else RAY_COLOR_INVALID)]
         
         # --- Short-Circuit Invalid Primary Rays ---
-        # If the primary ray did not hit real scene geometry, skip secondary rays entirely
-        # (no secondary rays should project into an arbitrary guessed point in empty space).
-        primary_ray_valid = ray.has_accurate_depth or ray.element_id > -1
+        # If the primary ray did not hit real scene geometry, skip secondary rays entirely.
         if not primary_ray_valid:
-            # Primary ray is invalid: send only the invalid primary ray (RED), clear markers, and return
+            # Primary ray is invalid: keep only the selected-camera ray, clear markers, and return.
             self.manager.viewer.show_rays(rays_with_colors)
             self.clear_all_markers()
             return
@@ -148,6 +178,7 @@ class MousePositionBridge(QObject):
         # --- Primary ray is valid: proceed with secondary rays ---
         visibility_status = {}
         accuracies = {camera.image_path: ray.has_accurate_depth}
+        highlighted_cameras = visible_cameras
 
         for target_cam in highlighted_cameras:
             if target_cam.image_path == camera.image_path:
@@ -210,7 +241,6 @@ class MousePositionBridge(QObject):
                 # -----------------------------------------------------------------------
 
                 if is_visible:
-                    ray_color = RAY_COLOR_HIGHLIGHTED
                     target_terminal = ray.terminal_point
                     is_occluded = False
                     accuracies[target_cam.image_path] = True
@@ -227,28 +257,32 @@ class MousePositionBridge(QObject):
                 # Legacy fallback: depth-based occlusion test
                 is_occluded = target_cam.is_point_occluded_depth_based(
                     ray.terminal_point, depth_threshold=0.15)
-                ray_color = RAY_COLOR_HIGHLIGHTED if not is_occluded else RAY_COLOR_INVALID
                 accuracies[target_cam.image_path] = target_cam._raster.z_channel is not None
 
             visibility_status[target_cam.image_path] = is_occluded
+            ray_color = RAY_COLOR_HIGHLIGHTED if (accuracies.get(target_cam.image_path, False) and not is_occluded) else RAY_COLOR_INVALID
 
             # Build secondary ray directly
             t_origin = target_cam.position.copy()
             t_direction = target_terminal - t_origin
             t_norm = np.linalg.norm(t_direction)
             t_direction = t_direction / t_norm if t_norm > 0 else target_cam.R.T @ np.array([0, 0, 1])
+            is_ray_accurate = accuracies.get(target_cam.image_path, False) and not is_occluded
             target_ray = CameraRay(
                 origin=t_origin,
                 direction=t_direction,
                 terminal_point=target_terminal,
-                has_accurate_depth=(ray_color == RAY_COLOR_HIGHLIGHTED),
+                has_accurate_depth=is_ray_accurate,
                 source_camera=target_cam,
                 element_id=found_id,
             )
             rays_with_colors.append((target_ray, ray_color))
 
         self.manager.viewer.show_rays(rays_with_colors)
-        projections = ray.project_to_cameras(self.manager.cameras)
+        # Project only into visible cameras — avoids O(all_cameras) work per frame
+        visible_cam_dict = {cam.image_path: cam for cam in highlighted_cameras}
+        visible_cam_dict[camera.image_path] = camera  # include the primary camera
+        projections = ray.project_to_cameras(visible_cam_dict)
 
         # Update context matrix canvases (Phase 4)
         if self.manager.context_matrix is not None:
@@ -259,13 +293,74 @@ class MousePositionBridge(QObject):
             except Exception:
                 self.manager.context_matrix.clear_all_dynamic_markers()
                 
+    def _process_ortho_position(self, x: int, y: int, ortho_camera):
+        """
+        Handle mouse-move events when the AnnotationWindow is showing an OrthoRaster.
+
+        Resolves the 3D world point via z-channel lookup (O(1)) instead of mesh
+        ray tracing.  The z-channel is stored at full ortho resolution so pixel
+        coords map directly; the raw CRS elevation is fed into geo_to_world.
+        """
+
+        if not (0 <= x < ortho_camera.width and 0 <= y < ortho_camera.height):
+            self.manager.viewer.clear_ortho_ray()
+            self.clear_all_markers()
+            return
+
+        # Geo XY from affine transform
+        X, Y = ortho_camera.pixel_to_geo(x, y)
+
+        # CRS elevation from z-channel (stored at full ortho resolution, raw units)
+        Z = ortho_camera._raster.get_z_value(x, y)
+        if Z is None:
+            self.manager.viewer.clear_ortho_ray()
+            self.clear_all_markers()
+            return
+
+        world_pt = ortho_camera.geo_to_world(X, Y, Z)
+
+        try:
+            self.manager.viewer.show_ortho_ray(
+                world_pt,
+                ortho_camera.get_vertical_direction_world(),
+            )
+        except Exception:
+            pass
+
+        # Project to all visible context cameras and build marker dicts
+        projections = {}
+        accuracies = {}
+        visibility_status = {}
+
+        for cam in self.manager._get_visible_context_cameras():
+            try:
+                proj = cam.project(world_pt)
+                if np.isnan(proj).any():
+                    continue
+                u = float(proj[0])
+                v = float(proj[1])
+                in_bounds = 0 <= u < cam.width and 0 <= v < cam.height
+                projections[cam.image_path] = (u, v, in_bounds)
+                accuracies[cam.image_path] = True
+                visibility_status[cam.image_path] = False
+            except Exception:
+                pass
+
+        if self.manager.context_matrix is not None:
+            try:
+                self.manager.context_matrix.update_dynamic_markers(
+                    projections, accuracies, visibility_status
+                )
+            except Exception:
+                self.manager.context_matrix.clear_all_dynamic_markers()
+
     def clear_all_markers(self):
         if self.manager.context_matrix is not None:
             try:
                 self.manager.context_matrix.clear_all_dynamic_markers()
             except Exception:
                 pass
-            
+
     def cleanup(self):
         self.clear_all_markers()
 
@@ -275,6 +370,8 @@ class MVATManager(QObject):
     Core Controller for the MVAT Workspace.
     """
     cameraSelectedInMVAT = pyqtSignal(str)
+    contextStatsComputed = pyqtSignal(int, str, int, int)
+    _orthoIndexMapReady  = pyqtSignal(object)  # internal: carries result dict from worker thread
     
     def __init__(self, main_window, viewer):
         super().__init__()
@@ -293,6 +390,7 @@ class MVATManager(QObject):
         self.highlighted_cameras = []
         self.hovered_camera = None
         self.current_focal_point = None
+        self._context_view_path = None
         
         # Data Settings
         self.compute_depth_maps_enabled = True
@@ -304,10 +402,18 @@ class MVATManager(QObject):
         self._is_computing_visibility = False
         # Track active worker threads to prevent GC
         self._active_workers = []
+        self._context_stats_request_id = 0
+        self._latest_context_stats_request_id = 0
 
         # Multi-camera annotation state
         self.multi_annotate_enabled = False
         self._propagating_annotation = False
+
+        # Ortho state: chunk transform T and OrthoCamera (set during load_cameras
+        # when an OrthoRaster is present in the project)
+        self._chunk_transform = None  # 4x4 Metashape chunk transform matrix
+        self.ortho_camera = None      # OrthoCamera instance
+        self._computing_ortho_index_map = False  # guard against concurrent builds
 
         # Internal Managers
         self.selection_model = SelectionManager(self)
@@ -329,6 +435,8 @@ class MVATManager(QObject):
 
         # Overlay actor handle (tiny actor swapped during painting)
         self._label_overlay_actor = None
+
+        self.contextStatsComputed.connect(self._on_context_stats_computed)
 
         self._setup_connections()
 
@@ -352,7 +460,8 @@ class MVATManager(QObject):
         self.viewer.focalPointChanged.connect(self._on_focal_point_changed)
         self.viewer.computeIndexMapsToggled.connect(self._on_compute_index_maps_toggled)
         self.viewer.computeDepthMapsToggled.connect(self._on_compute_depth_maps_toggled)
-        self.viewer.visibilityQualityChanged.connect(self._on_visibility_quality_changed)
+        self.viewer.primaryTargetChanged.connect(self._on_primary_target_changed)
+        self._orthoIndexMapReady.connect(self._on_ortho_index_map_computed)
         
         # 5. Main Window Sync
         if hasattr(self.annotation_window, 'mouseMoved'):
@@ -361,16 +470,15 @@ class MVATManager(QObject):
             self.image_window.imageLoaded.connect(self._on_main_image_loaded)
         # 6. Context Matrix Signals
         if self.context_matrix is not None:
-            # Promote (double-click) -> load image as active camera
-            self.context_matrix.contextImagePromoted.connect(self._on_camera_selected)
             # Toolbar buttons
             self.context_matrix.loadCamerasRequested.connect(self.load_cameras)
             self.context_matrix.clearSelectionsRequested.connect(self.selection_model.clear_selections)
-            # Selection intent signals -> SelectionModel (source of truth)
-            self.context_matrix.selection_requested.connect(self.selection_model.set_selections)
-            self.context_matrix.toggle_requested.connect(self.selection_model.toggle)
-            self.context_matrix.active_requested.connect(self.selection_model.set_active)
+            self.context_matrix.previousCameraRequested.connect(self._on_previous_camera_requested)
+            self.context_matrix.nextCameraRequested.connect(self._on_next_camera_requested)
+            self.context_matrix.visibleCamerasChanged.connect(self._on_context_visible_cameras_changed)
+            # Canvas click intents
             self.context_matrix.camera_highlighted_single.connect(self._on_camera_highlighted_single)
+            self.context_matrix.new_active_camera_requested.connect(self._on_camera_selected)
             # Phase 5 / multi-annotate
             self.context_matrix.set_mvat_manager(self)
             self.context_matrix.multiAnnotateToggled.connect(self._on_multi_annotate_toggled)
@@ -384,75 +492,129 @@ class MVATManager(QObject):
         Extract camera parameters from the RasterManager, construct Camera
         objects, and push them into the Grid and Viewer.
 
-        Shows a progress dialog during load and reports if no valid camera
-        parameters are found. After loading it synchronizes the active camera
-        with the AnnotationWindow's currently displayed image (when possible)
-        and triggers an initial frustum render and viewer fit.
+        Idempotent: cameras that are already loaded are skipped so that calling
+        this method a second time (with no project changes) is effectively a
+        no-op.  New cameras added to the project mid-session are detected and
+        added incrementally without disturbing existing state (selected camera,
+        hovered camera, frustum highlights, etc.).
+
+        On the very first call (cameras dict was empty) the viewer is also
+        fit-to-view and the active camera is synchronised with the annotation
+        window.  On subsequent calls with new cameras, the frustums are
+        refreshed but the view is not reset.
         """
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        QApplication.processEvents()
         all_paths = self.raster_manager.image_paths
         if not all_paths:
+            QApplication.restoreOverrideCursor()
             return
-            
-        # Indicate busy state via cursor and status bar (no modal progress)
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        
+
+        # ------------------------------------------------------------------
+        # Partition paths: already-loaded perspective cameras, new perspective
+        # cameras, and OrthoRasters (handled separately).
+        # ------------------------------------------------------------------
+        first_load = len(self.cameras) == 0
+        new_perspective_rasters: list = []   # [(path, raster), ...]
+        ortho_rasters: list = []
+
+        for path in all_paths:
+            raster = self.raster_manager.get_raster(path)
+            if not raster:
+                continue
+
+            if getattr(raster, 'raster_type', '') == 'OrthoRaster':
+                ortho_rasters.append(raster)
+                continue
+
+            # Skip cameras that have already been successfully loaded.
+            if path in self.cameras:
+                continue
+
+            if raster.intrinsics is not None and raster.extrinsics is not None:
+                new_perspective_rasters.append((path, raster))
+
+        need_ortho = bool(ortho_rasters) and self.ortho_camera is None
+
+        # Nothing genuinely new to do — report and exit cleanly.
+        if not new_perspective_rasters and not need_ortho:
+            self.main_window.status_bar.showMessage("All cameras already loaded.", 3000)
+            QApplication.restoreOverrideCursor()
+            return
+
+        # ------------------------------------------------------------------
+        # Build Camera objects only for new perspective cameras.
+        # ------------------------------------------------------------------
+        valid_count = 0
         try:
             self.main_window.status_bar.showMessage("Loading cameras...", 0)
-
-            valid_count = 0
-            
-            for path in all_paths:
-                raster = self.raster_manager.get_raster(path)
-                if not raster:
-                    continue
-                
-                # CREATE PERSPECTIVE CAMERA
-                if raster.intrinsics is not None and raster.extrinsics is not None:
-                    try:
-                        self.cameras[path] = Camera(raster)
-                        valid_count += 1
-                    except Exception as e:
-                        # Log full exception and traceback to aid diagnosis
-                        print(f"❌ Failed to load perspective camera {raster.basename}: {e}")
-                        print(traceback.format_exc())
-                        pass
+            for path, raster in new_perspective_rasters:
+                try:
+                    self.cameras[path] = Camera(raster)
+                    valid_count += 1
+                except Exception as e:
+                    print(f"❌ Failed to load perspective camera {raster.basename}: {e}")
+                    print(traceback.format_exc())
         finally:
-            try:
-                QApplication.restoreOverrideCursor()
-            except Exception:
-                pass
-            
             self.main_window.status_bar.showMessage(
-                f"Loaded {valid_count} cameras",
-                3000
+                f"Loaded {valid_count} new camera(s)", 3000
             )
-            
-        if valid_count == 0:
+
+        if valid_count == 0 and not need_ortho:
             QMessageBox.information(self.main_window, "No Camera Data", "No valid camera parameters found.")
+            QApplication.restoreOverrideCursor()
             return
-        
+
         # =====================================================================
-        # Pre-computation Cache Check and Dialog
+        # OrthoRaster: build OrthoCamera only when one hasn't been created yet.
+        # =====================================================================
+        if need_ortho:
+            from coralnet_toolbox.MVAT.core.OrthoCamera import OrthoCamera
+
+            chunk_transform = getattr(ortho_rasters[0], 'chunk_transform_matrix', None)
+            if chunk_transform is None:
+                chunk_transform = self._chunk_transform
+            if chunk_transform is None:
+                chunk_transform = np.eye(4, dtype=np.float64)
+
+            self._chunk_transform = np.asarray(chunk_transform, dtype=np.float64)
+            for raster in ortho_rasters:
+                raster_transform = getattr(raster, 'chunk_transform_matrix', None)
+                if raster_transform is None:
+                    raster_transform = self._chunk_transform
+
+                raster.chunk_transform_matrix = np.asarray(raster_transform, dtype=np.float64).copy()
+                oc = OrthoCamera(raster, raster.chunk_transform_matrix)
+                if oc.is_valid:
+                    self.ortho_camera = oc
+                    self._maybe_compute_ortho_index_map()
+                    break
+                else:
+                    print(f"⚠️ OrthoRaster {raster.basename} missing geo transform — skipping.")
+
+        # =====================================================================
+        # Pre-computation Cache Check — only for cameras that are new this call.
         # =====================================================================
         primary_target = self.viewer.scene_context.get_primary_target()
-        
-        # We can only pre-compute if a 3D model is loaded FIRST.
-        if primary_target is not None and self.cache_manager is not None and self.compute_index_maps_enabled:
+        newly_added_cameras = [self.cameras[p] for p, _ in new_perspective_rasters if p in self.cameras]
+
+        if (primary_target is not None
+                and self.cache_manager is not None
+                and self.compute_index_maps_enabled
+                and newly_added_cameras):
             target_path = primary_target.file_path
             element_type = primary_target.get_element_type()
             uncached_cameras = []
-            
-            for path, cam in self.cameras.items():
+
+            for cam in newly_added_cameras:
                 cache_key = cam._raster.extrinsics
                 extra = (cam._raster.dist_coeffs.tobytes()
                          if cam.is_distorted
                          and cam._raster.dist_coeffs is not None else None)
                 cache_path = self.cache_manager.get_cache_path(cache_key, target_path, element_type, extra)
-                
-                # Check if the cache file exists on disk
                 if not os.path.exists(cache_path):
                     uncached_cameras.append(cam)
-            
+
             if uncached_cameras:
                 reply = QMessageBox.question(
                     self.main_window,
@@ -463,9 +625,8 @@ class MVATManager(QObject):
                     QMessageBox.Yes | QMessageBox.No,
                     QMessageBox.No
                 )
-                
+
                 if reply == QMessageBox.Yes:
-                    # Prompt for quality level
                     from PyQt5.QtWidgets import QInputDialog
                     qualities = ["Highest (100%)", "High (75%)", "Medium (50%)", "Low (25%)", "Lowest (10%)"]
                     quality_map = dict(zip(qualities, [1.0, 0.75, 0.50, 0.25, 0.10]))
@@ -487,37 +648,32 @@ class MVATManager(QObject):
 
                     if ok and choice:
                         self.visibility_scale_factor = quality_map[choice]
-                        # Sync the View menu checkmark
-                        for action in self.viewer._quality_action_group.actions():
-                            if action.text() == choice:
-                                action.setChecked(True)
-                                break
                         self._compute_visibility_async(primary_target, uncached_cameras)
-        
-        # FILTER: Only pass perspective cameras to grid UI
-        perspective_cameras = self.cameras    
 
+        # ------------------------------------------------------------------
+        # Update the context matrix with the full (now-extended) camera set.
+        # ------------------------------------------------------------------
         if self.context_matrix is not None:
             try:
-                self.context_matrix.update_stats(len(perspective_cameras), 0)
+                all_ordered = list(self.cameras.keys())
+                self.context_matrix.set_camera_data(list(self.cameras.values()), all_ordered)
             except Exception:
                 pass
-            try:
-                all_ordered = list(perspective_cameras.keys())
-                self.context_matrix.set_camera_data(list(perspective_cameras.values()), all_ordered)
-            except Exception:
-                pass
-        
-        # Generate and load 3D elevation
-        self._render_frustums()  
-        self.viewer.fit_to_view()
-        
-        # Initial Synchronization
-        current_image_path = getattr(self.annotation_window, 'current_image_path', None)
-        if current_image_path and current_image_path in self.cameras:
-            self.selection_model.set_active(current_image_path)
-        elif self.cameras:
-            self.selection_model.set_active(next(iter(self.cameras)))
+
+        self._render_frustums()
+
+        # Fit to view only on the very first load so we don't reset the user's
+        # current pan/zoom when cameras are added incrementally.
+        if first_load:
+            self.viewer.fit_to_view()
+            # Sync the active camera with whatever image is open in the annotation window.
+            current_image_path = getattr(self.annotation_window, 'current_image_path', None)
+            if current_image_path and current_image_path in self.cameras:
+                self.selection_model.set_active(current_image_path)
+            elif self.cameras:
+                self.selection_model.set_active(next(iter(self.cameras)))
+
+        QApplication.restoreOverrideCursor()
 
     def _render_frustums(self):
         """
@@ -534,13 +690,17 @@ class MVATManager(QObject):
             QApplication.restoreOverrideCursor()
             
         self.viewer.add_axes()
-        highlighted = self.selection_model.get_selected_list()
+        visible_paths = self._get_visible_context_camera_paths()
+        selected_path = None
+        if self.selected_camera and self.selected_camera.image_path in visible_paths:
+            selected_path = self.selected_camera.image_path
         
         self.viewer.add_frustums(
             self.cameras,
-            selected_camera=self.selected_camera,
-            highlighted_paths=highlighted,
-            hovered_camera=self.hovered_camera
+            selected_camera=self.selected_camera if selected_path else None,
+            highlighted_paths=visible_paths,
+            hovered_camera=self.hovered_camera,
+            context_highlighted_paths=visible_paths,
         )
 
     # --- Signal Handlers ---
@@ -549,12 +709,42 @@ class MVATManager(QObject):
         """
         Handler for when the main image window loads a new image.
 
-        If the image corresponds to a camera known to the MVAT manager, set
-        that camera as the active camera in the selection model so the
-        manager and views synchronize.
+        For a perspective camera: sets it as the active camera so the manager
+        and views synchronise (proximity reorder, frustum highlight, etc.).
+
+        For the OrthoRaster: sets selected_camera to ortho_camera so that
+        multi-annotation can project cursor previews and paint operations
+        into visible context cameras.
         """
         if path in self.cameras:
             self.selection_model.set_active(path)
+        else:
+            # Check if this path is an OrthoRaster (works whether or not ortho_camera has been set)
+            _raster = self.raster_manager.get_raster(path)
+            _is_ortho = getattr(_raster, 'raster_type', '') == 'OrthoRaster'
+            if _is_ortho or (self.ortho_camera is not None and path == self.ortho_camera.image_path):
+                # Deselect any active perspective camera from selection model
+                self.selection_model.set_active(None)
+                # BUT: set selected_camera to ortho_camera so that painting/preview works
+                self.selected_camera = self.ortho_camera
+                self.viewer.clear_ray()
+                # Show all cameras in the context matrix
+                if self.context_matrix is not None and self.cameras:
+                    all_paths = list(self.cameras.keys())
+                    try:
+                        self.context_matrix.update_stats_label(len(all_paths), len(all_paths))
+                    except Exception:
+                        pass
+                    try:
+                        self.context_matrix.set_target_camera_count(len(all_paths))
+                    except Exception:
+                        pass
+                    try:
+                        self.context_matrix.set_camera_order(all_paths)
+                    except Exception:
+                        pass
+                # Fit the scene and snap to the canonical top perspective view.
+                self.viewer.set_ortho_top_view()
 
     def _on_focal_point_changed(self, point_3d):
         """
@@ -567,9 +757,15 @@ class MVATManager(QObject):
         fails, hide the marker.
         """
         self.current_focal_point = point_3d
-        if self.selected_camera and self.selected_camera.image_path in self.cameras:
-            pixel = self.selected_camera.project(point_3d)
-            if not np.isnan(pixel).any():
+        if self.selected_camera is not None:
+            if hasattr(self.selected_camera, 'world_to_pixel'):
+                pixel = self.selected_camera.world_to_pixel(point_3d)
+            elif self.selected_camera.image_path in self.cameras:
+                pixel = self.selected_camera.project(point_3d)
+            else:
+                pixel = None
+
+            if pixel is not None and not np.isnan(pixel).any():
                 u, v = pixel[0], pixel[1]
                 # Show green whenever the point projects within the camera's FOV.
                 # A depth-validity check caused false reds for MVATViewer double-clicks
@@ -628,11 +824,6 @@ class MVATManager(QObject):
         self.compute_index_maps_enabled = state
         self.main_window.status_bar.showMessage("Compute Index Maps: ON" if state else "Compute Index Maps: OFF", 2000)
 
-    def _on_visibility_quality_changed(self, scale_factor: float):
-        """Store the user-selected visibility resolution scale factor."""
-        self.visibility_scale_factor = scale_factor
-        print(f"Visibility quality scale set to {scale_factor}")
-
     def _on_visibility_computed(self, results: dict):
         """Handle results emitted from VisibilityWorker (runs on main thread)."""
         try:
@@ -646,6 +837,145 @@ class MVATManager(QObject):
             self._is_computing_visibility = False
             self.main_window.status_bar.showMessage("Visibility maps updated.", 3000)
             QApplication.restoreOverrideCursor()
+
+        # After perspective maps are done, build the ortho index map if needed
+        self._maybe_compute_ortho_index_map()
+
+    def _on_primary_target_changed(self, product_id: str):
+        """A new 3D model was loaded — clear stale ortho index map and rebuild."""
+        self._computing_ortho_index_map = False  # reset any in-flight build
+        if self.ortho_camera is not None:
+            self.ortho_camera._raster.index_map = None
+            self.ortho_camera._raster.index_map_scale_factor = None
+            self.ortho_camera._raster.index_map_path = None
+        self._maybe_compute_ortho_index_map()
+
+    def _maybe_compute_ortho_index_map(self):
+        """Build the ortho face-ID index map if ortho camera + mesh are both ready."""
+        if self._computing_ortho_index_map:
+            return
+        if self.ortho_camera is None or not self.ortho_camera.is_valid:
+            return
+        if not self.compute_index_maps_enabled:
+            return
+
+        primary_target = self.viewer.scene_context.get_primary_target()
+        if primary_target is None or not isinstance(primary_target, MeshProduct):
+            return
+
+        ortho_raster = self.ortho_camera._raster
+
+        current_scale = float(self.visibility_scale_factor)
+
+        if ortho_raster.index_map is not None:
+            return
+
+        if self.cache_manager is not None:
+            try:
+                cached = self.cache_manager.load_ortho_index_map(
+                    self.ortho_camera.image_path,
+                    primary_target.file_path,
+                    self.ortho_camera._chunk_transform,
+                    getattr(self.ortho_camera, '_proj_mat', None),
+                    current_scale,
+                    (self.ortho_camera.width, self.ortho_camera.height),
+                    element_type='face',
+                )
+                if cached is not None and cached.get('index_map') is not None:
+                    ortho_raster.add_index_map(
+                        cached['index_map'],
+                        index_map_path=cached.get('cache_path'),
+                        visible_indices=cached.get('visible_indices'),
+                        element_type=cached.get('element_type', 'face'),
+                    )
+                    sf = getattr(ortho_raster, 'index_map_scale_factor', None)
+                    print(f"💽 Loaded ortho index map from cache: {ortho_raster.index_map.shape}, scale_factor={sf:.4f}")
+                    self.main_window.status_bar.showMessage("Loaded ortho index map from cache.", 3000)
+                    return
+            except Exception as e:
+                print(f"⚠️ Failed to load ortho index map cache: {e}")
+
+        self._computing_ortho_index_map = True
+        self.main_window.status_bar.showMessage(f"Building ortho index map at {current_scale:.0%} quality…")
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
+        ortho_camera   = self.ortho_camera
+        mesh_product   = primary_target
+        requested_scale = current_scale
+
+        def _build():
+            from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
+            result = VisibilityManager.compute_ortho_index_map_vtk(
+                ortho_camera,
+                mesh_product,
+                scale_factor=requested_scale,
+            )
+            result['scale_factor'] = requested_scale
+            return result
+
+        def _done(future):
+            # Called on the thread-pool thread — only emit a Qt signal (thread-safe)
+            try:
+                result = future.result()
+                self._orthoIndexMapReady.emit(result)
+            except Exception as e:
+                print(f"⚠️ Ortho index map build failed: {e}")
+                self._computing_ortho_index_map = False
+
+        future = self._propagation_executor.submit(_build)
+        future.add_done_callback(_done)
+
+    def _on_ortho_index_map_computed(self, result: dict):
+        """Store the completed ortho index map on the OrthoRaster (runs on main thread via signal)."""
+        try:
+            result_scale = float(result.get('scale_factor', self.visibility_scale_factor))
+            if not np.isclose(result_scale, float(self.visibility_scale_factor)):
+                print(
+                    f"⚠️ Discarding stale ortho index map at scale {result_scale:.4f}; "
+                    f"current quality is {self.visibility_scale_factor:.4f}"
+                )
+                return
+
+            index_map = result.get('index_map')
+            if index_map is None:
+                return
+            visible_indices = result.get('visible_indices')
+            # scale_factor is derived automatically inside OrthoRaster.add_index_map
+            ortho_raster = self.ortho_camera._raster
+            ortho_raster.add_index_map(
+                index_map,
+                index_map_path=result.get('cache_path'),
+                visible_indices=visible_indices,
+                element_type='face',
+            )
+            sf = ortho_raster.index_map_scale_factor
+            print(f"✅ Ortho index map stored: {index_map.shape}, scale_factor={sf:.4f}")
+
+            if self.cache_manager is not None:
+                try:
+                    primary_target = self.viewer.scene_context.get_primary_target()
+                    target_path = primary_target.file_path if primary_target is not None else ""
+                    cache_path = self.cache_manager.save_ortho_index_map(
+                        self.ortho_camera.image_path,
+                        target_path,
+                        self.ortho_camera._chunk_transform,
+                        getattr(self.ortho_camera, '_proj_mat', None),
+                        result_scale,
+                        (self.ortho_camera.width, self.ortho_camera.height),
+                        index_map,
+                        visible_indices if visible_indices is not None else np.array([], dtype=np.int32),
+                        element_type='face',
+                    )
+                    if cache_path is not None:
+                        ortho_raster.index_map_path = cache_path
+                except Exception as e:
+                    print(f"⚠️ Failed to save ortho index map cache: {e}")
+        except Exception as e:
+            print(f"⚠️ Failed to store ortho index map: {e}")
+        finally:
+            self._computing_ortho_index_map = False
+            QApplication.restoreOverrideCursor()
+            self.main_window.status_bar.showMessage("Ortho index map ready.", 3000)
 
     def _process_visibility_results(self, results: dict, target_file_path: str):
         """
@@ -721,7 +1051,14 @@ class MVATManager(QObject):
         instructs the viewer to match the selected camera perspective (when
         supported), reorders the grid to prioritize nearby cameras, and asks
         the image window to load the selected image.
+
+        When path is None or empty (e.g. when switching to the OrthoRaster),
+        the selected camera is cleared without any further perspective logic.
         """
+        if not path:
+            self.selected_camera = None
+            return
+
         camera = self.cameras.get(path)
         if camera:
             self.viewer.clear_ray()
@@ -730,27 +1067,23 @@ class MVATManager(QObject):
                 # Double-click to set active: animate
                 self.viewer.match_camera_perspective(camera, animate=True)
             self._reorder_cameras(path)
-
-            if self.context_matrix is not None:
-                try:
-                    self.context_matrix.sync_selection_borders(
-                        path, self.selection_model.selected_paths
-                    )
-                except Exception:
-                    pass
+            self._context_view_path = path
 
             try:
                 self.image_window.load_image_by_path(path)
             except Exception:
                 pass
 
+            # Update the N / M stat when the active camera changes.
+            self._update_context_stats()
+
     def _on_camera_selected(self, path: str):
         """Handle camera_selected from the grid (context menu 'Select Image').
 
-        Preferred entry point to change the displayed image in the annotation
-        window is `annotation_window.set_image(path)` per project convention.
-        Fall back to older image_window loader if the method isn't present.
+        Selection state is the source of truth; the active-camera change
+        handler performs the actual image load.
         """
+        QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             # Make this the sole selection: set active and clear other highlights
             try:
@@ -759,28 +1092,63 @@ class MVATManager(QObject):
                 self.selection_model.set_selections([path])
             except Exception:
                 pass
-
-            if hasattr(self.annotation_window, 'set_image'):
-                self.annotation_window.set_image(path)
-            else:
-                # Legacy fallback
-                self.image_window.load_image_by_path(path)
-            # Note: status message moved to AnnotationWindow.set_image
         except Exception as e:
             print(f"Failed to load selected image '{path}': {e}")
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def _on_camera_highlighted_single(self, path: str):
-        """Handle single-camera highlight intent (e.g., plain click).
+        """Handle viewer-only camera navigation from the context matrix."""
+        self._focus_context_camera(path, animate=True)
 
-        This updates the viewer perspective to match the clicked camera with
-        smooth animation when supported.
-        """
+    def _get_context_camera_order(self) -> list:
+        ordered_paths = []
+        if self.context_matrix is not None and hasattr(self.context_matrix, 'get_camera_order'):
+            try:
+                ordered_paths = list(self.context_matrix.get_camera_order())
+            except Exception:
+                ordered_paths = []
+
+        if not ordered_paths:
+            ordered_paths = list(self.cameras.keys())
+
+        return [path for path in ordered_paths if path in self.cameras]
+
+    def _focus_context_camera(self, path: str, animate: bool = True):
+        camera = self.cameras.get(path)
+        if camera is None:
+            return
+
+        self._context_view_path = path
+        if hasattr(self.viewer, 'match_camera_perspective'):
+            self.viewer.match_camera_perspective(camera, animate=animate)
+
+    def _cycle_active_camera(self, step: int):
+        """Cycle the current context-view camera through the proximity order."""
+        ordered_paths = self._get_context_camera_order()
+        if not ordered_paths:
+            return
+
+        current_path = self._context_view_path
+        if current_path not in ordered_paths:
+            if self.selected_camera and self.selected_camera.image_path in ordered_paths:
+                current_path = self.selected_camera.image_path
+            else:
+                current_path = ordered_paths[0]
+
         try:
-            cam = self.cameras.get(path)
-            if cam and hasattr(self.viewer, 'match_camera_perspective'):
-                self.viewer.match_camera_perspective(cam, animate=True)
-        except Exception:
-            pass
+            current_index = ordered_paths.index(current_path)
+        except ValueError:
+            current_index = 0
+
+        target_path = ordered_paths[(current_index + step) % len(ordered_paths)]
+        self._focus_context_camera(target_path, animate=True)
+
+    def _on_previous_camera_requested(self):
+        self._cycle_active_camera(-1)
+
+    def _on_next_camera_requested(self):
+        self._cycle_active_camera(1)
 
     def _on_selections_changed(self, selected_paths):
         """
@@ -805,18 +1173,6 @@ class MVATManager(QObject):
 
         self.highlighted_cameras = [self.cameras.get(path) for path in selected_paths if path in self.cameras]
         self._update_frustum_states()
-        
-        if self.context_matrix is not None:
-            try:
-                active_path = self.selection_model.active_path or ""
-                active_label = ""
-                if active_path:
-                    from pathlib import Path
-                    active_label = Path(active_path).stem
-                self.context_matrix.sync_selection_borders(active_path, selected_paths)
-                self.context_matrix.update_selection_labels(active_label, len(selected_paths))
-            except Exception:
-                pass
 
         self.viewer.clear_ray()
         self._update_visibility_filter(list(selected_paths))
@@ -866,13 +1222,20 @@ class MVATManager(QObject):
         Errors are caught and ignored to avoid destabilizing the UI for
         non-critical failures.
         """
-        selected_path = self.selected_camera.image_path if self.selected_camera else None
-        highlighted_paths = [cam.image_path for cam in self.highlighted_cameras]
+        highlighted_paths = self._get_visible_context_camera_paths()
+        selected_path = None
+        if self.selected_camera and self.selected_camera.image_path in highlighted_paths:
+            selected_path = self.selected_camera.image_path
         
         # Update wireframe state scalars (colors based on selection/highlight)
         try:
             if hasattr(self.viewer, 'update_frustum_states'):
-                self.viewer.update_frustum_states(selected_path, highlighted_paths, self.hovered_camera)
+                self.viewer.update_frustum_states(
+                    selected_path,
+                    highlighted_paths,
+                    self.hovered_camera,
+                    context_highlighted_paths=highlighted_paths,
+                )
         except Exception: 
             pass
         
@@ -907,6 +1270,7 @@ class MVATManager(QObject):
         Compute visibility index maps for the supplied highlighted cameras.
         Intercepts and loads from disk cache if available before using the worker.
         """
+        highlighted_paths = set(self._get_visible_context_camera_paths())
         if not self.viewer.scene_context.has_any_product():
             return
         if not self.compute_index_maps_enabled:
@@ -1249,7 +1613,7 @@ class MVATManager(QObject):
                 print(f"⚠️ Failed to extract face centers for {primary_target.label}: {e}")
                 return None, None, 'face'
 
-    def _calculate_camera_proximity_score(self, reference_camera, candidate_camera):
+    def _calculate_camera_proximity_score(self, reference_camera, candidate_camera, scene_size=None):
         """
         Calculate a scalar proximity score between two cameras used for
         ordering the camera grid.
@@ -1259,6 +1623,12 @@ class MVATManager(QObject):
         score (dot product between viewing directions). Cameras behind the
         reference (negative alignment) are given a score of 0.
         """
+        if (getattr(reference_camera, 'position', None) is None or
+                getattr(reference_camera, 'R', None) is None or
+                getattr(candidate_camera, 'position', None) is None or
+                getattr(candidate_camera, 'R', None) is None):
+            return 0.0
+
         spatial_distance = np.linalg.norm(reference_camera.position - candidate_camera.position)
         ref_view_dir = reference_camera.R.T @ np.array([0, 0, 1])
         cand_view_dir = candidate_camera.R.T @ np.array([0, 0, 1])
@@ -1268,12 +1638,21 @@ class MVATManager(QObject):
         
         view_alignment = np.dot(ref_view_dir, cand_view_dir)
         
-        try:
-            bounds = self.viewer.get_bounds()
-            scene_size = np.sqrt((bounds[1] - bounds[0])**2 + (bounds[3] - bounds[2])**2 + (bounds[5] - bounds[4])**2)
-            normalized_distance = spatial_distance / (scene_size + 1e-6)
-        except Exception:
+        if scene_size is None:
+            try:
+                bounds = self.viewer.get_bounds()
+                scene_size = np.sqrt(
+                    (bounds[1] - bounds[0])**2
+                    + (bounds[3] - bounds[2])**2
+                    + (bounds[5] - bounds[4])**2
+                )
+            except Exception:
+                scene_size = None
+
+        if scene_size is None:
             normalized_distance = spatial_distance / 10.0
+        else:
+            normalized_distance = spatial_distance / (scene_size + 1e-6)
             
         distance_score = np.exp(-2.0 * normalized_distance)
         view_score = (view_alignment + 1.0) / 2.0
@@ -1320,12 +1699,20 @@ class MVATManager(QObject):
             return
         if not self.context_matrix.target_lock_enabled:
             return
+        base_rotation = getattr(self.annotation_window, 'rotation_angle', 0.0)
+
+        # Ortho path: derive world point via z-channel instead of index-map ray
+        if self.ortho_camera is not None:
+            current_path = getattr(self.annotation_window, 'current_image_path', None)
+            if current_path == self.ortho_camera.image_path:
+                self._on_ortho_view_navigated(center_x, center_y, zoom_factor, base_rotation)
+                return
+
         if self.selected_camera is None:
             return
 
-        # NEW: Fetch reference path and current rotation from the Annotation Window
+        # Fetch reference path and current rotation from the Annotation Window
         reference_path = self.selected_camera.image_path
-        base_rotation = getattr(self.annotation_window, 'rotation_angle', 0.0)
 
         # Step 1: Get the 3D world point at the viewport center
         world_point = self._get_world_point_at_pixel(
@@ -1392,6 +1779,59 @@ class MVATManager(QObject):
             # Fallback if ContextMatrix hasn't been updated to accept kwargs yet
             self.context_matrix.request_sync(targets_with_center, relative_zoom)
             self.context_matrix.request_zoom_only(zoom_only, relative_zoom)
+
+    def _on_ortho_view_navigated(self, center_x: float, center_y: float, zoom_factor: float, base_rotation: float):
+        """Sync context canvases when the user pans/zooms the OrthoRaster view.
+
+        Mirrors _on_main_view_navigated but resolves the world point via
+        z-channel lookup (O(1)) rather than an index-map / ray-trace.
+        """
+        ortho_camera = self.ortho_camera
+        cx, cy = int(round(center_x)), int(round(center_y))
+
+        X, Y = ortho_camera.pixel_to_geo(cx, cy)
+        Z = ortho_camera._raster.get_z_value(cx, cy)
+        if Z is None:
+            return
+        world_point = ortho_camera.geo_to_world(X, Y, Z)
+
+        # Compute relative zoom (same logic as perspective path)
+        min_zoom = getattr(self.annotation_window, '_min_zoom', 0)
+        relative_zoom = (zoom_factor / min_zoom) if min_zoom > 0 else 1.0
+
+        targets_with_center = {}
+        zoom_only = set()
+        capacity = self.context_matrix._get_visible_capacity()
+
+        for i in range(capacity):
+            canvas = self.context_matrix._canvas_pool[i]
+            if not canvas.isVisible() or not canvas.current_image_path:
+                continue
+            camera = self.cameras.get(canvas.current_image_path)
+            if not camera:
+                continue
+            try:
+                pixel = camera.project(world_point)
+            except Exception:
+                zoom_only.add(i)
+                continue
+            if np.isnan(pixel).any():
+                zoom_only.add(i)
+                continue
+            u, v = float(pixel[0]), float(pixel[1])
+            if 0 <= u < camera.width and 0 <= v < camera.height:
+                targets_with_center[i] = (u, v)
+            else:
+                zoom_only.add(i)
+
+        self.context_matrix.request_sync(
+            targets_with_center, relative_zoom,
+            reference_path=None, base_rotation=base_rotation
+        )
+        self.context_matrix.request_zoom_only(
+            zoom_only, relative_zoom,
+            reference_path=None, base_rotation=base_rotation
+        )
 
     def _get_world_point_at_pixel(self, camera, px, py):
         """Get the 3D world point at a specific pixel coordinate.
@@ -1502,6 +1942,9 @@ class MVATManager(QObject):
             # so True 3D mapping will be available when the user paints or applies SAM.
             try:
                 visible = list(self._get_visible_context_paths())
+                target_paths = set(visible)
+                if self.ortho_camera is not None and not self._is_ortho_annotation_source():
+                    target_paths.add(self.ortho_camera.image_path)
                 if visible and self.compute_index_maps_enabled:
                     self.main_window.status_bar.showMessage("Preparing context visibility maps...", 2000)
                     # Ask the visibility system to compute index maps for these visible cameras
@@ -1511,7 +1954,7 @@ class MVATManager(QObject):
                 # --- Force Mask Canvas Allocation NOW ---
                 # Don't wait for the first brush stroke to allocate canvases!
                 project_labels = list(self.main_window.label_window.labels)
-                for path in visible:
+                for path in target_paths:
                     raster = self.raster_manager.get_raster(path)
                     if raster and raster.mask_annotation is None:
                         raster.get_mask_annotation(project_labels)
@@ -1550,6 +1993,10 @@ class MVATManager(QObject):
     def _on_cursor_preview_moved(self, scene_pos, item_factory):
         """Project the cursor position into visible context cameras and show previews.
 
+        When on an OrthoCamera (orthomosaic), projects the cursor into all visible
+        perspective cameras. When on a perspective camera, projects into all visible
+        context cameras.
+
         Uses the blazingly fast center-point projection to display brush previews
         in all visible context cameras. The tool factory already draws the correct
         brush size visually; we just need to tell it where the center is.
@@ -1558,7 +2005,9 @@ class MVATManager(QObject):
             return
 
         px, py = int(scene_pos.x()), int(scene_pos.y())
-        visible_paths = self._get_visible_context_paths()
+
+        # Determine which cameras should show previews
+        visible_paths = self._get_annotation_target_paths()
 
         # Use the blazingly fast center-point projection
         projections = self._build_projection(px, py)
@@ -1570,12 +2019,16 @@ class MVATManager(QObject):
             self.context_matrix.clear_all_cursor_previews()
 
     def _on_live_stroke_applied(self, scene_pos, size, shape, color):
-        """Instantly projects the center of the brush to context cameras for a live trail."""
+        """Instantly projects the center of the brush to context cameras for a live trail.
+
+        When on an OrthoCamera (orthomosaic), projects into all visible perspective cameras.
+        When on a perspective camera, projects into visible context cameras.
+        """
         if self.selected_camera is None or self.context_matrix is None:
             return
 
         px, py = int(scene_pos.x()), int(scene_pos.y())
-        
+
         # We already have a blazingly fast center-point projector!
         projections = self._build_projection(px, py)
         try:
@@ -1587,25 +2040,305 @@ class MVATManager(QObject):
         """Return the context canvas currently displaying image_path, or None."""
         if self.context_matrix is None:
             return None
-        for row in self.context_matrix._visible_canvases:
-            for canvas in row:
-                if canvas is not None and canvas.current_image_path == image_path:
-                    return canvas
+        for canvas in self.context_matrix._visible_canvases:
+            if canvas is not None and canvas.current_image_path == image_path:
+                return canvas
         return None
+
+    def _get_visible_context_camera_paths(self) -> list:
+        """Return the ordered list of image paths currently visible in the context matrix."""
+        if self.context_matrix is None:
+            return []
+        if hasattr(self.context_matrix, 'get_visible_camera_paths'):
+            try:
+                return list(self.context_matrix.get_visible_camera_paths())
+            except Exception:
+                pass
+
+        visible_paths = []
+        for canvas in self.context_matrix._visible_canvases:
+            if canvas and canvas.active_image and canvas.current_image_path:
+                visible_paths.append(canvas.current_image_path)
+        return visible_paths
+
+    def _get_visible_context_cameras(self) -> list:
+        """Return the Camera objects currently visible in the context matrix."""
+        return [self.cameras[path] for path in self._get_visible_context_camera_paths() if path in self.cameras]
+
+    def _get_visible_context_target_paths(self) -> set:
+        """Return visible context camera paths excluding the active annotation camera."""
+        paths = set(self._get_visible_context_camera_paths())
+        if self.selected_camera and self.selected_camera.image_path in paths:
+            paths.discard(self.selected_camera.image_path)
+        return paths
+
+    def _is_ortho_annotation_source(self) -> bool:
+        """Return True when the active annotation source is the ortho view."""
+        return self.ortho_camera is not None and self.selected_camera == self.ortho_camera
+
+    def _get_annotation_target_paths(self) -> set:
+        """Return the target camera paths for the current annotation source."""
+        if self._is_ortho_annotation_source():
+            return self._get_ortho_target_cameras()
+        target_paths = self._get_visible_context_target_paths()
+        if self.ortho_camera is not None:
+            target_paths.add(self.ortho_camera.image_path)
+        return target_paths
+
+    def _extract_source_ids_from_crop_mask(self,
+                                           source_camera,
+                                           source_mask: np.ndarray,
+                                           px: int,
+                                           py: int) -> Optional[np.ndarray]:
+        """Extract visible element IDs from a crop-centred binary mask."""
+        raster = getattr(source_camera, '_raster', None)
+        if raster is None or source_mask is None:
+            return None
+
+        source_index_map = getattr(raster, 'index_map', None)
+        if source_index_map is None:
+            return None
+
+        source_mask = np.asarray(source_mask)
+        mask_h, mask_w = source_mask.shape
+        scale_factor = getattr(raster, 'index_map_scale_factor', None)
+
+        if scale_factor is not None and scale_factor != 1.0:
+            map_px = int(px * scale_factor)
+            map_py = int(py * scale_factor)
+            map_bw = max(1, int(mask_w * scale_factor))
+            map_bh = max(1, int(mask_h * scale_factor))
+        else:
+            map_px, map_py = px, py
+            map_bw, map_bh = mask_w, mask_h
+
+        x0 = map_px - map_bw // 2
+        y0 = map_py - map_bh // 2
+        x1 = x0 + map_bw
+        y1 = y0 + map_bh
+
+        img_h, img_w = source_index_map.shape
+        if x0 >= img_w or y0 >= img_h or x1 <= 0 or y1 <= 0:
+            return np.array([], dtype=np.int64)
+
+        cx0 = max(x0, 0)
+        cy0 = max(y0, 0)
+        cx1 = min(x1, img_w)
+        cy1 = min(y1, img_h)
+        index_slice = source_index_map[cy0:cy1, cx0:cx1]
+
+        if scale_factor is not None and scale_factor != 1.0:
+            raw_ids = index_slice.ravel()
+        else:
+            bx0 = cx0 - x0
+            by0 = cy0 - y0
+            bx1 = bx0 + (cx1 - cx0)
+            by1 = by0 + (cy1 - cy0)
+            mask_clip = source_mask[by0:by1, bx0:bx1]
+            raw_ids = index_slice[mask_clip.astype(bool)]
+
+        unique_ids = np.unique(raw_ids)
+        return unique_ids[unique_ids > -1].astype(np.int64, copy=False)
+
+    def _extract_source_ids_from_full_mask(self,
+                                           source_camera,
+                                           source_mask: np.ndarray) -> Optional[np.ndarray]:
+        """Extract visible element IDs from a full-frame binary mask."""
+        raster = getattr(source_camera, '_raster', None)
+        if raster is None or source_mask is None:
+            return None
+
+        source_index_map = getattr(raster, 'index_map', None)
+        if source_index_map is None:
+            return None
+
+        source_mask = np.asarray(source_mask)
+        if source_mask.ndim != 2:
+            return None
+
+        needs_resize = (
+            source_mask.shape != source_index_map.shape or
+            (getattr(raster, 'index_map_scale_factor', None) not in (None, 1.0))
+        )
+
+        if needs_resize:
+            import cv2
+            mask_bool = cv2.resize(
+                source_mask.astype(np.uint8),
+                (source_index_map.shape[1], source_index_map.shape[0]),
+                interpolation=cv2.INTER_NEAREST,
+            ).astype(bool)
+        else:
+            mask_bool = source_mask.astype(bool)
+
+        if not np.any(mask_bool):
+            return np.array([], dtype=np.int64)
+
+        raw_ids = source_index_map[mask_bool]
+        unique_ids = np.unique(raw_ids)
+        return unique_ids[unique_ids > -1].astype(np.int64, copy=False)
 
     def _get_visible_context_paths(self) -> set:
         """Return the set of image paths currently visible in the context matrix."""
-        paths = set()
-        if self.context_matrix is None:
-            return paths
-        for row in self.context_matrix._visible_canvases:
-            for canvas in row:
-                if canvas and canvas.active_image and canvas.current_image_path:
-                    paths.add(canvas.current_image_path)
-        return paths
+        return set(self._get_visible_context_camera_paths())
+
+    def _get_ortho_target_cameras(self) -> set:
+        """Get target camera paths when painting on OrthoCamera.
+
+        Returns the set of visible perspective camera paths that should receive
+        multi-annotations when painting on an orthomosaic. This is the same as
+        the visible context target paths, since we want to paint all visible cameras
+        that can see the orthomosaic's geometry.
+        """
+        if self.ortho_camera is None:
+            return set()
+        # When on orthomosaic, propagate to all visible context cameras
+        # (the ContextMatrix handles filtering for which cameras are viewable)
+        return self._get_visible_context_target_paths()
+
+    def _get_camera_for_path(self, image_path: str):
+        """Return the loaded camera object for a path, including the orthocamera."""
+        if self.ortho_camera is not None and image_path == self.ortho_camera.image_path:
+            return self.ortho_camera
+        return self.cameras.get(image_path)
+
+    def _is_ortho_path(self, image_path: str) -> bool:
+        return self.ortho_camera is not None and image_path == self.ortho_camera.image_path
+
+    def _on_context_visible_cameras_changed(self, visible_paths):
+        """Refresh viewer state when the ContextMatrix changes its visible cameras."""
+        try:
+            self.viewer.clear_ray()
+        except Exception:
+            pass
+
+        self._update_frustum_states()
+        self._update_visibility_filter(list(visible_paths))
+
+        # Update the N / M stat when the visible count changes.
+        self._update_context_stats()
+
+    def _get_scene_size_snapshot(self):
+        """Capture the viewer scene size on the main thread for background proximity checks."""
+        try:
+            bounds = self.viewer.get_bounds()
+            return float(np.sqrt(
+                (bounds[1] - bounds[0])**2
+                + (bounds[3] - bounds[2])**2
+                + (bounds[5] - bounds[4])**2
+            ))
+        except Exception:
+            return None
+
+    def count_overlapping_cameras(self, active_camera, camera_items=None, scene_size=None):
+        """
+        Calculates how many cameras share a view of the same 3D geometry.
+        Uses proximity scoring as a fast-reject to keep UI thread performance high.
+
+        TODO (Threading): If this begins to block the UI on extreme datasets
+        (e.g., >10M polygons and >1,000 cameras), move this loop into
+        self._propagation_executor.submit(). Have the thread return the
+        overlap_count and emit a PyQt signal back to the main thread to
+        safely call self.context_matrix.update_stats_label().
+        """
+        overlap_count = 0
+        min_overlap_ratio = 0.20  # Secondary camera must cover at least 20% of the active camera's view
+        camera_items = tuple(camera_items if camera_items is not None else self.cameras.items())
+        active_indices = active_camera.visible_indices
+        active_visible_count = len(active_indices) if active_indices is not None else 0
+
+        # OrthoCamera (and any other non-pose camera) does not expose a
+        # perspective center / orientation. In ortho mode the UI already treats
+        # the orthomosaic as overlapping with every loaded context camera, so we
+        # return that count directly instead of running perspective heuristics.
+        if (getattr(active_camera, 'position', None) is None or
+                getattr(active_camera, 'R', None) is None):
+            return len(camera_items)
+
+        for path, cam in camera_items:
+            if path == active_camera.image_path:
+                overlap_count += 1  # Always counts itself
+                continue
+
+            # OPTIMIZATION 1: Fast Reject.
+            # If the proximity score is 0 (facing away, or too far), they don't overlap.
+            # Skip the expensive array math entirely!
+            score = self._calculate_camera_proximity_score(active_camera, cam, scene_size=scene_size)
+            if score == 0.0:
+                continue
+
+            # OPTIMIZATION 2: True Geometric Overlap
+            if active_indices is not None and cam.visible_indices is not None:
+                # Both arrays are pre-sorted and unique thanks to VisibilityWorker.
+                # assume_unique=True makes this incredibly fast.
+                shared = np.intersect1d(active_indices, cam.visible_indices, assume_unique=True)
+
+                if active_visible_count > 0 and (len(shared) / active_visible_count) >= min_overlap_ratio:
+                    overlap_count += 1
+
+        return overlap_count
+
+    def _count_overlapping_cameras_async(self, request_id: int, active_path: str, visible_count: int, active_camera, camera_items, scene_size):
+        """Background worker wrapper for overlap counting."""
+        try:
+            overlap_count = self.count_overlapping_cameras(active_camera, camera_items=camera_items, scene_size=scene_size)
+        except Exception as e:
+            print(f"Failed to count overlapping cameras for {active_path}: {e}")
+            return
+
+        self.contextStatsComputed.emit(request_id, active_path, visible_count, overlap_count)
+
+    def _on_context_stats_computed(self, request_id: int, active_path: str, visible_count: int, overlap_count: int):
+        """Apply async overlap counts only if they belong to the latest active image."""
+        if request_id != self._latest_context_stats_request_id:
+            return
+
+        if self.selected_camera is None or self.selected_camera.image_path != active_path:
+            return
+
+        if self.context_matrix is not None:
+            self.context_matrix.update_stats_label(visible_count, overlap_count)
+
+    def _update_context_stats(self):
+        """Calculates overlap and pushes the string to the ContextMatrix UI."""
+        if self.context_matrix is None or self.selected_camera is None:
+            return
+
+        # N: Total cameras visible in the matrix right now.
+        n_visible = len(self._get_visible_context_camera_paths())
+
+        self._context_stats_request_id += 1
+        request_id = self._context_stats_request_id
+        self._latest_context_stats_request_id = request_id
+
+        active_camera = self.selected_camera
+        active_path = active_camera.image_path
+        camera_items = tuple(self.cameras.items())
+        scene_size = self._get_scene_size_snapshot()
+
+        try:
+            future = self._propagation_executor.submit(
+                self._count_overlapping_cameras_async,
+                request_id,
+                active_path,
+                n_visible,
+                active_camera,
+                camera_items,
+                scene_size,
+            )
+        except Exception:
+            try:
+                m_overlapping = self.count_overlapping_cameras(active_camera, camera_items=camera_items, scene_size=scene_size)
+            except Exception:
+                return
+            self.contextStatsComputed.emit(request_id, active_path, n_visible, m_overlapping)
 
     def _build_projection(self, px: int, py: int) -> dict:
         """Cast a ray from the selected camera at (px, py) and return projections.
+
+        Handles both perspective cameras and OrthoCamera (orthomosaic):
+        - For perspective cameras: uses existing ray-projection logic
+        - For OrthoCamera: converts orthomosaic pixel → geo → world space
 
         Returns:
             dict mapping image_path -> (u, v, is_valid), or empty dict on failure.
@@ -1617,68 +2350,123 @@ class MVATManager(QObject):
         primary_target = self.viewer.scene_context.get_primary_target()
         ray = None
 
-        # --- PLAN A: Index Map (Flawless 3D Coordinate) ---
-        index_map = camera._raster.index_map
-        if index_map is not None and primary_target is not None:
+        # Special handling for OrthoCamera (orthomosaic)
+        if self.ortho_camera is not None and camera == self.ortho_camera:
             try:
-                # Ensure we are inside the image bounds
-                if 0 <= px < camera.width and 0 <= py < camera.height:
-                    candidate_id = int(index_map[py, px])
+                if not camera.is_valid:
+                    return {}
+
+                # Convert orthomosaic pixel → geo → world space
+                X, Y = camera.pixel_to_geo(px, py)
+                Z = camera._raster.get_z_value(px, py)
+                if Z is None or np.isnan(Z):
+                    Z = 0.0
+
+                world_pt = camera.geo_to_world(X, Y, Z)
+
+                # Get element ID if index_map is available
+                element_id = None
+                index_map = camera._raster.index_map
+                if index_map is not None and 0 <= px < camera.width and 0 <= py < camera.height:
+                    sf = getattr(camera._raster, 'index_map_scale_factor', None)
+                    map_px = int(px * sf) if sf else px
+                    map_py = int(py * sf) if sf else py
+                    map_px = min(map_px, index_map.shape[1] - 1)
+                    map_py = min(map_py, index_map.shape[0] - 1)
+                    candidate_id = int(index_map[map_py, map_px])
                     if candidate_id > -1:
-                        coord = primary_target.get_element_coordinate(candidate_id)
-                        if coord is not None:
-                            origin = camera.position.copy()
-                            direction = coord - origin
-                            norm = np.linalg.norm(direction)
-                            direction = direction / norm if norm > 0 else camera.R.T @ np.array([0, 0, 1])
+                        element_id = candidate_id
 
-                            ray = CameraRay(
-                                origin=origin,
-                                direction=direction,
-                                terminal_point=coord,
-                                has_accurate_depth=True,
-                                pixel_coord=(px, py),
-                                source_camera=camera,
-                                element_id=candidate_id
-                            )
-            except Exception:
-                pass
+                # Construct a vertical ray from the orthomosaic
+                # The ray origin is slightly above the world point, direction points down
+                vertical_dir = camera.get_vertical_direction_world()
+                ray_origin = world_pt - vertical_dir * 0.1  # Slightly above the surface
+                ray_direction = vertical_dir
 
-        # --- PLAN B: Depth Map / Scene Median Fallback ---
-        if ray is None:
-            depth = None
-            try:
-                raster = camera._raster
-                if raster.z_channel is not None and raster.z_data_type == 'depth':
-                    depth = raster.get_z_value(px, py)
-            except Exception:
-                pass
-
-            # Cache median depth per camera — only recompute when active camera changes
-            cache_key = id(camera)
-            if getattr(self, '_median_depth_cache_key', None) != cache_key:
-                try:
-                    self._cached_median_depth = self.viewer.get_scene_median_depth(camera.position)
-                except Exception:
-                    self._cached_median_depth = 10.0
-                self._median_depth_cache_key = cache_key
-
-            default_depth = self._cached_median_depth or 10.0
-
-            try:
-                ray = CameraRay.from_pixel_and_camera(
-                    pixel_xy=(px, py),
-                    camera=camera,
-                    depth=depth,
-                    default_depth=default_depth,
+                ray = CameraRay(
+                    origin=ray_origin,
+                    direction=ray_direction,
+                    terminal_point=world_pt,
+                    has_accurate_depth=True,
+                    pixel_coord=(px, py),
+                    source_camera=camera,
+                    element_id=element_id
                 )
-            except Exception:
+            except Exception as e:
+                print(f"Error building ortho projection: {e}")
                 return {}
+        else:
+            # Standard perspective camera logic
+            # --- PLAN A: Index Map (Flawless 3D Coordinate) ---
+            index_map = camera._raster.index_map
+            if index_map is not None and primary_target is not None:
+                try:
+                    # Ensure we are inside the image bounds
+                    if 0 <= px < camera.width and 0 <= py < camera.height:
+                        candidate_id = int(index_map[py, px])
+                        if candidate_id > -1:
+                            coord = primary_target.get_element_coordinate(candidate_id)
+                            if coord is not None:
+                                origin = camera.position.copy()
+                                direction = coord - origin
+                                norm = np.linalg.norm(direction)
+                                direction = direction / norm if norm > 0 else camera.R.T @ np.array([0, 0, 1])
 
-        return ray.project_to_cameras(self.cameras)
+                                ray = CameraRay(
+                                    origin=origin,
+                                    direction=direction,
+                                    terminal_point=coord,
+                                    has_accurate_depth=True,
+                                    pixel_coord=(px, py),
+                                    source_camera=camera,
+                                    element_id=candidate_id
+                                )
+                except Exception:
+                    pass
+
+            # --- PLAN B: Depth Map / Scene Median Fallback ---
+            if ray is None:
+                depth = None
+                try:
+                    raster = camera._raster
+                    if raster.z_channel is not None and raster.z_data_type == 'depth':
+                        depth = raster.get_z_value(px, py)
+                except Exception:
+                    pass
+
+                # Cache median depth per camera — only recompute when active camera changes
+                cache_key = id(camera)
+                if getattr(self, '_median_depth_cache_key', None) != cache_key:
+                    try:
+                        self._cached_median_depth = self.viewer.get_scene_median_depth(camera.position)
+                    except Exception:
+                        self._cached_median_depth = 10.0
+                    self._median_depth_cache_key = cache_key
+
+                default_depth = self._cached_median_depth or 10.0
+
+                try:
+                    ray = CameraRay.from_pixel_and_camera(
+                        pixel_xy=(px, py),
+                        camera=camera,
+                        depth=depth,
+                        default_depth=default_depth,
+                    )
+                except Exception:
+                    return {}
+
+        if ray is None:
+            return {}
+
+        cameras_for_projection = self.cameras
+        if self.ortho_camera is not None and camera != self.ortho_camera:
+            cameras_for_projection = dict(self.cameras)
+            cameras_for_projection[self.ortho_camera.image_path] = self.ortho_camera
+
+        return ray.project_to_cameras(cameras_for_projection)
 
     def _on_patch_annotation_created(self, annotation_id: str):
-        """Propagate a newly created PatchAnnotation into all visible context cameras."""
+        """Propagate a newly created PatchAnnotation into all target cameras (perspective and ortho-aware)."""
         if self._propagating_annotation:
             return
 
@@ -1693,9 +2481,7 @@ class MVATManager(QObject):
         px = int(annotation.center_xy.x())
         py = int(annotation.center_xy.y())
 
-        selected_paths = set(self.selection_model.selected_paths)
-        if self.selected_camera and self.selected_camera.image_path in selected_paths:
-            selected_paths.discard(self.selected_camera.image_path)
+        selected_paths = self._get_annotation_target_paths()
 
         # Quick exit: nothing to propagate to
         if not selected_paths:
@@ -1704,18 +2490,41 @@ class MVATManager(QObject):
         from PyQt5.QtCore import QPointF
         self._propagating_annotation = True
         try:
-            # Try True 3D mapping: get the element id at source pixel (if index map present)
-            # Use the in-memory raster index_map to avoid triggering lazy disk loads.
-            source_index_map = self.selected_camera._raster.index_map
-            element_id = None
+            # ------------------------------------------------------------------
+            # Source element-ID extraction: sample a sparse grid within the
+            # annotation bounding box so that get_pixels_for_elements has many
+            # IDs to work with — not just the single center pixel.  More IDs
+            # dramatically reduces stride false-negatives in the target cameras.
+            # ------------------------------------------------------------------
+            source_raster = getattr(self.selected_camera, '_raster', None)
+            source_index_map = source_raster.index_map if source_raster is not None else None
+            source_element_ids = None   # list[int] — passed to get_pixels_for_elements
+            element_id = None           # center-pixel ID — used by _build_projection ray
             use_3d = False
+
             if source_index_map is not None:
                 try:
+                    sf = getattr(source_raster, 'index_map_scale_factor', None) or 1.0
                     img_h, img_w = source_index_map.shape
-                    if 0 <= px < img_w and 0 <= py < img_h:
-                        eid = int(source_index_map[py, px])
-                        if eid > -1:
-                            element_id = eid
+                    ann_size = annotation.annotation_size   # half-extent in image pixels
+
+                    # Clamp the annotation bounding box to the index-map bounds
+                    # (coordinates scaled by sf to match the index-map resolution).
+                    x0 = max(0,       int((px - ann_size) * sf))
+                    x1 = min(img_w,   int((px + ann_size) * sf) + 1)
+                    y0 = max(0,       int((py - ann_size) * sf))
+                    y1 = min(img_h,   int((py + ann_size) * sf) + 1)
+
+                    if x0 < x1 and y0 < y1:
+                        patch = source_index_map[y0:y1, x0:x1].ravel()
+                        valid = patch[patch > -1]
+                        if valid.size > 0:
+                            source_element_ids = list(np.unique(valid).tolist())
+                            # Prefer the exact center-pixel ID for the ray direction
+                            cx = min(int(px * sf), img_w - 1)
+                            cy = min(int(py * sf), img_h - 1)
+                            center_eid = int(source_index_map[cy, cx])
+                            element_id = center_eid if center_eid > -1 else source_element_ids[0]
                             use_3d = True
                 except Exception:
                     pass
@@ -1725,37 +2534,50 @@ class MVATManager(QObject):
 
             for target_path in selected_paths:
 
-                target_camera = self.cameras.get(target_path)
+                target_camera = self._get_camera_for_path(target_path)
                 if target_camera is None:
                     continue
 
                 try:
-                    # 3D centroid mapping if both source hit and target index map exist
-                    target_has_index = getattr(target_camera, '_raster', None) is not None and target_camera._raster.index_map is not None
-                    if use_3d and target_has_index and element_id is not None:
-                        flat = target_camera.get_pixels_for_elements(np.array([element_id], dtype=np.int64))
-                        if flat.size == 0:
-                            # occluded in this view
-                            continue
-                        v_arr, u_arr = np.divmod(flat, target_camera.width)
-                        u_centroid = float(np.mean(u_arr))
-                        v_centroid = float(np.mean(v_arr))
-                        if not (0 <= u_centroid < target_camera.width and 0 <= v_centroid < target_camera.height):
-                            continue
+                    placed = False
 
-                        new_annotation = PatchAnnotation(
-                            center_xy=QPointF(u_centroid, v_centroid),
-                            annotation_size=annotation.annotation_size,
-                            label=annotation.label,
-                            image_path=target_path,
-                            transparency=annotation.transparency,
+                    # ----------------------------------------------------------
+                    # 3D centroid path: look up every sampled element ID in the
+                    # target's index map and use the resulting pixel centroid.
+                    # Falls through to 2D when the lookup returns empty (element
+                    # too small / edge-on in target, or stride miss) rather than
+                    # hard-skipping the camera.
+                    # ----------------------------------------------------------
+                    target_has_index = (getattr(target_camera, '_raster', None) is not None
+                                        and target_camera._raster.index_map is not None)
+                    target_is_ortho = target_camera is self.ortho_camera
+                    if use_3d and target_has_index and source_element_ids and not target_is_ortho:
+                        flat = target_camera.get_pixels_for_elements(
+                            np.array(source_element_ids, dtype=np.int64)
                         )
-                        try:
-                            self.annotation_window.add_annotation(new_annotation, record_action=True)
-                        except Exception:
-                            pass
-                    else:
-                        # 2D center-stamp fallback: per-target projection (lazy)
+                        if flat.size > 0:
+                            v_arr, u_arr = np.divmod(flat, target_camera.width)
+                            u_centroid = float(np.mean(u_arr))
+                            v_centroid = float(np.mean(v_arr))
+                            if 0 <= u_centroid < target_camera.width and 0 <= v_centroid < target_camera.height:
+                                new_annotation = PatchAnnotation(
+                                    center_xy=QPointF(u_centroid, v_centroid),
+                                    annotation_size=annotation.annotation_size,
+                                    label=annotation.label,
+                                    image_path=target_path,
+                                    transparency=annotation.transparency,
+                                )
+                                try:
+                                    self.annotation_window.add_annotation(new_annotation, record_action=True)
+                                    placed = True
+                                except Exception:
+                                    pass
+
+                    # ----------------------------------------------------------
+                    # 2D fallback: used when no index map is available OR when
+                    # the 3D lookup returned empty (element occluded / missed).
+                    # ----------------------------------------------------------
+                    if not placed:
                         if projections is None:
                             projections = self._build_projection(px, py)
                         proj = projections.get(target_path)
@@ -1792,6 +2614,8 @@ class MVATManager(QObject):
     # TODO Note: dense mesh hit fills in the face IDs when the quality of index map < Highest; otherwise VTK does this fine.
     # If we can find a way to not use Open3D always, then we don't need to calculate a BVH, which takes times to build.
     # Figure out how we can allow the user to use lower quality index maps, but still fill in the gaps.
+    # 
+    # Leagcy code; do not delete
     def _dense_mesh_hit_test(self, source_camera, pixel_mask: np.ndarray, px: int, py: int, mesh_product) -> np.ndarray:
         """Cast rays through every True pixel in pixel_mask against the mesh surface.
 
@@ -1922,7 +2746,7 @@ class MVATManager(QObject):
     def _propagate_to_camera(self, target_path, painted_ids, target_class_id_map,
                               projections, brush_w, brush_h, brush_mask, use_3d):
         """Single-camera propagation — runs in thread pool, no Qt calls."""
-        target_camera = self.cameras.get(target_path)
+        target_camera = self._get_camera_for_path(target_path)
         if target_camera is None:
             return target_path, False
 
@@ -1940,7 +2764,7 @@ class MVATManager(QObject):
 
         target_has_index = target_camera._raster.index_map is not None
 
-        if use_3d and target_has_index:
+        if use_3d and target_has_index and target_camera is not self.ortho_camera:
             proj = projections.get(target_path)
             bbox = None
             if proj is not None and proj[2]:
@@ -1976,6 +2800,9 @@ class MVATManager(QObject):
     def _on_brush_stroke_applied(self, scene_pos, label_id: str, brush_mask):
         """Propagate a brush stroke into all visible context cameras.
 
+        When painting on an OrthoRaster/OrthoCamera, applies the brush to all visible
+        perspective cameras that can see the same 3D geometry.
+
         Uses True 3D Mapping when the source camera's index map is available:
         1. Extract the element IDs painted under the brush using the source
            camera's index_map.
@@ -1986,7 +2813,7 @@ class MVATManager(QObject):
         Falls back to the legacy 2D center-stamp when the index map is absent
         (e.g., visibility not yet computed) or when no scene geometry was hit.
         """
-        
+
         if self._propagating_annotation:
             return
         if self.selected_camera is None:
@@ -1995,9 +2822,8 @@ class MVATManager(QObject):
         px = int(scene_pos.x())
         py = int(scene_pos.y())
 
-        selected_paths = set(self.selection_model.selected_paths)
-        if self.selected_camera and self.selected_camera.image_path in selected_paths:
-            selected_paths.discard(self.selected_camera.image_path)
+        selected_paths = self._get_annotation_target_paths()
+
         project_labels = list(self.main_window.label_window.labels)
 
         # Quick exit: nothing to propagate to
@@ -2013,61 +2839,15 @@ class MVATManager(QObject):
         # ------------------------------------------------------------------
         # Phase 1: Source ID Extraction (2D → 3D)
         # ------------------------------------------------------------------
-        painted_ids = None
-        _p1_target = self.viewer.scene_context.get_primary_target()
-        if isinstance(_p1_target, MeshProduct) and False: # now fast
-            try:
-                # Dense ray casting: cast through every True pixel in the brush mask
-                # to intersect the full triangle surface area rather than relying on
-                # the downsampled index_map (which only captures face centres at reduced
-                # resolution, missing small or oblique triangles).
-                painted_ids = self._dense_mesh_hit_test(
-                    self.selected_camera, brush_mask, px, py, _p1_target
-                )
-                if painted_ids is None:
-                    painted_ids = np.array([], dtype=np.int32)
-            except Exception as e:
-                print(f"⚠️ Dense mesh hit test failed: {e}. Falling back to index_map.")
-                painted_ids = None
-        
-        # If mesh hit test didn't work, try index_map fallback
-        if painted_ids is None:
-            # PointCloud (or non-mesh) target: use the pre-computed index_map.
-            # Use the in-memory raster index_map to avoid triggering lazy disk loads.
-            source_index_map = self.selected_camera._raster.index_map
-            if source_index_map is not None:
-                # Bounding box of the brush in source image coordinates
-                x0 = px - brush_w // 2
-                y0 = py - brush_h // 2
-                x1 = x0 + brush_w
-                y1 = y0 + brush_h
-
-                img_h, img_w = source_index_map.shape
-
-                # Only proceed if the brush overlaps the image at all
-                if x0 < img_w and y0 < img_h and x1 > 0 and y1 > 0:
-                    # Clip to image bounds
-                    cx0 = max(x0, 0)
-                    cy0 = max(y0, 0)
-                    cx1 = min(x1, img_w)
-                    cy1 = min(y1, img_h)
-
-                    # Corresponding slice of the brush mask
-                    bx0 = cx0 - x0
-                    by0 = cy0 - y0
-                    bx1 = bx0 + (cx1 - cx0)
-                    by1 = by0 + (cy1 - cy0)
-
-                    index_slice = source_index_map[cy0:cy1, cx0:cx1]
-                    brush_clip  = brush_mask[by0:by1, bx0:bx1]
-
-                    # Extract the 3D Face IDs perfectly using the VTK raster
-                    raw_ids = index_slice[brush_clip.astype(bool)]
-                    unique_ids = np.unique(raw_ids)
-                    painted_ids = unique_ids[unique_ids > -1]  # filter background
+        painted_ids = self._extract_source_ids_from_crop_mask(
+            self.selected_camera,
+            brush_mask,
+            px,
+            py,
+        )
 
         # Whether the source camera has valid 3D geometry hits to propagate
-        use_3d = painted_ids is not None and len(painted_ids) > 0 
+        use_3d = painted_ids is not None and len(painted_ids) > 0
 
         # ------------------------------------------------------------------
         # Paint the 3D Model directly
@@ -2077,11 +2857,11 @@ class MVATManager(QObject):
             if primary_target and hasattr(primary_target, 'apply_labels'):
                 # 1. Convert QColor to RGB tuple
                 target_color = (source_label.color.red(), source_label.color.green(), source_label.color.blue())
-                
+
                 # 2. Get the integer class_id mapped to this label from the source mask
                 source_raster = self.raster_manager.get_raster(self.selected_camera.image_path)
                 source_mask = source_raster.get_mask_annotation(project_labels) if source_raster else None
-                
+
                 if source_mask:
                     source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
                     # Sync if it's a brand new label
@@ -2101,6 +2881,7 @@ class MVATManager(QObject):
             # (avoids repeated dict lookups and sync_label_map calls inside threads)
             target_class_id_map = {}
             for target_path in selected_paths:
+                target_camera = self._get_camera_for_path(target_path)
                 target_raster = self.raster_manager.get_raster(target_path)
                 if target_raster is None:
                     continue
@@ -2147,61 +2928,41 @@ class MVATManager(QObject):
 
     def _on_fill_stroke_applied(self, scene_pos, label_id: str, fill_mask=None):
         """Propagate a fill operation into all visible context cameras.
-        
+
+        When painting on an OrthoRaster/OrthoCamera, applies the fill to all visible
+        perspective cameras that can see the same 3D geometry.
+
         Uses True 3D Mapping when the source camera's index map is available:
         1. Extract all element IDs under the filled region using the source
            camera's index_map and the fill_mask.
         2. Update the 3D Scene Product directly with the new Class ID and Color.
         3. Query each target camera's inverted index for the same IDs.
         4. Fill the connected regions in the target masks.
-        
+
         Falls back to the legacy 2D center-point projection when the index map is absent.
         """
         if self._propagating_annotation:
             return
         if self.selected_camera is None:
             return
-        
+
         px = int(scene_pos.x())
         py = int(scene_pos.y())
-        
-        selected_paths = set(self.selection_model.selected_paths)
-        if self.selected_camera and self.selected_camera.image_path in selected_paths:
-            selected_paths.discard(self.selected_camera.image_path)
+
+        selected_paths = self._get_annotation_target_paths()
+
         project_labels = list(self.main_window.label_window.labels)
-        
+
         source_label = next((lbl for lbl in project_labels if lbl.id == label_id), None)
         if source_label is None:
             return
-        
+
         # ------------------------------------------------------------------
         # Phase 1: Source ID Extraction (2D → 3D)
         # ------------------------------------------------------------------
         painted_ids = None
-        _p1_target = self.viewer.scene_context.get_primary_target()
-        if fill_mask is not None and isinstance(_p1_target, MeshProduct) and False:
-            # Dense ray casting: fill_mask is full image-sized, so pass center coords
-            # that produce a zero offset (x0=0, y0=0) aligning the mask to image space.
-            mask_h_fill, mask_w_fill = fill_mask.shape
-            painted_ids = self._dense_mesh_hit_test(
-                self.selected_camera, fill_mask.astype(bool),
-                mask_w_fill // 2, mask_h_fill // 2, _p1_target
-            )
-        else:
-            # PointCloud (or non-mesh) target: use the pre-computed index_map.
-            # Use the in-memory raster index_map to avoid triggering lazy disk loads.
-            source_index_map = self.selected_camera._raster.index_map
-            if source_index_map is not None and fill_mask is not None:
-                try:
-                    img_h, img_w = source_index_map.shape
-                    # Get all element IDs where fill_mask is True
-                    if fill_mask.shape == (img_h, img_w):
-                        element_ids = source_index_map[fill_mask]
-                        # Get unique element IDs (excluding -1 which means background)
-                        painted_ids = np.unique(element_ids[element_ids > -1])
-                        painted_ids = np.array(painted_ids, dtype=np.int64)
-                except Exception:
-                    pass
+        if fill_mask is not None:
+            painted_ids = self._extract_source_ids_from_full_mask(self.selected_camera, fill_mask)
 
         use_3d = painted_ids is not None and len(painted_ids) > 0
         
@@ -2240,7 +3001,7 @@ class MVATManager(QObject):
             target_cameras_2d = []
 
             for target_path in selected_paths:
-                target_camera = self.cameras.get(target_path)
+                target_camera = self._get_camera_for_path(target_path)
                 if not target_camera: continue
                 
                 target_raster = self.raster_manager.get_raster(target_path)
@@ -2261,7 +3022,8 @@ class MVATManager(QObject):
                 target_class_id_map[target_path] = target_class_id
                 
                 target_has_index = target_camera._raster is not None and target_camera._raster.index_map is not None
-                if use_3d and target_has_index:
+                target_is_ortho = target_camera is self.ortho_camera
+                if use_3d and target_has_index and not target_is_ortho:
                     target_cameras_3d.append((target_path, target_camera))
                 else:
                     target_cameras_2d.append((target_path, target_camera))
@@ -2339,6 +3101,9 @@ class MVATManager(QObject):
     def _on_erase_stroke_applied(self, scene_pos, label_id: str, brush_mask: np.ndarray):
         """Propagate an erase operation into all visible context cameras.
 
+        When painting on an OrthoRaster/OrthoCamera, applies the erase to all visible
+        perspective cameras that can see the same 3D geometry.
+
         Uses True 3D Mapping when the source camera's index map is available:
         1. Extract the element IDs beneath the eraser brush using the source
            camera's index_map.
@@ -2354,9 +3119,8 @@ class MVATManager(QObject):
             return
 
         px, py = int(scene_pos.x()), int(scene_pos.y())
-        selected_paths = set(self.selection_model.selected_paths)
-        if self.selected_camera and self.selected_camera.image_path in selected_paths:
-            selected_paths.discard(self.selected_camera.image_path)
+
+        selected_paths = self._get_annotation_target_paths()
 
         # Quick exit: nothing to propagate to
         if not selected_paths:
@@ -2367,43 +3131,7 @@ class MVATManager(QObject):
         # ------------------------------------------------------------------
         # Phase 1: Source ID Extraction (2D → 3D)
         # ------------------------------------------------------------------
-        painted_ids = None
-        _p1_target = self.viewer.scene_context.get_primary_target()
-        if isinstance(_p1_target, MeshProduct) and False:
-            # Dense ray casting: cast through every True pixel in the eraser mask
-            # to intersect the full triangle surface area, matching the brush approach.
-            painted_ids = self._dense_mesh_hit_test(
-                self.selected_camera, brush_mask, px, py, _p1_target
-            )
-        else:
-            # PointCloud (or non-mesh) target: use the pre-computed index_map.
-            # Use the in-memory raster index_map to avoid triggering lazy disk loads.
-            source_index_map = self.selected_camera._raster.index_map
-            if source_index_map is not None:
-                x0 = px - brush_w // 2
-                y0 = py - brush_h // 2
-                x1 = x0 + brush_w
-                y1 = y0 + brush_h
-
-                img_h, img_w = source_index_map.shape
-
-                if x0 < img_w and y0 < img_h and x1 > 0 and y1 > 0:
-                    cx0 = max(x0, 0)
-                    cy0 = max(y0, 0)
-                    cx1 = min(x1, img_w)
-                    cy1 = min(y1, img_h)
-
-                    bx0 = cx0 - x0
-                    by0 = cy0 - y0
-                    bx1 = bx0 + (cx1 - cx0)
-                    by1 = by0 + (cy1 - cy0)
-
-                    index_slice = source_index_map[cy0:cy1, cx0:cx1]
-                    brush_clip = brush_mask[by0:by1, bx0:bx1]
-
-                    raw_ids = index_slice[brush_clip.astype(bool)]
-                    unique_ids = np.unique(raw_ids)
-                    painted_ids = unique_ids[unique_ids > -1]
+        painted_ids = self._extract_source_ids_from_crop_mask(self.selected_camera, brush_mask, px, py)
 
         use_3d = painted_ids is not None and len(painted_ids) > 0
 
@@ -2441,20 +3169,23 @@ class MVATManager(QObject):
             # Catch the results on the Main Thread and repaint
             for future in as_completed(futures):
                 target_path, did_update = future.result()
-                
+
                 if did_update:
                     target_raster = self.raster_manager.get_raster(target_path)
                     if target_raster and target_raster.mask_annotation:
                         target_mask = target_raster.mask_annotation
-                        
-                        # Trigger the Qt repaint on the Main Thread
-                        target_mask.update_graphics_item()
-                        
+
+                        # The silent update in _propagate_to_camera already wrote to
+                        # colored_mask, so only a lightweight Qt repaint is needed here —
+                        # not a full _update_full_canvas() rebuild.
+                        if target_mask.graphics_item is not None:
+                            target_mask.graphics_item.update()
+
                         # Mount the overlay if it isn't already attached
                         context_canvas = self._get_context_canvas_for_path(target_path)
                         if context_canvas is not None and context_canvas._mask_overlay_item is None:
                             context_canvas.set_mask_overlay(target_mask)
-                            
+
         except Exception as e:
             print(f"Error in multi-annotate erase: {e}")
         finally:
@@ -2466,6 +3197,9 @@ class MVATManager(QObject):
 
     def _on_sam_prediction_applied(self, scene_pos, label_id: str, binary_mask: np.ndarray):
         """Propagate a final SAM mask prediction into all visible context cameras.
+
+        When painting on an OrthoRaster/OrthoCamera, applies the SAM prediction to all visible
+        perspective cameras that can see the same 3D geometry.
 
         Uses True 3D Mapping when the source camera's index map is available:
         1. Extract the element IDs beneath the predicted binary_mask using the
@@ -2490,9 +3224,8 @@ class MVATManager(QObject):
         px = int(scene_pos.x())
         py = int(scene_pos.y())
 
-        selected_paths = set(self.selection_model.selected_paths)
-        if self.selected_camera and self.selected_camera.image_path in selected_paths:
-            selected_paths.discard(self.selected_camera.image_path)
+        selected_paths = self._get_annotation_target_paths()
+
         project_labels = list(self.main_window.label_window.labels)
 
         source_label = next((lbl for lbl in project_labels if lbl.id == label_id), None)
@@ -2505,14 +3238,12 @@ class MVATManager(QObject):
         # Phase 1: Source ID Extraction (2D → 3D)
         # ------------------------------------------------------------------
         painted_ids = None
-        _p1_target = self.viewer.scene_context.get_primary_target()
-        if isinstance(_p1_target, MeshProduct) and False:
-            # Dense ray casting: cast through every True pixel in the SAM binary_mask
-            # to intersect the full triangle surface area rather than relying on
-            # the downsampled index_map (which only captures face centres at reduced
-            # resolution, missing small or oblique triangles).
-            painted_ids = self._dense_mesh_hit_test(
-                self.selected_camera, binary_mask.astype(bool), px, py, _p1_target
+        if self._is_ortho_annotation_source():
+            painted_ids = self._extract_source_ids_from_crop_mask(
+                self.selected_camera,
+                binary_mask.astype(bool),
+                px,
+                py,
             )
         else:
             import cv2
@@ -2545,7 +3276,6 @@ class MVATManager(QObject):
                     source_depth_map = self.selected_camera._raster.z_channel
 
                     if source_depth_map is not None:
-                        import cv2
                         depth_slice = source_depth_map[cy0:cy1, cx0:cx1]
 
                         # ----------------------------------------------------------
@@ -2644,7 +3374,7 @@ class MVATManager(QObject):
             target_cameras_2d = []
 
             for target_path in selected_paths:
-                target_camera = self.cameras.get(target_path)
+                target_camera = self._get_camera_for_path(target_path)
                 if not target_camera: continue
                 
                 target_raster = self.raster_manager.get_raster(target_path)
@@ -2665,7 +3395,8 @@ class MVATManager(QObject):
                 target_class_id_map[target_path] = target_class_id
                 
                 target_has_index = target_camera._raster is not None and target_camera._raster.index_map is not None
-                if use_3d and target_has_index:
+                target_is_ortho = target_camera is self.ortho_camera
+                if use_3d and target_has_index and not target_is_ortho:
                     target_cameras_3d.append((target_path, target_camera))
                 else:
                     target_cameras_2d.append((target_path, target_camera))

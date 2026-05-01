@@ -12,15 +12,19 @@ from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QToolButton, Q
                              QGraphicsDropShadowEffect, QToolBar,
                              QListWidget, QListWidgetItem, QComboBox, QLabel)
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
+from coralnet_toolbox import theme as app_theme
 
 # Theme tokens (moved here from coralnet_toolbox/theme.py)
 # Colors
-BACKGROUND = QColor('#FFFFFF')
-SURFACE = QColor('#F7F9FB')
-PRIMARY = QColor('#0B78D1')
-TEXT_PRIMARY = QColor('#222222')
-TEXT_SECONDARY = QColor('#6B7280')
+BACKGROUND = app_theme.BACKGROUND_COLOR
+SURFACE = app_theme.SURFACE_COLOR
+PRIMARY = app_theme.ACCENT_COLOR
+TEXT_PRIMARY = app_theme.TEXT_PRIMARY_COLOR
+TEXT_SECONDARY = app_theme.TEXT_SECONDARY_COLOR
+BORDER = app_theme.SURFACE_BORDER_COLOR
+FIELD_STYLE = f"background-color: {SURFACE.name()}; color: {TEXT_PRIMARY.name()}; border: 1px solid {BORDER.name()}; border-radius: 4px; padding: 3px 6px;"
+FIELD_STYLE_EDITABLE = f"background-color: {app_theme.SURFACE_ELEVATED_COLOR.name()}; color: {TEXT_PRIMARY.name()}; border: 1px solid {PRIMARY.name()}; border-radius: 4px; padding: 3px 6px;"
 
 # Shadow / elevation
 SHADOW_COLOR = QColor(0, 0, 0, 80)
@@ -105,7 +109,7 @@ class LabelDisplay(QWidget):
         try:
             accent_color = QColor(self.label.color)
         except Exception:
-            accent_color = QColor('#CCCCCC')
+            accent_color = QColor(BORDER)
         if self.label.is_selected:
             # Make accent slightly brighter when selected
             accent_color = accent_color.lighter(110)
@@ -159,9 +163,14 @@ class Label(QWidget):
         self.drag_start_position = None
 
         # --- Layout and Child Widgets ---
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(5, 2, 5, 2)
-        layout.setSpacing(5)
+        self.main_layout = QHBoxLayout(self)
+        self.main_layout.setContentsMargins(
+            app_theme.scale_int(5),
+            app_theme.scale_int(2),
+            app_theme.scale_int(5),
+            app_theme.scale_int(2),
+        )
+        self.main_layout.setSpacing(app_theme.scale_int(LABEL_SPACING))
 
         # 1. The visual display part of the label
         self.display_widget = LabelDisplay(self)
@@ -169,8 +178,12 @@ class Label(QWidget):
 
         # 2. Small color swatch for quick recognition
         self.color_swatch = QLabel()
-        self.color_swatch.setFixedSize(SWATCH_SIZE, SWATCH_SIZE)
-        self.color_swatch.setStyleSheet(f"background-color: {self.color.name()}; border-radius: {SWATCH_RADIUS}px; border: 1px solid #DDDDDD;")
+        self.color_swatch.setFixedSize(app_theme.scale_int(SWATCH_SIZE), app_theme.scale_int(SWATCH_SIZE))
+        self.color_swatch.setStyleSheet(
+            app_theme.scale_qss(
+                f"background-color: {self.color.name()}; border-radius: {SWATCH_RADIUS}px; border: 1px solid {BORDER.name()};"
+            )
+        )
         self.color_swatch.setToolTip("Label color")
 
         # 3. Visibility toggle - compact icon button (eye)
@@ -181,6 +194,7 @@ class Label(QWidget):
             self.visibility_checkbox.setIcon(visible_icon)
         else:
             self.visibility_checkbox.setText("👁")
+        self.visibility_checkbox.setIconSize(app_theme.scale_size(16))
         self.visibility_checkbox.setCheckable(True)
         self.visibility_checkbox.setChecked(True)
         self.visibility_checkbox.setToolTip("Show/hide annotations for this label")
@@ -212,9 +226,9 @@ class Label(QWidget):
         _sync_visibility_icon(self.visibility_checkbox.isChecked())
 
         # Add widgets to the layout: swatch, flexible display, and toggle
-        layout.addWidget(self.color_swatch)
-        layout.addWidget(self.display_widget, 1)
-        layout.addWidget(self.visibility_checkbox)
+        self.main_layout.addWidget(self.color_swatch)
+        self.main_layout.addWidget(self.display_widget, 1)
+        self.main_layout.addWidget(self.visibility_checkbox)
 
         # --- Animation Properties ---
         self.animation_manager = None
@@ -224,16 +238,34 @@ class Label(QWidget):
         self._pulse_alpha = 128
         self._pulse_direction = 1
 
-        # --- Widget settings ---
-        self.setFixedHeight(LABEL_HEIGHT)
+        self.refresh_scaling()
+
+    def refresh_scaling(self):
+        """Refresh the label widget after a UI scale change."""
+        self.main_layout.setContentsMargins(
+            app_theme.scale_int(5),
+            app_theme.scale_int(2),
+            app_theme.scale_int(5),
+            app_theme.scale_int(2),
+        )
+        self.main_layout.setSpacing(app_theme.scale_int(LABEL_SPACING))
+        self.color_swatch.setFixedSize(app_theme.scale_int(SWATCH_SIZE), app_theme.scale_int(SWATCH_SIZE))
+        self.color_swatch.setStyleSheet(
+            app_theme.scale_qss(
+                f"background-color: {self.color.name()}; border-radius: {SWATCH_RADIUS}px; border: 1px solid {BORDER.name()};"
+            )
+        )
+        self.visibility_checkbox.setIconSize(app_theme.scale_size(16))
+        self.setFixedHeight(app_theme.scale_int(LABEL_HEIGHT))
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setToolTip(self.long_label_code)
         # Apply subtle elevation only when necessary (keeps rendering cheap)
         shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(ELEVATION_BLUR)
+        shadow.setBlurRadius(app_theme.scale_int(ELEVATION_BLUR))
         shadow.setColor(SHADOW_COLOR)
-        shadow.setOffset(ELEVATION_OFFSET[0], ELEVATION_OFFSET[1])
+        shadow.setOffset(app_theme.scale_int(ELEVATION_OFFSET[0]), app_theme.scale_int(ELEVATION_OFFSET[1]))
         self.setGraphicsEffect(shadow)
+        self.display_widget.update()
 
     def _handle_selection(self):
         """Internal slot to handle clicks from the display widget."""
@@ -327,7 +359,7 @@ class Label(QWidget):
     def update_color(self):
         """Trigger a repaint to reflect color changes."""
         try:
-            self.color_swatch.setStyleSheet(f"background-color: {self.color.name()}; border-radius: {SWATCH_RADIUS}px; border: 1px solid #DDDDDD;")
+            self.color_swatch.setStyleSheet(f"background-color: {self.color.name()}; border-radius: {SWATCH_RADIUS}px; border: 1px solid {BORDER.name()};")
         except Exception:
             pass
         self.display_widget.update()
@@ -342,7 +374,7 @@ class Label(QWidget):
             self.color = new_color
             # Update the small swatch immediately if present
             try:
-                self.color_swatch.setStyleSheet(f"background-color: {self.color.name()}; border-radius: {SWATCH_RADIUS}px; border: 1px solid #DDDDDD;")
+                self.color_swatch.setStyleSheet(f"background-color: {self.color.name()}; border-radius: {SWATCH_RADIUS}px; border: 1px solid {BORDER.name()};")
             except Exception:
                 pass
             self.update_color()
@@ -473,8 +505,8 @@ class LabelWindow(QWidget):
         self.label_locked = False
         self.locked_label = None
 
-        self.label_height = 30
-        self.label_width = 50 
+        self.label_height = app_theme.scale_int(30)
+        self.label_width = app_theme.scale_int(50) 
         
         # Setup UI components
         self.setup_ui()
@@ -528,15 +560,18 @@ class LabelWindow(QWidget):
         """Instantiate action buttons and filter bar."""
         self.add_label_button = QPushButton()
         self.add_label_button.setIcon(self.main_window.add_icon)
+        self.add_label_button.setIconSize(app_theme.scale_size(16))
         self.add_label_button.setToolTip("Add Label")
 
         self.delete_label_button = QPushButton()
         self.delete_label_button.setIcon(self.main_window.remove_icon)
+        self.delete_label_button.setIconSize(app_theme.scale_size(16))
         self.delete_label_button.setToolTip("Delete Label")
         self.delete_label_button.setEnabled(False)
 
         self.edit_label_button = QPushButton()
         self.edit_label_button.setIcon(self.main_window.edit_icon)
+        self.edit_label_button.setIconSize(app_theme.scale_size(16))
         self.edit_label_button.setToolTip("Edit Label / Merge Labels")
         self.edit_label_button.setEnabled(False)
 
@@ -546,17 +581,20 @@ class LabelWindow(QWidget):
         if not icon:
             icon = self.main_window.edit_icon
         self.bulk_map_button.setIcon(icon)
+        self.bulk_map_button.setIconSize(app_theme.scale_size(16))
         self.bulk_map_button.setToolTip("Map Labels (bulk)")
         self.bulk_map_button.setEnabled(False)
 
         self.label_lock_button = QPushButton()
         self.label_lock_button.setIcon(self.main_window.unlock_icon)
+        self.label_lock_button.setIconSize(app_theme.scale_size(16))
         self.label_lock_button.setToolTip("Label Unlocked")
         self.label_lock_button.setCheckable(True)
         self.label_lock_button.toggled.connect(self.toggle_label_lock)
 
         self.toggle_all_button = QPushButton()
         self.toggle_all_button.setIcon(get_icon("all.svg"))
+        self.toggle_all_button.setIconSize(app_theme.scale_size(16))
         self.toggle_all_button.setToolTip("Toggle All Labels")
         self.toggle_all_button.clicked.connect(self.toggle_all_labels)
 
@@ -568,11 +606,11 @@ class LabelWindow(QWidget):
         """Instantiate count displays."""
         self.label_count_display = QLineEdit("Labels: 1")
         self.label_count_display.setReadOnly(True)
-        self.label_count_display.setStyleSheet("background-color: #F0F0F0;")
+        self.label_count_display.setStyleSheet(app_theme.scale_qss(FIELD_STYLE))
 
         self.annotation_count_display = QLineEdit("Annotations: 0")
         self.annotation_count_display.setReadOnly(True)
-        self.annotation_count_display.setStyleSheet("background-color: #F0F0F0;")
+        self.annotation_count_display.setStyleSheet(app_theme.scale_qss(FIELD_STYLE))
         self.annotation_count_display.returnPressed.connect(self.update_annotation_count_index)
 
     def setup_labels_section(self):
@@ -689,13 +727,36 @@ class LabelWindow(QWidget):
         """Update the annotation count display based on the current selection."""
         if self.annotation_window.selected_tool == "select":
             self.annotation_count_display.setReadOnly(False)  # Make it editable
-            self.annotation_count_display.setStyleSheet("background-color: white;")
+            self.annotation_count_display.setStyleSheet(app_theme.scale_qss(FIELD_STYLE_EDITABLE))
         else:
             self.annotation_count_display.setReadOnly(True)  # Make it uneditable
-            self.annotation_count_display.setStyleSheet("background-color: #F0F0F0;")
+            self.annotation_count_display.setStyleSheet(app_theme.scale_qss(FIELD_STYLE))
 
         # Update the annotation count display after a tool is switched
         self.update_annotation_count()
+
+    def refresh_scaling(self):
+        """Refresh the label dock after a global UI scale change."""
+        self.label_height = app_theme.scale_int(30)
+        self.label_width = app_theme.scale_int(50)
+        self.add_label_button.setIconSize(app_theme.scale_size(16))
+        self.delete_label_button.setIconSize(app_theme.scale_size(16))
+        self.edit_label_button.setIconSize(app_theme.scale_size(16))
+        self.bulk_map_button.setIconSize(app_theme.scale_size(16))
+        self.label_lock_button.setIconSize(app_theme.scale_size(16))
+        self.toggle_all_button.setIconSize(app_theme.scale_size(16))
+        self.label_count_display.setStyleSheet(app_theme.scale_qss(FIELD_STYLE))
+        self.annotation_count_display.setStyleSheet(
+            app_theme.scale_qss(FIELD_STYLE_EDITABLE if not self.annotation_count_display.isReadOnly() else FIELD_STYLE)
+        )
+
+        for label in self.labels:
+            refresh = getattr(label, "refresh_scaling", None)
+            if callable(refresh):
+                refresh()
+
+        self.update_labels_per_row()
+        self.reorganize_labels()
 
     def update_annotation_count(self):
         """Update the annotation count display with current selection and total count."""
@@ -862,6 +923,7 @@ class LabelWindow(QWidget):
         label = Label("Review", "Review", QColor(255, 255, 255), label_id="-1")
         # Animate
         label.set_animation_manager(self.animation_manager)
+        label.refresh_scaling()
         # Connect
         label.selected.connect(self.set_active_label)
         label.label_deleted.connect(self.delete_label)
@@ -882,6 +944,7 @@ class LabelWindow(QWidget):
         label = Label(short_label_code, long_label_code, color, label_id)
         # Animate
         label.set_animation_manager(self.animation_manager)
+        label.refresh_scaling()
         # Connect
         label.selected.connect(self.set_active_label)
         label.label_deleted.connect(self.delete_label)
@@ -1387,7 +1450,7 @@ class LabelWindow(QWidget):
             return
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        self.main_window.showMessage(f"Bulk merging {len(source_labels)} labels into '{target_label.short_label_code}'...", 5000)
+        self.main_window.status_bar.showMessage(f"Bulk merging {len(source_labels)} labels into '{target_label.short_label_code}'...", 5000)
 
         # Update all rasters once
         for raster in self.main_window.image_window.raster_manager.rasters.values():
@@ -1699,6 +1762,31 @@ class LabelWindow(QWidget):
             
             # Update the scene once
             self.annotation_window.update_scene()
+
+            # Match per-label behavior: refresh phantom annotations, repaint viewport,
+            # and restore focus so visibility changes appear immediately.
+            try:
+                self.annotation_window.refresh_phantom_annotations()
+            except Exception:
+                pass
+
+            try:
+                vp = self.annotation_window.viewport()
+                if vp is not None:
+                    vp.repaint()
+            except Exception:
+                pass
+
+            try:
+                self.annotation_window.setFocus(Qt.OtherFocusReason)
+            except Exception:
+                pass
+
+            # Update annotation counts to reflect visibility changes
+            try:
+                self.update_annotation_count()
+            except Exception:
+                pass
             
         finally:
             # Restore cursor
@@ -1760,7 +1848,7 @@ class AddLabelDialog(QDialog):
         super().__init__(parent)
         self.label_window = label_window
 
-        self.setWindowIcon(get_icon("coralnet.svg"))
+        self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowTitle("Add Label")
         self.setObjectName("AddLabelDialog")
 
@@ -1840,7 +1928,7 @@ class EditLabelDialog(QDialog):
         self.label_window = label_window
         self.label = label
 
-        self.setWindowIcon(get_icon("coralnet.svg"))
+        self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowTitle("Edit Label")
         self.setObjectName("EditLabelDialog")
 
@@ -1966,7 +2054,7 @@ class BulkMapDialog(QDialog):
         super().__init__(parent)
         self.label_window = label_window
 
-        self.setWindowIcon(get_icon("coralnet.svg"))
+        self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowTitle("Map Labels (bulk)")
         self.setObjectName("BulkMapDialog")
 

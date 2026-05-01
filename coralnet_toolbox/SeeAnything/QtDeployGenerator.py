@@ -32,7 +32,7 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Common import ThresholdsWidget
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -58,7 +58,7 @@ class DeployGeneratorDialog(QDialog):
         self.annotation_window = main_window.annotation_window
         self.sam_dialog = None
 
-        self.setWindowIcon(get_icon("eye.svg"))
+        self.setWindowIcon(get_window_icon("eye.svg"))
         self.setWindowTitle("See Anything (YOLOE) Generator (Ctrl + 6)")
         self.resize(800, 800)  # Increased size to accommodate the horizontal layout
 
@@ -144,42 +144,49 @@ class DeployGeneratorDialog(QDialog):
 
         # Block signals to prevent setChecked from triggering the ImageWindow's
         # own filtering logic. We want to be in complete control.
-        iw.filter_combo.blockSignals(True)
+        if hasattr(iw, 'filter_combo'):
+            iw.filter_combo.blockSignals(True)
 
         # Disable and set filter checkboxes
         # Set only "Has Annotations" checked
-        for i in range(iw.filter_combo.count()):
-            item = iw.filter_combo.model().item(i)
-            if item.text() == "Has Annotations":
-                item.setCheckState(Qt.Checked)
-            else:
-                item.setCheckState(Qt.Unchecked)
-        
-        iw.filter_combo.setEnabled(False)
+        if hasattr(iw, 'filter_combo'):
+            for i in range(iw.filter_combo.count()):
+                item = iw.filter_combo.model().item(i)
+                if item.text() == "Has Annotations":
+                    item.setCheckState(Qt.Checked)
+                else:
+                    item.setCheckState(Qt.Unchecked)
+
+            iw.filter_combo.setEnabled(False)
 
         # Unblock signals now that we're done.
-        iw.filter_combo.blockSignals(False)
+        if hasattr(iw, 'filter_combo'):
+            iw.filter_combo.blockSignals(False)
 
         # Disable search UI elements
-        iw.home_button.setEnabled(False)
-        iw.image_search_button.setEnabled(False)
-        iw.label_search_button.setEnabled(False)
-        iw.search_bar_images.setEnabled(False)
-        iw.search_bar_labels.setEnabled(False)
+        if hasattr(iw, 'home_button'):
+            iw.home_button.setEnabled(False)
+        if hasattr(iw, 'search_bar_images'):
+            iw.search_bar_images.setEnabled(False)
+        if hasattr(iw, 'search_bar_labels'):
+            iw.search_bar_labels.setEnabled(False)
         
         # Hide the "Current" label as it is not applicable in this dialog
-        iw.current_image_index_label.hide()
+        if hasattr(iw, 'current_image_index_label'):
+            iw.current_image_index_label.hide()
 
         # Disconnect the double-click signal to prevent it from loading an image
         # in the main window, as this dialog is for selection only.
-        try:
-            iw.tableView.doubleClicked.disconnect()
-        except TypeError:
-            pass
+        if hasattr(iw, 'tableView'):
+            try:
+                iw.tableView.doubleClicked.disconnect()
+            except TypeError:
+                pass
         
         # CRITICAL: Override the load_first_filtered_image method to prevent auto-loading
         # This is the key fix to prevent unwanted load_image_by_path calls
-        iw.load_first_filtered_image = lambda: None
+        if hasattr(iw, 'load_first_filtered_image'):
+            iw.load_first_filtered_image = lambda: None
 
     def showEvent(self, event):
         """
@@ -577,9 +584,17 @@ class DeployGeneratorDialog(QDialog):
         self.sam_dialog = self.main_window.sam_deploy_predictor_dialog
 
         if not self.sam_dialog.loaded_model:
-            self.use_sam_dropdown.setCurrentText("False")
+            if self.use_sam_dropdown.currentText() != "False":
+                self.use_sam_dropdown.blockSignals(True)
+                self.use_sam_dropdown.setCurrentText("False")
+                self.use_sam_dropdown.blockSignals(False)
+            if hasattr(self, 'update_sam_task_state'):
+                self.update_sam_task_state()
             QMessageBox.critical(self, "Error", "Please deploy the SAM model first.")
             return False
+
+        if hasattr(self, 'update_sam_task_state'):
+            self.update_sam_task_state()
 
         return True
 
@@ -606,6 +621,8 @@ class DeployGeneratorDialog(QDialog):
                 # If SAM is wanted but not available, revert the dropdown and do nothing else.
                 # The 'is_sam_model_deployed' function already handles showing an error message.
                 self.use_sam_dropdown.setCurrentText("False")
+        else:
+            self.task = self.use_task_dropdown.currentText()
 
         # If use_sam_dropdown is "False", do nothing. Let self.task be whatever the user set.
             
@@ -970,11 +987,13 @@ class DeployGeneratorDialog(QDialog):
         progress_bar = ProgressBar(self.annotation_window, title="Running Inference")
         progress_bar.show()
 
-        cache = {}  # image_path → [Results, …]
+        # Bake per-image so full-resolution mask tensors don't accumulate
+        # across the whole batch — peak RAM stays at one image's worth.
+        processed_paths = []
 
         try:
             for img_idx, image_path in enumerate(image_paths):
-                
+
                 # --- 2. Get Raster and Work Items ---
                 raster = self.image_window.raster_manager.get_raster(image_path)
                 if raster is None:
@@ -1009,11 +1028,11 @@ class DeployGeneratorDialog(QDialog):
 
                 results_for_this_image = []
                 is_segmentation = self.task == 'segment' or self.use_sam_dropdown.currentText() == "True"
-                
+
                 try:
                     # --- Loop over the data in mini-batches ---
                     for i in range(0, len(work_items_data), BATCH_SIZE):
-                        
+
                         # Get the mini-batch chunks
                         data_chunk = work_items_data[i: i + BATCH_SIZE]
                         area_chunk = work_areas[i: i + BATCH_SIZE]
@@ -1022,13 +1041,16 @@ class DeployGeneratorDialog(QDialog):
                         for wa in area_chunk:
                             if wa is not None:
                                 wa.highlight()
-                        
+
                         # --- 4a. Apply Model (Batched) ---
                         # Returns a flat list: [res1, res2, ...]
                         batch_results_list = self._apply_model(data_chunk)
-                        
+
                         # --- 4b. Apply SAM (Batched) ---
-                        # Takes a flat list, returns a flat list
+                        # Takes a flat list, returns a flat list.  SAM sees the
+                        # tile crop (YOLOE set orig_img to the input ndarray)
+                        # with tile-space boxes, so its ViT encoder is bounded
+                        # by tile size instead of full-raster size.
                         sam_results_list = self._apply_sam(batch_results_list, image_path)
 
                         # Safety check
@@ -1039,7 +1061,7 @@ class DeployGeneratorDialog(QDialog):
                                     wa.unhighlight()
                                 progress_bar.update_progress()
                             continue
-                            
+
                         # --- 4c. Post-process ---
                         for results_obj, work_area in zip(sam_results_list, area_chunk):
 
@@ -1054,16 +1076,24 @@ class DeployGeneratorDialog(QDialog):
                             # --- 4d. Map Result ---
                             if work_area:
                                 mapped_result = MapResults().map_results_from_work_area(
-                                    results_obj, raster, work_area, is_segmentation
+                                    results_obj, raster, work_area, is_segmentation,
+                                    boundary_tolerance=self.thresholds_widget.get_boundary_tolerance()
                                 )
                             else:
                                 mapped_result = results_obj
+
+                            # Release tile/full BGR reference; downstream baking
+                            # only needs boxes + masks.xy, not orig_img.
+                            try:
+                                mapped_result.orig_img = None
+                            except Exception:
+                                pass
 
                             # --- 4e. Append to list ---
                             results_for_this_image.append(mapped_result)
 
                             progress_bar.update_progress()
-                            
+
                             if work_area:
                                 work_area.unhighlight()
 
@@ -1076,9 +1106,9 @@ class DeployGeneratorDialog(QDialog):
                     import traceback
                     traceback.print_exc()
 
-                # --- 5. Process All Results for This Image at Once ---
+                # --- 5. Bake this image's results immediately ---
                 if results_for_this_image:
-                    # Remap multi-prototype class IDs → 0 before rendering
+                    # Remap multi-prototype class IDs → 0 before rendering/baking
                     target_label_name = self.reference_label.short_label_code
                     for r in results_for_this_image:
                         if r is not None and r.boxes is not None and len(r.boxes) > 0:
@@ -1087,8 +1117,8 @@ class DeployGeneratorDialog(QDialog):
                             r.boxes = type(r.boxes)(new_data, r.boxes.orig_shape)
                             r.names = {0: target_label_name}
 
-                    cache[image_path] = results_for_this_image
-
+                    # Fast render must happen before baking — baking clears the
+                    # per-result tensors that generate_fast_render_paths reads.
                     if image_path == self.annotation_window.current_image_path:
                         try:
                             self._fast_render_image(
@@ -1096,33 +1126,51 @@ class DeployGeneratorDialog(QDialog):
                         except Exception as e:
                             print(f"SeeAnything.predict: fast render failed: {e}")
 
+                    try:
+                        self.annotation_window.is_streaming_inference = True
+                    except Exception:
+                        pass
+                    try:
+                        self._process_results(
+                            results_processor, results_for_this_image, image_path)
+                        processed_paths.append(image_path)
+                    except Exception as e:
+                        print(f"Error baking results for {image_path}: {e}")
+                    try:
+                        self.image_window.update_image_annotations(
+                            image_path, update_counts=False)
+                    except Exception:
+                        pass
+
+                    # Explicit drop: null masks + orig_img so the huge tensors
+                    # can be reclaimed before the next image runs.
+                    for r in results_for_this_image:
+                        try:
+                            r.masks = None
+                        except Exception:
+                            pass
+                        try:
+                            r.orig_img = None
+                        except Exception:
+                            pass
+                    results_for_this_image.clear()
+                    gc.collect()
+                    empty_cache()
+
         except Exception as e:
             print(f"A fatal error occurred during the prediction workflow: {e}")
         finally:
-            if cache:
-                is_segmentation = self.task == 'segment' or self.use_sam_dropdown.currentText() == "True"
-                self.annotation_window.is_streaming_inference = True
-                progress_bar.set_title("Saving Annotations...")
-                progress_bar.start_progress(len(cache))
-
-                for path, results_list in cache.items():
-                    try:
-                        self._process_results(results_processor, results_list, path)
-                    except Exception as e:
-                        print(f"Error baking results for {path}: {e}")
-                    progress_bar.update_progress()
-                    QApplication.processEvents()
-
-                self.annotation_window.is_streaming_inference = False
-
+            if processed_paths:
+                try:
+                    self.annotation_window.is_streaming_inference = False
+                except Exception:
+                    pass
                 try:
                     self.annotation_window.refresh_phantom_annotations()
                 except Exception:
                     pass
                 try:
                     self.main_window.label_window.update_annotation_count()
-                    for path in cache:
-                        self.image_window.update_image_annotations(path, update_counts=False)
                 except Exception:
                     pass
 
@@ -1146,7 +1194,6 @@ class DeployGeneratorDialog(QDialog):
                 try:
                     aw.current_image_path = image_path
                     aw._base_image_item.set_image(q_img)
-                    aw.fit_to_image()
                 except Exception:
                     pass
 

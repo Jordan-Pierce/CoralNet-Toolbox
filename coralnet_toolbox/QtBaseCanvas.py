@@ -6,6 +6,7 @@ Z-channel visualization, and marker slots. It is designed to be inherited by Ann
 and reused in Phase 2's context matrix for multi-viewport displays.
 """
 
+import time
 import warnings
 import traceback
 import numpy as np
@@ -17,7 +18,9 @@ from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QSize, QObject
 from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, 
                              QGraphicsItemGroup, QGraphicsEllipseItem, QGraphicsLineItem,
                              QGraphicsItem, QGraphicsPathItem, QLabel, QApplication,
-                             QOpenGLWidget)
+                             QGraphicsDropShadowEffect, QOpenGLWidget, QFrame)
+
+from coralnet_toolbox import theme as app_theme
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -32,21 +35,34 @@ class FastImageItem(QGraphicsItem):
     def __init__(self):
         super().__init__()
         self._image = None
-        self._readonly_paths = [] 
-        
+        self._readonly_paths = []
+        # Cached QImage of all readonly paths rendered at base-image resolution.
+        # Built lazily on first paint after set_readonly_annotations() so that the
+        # per-frame paint cost is one drawImage call instead of 14K drawPaths.
+        self._readonly_cache = None
+        self._readonly_dirty = False
+
         # --- CRITICAL: Initialize the mask variables here! ---
         self._mask_image = None
         self._mask_opacity = 1.0
-        
+
         # Optimize for rapidly changing content
         self.setCacheMode(QGraphicsItem.NoCache)
 
     def set_image(self, qimage):
+        """Set the image to be drawn by this item, keeping a reference to the original QImage."""
         if qimage is not None and not qimage.isNull():
             self._image = qimage.copy()
         else:
             self._image = qimage
-        self.update()
+        # Image dimensions changed — invalidate the readonly cache so it rebuilds
+        # at the correct resolution on next paint.
+        self._readonly_cache = None
+        self._readonly_dirty = bool(self._readonly_paths)
+        try:
+            self.update()
+        except RuntimeError:
+            pass
 
     def set_mask_image(self, qimage, opacity=1.0):
         """Provide a mask image to be drawn natively on top of the base image."""
@@ -56,19 +72,78 @@ class FastImageItem(QGraphicsItem):
         else:
             self._mask_image = None
         self._mask_opacity = opacity
-        self.update()
+        try:
+            self.update()
+        except RuntimeError:
+            pass
 
     def set_readonly_annotations(self, paths_data):
-        """Pass a list of ready-to-draw paths: (QPainterPath, QColor, opacity)"""
+        """Pass a list of ready-to-draw paths: (QPainterPath, QColor, opacity).
+
+        The paths are stored verbatim and rendered into a QImage cache lazily on
+        the next paint(); subsequent paints just blit the cache, so pan/zoom no
+        longer pays the per-path dispatch cost.
+        """
         self._readonly_paths = paths_data
-        self.update()
+        self._readonly_cache = None  # Free old cache immediately
+        self._readonly_dirty = bool(paths_data)
+        try:
+            self.update()
+        except RuntimeError:
+            pass
+
+    def _build_readonly_cache(self):
+        """Render all readonly paths into a single QImage at base-image resolution.
+
+        Pen widths become fixed image-pixel widths (no cosmetic scaling), so
+        outlines look slightly thinner at extreme zoom-out, but the fill carries
+        the visual signal there anyway.
+        """
+        self._readonly_dirty = False
+        if self._image is None or self._image.isNull() or not self._readonly_paths:
+            self._readonly_cache = None
+            return
+
+        img = QImage(self._image.size(), QImage.Format_ARGB32_Premultiplied)
+        img.fill(Qt.transparent)
+
+        painter = QPainter(img)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        # Shadow pen is constant — build once. Width is in image pixels.
+        shadow_pen = QPen(QColor(0, 0, 0, 130), 4.0, Qt.SolidLine)
+        shadow_pen.setCapStyle(Qt.RoundCap)
+        shadow_pen.setJoinStyle(Qt.RoundJoin)
+
+        for path, color_val, transparency in self._readonly_paths:
+            # PASS 1: fill + dark halo
+            fill_color = QColor(color_val)
+            fill_color.setAlpha(transparency)
+            painter.setBrush(QBrush(fill_color))
+            painter.setPen(shadow_pen)
+            painter.drawPath(path)
+
+            # PASS 2: crisp colored inner border
+            painter.setBrush(Qt.NoBrush)
+            pen_color = QColor(color_val)
+            pen_color.setAlpha(255)
+            main_pen = QPen(pen_color, 2.0, Qt.SolidLine)
+            main_pen.setCapStyle(Qt.RoundCap)
+            main_pen.setJoinStyle(Qt.RoundJoin)
+            painter.setPen(main_pen)
+            painter.drawPath(path)
+
+        painter.end()
+        self._readonly_cache = img
 
     def boundingRect(self):
+        """Return the bounding rectangle of the image for proper redraw regions."""
         if self._image is None or self._image.isNull():
             return QRectF(0, 0, 100, 100) # Fallback safe rect
         return QRectF(0, 0, self._image.width(), self._image.height())
 
     def paint(self, painter, option, widget):
+        """Custom paint method to draw the image, mask, and annotations in a single pass."""
         # 1. Draw the video frame directly from RAM to the OpenGL Viewport
         if self._image is not None and not self._image.isNull():
             painter.drawImage(0, 0, self._image)
@@ -80,46 +155,12 @@ class FastImageItem(QGraphicsItem):
             painter.drawImage(0, 0, mask)
             painter.setOpacity(1.0) # Reset opacity
 
-        # 3. Draw all annotations in a single ultra-fast pass
+        # 3. Draw all readonly annotations as a single pre-rendered QImage blit.
         if self._readonly_paths:
-            painter.setRenderHint(QPainter.Antialiasing, True)
-            
-            for path, color_val, transparency in self._readonly_paths:
-                # --- PASS 1: FILL AND SHADOW BORDER ---
-                # 1a. Set up the translucent fill
-                fill_color = QColor(color_val)
-                fill_color.setAlpha(transparency)
-                painter.setBrush(QBrush(fill_color))
-                
-                # 1b. Set up a thicker, semi-transparent dark "halo" pen
-                shadow_pen = QPen(QColor(0, 0, 0, 130), 4.0, Qt.SolidLine)
-                shadow_pen.setCapStyle(Qt.RoundCap)
-                shadow_pen.setJoinStyle(Qt.RoundJoin)
-                shadow_pen.setCosmetic(True)
-                
-                painter.setPen(shadow_pen)
-                
-                # Draw the path (this drops the fill and the dark 4px border)
-                painter.drawPath(path)
-                
-                
-                # --- PASS 2: CRISP COLORED INNER BORDER ---
-                # 2a. Turn off the brush so we don't double-stack the transparency
-                painter.setBrush(Qt.NoBrush)
-                
-                # 2b. Set up the vibrant 2px colored pen
-                pen_color = QColor(color_val)
-                pen_color.setAlpha(255)  
-                
-                main_pen = QPen(pen_color, 2.0, Qt.SolidLine)
-                main_pen.setCapStyle(Qt.RoundCap)
-                main_pen.setJoinStyle(Qt.RoundJoin)
-                main_pen.setCosmetic(True)
-                
-                painter.setPen(main_pen)
-                
-                # Draw the path again (this drops the crisp 2px colored line right inside the shadow)
-                painter.drawPath(path)
+            if self._readonly_dirty or self._readonly_cache is None:
+                self._build_readonly_cache()
+            if self._readonly_cache is not None:
+                painter.drawImage(0, 0, self._readonly_cache)
 
 
 class BaseCanvas(QGraphicsView):
@@ -146,19 +187,17 @@ class BaseCanvas(QGraphicsView):
         """Initialize the base canvas."""
         super().__init__(parent)
         
-        if False:
-            # Causes a lag, leaving commented out for now.
-            # --- PHASE 2: ENABLE HARDWARE ACCELERATION ---
-            gl_widget = QOpenGLWidget()
-            
-            # Enable Anti-Aliasing (4x MSAA) for smooth vector drawing
-            format_gl = QSurfaceFormat()
-            format_gl.setSamples(4) 
-            gl_widget.setFormat(format_gl)
-            
-            # Set the hardware-accelerated widget as the viewport
-            self.setViewport(gl_widget)
-            # ---------------------------------------------
+        # --- HARDWARE ACCELERATION ---
+        gl_widget = QOpenGLWidget()
+
+        # Enable Anti-Aliasing (4x MSAA) for smooth vector drawing
+        format_gl = QSurfaceFormat()
+        format_gl.setSamples(4)
+        gl_widget.setFormat(format_gl)
+
+        # Set the hardware-accelerated widget as the viewport
+        self.setViewport(gl_widget)
+        # -----------------------------
         
         # Create and set the scene
         self.scene = QGraphicsScene(self)
@@ -166,9 +205,9 @@ class BaseCanvas(QGraphicsView):
         
         # Set dark background for the annotation workspace
         try:
-            self.scene.setBackgroundBrush(QBrush(QColor('#1e1e1e')))
-            self.setBackgroundBrush(QBrush(QColor('#1e1e1e')))
-            self.viewport().setStyleSheet("background-color: #1e1e1e;")
+            self.scene.setBackgroundBrush(QBrush(app_theme.BACKGROUND_COLOR))
+            self.setBackgroundBrush(QBrush(app_theme.BACKGROUND_COLOR))
+            self.viewport().setStyleSheet(f"background-color: {app_theme.BACKGROUND_COLOR.name()};")
         except Exception:
             pass
         
@@ -212,6 +251,7 @@ class BaseCanvas(QGraphicsView):
         self._dynamic_marker = None
         self._cursor_preview_item = None  # Preview rect for tool cursor propagation
         self._mask_overlay_item = None    # Read-only MaskAnnotation overlay for brush propagation
+        self._perimeter_overlay = None    # Viewport border overlay
 
         # Read-only annotation overlays (Phase 6)
         self._readonly_annotation_items = []
@@ -223,7 +263,7 @@ class BaseCanvas(QGraphicsView):
         )
         self._placeholder_label.setAlignment(Qt.AlignCenter)
         self._placeholder_label.setStyleSheet(
-            "color: #888888; font-size: 14px; background-color: transparent;"
+            f"color: {app_theme.TEXT_MUTED_COLOR.name()}; font-size: 14px; background-color: transparent;"
         )
         
         # View transformation settings
@@ -241,17 +281,24 @@ class BaseCanvas(QGraphicsView):
         # 2. Prevent Qt from saving/restoring the painter state for every single item.
         # This saves massive CPU overhead when rendering thousands of items.
         self.setOptimizationFlag(QGraphicsView.DontSavePainterState)
-        
-        # 3. Prevent Qt from doing sub-pixel antialiasing adjustments during fast pans.
-        self.setOptimizationFlag(QGraphicsView.DontAdjustForAntialiasing)
+
+        # Favor visual quality over raw interaction speed.
+        self.setRenderHints(
+            QPainter.Antialiasing |
+            QPainter.TextAntialiasing |
+            QPainter.SmoothPixmapTransform
+        )
     
     # ==================== Navigation Events ====================
     
     def wheelEvent(self, event: QMouseEvent):
         """Handle mouse wheel events for zooming."""
+        self._wheel_event_impl(event)
+
+    def _wheel_event_impl(self, event: QMouseEvent):
         if not self.active_image:
             return
-        
+
         # Determine zoom direction
         if event.angleDelta().y() > 0:
             factor = 1.1  # Zoom in
@@ -319,6 +366,9 @@ class BaseCanvas(QGraphicsView):
     
     def mouseMoveEvent(self, event: QMouseEvent):
         """Handle mouse move events for rotation, panning, and hover tracking."""
+        self._mouse_move_event_impl(event)
+
+    def _mouse_move_event_impl(self, event: QMouseEvent):
         # Handle rotation
         if self._rotate_active and self.active_image:
             center = self.viewport().rect().center()
@@ -388,6 +438,11 @@ class BaseCanvas(QGraphicsView):
                 self._placeholder_label.setGeometry(self.viewport().rect())
         except Exception:
             pass
+
+        try:
+            self._sync_perimeter_overlay_geometry()
+        except Exception:
+            pass
     
     # ==================== Placeholder Management ====================
     
@@ -407,6 +462,49 @@ class BaseCanvas(QGraphicsView):
             self._placeholder_label.hide()
         except Exception:
             pass
+
+    # ==================== Canvas Perimeter Overlay ====================
+
+    def _sync_perimeter_overlay_geometry(self):
+        """Keep the perimeter overlay aligned with the canvas widget."""
+        if self._perimeter_overlay is None:
+            return
+
+        self._perimeter_overlay.setGeometry(self.rect())
+        self._perimeter_overlay.raise_()
+
+    def clear_perimeter_overlay(self):
+        """Clear any perimeter border from the canvas."""
+        if self._perimeter_overlay is None:
+            return
+
+        try:
+            self._perimeter_overlay.hide()
+            self._perimeter_overlay.setStyleSheet("background: transparent; border: none;")
+        except Exception:
+            pass
+
+    def set_perimeter_overlay(self, color, width):
+        """Draw a perimeter around the canvas using the given color and width."""
+        self.clear_perimeter_overlay()
+
+        border_color = QColor(color)
+        border_width = max(0, int(round(width)))
+        if not border_color.isValid() or border_width <= 0:
+            return
+
+        if self._perimeter_overlay is None:
+            self._perimeter_overlay = QFrame(self)
+            self._perimeter_overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            self._perimeter_overlay.setFrameShape(QFrame.NoFrame)
+            self._perimeter_overlay.setAutoFillBackground(False)
+
+        self._sync_perimeter_overlay_geometry()
+        self._perimeter_overlay.setStyleSheet(
+            f"background: transparent; border: {border_width}px solid {border_color.name()};"
+        )
+        self._perimeter_overlay.show()
+        self._perimeter_overlay.raise_()
     
     # ==================== Scene Management ====================
     
@@ -414,6 +512,7 @@ class BaseCanvas(QGraphicsView):
         """Clear the graphics scene and reset related variables."""
         # Stop any pending dynamic range update
         self._dynamic_range_timer.stop()
+        self.clear_perimeter_overlay()
         
         # Clean up scene items
         if self.scene:
@@ -738,6 +837,12 @@ class BaseCanvas(QGraphicsView):
         item.setFlag(QGraphicsItem.ItemIsSelectable, False)
         item.setFlag(QGraphicsItem.ItemIsMovable, False)
         item.setAcceptHoverEvents(False)
+
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(10.0)
+        shadow.setOffset(0.0, 1.5)
+        shadow.setColor(QColor(0, 0, 0, 110))
+        item.setGraphicsEffect(shadow)
         
         # Z-value above base image but below markers
         item.setZValue(5)
@@ -757,22 +862,13 @@ class BaseCanvas(QGraphicsView):
         """
         for item in self._readonly_annotation_items:
             if getattr(item, '_source_annotation_id', None) == annotation_id:
-                try:
-                    if highlighted:
-                        pen = QPen(QColor(255, 255, 0), 3)
-                        pen.setCosmetic(True)
-                        item.setPen(pen)
-                        item.setZValue(6)
-                    else:
-                        # Restore original style from annotation data
-                        original_color = item.brush().color()
-                        original_color.setAlpha(255)
-                        pen = QPen(original_color, 1)
-                        pen.setCosmetic(True)
-                        item.setPen(pen)
-                        item.setZValue(5)
-                except Exception:
-                    pass
+                # Restore original style from annotation data
+                original_color = item.brush().color()
+                original_color.setAlpha(255)
+                pen = QPen(original_color, 1)
+                pen.setCosmetic(True)
+                item.setPen(pen)
+                item.setZValue(5)
                 break
     
     # ==================== Z-Channel Visualization ====================
@@ -1126,16 +1222,27 @@ class BaseCanvas(QGraphicsView):
         """Create marker graphics items (hidden by default) and add to the scene."""
         try:
             # remove existing if leftover
-            if self._static_marker is not None and self._static_marker.scene() == self.scene:
+            if self._static_marker is not None:
                 try:
-                    self.scene.removeItem(self._static_marker)
-                except Exception:
+                    if self._static_marker.scene() == self.scene:
+                        try:
+                            self.scene.removeItem(self._static_marker)
+                        except Exception:
+                            pass
+                except RuntimeError:
                     pass
-            if self._dynamic_marker is not None and self._dynamic_marker.scene() == self.scene:
+                self._static_marker = None
+                
+            if self._dynamic_marker is not None:
                 try:
-                    self.scene.removeItem(self._dynamic_marker)
-                except Exception:
+                    if self._dynamic_marker.scene() == self.scene:
+                        try:
+                            self.scene.removeItem(self._dynamic_marker)
+                        except Exception:
+                            pass
+                except RuntimeError:
                     pass
+                self._dynamic_marker = None
 
             # Static crosshair group
             self._static_marker = QGraphicsItemGroup()
@@ -1170,16 +1277,18 @@ class BaseCanvas(QGraphicsView):
     # ==================== Read-Only Annotations (Phase 6) ====================
 
     def render_readonly_annotations(self, annotation_data_list):
-        """
-        Render annotations as non-interactive visual overlays.
+        """Render read-only annotations as live vector overlays."""
+        if not self.active_image:
+            if isinstance(self._base_image_item, FastImageItem):
+                self._base_image_item.set_readonly_annotations([])
+            self._clear_readonly_annotations()
+            return
 
-        Stub for Phase 6 implementation.
-
-        Args:
-            annotation_data_list: List of annotation data to render
-        """
-        # TODO: implement rendering of read-only annotations for context canvases
-        pass
+        annotations = annotation_data_list or []
+        if isinstance(self._base_image_item, FastImageItem):
+            self._base_image_item.set_readonly_annotations([])
+        self._clear_readonly_annotations()
+        self._render_annotations_readonly(annotations)
 
     # ==================== Cursor Preview (Tool Propagation) ====================
 

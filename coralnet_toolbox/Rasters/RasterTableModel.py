@@ -1,5 +1,7 @@
 import warnings
 
+import numpy as np
+
 from typing import Any, Dict, List, Optional, Set
 
 from PyQt5.QtCore import Qt, QAbstractTableModel, QModelIndex, QVariant, pyqtSignal
@@ -25,8 +27,8 @@ class RasterTableModel(QAbstractTableModel):
     # Column indices
     CHECKBOX_COL = 0
     Z_COL = 1
-    FILENAME_COL = 2
-    ANNOTATION_COUNT_COL = 3
+    ANNOTATION_COUNT_COL = 2
+    FILENAME_COL = 3
     
     # Row colors
     HIGHLIGHTED_COLOR = QColor(173, 216, 230)  # Light blue
@@ -44,10 +46,10 @@ class RasterTableModel(QAbstractTableModel):
         self.raster_manager = raster_manager
         self.filtered_paths: List[str] = []
         
-        self.column_headers = ["\u2713", "Z", "Image", "Annotations"]
+        self.column_headers = ["\u2713", "Z", "#", "Image"]
         
         # Column widths
-        self.column_widths = [30, 30, -1, 120]  # -1 means stretch
+        self.column_widths = [30, 30, 80, -1]  # -1 means stretch
         
         # Connect to manager signals
         self.raster_manager.rasterAdded.connect(self.on_raster_added)
@@ -92,34 +94,6 @@ class RasterTableModel(QAbstractTableModel):
             elif index.column() == self.FILENAME_COL:
                 return raster.display_name
             elif index.column() == self.ANNOTATION_COUNT_COL:
-                # For VideoRaster: sum annotations across all virtual frame paths
-                try:
-                    from coralnet_toolbox.Rasters.VideoRaster import VideoRaster as _VR
-                    if isinstance(raster, _VR):
-                        prefix = raster.image_path + '::frame_'
-                        ann_dict = self.raster_manager.rasters  # just a hint; use annotation_manager
-                        # Sum via annotation_manager on the MainWindow if available
-                        try:
-                            import gc
-                            import weakref
-                            ann_manager = None
-                            # Walk parent chain to find annotation_manager
-                            for obj in gc.get_objects():
-                                if (hasattr(obj, 'image_annotations_dict') and
-                                        hasattr(obj, 'annotations_dict')):
-                                    ann_manager = obj
-                                    break
-                            if ann_manager is not None:
-                                total = sum(
-                                    len(v) for k, v in ann_manager.image_annotations_dict.items()
-                                    if k.startswith(prefix)
-                                )
-                                return str(total)
-                        except Exception:
-                            pass
-                        return str(raster.annotation_count)
-                except ImportError:
-                    pass
                 return str(raster.annotation_count)
                 
         elif role == Qt.TextAlignmentRole:
@@ -179,16 +153,41 @@ class RasterTableModel(QAbstractTableModel):
                         z_info_parts.append(f"NoData: {raster.z_nodata}")
                     tooltip_parts.append(" | ".join(z_info_parts))
 
-                # Add camera parameters information if it exists
-                if raster.intrinsics is not None:
-                    tooltip_parts.append(f"<b>Has Intrinsics:</b> Yes")
+                # Add camera / ortho transform information if it exists
+                if getattr(raster, 'raster_type', '') == 'OrthoRaster':
+                    projection_matrix = getattr(raster, 'ortho_projection_matrix', None)
+                    chunk_transform = getattr(raster, 'chunk_transform_matrix', None)
+
+                    def _matrix_is_set(matrix) -> bool:
+                        if matrix is None:
+                            return False
+                        try:
+                            matrix_array = np.asarray(matrix, dtype=np.float64)
+                        except Exception:
+                            return False
+                        if matrix_array.shape != (4, 4):
+                            return False
+                        return not np.allclose(matrix_array, np.eye(4, dtype=np.float64))
+
+                    if _matrix_is_set(projection_matrix):
+                        tooltip_parts.append(f"<b>Projection:</b> Yes")
+                    else:
+                        tooltip_parts.append(f"<b>Projection:</b> No")
+
+                    if _matrix_is_set(chunk_transform):
+                        tooltip_parts.append(f"<b>Transform:</b> Yes")
+                    else:
+                        tooltip_parts.append(f"<b>Transform:</b> No")
                 else:
-                    tooltip_parts.append(f"<b>Has Intrinsics:</b> No")
-                
-                if raster.extrinsics is not None:
-                    tooltip_parts.append(f"<b>Has Extrinsics:</b> Yes")
-                else:
-                    tooltip_parts.append(f"<b>Has Extrinsics:</b> No")
+                    if getattr(raster, 'intrinsics', None) is not None:
+                        tooltip_parts.append(f"<b>Has Intrinsics:</b> Yes")
+                    else:
+                        tooltip_parts.append(f"<b>Has Intrinsics:</b> No")
+
+                    if getattr(raster, 'extrinsics', None) is not None:
+                        tooltip_parts.append(f"<b>Has Extrinsics:</b> Yes")
+                    else:
+                        tooltip_parts.append(f"<b>Has Extrinsics:</b> No")
 
                 tooltip_parts.extend([
                     f"<b>Annotations:</b> {'Yes' if raster.has_annotations else 'No'}",

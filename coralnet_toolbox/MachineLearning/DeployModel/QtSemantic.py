@@ -224,6 +224,7 @@ class Semantic(Base):
 
             # Display the class names
             self.check_and_display_class_names()
+            self.model_state_changed.emit()
 
             # Update the status bar
             self.status_bar.setText(f"Model loaded: {os.path.basename(self.model_path)}")

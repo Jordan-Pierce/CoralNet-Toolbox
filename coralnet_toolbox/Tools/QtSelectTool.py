@@ -154,7 +154,9 @@ class SelectTool(Tool):
             return
 
         # PRIORITY 3: Default action - Select an annotation.
-        clicked_annotation = self._handle_annotation_selection(position, items, event.modifiers())
+        # Pass the already-resolved annotation to avoid a second expensive hit-test.
+        clicked_annotation = self._handle_annotation_selection(position, items, event.modifiers(),
+                                                               cached_annotation=annotation_under_cursor)
 
         # If a selection was made and it's a left-click, start moving it.
         if clicked_annotation and event.button() == Qt.LeftButton:
@@ -317,37 +319,45 @@ class SelectTool(Tool):
         # If the Qt layer didn't find anything, check all annotations (including phantoms)
         # Iterate in reverse to respect visual Z-index (topmost items clicked first)
         all_annotations = self.annotation_window.get_image_annotations()
+        px, py = position.x(), position.y()
         
-        phantom_center_candidates = []
-        phantom_general_candidates = []
+        best_center = None
+        best_general = None
         
         for annotation in reversed(all_annotations):
             # Skip selected annotations (already checked above) and invisible labels
             if annotation.is_selected or not getattr(annotation.label, 'is_visible', True):
                 continue
-                
-            # Check if this phantom annotation contains the position mathematically
+            
+            # Fast bounding-box pre-filter: skip annotations whose bbox
+            # doesn't contain the click point (near-zero cost vs Shapely).
+            bbox = annotation.cropped_bbox
+            if bbox and not (bbox[0] <= px <= bbox[2] and bbox[1] <= py <= bbox[3]):
+                continue
+            
+            # Full geometric check (Shapely) only for bbox survivors
             if annotation.contains_point(position):
                 center_distance = (position - annotation.center_xy).manhattanLength()
                 if center_distance <= center_threshold:
-                    phantom_center_candidates.append(annotation)
-                else:
-                    phantom_general_candidates.append(annotation)
+                    best_center = annotation
+                    break  # Center hit is highest priority — stop immediately
+                elif best_general is None:
+                    best_general = annotation
+                    # Don't break: keep looking for a possible center hit
         
-        # Return phantom item if found (lower priority than awake items)
-        if phantom_center_candidates:
-            return phantom_center_candidates[0]
-        elif phantom_general_candidates:
-            return phantom_general_candidates[0]
+        if best_center:
+            return best_center
+        if best_general:
+            return best_general
                 
         return None
 
-    def _handle_annotation_selection(self, position, items, modifiers):
+    def _handle_annotation_selection(self, position, items, modifiers, cached_annotation=None):
         """
         Handles the core logic of selecting and unselecting annotations.
         Returns the annotation that was clicked on, if any.
         """
-        annotation = self._get_annotation_from_items(items, position)
+        annotation = cached_annotation if cached_annotation is not None else self._get_annotation_from_items(items, position)
         locked_label = self.get_locked_label()
         multi_select = modifiers & Qt.ControlModifier
 

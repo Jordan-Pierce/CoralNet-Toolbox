@@ -1,135 +1,15 @@
 import os
-import gc
-import time
 import math
-from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import cv2
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QMutex, QTimer, QSize
-from PyQt5.QtGui import QImage, QPixmap
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (QFileDialog, QVBoxLayout, QPushButton, QLabel, QLineEdit,
                              QDialog, QApplication, QMessageBox, QGroupBox,
                              QHBoxLayout, QFormLayout, QComboBox, QSpinBox, QSlider,
-                             QStyle, QFrame, QTabWidget, QWidget)
+                             QStyle, QTabWidget, QWidget)
 from coralnet_toolbox.QtProgressBar import ProgressBar
-from coralnet_toolbox.Icons import get_icon
-
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Video Player Thread
-# ----------------------------------------------------------------------------------------------------------------------
-
-
-class VideoPlayerThread(QThread):
-    """Thread for playing video frames without blocking the UI."""
-    update_frame = pyqtSignal(object, int)
-
-    def __init__(self, video_path, fps=30):
-        super().__init__()
-        self.video_path = video_path
-        self.fps = max(fps, 1)
-        self.running = False
-        self.paused = True
-        self.mutex = QMutex()
-        self.current_frame_number = 0
-        self.total_frames = 0
-        self._seek_requested = False
-        self._seek_target = 0
-
-    def run(self):
-        cap = cv2.VideoCapture(self.video_path)
-        if not cap.isOpened():
-            return
-
-        self.total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        self.running = True
-        frame_interval = 1.0 / self.fps
-        last_frame_time = 0.0
-        last_read_frame = -1  # tracks what frame cap is positioned at after last read
-
-        while self.running:
-            self.mutex.lock()
-            paused = self.paused
-            seek_requested = self._seek_requested
-            seek_target = self._seek_target
-            if seek_requested:
-                self._seek_requested = False
-            self.mutex.unlock()
-
-            if seek_requested:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, seek_target)
-                ret, frame = cap.read()
-                if ret and frame is not None:
-                    last_read_frame = seek_target
-                    self.mutex.lock()
-                    self.current_frame_number = seek_target
-                    self.mutex.unlock()
-                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    self.update_frame.emit(frame_rgb, seek_target)
-                else:
-                    last_read_frame = seek_target
-                time.sleep(0.01)
-                continue
-
-            if paused:
-                time.sleep(0.05)
-                continue
-
-            now = time.monotonic()
-            if now - last_frame_time < frame_interval:
-                time.sleep(0.001)
-                continue
-
-            self.mutex.lock()
-            current = self.current_frame_number
-            self.mutex.unlock()
-
-            # Seek only if we're not already positioned at the right frame
-            if last_read_frame != current - 1 and current != 0:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, current)
-
-            ret, frame = cap.read()
-            if not ret or frame is None:
-                # End of video — wrap around
-                self.mutex.lock()
-                self.current_frame_number = 0
-                self.mutex.unlock()
-                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                last_read_frame = -1
-                continue
-
-            last_read_frame = current
-            next_frame = (current + 1) % self.total_frames
-
-            self.mutex.lock()
-            self.current_frame_number = next_frame
-            self.mutex.unlock()
-
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            self.update_frame.emit(frame_rgb, current)
-            last_frame_time = now
-
-        cap.release()
-
-    def seek(self, frame_number):
-        """Seek to a specific frame (thread-safe)."""
-        self.mutex.lock()
-        self.current_frame_number = min(max(0, frame_number), max(0, self.total_frames - 1))
-        self._seek_requested = True
-        self._seek_target = self.current_frame_number
-        self.mutex.unlock()
-
-    def toggle_pause(self):
-        """Toggle pause state (thread-safe)."""
-        self.mutex.lock()
-        self.paused = not self.paused
-        self.mutex.unlock()
-
-    def stop(self):
-        """Stop the thread and wait for it to finish."""
-        self.running = False
-        self.wait(3000)
+from coralnet_toolbox.Icons import get_window_icon
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -262,36 +142,6 @@ class FrameExtractorThread(QThread):
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Frame Cache (O(1) LRU via OrderedDict)
-# ----------------------------------------------------------------------------------------------------------------------
-
-
-class FrameCache:
-    """LRU cache for video frames using OrderedDict for O(1) operations."""
-
-    def __init__(self, max_size=30):
-        self.cache = OrderedDict()
-        self.max_size = max_size
-
-    def get(self, frame_idx):
-        if frame_idx not in self.cache:
-            return None
-        self.cache.move_to_end(frame_idx)
-        return self.cache[frame_idx]
-
-    def put(self, frame_idx, frame):
-        if frame_idx in self.cache:
-            self.cache.move_to_end(frame_idx)
-        else:
-            if len(self.cache) >= self.max_size:
-                self.cache.popitem(last=False)
-            self.cache[frame_idx] = frame
-
-    def clear(self):
-        self.cache.clear()
-
-
-# ----------------------------------------------------------------------------------------------------------------------
 # Main Import Frames Dialog
 # ----------------------------------------------------------------------------------------------------------------------
 
@@ -300,9 +150,8 @@ class ImportFrames(QDialog):
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.main_window = main_window
-        self.image_window = main_window.image_window
 
-        self.setWindowIcon(get_icon("coralnet.svg"))
+        self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowTitle("Import Frames from Video")
         self.resize(1000, 600)
 
@@ -312,14 +161,9 @@ class ImportFrames(QDialog):
         self.fps = 30.0
 
         self.frame_paths = []
-        self.frame_cache = FrameCache(max_size=30)
 
-        # Video player state
-        self.player_thread = None
-        self.is_playing = False
-
-        # Build UI
-        main_layout = QHBoxLayout()
+        # Build UI (controls only)
+        main_layout = QVBoxLayout()
         controls_layout = QVBoxLayout()
         controls_layout.addWidget(self.create_info_group())
         controls_layout.addWidget(self.create_import_group())
@@ -327,18 +171,8 @@ class ImportFrames(QDialog):
         controls_layout.addWidget(self.create_sample_group())
         controls_layout.addLayout(self.create_buttons_layout())
 
-        preview_layout = self.setup_preview_layout()
-
-        main_layout.addLayout(controls_layout, stretch=60)
-        main_layout.addLayout(preview_layout, stretch=40)
+        main_layout.addLayout(controls_layout)
         self.setLayout(main_layout)
-
-        self.current_frame_idx = 0
-
-        # Periodic UI sync timer (only updates when playing)
-        self.ui_update_timer = QTimer(self)
-        self.ui_update_timer.timeout.connect(self.update_ui_elements)
-        self.ui_update_timer.start(200)
 
     # ------------------------------------------------------------------
     # UI Group Builders
@@ -508,186 +342,10 @@ class ImportFrames(QDialog):
 
         return buttons_layout
 
-    def setup_preview_layout(self):
-        preview_layout = QVBoxLayout()
-
-        preview_group = QGroupBox("Video Preview")
-        preview_inner_layout = QVBoxLayout()
-
-        self.preview_label = QLabel()
-        self.preview_label.setMinimumSize(320, 240)
-        self.preview_label.setAlignment(Qt.AlignCenter)
-        self.preview_label.setStyleSheet("QLabel { background-color: black; }")
-        preview_inner_layout.addWidget(self.preview_label)
-
-        vc_layout = QHBoxLayout()
-
-        self.play_pause_btn = QPushButton()
-        self.play_pause_btn.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
-        self.play_pause_btn.clicked.connect(self.toggle_playback)
-        self.play_pause_btn.setEnabled(False)
-
-        self.prev_frame_btn = QPushButton("←")
-        self.prev_frame_btn.clicked.connect(self.prev_frame)
-        self.prev_frame_btn.setEnabled(False)
-
-        self.next_frame_btn = QPushButton("→")
-        self.next_frame_btn.clicked.connect(self.next_frame)
-        self.next_frame_btn.setEnabled(False)
-
-        self.frame_number_spinbox = QSpinBox()
-        self.frame_number_spinbox.setFixedWidth(80)
-        self.frame_number_spinbox.setAlignment(Qt.AlignCenter)
-        self.frame_number_spinbox.setEnabled(False)
-
-        self.goto_frame_btn = QPushButton()
-        self.goto_frame_btn.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
-        self.goto_frame_btn.clicked.connect(self.goto_frame)
-        self.goto_frame_btn.setEnabled(False)
-
-        vc_layout.addWidget(self.play_pause_btn)
-        vc_layout.addWidget(self.prev_frame_btn)
-        vc_layout.addWidget(self.next_frame_btn)
-        vc_layout.addWidget(self.frame_number_spinbox)
-        vc_layout.addWidget(self.goto_frame_btn)
-
-        self.frame_slider = QSlider(Qt.Horizontal)
-        self.frame_slider.setEnabled(False)
-        self.frame_slider.valueChanged.connect(self.slider_changed)
-
-        preview_inner_layout.addLayout(vc_layout)
-        preview_inner_layout.addWidget(self.frame_slider)
-        preview_group.setLayout(preview_inner_layout)
-        preview_layout.addWidget(preview_group)
-
-        info_group = QGroupBox("Frame Information")
-        info_layout = QVBoxLayout()
-
-        self.frame_counter = QLabel("Frame: 0 / 0")
-        self.frame_counter.setAlignment(Qt.AlignCenter)
-        self.frame_counter.setStyleSheet("QLabel { font-size: 11pt; }")
-
-        self.frame_timestamp = QLabel("Time: 00:00")
-        self.frame_timestamp.setAlignment(Qt.AlignCenter)
-        self.frame_timestamp.setStyleSheet("QLabel { font-size: 11pt; }")
-
-        line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setFrameShadow(QFrame.Sunken)
-
-        info_layout.addWidget(self.frame_counter)
-        info_layout.addWidget(line)
-        info_layout.addWidget(self.frame_timestamp)
-
-        info_group.setLayout(info_layout)
-        preview_layout.addWidget(info_group)
-
-        return preview_layout
-
-    # ------------------------------------------------------------------
-    # Playback Controls
-    # ------------------------------------------------------------------
-
-    def goto_frame(self):
-        if not self.player_thread:
-            return
-        frame_num = self.frame_number_spinbox.value()
-        self.current_frame_idx = frame_num
-        # Block slider to avoid recursive slider_changed → seek loop
-        self.frame_slider.blockSignals(True)
-        self.frame_slider.setValue(frame_num)
-        self.frame_slider.blockSignals(False)
-        self.player_thread.seek(frame_num)
-
-    def toggle_playback(self):
-        if not self.player_thread:
-            return
-        self.player_thread.toggle_pause()
-        self.is_playing = not self.is_playing
-        icon = QStyle.SP_MediaPause if self.is_playing else QStyle.SP_MediaPlay
-        self.play_pause_btn.setIcon(self.style().standardIcon(icon))
-
-    def update_ui_elements(self):
-        """Sync slider / counter to current playback position."""
-        if not (self.player_thread and self.player_thread.isRunning() and self.is_playing):
-            return
-
-        current_frame = self.player_thread.current_frame_number
-        total = self.player_thread.total_frames
-
-        self.frame_slider.blockSignals(True)
-        self.frame_slider.setValue(current_frame)
-        self.frame_slider.blockSignals(False)
-
-        self.frame_counter.setText(f"Frame: {current_frame} / {total}")
-
-        fps = self.player_thread.fps
-        if fps > 0:
-            t = current_frame / fps
-            self.frame_timestamp.setText(f"Time: {int(t // 60):02d}:{int(t % 60):02d}")
-
-    def on_frame_update(self, frame, frame_number):
-        """Render a frame emitted from the player thread."""
-        if frame is None:
-            return
-
-        h, w, _ = frame.shape
-        q_img = QImage(frame.data, w, h, frame.strides[0], QImage.Format_RGB888)
-
-        label_size = self.preview_label.size()
-        img_ratio = w / h
-        label_ratio = label_size.width() / label_size.height()
-
-        if img_ratio > label_ratio:
-            scaled_size = QSize(label_size.width(), int(label_size.width() / img_ratio))
-        else:
-            scaled_size = QSize(int(label_size.height() * img_ratio), label_size.height())
-
-        pixmap = QPixmap.fromImage(q_img)
-        self.preview_label.setPixmap(
-            pixmap.scaled(scaled_size.width(), scaled_size.height(),
-                          Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        )
-
-        self.current_frame_idx = frame_number
-
-        self.frame_number_spinbox.blockSignals(True)
-        self.frame_number_spinbox.setValue(frame_number)
-        self.frame_number_spinbox.blockSignals(False)
-
-        self.frame_counter.setText(f"Frame: {frame_number} / {self.total_frames}")
-        if self.fps > 0:
-            t = frame_number / self.fps
-            self.frame_timestamp.setText(f"Time: {int(t // 60):02d}:{int(t % 60):02d}")
-
-    def slider_changed(self, value):
-        self.current_frame_idx = value
-        if self.player_thread and self.player_thread.isRunning():
-            self.player_thread.seek(value)
-        self.frame_number_spinbox.blockSignals(True)
-        self.frame_number_spinbox.setValue(value)
-        self.frame_number_spinbox.blockSignals(False)
-
-    def next_frame(self):
-        if self.player_thread and self.player_thread.isRunning():
-            target = min(self.current_frame_idx + 1, self.player_thread.total_frames - 1)
-            self.player_thread.seek(target)
-            self.frame_slider.blockSignals(True)
-            self.frame_slider.setValue(target)
-            self.frame_slider.blockSignals(False)
-
-    def prev_frame(self):
-        if self.player_thread and self.player_thread.isRunning():
-            target = max(self.current_frame_idx - 1, 0)
-            self.player_thread.seek(target)
-            self.frame_slider.blockSignals(True)
-            self.frame_slider.setValue(target)
-            self.frame_slider.blockSignals(False)
-
     # ------------------------------------------------------------------
     # File / Directory Browsers
     # ------------------------------------------------------------------
-
+    
     def browse_video_file(self):
         file_name, _ = QFileDialog.getOpenFileName(
             self, "Select Video File", "",
@@ -704,7 +362,6 @@ class ImportFrames(QDialog):
         self.video_file_edit.setText(file_name)
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        self.stop_video_player()
 
         try:
             cap = cv2.VideoCapture(file_name)
@@ -716,8 +373,7 @@ class ImportFrames(QDialog):
             self.fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
             cap.release()
 
-            self._setup_controls_for_video()
-            self.init_video_player(file_name, self.fps)
+            # No preview: just update range controls
             self.update_range_slider()
             self.update_calculated_frames()
 
@@ -726,37 +382,9 @@ class ImportFrames(QDialog):
         finally:
             QApplication.restoreOverrideCursor()
 
-    def _setup_controls_for_video(self):
-        """Enable and configure all playback controls after a video is loaded."""
-        max_frame = max(0, self.total_frames - 1)
+    # Playback control helpers removed (preview disabled)
 
-        for widget in (self.play_pause_btn, self.prev_frame_btn,
-                       self.next_frame_btn, self.frame_number_spinbox, self.goto_frame_btn):
-            widget.setEnabled(True)
-
-        self.frame_slider.setEnabled(True)
-        self.frame_slider.setRange(0, max_frame)
-        self.frame_slider.setValue(0)
-
-        self.frame_number_spinbox.setRange(0, max_frame)
-        self.frame_number_spinbox.setValue(0)
-
-    def init_video_player(self, video_path, fps):
-        self.player_thread = VideoPlayerThread(video_path, fps)
-        self.player_thread.update_frame.connect(self.on_frame_update)
-        self.player_thread.start()
-        self.is_playing = False
-        self.play_pause_btn.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
-        self.setWindowTitle(f"Import Frames - {os.path.basename(video_path)}")
-        # Show frame 0 immediately
-        self.player_thread.seek(0)
-
-    def stop_video_player(self):
-        if self.player_thread and self.player_thread.isRunning():
-            self.player_thread.stop()
-        self.player_thread = None
-        self.is_playing = False
-        self.play_pause_btn.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
+    # Video player initialization and stop removed (preview disabled)
 
     def browse_output_dir(self):
         directory = QFileDialog.getExistingDirectory(self, "Select Output Directory")
@@ -984,8 +612,6 @@ class ImportFrames(QDialog):
 
     def closeEvent(self, event):
         """Ensure background threads are stopped before the dialog closes."""
-        self.ui_update_timer.stop()
-        self.stop_video_player()
         if hasattr(self, 'extractor_thread') and self.extractor_thread and self.extractor_thread.isRunning():
             self.extractor_thread.wait(5000)
         super().closeEvent(event)

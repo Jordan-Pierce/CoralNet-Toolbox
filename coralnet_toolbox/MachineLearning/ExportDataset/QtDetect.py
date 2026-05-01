@@ -2,16 +2,18 @@ import warnings
 
 import os
 import yaml
-import shutil
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel, QApplication)
 
 from coralnet_toolbox.MachineLearning.ExportDataset.QtBase import Base
+from coralnet_toolbox.MachineLearning.ExportDataset.export_dataset_utils import (
+    build_sample_export_name,
+    materialize_sample_image,
+    sample_dimensions,
+)
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
-
-from coralnet_toolbox.utilities import rasterio_open
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -22,6 +24,8 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 
 class Detect(Base):
+    supports_unlabeled_video_frames = True
+
     def __init__(self, parent=None):
         super(Detect, self).__init__(parent)
         self.setWindowTitle("Export Detection Dataset")
@@ -135,20 +139,24 @@ class Detect(Base):
         progress_bar.show()
         progress_bar.start_progress(len(image_paths))
 
+        # Group annotations by image path and precompute label→index once
+        annotations_by_image = {}
+        for a in annotations:
+            annotations_by_image.setdefault(a.image_path, []).append(a)
+        label_to_index = {label: i for i, label in enumerate(self.selected_labels)}
+
         for image_path in image_paths:
             yolo_annotations = []
-            image_height, image_width = rasterio_open(image_path).shape
-            # Filter the annotations passed to this function to get only those for the current image
-            image_annotations = [a for a in annotations if a.image_path == image_path]
+            image_height, image_width, _ = sample_dimensions(image_path, self.image_window.raster_manager)
+            image_annotations = annotations_by_image.get(image_path, [])
 
             for image_annotation in image_annotations:
                 class_label, annotation = image_annotation.to_yolo_detection(image_width, image_height)
-                class_number = self.selected_labels.index(class_label)
+                class_number = label_to_index[class_label]
                 yolo_annotations.append(f"{class_number} {annotation}")
 
             # Save the annotations to a text file
-            file_ext = os.path.splitext(image_path)[1]
-            text_file = os.path.basename(image_path).replace(file_ext, ".txt")
+            text_file = build_sample_export_name(image_path, ".txt")
             text_path = os.path.join(f"{split_dir}/labels", text_file)
 
             # Write the annotations to the text file (creates an empty file for negatives)
@@ -157,7 +165,9 @@ class Detect(Base):
                     f.write(annotation + '\n')
 
             # Copy the image to the split directory
-            shutil.copy(image_path, f"{split_dir}/images/{os.path.basename(image_path)}")
+            output_image_path = os.path.join(f"{split_dir}/images", build_sample_export_name(image_path))
+            if not materialize_sample_image(image_path, self.image_window.raster_manager, output_image_path):
+                raise RuntimeError(f"Failed to export image sample: {image_path}")
 
             progress_bar.update_progress()
 

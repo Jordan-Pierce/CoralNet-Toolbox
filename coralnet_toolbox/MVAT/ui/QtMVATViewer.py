@@ -16,11 +16,12 @@ import traceback
 import numpy as np
 
 from pyvistaqt import QtInteractor
-from PyQt5.QtCore import Qt, QEvent, QTimer, pyqtSignal
+from PyQt5.QtCore import Qt, QEvent, QTimer, QObject, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication, QFrame, QVBoxLayout,
     QWidget, QHBoxLayout, QLabel, QSpinBox, QComboBox,
-    QToolBar, QToolButton, QMenu, QAction, QActionGroup, QStackedLayout
+    QToolBar, QToolButton, QMenu, QAction, QActionGroup, QStackedLayout,
+    QVBoxLayout, QLabel, QHBoxLayout
 )
 
 from coralnet_toolbox.MVAT.core.Ray import CameraRay, BatchedRayManager
@@ -30,6 +31,7 @@ from coralnet_toolbox.MVAT.core.SceneContext import SceneContext
 from coralnet_toolbox.MVAT.core.SceneProduct import AbstractSceneProduct
 from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED
 from coralnet_toolbox.MVAT.ui.CameraAnimator import CameraAnimator
+from coralnet_toolbox import theme as app_theme
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -37,96 +39,335 @@ from coralnet_toolbox.MVAT.ui.CameraAnimator import CameraAnimator
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-import re
-from PyQt5.QtWidgets import QDialog, QGridLayout, QLineEdit, QPushButton, QVBoxLayout, QLabel, QHBoxLayout
+class _CameraInertiaController(QObject):
+    """
+    Post-interaction inertia layer for the MVAT camera.
 
-class TransformInputDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Input Chunk Transform Matrix")
-        self.setMinimumWidth(600)
-        
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Enter the 4x4 chunk_transform matrix:\n(You can paste the entire terminal log block directly into the top-left box)"))
-        
-        grid_layout = QGridLayout()
-        self.inputs = []
-        
-        # Create 4x4 grid of inputs
-        for i in range(4):
-            row_inputs = []
-            for j in range(4):
-                line_edit = QLineEdit()
-                # Default to Identity matrix
-                line_edit.setText("1.0" if i == j else "0.0")
-                grid_layout.addWidget(line_edit, i, j)
-                row_inputs.append(line_edit)
-            self.inputs.append(row_inputs)
-            
-        # Hook up the smart paste listener to the very first box
-        self.inputs[0][0].textChanged.connect(self._try_smart_paste)
-            
-        layout.addLayout(grid_layout)
-        
-        btn_layout = QHBoxLayout()
-        ok_btn = QPushButton("Apply")
-        cancel_btn = QPushButton("Cancel")
-        
-        ok_btn.clicked.connect(self.accept)
-        cancel_btn.clicked.connect(self.reject)
-        
-        btn_layout.addStretch()
-        btn_layout.addWidget(cancel_btn)
-        btn_layout.addWidget(ok_btn)
-        
-        layout.addLayout(btn_layout)
+    Handles two independent inertia channels:
+      - Drag inertia  (rotate / pan): driven by VTK StartInteraction /
+        Interaction / EndInteraction events bound to the active style.
+      - Zoom inertia  (scroll wheel):  driven entirely at the Qt level via
+        on_qt_wheel().  VTK never sees raw wheel events; this avoids the
+        unreliable wheel routing that varies across PyVista / VTK versions
+        and custom trackball styles.
 
-    def _try_smart_paste(self, text):
-        """
-        Detects if a matrix string was pasted, strips out log prefixes (like dates/times),
-        extracts exactly 16 floats from inside the brackets, and auto-fills the grid.
-        """
-        if '[' not in text or ']' not in text:
+    Usage
+    -----
+    1. Call bind(style) after enable_custom_trackball_style().
+    2. Call on_qt_wheel(delta_y) from the Qt eventFilter for non-Ctrl wheel.
+    3. Call stop() / unbind() on teardown.
+    """
+
+    # ── Drag inertia ──────────────────────────────────────────────────
+    _DRAG_DECAY      = 0.84   # velocity retained per ~16 ms tick
+    _MIN_POSITION    = 1e-4
+    _MIN_FOCAL       = 1e-4
+    _MIN_UP          = 1e-5
+    _MIN_ANGLE       = 1e-4
+
+    # ── Zoom inertia ──────────────────────────────────────────────────
+    # Log-space step applied per standard wheel notch (Qt 120 units).
+    # A value of ~0.12 ≈ ln(1.13) gives ≈13 % distance change per notch,
+    # which is a comfortable default.
+    _ZOOM_LOG_PER_NOTCH = 0.12
+    _WHEEL_NOTCH_UNITS  = 120
+    _ZOOM_DECAY          = 0.78   # slightly snappier than drag
+    _MIN_ZOOM_VEL        = 5e-4
+
+    def __init__(self, viewer):
+        super().__init__(viewer)
+        self.viewer = viewer
+
+        # VTK observer bookkeeping
+        self._style        = None
+        self._observer_ids = []
+
+        # Shared ~60 fps decay timer
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)
+        self._timer.setSingleShot(False)
+        self._timer.timeout.connect(self._on_tick)
+
+        # Drag state
+        self._last_sample  = None
+        self._drag_residual = None
+
+        # Zoom state (log-space velocity; positive → zoom in)
+        self._zoom_velocity = 0.0
+
+    # ──────────────────────────────────────────────────────────────────
+    # Binding / unbinding
+    # ──────────────────────────────────────────────────────────────────
+
+    def bind(self, style):
+        """Attach to a VTK interaction style to capture drag events."""
+        if style is self._style:
             return
-            
-        # Extract contents strictly within brackets to avoid matching dates/times in the log prefix
-        floats = []
-        blocks = re.findall(r'\[(.*?)\]', text)
-        for block in blocks:
-            for val in block.split(','):
-                val = val.strip()
-                if val:
-                    try:
-                        floats.append(float(val))
-                    except ValueError:
-                        pass
-        
-        # If we successfully parsed exactly a 4x4 matrix
-        if len(floats) == 16:
-            # Disconnect temporarily to avoid infinite recursive triggering
-            self.inputs[0][0].textChanged.disconnect(self._try_smart_paste)
-            
-            for i in range(4):
-                for j in range(4):
-                    # Inject the parsed floats into their respective boxes
-                    self.inputs[i][j].setText(str(floats[i * 4 + j]))
-                    
-            # Reconnect the listener
-            self.inputs[0][0].textChanged.connect(self._try_smart_paste)
-        
-    def get_matrix(self):
-        import numpy as np
-        matrix = np.eye(4, dtype=np.float64)
-        for i in range(4):
-            for j in range(4):
+        self.unbind()
+        self._style = style
+        if style is None:
+            return
+
+        # Only drag events — wheel is handled entirely at the Qt level.
+        specs = [
+            ("StartInteractionEvent", self._on_start,       -1.0),
+            ("InteractionEvent",      self._on_interaction, -1.0),
+            ("EndInteractionEvent",   self._on_end,         -1.0),
+        ]
+        for event_name, callback, priority in specs:
+            try:
+                oid = style.AddObserver(event_name, callback, priority)
+            except TypeError:
+                oid = style.AddObserver(event_name, callback)
+            except Exception:
+                continue
+            if oid is not None:
+                self._observer_ids.append(oid)
+
+    def unbind(self):
+        """Detach all VTK observers and stop the timer."""
+        self.stop()
+        if self._style is not None:
+            for oid in self._observer_ids:
                 try:
-                    # Strip any accidental brackets or commas if someone pastes a single value
-                    val_str = self.inputs[i][j].text().strip('[], ')
-                    matrix[i, j] = float(val_str)
-                except ValueError:
-                    print(f"Failed to parse value at {i},{j}. Defaulting to 0.0")
-                    matrix[i, j] = 0.0
-        return matrix
+                    self._style.RemoveObserver(oid)
+                except Exception:
+                    pass
+        self._observer_ids = []
+        self._style = None
+
+    # ──────────────────────────────────────────────────────────────────
+    # Public control
+    # ──────────────────────────────────────────────────────────────────
+
+    def stop(self):
+        """Halt all inertia immediately."""
+        self._timer.stop()
+        self._last_sample   = None
+        self._drag_residual = None
+        self._zoom_velocity = 0.0
+
+    def on_qt_wheel(self, delta_y: int):
+        """
+        Entry point called from the Qt eventFilter on every non-Ctrl wheel event.
+
+        Applies the zoom step immediately and seeds the zoom-inertia channel so
+        the camera coasts to a stop after the user lifts their fingers.
+
+        Args:
+            delta_y: Qt angleDelta y-component.  Positive = scroll up = zoom in.
+        """
+        if delta_y == 0:
+            return
+
+        self._cancel_viewer_animation()
+
+        # Stop drag inertia — the user has switched to zooming.
+        self._drag_residual = None
+        self._last_sample   = None
+        # Do NOT stop the timer here; zoom inertia may already be running and
+        # we want continued scrolls to accumulate naturally.
+
+        # Convert to a log-space step.  Fractional notches (trackpads) are fine.
+        notches   = delta_y / self._WHEEL_NOTCH_UNITS
+        log_step  = notches * self._ZOOM_LOG_PER_NOTCH  # positive → zoom in
+
+        # Apply immediately so the view responds on every tick of the wheel.
+        self._apply_zoom_log(log_step)
+
+        # Blend new step into the running velocity so rapid scrolling
+        # accumulates while a single notch gives only gentle coasting.
+        self._zoom_velocity = self._zoom_velocity * 0.45 + log_step * 0.35
+
+        if abs(self._zoom_velocity) > self._MIN_ZOOM_VEL and not self._timer.isActive():
+            self._timer.start()
+
+    # ──────────────────────────────────────────────────────────────────
+    # Shared helpers
+    # ──────────────────────────────────────────────────────────────────
+
+    def _cancel_viewer_animation(self):
+        for name in ("_camera_animator", "_focal_point_animator"):
+            animator = getattr(self.viewer, name, None)
+            if animator is not None:
+                try:
+                    animator.cancel()
+                except Exception:
+                    pass
+
+    def _normalize(self, vector, fallback):
+        arr    = np.asarray(vector, dtype=float)
+        length = float(np.linalg.norm(arr))
+        return arr / length if length >= 1e-12 else np.asarray(fallback, dtype=float)
+
+    def _trigger_render(self):
+        try:
+            self.viewer._update_clipping_range()
+        except Exception:
+            try:
+                self.viewer.plotter.render()
+            except Exception:
+                pass
+
+    # ──────────────────────────────────────────────────────────────────
+    # Zoom implementation
+    # ──────────────────────────────────────────────────────────────────
+
+    def _apply_zoom_log(self, log_step: float):
+        """
+        Apply a log-space zoom step to the camera.
+
+        log_step > 0  →  zoom in  (camera moves toward focal point).
+        log_step < 0  →  zoom out (camera moves away from focal point).
+
+        Using log-space means equal notches produce equal *fractional* distance
+        changes, giving perceptually uniform zoom at any depth.
+        """
+        if abs(log_step) < 1e-9:
+            return
+        try:
+            cam         = self.viewer.plotter.camera
+            is_parallel = bool(getattr(cam, 'GetParallelProjection', lambda: False)())
+
+            if is_parallel:
+                # Parallel projection: scale the ortho window instead.
+                # log_step > 0 → zoom in → smaller scale.
+                new_scale = float(cam.parallel_scale) * np.exp(-log_step)
+                cam.parallel_scale = max(1e-6, new_scale)
+            else:
+                pos  = np.asarray(cam.position,    dtype=float)
+                fp   = np.asarray(cam.focal_point, dtype=float)
+                diff = pos - fp
+                dist = float(np.linalg.norm(diff))
+                if dist < 1e-8:
+                    return
+                # log_step > 0 → new_dist < dist  (zoom in)
+                new_dist = dist * np.exp(-log_step)
+                # Never let the camera pass through or clip the focal point.
+                new_dist = max(1e-3, new_dist)
+                cam.position = (fp + (diff / dist) * new_dist).tolist()
+
+            self._trigger_render()
+        except Exception:
+            pass
+
+    # ──────────────────────────────────────────────────────────────────
+    # Drag inertia implementation
+    # ──────────────────────────────────────────────────────────────────
+
+    def _snapshot(self):
+        cam = self.viewer.plotter.camera
+        return {
+            "position":       np.asarray(cam.position,    dtype=float),
+            "focal":          np.asarray(cam.focal_point, dtype=float),
+            "up":             self._normalize(cam.up, [0.0, 0.0, 1.0]),
+            "view_angle":     float(getattr(cam, 'view_angle',    30.0)),
+            "parallel_scale": float(getattr(cam, 'parallel_scale', 1.0)),
+        }
+
+    def _diff(self, current, previous):
+        return {k: current[k] - previous[k] for k in current}
+
+    def _blend(self, base, update, alpha=0.35):
+        return {k: base[k] * (1.0 - alpha) + update[k] * alpha for k in base}
+
+    def _scale(self, delta, factor):
+        return {k: delta[k] * factor for k in delta}
+
+    def _has_drag_motion(self, delta):
+        return (
+            float(np.linalg.norm(delta["position"]))    > self._MIN_POSITION
+            or float(np.linalg.norm(delta["focal"]))    > self._MIN_FOCAL
+            or float(np.linalg.norm(delta["up"]))       > self._MIN_UP
+            or abs(float(delta["view_angle"]))           > self._MIN_ANGLE
+            or abs(float(delta["parallel_scale"]))       > self._MIN_ANGLE
+        )
+
+    def _capture_drag_delta(self):
+        current = self._snapshot()
+        if self._last_sample is None:
+            self._last_sample = current
+            return
+        delta             = self._diff(current, self._last_sample)
+        self._last_sample = current
+        if not self._has_drag_motion(delta):
+            return
+        if self._drag_residual is None:
+            self._drag_residual = delta
+        else:
+            self._drag_residual = self._blend(self._drag_residual, delta)
+
+    def _apply_drag_delta(self, delta):
+        cam  = self.viewer.plotter.camera
+        pos  = np.asarray(cam.position,    dtype=float) + delta["position"]
+        fp   = np.asarray(cam.focal_point, dtype=float) + delta["focal"]
+        up   = self._normalize(np.asarray(cam.up, dtype=float) + delta["up"], [0.0, 0.0, 1.0])
+
+        cam.position    = pos.tolist()
+        cam.focal_point = fp.tolist()
+        cam.up          = up.tolist()
+
+        if bool(getattr(cam, 'GetParallelProjection', lambda: False)()):
+            try:
+                cam.parallel_scale = max(1e-6, float(cam.parallel_scale) + float(delta["parallel_scale"]))
+            except Exception:
+                pass
+        else:
+            try:
+                cam.view_angle = float(np.clip(float(cam.view_angle) + float(delta["view_angle"]), 1.0, 175.0))
+            except Exception:
+                pass
+
+        self._trigger_render()
+
+    # ──────────────────────────────────────────────────────────────────
+    # VTK drag event callbacks
+    # ──────────────────────────────────────────────────────────────────
+
+    def _on_start(self, *_args):
+        """VTK drag started — cancel all running inertia and begin sampling."""
+        self._timer.stop()
+        self._cancel_viewer_animation()
+        self._drag_residual = None
+        self._zoom_velocity = 0.0
+        self._last_sample   = self._snapshot()
+
+    def _on_interaction(self, *_args):
+        self._capture_drag_delta()
+
+    def _on_end(self, *_args):
+        self._capture_drag_delta()
+        # Start the timer only if there is something to coast.
+        has_drag = self._drag_residual is not None and self._has_drag_motion(self._drag_residual)
+        has_zoom = abs(self._zoom_velocity) > self._MIN_ZOOM_VEL
+        if has_drag or has_zoom:
+            self._timer.start()
+        else:
+            self.stop()
+
+    # ──────────────────────────────────────────────────────────────────
+    # Shared decay tick
+    # ──────────────────────────────────────────────────────────────────
+
+    def _on_tick(self):
+        has_drag = self._drag_residual is not None and self._has_drag_motion(self._drag_residual)
+        has_zoom = abs(self._zoom_velocity) > self._MIN_ZOOM_VEL
+
+        if not has_drag and not has_zoom:
+            self.stop()
+            return
+
+        if has_drag:
+            self._apply_drag_delta(self._drag_residual)
+            self._drag_residual = self._scale(self._drag_residual, self._DRAG_DECAY)
+            if not self._has_drag_motion(self._drag_residual):
+                self._drag_residual = None
+
+        if has_zoom:
+            self._apply_zoom_log(self._zoom_velocity)
+            self._zoom_velocity *= self._ZOOM_DECAY
+            if abs(self._zoom_velocity) <= self._MIN_ZOOM_VEL:
+                self._zoom_velocity = 0.0
 
 
 class MVATViewer(QFrame):
@@ -135,7 +376,6 @@ class MVATViewer(QFrame):
     computeIndexMapsToggled = pyqtSignal(bool)
     computeDepthMapsToggled = pyqtSignal(bool)
     primaryTargetChanged = pyqtSignal(str)      # Emits product_id when primary target changes
-    visibilityQualityChanged = pyqtSignal(float)  # Emits scale factor (0.1 - 1.0) when quality changes
 
     def __init__(self, parent=None, point_size=1, show_rays=True):
         super().__init__(parent)
@@ -156,7 +396,7 @@ class MVATViewer(QFrame):
         self.plotter = QtInteractor(self, point_smoothing=False)
 
         # Optimizations TODO make configurable?
-        self.plotter.set_background('#1e1e1e')
+        self.plotter.set_background(app_theme.BACKGROUND_COLOR.name())
         self.plotter.disable_anti_aliasing()
         self.plotter.disable_eye_dome_lighting()
         self.plotter.disable_shadows()
@@ -176,9 +416,12 @@ class MVATViewer(QFrame):
         self._show_rays_enabled = show_rays
         self._ray_visible = True
         self._ray_manager = BatchedRayManager()
+        self._ortho_ray_manager = BatchedRayManager()
         # Frustum and thumbnail management
         self._frustum_manager = BatchedFrustumManager()
         self._camera_animator = CameraAnimator(self.plotter, duration_ms=400)
+        self._focal_point_animator = CameraAnimator(self.plotter, duration_ms=180)
+        self._camera_inertia = _CameraInertiaController(self)
         self.thumbnail_actors = []
         self.thumbnail_opacity = 0.50
         self.frustum_scale = 0.1
@@ -213,18 +456,21 @@ class MVATViewer(QFrame):
         self._placeholder_label = QLabel(
             "No 3D data loaded\nDrag a file here to load:\n• Point clouds (.ply, .pcd)\n• Meshes (.obj, .stl)"
         )
-        self._placeholder_label.setStyleSheet("color: white; background-color: #1e1e1e; font-size: 14px; padding: 16px;")
+        self._placeholder_label.setStyleSheet(
+            app_theme.scale_qss(
+                f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; background-color: transparent; font-size: 14px; padding: 16px;"
+            )
+        )
         self._placeholder_label.setAlignment(Qt.AlignCenter)
         self._placeholder_label.setAutoFillBackground(True)
         self._placeholder_label.setWordWrap(True)
-        self._show_placeholder()  # Show placeholder initially        
         self._stack.addWidget(self._placeholder_label)
-        self._stack.setCurrentWidget(self._placeholder_label)
+        self._show_placeholder()  # Show placeholder initially
         self.layout.addWidget(self._stack_container)
 
         # Point size hint (spinbox removed; use Ctrl + mouse wheel)
         hint_label = QLabel("Point Size: Ctrl + Mouse Wheel")
-        hint_label.setStyleSheet("color: white;")
+        hint_label.setStyleSheet(f"color: {app_theme.TEXT_PRIMARY_COLOR.name()};")
         bottom_layout.addStretch(1)
         bottom_layout.addWidget(hint_label)
 
@@ -233,8 +479,17 @@ class MVATViewer(QFrame):
         self.rotate_speed = 0.25        # degrees per key press
         
         self.plotter.interactor.installEventFilter(self)
+        QTimer.singleShot(100, self._configure_interaction)
 
         # Configure Interaction (Delayed)
+
+    def refresh_scaling(self):
+        """Refresh the placeholder styling after a UI scale change."""
+        self._placeholder_label.setStyleSheet(
+            app_theme.scale_qss(
+                f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; background-color: transparent; font-size: 14px; padding: 16px;"
+            )
+        )
         # We run this on a timer to ensure it happens AFTER the parent window
         # has run its setup (like enable_point_picking), so we can override it.
         QTimer.singleShot(100, self._configure_interaction)
@@ -296,12 +551,13 @@ class MVATViewer(QFrame):
         
     def view_isometric(self):
         try:
+            self._cancel_camera_motion()
             self.plotter.view_isometric()
             self.plotter.render()
         except Exception:
             print("Error setting isometric view: ", traceback.format_exc())
 
-    def _set_view_preserve_zoom(self, view_dir, up=None):
+    def _set_view_preserve_zoom(self, view_dir, up=None, animate=True):
         """Set camera looking along view_dir (from camera towards focal point)
         while preserving current camera distance (zoom) and view angle.
 
@@ -309,6 +565,7 @@ class MVATViewer(QFrame):
         up: optional up-vector to set on the camera
         """
         try:
+            self._cancel_camera_motion()
             cam = self.plotter.camera
             fp = np.array(cam.focal_point)
             pos = np.array(cam.position)
@@ -326,10 +583,22 @@ class MVATViewer(QFrame):
             # new camera position such that (fp - new_pos) is view_dir_norm * dist
             new_pos = fp - view_dir_norm * dist
 
+            target_up = np.array(up, dtype=float) if up is not None else np.array(cam.up, dtype=float)
+
+            if animate:
+                animator = getattr(self, '_focal_point_animator', None)
+                if animator is not None:
+                    try:
+                        animator.animate_to_camera_state(new_pos, fp, target_up, cam.view_angle)
+                        QTimer.singleShot(int(getattr(animator, 'duration_ms', 180)) + 20, self._update_clipping_range)
+                        return
+                    except Exception:
+                        pass
+
             cam.position = new_pos.tolist()
             cam.focal_point = fp.tolist()
             if up is not None:
-                cam.up = np.array(up, dtype=float).tolist()
+                cam.up = target_up.tolist()
             # keep view_angle unchanged -> do not call reset/fit helpers
             try:
                 self.plotter.render()
@@ -340,6 +609,7 @@ class MVATViewer(QFrame):
             pass
 
     def toggle_orthographic(self, state: bool):
+        self._cancel_camera_motion()
         if state:
             self.plotter.enable_parallel_projection()
         else:
@@ -354,6 +624,15 @@ class MVATViewer(QFrame):
                 self._action_ortho.blockSignals(False)
         except Exception:
             pass
+
+    def set_ortho_top_view(self):
+        """Fit the scene and snap to the canonical top perspective view."""
+        try:
+            self.toggle_orthographic(False)
+            self.fit_to_view()
+            self.view_top()
+        except Exception:
+            print("Error setting ortho selection view: ", traceback.format_exc())
         
     # --------------------------------------------------------------------------
     # DockWrapper Hooks
@@ -376,7 +655,7 @@ class MVATViewer(QFrame):
 
     def create_view_menu(self) -> QMenu:
         """Create a standalone QMenu for the viewer that can be attached to a menubar or dock."""
-        view_menu = QMenu("View")
+        view_menu = QMenu("3D Viewer")
 
         # Top actions: Fit and Reset
         action_fit = QAction("Fit All", self)
@@ -474,30 +753,6 @@ class MVATViewer(QFrame):
 
         view_menu.addSeparator()
 
-        # Visibility Quality submenu
-        quality_menu = view_menu.addMenu("Visibility Quality")
-        quality_menu.setToolTip("Set the resolution scale for computing occlusion maps")
-
-        self._quality_action_group = QActionGroup(self)
-        self._quality_action_group.setExclusive(True)
-
-        quality_levels = [
-            ("Highest (100%)", 1.0),
-            ("High (75%)", 0.75),
-            ("Medium (50%)", 0.50),
-            ("Low (25%)", 0.25),
-            ("Lowest (10%)", 0.10),
-        ]
-
-        for label, scale in quality_levels:
-            action = QAction(label, self)
-            action.setCheckable(True)
-            if scale == 0.50:  # default to Medium
-                action.setChecked(True)
-            action.triggered.connect(lambda checked, s=scale: self.visibilityQualityChanged.emit(s))
-            self._quality_action_group.addAction(action)
-            quality_menu.addAction(action)
-        
         view_menu.addSeparator()
 
         # Background computation toggles
@@ -551,7 +806,11 @@ class MVATViewer(QFrame):
         # This cleanly maps Right Drag -> Pan without complex state management.
         # left='rotate' is implied default.
         self.plotter.enable_custom_trackball_style(right='pan')
-        print("MVATViewer: Custom trackball style enabled (Right=Pan).")
+        inertia_style = getattr(getattr(self.plotter, 'iren', None), 'style', None)
+        if inertia_style is None:
+            inertia_style = interactor
+        if hasattr(self, '_camera_inertia') and self._camera_inertia is not None:
+            self._camera_inertia.bind(inertia_style)
 
     def eventFilter(self, obj, event):
         """Intercept key press events."""
@@ -561,12 +820,12 @@ class MVATViewer(QFrame):
             return True
 
         if event.type() == QEvent.Wheel:
-            # Ctrl + wheel adjusts point size; consume event to prevent zoom
+            delta_y = event.angleDelta().y()
+
+            # Ctrl + wheel → adjust point size; consume so zoom is not triggered.
             if event.modifiers() & Qt.ControlModifier:
-                # angleDelta().y() is positive for wheel up, negative for wheel down
-                delta = event.angleDelta().y()
-                if delta != 0:
-                    step = 1 if delta > 0 else -1
+                if delta_y != 0:
+                    step = 1 if delta_y > 0 else -1
                     new_size = max(1, min(20, self.point_size + step))
                     if new_size != self.point_size:
                         self.set_point_size(new_size)
@@ -574,7 +833,19 @@ class MVATViewer(QFrame):
                             self.pointSizeChanged.emit(new_size)
                         except Exception:
                             pass
-                return True  # consume event (prevent default zoom)
+                return True  # consumed
+
+            # Regular wheel → zoom via inertia controller.
+            # We always consume the event so VTK's default wheel handling
+            # (which varies across versions / custom styles) never runs.
+            if delta_y != 0:
+                controller = getattr(self, '_camera_inertia', None)
+                if controller is not None:
+                    try:
+                        controller.on_qt_wheel(delta_y)
+                    except Exception:
+                        pass
+            return True  # consumed — VTK must not see raw wheel events
 
         # Forward key presses to keyPressEvent once; if handled, consume the event
         if event.type() == QEvent.KeyPress:
@@ -601,15 +872,39 @@ class MVATViewer(QFrame):
 
     def _handle_double_click(self):
         """
-        Perform a pick explicitly against the Scene Geometry to set Focal Point.
-        This is the ONLY way to change the focal point via mouse.
+        Perform a pick against the scene geometry and set the focal point to
+        the picked world coordinate.
+
+        Silently does nothing if no geometry is under the cursor (background click).
         """
-        # Perform a normal pick against the scene; let the renderer choose the
-        # visible actor under the mouse and return the picked world coordinate.
         try:
-            picked_point = self.plotter.pick_mouse_position()
-            if picked_point is not None:
-                self.set_focal_point(picked_point)
+            # Stop any running inertia/animation so the animated focal-point
+            # transition isn't immediately clobbered by the decay timer.
+            self._cancel_camera_motion()
+
+            picked = self.plotter.pick_mouse_position()
+            if picked is None:
+                return
+
+            picked = np.asarray(picked, dtype=float)
+
+            # Validate: if the pick landed at the exact origin while the camera
+            # is nowhere near it, it almost certainly means "no geometry hit".
+            # We reject the pick rather than snapping the focal point to [0,0,0].
+            try:
+                cam_pos  = np.asarray(self.plotter.camera.position,    dtype=float)
+                cam_fp   = np.asarray(self.plotter.camera.focal_point, dtype=float)
+                cam_dist = float(np.linalg.norm(cam_pos - cam_fp))
+                pick_dist_from_cam = float(np.linalg.norm(picked - cam_pos))
+
+                # Heuristic: a valid pick should be within ~50× the current
+                # focal distance.  Beyond that it's almost certainly a miss.
+                if cam_dist > 1e-4 and pick_dist_from_cam > cam_dist * 50.0:
+                    return
+            except Exception:
+                pass  # validation failed — proceed optimistically
+
+            self.set_focal_point(picked)
         except Exception:
             pass
         
@@ -641,11 +936,60 @@ class MVATViewer(QFrame):
         self.plotter.camera.reset_clipping_range()
         self.plotter.render()
 
+    def _cancel_camera_motion(self):
+        """Stop any active inertia or explicit camera animation."""
+        controller = getattr(self, '_camera_inertia', None)
+        if controller is not None:
+            try:
+                controller.stop()
+            except Exception:
+                pass
+
+        for animator_name in ('_camera_animator', '_focal_point_animator'):
+            animator = getattr(self, animator_name, None)
+            if animator is not None:
+                try:
+                    animator.cancel()
+                except Exception:
+                    pass
+
+    def _animate_focal_point(self, point):
+        """Eased focal-point transition used for double-click picking."""
+        target = np.asarray(point, dtype=float)
+        try:
+            self._cancel_camera_motion()
+            cam = self.plotter.camera
+            current_position = np.array(cam.position, dtype=float)
+            current_up = np.array(cam.up, dtype=float)
+            current_fov = float(cam.view_angle)
+
+            # Preserve the signal contract: emit immediately, then animate.
+            self.focalPointChanged.emit(target)
+
+            animator = getattr(self, '_focal_point_animator', None)
+            if animator is not None:
+                try:
+                    animator.animate_to_camera_state(current_position, target, current_up, current_fov)
+                    return
+                except Exception:
+                    pass
+
+            cam.focal_point = target.tolist()
+            self.plotter.render()
+        except Exception:
+            try:
+                cam = self.plotter.camera
+                cam.focal_point = target.tolist()
+                self.plotter.render()
+            except Exception:
+                pass
+
     # ------------------------------------------------------------------
     # Movement methods (each updates clipping)
     # ------------------------------------------------------------------
     def move_forward(self, speed=None):
         """Move camera forward along view direction."""
+        self._cancel_camera_motion()
         if speed is None:
             speed = self.move_speed
         pos, fp, view_dir, _, _ = self._get_camera_vectors()
@@ -662,6 +1006,7 @@ class MVATViewer(QFrame):
 
     def strafe_left(self, speed=None):
         """Move camera left (perpendicular to view direction)."""
+        self._cancel_camera_motion()
         if speed is None:
             speed = self.move_speed
         pos, fp, _, right, _ = self._get_camera_vectors()
@@ -672,6 +1017,7 @@ class MVATViewer(QFrame):
 
     def strafe_right(self, speed=None):
         """Move camera right."""
+        self._cancel_camera_motion()
         if speed is None:
             speed = self.move_speed
         pos, fp, _, right, _ = self._get_camera_vectors()
@@ -697,6 +1043,7 @@ class MVATViewer(QFrame):
         Rotate the camera position around the focal point,
         keeping the up vector fixed.
         """
+        self._cancel_camera_motion()
         cam = self.plotter.camera
         pos = np.array(cam.position)
         fp = np.array(cam.focal_point)
@@ -736,6 +1083,7 @@ class MVATViewer(QFrame):
         Pitch the camera up/down around the camera's right vector, keeping
         the focal point fixed. Positive angle pitches up.
         """
+        self._cancel_camera_motion()
         cam = self.plotter.camera
         pos = np.array(cam.position)
         fp = np.array(cam.focal_point)
@@ -789,6 +1137,7 @@ class MVATViewer(QFrame):
 
         Camera position remains fixed; focal_point is updated.
         """
+        self._cancel_camera_motion()
         cam = self.plotter.camera
         pos = np.array(cam.position)
         fp = np.array(cam.focal_point)
@@ -812,6 +1161,7 @@ class MVATViewer(QFrame):
 
         Camera position remains fixed; focal_point and up vector are updated.
         """
+        self._cancel_camera_motion()
         cam = self.plotter.camera
         pos = np.array(cam.position)
         fp = np.array(cam.focal_point)
@@ -954,10 +1304,11 @@ class MVATViewer(QFrame):
 
     def set_focal_point(self, point):
         """Sets the camera focal point and re-renders."""
-        # Animate the transition if desired, or just set it
-        self.plotter.camera.focal_point = point
+        self._cancel_camera_motion()
+        target = np.asarray(point, dtype=float)
+        self.plotter.camera.focal_point = target.tolist()
         self.plotter.render()
-        self.focalPointChanged.emit(np.asarray(point))
+        self.focalPointChanged.emit(target)
         
     # --------------------------------------------------------------------------
     # Scene Product Loading
@@ -1404,7 +1755,7 @@ class MVATViewer(QFrame):
         try:
             if text:
                 self._placeholder_label.setText(text)
-            if hasattr(self, '_stack'):
+            if hasattr(self, '_stack') and self._stack.indexOf(self._placeholder_label) >= 0:
                 self._stack.setCurrentWidget(self._placeholder_label)
         except Exception:
             pass
@@ -1412,7 +1763,7 @@ class MVATViewer(QFrame):
     def _hide_placeholder(self):
         """Hide the placeholder and show the plotter interactor."""
         try:
-            if hasattr(self, '_stack'):
+            if hasattr(self, '_stack') and self._stack.indexOf(self.plotter.interactor) >= 0:
                 self._stack.setCurrentWidget(self.plotter.interactor)
         except Exception:
             pass
@@ -1504,13 +1855,90 @@ class MVATViewer(QFrame):
         
         # Update display
         self.plotter.render()
+
+    def show_ortho_ray(self, world_point: np.ndarray, ortho_direction: np.ndarray,
+                       color: tuple = RAY_COLOR_SELECTED):
+        """Display the orthomosaic debug ray as a single cached line actor."""
+        if world_point is None:
+            self.clear_ortho_ray()
+            return
+
+        world_point = np.asarray(world_point, dtype=np.float64)
+        ortho_direction = np.asarray(ortho_direction, dtype=np.float64)
+        direction_norm = np.linalg.norm(ortho_direction)
+        if not np.isfinite(direction_norm) or direction_norm <= 1e-12:
+            ortho_direction = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+        else:
+            ortho_direction = ortho_direction / direction_norm
+
+        bounds = None
+        try:
+            if self.scene_context is not None and self.scene_context.has_any_product():
+                bounds = self.scene_context.unified_bounds()
+        except Exception:
+            bounds = None
+
+        if bounds is None:
+            bounds = self.get_bounds()
+
+        if bounds is not None:
+            try:
+                scene_size = float(np.sqrt(
+                    (bounds[1] - bounds[0]) ** 2
+                    + (bounds[3] - bounds[2]) ** 2
+                    + (bounds[5] - bounds[4]) ** 2
+                ))
+                ray_length = scene_size if np.isfinite(scene_size) and scene_size > 1e-6 else 100.0
+            except Exception:
+                ray_length = 100.0
+        else:
+            ray_length = 100.0
+
+        sky_origin = world_point + (ortho_direction * ray_length)
+        ortho_ray = CameraRay(
+            origin=sky_origin,
+            direction=world_point - sky_origin,
+            terminal_point=world_point,
+            has_accurate_depth=True,
+            pixel_coord=None,
+            source_camera=None,
+        )
+
+        rays_with_colors = [(ortho_ray, color)]
+        if self._ortho_ray_manager.ray_actor is not None and self._ortho_ray_manager._num_rays == 1:
+            self._ortho_ray_manager.update_ray_endpoints(rays_with_colors)
+        else:
+            self._ortho_ray_manager.build_ray_batch(rays_with_colors)
+            self._ortho_ray_manager.add_to_plotter(self.plotter, line_width=4)
+
+        self._ortho_ray_manager.set_visibility(self._ray_visible)
+        self.plotter.render()
+
+    def clear_ortho_ray(self):
+        """Hide the orthomosaic debug ray without destroying its cached actor."""
+        actor = self._ortho_ray_manager.ray_actor
+        if actor is None:
+            return
+
+        try:
+            if actor.GetVisibility():
+                self._ortho_ray_manager.set_visibility(False)
+                self.plotter.render()
+        except Exception:
+            try:
+                self._ortho_ray_manager.set_visibility(False)
+                self.plotter.render()
+            except Exception:
+                pass
         
     def clear_ray(self):
         """Remove any displayed ray visualization."""
+        if self._ray_manager.ray_actor is None and self._ray_manager.ray_mesh is None:
+            return
         self._ray_manager.remove_from_plotter(self.plotter)
         self._ray_manager.clear()
         self.plotter.render()
-            
+
     def set_ray_visible(self, visible: bool):
         """
         Toggle ray visualization visibility.
@@ -1520,6 +1948,7 @@ class MVATViewer(QFrame):
         """
         self._ray_visible = visible
         self._ray_manager.set_visibility(visible)
+        self._ortho_ray_manager.set_visibility(visible)
         self.plotter.render()
         
     def get_scene_median_depth(self, camera_position: np.ndarray) -> float:
@@ -1558,7 +1987,8 @@ class MVATViewer(QFrame):
     
     def add_frustums(self, cameras: dict, frustum_scale: float = None,
                      show_thumbnails: bool = None, selected_camera=None,
-                     highlighted_paths: list = None, hovered_camera: str = None):
+                     highlighted_paths: list = None, hovered_camera: str = None,
+                     context_highlighted_paths: list = None):
         """
         Build and add batched frustums (wireframes) to the plotter.
 
@@ -1610,7 +2040,12 @@ class MVATViewer(QFrame):
                     self._frustum_manager.add_to_plotter(self.plotter, line_width=1.5)
                     selected_path = selected_camera.image_path if selected_camera else None
                     highlighted_paths = highlighted_paths or []
-                    self._frustum_manager.update_camera_states(selected_path, highlighted_paths, hovered_camera)
+                    self._frustum_manager.update_camera_states(
+                        selected_path,
+                        highlighted_paths,
+                        hovered_camera,
+                        context_highlighted_paths=context_highlighted_paths,
+                    )
                     self._frustum_manager.mark_modified()
                     print(f"   ✅ Frustums added to plotter successfully")
                 else:
@@ -1739,6 +2174,7 @@ class MVATViewer(QFrame):
     def fit_to_view(self):
         """Fit the current scene in view (wrapper)."""
         try:
+            self._cancel_camera_motion()
             self.plotter.reset_camera()
             self.plotter.render()
         except Exception:
@@ -1747,6 +2183,7 @@ class MVATViewer(QFrame):
     def reset_view(self):
         """Reset to default isometric view."""
         try:
+            self._cancel_camera_motion()
             self.plotter.reset_camera()
             try:
                 self.plotter.view_isometric()
@@ -1765,6 +2202,7 @@ class MVATViewer(QFrame):
             animate: If True, smoothly animate the camera transition (default False)
         """
         try:
+            self._cancel_camera_motion()
             # RESTORE: Perspective projection for normal cameras, but ONLY if currently
             # in parallel projection. PyVista's disable_parallel_projection() unconditionally
             # overwrites camera.position using stale parallel_scale, which would snap the
@@ -2027,12 +2465,18 @@ class MVATViewer(QFrame):
         except Exception:
             pass
 
-    def update_frustum_states(self, selected_path, highlighted_paths, hovered_camera):
+    def update_frustum_states(self, selected_path, highlighted_paths, hovered_camera,
+                              context_highlighted_paths=None):
         """Update frustum manager camera states and mark modified."""
         try:
             if hasattr(self, '_frustum_manager') and self._frustum_manager is not None:
                 try:
-                    self._frustum_manager.update_camera_states(selected_path, highlighted_paths, hovered_camera)
+                    self._frustum_manager.update_camera_states(
+                        selected_path,
+                        highlighted_paths,
+                        hovered_camera,
+                        context_highlighted_paths=context_highlighted_paths,
+                    )
                     self._frustum_manager.mark_modified()
                 except Exception:
                     pass
@@ -2044,6 +2488,24 @@ class MVATViewer(QFrame):
         # Clean up ray manager
         if hasattr(self, '_ray_manager'):
             self._ray_manager.clear()
+        if hasattr(self, '_ortho_ray_manager'):
+            try:
+                self._ortho_ray_manager.remove_from_plotter(self.plotter)
+            except Exception:
+                pass
+            self._ortho_ray_manager.clear()
+
+        try:
+            self._cancel_camera_motion()
+        except Exception:
+            pass
+
+        controller = getattr(self, '_camera_inertia', None)
+        if controller is not None:
+            try:
+                controller.unbind()
+            except Exception:
+                pass
         
         if self.plotter:
             self.plotter.close()

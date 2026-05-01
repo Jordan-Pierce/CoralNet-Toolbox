@@ -559,7 +559,8 @@ class BatchedFrustumManager:
     def update_camera_states(self, 
                              selected_path: Optional[str] = None,
                              highlighted_paths: Optional[List[str]] = None,
-                             hovered_path: Optional[str] = None):
+                             hovered_path: Optional[str] = None,
+                             context_highlighted_paths: Optional[List[str]] = None):
         """
         Batch update visual states for all cameras.
         
@@ -569,24 +570,34 @@ class BatchedFrustumManager:
             selected_path: Path of the selected camera (lime green)
             highlighted_paths: List of highlighted camera paths (cyan)
             hovered_path: Path of the hovered camera (red, with Ctrl)
+            context_highlighted_paths: List of matrix-visible camera paths that
+                should render cyan while the selected camera remains green.
         """
         if self.merged_wireframe is None:
             return
             
         highlighted_paths = highlighted_paths or []
+        context_highlighted_paths = context_highlighted_paths or []
         
         # Reset all to default
         self.merged_wireframe['state'][:] = STATE_DEFAULT
         
-        # Set highlighted cameras
-        for path in highlighted_paths:
-            if path in self.camera_indices and path != selected_path and path != hovered_path:
+        cyan_paths = []
+        seen_paths = set()
+        for path in list(highlighted_paths) + list(context_highlighted_paths):
+            if path not in seen_paths:
+                cyan_paths.append(path)
+                seen_paths.add(path)
+
+        # Set cyan cameras first so the selected camera can stay green.
+        for path in cyan_paths:
+            if path in self.camera_indices and path != hovered_path and path != selected_path:
                 idx = self.camera_indices[path]
                 if idx < len(self.point_ranges):
                     start, end = self.point_ranges[idx]
                     if start < end:
                         self.merged_wireframe['state'][start:end] = STATE_HIGHLIGHTED
-        
+
         # Set selected camera (overrides highlight)
         if selected_path and selected_path in self.camera_indices and selected_path != hovered_path:
             idx = self.camera_indices[selected_path]

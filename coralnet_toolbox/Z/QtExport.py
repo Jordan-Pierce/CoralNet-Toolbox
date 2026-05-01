@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushBut
                              QFileDialog, QMessageBox, QGroupBox, QFormLayout, 
                              QLineEdit)
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -68,7 +68,7 @@ class ZExportDialog(QDialog):
             return
         
         self.setWindowTitle("Export Z-Channels")
-        self.setWindowIcon(get_icon("z.svg"))
+        self.setWindowIcon(get_window_icon("z.svg"))
         self.resize(600, 300)
         
         # Main layout

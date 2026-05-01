@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (
 from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 from coralnet_toolbox.utilities import convert_scale_units
 
@@ -208,7 +208,7 @@ class ExportSpatialMetrics(QDialog):
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
 
-        self.setWindowIcon(get_icon("coralnet.svg"))
+        self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowTitle("Export Spatial Metrics (CSV)")
         self.resize(500, 600)
 

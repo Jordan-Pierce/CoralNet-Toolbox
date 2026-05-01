@@ -23,7 +23,7 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Common import ThresholdsWidget
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -53,7 +53,7 @@ class DeployGeneratorDialog(QDialog):
         self.image_window = main_window.image_window
         self.annotation_window = main_window.annotation_window
 
-        self.setWindowIcon(get_icon("wizard.svg"))
+        self.setWindowIcon(get_window_icon("wizard.svg"))
         self.setWindowTitle("SAM Generator (Ctrl + 5)")
         self.resize(400, 325)
 
@@ -465,6 +465,7 @@ class DeployGeneratorDialog(QDialog):
                                 result, raster, wa,
                                 map_masks=is_segmentation,
                                 task=self.task,
+                                boundary_tolerance=self.thresholds_widget.get_boundary_tolerance(),
                             )
                             wa.unhighlight()
 
@@ -536,7 +537,6 @@ class DeployGeneratorDialog(QDialog):
                 try:
                     aw.current_image_path = image_path
                     aw._base_image_item.set_image(q_img)
-                    aw.fit_to_image()
                 except Exception:
                     pass
 

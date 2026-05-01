@@ -12,14 +12,14 @@ import warnings
 import os
 import time
 
-from PyQt5.QtCore import Qt, QTimer, QRect, pyqtSignal, pyqtSlot, QEvent, QThread, QSignalBlocker
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot, QEvent, QThread, QSignalBlocker
 from PyQt5 import QtCore, QtGui
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QToolBar, QComboBox,
-    QLabel, QPushButton, QSizePolicy, QApplication, QListView
+    QLabel, QPushButton, QApplication, QListView
 )
 from PyQt5.QtWidgets import QHBoxLayout
-from types import SimpleNamespace
+from coralnet_toolbox import theme as app_theme
 
 from coralnet_toolbox.Explorer.core.QtDataItem import AnnotationDataItem
 from coralnet_toolbox.Explorer.models.annotation_list_model import AnnotationListModel, AnnotationItemDelegate
@@ -196,11 +196,11 @@ class AnnotationViewerWindow(QWidget):
         self._group_headers = []
         
         # Display options
-        self.current_widget_size = 96
+        self.current_widget_size = app_theme.scale_int(96)
         # Widget size limits and step for Ctrl+Scroll resizing
-        self._widget_size_min = 32
-        self._widget_size_max = 256
-        self._widget_size_step = 8
+        self._widget_size_min = app_theme.scale_int(32)
+        self._widget_size_max = app_theme.scale_int(256)
+        self._widget_size_step = max(1, app_theme.scale_int(8))
         
         # Selection blocking (for external wizards)
         self.selection_blocked = False
@@ -251,21 +251,61 @@ class AnnotationViewerWindow(QWidget):
         self.isolate_button.setToolTip("Show only selected annotations (double-click to exit)")
         self.isolate_button.clicked.connect(self._isolate_selection)
         self.isolate_button.setEnabled(False)
-        toolbar.addWidget(self.isolate_button)
+        # toolbar.addWidget(self.isolate_button)
         
         toolbar.addSeparator()
         
         # Sort controls
-        sort_label = QLabel(" Sort: ")
+        sort_label = QLabel("Sort:")
         toolbar.addWidget(sort_label)
         
         self.sort_combo = QComboBox()
-        self.sort_combo.addItems(["None", "Label", "Image"])
+        self.sort_combo.addItems(["None", "Label", "Image", "Confidence"])
         self.sort_combo.currentTextChanged.connect(self._on_sort_changed)
         self.sort_combo.setMinimumWidth(100)
         toolbar.addWidget(self.sort_combo)
+
+        toolbar.addSeparator()
+
+        # Image filter - multi-select combo
+        image_label = QLabel("Images:")
+        toolbar.addWidget(image_label)
+
+        self.image_filter_combo = MultiSelectCombo()
+        self.image_filter_combo.setFixedWidth(80)
+        self.image_filter_combo.setToolTip("Filter by image (multi-select)")
+        self.image_filter_combo.selection_changed.connect(lambda v: None)
+        toolbar.addWidget(self.image_filter_combo)
+        
+        # Label filter - searchable combo box
+        label_label = QLabel("Labels:")
+        toolbar.addWidget(label_label)
+
+        self.label_filter_combo = MultiSelectCombo()
+        self.label_filter_combo.setFixedWidth(80)
+        self.label_filter_combo.setToolTip("Filter by label (multi-select)")
+        toolbar.addWidget(self.label_filter_combo)
+
+        # Type filter - searchable combo box
+        type_label = QLabel("Annotations:")
+        toolbar.addWidget(type_label)
+
+        self.type_filter_combo = MultiSelectCombo()
+        self.type_filter_combo.setFixedWidth(80)
+        # Populate type filter with fixed options
+        type_opts = [
+            ("Patch", "PatchAnnotation"),
+            ("Rectangle", "RectangleAnnotation"),
+            ("Polygon", "PolygonAnnotation"),
+            ("MultiPolygon", "MultiPolygonAnnotation"),
+        ]
+        self.type_filter_combo.set_options(type_opts)
+        toolbar.addWidget(self.type_filter_combo)
         
         toolbar.addSeparator()
+
+        # Initialize filter options now that the controls exist
+        self._populate_filter_combos()
         
         return toolbar
     
@@ -279,51 +319,7 @@ class AnnotationViewerWindow(QWidget):
         toolbar = QToolBar()
         toolbar.setMovable(False)
         toolbar.setFloatable(False)
-        
-        # Image filter - multi-select combo
-        image_label = QLabel(" Image: ")
-        toolbar.addWidget(image_label)
 
-        self.image_filter_combo = MultiSelectCombo()
-        self.image_filter_combo.setFixedWidth(180)
-        self.image_filter_combo.setToolTip("Filter by image (multi-select)")
-        self.image_filter_combo.selection_changed.connect(lambda v: None)
-        toolbar.addWidget(self.image_filter_combo)
-        
-        toolbar.addSeparator()
-        
-        # Type filter - searchable combo box
-        type_label = QLabel(" Type: ")
-        toolbar.addWidget(type_label)
-        
-        self.type_filter_combo = MultiSelectCombo()
-        self.type_filter_combo.setFixedWidth(180)
-        # Populate type filter with fixed options
-        type_opts = [
-            ("Patch", "PatchAnnotation"),
-            ("Rectangle", "RectangleAnnotation"),
-            ("Polygon", "PolygonAnnotation"),
-            ("MultiPolygon", "MultiPolygonAnnotation"),
-        ]
-        self.type_filter_combo.set_options(type_opts)
-        toolbar.addWidget(self.type_filter_combo)
-        
-        toolbar.addSeparator()
-        
-        # Label filter - searchable combo box
-        label_label = QLabel(" Label: ")
-        toolbar.addWidget(label_label)
-        
-        self.label_filter_combo = MultiSelectCombo()
-        self.label_filter_combo.setFixedWidth(180)
-        self.label_filter_combo.setToolTip("Filter by label (multi-select)")
-        toolbar.addWidget(self.label_filter_combo)
-        
-        # Spacer to push apply button to the right
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        toolbar.addWidget(spacer)
-        
         # Clear button - clears gallery and notifies other viewers
         self.clear_button = QPushButton("Clear")
         self.clear_button.setToolTip("Clear gallery and reset view")
@@ -336,9 +332,6 @@ class AnnotationViewerWindow(QWidget):
         self.apply_filter_button.clicked.connect(self.apply_filters)
         toolbar.addWidget(self.apply_filter_button)
         
-        # Initialize filter options
-        self._populate_filter_combos()
-        
         return toolbar
     
     def _populate_filter_combos(self):
@@ -349,9 +342,6 @@ class AnnotationViewerWindow(QWidget):
     def _populate_image_filter(self):
         """Populate image filter combo with current images."""
         opts = []
-        current_image = None
-        if hasattr(self.annotation_window, 'current_image_path') and self.annotation_window.current_image_path:
-            current_image = os.path.basename(self.annotation_window.current_image_path)
         image_window = getattr(self.main_window, 'image_window', None)
         if image_window:
             raster_manager = getattr(image_window, 'raster_manager', None)
@@ -359,9 +349,13 @@ class AnnotationViewerWindow(QWidget):
                 for path in raster_manager.image_paths:
                     image_name = os.path.basename(path)
                     opts.append((image_name, image_name))
-        # set options (MultiSelectCombo expects list of tuples)
+        
         try:
+            # Set options (MultiSelectCombo expects list of tuples)
             self.image_filter_combo.set_options(opts)
+            current_image_path = getattr(self.annotation_window, 'current_image_path', None)
+            current_image_name = os.path.basename(current_image_path) if current_image_path else None
+            self.image_filter_combo.set_highlighted_value(current_image_name)
         except Exception:
             pass
     
@@ -447,12 +441,15 @@ class AnnotationViewerWindow(QWidget):
         self.list_view.setViewMode(QListView.IconMode)
         self.list_view.setResizeMode(QListView.Adjust)
         self.list_view.setSelectionMode(QListView.ExtendedSelection)
-        self.list_view.setSpacing(5)
+        self.list_view.setSpacing(app_theme.scale_int(5))
         # Override key press events to support Ctrl+A selection
         self.list_view.keyPressEvent = self._list_view_key_press_event
         # Set background and rubber-band styling (cyan rubber band)
-        self.list_view.setStyleSheet("background-color: #1e1e1e;"
-                         "QRubberBand { border: 1px solid rgba(0,255,255,200); background: rgba(0,255,255,40); }")
+        self.list_view.setStyleSheet(
+            "background-color: %s;"
+            "QRubberBand { border: 1px solid %s; background: rgba(61,122,237,40); }"
+            % (app_theme.BACKGROUND_COLOR.name(), app_theme.ACCENT_COLOR.name())
+        )
         layout.addWidget(self.list_view)
 
         # Backwards-compatibility aliases for code paths that still reference the
@@ -465,7 +462,12 @@ class AnnotationViewerWindow(QWidget):
         self.placeholder_label = QLabel(
             "No annotations available\nLoad annotations or adjust the gallery filters to display results."
         )
-        self.placeholder_label.setStyleSheet("color: white; background-color: #1e1e1e; font-size: 14px; padding: 16px;")
+        self.placeholder_label.setStyleSheet(
+            app_theme.scale_qss(
+                f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; "
+                "background-color: transparent; font-size: 14px; padding: 16px;"
+            )
+        )
         self.placeholder_label.setAlignment(Qt.AlignCenter)
         self.placeholder_label.setAutoFillBackground(True)
         self._show_placeholder()
@@ -477,9 +479,11 @@ class AnnotationViewerWindow(QWidget):
         # Setup model and delegate
         self.list_model = AnnotationListModel(self)
         self.list_delegate = AnnotationItemDelegate(item_size=self.current_widget_size)
+
         self.list_view.setModel(self.list_model)
         self.list_view.setItemDelegate(self.list_delegate)
         self.list_view.selectionModel().selectionChanged.connect(self._on_list_selection_changed)
+
         # Sticky header overlay (hidden until needed)
         class StickyHeaderWidget(QWidget):
             def __init__(self, parent=None, height=32):
@@ -538,6 +542,23 @@ class AnnotationViewerWindow(QWidget):
         except Exception:
             pass
 
+    def refresh_scaling(self):
+        """Refresh gallery sizing after a UI scale change."""
+        self.current_widget_size = app_theme.scale_int(96)
+        self._widget_size_min = app_theme.scale_int(32)
+        self._widget_size_max = app_theme.scale_int(256)
+        self._widget_size_step = max(1, app_theme.scale_int(8))
+        self.list_view.setSpacing(app_theme.scale_int(5))
+        self.placeholder_label.setStyleSheet(
+            app_theme.scale_qss(
+                f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; "
+                "background-color: transparent; font-size: 14px; padding: 16px;"
+            )
+        )
+        if hasattr(self, 'list_delegate'):
+            self.list_delegate.item_size = self.current_widget_size
+        self.list_view.doItemsLayout()
+        self.list_view.update()
         
     # -------------------------------------------------------------------------
     # Public API
@@ -751,6 +772,7 @@ class AnnotationViewerWindow(QWidget):
         for ann in filtered_annotations:
             if ann.id not in self.data_item_cache:
                 self.data_item_cache[ann.id] = AnnotationDataItem(ann)
+            self._connect_annotation_updates(ann)
             data_items.append(self.data_item_cache[ann.id])
         
         self.all_data_items = data_items
@@ -924,6 +946,7 @@ class AnnotationViewerWindow(QWidget):
                     if annotation_id not in self.data_item_cache:
                         self._ensure_cropped_images([ann])
                         self.data_item_cache[annotation_id] = AnnotationDataItem(ann)
+                        self._connect_annotation_updates(ann)
                     
                     data_item = self.data_item_cache[annotation_id]
                     if data_item not in self.all_data_items:
@@ -1018,6 +1041,7 @@ class AnnotationViewerWindow(QWidget):
         for ann in annotations_to_add:
             if ann.id not in self.data_item_cache:
                 self.data_item_cache[ann.id] = AnnotationDataItem(ann)
+            self._connect_annotation_updates(ann)
 
             data_item = self.data_item_cache[ann.id]
             if data_item not in self.all_data_items:
@@ -1044,8 +1068,9 @@ class AnnotationViewerWindow(QWidget):
         # Check if structural changes are needed
         active_label_filters = self._get_selected_labels()
         is_sorting_by_label = (self.sort_combo.currentText() == "Label")
+        is_sorting_by_confidence = (self.sort_combo.currentText() == "Confidence")
 
-        if active_label_filters or is_sorting_by_label:
+        if active_label_filters or is_sorting_by_label or is_sorting_by_confidence:
             QTimer.singleShot(0, self.refresh_annotations)
         else:
             # For pure color/text updates, just force a repaint for instant feedback
@@ -1098,8 +1123,9 @@ class AnnotationViewerWindow(QWidget):
         # Check if structural changes are needed
         active_label_filters = self._get_selected_labels()
         is_sorting_by_label = (self.sort_combo.currentText() == "Label")
+        is_sorting_by_confidence = (self.sort_combo.currentText() == "Confidence")
 
-        if active_label_filters or is_sorting_by_label:
+        if active_label_filters or is_sorting_by_label or is_sorting_by_confidence:
             QTimer.singleShot(0, self.refresh_annotations)
         else:
             # For pure color/text updates, just force a repaint for instant feedback
@@ -1281,6 +1307,8 @@ class AnnotationViewerWindow(QWidget):
             items.sort(key=lambda i: (i.effective_label.short_label_code, i.get_effective_confidence()))
         elif sort_type == "Image":
             items.sort(key=lambda i: (os.path.basename(i.annotation.image_path), i.get_effective_confidence()))
+        elif sort_type == "Confidence":
+            items.sort(key=self._confidence_sort_key)
         
         return items
     
@@ -1303,6 +1331,9 @@ class AnnotationViewerWindow(QWidget):
             elif sort_type == "Image":
                 key = os.path.basename(item.annotation.image_path)
                 color = None
+            elif sort_type == "Confidence":
+                key = self._confidence_group_key(item)
+                color = None
             else:
                 key = ""
                 color = None
@@ -1323,6 +1354,91 @@ class AnnotationViewerWindow(QWidget):
             groups.append((k, v.get("color"), v.get("items", [])))
 
         return groups
+
+    @staticmethod
+    def _confidence_value(item):
+        """Return the confidence value used for sorting and binning."""
+        try:
+            return float(item.get_effective_confidence())
+        except Exception:
+            return 1.0
+
+    @staticmethod
+    def _confidence_bucket_start(confidence):
+        """Map confidence to a 10% bucket start (0, 10, ..., 90)."""
+        try:
+            confidence = float(confidence)
+        except Exception:
+            confidence = 0.0
+
+        confidence = max(0.0, min(confidence, 1.0))
+        bucket_start = int(confidence * 10) * 10
+        return min(bucket_start, 90)
+
+    @classmethod
+    def _confidence_bucket_label(cls, confidence):
+        """Return the display label for a confidence bucket."""
+        bucket_start = cls._confidence_bucket_start(confidence)
+        if bucket_start >= 90:
+            return "90-100%"
+        return f"{bucket_start}-{bucket_start + 9}%"
+
+    def _confidence_group_key(self, item):
+        """Return the confidence group key for a data item."""
+        if getattr(item.annotation, 'verified', False):
+            return "Verified"
+        return self._confidence_bucket_label(self._confidence_value(item))
+
+    def _confidence_sort_key(self, item):
+        """Sort unverified annotations by bucket, then by confidence; verified last."""
+        confidence = self._confidence_value(item)
+        verified = bool(getattr(item.annotation, 'verified', False))
+        if verified:
+            return (1, 
+                    10, 
+                    confidence, 
+                    item.effective_label.short_label_code, 
+                    os.path.basename(item.annotation.image_path), 
+                    item.annotation.id)
+
+        bucket_start = self._confidence_bucket_start(confidence)
+        return (0, 
+                bucket_start, 
+                confidence, 
+                item.effective_label.short_label_code, 
+                os.path.basename(item.annotation.image_path), 
+                item.annotation.id)
+
+    @pyqtSlot(object)
+    def _on_annotation_updated(self, updated_annotation):
+        """Refresh a single annotation's cached state when it changes."""
+        try:
+            if updated_annotation is not None:
+                self.on_annotation_modified(updated_annotation.id)
+        except Exception:
+            pass
+
+    def _connect_annotation_updates(self, annotation):
+        """Connect annotation update signals so confidence changes refresh the gallery."""
+        try:
+            annotation.annotationUpdated.disconnect(self._on_annotation_updated)
+        except Exception:
+            pass
+
+        try:
+            annotation.annotationUpdated.connect(self._on_annotation_updated)
+        except Exception:
+            pass
+
+        try:
+            annotation.verifiedChanged.disconnect(self._on_annotation_updated)
+        except Exception:
+            pass
+
+        try:
+            annotation.verifiedChanged.connect(self._on_annotation_updated)
+        except Exception:
+            pass
     
     def _clear_separator_labels(self):
         """Remove existing group headers."""
@@ -1335,12 +1451,12 @@ class AnnotationViewerWindow(QWidget):
         """Create a group header label."""
         header = QLabel(text, self.content_widget)
         
-        bg_color = color.name() if color else "#f0f0f0"
+        bg_color = color.name() if color else app_theme.SURFACE_COLOR.name()
         if color:
             luminance = (0.299 * color.red() + 0.587 * color.green() + 0.114 * color.blue()) / 255
             text_color = "#ffffff" if luminance < 0.5 else "#000000"
         else:
-            text_color = "#555"
+            text_color = app_theme.TEXT_PRIMARY_COLOR.name()
         
         header.setStyleSheet(f"""
             QLabel {{
@@ -1698,11 +1814,42 @@ class AnnotationViewerWindow(QWidget):
                         pass
                 event.accept()
                 return
+            if event.key() == Qt.Key_Space and (event.modifiers() & Qt.ControlModifier):
+                self._confirm_selected_annotations()
+                event.accept()
+                return
         except Exception:
             pass
 
         # Fallback to native behavior
         QListView.keyPressEvent(self.list_view, event)
+
+    def _confirm_selected_annotations(self):
+        """Confirm selected annotations from the gallery with Ctrl+Space."""
+        if not hasattr(self.annotation_window, 'annotations_dict'):
+            return
+
+        selected_ids = self.get_selected_annotation_ids()
+        if not selected_ids:
+            return
+
+        for annotation_id in selected_ids:
+            ann = self.annotation_window.annotations_dict.get(annotation_id)
+            if not ann:
+                continue
+            if ann.machine_confidence:
+                ann.update_user_confidence(next(iter(ann.machine_confidence)))
+
+        try:
+            self.refresh_annotations()
+        except Exception:
+            pass
+
+        if len(selected_ids) == 1 and hasattr(self.main_window, 'confidence_window'):
+            try:
+                self.main_window.confidence_window.refresh_display()
+            except Exception:
+                pass
 
     def _toggle_group_from_header(self, group_key):
         """Toggle group expansion when sticky header clicked."""

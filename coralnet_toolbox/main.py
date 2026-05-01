@@ -1,12 +1,11 @@
 import sys
 import traceback
 
-import qdarktheme
-
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QCoreApplication
 from PyQt5.QtWidgets import QApplication
 
 from coralnet_toolbox.QtMainWindow import MainWindow
+from coralnet_toolbox.theme import apply_theme
 
 from coralnet_toolbox.utilities import console_user
 from coralnet_toolbox.utilities import except_hook
@@ -26,19 +25,13 @@ def run():
     try:
         # Install the exception hook (initial setup without main_window)
         sys.excepthook = except_hook
+
+        QCoreApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+        QCoreApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
         
         app = QApplication(sys.argv)
-        app.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-        app.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
-        
-        # Custom colors with command-line green accents
-        # 00BFFF (Deep Sky Blue) - bright and vibrant
-        # 0099CC (Medium cyan) - more professional
-        # 00A8E6 (Vivid cyan) - balanced brightness
-        custom_colors = {
-            "primary": "#00A8E6",  # primary elements
-        }
-        qdarktheme.setup_theme("light", custom_colors=custom_colors)
+
+        apply_theme(app)
         
         main_window = MainWindow(__version__)
         

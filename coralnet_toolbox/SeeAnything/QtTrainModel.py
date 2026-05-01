@@ -20,7 +20,7 @@ from torch.cuda import empty_cache
 
 from coralnet_toolbox.MachineLearning.EvaluateModel.QtBase import EvaluateModelWorker
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -232,9 +232,9 @@ class TrainModelDialog(QDialog):
         super().__init__(parent)
         self.main_window = main_window
 
-        self.setWindowIcon(get_icon("eye.svg"))
+        self.setWindowIcon(get_window_icon("eye.svg"))
         self.setWindowTitle("Train YOLOE Model")
-        self.resize(600, 800)  # Increased height for new parameters
+        self.resize(450, 750)
 
         # Set window settings
         self.setWindowFlags(Qt.Window |
@@ -265,7 +265,11 @@ class TrainModelDialog(QDialog):
         self._close_mosaic = 0  # Default for linear-probing
 
         # Create the layout
-        self.layout = QVBoxLayout(self)
+        main_layout = QVBoxLayout(self)
+
+        self.layout = main_layout  # Keep backward compatibility for helper methods
+        self.left_layout = main_layout
+        self.right_layout = None
 
         # Create the info layout
         self.setup_info_layout()
@@ -275,6 +279,8 @@ class TrainModelDialog(QDialog):
         self.setup_model_layout()
         # Create the output parameters layout
         self.setup_output_parameters_layout()
+        # Reserve space so the parameters section lands below the main setup fields.
+        self.layout.addStretch(1)
         # Create and set up the parameters layout
         self.setup_parameters_layout()
         # Create the buttons layout
@@ -430,13 +436,14 @@ class TrainModelDialog(QDialog):
         # Create a widget to hold the form layout
         form_widget = QWidget()
         form_layout = QFormLayout(form_widget)
+        form_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
 
         # Create the scroll area
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setWidget(form_widget)
         
-        group_layout.addWidget(scroll_area)
+        group_layout.addWidget(scroll_area, 1)
 
         # Fine-tune or Linear Probing
         self.training_mode = QComboBox()

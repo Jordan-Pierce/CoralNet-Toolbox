@@ -25,7 +25,7 @@ from coralnet_toolbox.MachineLearning.archive.SMP import get_segmentation_encode
 from coralnet_toolbox.MachineLearning.archive.SMP import get_segmentation_decoders
 from coralnet_toolbox.MachineLearning.archive.SMP import get_segmentation_optimizers
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -173,7 +173,7 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
         super().__init__(parent)
         self.main_window = main_window
 
-        self.setWindowIcon(get_icon("coralnet.svg"))
+        self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowTitle("Train Semantic Segmentation Model")
         self.resize(600, 750)  
 

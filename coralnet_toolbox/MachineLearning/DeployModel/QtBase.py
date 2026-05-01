@@ -8,11 +8,11 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (QFileDialog, QMessageBox, QVBoxLayout, QLabel, QDialog,
                              QPushButton, QGroupBox, QHBoxLayout, QTableWidget, 
-                             QTableWidgetItem)
+                             QTableWidgetItem, QHeaderView, QSizePolicy)
 
 from torch.cuda import empty_cache
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -23,6 +23,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 
+from PyQt5.QtCore import Qt, pyqtSignal
 class Base(QDialog):
     """
     Base class for deploying machine learning models.
@@ -30,6 +31,8 @@ class Base(QDialog):
     :param main_window: MainWindow object
     :param parent: Parent widget
     """
+    model_state_changed = pyqtSignal()
+
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.main_window = main_window
@@ -38,9 +41,9 @@ class Base(QDialog):
         self.annotation_window = main_window.annotation_window
         self.sam_dialog = None
 
-        self.setWindowIcon(get_icon("coralnet.svg"))
+        self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowTitle("Deploy Model")
-        self.resize(900, 200)
+        self.resize(1100, 240)
 
         # Initialize variables
         self.imgsz = 1024
@@ -92,7 +95,7 @@ class Base(QDialog):
         # Add left column to main layout (more balanced ratio)
         main_layout.addLayout(left_layout, stretch=2)
         # Add right column to main layout (labels panel)
-        main_layout.addLayout(right_layout, stretch=1)
+        main_layout.addLayout(right_layout, stretch=2)
 
     def setup_info_layout(self):
         """Set up the layout and widgets for the info layout."""
@@ -118,12 +121,13 @@ class Base(QDialog):
         self.labels_table = QTableWidget()
         # Removed disabled checkbox column (was unused). Use 3 columns: Status, Short Label, Long Label
         self.labels_table.setColumnCount(3)
-        self.labels_table.setHorizontalHeaderLabels(["Status", "Short Label", "Long Label"])
+        self.labels_table.setHorizontalHeaderLabels(["Status", "Short", "Long"])
         self.labels_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.labels_table.horizontalHeader().setStretchLastSection(True)
-        self.labels_table.setColumnWidth(0, 50)
-        self.labels_table.setColumnWidth(1, 90)
-        layout.addWidget(self.labels_table)
+        self.labels_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        header = self.labels_table.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(QHeaderView.Stretch)
+        layout.addWidget(self.labels_table, 1)
 
         # Add status label
         self.labels_status_label = QLabel("No model file selected")
@@ -203,9 +207,17 @@ class Base(QDialog):
         self.sam_dialog = self.main_window.sam_deploy_predictor_dialog
 
         if not self.sam_dialog.loaded_model:
-            self.use_sam_dropdown.setCurrentText("False")
+            if self.use_sam_dropdown.currentText() != "False":
+                self.use_sam_dropdown.blockSignals(True)
+                self.use_sam_dropdown.setCurrentText("False")
+                self.use_sam_dropdown.blockSignals(False)
+            if hasattr(self, 'update_sam_task_state'):
+                self.update_sam_task_state()
             QMessageBox.critical(self, "Error", "Please deploy the SAM model first.")
             return False
+
+        if hasattr(self, 'update_sam_task_state'):
+            self.update_sam_task_state()
 
         return True
 
@@ -490,3 +502,4 @@ class Base(QDialog):
         self.status_bar.setText("No model loaded")
         self.labels_status_label.setText("No model file selected")
         self.labels_table.setRowCount(0)
+        self.model_state_changed.emit()

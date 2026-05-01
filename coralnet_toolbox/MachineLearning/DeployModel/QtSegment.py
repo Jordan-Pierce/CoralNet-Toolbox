@@ -105,6 +105,8 @@ class Segment(Base):
                 # If SAM is wanted but not available, revert the dropdown and do nothing else.
                 # The 'is_sam_model_deployed' function already handles showing an error message.
                 self.use_sam_dropdown.setCurrentText("False")
+        else:
+            self.task = 'segment'
 
         # If use_sam_dropdown is "False", do nothing. Let self.task be whatever the user set.
 
@@ -161,6 +163,7 @@ class Segment(Base):
 
             # Display the class names
             self.check_and_display_class_names()
+            self.model_state_changed.emit()
 
             # Update the status bar
             self.status_bar.setText(f"Model loaded: {os.path.basename(self.model_path)}")
@@ -263,14 +266,32 @@ class Segment(Base):
 
                     batch_results = self._apply_model(inputs)
 
+                    # Remap tile coordinates + collect.  With SAM + work areas,
+                    # SAM runs on the tile crop before the remap so the ViT
+                    # encoder only ever sees the small tile — never the full raster.
                     for wa, result in zip(wa_chunk, batch_results):
                         result.path = image_path
                         if wa is not None:
+                            if (use_sam and result.boxes is not None
+                                    and len(result.boxes)):
+                                try:
+                                    sam_out = self.sam_dialog.predict_from_results(
+                                        [result], image_path)
+                                    if sam_out and sam_out[0] is not None:
+                                        result = sam_out[0]
+                                except Exception as e:
+                                    print(f"Segment.predict: per-tile SAM failed: {e}")
                             result = MapResults().map_results_from_work_area(
                                 result, raster, wa,
-                                map_masks=(self.task == 'segment'),
-                                task=self.task,
+                                map_masks=True,
+                                task='segment' if (use_sam or self.task == 'segment')
+                                      else self.task,
+                                boundary_tolerance=self.thresholds_widget.get_boundary_tolerance(),
                             )
+                            try:
+                                result.orig_img = None
+                            except Exception:
+                                pass
                             wa.unhighlight()
                         results_for_image.append(result)
                         progress_bar.update_progress()
@@ -278,8 +299,9 @@ class Segment(Base):
                     gc.collect()
                     empty_cache()
 
-                # SAM pass: once per image after all tiles are collected
-                if use_sam and results_for_image:
+                # Full-image SAM pass: only when work areas were NOT used.
+                # With tiles, SAM already ran per-tile above.
+                if use_sam and results_for_image and not use_tiles:
                     try:
                         import cv2
                         numpy_arr = raster.get_numpy()
@@ -287,14 +309,22 @@ class Segment(Base):
                             full_bgr = cv2.cvtColor(numpy_arr, cv2.COLOR_RGB2BGR)
                             for r in results_for_image:
                                 r.orig_img = full_bgr
+                            del full_bgr, numpy_arr
                         results_for_image = self.sam_dialog.predict_from_results(
                             results_for_image, image_path)
-                        is_segmentation = True
+                        for r in results_for_image:
+                            try:
+                                r.orig_img = None
+                            except Exception:
+                                pass
                     except Exception as e:
                         print(f"Segment.predict: SAM pass failed for {image_path}: {e}")
                     finally:
                         gc.collect()
                         empty_cache()
+
+                if use_sam:
+                    is_segmentation = True
 
                 cache[image_path] = results_for_image
 
@@ -356,7 +386,6 @@ class Segment(Base):
                 try:
                     aw.current_image_path = image_path
                     aw._base_image_item.set_image(q_img)
-                    aw.fit_to_image()
                 except Exception:
                     pass
 

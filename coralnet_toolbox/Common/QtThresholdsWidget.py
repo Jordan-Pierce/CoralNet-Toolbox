@@ -3,12 +3,13 @@ QtThresholdsWidget - Reusable widget for threshold controls
 """
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QGroupBox, QFormLayout, QLabel, QSlider, QSpinBox
+from PyQt5.QtWidgets import QComboBox, QGroupBox, QFormLayout, QLabel, QSlider, QSpinBox
 
 
 class ThresholdsWidget(QGroupBox):
     """
-    A reusable widget that provides threshold controls (max detections, uncertainty, IoU, area min/max).
+    A reusable widget that provides threshold controls (max detections, boundary detections,
+    uncertainty, IoU, area min/max).
     This widget can be configured to show only the controls needed for a specific use case.
     
     :param main_window: MainWindow object to sync threshold values
@@ -29,6 +30,7 @@ class ThresholdsWidget(QGroupBox):
         
         # Initialize threshold values from main window
         self.max_detections = main_window.get_max_detections()
+        self.boundary_tolerance = main_window.get_boundary_tolerance()
         self.uncertainty_thresh = main_window.get_uncertainty_thresh()
         self.iou_thresh = main_window.get_iou_thresh()
         min_val, max_val = main_window.get_area_thresh()
@@ -37,6 +39,14 @@ class ThresholdsWidget(QGroupBox):
         
         # Create the layout
         layout = QFormLayout()
+
+        def apply_row_tooltip(field_widget, tooltip_text):
+            field_widget.setToolTip(tooltip_text)
+            field_widget.setStatusTip(tooltip_text)
+            label_widget = layout.labelForField(field_widget)
+            if label_widget is not None:
+                label_widget.setToolTip(tooltip_text)
+                label_widget.setStatusTip(tooltip_text)
         
         # Max detections spinbox
         if show_max_detections:
@@ -46,6 +56,27 @@ class ThresholdsWidget(QGroupBox):
             self.max_detections_spinbox.valueChanged.connect(self._update_max_detections)
             main_window.maxDetectionsChanged.connect(self._on_max_detections_changed)
             layout.addRow("Max Detections:", self.max_detections_spinbox)
+            apply_row_tooltip(
+                self.max_detections_spinbox,
+                "Maximum number of detections kept after Ultralytics non-max suppression. Lower "
+                "values reduce clutter and processing time; higher values allow more candidates to "
+                "survive into annotation creation.")
+
+        # Boundary detections controls
+        self.boundary_tolerance_combo = QComboBox()
+        self.boundary_tolerance_combo.addItems([
+            "Keep",
+            "Ignore",
+        ])
+        self.boundary_tolerance_combo.setCurrentIndex(0 if self.boundary_tolerance else 1)
+        self.boundary_tolerance_combo.currentIndexChanged.connect(self._update_boundary_tolerance)
+        if hasattr(main_window, 'boundaryToleranceChanged'):
+            main_window.boundaryToleranceChanged.connect(self._on_boundary_tolerance_changed)
+        layout.addRow("Boundary Detections", self.boundary_tolerance_combo)
+        apply_row_tooltip(
+            self.boundary_tolerance_combo,
+            "Choose whether detections that touch a work-area edge should be preserved. Keep retains "
+            "cut-off objects, while Ignore removes them to reduce seam duplicates across tiles.")
         
         # Uncertainty threshold controls
         if show_uncertainty:
@@ -59,6 +90,13 @@ class ThresholdsWidget(QGroupBox):
             self.uncertainty_threshold_label = QLabel(f"{self.uncertainty_thresh:.2f}")
             layout.addRow("Uncertainty Threshold", self.uncertainty_threshold_slider)
             layout.addRow("", self.uncertainty_threshold_label)
+            apply_row_tooltip(
+                self.uncertainty_threshold_slider,
+                "Minimum confidence required before a prediction is accepted as a normal annotation. "
+                "Predictions below this value are treated as Review and can be surfaced for manual "
+                "inspection.")
+            self.uncertainty_threshold_label.setToolTip(
+                "Current uncertainty threshold value, shown as a 0.00 to 1.00 confidence cutoff.")
         
         # IoU threshold controls
         if show_iou:
@@ -72,6 +110,12 @@ class ThresholdsWidget(QGroupBox):
             self.iou_threshold_label = QLabel(f"{self.iou_thresh:.2f}")
             layout.addRow("IoU Threshold", self.iou_threshold_slider)
             layout.addRow("", self.iou_threshold_label)
+            apply_row_tooltip(
+                self.iou_threshold_slider,
+                "Intersection-over-Union threshold used by non-max suppression. Higher values keep "
+                "more overlapping detections; lower values remove duplicates more aggressively.")
+            self.iou_threshold_label.setToolTip(
+                "Current IoU threshold value used for non-max suppression.")
         
         # Area threshold controls
         if show_area:
@@ -95,6 +139,16 @@ class ThresholdsWidget(QGroupBox):
             layout.addRow("Area Threshold Min", self.area_threshold_min_slider)
             layout.addRow("Area Threshold Max", self.area_threshold_max_slider)
             layout.addRow("", self.area_threshold_label)
+            apply_row_tooltip(
+                self.area_threshold_min_slider,
+                "Lower bound of the normalized annotation area filter. Objects smaller than this "
+                "fraction of the image area are removed after confidence and IoU filtering.")
+            apply_row_tooltip(
+                self.area_threshold_max_slider,
+                "Upper bound of the normalized annotation area filter. Objects larger than this "
+                "fraction of the image area are removed after confidence and IoU filtering.")
+            self.area_threshold_label.setToolTip(
+                "Current area filter range, shown as normalized fractions of the image area.")
         
         self.setLayout(layout)
         
@@ -102,6 +156,15 @@ class ThresholdsWidget(QGroupBox):
         """Update max detections value"""
         self.max_detections = value
         self.main_window.update_max_detections(value)
+
+    def _update_boundary_tolerance(self, value):
+        """Update boundary detection handling value"""
+        if isinstance(value, bool):
+            keep_boundary_detections = value
+        else:
+            keep_boundary_detections = int(value) == 0
+        self.boundary_tolerance = keep_boundary_detections
+        self.main_window.update_boundary_tolerance(keep_boundary_detections)
     
     def _update_uncertainty_label(self, value):
         """Update uncertainty threshold and label"""
@@ -138,6 +201,13 @@ class ThresholdsWidget(QGroupBox):
             current_value = self.main_window.get_max_detections()
             self.max_detections_spinbox.setValue(current_value)
             self.max_detections = current_value
+
+        if hasattr(self, 'boundary_tolerance_combo'):
+            current_value = self.main_window.get_boundary_tolerance()
+            self.boundary_tolerance_combo.blockSignals(True)
+            self.boundary_tolerance_combo.setCurrentIndex(0 if current_value else 1)
+            self.boundary_tolerance_combo.blockSignals(False)
+            self.boundary_tolerance = current_value
         
         if hasattr(self, 'uncertainty_threshold_slider'):
             current_value = self.main_window.get_uncertainty_thresh()
@@ -159,6 +229,10 @@ class ThresholdsWidget(QGroupBox):
     def get_max_detections(self):
         """Get the current max detections value"""
         return self.max_detections
+
+    def get_boundary_tolerance(self):
+        """Get whether detections on boundaries should be kept"""
+        return self.boundary_tolerance
     
     def get_uncertainty_thresh(self):
         """Get the current uncertainty threshold value"""
@@ -183,6 +257,14 @@ class ThresholdsWidget(QGroupBox):
             self.max_detections_spinbox.setValue(value)
             self.max_detections = value
             self.max_detections_spinbox.blockSignals(False)
+
+    def _on_boundary_tolerance_changed(self, value):
+        """Update combo box when MainWindow changes"""
+        if hasattr(self, 'boundary_tolerance_combo'):
+            self.boundary_tolerance_combo.blockSignals(True)
+            self.boundary_tolerance_combo.setCurrentIndex(0 if value else 1)
+            self.boundary_tolerance = value
+            self.boundary_tolerance_combo.blockSignals(False)
     
     def _on_uncertainty_changed(self, value):
         """Update slider/label when MainWindow changes"""

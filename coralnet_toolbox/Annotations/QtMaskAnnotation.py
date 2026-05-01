@@ -551,9 +551,15 @@ class MaskAnnotation(Annotation):
             
     def remove_from_scene(self):
         """Removes the graphics item from its scene, if it exists."""
-        if self.graphics_item and self.graphics_item.scene():
-            self.graphics_item.scene().removeItem(self.graphics_item)
-            
+        if self.graphics_item:
+            try:
+                scene = self.graphics_item.scene()
+                if scene is not None:
+                    scene.removeItem(self.graphics_item)
+            except RuntimeError:
+                # The underlying C++ item may already have been deleted by a scene clear.
+                pass
+
         # Remove the graphics item reference
         self.graphics_item = None
 

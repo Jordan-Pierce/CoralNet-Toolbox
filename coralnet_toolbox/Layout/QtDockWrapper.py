@@ -7,6 +7,8 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QMenu, QMenuBar, QToolBar, QWidget, 
                              QStatusBar, QSizePolicy, QVBoxLayout)
 
+from coralnet_toolbox import theme as app_theme
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
@@ -61,10 +63,7 @@ class DockWrapper(ads.CDockWidget):
         # Mount the safe widget to the ADS Dock
         self.setWidget(self.inner_widget)
         
-        self.inner_widget.setStyleSheet("""
-            QMenuBar { background-color: rgb(248, 249, 250); border-bottom: 1px solid #ddd; }
-            QToolBar { background-color: rgb(248, 249, 250); border: none; padding: 2px; }
-        """)
+        self.inner_widget.setStyleSheet(app_theme.build_panel_stylesheet())
 
     # --- UI COMPONENT MOUNTING ---
     
@@ -72,11 +71,7 @@ class DockWrapper(ads.CDockWidget):
         if not hasattr(self, '_local_menubar'):
             self._local_menubar = QMenuBar()
             self._local_menubar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            self._local_menubar.setStyleSheet("""
-                QMenuBar { color: black; }
-                QMenuBar::item { background-color: transparent; padding: 4px 8px; }
-                QMenuBar::item:selected { background-color: #e2e6ea; }
-            """)
+            self._local_menubar.setStyleSheet(app_theme.build_panel_stylesheet())
             # Insert menu at the absolute top (index 0)
             self.layout.insertWidget(0, self._local_menubar)
             
@@ -113,6 +108,15 @@ class DockWrapper(ads.CDockWidget):
     def toggle_toolbars(self, visible: bool):
         for toolbar in self.inner_widget.findChildren(QToolBar):
             toolbar.setVisible(visible)
+
+    def refresh_scaling(self):
+        """Reapply panel styling after a scale change."""
+        self.inner_widget.setStyleSheet(app_theme.build_panel_stylesheet())
+        if hasattr(self, '_local_menubar'):
+            self._local_menubar.setStyleSheet(app_theme.build_panel_stylesheet())
+
+        for toolbar in self.inner_widget.findChildren(QToolBar):
+            toolbar.setIconSize(app_theme.scale_size(18))
 
     # --- LIFECYCLE EVENT FORWARDING ---
     def closeEvent(self, event):

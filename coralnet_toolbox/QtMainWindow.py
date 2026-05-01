@@ -15,9 +15,11 @@ from PyQtAds import ads
 
 from PyQt5.QtGui import QMouseEvent
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize
-from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy,
+from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QActionGroup, QSizePolicy,
                              QMessageBox, QWidget, QVBoxLayout, QLabel, QHBoxLayout,
-                             QSpinBox, QSlider, QDialog, QPushButton, QListWidget)
+                             QSpinBox, QComboBox, QSlider, QDialog, QPushButton, QListWidget)
+
+from coralnet_toolbox import theme as app_theme
 
 # Utilities
 from coralnet_toolbox.QtEventFilter import GlobalEventFilter
@@ -37,6 +39,7 @@ from coralnet_toolbox.QtLabelWindow import LabelWindow
 from coralnet_toolbox.Explorer import AnnotationViewerWindow
 from coralnet_toolbox.Explorer import EmbeddingViewerWindow
 from coralnet_toolbox.Explorer import SelectionManager
+from coralnet_toolbox.Explorer.models.yolo_models import LIVE_YOLO_MODEL_PREFIX
 
 # MVAT Windows
 from coralnet_toolbox.MVAT import MVATViewer
@@ -44,7 +47,6 @@ from coralnet_toolbox.MVAT import MVATManager
 from coralnet_toolbox.MVAT import ContextMatrixWidget
 
 # Other Dialogs
-from coralnet_toolbox.QtBatchInference import BatchInferenceDialog
 from coralnet_toolbox.WorkArea import WorkAreaManager as WorkAreaManagerDialog
 
 # Import Dialogs
@@ -86,6 +88,7 @@ from coralnet_toolbox.MachineLearning import (
     DeployDetect as DetectDeployModelDialog,
     DeploySegment as SegmentDeployModelDialog,
     DeploySemantic as SemanticDeployModelDialog,
+    BatchInference as BatchInferenceDialog,
     ImportDetect as DetectImportDatasetDialog,
     ImportSegment as SegmentImportDatasetDialog,
     ExportClassify as ClassifyExportDatasetDialog,
@@ -136,7 +139,7 @@ from coralnet_toolbox.BreakTime import (
     LightCycleGame
 )
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -153,6 +156,7 @@ class MainWindow(QMainWindow):
     uncertaintyChanged = pyqtSignal(float)  # Signal to emit the current uncertainty threshold
     iouChanged = pyqtSignal(float)  # Signal to emit the current IoU threshold
     areaChanged = pyqtSignal(float, float)  # Signal to emit the current area threshold
+    boundaryToleranceChanged = pyqtSignal(bool)  # Signal to emit whether to keep detections on boundaries
 
     def __init__(self, __version__):
         super().__init__()
@@ -165,8 +169,8 @@ class MainWindow(QMainWindow):
         self.pid = os.getpid()
 
         # Define icons
-        self.coralnet_icon = get_icon("coralnet.svg")
-        self.coral_icon = get_icon("coral.svg")
+        self.coralnet_icon = get_window_icon("coralnet.svg")
+        self.coral_icon = get_window_icon("coral.svg")
         self.select_icon = get_icon("select.svg")
         self.patch_icon = get_icon("patch.svg")
         self.rectangle_icon = get_icon("rectangle.svg")
@@ -196,17 +200,11 @@ class MainWindow(QMainWindow):
         self.unlock_icon = get_icon("unlock.svg")
         self.home_icon = get_icon("home.svg")
 
-        # Set the version
+        # Set the version and window icon used across dialogs and update prompts
         self.version = __version__
-
-        # Project path
         self.current_project_path = ""
-
-        # Update the project label
-        self.update_project_label()
-
-        # Set icon
         self.setWindowIcon(self.coralnet_icon)
+        self.update_project_label()
 
         # Set window flags for resizing, minimize, maximize, and customizing
         self.setWindowFlags(Qt.Window |
@@ -221,6 +219,7 @@ class MainWindow(QMainWindow):
         self.uncertainty_thresh = 0.20
         self.area_thresh_min = 0.00
         self.area_thresh_max = 0.70
+        self.boundary_tolerance = False
 
         # Create the central annotation data store (before AnnotationWindow)
         self.annotation_manager = AnnotationManager(self)
@@ -313,6 +312,7 @@ class MainWindow(QMainWindow):
         self.detect_deploy_model_dialog = DetectDeployModelDialog(self)
         self.segment_deploy_model_dialog = SegmentDeployModelDialog(self)
         self.semantic_deploy_model_dialog = SemanticDeployModelDialog(self)
+        self.batch_inference_dialog = BatchInferenceDialog(self)
 
         # Create dialogs (SAM)
         self.sam_deploy_predictor_dialog = SAMDeployPredictorDialog(self)
@@ -322,22 +322,6 @@ class MainWindow(QMainWindow):
         self.see_anything_train_model_dialog = SeeAnythingTrainModelDialog(self)
         self.see_anything_deploy_predictor_dialog = SeeAnythingDeployPredictorDialog(self)
         self.see_anything_deploy_generator_dialog = SeeAnythingDeployGeneratorDialog(self)
-
-        # Create dialogs (Batch Inference - Consolidated)
-        # This is accessed via ImageWindow right-click context menu
-        self.batch_inference_dialog = BatchInferenceDialog(self)
-
-        # Keep the BatchInferenceDialog updated when image highlights change
-        try:
-            # Connect the table-model highlight change signal to update the dialog's highlighted list
-            self.image_window.table_model.rowsChanged.connect(
-                lambda: self.batch_inference_dialog.update_highlighted_images(
-                    self.image_window.table_model.get_highlighted_paths()
-                )
-            )
-        except Exception:
-            # If connection fails for some reason, continue without breaking startup
-            pass
 
         # Create dialogs (Work Areas)
         self.tile_manager_dialog = WorkAreaManagerDialog(self)
@@ -520,15 +504,21 @@ class MainWindow(QMainWindow):
         self.save_project_action.triggered.connect(self.open_save_project_dialog)
         self.file_menu.addAction(self.save_project_action)
         
-        # ========== LAYOUT MENU ==========
-        # Layout menu - for saving and loading dock configurations
-        self.layout_menu = self.menu_bar.addMenu("Layout")
-        self.dock_toggle_actions = {}
-        
         # ========== VIEW MENU ==========
-        # Fetch the fully encapsulated menu from the MVAT Viewer and add it to the main menu bar
-        self.view_menu = self.mvat_viewer.create_view_menu()
-        self.menu_bar.addMenu(self.view_menu)
+        # View menu groups Windows, Layout, and 3D Viewer submenus.
+        self.view_menu = self.menu_bar.addMenu("View")
+        self.dock_toggle_actions = {}
+        self.scale_actions = {}
+
+        self.windows_menu = self.view_menu.addMenu("Windows")
+        self.layout_menu = self.view_menu.addMenu("Layout")
+        self.scale_menu = self.view_menu.addMenu("Scale")
+        self.view_menu.addSeparator()
+        
+        # 3D Viewer submenu
+        # Fetch the fully encapsulated menu from the MVAT Viewer and add it under View.
+        self.viewer_menu = self.mvat_viewer.create_view_menu()
+        self.view_menu.addMenu(self.viewer_menu)
 
         # ========== UTILITIES MENU ==========
         # Utilities menu
@@ -669,6 +659,9 @@ class MainWindow(QMainWindow):
         self.ml_optimize_model_action = QAction("Optimize Model", self)
         self.ml_optimize_model_action.triggered.connect(self.open_optimize_model_dialog)
         self.ml_menu.addAction(self.ml_optimize_model_action)
+
+        # Add a separator
+        self.ml_menu.addSeparator()
         
         # Deploy Model submenu
         self.ml_deploy_model_menu = self.ml_menu.addMenu("Deploy Model")
@@ -684,15 +677,16 @@ class MainWindow(QMainWindow):
         self.ml_segment_deploy_model_action = QAction("Segment", self)
         self.ml_segment_deploy_model_action.triggered.connect(self.open_segment_deploy_model_dialog)
         self.ml_deploy_model_menu.addAction(self.ml_segment_deploy_model_action)
+
         # Deploy Semantic Segmentation Model
         self.ml_semantic_deploy_model_action = QAction("Semantic", self)
         self.ml_semantic_deploy_model_action.triggered.connect(self.open_semantic_deploy_model_dialog)
         self.ml_deploy_model_menu.addAction(self.ml_semantic_deploy_model_action)
-        
-        # Add a separator
-        self.ml_menu.addSeparator()
 
-        # TODO Batch Inference submenu (not yet implemented)
+        # Batch Inference action 
+        self.ml_batch_inference_action = QAction("Batch Inference", self)
+        self.ml_batch_inference_action.triggered.connect(self.open_batch_inference_dialog)
+        self.ml_menu.addAction(self.ml_batch_inference_action)
 
         # ========== CORALNET MENU ==========
         # CoralNet menu
@@ -839,22 +833,24 @@ class MainWindow(QMainWindow):
     
         self.toolbar = QToolBar("Tools", self)
         self.toolbar.setOrientation(Qt.Vertical)
-        self.toolbar.setFixedWidth(40)
+        self.toolbar.setFixedWidth(app_theme.scale_int(48))
+        self.toolbar.setIconSize(app_theme.scale_size(24))
         self.toolbar.setMovable(False)  # Lock the toolbar in place
         self.addToolBar(Qt.LeftToolBarArea, self.toolbar)
 
         # Define spacer
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        spacer.setFixedHeight(10)  # Set a fixed height for the spacer
+        self.toolbar_spacer = QWidget()
+        self.toolbar_spacer.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.toolbar_spacer.setFixedHeight(app_theme.scale_int(12))  # Set a fixed height for the spacer
 
         # Define line separator
-        separator = QWidget()
-        separator.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        separator.setFixedHeight(1)  # Set a fixed height for the line separator
+        self.toolbar_separator = QWidget()
+        self.toolbar_separator.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.toolbar_separator.setFixedHeight(app_theme.scale_int(1))  # Set a fixed height for the line separator
 
         # Add a spacer before the first tool with a fixed height
-        self.toolbar.addWidget(spacer)
+        self.toolbar.addWidget(self.toolbar_spacer)
+        self.toolbar.addWidget(self.toolbar_separator)
 
         # Add tools here with icons
         self.select_tool_action = QAction(self.select_icon, "Select", self)
@@ -948,14 +944,38 @@ class MainWindow(QMainWindow):
         self.max_detections_spinbox.setRange(1, 10000)
         self.max_detections_spinbox.setValue(self.max_detections)
         self.max_detections_spinbox.valueChanged.connect(self.update_max_detections)
+        self.max_detections_spinbox.setToolTip(
+            "Maximum number of detections kept after Ultralytics non-max suppression. Lower values "
+            "reduce clutter and processing time; higher values allow more candidates to survive into "
+            "annotation creation.")
         max_detections_layout = QHBoxLayout()
-        max_detections_label = QLabel("Max Detections:")
+        max_detections_label = QLabel("")
         max_detections_layout.addWidget(max_detections_label)
         max_detections_layout.addWidget(self.max_detections_spinbox)
         max_detections_layout.addStretch()
         max_detections_widget = QWidget()
         max_detections_widget.setLayout(max_detections_layout)
         self.parameters_section.add_widget(max_detections_widget, "Max Detections")
+
+        # Boundary detections (keep/remove)
+        self.boundary_tolerance_combo = QComboBox()
+        self.boundary_tolerance_combo.addItems([
+            "Keep",
+            "Ignore",
+        ])
+        self.boundary_tolerance_combo.setCurrentIndex(0 if self.boundary_tolerance else 1)
+        self.boundary_tolerance_combo.currentIndexChanged.connect(self.update_boundary_tolerance)
+        self.boundary_tolerance_combo.setToolTip(
+            "Choose whether detections that touch a work-area edge should be preserved. Keep retains "
+            "cut-off objects, while Ignore removes them to reduce seam duplicates across tiles.")
+        boundary_tolerance_layout = QHBoxLayout()
+        boundary_tolerance_label = QLabel("")
+        boundary_tolerance_layout.addWidget(boundary_tolerance_label)
+        boundary_tolerance_layout.addWidget(self.boundary_tolerance_combo)
+        boundary_tolerance_layout.addStretch()
+        boundary_tolerance_widget = QWidget()
+        boundary_tolerance_widget.setLayout(boundary_tolerance_layout)
+        self.parameters_section.add_widget(boundary_tolerance_widget, "Boundary Detections")
 
         # Uncertainty threshold
         self.uncertainty_thresh_slider = QSlider(Qt.Horizontal)
@@ -965,6 +985,12 @@ class MainWindow(QMainWindow):
         self.uncertainty_thresh_slider.setTickInterval(10)
         self.uncertainty_value_label = QLabel(f"{self.uncertainty_thresh:.2f}")
         self.uncertainty_thresh_slider.valueChanged.connect(self.update_uncertainty_label)
+        self.uncertainty_thresh_slider.setToolTip(
+            "Minimum confidence required before a prediction is accepted as a normal annotation. "
+            "Predictions below this value are treated as Review and can be surfaced for manual "
+            "inspection.")
+        self.uncertainty_value_label.setToolTip(
+            "Current uncertainty threshold value, shown as a 0.00 to 1.00 confidence cutoff.")
         uncertainty_layout = QHBoxLayout()
         uncertainty_layout.addWidget(self.uncertainty_thresh_slider)
         uncertainty_layout.addWidget(self.uncertainty_value_label)
@@ -980,6 +1006,11 @@ class MainWindow(QMainWindow):
         self.iou_thresh_slider.setTickInterval(10)
         self.iou_value_label = QLabel(f"{self.iou_thresh:.2f}")
         self.iou_thresh_slider.valueChanged.connect(self.update_iou_label)
+        self.iou_thresh_slider.setToolTip(
+            "Intersection-over-Union threshold used by non-max suppression. Higher values keep more "
+            "overlapping detections; lower values remove duplicates more aggressively.")
+        self.iou_value_label.setToolTip(
+            "Current IoU threshold value used for non-max suppression.")
         iou_layout = QHBoxLayout()
         iou_layout.addWidget(self.iou_thresh_slider)
         iou_layout.addWidget(self.iou_value_label)
@@ -997,6 +1028,9 @@ class MainWindow(QMainWindow):
         self.area_threshold_min_slider.setTickInterval(10)
         self.area_threshold_min_slider.setValue(int(min_val * 100))
         self.area_threshold_min_slider.valueChanged.connect(self.update_area_label)
+        self.area_threshold_min_slider.setToolTip(
+            "Lower bound of the normalized annotation area filter. Objects smaller than this fraction "
+            "of the image area are removed after confidence and IoU filtering.")
         self.area_threshold_max_slider = QSlider(Qt.Horizontal)
         self.area_threshold_max_slider.setMinimum(0)
         self.area_threshold_max_slider.setMaximum(100)
@@ -1004,7 +1038,12 @@ class MainWindow(QMainWindow):
         self.area_threshold_max_slider.setTickInterval(10)
         self.area_threshold_max_slider.setValue(int(max_val * 100))
         self.area_threshold_max_slider.valueChanged.connect(self.update_area_label)
+        self.area_threshold_max_slider.setToolTip(
+            "Upper bound of the normalized annotation area filter. Objects larger than this fraction "
+            "of the image area are removed after confidence and IoU filtering.")
         self.area_threshold_label = QLabel(f"{min_val:.2f} - {max_val:.2f}")
+        self.area_threshold_label.setToolTip(
+            "Current area filter range, shown as normalized fractions of the image area.")
         area_thresh_layout = QVBoxLayout()
         area_thresh_layout.addWidget(self.area_threshold_min_slider)
         area_thresh_layout.addWidget(self.area_threshold_max_slider)
@@ -1057,85 +1096,8 @@ class MainWindow(QMainWindow):
             self.dock_manager.configFlags() & ~ads.CDockManager.DockAreaHasTabsMenuButton
         )
         
-        # Apply custom QSS for vibrant cyan tabs
-        self.dock_manager.setStyleSheet("""
-            /* The flat grey background behind the tabs */
-            ads--CDockAreaTabBar {
-            background-color: #f0f0f0;
-            height: 28px;
-            }
-
-            /* Inactive tabs - subtle grey, pushed down slightly */
-            ads--CDockWidgetTab {
-            background-color: #e8e8e8;
-            border: none;
-            border-right: 1px solid #d0d0d0; /* Subtle separator between inactive tabs */
-            padding: 2px 12px;
-            color: #666666;
-            margin-top: 2px; /* Pushes inactive tabs down so they don't protrude */
-            font-weight: 700;
-            min-width: 100px;
-            max-width: 600px;
-            }
-
-            /* Slight highlight when hovering over inactive tabs */
-            ads--CDockWidgetTab:hover {
-            background-color: #d9d9d9;
-            color: #333333;
-            }
-
-            /* The currently active tab - Vibrant Cyan, protruding up */
-            ads--CDockWidgetTab[activeTab="true"] {
-            background-color: #00A8E6; /* Bright, vibrant cyan */
-            border: none;
-            color: #ffffff; /* Pure white text for maximum contrast */
-            font-weight: 800; /* Bold for prominence */
-            margin-top: 0px; /* Zero margin pulls it flush to the top, making it protrude */
-            padding: 4px 12px;
-            min-width: 100px;
-            max-width: 600px;
-            }
-
-            /* Active tab on hover - slightly darker cyan */
-            ads--CDockWidgetTab[activeTab="true"]:hover {
-            background-color: #0095CC; /* Slightly darker cyan on hover */
-            }
-
-            /* Close button - blend with tab, no button appearance */
-            ads--CDockWidgetTab QAbstractButton {
-            background-color: transparent;
-            border: none;
-            padding: 0px;
-            margin: 0px 4px;
-            width: 14px;
-            height: 14px;
-            }
-
-            ads--CDockWidgetTab[activeTab="true"] QAbstractButton {
-            background-color: transparent;
-            }
-
-            ads--CDockWidgetTab QAbstractButton:hover {
-            background-color: rgba(255, 255, 255, 0.3);
-            border-radius: 2px;
-            }
-
-            ads--CDockWidgetTab[activeTab="true"] QAbstractButton:hover {
-            background-color: rgba(0, 0, 0, 0.2);
-            border-radius: 2px;
-            }
-
-            /* Focus state - keep the same solid block look */
-            ads--CDockWidgetTab:focus {
-            outline: none; /* Kills default Qt dotted line */
-            }
-            
-            /* Dock area background */
-            ads--CDockArea {
-            background-color: #ffffff;
-            border: 1px solid #d0d0d0;
-            }
-        """)
+        # Apply the shared dock tab theme
+        self.dock_manager.setStyleSheet(app_theme.build_dock_stylesheet())
 
         # --------------------------------------------------
         # 2. Create the Docks & Containers
@@ -1160,7 +1122,7 @@ class MainWindow(QMainWindow):
         if hasattr(self.image_window, 'create_info_toolbar'):
             self.rasters_dock.add_toolbar(self.image_window.create_info_toolbar())
         if hasattr(self.image_window, 'create_action_toolbar'):
-            self.rasters_dock.add_toolbar(self.image_window.create_action_toolbar())
+            self.rasters_dock.add_toolbar(self.image_window.create_action_toolbar(), Qt.BottomToolBarArea)
 
         # Setup Label Dock using DockWrapper
         self.labels_dock = DockWrapper("Labels", "LabelsDock",  self.label_window, self)
@@ -1211,6 +1173,8 @@ class MainWindow(QMainWindow):
         
         if hasattr(self.context_matrix, 'create_top_toolbar'):
             self.context_dock.add_toolbar(self.context_matrix.create_top_toolbar())
+        if hasattr(self.context_matrix, 'create_bottom_toolbar'):
+            self.context_dock.add_toolbar(self.context_matrix.create_bottom_toolbar(), Qt.BottomToolBarArea)
 
         # --------------------------------------------------
         # 3. Explicitly arrange the docks using PyQtADS
@@ -1248,39 +1212,41 @@ class MainWindow(QMainWindow):
         
         # Populate the Windows menu with dock toggle actions
         dock_windows = [
-            ("Annotation", self.annotation_dock),
-            ("Rasters", self.rasters_dock),
-            ("Labels", self.labels_dock),
-            ("Confidence", self.confidence_dock),
-            ("Performance", self.performance_dock),
-            ("Timer", self.timer_dock),
-            ("Gallery", self.gallery_dock),
-            ("Embeddings", self.embeddings_dock),
-            ("3D Viewer", self.mvat_dock),
-            ("Context", self.context_dock),
+            ("Annotation", self.annotation_dock, False),
+            ("Rasters", self.rasters_dock, False),
+            ("Labels", self.labels_dock, False),
+            ("Confidence", self.confidence_dock, True),
+            ("Gallery", self.gallery_dock, False),
+            ("Embeddings", self.embeddings_dock, True),
+            ("3D Viewer", self.mvat_dock, False),
+            ("Context", self.context_dock, True),
+            ("Performance", self.performance_dock, False),
+            ("Timer", self.timer_dock, False),
         ]
 
-        for dock_name, dock_widget in dock_windows:
+        for dock_name, dock_widget, add_separator in dock_windows:
             action = QAction(dock_name, self, checkable=True)
             action.setChecked(dock_widget.isVisible())
             # Connect the action to toggle the dock visibility
             action.triggered.connect(lambda checked, dw=dock_widget: dw.toggleView(checked))
             # Also update the action when the dock visibility changes
             dock_widget.visibilityChanged.connect(lambda visible, act=action: act.setChecked(visible))
-            self.layout_menu.addAction(action)
+            self.windows_menu.addAction(action)
             self.dock_toggle_actions[dock_name] = action
 
-        # Add separator before layout actions
-        self.layout_menu.addSeparator()
+            if add_separator:
+                self.windows_menu.addSeparator()
 
-        # Save Layout action
-        self.save_layout_action = QAction("Save Layout", self)
+        # Save action
+        self.save_layout_action = QAction("Save", self)
         self.save_layout_action.triggered.connect(self.on_save_layout)
         self.layout_menu.addAction(self.save_layout_action)
 
-        # Load Layout submenu
-        self.load_layout_menu = self.layout_menu.addMenu("Load Layout")
+        # Load submenu
+        self.load_layout_menu = self.layout_menu.addMenu("Load")
         self.populate_load_layout_menu()
+
+        self.populate_scale_menu()
         
         # --------------------------------------------------
         # Restore layout from cache
@@ -1405,6 +1371,32 @@ class MainWindow(QMainWindow):
         #   update the embedding viewer's working set so embeddings reflect
         #   the current gallery filter.
         # ---------------------------------------------------------------------
+
+        try:
+            for dialog in (
+                self.classify_deploy_model_dialog,
+                self.detect_deploy_model_dialog,
+                self.segment_deploy_model_dialog,
+                self.semantic_deploy_model_dialog,
+            ):
+                if hasattr(dialog, 'model_state_changed'):
+                    dialog.model_state_changed.connect(self.embedding_viewer_window.refresh_model_options)
+        except Exception:
+            pass
+
+        # Keep the BatchInferenceDialog updated when image highlights change
+        try:
+            # Connect the table-model highlight change signal to update the dialog's highlighted list
+            self.image_window.table_model.rowsChanged.connect(
+                lambda: self.batch_inference_dialog.update_highlighted_images(
+                    self.image_window.table_model.get_highlighted_paths()
+                )
+            )
+        except Exception:
+            # If connection fails for some reason, continue without breaking startup
+            pass
+
+
         self.annotation_viewer_window.annotations_filtered.connect(
             self.embedding_viewer_window.set_working_set)
 
@@ -1491,6 +1483,41 @@ class MainWindow(QMainWindow):
         if not hasattr(self, 'annotation_window') or self.annotation_window is None:
             return None
         return self.annotation_window.transparency_slider.value()
+
+    def get_loaded_yolo_models(self):
+        """Return the currently loaded YOLO deploy models."""
+        loaded_models = []
+        dialog_specs = (
+            ('classify', 'Classify', 'classify_deploy_model_dialog'),
+            ('detect', 'Detect', 'detect_deploy_model_dialog'),
+            ('segment', 'Segment', 'segment_deploy_model_dialog'),
+            ('semantic', 'Semantic', 'semantic_deploy_model_dialog'),
+        )
+
+        for dialog_key, label, dialog_attr in dialog_specs:
+            dialog = getattr(self, dialog_attr, None)
+            if dialog is None:
+                continue
+
+            model = getattr(dialog, 'loaded_model', None)
+            model_path = getattr(dialog, 'model_path', None)
+            if model is None or not model_path:
+                continue
+
+            normalized_model_path = os.path.normcase(os.path.abspath(model_path))
+            loaded_models.append({
+                'dialog_key': dialog_key,
+                'dialog_label': label,
+                'display_name': label,
+                'task': getattr(dialog, 'task', ''),
+                'model_path': model_path,
+                'normalized_model_path': normalized_model_path,
+                'model': model,
+                'dialog': dialog,
+                'source_key': f'{LIVE_YOLO_MODEL_PREFIX}{dialog_key}::{getattr(dialog, "task", "")}::{normalized_model_path}',
+            })
+
+        return loaded_models
 
     # Redirect widget references for ScaleTool, ZImportDialog, etc.
     @property
@@ -1599,6 +1626,25 @@ class MainWindow(QMainWindow):
         self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
         self.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
 
+    def get_boundary_tolerance(self):
+        """Get whether detections on boundaries should be kept"""
+        return self.boundary_tolerance
+
+    def update_boundary_tolerance(self, value):
+        """Update the boundary detection handling mode"""
+        if isinstance(value, bool):
+            keep_boundary_detections = value
+        else:
+            keep_boundary_detections = int(value) == 0
+
+        if self.boundary_tolerance != keep_boundary_detections:
+            self.boundary_tolerance = keep_boundary_detections
+            if hasattr(self, 'boundary_tolerance_combo'):
+                self.boundary_tolerance_combo.blockSignals(True)
+                self.boundary_tolerance_combo.setCurrentIndex(0 if keep_boundary_detections else 1)
+                self.boundary_tolerance_combo.blockSignals(False)
+            self.boundaryToleranceChanged.emit(keep_boundary_detections)
+
     def showEvent(self, event):
         """Show the main window maximized."""
         super().showEvent(event)
@@ -1610,6 +1656,22 @@ class MainWindow(QMainWindow):
         # Save layout configuration before closing
         if hasattr(self, 'dock_manager'):
             QtLayoutManager.save_and_close(self.dock_manager, layout_name='default')
+
+        # Stop the always-on UI animation timer before widgets begin tearing down.
+        if hasattr(self, 'animation_manager') and self.animation_manager:
+            try:
+                self.animation_manager.stop_timer()
+            except Exception:
+                pass
+
+        # Stop the performance monitor worker explicitly; it may be embedded in a dock,
+        # so its own closeEvent is not guaranteed to run during application shutdown.
+        if hasattr(self, 'performance_window') and self.performance_window:
+            try:
+                if hasattr(self.performance_window, 'worker') and self.performance_window.worker:
+                    self.performance_window.worker.stop(wait=True)
+            except Exception:
+                pass
         
         if hasattr(self, 'mvat_manager') and self.mvat_manager:
             self.mvat_manager.cleanup()
@@ -2616,6 +2678,117 @@ class MainWindow(QMainWindow):
                 f"Failed to load layout '{layout_name}'."
             )
 
+    def populate_scale_menu(self):
+        """Populate the Scale submenu with auto and fixed percentage options."""
+        self.scale_menu.clear()
+        self.scale_action_group = QActionGroup(self)
+        self.scale_action_group.setExclusive(True)
+        self.scale_actions = {}
+
+        scale_options = [
+            ("75%", app_theme.SCALE_MODE_MANUAL, 0.75),
+            ("100%", app_theme.SCALE_MODE_MANUAL, 1.0),
+            ("125%", app_theme.SCALE_MODE_MANUAL, 1.25),
+            ("150%", app_theme.SCALE_MODE_MANUAL, 1.5),
+            ("175%", app_theme.SCALE_MODE_MANUAL, 1.75),
+            ("200%", app_theme.SCALE_MODE_MANUAL, 2.0),
+        ]
+
+        for label, scale_mode, scale_factor in scale_options:
+            action = QAction(label, self, checkable=True)
+            action.triggered.connect(
+                lambda checked=False, selected_mode=scale_mode, selected_factor=scale_factor: self.apply_scale_selection(selected_mode, selected_factor)
+            )
+            self.scale_action_group.addAction(action)
+            self.scale_menu.addAction(action)
+            self.scale_actions[label] = action
+
+        self.sync_scale_menu_selection()
+
+    def apply_scale_selection(self, scale_mode: str, scale_factor: float | None = None):
+        """Apply a manual or automatic scale selection."""
+        app = QApplication.instance()
+        cursor_set = False
+
+        try:
+            if app is not None:
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+                QApplication.processEvents()
+                cursor_set = True
+
+            if scale_mode == app_theme.SCALE_MODE_AUTO:
+                app_theme.set_scale_mode(app_theme.SCALE_MODE_AUTO)
+            else:
+                app_theme.set_scale_factor(1.0 if scale_factor is None else scale_factor)
+
+            if app is not None:
+                app_theme.apply_theme(app)
+
+            self.refresh_scale_sensitive_ui()
+            self.sync_scale_menu_selection()
+        finally:
+            if cursor_set:
+                QApplication.restoreOverrideCursor()
+
+    def refresh_scale_sensitive_ui(self):
+        """Refresh widget sizes and styles that depend on the selected UI scale."""
+        self.dock_manager.setStyleSheet(app_theme.build_dock_stylesheet())
+
+        self.toolbar.setFixedWidth(app_theme.scale_int(48))
+        self.toolbar.setIconSize(app_theme.scale_size(24))
+        self.toolbar_spacer.setFixedHeight(app_theme.scale_int(12))
+        self.toolbar_separator.setFixedHeight(app_theme.scale_int(1))
+
+        dock_wrappers = [
+            self.annotation_dock,
+            self.rasters_dock,
+            self.labels_dock,
+            self.confidence_dock,
+            self.performance_dock,
+            self.timer_dock,
+            self.gallery_dock,
+            self.embeddings_dock,
+            self.mvat_dock,
+            self.context_dock,
+        ]
+
+        for dock_wrapper in dock_wrappers:
+            refresh = getattr(dock_wrapper, "refresh_scaling", None)
+            if callable(refresh):
+                refresh()
+
+        refresh_targets = [
+            self.annotation_window,
+            self.image_window,
+            self.label_window,
+            self.confidence_window,
+            self.performance_window,
+            self.timer_window,
+            self.annotation_viewer_window,
+            self.embedding_viewer_window,
+            self.mvat_viewer,
+            self.context_matrix,
+        ]
+
+        for target in refresh_targets:
+            refresh = getattr(target, "refresh_scaling", None)
+            if callable(refresh):
+                refresh()
+
+    def sync_scale_menu_selection(self):
+        """Check the current scale entry in the Scale submenu."""
+        current_factor = app_theme.get_scale_factor()
+
+        for action in self.scale_actions.values():
+            action.setChecked(False)
+
+        for label, scale_factor in (("75%", 0.75), ("100%", 1.0), ("125%", 1.25), ("150%", 1.5), ("175%", 1.75), ("200%", 2.0)):
+            if abs(current_factor - scale_factor) < 0.001:
+                action = self.scale_actions.get(label)
+                if action is not None:
+                    action.setChecked(True)
+                break
+
     def open_export_spatial_metrics_dialog(self):
         """Open the Export Spatial Metrics dialog to export spatial metrics."""
         # Check if there are loaded images
@@ -2938,6 +3111,40 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.semantic_deploy_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_batch_inference_dialog(self):
+        """Open the Batch Inference dialog to perform batch inference on images."""
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "Batch Inference",
+                                "No images are present in the project.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            # Ensure the dialog knows about current model availability
+            batch_dialog = self.batch_inference_dialog
+            batch_dialog.update_model_availability()
+
+            # Initialize with currently highlighted image paths so the dialog
+            # can reflect selection state even when opened from the Main menu
+            try:
+                highlighted = self.image_window.table_model.get_highlighted_paths()
+            except Exception:
+                highlighted = []
+
+            batch_dialog.update_highlighted_images(highlighted)
+
+            # Make dialog modeless so users can adjust highlights while it is open
+            try:
+                batch_dialog.setModal(False)
+            except Exception:
+                pass
+            batch_dialog.show()
+            batch_dialog.raise_()
+            batch_dialog.activateWindow()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
