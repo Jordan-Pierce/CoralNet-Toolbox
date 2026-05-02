@@ -538,7 +538,7 @@ class MainWindow(QMainWindow):
         self.utilities_menu.addSeparator()
 
         # Scale
-        self.scale_action = QAction("Set Scale", self)
+        self.scale_action = QAction("Set Image Scale", self)
         self.scale_action.triggered.connect(self.open_scale_dialog)
         self.utilities_menu.addAction(self.scale_action)
 

@@ -33,7 +33,7 @@ class RasterTableModel(QAbstractTableModel):
     # Row colors
     HIGHLIGHTED_COLOR = QColor(173, 216, 230)  # Light blue
     SELECTED_COLOR = QColor(144, 238, 144)     # Light green
-    
+
     def __init__(self, raster_manager: RasterManager, parent=None):
         """
         Initialize the model.
@@ -82,8 +82,8 @@ class RasterTableModel(QAbstractTableModel):
         if not raster:
             return None
             
-        # Make sure display name is set
-        raster.set_display_name(max_length=25)
+        # Use the full basename here and let the table view elide as needed.
+        raster.set_display_name(max_length=len(raster.basename))
         
         if role == Qt.DisplayRole:
             if index.column() == self.CHECKBOX_COL:
