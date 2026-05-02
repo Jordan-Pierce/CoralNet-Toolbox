@@ -773,11 +773,26 @@ class AnnotationWindow(BaseCanvas):
             updated_annotation.is_graphics_item_valid()):
             updated_annotation.update_graphics_item()
 
+        if getattr(updated_annotation, 'is_mask_annotation', False):
+            self.refresh_mask_annotation_view(updated_annotation)
+
         try:
             self.annotationModified.emit(updated_annotation.id)
         except Exception:
             pass
-            
+
+    def refresh_mask_annotation_view(self, mask_annotation):
+        """Recompute mask statistics and refresh the raster metadata for one image."""
+        if mask_annotation is None:
+            return
+
+        mask_annotation.recalculate_class_statistics()
+
+        self.main_window.image_window.update_image_annotations(mask_annotation.image_path)
+
+        if mask_annotation.image_path == self.current_image_path:
+            self.viewport().update()
+   
     def set_incoming_marker(self, u, v, color):
         """Set the incoming marker (focal point) position and color from MVAT.
         
@@ -2256,6 +2271,16 @@ class AnnotationWindow(BaseCanvas):
         is_new = raster.mask_annotation is None
         project_labels = self.main_window.label_window.labels
         mask_annotation = raster.get_mask_annotation(project_labels)
+        try:
+            self.annotation_manager.register_mask_annotation(mask_annotation)
+        except Exception:
+            pass
+        try:
+            if not getattr(mask_annotation, '_signals_connected', False):
+                mask_annotation.annotationUpdated.connect(self.on_annotation_updated)
+                mask_annotation._signals_connected = True
+        except Exception:
+            pass
         if is_new:
             self.main_window.status_bar.showMessage(
                 f"Creating mask annotation for {os.path.basename(self.current_image_path)}…", 3000
@@ -3096,6 +3121,14 @@ class AnnotationWindow(BaseCanvas):
         
         # If this is a MaskAnnotation, update the raster's reference to it
         if isinstance(annotation, MaskAnnotation):
+            try:
+                self.annotation_manager.register_mask_annotation(annotation)
+            except Exception:
+                pass
+            try:
+                annotation._signals_connected = True
+            except Exception:
+                pass
             raster = self.main_window.image_window.raster_manager.get_raster(annotation.image_path)
             if raster:
                 raster.mask_annotation = annotation
@@ -3224,6 +3257,12 @@ class AnnotationWindow(BaseCanvas):
                 if annotation in self.image_annotations_dict[annotation.image_path]:
                     self.image_annotations_dict[annotation.image_path].remove(annotation)
 
+            if isinstance(annotation, MaskAnnotation):
+                try:
+                    self.annotation_manager.unregister_mask_annotation(annotation)
+                except Exception:
+                    pass
+
             annotation.delete()
             del self.annotations_dict[annotation_id]
             self.annotationDeleted.emit(annotation_id)
@@ -3291,6 +3330,12 @@ class AnnotationWindow(BaseCanvas):
         for ann in annotations:
             if ann.id in self.annotations_dict:
                 del self.annotations_dict[ann.id]
+
+            if isinstance(ann, MaskAnnotation):
+                try:
+                    self.annotation_manager.unregister_mask_annotation(ann)
+                except Exception:
+                    pass
                 
             # Block the annotation's own internal signals as well
             ann.blockSignals(True)

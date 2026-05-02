@@ -441,8 +441,14 @@ class BrushTool(Tool):
         self._accumulated_points.clear()
 
     def _commit_stroke_history_action(self):
+        mask_annotation = self._stroke_mask_annotation
         if self._stroke_history_action and not self._stroke_history_action.is_empty():
             self.annotation_window.action_stack.push(self._stroke_history_action)
+            if mask_annotation is not None:
+                try:
+                    mask_annotation.annotationUpdated.emit(mask_annotation)
+                except Exception:
+                    pass
         self._stroke_history_action = None
         self._stroke_mask_annotation = None
         self._is_finishing_stroke = False

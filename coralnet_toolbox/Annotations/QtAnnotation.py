@@ -128,6 +128,7 @@ class Annotation(QObject):
     annotationDeleted = pyqtSignal(object)
     annotationUpdated = pyqtSignal(object)
     verifiedChanged = pyqtSignal(object)
+    is_mask_annotation = False
 
     def __init__(self,
                  label: 'Label',

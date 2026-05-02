@@ -52,6 +52,7 @@ class MaskGraphicsItem(QGraphicsItem):
 
 class MaskAnnotation(Annotation):
     LOCK_BIT = 2**7  # For uint8, this is 128
+    is_mask_annotation = True
 
     def __init__(self,
                  image_path: str,
@@ -889,9 +890,6 @@ class MaskAnnotation(Annotation):
             QApplication.restoreOverrideCursor()
             return
 
-        # No need to update if the mask is already empty, check before rasterization
-        update_canvas = True if np.any(self.mask_data) else False
-
         # Section 2: Rasterize geometries
         annotation_mask = self._fast_rasterize(geometries, width, height, mode="rasterio")
         flat_indices = np.flatnonzero(annotation_mask.ravel())
@@ -938,10 +936,6 @@ class MaskAnnotation(Annotation):
                 update_rect=update_rect,
             )
 
-        if not update_canvas:
-            QApplication.restoreOverrideCursor()
-            return  # No visual update needed
-
         # Section 5: Smart localized repaint
         if np.any(to_lock) or np.any(annotation_mask):
             if update_rect and (x_max - x_min) * (y_max - y_min) < width * height * 0.3:  # If < 30% of image
@@ -950,6 +944,8 @@ class MaskAnnotation(Annotation):
             else:
                 # Fall back to full update if annotations cover too much area
                 self.update_graphics_item()
+
+            self.annotationUpdated.emit(self)
 
         # Restore cursor
         QApplication.restoreOverrideCursor()
@@ -982,6 +978,8 @@ class MaskAnnotation(Annotation):
 
         # Proactively recalculate stats, as this signals the end of an edit session
         self.recalculate_class_statistics()
+        if np.any(locked_pixels):
+            self.annotationUpdated.emit(self)
 
     def clear_pixels_for_class(self, class_id: int, history_action=None):
         """Finds all pixels matching a class ID (both locked and unlocked) and resets them to 0."""
@@ -1011,6 +1009,8 @@ class MaskAnnotation(Annotation):
             self.update_graphics_item(update_rect=update_rect)
 
         self._invalidate_stats_cache()
+        if np.any(pixels_to_clear):
+            self.annotationUpdated.emit(self)
 
     def clear_pixels_for_annotations(self, annotations_to_clear: list, history_action=None):
         """
@@ -1070,6 +1070,9 @@ class MaskAnnotation(Annotation):
                 min(height, y_max + 2)
             )
             self.update_graphics_item(update_rect=update_rect)
+
+        if np.any(clear_mask):
+            self.annotationUpdated.emit(self)
 
     # --- Analysis & Information Retrieval Methods ---
 
