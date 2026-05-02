@@ -105,7 +105,7 @@ class EraseTool(BrushTool):
     def _on_math_finished(self, flat_indices, center_pos, combined_mask, mask_annotation, selected_label_id):
         """Executes on the Main Thread: Writes 0 (background) and triggers 3D sync."""
         self._active_workers -= 1
-        
+
         if len(flat_indices) > 0:
             # ERASER FIX: Hardcode class_id = 0
             mask_annotation.update_mask_at_indices(
@@ -114,6 +114,9 @@ class EraseTool(BrushTool):
                 silent=True,
                 history_action=self._stroke_history_action,
             )
+            # Show erased pixels in real time — eraser has no scratchpad overlay,
+            # so we refresh the mask display directly after each chunk.
+            mask_annotation.refresh_graphics()
 
         if self.post_stroke_callback:
             # We still pass selected_label_id for context routing, even though the value written is 0
