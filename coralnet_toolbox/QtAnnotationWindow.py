@@ -769,11 +769,17 @@ class AnnotationWindow(BaseCanvas):
         """
         # Only update graphics if the annotation belongs to the currently displayed image
         # and has a valid graphics item in the scene
-        if (updated_annotation.image_path == self.current_image_path and 
-            updated_annotation.is_graphics_item_valid()):
+        if (updated_annotation.image_path == self.current_image_path and
+                updated_annotation.is_graphics_item_valid()):
             updated_annotation.update_graphics_item()
 
         if getattr(updated_annotation, 'is_mask_annotation', False):
+            # MaskAnnotation stores its item in graphics_item, not graphics_item_group,
+            # so is_graphics_item_valid() always returns False for it.  Call
+            # refresh_graphics() directly: this recreates the QImage (busting Qt's
+            # OpenGL texture cache) and marks the item dirty so paint() is invoked.
+            if updated_annotation.image_path == self.current_image_path:
+                updated_annotation.refresh_graphics()
             self.refresh_mask_annotation_view(updated_annotation)
 
         try:

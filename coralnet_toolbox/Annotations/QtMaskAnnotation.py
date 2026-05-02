@@ -221,22 +221,45 @@ class MaskAnnotation(Annotation):
         self.graphics_item = MaskGraphicsItem(self)
         scene.addItem(self.graphics_item)
 
+    def refresh_graphics(self):
+        """Recreate QImage to bust Qt's OpenGL texture cache and schedule a repaint.
+
+        Call this whenever colored_mask has been updated in-place (e.g. silent brush
+        strokes) and Qt needs to re-upload the texture without a full canvas rebuild.
+        """
+        if self.graphics_item is None:
+            return
+        try:
+            if self.graphics_item.scene() is None:
+                return
+        except RuntimeError:
+            return
+        height, width = self.mask_data.shape
+        self.qimage = QImage(self.colored_mask.data, width, height, QImage.Format_RGBA8888)
+        self.graphics_item.update()
+
     def update_graphics_item(self, update_rect=None):
         """Update the graphics item when mask data has changed."""
         if self.graphics_item is None:
             return
-        
+
+        height, width = self.mask_data.shape
+
         if update_rect:
             # Localized update for brush strokes - update only the changed area
             self._update_canvas_slice(update_rect)
-            qt_rect = QRectF(update_rect[0], 
-                             update_rect[1], 
-                             update_rect[2] - update_rect[0], 
+            # Recreate QImage so Qt's OpenGL texture cache sees a new cacheKey
+            self.qimage = QImage(self.colored_mask.data, width, height, QImage.Format_RGBA8888)
+            qt_rect = QRectF(update_rect[0],
+                             update_rect[1],
+                             update_rect[2] - update_rect[0],
                              update_rect[3] - update_rect[1])
             self.graphics_item.update(qt_rect)
         else:
             # Full update for global changes (e.g., label color changes)
             self._update_full_canvas()
+            # Recreate QImage so Qt's OpenGL texture cache sees a new cacheKey
+            self.qimage = QImage(self.colored_mask.data, width, height, QImage.Format_RGBA8888)
             self.graphics_item.update()
 
     def apply_flat_values_at_indices(self, flat_indices, class_values, silent: bool = False, update_rect=None):
