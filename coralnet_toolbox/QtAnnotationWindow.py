@@ -51,6 +51,7 @@ from coralnet_toolbox.QtActions import (
     ChangeLabelsAction,
     ResizeAnnotationAction,
     AnnotationGeometryEditAction,
+    MaskEditAction,
 )
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
@@ -2277,9 +2278,14 @@ class AnnotationWindow(BaseCanvas):
         
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-            
+
+        history_action = MaskEditAction(self.current_mask_annotation, description="Rasterize annotations")
+
         # The MaskAnnotation handles the efficient protection marking internally
-        self.current_mask_annotation.rasterize_annotations(annotations)
+        self.current_mask_annotation.rasterize_annotations(annotations, history_action=history_action)
+
+        if not history_action.is_empty():
+            self.action_stack.push(history_action)
 
         # Restore cursor
         QApplication.restoreOverrideCursor()
@@ -2293,7 +2299,11 @@ class AnnotationWindow(BaseCanvas):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
         if self.current_mask_annotation:
-            self.current_mask_annotation.unrasterize_annotations()
+            history_action = MaskEditAction(self.current_mask_annotation, description="Unrasterize annotations")
+            self.current_mask_annotation.unrasterize_annotations(history_action=history_action)
+
+            if not history_action.is_empty():
+                self.action_stack.push(history_action)
             
         # Restore cursor
         QApplication.restoreOverrideCursor()

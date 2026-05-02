@@ -5,6 +5,7 @@ from PyQt5.QtGui import QColor, QPen, QBrush, QPainterPath
 from PyQt5.QtCore import Qt, QPointF, QRectF, QTimer, QObject, pyqtSignal, QRunnable, QThreadPool
 from PyQt5.QtWidgets import QGraphicsEllipseItem, QMessageBox, QGraphicsRectItem, QGraphicsPathItem
 
+from coralnet_toolbox.QtActions import MaskEditAction
 from coralnet_toolbox.Tools.QtTool import Tool
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -142,6 +143,8 @@ class BrushTool(Tool):
 
         self.post_stroke_callback = None
         self._accumulated_points = []
+        self._stroke_history_action = None
+        self._stroke_mask_annotation = None
         
         self.scratchpad_item = None
         self.scratchpad_path = QPainterPath()
@@ -177,11 +180,19 @@ class BrushTool(Tool):
         if not self.annotation_window.selected_label.is_visible:
             self.annotation_window.selected_label.visibility_checkbox.setChecked(True)
 
+        if not self.painting and self._stroke_history_action is not None:
+            return
+
         self.painting = not self.painting
         
         if self.painting:
             # 1. Setup the Qt Scratchpad
             self._is_finishing_stroke = False
+            self._stroke_mask_annotation = self.annotation_window.current_mask_annotation
+            self._stroke_history_action = MaskEditAction(
+                self._stroke_mask_annotation,
+                description=f"{self.__class__.__name__} stroke",
+            )
             self.scratchpad_path = QPainterPath()
             self.scratchpad_path.setFillRule(Qt.WindingFill)
             self.scratchpad_item = QGraphicsPathItem()
@@ -354,13 +365,17 @@ class BrushTool(Tool):
             if self._is_finishing_stroke and self._active_workers == 0:
                 self._cleanup_scratchpad()
                 self.annotation_window.viewport().update()
+                self._commit_stroke_history_action()
             return
             
         points_to_process = list(self._accumulated_points)
         self._accumulated_points.clear()
         
-        mask_annotation = self.annotation_window.current_mask_annotation
+        mask_annotation = self._stroke_mask_annotation or self.annotation_window.current_mask_annotation
         if not mask_annotation or not self.annotation_window.selected_label:
+            if self._is_finishing_stroke and self._active_workers == 0:
+                self._cleanup_scratchpad()
+                self._commit_stroke_history_action()
             return
 
         img_h, img_w = mask_annotation.mask_data.shape
@@ -399,7 +414,12 @@ class BrushTool(Tool):
         class_id = mask_annotation.label_id_to_class_id_map.get(selected_label_id)
         if class_id is not None and len(flat_indices) > 0:
             # silent=True locally so we don't double-draw under the opaque Qt scratchpad
-            mask_annotation.update_mask_at_indices(flat_indices, class_id, silent=True)
+            mask_annotation.update_mask_at_indices(
+                flat_indices,
+                class_id,
+                silent=True,
+                history_action=self._stroke_history_action,
+            )
 
         # Trigger Multi-Annotate (Projects this 40ms chunk instantly to context cameras)
         if self.post_stroke_callback:
@@ -410,6 +430,7 @@ class BrushTool(Tool):
             self._cleanup_scratchpad()
             # Final local repaint so the baked pixels show up
             self.annotation_window.viewport().update()
+            self._commit_stroke_history_action()
 
     def _cleanup_scratchpad(self):
         """Safely removes the temporary vector stroke from the UI."""
@@ -418,3 +439,10 @@ class BrushTool(Tool):
         self.scratchpad_item = None
         self.scratchpad_path = QPainterPath()
         self._accumulated_points.clear()
+
+    def _commit_stroke_history_action(self):
+        if self._stroke_history_action and not self._stroke_history_action.is_empty():
+            self.annotation_window.action_stack.push(self._stroke_history_action)
+        self._stroke_history_action = None
+        self._stroke_mask_annotation = None
+        self._is_finishing_stroke = False

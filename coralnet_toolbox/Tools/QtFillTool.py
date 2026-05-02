@@ -3,6 +3,7 @@ import warnings
 from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtWidgets import QMessageBox, QApplication
 
+from coralnet_toolbox.QtActions import MaskEditAction
 from coralnet_toolbox.Tools.QtTool import Tool
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -136,9 +137,10 @@ class FillTool(Tool):
         
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
+        history_action = MaskEditAction(mask_annotation, description="Fill region")
         
         # Call the fill_region method on the MaskAnnotation object and get the fill mask
-        fill_mask = mask_annotation.fill_region(scene_pos, new_class_id)
+        fill_mask = mask_annotation.fill_region(scene_pos, new_class_id, history_action=history_action)
 
         # Ensure the label is visible in the mask (even if checkbox is unchecked)
         if selected_label_id not in mask_annotation.visible_label_ids:
@@ -149,6 +151,9 @@ class FillTool(Tool):
         # Pass all the filled pixels (like BrushTool does) instead of just the single point
         if self.post_stroke_callback and fill_mask is not None:
             self.post_stroke_callback(scene_pos, selected_label_id, fill_mask)
+
+        if not history_action.is_empty():
+            self.annotation_window.action_stack.push(history_action)
         
         # Restore the cursor
         QApplication.restoreOverrideCursor()

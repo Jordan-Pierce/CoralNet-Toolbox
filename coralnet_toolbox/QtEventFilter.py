@@ -125,12 +125,32 @@ class GlobalEventFilter(QObject):
                     # Handle undo/redo hotkeys globally to avoid focus issues
                     if event.key() == Qt.Key_Z:
                         if self.annotation_window.selected_tool:
+                            tool = self.annotation_window.tools.get(self.annotation_window.selected_tool)
+                            if tool and (
+                                getattr(tool, "painting", False)
+                                or getattr(tool, "_is_finishing_stroke", False)
+                                or getattr(tool, "_active_workers", 0) > 0
+                                or getattr(tool, "_stroke_history_action", None) is not None
+                            ):
+                                tool.stop_current_drawing()
+                                return True
+
                             self.annotation_window.action_stack.undo()
                             return True
 
                 # Handle redo hotkey (Ctrl+Shift+Z)
                 if event.key() == Qt.Key_Z and event.modifiers() == (Qt.ControlModifier | Qt.ShiftModifier):
                     if self.annotation_window.selected_tool:
+                        tool = self.annotation_window.tools.get(self.annotation_window.selected_tool)
+                        if tool and (
+                            getattr(tool, "painting", False)
+                            or getattr(tool, "_is_finishing_stroke", False)
+                            or getattr(tool, "_active_workers", 0) > 0
+                            or getattr(tool, "_stroke_history_action", None) is not None
+                        ):
+                            tool.stop_current_drawing()
+                            return True
+
                         self.annotation_window.action_stack.redo()
                         return True
 

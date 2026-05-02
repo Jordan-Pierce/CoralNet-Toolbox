@@ -7,6 +7,8 @@ these in a separate module avoids cluttering the large
 """
 
 from typing import Any
+
+import numpy as np
 from PyQt5.QtCore import QPointF, Qt
 from PyQt5.QtWidgets import QApplication
 
@@ -593,6 +595,103 @@ class SubtractAnnotationsAction(Action):
             pass
 
 
+class CompoundAction(Action):
+    """Group multiple actions so they undo/redo as one logical edit."""
+
+    def __init__(self, actions=None, description: str = "Compound action"):
+        self.description = description
+        self.actions = [action for action in (actions or []) if action is not None]
+
+    def add_action(self, action: Action):
+        if action is not None:
+            self.actions.append(action)
+
+    def is_empty(self):
+        return len(self.actions) == 0
+
+    def do(self):
+        for action in self.actions:
+            action.do()
+
+    def undo(self):
+        for action in reversed(self.actions):
+            action.undo()
+
+
+class MaskEditAction(Action):
+    """Undoable raw pixel edit for a single mask annotation."""
+
+    def __init__(self, mask_annotation, description: str = "Mask edit"):
+        self.mask_annotation = mask_annotation
+        self.description = description
+        self._flat_index_chunks = []
+        self._before_value_chunks = []
+        self._after_value_chunks = []
+        self._update_rect = None
+
+    @staticmethod
+    def _merge_rects(existing_rect, incoming_rect):
+        if existing_rect is None:
+            return incoming_rect
+        if incoming_rect is None:
+            return existing_rect
+
+        x1 = min(existing_rect[0], incoming_rect[0])
+        y1 = min(existing_rect[1], incoming_rect[1])
+        x2 = max(existing_rect[2], incoming_rect[2])
+        y2 = max(existing_rect[3], incoming_rect[3])
+        return (x1, y1, x2, y2)
+
+    def add_change(self, flat_indices, before_values, after_values, update_rect=None):
+        if flat_indices is None:
+            return
+
+        flat_indices = np.asarray(flat_indices, dtype=np.int64).ravel()
+        if flat_indices.size == 0:
+            return
+
+        before_values = np.asarray(before_values).reshape(-1).copy()
+        after_values = np.asarray(after_values).reshape(-1).copy()
+
+        if before_values.size != flat_indices.size or after_values.size != flat_indices.size:
+            raise ValueError("Mask edit changes must have matching index and value counts.")
+
+        changed_mask = before_values != after_values
+        if not np.any(changed_mask):
+            return
+
+        flat_indices = flat_indices[changed_mask]
+        before_values = before_values[changed_mask]
+        after_values = after_values[changed_mask]
+
+        self._flat_index_chunks.append(flat_indices)
+        self._before_value_chunks.append(before_values)
+        self._after_value_chunks.append(after_values)
+        self._update_rect = self._merge_rects(self._update_rect, update_rect)
+
+    def is_empty(self):
+        return len(self._flat_index_chunks) == 0
+
+    def _apply(self, value_chunks):
+        if self.mask_annotation is None or self.is_empty():
+            return
+
+        flat_indices = np.concatenate(self._flat_index_chunks)
+        values = np.concatenate(value_chunks)
+        self.mask_annotation.apply_flat_values_at_indices(
+            flat_indices,
+            values,
+            silent=False,
+            update_rect=self._update_rect,
+        )
+
+    def do(self):
+        self._apply(self._after_value_chunks)
+
+    def undo(self):
+        self._apply(self._before_value_chunks)
+
+
 class ActionStack:
     """Simple undo/redo stack for Action objects."""
 
@@ -664,6 +763,7 @@ __all__ = [
     "AddAnnotationAction",
     "DeleteAnnotationAction",
     "ActionStack",
+    "CompoundAction",
     "AddAnnotationsAction",
     "DeleteAnnotationsAction",
     "MoveAnnotationAction",
@@ -676,5 +776,6 @@ __all__ = [
     "MoveImageAnnotationsAction",
     "SubtractAnnotationsAction",
     "AnnotationGeometryEditAction",
+    "MaskEditAction",
 ]
 
