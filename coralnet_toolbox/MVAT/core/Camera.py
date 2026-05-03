@@ -237,6 +237,18 @@ class Camera:
                 # If we don't have a bbox, DO NOT scan 16M pixels! 
                 # Scan a 1/64th resolution version to find the rough bounding box instantly.
                 stride = 8
+                if self.width <= stride and self.height <= stride:
+                    exact_map = self._raster.index_map.ravel()
+                    valid_mask = lut[exact_map]
+                    local_flat_indices = np.where(valid_mask)[0].astype(np.int64)
+
+                    if len(local_flat_indices) == 0:
+                        lut[valid_query_ids] = False
+                        return np.empty(0, dtype=np.int64)
+
+                    lut[valid_query_ids] = False
+                    return local_flat_indices
+
                 sub_map = self._raster.index_map[::stride, ::stride].ravel()
                 valid_mask_sub = lut[sub_map]
                 

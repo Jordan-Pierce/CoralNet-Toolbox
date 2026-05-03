@@ -2072,6 +2072,19 @@ class MVATManager(QObject):
             paths.discard(self.selected_camera.image_path)
         return paths
 
+    def _get_semantic_target_paths(self, source_camera) -> set:
+        """Return source-aware target paths for semantic prediction propagation."""
+        if source_camera is None:
+            return set()
+
+        target_paths = set(self._get_visible_context_camera_paths())
+        target_paths.discard(source_camera.image_path)
+
+        if self.ortho_camera is not None and source_camera is not self.ortho_camera:
+            target_paths.add(self.ortho_camera.image_path)
+
+        return target_paths
+
     def _is_ortho_annotation_source(self) -> bool:
         """Return True when the active annotation source is the ortho view."""
         return self.ortho_camera is not None and self.selected_camera == self.ortho_camera
@@ -3515,16 +3528,7 @@ class MVATManager(QObject):
         if source_camera is None:
             return
 
-        # Determine targets using same logic as _get_annotation_target_paths but
-        # driven by the explicit source camera, not self.selected_camera (batch-safe).
-        if self.ortho_camera is not None and source_camera == self.ortho_camera:
-            selected_paths = set(self._get_ortho_target_cameras())
-        else:
-            selected_paths = set(self._get_visible_context_target_paths())
-            if self.ortho_camera is not None:
-                selected_paths.add(self.ortho_camera.image_path)
-        # Never propagate back to the source image
-        selected_paths.discard(image_path)
+        selected_paths = self._get_semantic_target_paths(source_camera)
 
         if not selected_paths:
             return

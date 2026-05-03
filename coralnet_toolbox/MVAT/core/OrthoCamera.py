@@ -97,6 +97,176 @@ class OrthoCamera:
         """
         return self._raster.visible_indices
 
+    def get_pixels_for_elements(self, element_ids: np.ndarray, bbox: tuple = None) -> np.ndarray:
+        """
+        Return a 1D array of flat (row-major) pixel indices for all elements
+        in ``element_ids`` that are visible in this orthomosaic.
+
+        Args:
+            element_ids: 1D int array of element IDs to query.
+            bbox: Optional (u_min, u_max, v_min, v_max) to restrict the search area.
+        """
+        try:
+            index_map = getattr(self._raster, 'index_map', None)
+            if index_map is None:
+                return np.empty(0, dtype=np.int64)
+            if element_ids is None or not isinstance(element_ids, np.ndarray) or len(element_ids) == 0:
+                return np.empty(0, dtype=np.int64)
+
+            # --- LUT Setup ---
+            current_map_id = id(index_map)
+            if getattr(self, '_cached_map_id', None) != current_map_id:
+                self._cached_max_id = int(np.max(index_map))
+                self._cached_map_id = current_map_id
+                self._lut_buf = None  # Invalidate buffer when index map changes
+
+            max_id = self._cached_max_id
+            valid_query_ids = element_ids[element_ids <= max_id]
+            if len(valid_query_ids) == 0:
+                return np.empty(0, dtype=np.int64)
+
+            # Reuse pre-allocated buffer — zero-allocation fast path
+            if getattr(self, '_lut_buf', None) is None or len(self._lut_buf) < max_id + 2:
+                self._lut_buf = np.zeros(max_id + 2, dtype=bool)
+            lut = self._lut_buf
+            lut[valid_query_ids] = True
+
+            map_h, map_w = index_map.shape
+
+            # Native-resolution index maps can reuse the camera-style search.
+            if (map_h, map_w) == (self.height, self.width):
+                if bbox is not None:
+                    u_min, u_max, v_min, v_max = bbox
+
+                    u_min = max(0, int(u_min))
+                    u_max = min(self.width, int(u_max))
+                    v_min = max(0, int(v_min))
+                    v_max = min(self.height, int(v_max))
+
+                    if u_min >= u_max or v_min >= v_max:
+                        lut[valid_query_ids] = False
+                        return np.empty(0, dtype=np.int64)
+
+                    sub_map = index_map[v_min:v_max, u_min:u_max].ravel()
+                    valid_mask = lut[sub_map]
+                    local_flat_indices = np.where(valid_mask)[0].astype(np.int64)
+
+                    if len(local_flat_indices) == 0:
+                        lut[valid_query_ids] = False
+                        return np.empty(0, dtype=np.int64)
+
+                    box_width = u_max - u_min
+                    local_v, local_u = np.divmod(local_flat_indices, box_width)
+                    global_flat_indices = (local_v + v_min) * self.width + (local_u + u_min)
+                    lut[valid_query_ids] = False
+                    return global_flat_indices
+
+                stride = 8
+                if map_h <= stride and map_w <= stride:
+                    exact_map = index_map.ravel()
+                    valid_mask = lut[exact_map]
+                    local_flat_indices = np.where(valid_mask)[0].astype(np.int64)
+
+                    if len(local_flat_indices) == 0:
+                        lut[valid_query_ids] = False
+                        return np.empty(0, dtype=np.int64)
+
+                    lut[valid_query_ids] = False
+                    return local_flat_indices
+
+                sub_map = index_map[::stride, ::stride].ravel()
+                valid_mask_sub = lut[sub_map]
+
+                if not valid_mask_sub.any():
+                    lut[valid_query_ids] = False
+                    return np.empty(0, dtype=np.int64)
+
+                sub_flat_indices = np.where(valid_mask_sub)[0]
+                sub_w = (self.width + stride - 1) // stride
+                sub_v, sub_u = np.divmod(sub_flat_indices, sub_w)
+
+                u_min = max(0, (sub_u.min() - 1) * stride)
+                u_max = min(self.width, (sub_u.max() + 2) * stride)
+                v_min = max(0, (sub_v.min() - 1) * stride)
+                v_max = min(self.height, (sub_v.max() + 2) * stride)
+
+                exact_map = index_map[v_min:v_max, u_min:u_max].ravel()
+                valid_mask = lut[exact_map]
+                local_flat_indices = np.where(valid_mask)[0].astype(np.int64)
+
+                if len(local_flat_indices) == 0:
+                    lut[valid_query_ids] = False
+                    return np.empty(0, dtype=np.int64)
+
+                box_width = u_max - u_min
+                local_v, local_u = np.divmod(local_flat_indices, box_width)
+                global_flat_indices = (local_v + v_min) * self.width + (local_u + u_min)
+                lut[valid_query_ids] = False
+                return global_flat_indices
+
+            # Lower-resolution ortho index maps are stored at a smaller grid.
+            # Expand the matching cells back to native pixel coordinates.
+            row_edges = np.round(np.linspace(0, self.height, map_h + 1)).astype(np.int64)
+            col_edges = np.round(np.linspace(0, self.width, map_w + 1)).astype(np.int64)
+
+            if bbox is not None:
+                u_min, u_max, v_min, v_max = bbox
+                u_min_lr = max(0, int(np.floor(u_min * map_w / self.width)))
+                u_max_lr = min(map_w, int(np.ceil(u_max * map_w / self.width)))
+                v_min_lr = max(0, int(np.floor(v_min * map_h / self.height)))
+                v_max_lr = min(map_h, int(np.ceil(v_max * map_h / self.height)))
+
+                if u_min_lr >= u_max_lr or v_min_lr >= v_max_lr:
+                    lut[valid_query_ids] = False
+                    return np.empty(0, dtype=np.int64)
+
+                search_map = index_map[v_min_lr:v_max_lr, u_min_lr:u_max_lr]
+                row_offset = v_min_lr
+                col_offset = u_min_lr
+            else:
+                search_map = index_map
+                row_offset = 0
+                col_offset = 0
+
+            valid_mask = lut[search_map]
+            if not valid_mask.any():
+                lut[valid_query_ids] = False
+                return np.empty(0, dtype=np.int64)
+
+            local_rows, local_cols = np.where(valid_mask)
+            global_rows = local_rows + row_offset
+            global_cols = local_cols + col_offset
+
+            flat_chunks = []
+            for row_idx, col_idx in zip(global_rows, global_cols):
+                row_start = row_edges[row_idx]
+                row_end = row_edges[row_idx + 1]
+                col_start = col_edges[col_idx]
+                col_end = col_edges[col_idx + 1]
+
+                if row_start >= row_end or col_start >= col_end:
+                    continue
+
+                row_indices = np.arange(row_start, row_end, dtype=np.int64)[:, None]
+                col_indices = np.arange(col_start, col_end, dtype=np.int64)[None, :]
+                flat_chunks.append((row_indices * self.width + col_indices).ravel())
+
+            lut[valid_query_ids] = False
+            if not flat_chunks:
+                return np.empty(0, dtype=np.int64)
+
+            return np.concatenate(flat_chunks)
+
+        except Exception as e:
+            if hasattr(self, '_lut_buf') and getattr(self, '_lut_buf', None) is not None:
+                try:
+                    if 'valid_query_ids' in dir():
+                        self._lut_buf[valid_query_ids] = False
+                except Exception:
+                    self._lut_buf = None
+            print(f"⚠️ get_pixels_for_elements failed: {e}")
+            return np.empty(0, dtype=np.int64)
+
     # ------------------------------------------------------------------
     # Coordinate transforms
     # ------------------------------------------------------------------
