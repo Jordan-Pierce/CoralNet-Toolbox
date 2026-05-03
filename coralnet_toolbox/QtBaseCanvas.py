@@ -187,16 +187,17 @@ class BaseCanvas(QGraphicsView):
         """Initialize the base canvas."""
         super().__init__(parent)
         
+        # TODO this makes MVAT and Multi-annotate very slow
         # --- HARDWARE ACCELERATION ---
-        gl_widget = QOpenGLWidget()
+        # gl_widget = QOpenGLWidget()
 
-        # Enable Anti-Aliasing (4x MSAA) for smooth vector drawing
-        format_gl = QSurfaceFormat()
-        format_gl.setSamples(4)
-        gl_widget.setFormat(format_gl)
+        # # Enable Anti-Aliasing (4x MSAA) for smooth vector drawing
+        # format_gl = QSurfaceFormat()
+        # format_gl.setSamples(4)
+        # gl_widget.setFormat(format_gl)
 
-        # Set the hardware-accelerated widget as the viewport
-        self.setViewport(gl_widget)
+        # # Set the hardware-accelerated widget as the viewport
+        # self.setViewport(gl_widget)
         # -----------------------------
         
         # Create and set the scene
