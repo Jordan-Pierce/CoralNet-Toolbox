@@ -1241,19 +1241,43 @@ class MaskAnnotation(Annotation):
     # --- Serialization & Deserialization ---
 
     def to_dict(self):
-        """Serialize the annotation to a dictionary, with RLE for the mask."""
+        """Serialize the annotation to a dictionary, with crop-RLE for the mask.
+
+        Each class is cropped to its bounding box before RLE encoding.  This
+        is far more compact than full-image RLE for small or sparse classes
+        (e.g. a 200×200 object in a 4000×4000 image).  The bbox offset stored
+        alongside the RLE lets ``from_dict`` reconstruct the full mask exactly.
+        Old project files that lack the ``bbox`` key are still handled correctly.
+        """
         base_dict = super().to_dict()
-        
-        # Encode each class's binary mask using pycocotools
+
+        # Encode each class's binary mask using crop-RLE (compact format)
         rle_list = []
         unique_classes = np.unique(self.mask_data)
         for class_id in unique_classes:
             if class_id == 0:
                 continue
             binary_mask = (self.mask_data == class_id).astype(np.uint8)
-            rle = mask.encode(np.asfortranarray(binary_mask))
+
+            # Find the tight bounding box of this class's pixels.
+            rows_any = binary_mask.any(axis=1)
+            cols_any = binary_mask.any(axis=0)
+            y_idx = np.where(rows_any)[0]
+            x_idx = np.where(cols_any)[0]
+            if y_idx.size == 0:
+                continue  # class present in map but not in mask data
+            y1, y2 = int(y_idx[0]), int(y_idx[-1])
+            x1, x2 = int(x_idx[0]), int(x_idx[-1])
+
+            # RLE-encode only the crop, not the full image.
+            crop = binary_mask[y1:y2 + 1, x1:x2 + 1]
+            rle = mask.encode(np.asfortranarray(crop))
             rle['counts'] = base64.b64encode(rle['counts']).decode('ascii')
-            rle_list.append({'class_id': int(class_id), 'rle': rle})
+            rle_list.append({
+                'class_id': int(class_id),
+                'rle': rle,
+                'bbox': [x1, y1, x2, y2],  # inclusive xyxy offset for decode
+            })
         
         # Convert the label map to a serializable format
         serializable_label_map = {}
@@ -1275,7 +1299,7 @@ class MaskAnnotation(Annotation):
         if not all_project_labels:
             raise ValueError("Cannot import a MaskAnnotation without any labels loaded in the project.")
 
-        # Decode the RLE mask data
+        # Decode the RLE mask data (supports both crop-RLE and legacy full-image RLE)
         shape = tuple(data['shape'])
         mask_data = np.zeros(shape, dtype=np.uint8)
         for item in data['rle_masks']:
@@ -1283,11 +1307,19 @@ class MaskAnnotation(Annotation):
             rle = item['rle']
             try:
                 rle['counts'] = base64.b64decode(rle['counts'])
-                binary_mask = mask.decode(rle).astype(bool)
-                if binary_mask.shape != shape:
-                    print(f"Warning: RLE decoded shape {binary_mask.shape} does not match expected shape {shape}")
-                    continue
-                mask_data[binary_mask] = class_id
+                if 'bbox' in item:
+                    # Compact format: RLE covers the bounding-box crop only.
+                    x1, y1, x2, y2 = item['bbox']
+                    crop_mask = mask.decode(rle).astype(bool)
+                    sub = mask_data[y1:y2 + 1, x1:x2 + 1]
+                    sub[crop_mask] = class_id
+                else:
+                    # Legacy format: RLE covers the full image.
+                    binary_mask = mask.decode(rle).astype(bool)
+                    if binary_mask.shape != shape:
+                        print(f"Warning: RLE decoded shape {binary_mask.shape} does not match expected shape {shape}")
+                        continue
+                    mask_data[binary_mask] = class_id
             except Exception as e:
                 print(f"Error decoding RLE for class {class_id}: {e}")
                 continue
