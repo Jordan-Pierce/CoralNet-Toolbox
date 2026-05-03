@@ -3720,52 +3720,76 @@ class MVATManager(QObject):
             if not target_masks:
                 return
 
-            # Phase 4: Dispatch get_pixels_for_elements for each (target, class) pair
-            # into the propagation thread pool.
-            futures = {}  # Future -> (target_path, real_class_id)
+            # Phase 4: Dispatch one future per target camera, batching ALL classes
+            # together so that get_pixels_for_elements is never called concurrently
+            # on the same camera object.  Concurrent calls on the same camera race on
+            # the shared _lut_buf, corrupting which pixels map to which class.
+            def _lookup_classes_for_camera(camera, class_items):
+                """Sequentially look up pixel indices for every class in class_items.
+
+                Args:
+                    camera: Camera or OrthoCamera whose index_map will be queried.
+                    class_items: list of (real_class_id, element_ids) tuples.
+
+                Returns:
+                    dict mapping real_class_id -> flat pixel index array.
+                """
+                out = {}
+                for real_class_id, element_ids in class_items:
+                    out[real_class_id] = camera.get_pixels_for_elements(element_ids)
+                return out
+
+            futures = {}  # Future -> target_path
             for target_path, target_camera in target_cameras_map.items():
-                for real_class_id, (element_ids, _) in class_data.items():
-                    if (target_path, real_class_id) not in target_class_id_map:
-                        continue
-                    if element_ids is None or len(element_ids) == 0:
-                        continue
-                    future = self._propagation_executor.submit(
-                        target_camera.get_pixels_for_elements, element_ids
-                    )
-                    futures[future] = (target_path, real_class_id)
+                class_items = [
+                    (real_class_id, element_ids)
+                    for real_class_id, (element_ids, _) in class_data.items()
+                    if (target_path, real_class_id) in target_class_id_map
+                    and element_ids is not None and len(element_ids) > 0
+                ]
+                if not class_items:
+                    continue
+                future = self._propagation_executor.submit(
+                    _lookup_classes_for_camera, target_camera, class_items
+                )
+                futures[future] = target_path
 
             # Phase 5: Collect results and apply masks (silent, Qt update deferred)
             updated_targets = set()
             for future in as_completed(futures):
-                target_path, real_class_id = futures[future]
+                target_path = futures[future]
                 try:
-                    flat_indices = future.result()
+                    class_pixel_map = future.result()  # {real_class_id: flat_indices}
                 except Exception:
                     continue
 
-                if len(flat_indices) == 0:
-                    continue
-
                 target_mask = target_masks[target_path]
-                target_class_id = target_class_id_map[(target_path, real_class_id)]
 
-                # Pixel diff filter: only write pixels that are unlocked and differ
-                current_vals = target_mask.mask_data.ravel()[flat_indices]
-                changed_indices = flat_indices[
-                    (current_vals < LOCK_BIT) & (current_vals != target_class_id)
-                ]
-                if len(changed_indices) == 0:
-                    continue
+                for real_class_id, flat_indices in class_pixel_map.items():
+                    if flat_indices is None or len(flat_indices) == 0:
+                        continue
 
-                target_mask.update_mask_at_indices(
-                    changed_indices, target_class_id, silent=True
-                )
+                    target_class_id = target_class_id_map.get((target_path, real_class_id))
+                    if target_class_id is None:
+                        continue
 
-                label = class_data[real_class_id][1]
-                if label.id not in target_mask.visible_label_ids:
-                    target_mask.visible_label_ids.add(label.id)
+                    # Pixel diff filter: only write pixels that are unlocked and differ
+                    current_vals = target_mask.mask_data.ravel()[flat_indices]
+                    changed_indices = flat_indices[
+                        (current_vals < LOCK_BIT) & (current_vals != target_class_id)
+                    ]
+                    if len(changed_indices) == 0:
+                        continue
 
-                updated_targets.add(target_path)
+                    target_mask.update_mask_at_indices(
+                        changed_indices, target_class_id, silent=True
+                    )
+
+                    label = class_data[real_class_id][1]
+                    if label.id not in target_mask.visible_label_ids:
+                        target_mask.visible_label_ids.add(label.id)
+
+                    updated_targets.add(target_path)
 
             # Phase 6: Qt graphics update per modified target (main thread)
             for target_path in updated_targets:
