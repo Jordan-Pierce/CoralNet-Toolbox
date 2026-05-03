@@ -2191,6 +2191,48 @@ class MVATManager(QObject):
         unique_ids = np.unique(raw_ids)
         return unique_ids[unique_ids > -1].astype(np.int64, copy=False)
 
+    def _extract_source_element_ids_from_full_mask(self,
+                                                   source_camera,
+                                                   source_mask: np.ndarray) -> Optional[np.ndarray]:
+        """Extract raw visible element IDs from a full-frame binary mask.
+
+        Unlike _extract_source_ids_from_full_mask, this preserves duplicates so
+        callers can compute per-element class votes before collapsing to one
+        class per element.
+        """
+        raster = getattr(source_camera, '_raster', None)
+        if raster is None or source_mask is None:
+            return None
+
+        source_index_map = getattr(raster, 'index_map', None)
+        if source_index_map is None:
+            return None
+
+        source_mask = np.asarray(source_mask)
+        if source_mask.ndim != 2:
+            return None
+
+        needs_resize = (
+            source_mask.shape != source_index_map.shape or
+            (getattr(raster, 'index_map_scale_factor', None) not in (None, 1.0))
+        )
+
+        if needs_resize:
+            import cv2
+            mask_bool = cv2.resize(
+                source_mask.astype(np.uint8),
+                (source_index_map.shape[1], source_index_map.shape[0]),
+                interpolation=cv2.INTER_NEAREST,
+            ).astype(bool)
+        else:
+            mask_bool = source_mask.astype(bool)
+
+        if not np.any(mask_bool):
+            return np.array([], dtype=np.int64)
+
+        raw_ids = source_index_map[mask_bool]
+        return raw_ids[raw_ids > -1].astype(np.int64, copy=False)
+
     def _get_visible_context_paths(self) -> set:
         """Return the set of image paths currently visible in the context matrix."""
         return set(self._get_visible_context_camera_paths())
@@ -3536,6 +3578,9 @@ class MVATManager(QObject):
         project_labels = list(self.main_window.label_window.labels)
         semantic_mask = source_mask_annotation.mask_data
         LOCK_BIT = source_mask_annotation.LOCK_BIT
+        source_index_map = getattr(getattr(source_camera, '_raster', None), 'index_map', None)
+        if source_index_map is None:
+            return
 
         # Unique real class IDs in the prediction (lock bit stripped, skip background)
         unique_real_ids = np.unique(semantic_mask % LOCK_BIT)
@@ -3543,31 +3588,96 @@ class MVATManager(QObject):
         if len(unique_real_ids) == 0:
             return
 
-        # Phase 1: Build per-class data on the main thread (fast numpy operations)
-        # int(real_class_id) -> (binary_mask, element_ids_or_None, label)
-        class_data = {}
+        # Phase 1: Build per-element class votes on the main thread.
+        # Each source element is assigned to the dominant semantic class once,
+        # so we do not end up painting the same element with multiple classes.
+        element_votes = {}
+        class_labels = {}
         for real_class_id in unique_real_ids:
             label = source_mask_annotation.class_id_to_label_map.get(int(real_class_id))
             if label is None:
                 continue
+            class_labels[int(real_class_id)] = label
             binary_mask = (semantic_mask % LOCK_BIT == real_class_id).astype(bool)
             if not np.any(binary_mask):
                 continue
-            element_ids = self._extract_source_ids_from_full_mask(source_camera, binary_mask)
-            class_data[int(real_class_id)] = (binary_mask, element_ids, label)
+
+            source_element_ids = self._extract_source_element_ids_from_full_mask(source_camera, binary_mask)
+            if source_element_ids is None or len(source_element_ids) == 0:
+                continue
+
+            unique_element_ids, counts = np.unique(source_element_ids, return_counts=True)
+            for element_id, count in zip(unique_element_ids.tolist(), counts.tolist()):
+                vote_map = element_votes.setdefault(int(element_id), {})
+                vote_map[int(real_class_id)] = vote_map.get(int(real_class_id), 0) + int(count)
+
+        if not element_votes:
+            return
+
+        class_data = {}
+        for element_id, vote_map in element_votes.items():
+            winner_class_id = max(vote_map.items(), key=lambda item: (item[1], -item[0]))[0]
+            class_data.setdefault(winner_class_id, []).append(element_id)
+
+        class_data = {
+            class_id: (
+                np.asarray(sorted(set(element_ids)), dtype=np.int64),
+                class_labels.get(class_id),
+            )
+            for class_id, element_ids in class_data.items()
+            if class_labels.get(class_id) is not None
+        }
 
         if not class_data:
             return
 
-        # Phase 2: Paint 3D model for each class (background thread, fire-and-forget)
+        # Phase 2: Paint the scene mesh directly so semantic batches do not
+        # lose classes to the live-stroke queue coalescing behavior.
         primary_target = self.viewer.scene_context.get_primary_target()
         if primary_target and hasattr(primary_target, 'apply_labels'):
-            for real_class_id, (_, element_ids, label) in class_data.items():
+            for real_class_id, (element_ids, label) in class_data.items():
                 if element_ids is None or len(element_ids) == 0:
                     continue
-                self._ensure_label_painter(primary_target)
                 target_color = (label.color.red(), label.color.green(), label.color.blue())
-                self._label_painter_thread.submit(element_ids, target_color, real_class_id)
+                try:
+                    primary_target.apply_labels(element_ids, real_class_id, target_color)
+                except Exception:
+                    continue
+
+            try:
+                primary_target.flush_labels_to_gpu()
+            except Exception:
+                pass
+
+            try:
+                self.viewer.plotter.render()
+            except Exception:
+                pass
+
+            if isinstance(primary_target, MeshProduct):
+                try:
+                    mesh = primary_target.get_render_mesh()
+                    class_ids = getattr(primary_target, 'class_ids', None)
+                    labels_cache = getattr(primary_target, '_labels_cache', None)
+                    if mesh is not None and class_ids is not None and labels_cache is not None:
+                        painted_faces = np.where(class_ids != 0)[0]
+                        if len(painted_faces) > 0:
+                            mesh_faces_flat = np.asarray(mesh.faces.reshape(-1, 4), dtype=np.int32)
+                            mesh_points = np.asarray(mesh.points, dtype=np.float32)
+
+                            selected = mesh_faces_flat[painted_faces, 1:]
+                            unique_vids, inverse = np.unique(selected, return_inverse=True)
+                            overlay_points = mesh_points[unique_vids]
+                            remapped = inverse.reshape(selected.shape)
+                            vtk_faces = np.hstack([
+                                np.full((len(painted_faces), 1), 3, dtype=np.int32),
+                                remapped.astype(np.int32),
+                            ]).ravel()
+
+                            colors = np.asarray(labels_cache[painted_faces], dtype=np.uint8)
+                            self._on_overlay_ready((overlay_points, vtk_faces, colors))
+                except Exception:
+                    pass
 
         self._propagating_annotation = True
         try:
@@ -3598,7 +3708,7 @@ class MVATManager(QObject):
                 target_masks[target_path] = target_mask
                 target_cameras_map[target_path] = target_camera
 
-                for real_class_id, (_, _, label) in class_data.items():
+                for real_class_id, (_, label) in class_data.items():
                     t_class_id = target_mask.label_id_to_class_id_map.get(label.id)
                     if t_class_id is None:
                         target_mask.sync_label_map([label])
@@ -3614,7 +3724,7 @@ class MVATManager(QObject):
             # into the propagation thread pool.
             futures = {}  # Future -> (target_path, real_class_id)
             for target_path, target_camera in target_cameras_map.items():
-                for real_class_id, (_, element_ids, _) in class_data.items():
+                for real_class_id, (element_ids, _) in class_data.items():
                     if (target_path, real_class_id) not in target_class_id_map:
                         continue
                     if element_ids is None or len(element_ids) == 0:
@@ -3651,7 +3761,7 @@ class MVATManager(QObject):
                     changed_indices, target_class_id, silent=True
                 )
 
-                label = class_data[real_class_id][2]
+                label = class_data[real_class_id][1]
                 if label.id not in target_mask.visible_label_ids:
                     target_mask.visible_label_ids.add(label.id)
 
