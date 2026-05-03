@@ -2288,6 +2288,14 @@ class AnnotationWindow(BaseCanvas):
         except Exception:
             pass
         if is_new:
+            # Newly created annotation has no graphics item — add it to the scene now
+            # so paint/fill/create operations render immediately without a load cycle.
+            if mask_annotation.graphics_item and mask_annotation.graphics_item.scene():
+                mask_annotation.graphics_item.scene().removeItem(mask_annotation.graphics_item)
+            mask_annotation.create_graphics_item(self.scene)
+            if mask_annotation.graphics_item:
+                mask_annotation.graphics_item.setZValue(-5)
+            mask_annotation.update_graphics_item()
             self.main_window.status_bar.showMessage(
                 f"Creating mask annotation for {os.path.basename(self.current_image_path)}…", 3000
             )
