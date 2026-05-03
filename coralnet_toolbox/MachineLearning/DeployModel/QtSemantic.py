@@ -299,24 +299,25 @@ class Semantic(Base):
                 # Get the mapping from Label UUID -> internal mask class ID (once)
                 mask_annotation_map = mask_annotation.label_id_to_class_id_map
 
-                # ── Clear the existing mask before starting new inference ────────────────
-                # Zero the data in-place so stale tiles don't accumulate across runs.
-                # Do NOT remove the graphics_item from the scene — removing it orphans
-                # the item so update_mask_with_mask() produces no visible output until
-                # load_mask_annotation() is called again at the end.
-                try:
-                    mask_annotation.mask_data[:] = 0
-                    mask_annotation.update_graphics_item()  # repaint blank in-place
-                    # If the image being processed is the one currently displayed,
-                    # ensure the graphics_item is registered in the scene now so
-                    # tile repaints are immediately visible.
-                    if image_path == self.annotation_window.current_image_path:
-                        self.annotation_window.load_mask_annotation()
-                except Exception:
-                    pass
-                
-                # Get the list of items to process
+                # Work-area inference should only touch the predicted tiles.
+                # Full-image inference still clears the old mask so the result
+                # replaces the entire canvas in one pass.
                 is_full_image = self.annotation_window.get_selected_tool() != "work_area"
+
+                if is_full_image:
+                    # Zero the data in-place so stale full-image predictions do not
+                    # accumulate across runs. Work-area mode intentionally skips this
+                    # so untouched regions remain intact.
+                    try:
+                        mask_annotation.mask_data[:] = 0
+                        mask_annotation.update_graphics_item()  # repaint blank in-place
+                        # If the image being processed is the one currently displayed,
+                        # ensure the graphics_item is registered in the scene now so
+                        # tile repaints are immediately visible.
+                        if image_path == self.annotation_window.current_image_path:
+                            self.annotation_window.load_mask_annotation()
+                    except Exception:
+                        pass
 
                 # Handle video virtual-frame paths specially (video.mp4::frame_N)
                 work_items_data = None
