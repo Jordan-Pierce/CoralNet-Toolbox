@@ -4,7 +4,9 @@
       "Bash(xargs grep *)",
       "Bash(python -c \"import ast; ast.parse\\(open\\('coralnet_toolbox/QtBaseCanvas.py'\\).read\\(\\)\\); ast.parse\\(open\\('coralnet_toolbox/QtAnnotationWindow.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
       "PowerShell(py -c \"import ast; ast.parse\\(open\\('coralnet_toolbox/QtBaseCanvas.py'\\).read\\(\\)\\); ast.parse\\(open\\('coralnet_toolbox/QtAnnotationWindow.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
-      "PowerShell(py -c \"import ast; ast.parse\\(open\\('coralnet_toolbox/QtBaseCanvas.py'\\).read\\(\\)\\); print\\('OK'\\)\")"
+      "PowerShell(py -c \"import ast; ast.parse\\(open\\('coralnet_toolbox/QtBaseCanvas.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(Get-ChildItem -Path \"coralnet_toolbox\\\\Rasters\" -Recurse)",
+      "Bash(Select-Object -ExpandProperty FullName)"
     ]
   }
 }

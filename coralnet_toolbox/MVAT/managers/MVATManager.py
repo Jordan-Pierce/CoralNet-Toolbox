@@ -3488,6 +3488,186 @@ class MVATManager(QObject):
             if self.context_matrix is not None:
                 self.context_matrix.clear_all_scratchpads()
 
+    def _on_semantic_prediction_applied(self, image_path: str, source_mask_annotation):
+        """Propagate a full-image semantic segmentation prediction to all target cameras.
+
+        Called by Semantic.predict() after each image is processed when multi-annotate
+        is enabled. For each labeled class in the predicted mask, extracts the
+        corresponding 3D element IDs (via the source camera's index map) and paints
+        them into every visible target camera using the same 3D pipeline as brush strokes.
+
+        Perspective ↔ orthomosaic propagation is supported: when the source is an
+        OrthoCamera, targets are all visible perspective cameras; when the source is a
+        perspective camera, targets include visible context cameras plus the ortho.
+
+        Cameras without a pre-computed index map are skipped — full-image warping
+        without geometry is too imprecise to be useful for semantic masks.
+
+        Args:
+            image_path: Path of the image whose Semantic prediction just completed.
+            source_mask_annotation: The MaskAnnotation whose mask_data was just
+                                    updated by the Semantic model.
+        """
+        if self._propagating_annotation:
+            return
+
+        source_camera = self._get_camera_for_path(image_path)
+        if source_camera is None:
+            return
+
+        # Determine targets using same logic as _get_annotation_target_paths but
+        # driven by the explicit source camera, not self.selected_camera (batch-safe).
+        if self.ortho_camera is not None and source_camera == self.ortho_camera:
+            selected_paths = set(self._get_ortho_target_cameras())
+        else:
+            selected_paths = set(self._get_visible_context_target_paths())
+            if self.ortho_camera is not None:
+                selected_paths.add(self.ortho_camera.image_path)
+        # Never propagate back to the source image
+        selected_paths.discard(image_path)
+
+        if not selected_paths:
+            return
+
+        project_labels = list(self.main_window.label_window.labels)
+        semantic_mask = source_mask_annotation.mask_data
+        LOCK_BIT = source_mask_annotation.LOCK_BIT
+
+        # Unique real class IDs in the prediction (lock bit stripped, skip background)
+        unique_real_ids = np.unique(semantic_mask % LOCK_BIT)
+        unique_real_ids = unique_real_ids[unique_real_ids > 0]
+        if len(unique_real_ids) == 0:
+            return
+
+        # Phase 1: Build per-class data on the main thread (fast numpy operations)
+        # int(real_class_id) -> (binary_mask, element_ids_or_None, label)
+        class_data = {}
+        for real_class_id in unique_real_ids:
+            label = source_mask_annotation.class_id_to_label_map.get(int(real_class_id))
+            if label is None:
+                continue
+            binary_mask = (semantic_mask % LOCK_BIT == real_class_id).astype(bool)
+            if not np.any(binary_mask):
+                continue
+            element_ids = self._extract_source_ids_from_full_mask(source_camera, binary_mask)
+            class_data[int(real_class_id)] = (binary_mask, element_ids, label)
+
+        if not class_data:
+            return
+
+        # Phase 2: Paint 3D model for each class (background thread, fire-and-forget)
+        primary_target = self.viewer.scene_context.get_primary_target()
+        if primary_target and hasattr(primary_target, 'apply_labels'):
+            for real_class_id, (_, element_ids, label) in class_data.items():
+                if element_ids is None or len(element_ids) == 0:
+                    continue
+                self._ensure_label_painter(primary_target)
+                target_color = (label.color.red(), label.color.green(), label.color.blue())
+                self._label_painter_thread.submit(element_ids, target_color, real_class_id)
+
+        self._propagating_annotation = True
+        try:
+            # Phase 3: Resolve target masks and class ID maps — only cameras with
+            # index maps can receive accurate full-image 3D propagation.
+            target_masks = {}        # target_path -> MaskAnnotation
+            target_cameras_map = {}  # target_path -> Camera
+            # (target_path, real_class_id) -> target_class_id
+            target_class_id_map = {}
+
+            for target_path in list(selected_paths):
+                target_camera = self._get_camera_for_path(target_path)
+                if target_camera is None:
+                    continue
+                if (target_camera._raster is None or
+                        target_camera._raster.index_map is None):
+                    continue  # Skip cameras without geometry data
+
+                target_raster = self.raster_manager.get_raster(target_path)
+                if target_raster is None:
+                    continue
+                target_mask = target_raster.mask_annotation
+                if target_mask is None:
+                    target_mask = target_raster.get_mask_annotation(project_labels)
+                if target_mask is None:
+                    continue
+
+                target_masks[target_path] = target_mask
+                target_cameras_map[target_path] = target_camera
+
+                for real_class_id, (_, _, label) in class_data.items():
+                    t_class_id = target_mask.label_id_to_class_id_map.get(label.id)
+                    if t_class_id is None:
+                        target_mask.sync_label_map([label])
+                        t_class_id = target_mask.label_id_to_class_id_map.get(label.id)
+                    if t_class_id is not None:
+                        target_class_id_map[(target_path, real_class_id)] = t_class_id
+                        target_mask._get_color_map()  # Pre-warm cache
+
+            if not target_masks:
+                return
+
+            # Phase 4: Dispatch get_pixels_for_elements for each (target, class) pair
+            # into the propagation thread pool.
+            futures = {}  # Future -> (target_path, real_class_id)
+            for target_path, target_camera in target_cameras_map.items():
+                for real_class_id, (_, element_ids, _) in class_data.items():
+                    if (target_path, real_class_id) not in target_class_id_map:
+                        continue
+                    if element_ids is None or len(element_ids) == 0:
+                        continue
+                    future = self._propagation_executor.submit(
+                        target_camera.get_pixels_for_elements, element_ids
+                    )
+                    futures[future] = (target_path, real_class_id)
+
+            # Phase 5: Collect results and apply masks (silent, Qt update deferred)
+            updated_targets = set()
+            for future in as_completed(futures):
+                target_path, real_class_id = futures[future]
+                try:
+                    flat_indices = future.result()
+                except Exception:
+                    continue
+
+                if len(flat_indices) == 0:
+                    continue
+
+                target_mask = target_masks[target_path]
+                target_class_id = target_class_id_map[(target_path, real_class_id)]
+
+                # Pixel diff filter: only write pixels that are unlocked and differ
+                current_vals = target_mask.mask_data.ravel()[flat_indices]
+                changed_indices = flat_indices[
+                    (current_vals < LOCK_BIT) & (current_vals != target_class_id)
+                ]
+                if len(changed_indices) == 0:
+                    continue
+
+                target_mask.update_mask_at_indices(
+                    changed_indices, target_class_id, silent=True
+                )
+
+                label = class_data[real_class_id][2]
+                if label.id not in target_mask.visible_label_ids:
+                    target_mask.visible_label_ids.add(label.id)
+
+                updated_targets.add(target_path)
+
+            # Phase 6: Qt graphics update per modified target (main thread)
+            for target_path in updated_targets:
+                target_mask = target_masks[target_path]
+                target_mask.update_graphics_item()
+
+                context_canvas = self._get_context_canvas_for_path(target_path)
+                if context_canvas is not None and context_canvas._mask_overlay_item is None:
+                    context_canvas.set_mask_overlay(target_mask)
+
+        except Exception as e:
+            print(f"Error in multi-annotate semantic propagation: {e}")
+            traceback.print_exc()
+        finally:
+            self._propagating_annotation = False
+
     def cleanup(self):
         """Clean up resources before closing."""
         self._on_multi_annotate_toggled(False)  # Disconnect all propagation hooks

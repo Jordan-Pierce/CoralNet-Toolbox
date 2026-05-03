@@ -168,6 +168,7 @@ class Semantic(Base):
         self.thresholds_widget = ThresholdsWidget(
             self.main_window,
             show_max_detections=False,
+            show_boundary=False,
             show_uncertainty=True,
             show_iou=False,
             show_area=False
@@ -438,12 +439,24 @@ class Semantic(Base):
                 # This is called *after* all tiles for an image are done
                 mask_annotation.recalculate_class_statistics()
 
+                # --- 5. Multi-annotate propagation ---
+                # When MVAT multi-annotate is active, propagate the predicted mask to
+                # all visible target cameras (perspective ↔ orthomosaic) using the same
+                # 3D index-map pipeline as brush strokes.
+                try:
+                    mvat_manager = getattr(self.main_window, 'mvat_manager', None)
+                    if (mvat_manager is not None and
+                            getattr(mvat_manager, 'multi_annotate_enabled', False)):
+                        mvat_manager._on_semantic_prediction_applied(image_path, mask_annotation)
+                except Exception:
+                    pass
+
         except Exception as e:
             print(f"A fatal error occurred during the prediction workflow: {e}")
             import traceback
             traceback.print_exc()
         finally:
-            # --- 5. Final Cleanup ---
+            # --- 6. Final Cleanup ---
             # This block now runs ONCE at the end of the entire function
             if progress_bar_created_here and progress_bar is not None:
                 progress_bar.finish_progress()

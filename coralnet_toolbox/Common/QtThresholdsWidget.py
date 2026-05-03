@@ -14,6 +14,7 @@ class ThresholdsWidget(QGroupBox):
     
     :param main_window: MainWindow object to sync threshold values
     :param show_max_detections: Whether to show the max detections spinbox
+    :param show_boundary: Whether to show the boundary detections combo box
     :param show_uncertainty: Whether to show the uncertainty threshold slider
     :param show_iou: Whether to show the IoU threshold slider
     :param show_area: Whether to show the area threshold sliders (min and max)
@@ -22,8 +23,8 @@ class ThresholdsWidget(QGroupBox):
     """
     
     def __init__(self, main_window, show_max_detections=False,
-                 show_uncertainty=True, show_iou=False, show_area=False, 
-                 title="Thresholds", parent=None):
+                 show_uncertainty=True, show_iou=False, show_area=False,
+                 title="Thresholds", parent=None, show_boundary=False):
         super().__init__(title, parent)
         
         self.main_window = main_window
@@ -62,21 +63,22 @@ class ThresholdsWidget(QGroupBox):
                 "values reduce clutter and processing time; higher values allow more candidates to "
                 "survive into annotation creation.")
 
-        # Boundary detections controls
-        self.boundary_tolerance_combo = QComboBox()
-        self.boundary_tolerance_combo.addItems([
-            "Keep",
-            "Ignore",
-        ])
-        self.boundary_tolerance_combo.setCurrentIndex(0 if self.boundary_tolerance else 1)
-        self.boundary_tolerance_combo.currentIndexChanged.connect(self._update_boundary_tolerance)
         if hasattr(main_window, 'boundaryToleranceChanged'):
             main_window.boundaryToleranceChanged.connect(self._on_boundary_tolerance_changed)
-        layout.addRow("Boundary Detections", self.boundary_tolerance_combo)
-        apply_row_tooltip(
-            self.boundary_tolerance_combo,
-            "Choose whether detections that touch a work-area edge should be preserved. Keep retains "
-            "cut-off objects, while Ignore removes them to reduce seam duplicates across tiles.")
+        if show_boundary:
+            # Boundary detections controls
+            self.boundary_tolerance_combo = QComboBox()
+            self.boundary_tolerance_combo.addItems([
+                "Keep",
+                "Ignore",
+            ])
+            self.boundary_tolerance_combo.setCurrentIndex(0 if self.boundary_tolerance else 1)
+            self.boundary_tolerance_combo.currentIndexChanged.connect(self._update_boundary_tolerance)
+            layout.addRow("Boundary Detections", self.boundary_tolerance_combo)
+            apply_row_tooltip(
+                self.boundary_tolerance_combo,
+                "Choose whether detections that touch a work-area edge should be preserved. Keep retains "
+                "cut-off objects, while Ignore removes them to reduce seam duplicates across tiles.")
         
         # Uncertainty threshold controls
         if show_uncertainty:
@@ -202,12 +204,12 @@ class ThresholdsWidget(QGroupBox):
             self.max_detections_spinbox.setValue(current_value)
             self.max_detections = current_value
 
+        current_value = self.main_window.get_boundary_tolerance()
+        self.boundary_tolerance = current_value
         if hasattr(self, 'boundary_tolerance_combo'):
-            current_value = self.main_window.get_boundary_tolerance()
             self.boundary_tolerance_combo.blockSignals(True)
             self.boundary_tolerance_combo.setCurrentIndex(0 if current_value else 1)
             self.boundary_tolerance_combo.blockSignals(False)
-            self.boundary_tolerance = current_value
         
         if hasattr(self, 'uncertainty_threshold_slider'):
             current_value = self.main_window.get_uncertainty_thresh()
@@ -260,10 +262,10 @@ class ThresholdsWidget(QGroupBox):
 
     def _on_boundary_tolerance_changed(self, value):
         """Update combo box when MainWindow changes"""
+        self.boundary_tolerance = value
         if hasattr(self, 'boundary_tolerance_combo'):
             self.boundary_tolerance_combo.blockSignals(True)
             self.boundary_tolerance_combo.setCurrentIndex(0 if value else 1)
-            self.boundary_tolerance = value
             self.boundary_tolerance_combo.blockSignals(False)
     
     def _on_uncertainty_changed(self, value):

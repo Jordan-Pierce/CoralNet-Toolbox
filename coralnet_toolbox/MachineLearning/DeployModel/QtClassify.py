@@ -62,6 +62,7 @@ class Classify(Base):
         self.thresholds_widget = ThresholdsWidget(
             self.main_window,
             show_max_detections=False,
+            show_boundary=False,
             show_uncertainty=True,
             show_iou=False,
             show_area=False
