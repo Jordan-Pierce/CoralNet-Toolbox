@@ -669,6 +669,18 @@ class MaskEditAction(Action):
         self._after_value_chunks.append(after_values)
         self._update_rect = self._merge_rects(self._update_rect, update_rect)
 
+    @classmethod
+    def from_snapshot(cls, mask_annotation, before_snapshot, description: str = "Mask edit"):
+        """Build a MaskEditAction by diffing *before_snapshot* against the
+        annotation's current mask_data.  Returns the action (possibly empty)."""
+        action = cls(mask_annotation, description=description)
+        before_flat = before_snapshot.ravel()
+        after_flat  = mask_annotation.mask_data.ravel()
+        changed = np.flatnonzero(before_flat != after_flat)
+        if changed.size:
+            action.add_change(changed, before_flat[changed], after_flat[changed])
+        return action
+
     def is_empty(self):
         return len(self._flat_index_chunks) == 0
 

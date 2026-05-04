@@ -19,6 +19,8 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Common import ThresholdsWidget
 
+from coralnet_toolbox.QtActions import MaskEditAction
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -299,6 +301,10 @@ class Semantic(Base):
                 # Get the mapping from Label UUID -> internal mask class ID (once)
                 mask_annotation_map = mask_annotation.label_id_to_class_id_map
 
+                # Snapshot the mask state before any modification so the entire
+                # prediction can be undone/redone as a single action.
+                _before_mask_snapshot = mask_annotation.mask_data.copy()
+
                 # Work-area inference should only touch the predicted tiles.
                 # Full-image inference still clears the old mask so the result
                 # replaces the entire canvas in one pass.
@@ -436,11 +442,18 @@ class Semantic(Base):
                     print(f"An error occurred during prediction on {image_path}: {e}")
                     # Let the outer finally block handle cleanup
                 
-                # --- 4. Recalculate Stats ---
+                # --- 4. Push undo action ---
+                _history_action = MaskEditAction.from_snapshot(
+                    mask_annotation, _before_mask_snapshot, description="Semantic prediction"
+                )
+                if not _history_action.is_empty():
+                    self.annotation_window.action_stack.push(_history_action)
+
+                # --- 5. Recalculate Stats ---
                 # This is called *after* all tiles for an image are done
                 mask_annotation.recalculate_class_statistics()
 
-                # --- 5. Multi-annotate propagation ---
+                # --- 6. Multi-annotate propagation ---
                 # When MVAT multi-annotate is active, propagate the predicted mask to
                 # all visible target cameras (perspective ↔ orthomosaic) using the same
                 # 3D index-map pipeline as brush strokes.
