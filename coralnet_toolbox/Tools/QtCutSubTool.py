@@ -45,7 +45,10 @@ class CutSubTool(SubTool):
             # Only verified annotations can be cut
             QMessageBox.warning(
                 self.annotation_window, "Cannot Cut",
-                "Cannot cut unverified annotations. Confirm prediction (Ctrl+Space) first."
+                "Cannot alter annotations that still have machine learning predictions until they are verified. "
+                "This prevents changes to machine-generated labels before user confirmation. To verify an "
+                "annotation, select it and press Ctrl+Space, click a label in the ConfidenceWindow, or update "
+                "the label manually."
             )
             self.parent_tool.deactivate_subtool()
             return
