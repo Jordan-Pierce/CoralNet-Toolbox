@@ -111,6 +111,27 @@ class MaskAnnotation(Annotation):
         if self._cached_color_map is None:
             self._cached_color_map = self._build_color_map()
         return self._cached_color_map
+
+    def _get_annotation_rasterization_geometry(self, annotation):
+        """Return a shapely geometry for an annotation if it can be rasterized."""
+        geometry_getter = getattr(annotation, 'get_rasterization_geometry', None)
+        if callable(geometry_getter):
+            try:
+                geometry = geometry_getter()
+                if geometry is not None:
+                    return geometry
+            except Exception:
+                pass
+
+        try:
+            qt_polygon = annotation.get_polygon()
+            points = [(p.x(), p.y()) for p in qt_polygon]
+            if len(points) >= 3:
+                return Polygon(points)
+        except Exception:
+            pass
+
+        return None
     
     def sync_label_map(self, current_labels_in_project: list):
         """Ensures the internal maps are synced with the project's labels."""
@@ -884,25 +905,21 @@ class MaskAnnotation(Annotation):
         all_bounds = []
 
         for annotation in all_annotations:
-            if not hasattr(annotation, 'get_polygon'):
+            if getattr(annotation, 'is_mask_annotation', False):
                 continue
             try:
-                polygon = annotation.get_polygon()
-                if polygon is None or polygon.isEmpty():
+                geometry = self._get_annotation_rasterization_geometry(annotation)
+                if geometry is None or getattr(geometry, 'is_empty', False):
                     continue
-                points = [(polygon.at(i).x(), polygon.at(i).y()) for i in range(polygon.count())]
-                if len(points) < 3:
-                    continue
-                shapely_poly = Polygon(points)
 
                 # Get the class ID for this annotation's label
                 class_id = self.label_id_to_class_id_map.get(annotation.label.id)
                 if class_id is None:
                     continue  # Skip if label not in mask
 
-                geometries.append(shapely_poly)
+                geometries.append(geometry)
                 annotations_to_process.append(annotation)
-                all_bounds.append(shapely_poly.bounds)
+                all_bounds.append(geometry.bounds)
 
             except Exception as e:
                 print(f"Warning: Could not process annotation {annotation.id}: {e}")
@@ -958,6 +975,113 @@ class MaskAnnotation(Annotation):
                 after_values,
                 update_rect=update_rect,
             )
+
+    def bake_annotations(self, all_annotations: list, history_action=None):
+        """Bake vector annotations into the semantic mask and return a summary.
+
+        Unlike rasterize_annotations(), this permanently writes the annotation
+        classes into the mask rather than locking the covered pixels. Existing
+        vector annotations should be removed by the caller as part of the same
+        undoable user action.
+        """
+        summary = {
+            "baked_annotations": [],
+            "skipped_annotations": [],
+            "changed_pixels": 0,
+            "update_rect": None,
+        }
+
+        if not all_annotations:
+            return summary
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
+        try:
+            height, width = self.mask_data.shape
+            shapes = []
+            all_bounds = []
+
+            for annotation in all_annotations:
+                if getattr(annotation, 'is_mask_annotation', False):
+                    continue
+
+                try:
+                    geometry = self._get_annotation_rasterization_geometry(annotation)
+                    if geometry is None or getattr(geometry, 'is_empty', False):
+                        summary["skipped_annotations"].append(annotation)
+                        continue
+
+                    class_id = self.label_id_to_class_id_map.get(annotation.label.id)
+                    if class_id is None:
+                        summary["skipped_annotations"].append(annotation)
+                        continue
+
+                    shapes.append((geometry, class_id))
+                    summary["baked_annotations"].append(annotation)
+                    all_bounds.append(geometry.bounds)
+
+                except Exception as e:
+                    print(f"Warning: Could not bake annotation {annotation.id}: {e}")
+                    summary["skipped_annotations"].append(annotation)
+                    continue
+
+            if not shapes:
+                return summary
+
+            baked_values = rasterize(
+                shapes,
+                out_shape=(height, width),
+                fill=0,
+                default_value=0,
+                dtype=np.uint8,
+            ).astype(np.uint8)
+
+            target_mask = baked_values != 0
+            flat_indices = np.flatnonzero(target_mask.ravel())
+            if flat_indices.size == 0:
+                return summary
+
+            flat_values = baked_values.ravel()[flat_indices]
+
+            if all_bounds:
+                min_x = min(b[0] for b in all_bounds)
+                min_y = min(b[1] for b in all_bounds)
+                max_x = max(b[2] for b in all_bounds)
+                max_y = max(b[3] for b in all_bounds)
+
+                x_min = max(0, int(min_x) - 5)
+                y_min = max(0, int(min_y) - 5)
+                x_max = min(width, int(max_x) + 6)
+                y_max = min(height, int(max_y) + 6)
+                update_rect = (x_min, y_min, x_max, y_max)
+            else:
+                update_rect = None
+
+            applied = self.apply_flat_values_at_indices(
+                flat_indices,
+                flat_values,
+                silent=False,
+                update_rect=update_rect,
+            )
+
+            if applied is None:
+                summary["update_rect"] = update_rect
+                return summary
+
+            if history_action is not None:
+                history_action.add_change(
+                    applied["flat_indices"],
+                    applied["before_values"],
+                    applied["after_values"],
+                    update_rect=applied["update_rect"],
+                )
+
+            summary["changed_pixels"] = int(applied["flat_indices"].size)
+            summary["update_rect"] = applied["update_rect"]
+            return summary
+
+        finally:
+            QApplication.restoreOverrideCursor()
 
         # Section 5: Smart localized repaint
         if np.any(to_lock) or np.any(annotation_mask):

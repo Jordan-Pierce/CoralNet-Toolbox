@@ -703,6 +703,15 @@ class Annotation(QObject):
         """Get the QPainterPath representation of this annotation."""
         raise NotImplementedError("Subclasses must implement this method.")
 
+    def get_rasterization_geometry(self):
+        """Get a shapely geometry suitable for rasterizing the annotation.
+
+        Subclasses that can be burned into a mask should override this and
+        return a shapely geometry in image pixel coordinates. The default
+        implementation returns None so non-vector annotations can opt out.
+        """
+        return None
+
     def get_bounding_box_top_left(self):
         """Get the top-left corner of the annotation's bounding box."""
         raise NotImplementedError("Subclasses must implement this method.")

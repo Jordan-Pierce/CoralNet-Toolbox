@@ -46,6 +46,7 @@ from coralnet_toolbox.QtActions import (
     DeleteAnnotationAction,
     AddAnnotationsAction,
     DeleteAnnotationsAction,
+    CompoundAction,
     ActionStack,
     ChangeLabelAction,
     ChangeLabelsAction,
@@ -2318,7 +2319,7 @@ class AnnotationWindow(BaseCanvas):
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
-        history_action = MaskEditAction(self.current_mask_annotation, description="Rasterize annotations")
+        history_action = MaskEditAction(self.current_mask_annotation, description="Protect vector annotations")
 
         # The MaskAnnotation handles the efficient protection marking internally
         self.current_mask_annotation.rasterize_annotations(annotations, history_action=history_action)
@@ -2329,6 +2330,101 @@ class AnnotationWindow(BaseCanvas):
         # Restore cursor
         QApplication.restoreOverrideCursor()
 
+    def bake_vector_annotations(self):
+        """Bake current-image vector annotations into the mask and delete them.
+
+        This is the destructive counterpart to rasterize_annotations(): it
+        permanently writes vector labels into the semantic mask and then removes
+        the vector annotations from the current image.
+        """
+        if not self.current_image_path:
+            return False
+
+        annotations = []
+        for annotation in self.get_image_annotations():
+            if getattr(annotation, 'is_mask_annotation', False):
+                continue
+
+            geometry_getter = getattr(annotation, 'get_rasterization_geometry', None)
+            geometry = None
+            if callable(geometry_getter):
+                try:
+                    geometry = geometry_getter()
+                except Exception:
+                    geometry = None
+
+            if geometry is not None and not getattr(geometry, 'is_empty', False):
+                annotations.append(annotation)
+
+        if not annotations:
+            try:
+                self.main_window.status_bar.showMessage(
+                    "No vector annotations on the current image can be baked into the mask.",
+                    3000,
+                )
+            except Exception:
+                pass
+            return False
+
+        reply = QMessageBox.question(
+            self,
+            "Bake Vector Annotations",
+            "Bake all vector annotations in the current image into the mask and remove the vectors?\n\n"
+            "Undo will restore both the mask pixels and the vector annotations.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+
+        if reply != QMessageBox.Yes:
+            return False
+
+        mask_annotation = self.current_mask_annotation
+        if mask_annotation is None:
+            return False
+
+        history_action = MaskEditAction(mask_annotation, description="Bake vector annotations")
+        bake_summary = mask_annotation.bake_annotations(annotations, history_action=history_action)
+
+        baked_annotations = bake_summary.get("baked_annotations", []) if bake_summary else []
+        skipped_annotations = bake_summary.get("skipped_annotations", []) if bake_summary else []
+
+        if not baked_annotations:
+            try:
+                self.main_window.status_bar.showMessage(
+                    "No vector annotations could be baked into the current mask.",
+                    3000,
+                )
+            except Exception:
+                pass
+            return False
+
+        self.unselect_annotations()
+
+        delete_action = DeleteAnnotationsAction(self, baked_annotations)
+        self.delete_annotations(baked_annotations, record_action=False)
+
+        compound_action = CompoundAction(
+            [history_action, delete_action],
+            description="Bake vector annotations",
+        )
+        self.action_stack.push(compound_action)
+
+        try:
+            if skipped_annotations:
+                self.main_window.status_bar.showMessage(
+                    f"Baked {len(baked_annotations)} vector annotations; skipped {len(skipped_annotations)} that could not be rasterized.",
+                    4000,
+                )
+            else:
+                self.main_window.status_bar.showMessage(
+                    f"Baked {len(baked_annotations)} vector annotations into the mask.",
+                    3000,
+                )
+        except Exception:
+            pass
+
+        return True
+
     def unrasterize_annotations(self):
         """
         Remove protection from vector annotation pixels, allowing mask editing over those areas again.
@@ -2338,7 +2434,7 @@ class AnnotationWindow(BaseCanvas):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
         if self.current_mask_annotation:
-            history_action = MaskEditAction(self.current_mask_annotation, description="Unrasterize annotations")
+            history_action = MaskEditAction(self.current_mask_annotation, description="Unprotect vector annotations")
             self.current_mask_annotation.unrasterize_annotations(history_action=history_action)
 
             if not history_action.is_empty():

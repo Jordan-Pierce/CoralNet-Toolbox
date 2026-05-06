@@ -160,6 +160,17 @@ class PatchAnnotation(Annotation):
 
         return path
 
+    def get_rasterization_geometry(self):
+        """Return a shapely polygon for mask rasterization."""
+        try:
+            qt_polygon = self.get_polygon()
+            shell_coords = [(p.x(), p.y()) for p in qt_polygon]
+            if len(shell_coords) < 3:
+                return None
+            return Polygon(shell=shell_coords)
+        except Exception:
+            return None
+
     def get_bounding_box_top_left(self):
         """Get the top-left corner of the bounding box."""
         half_size = self.annotation_size / 2
