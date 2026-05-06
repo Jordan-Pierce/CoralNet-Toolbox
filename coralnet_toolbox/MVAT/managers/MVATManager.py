@@ -2126,6 +2126,21 @@ class MVATManager(QObject):
             self._warn_semantic_propagation("The active image is not loaded in MVAT.")
             return
 
+        target_paths = self._get_semantic_target_paths(source_camera)
+        if not target_paths:
+            self._warn_semantic_propagation("No target cameras are currently visible for semantic propagation.")
+            return
+
+        status_bar = getattr(self.main_window, 'status_bar', None)
+        if status_bar is not None:
+            try:
+                status_bar.showMessage(
+                    f"Propagating semantic mask to {len(target_paths)} target camera(s)...",
+                    0,
+                )
+            except Exception:
+                pass
+
         source_raster = self.raster_manager.get_raster(image_path) if self.raster_manager is not None else None
         source_mask = getattr(source_raster, 'mask_annotation', None)
         if source_mask is None:
@@ -2172,22 +2187,6 @@ class MVATManager(QObject):
                 "The active camera does not have an index map, so semantic propagation is unavailable."
             )
             return
-
-        target_paths = self._get_semantic_target_paths(source_camera)
-        if not target_paths:
-            self._warn_semantic_propagation("No target cameras are currently visible for semantic propagation.")
-            return
-
-        status_bar = getattr(self.main_window, 'status_bar', None)
-        source_label = getattr(source_camera, 'label', None) or os.path.basename(image_path)
-        if status_bar is not None:
-            try:
-                status_bar.showMessage(
-                    f"Propagating semantic mask from {source_label} to {len(target_paths)} target camera(s)...",
-                    0,
-                )
-            except Exception:
-                pass
 
         try:
             self._on_semantic_prediction_applied(image_path, source_mask)

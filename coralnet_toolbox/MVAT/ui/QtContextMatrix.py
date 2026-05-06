@@ -17,7 +17,7 @@ from typing import List, Optional, Dict
 
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QRect, QPoint, QVariantAnimation, QEasingCurve
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QToolBar, QToolButton, QSizePolicy, QFrame,
     QScrollArea, QLayout, QLayoutItem, QGraphicsOpacityEffect
 )
@@ -802,6 +802,7 @@ class ContextMatrixWidget(QWidget):
 
         self.load_btn = QToolButton()
         self.load_btn.setText("Load Cameras")
+        self.load_btn.setToolTip("Load camera lists into the context matrix.")
         self.load_btn.setAutoRaise(True)
         self.load_btn.clicked.connect(lambda _checked=False: self.loadCamerasRequested.emit())
         layout.addWidget(self.load_btn)
@@ -811,22 +812,6 @@ class ContextMatrixWidget(QWidget):
         sep0.setFrameShadow(QFrame.Sunken)
         layout.addWidget(sep0)
 
-        self._semantic_mask_btn = QToolButton()
-        self._semantic_mask_btn.setText("Propagate Mask")
-        self._semantic_mask_btn.setToolTip(
-            "Transfer the active semantic mask to the mesh and visible MVAT targets."
-        )
-        self._semantic_mask_btn.setAutoRaise(True)
-        self._semantic_mask_btn.clicked.connect(
-            lambda _checked=False: self.semanticMaskPropagationRequested.emit()
-        )
-        layout.addWidget(self._semantic_mask_btn)
-
-        sep1 = QFrame()
-        sep1.setFrameShape(QFrame.VLine)
-        sep1.setFrameShadow(QFrame.Sunken)
-        layout.addWidget(sep1)
-
         self._multi_annotate_btn = QToolButton()
         self._multi_annotate_btn.setText("Multi-Annotate")
         self._multi_annotate_btn.setCheckable(True)
@@ -835,6 +820,20 @@ class ContextMatrixWidget(QWidget):
         self._multi_annotate_btn.setAutoRaise(True)
         self._multi_annotate_btn.toggled.connect(self._on_multi_annotate_toggled)
         layout.addWidget(self._multi_annotate_btn)
+
+        sep1 = QFrame()
+        sep1.setFrameShape(QFrame.VLine)
+        sep1.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(sep1)
+
+        self._semantic_mask_btn = QToolButton()
+        self._semantic_mask_btn.setText("Propagate Mask")
+        self._semantic_mask_btn.setToolTip(
+            "Transfer the active semantic mask to the mesh and visible MVAT targets."
+        )
+        self._semantic_mask_btn.setAutoRaise(True)
+        self._semantic_mask_btn.clicked.connect(self._on_propagate_mask_clicked)
+        layout.addWidget(self._semantic_mask_btn)
 
         layout.addStretch(1)
 
@@ -932,6 +931,14 @@ class ContextMatrixWidget(QWidget):
     def refresh_scaling(self):
         """Refresh toolbar sizing after a UI scale change."""
         self._sync_context_toolbar_scaling()
+
+    def _on_propagate_mask_clicked(self, _checked=False):
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        QApplication.processEvents()
+        try:
+            self.semanticMaskPropagationRequested.emit()
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def update_stats(self, perspective_count: int):
         return
