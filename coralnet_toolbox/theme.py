@@ -57,13 +57,13 @@ SPINBOX_DOWN_ARROW_ICON = (ICON_DIR / "spinbox-arrow-down.svg").as_posix()
 
 SCALE_MODE_AUTO = "auto"
 SCALE_MODE_MANUAL = "manual"
-SCALE_PRESETS = (1.0, 1.25, 1.5, 1.75, 2.0)
-SCALE_MIN = 1.0
+SCALE_PRESETS = (0.75, 1.0, 1.25, 1.5, 1.75, 2.0)
+SCALE_MIN = 0.75
 SCALE_MAX = 2.0
 SCALE_STEP = 0.25
 
 _scale_mode = SCALE_MODE_MANUAL
-_scale_factor = 0.75
+_scale_factor = 1.0
 
 _SCALEABLE_QSS_PROPERTIES = {
     "font-size",

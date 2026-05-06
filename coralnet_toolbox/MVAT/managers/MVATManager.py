@@ -482,6 +482,9 @@ class MVATManager(QObject):
             # Phase 5 / multi-annotate
             self.context_matrix.set_mvat_manager(self)
             self.context_matrix.multiAnnotateToggled.connect(self._on_multi_annotate_toggled)
+            self.context_matrix.semanticMaskPropagationRequested.connect(
+                self.propagate_current_semantic_mask
+            )
         
         # 7. Target-Lock Sync (Phase 5): AnnotationWindow viewNavigated -> sync engine
         if hasattr(self.annotation_window, 'viewNavigated'):
@@ -2084,6 +2087,124 @@ class MVATManager(QObject):
             target_paths.add(self.ortho_camera.image_path)
 
         return target_paths
+
+    def _warn_semantic_propagation(self, message: str):
+        """Show a short warning when semantic propagation cannot run."""
+        print(f"⚠️ Semantic propagation skipped: {message}")
+
+        status_bar = getattr(self.main_window, 'status_bar', None)
+        if status_bar is not None:
+            try:
+                status_bar.showMessage(message, 5000)
+                return
+            except Exception:
+                pass
+
+        try:
+            QMessageBox.warning(self.main_window, "Semantic Propagation", message)
+        except Exception:
+            pass
+
+    def propagate_current_semantic_mask(self):
+        """Propagate the active AnnotationWindow semantic mask to MVAT targets."""
+        if self._propagating_annotation:
+            self._warn_semantic_propagation("Semantic propagation is already in progress.")
+            return
+
+        annotation_window = getattr(self.main_window, 'annotation_window', None)
+        if annotation_window is None:
+            self._warn_semantic_propagation("AnnotationWindow is not available.")
+            return
+
+        image_path = getattr(annotation_window, 'current_image_path', None)
+        if not image_path:
+            self._warn_semantic_propagation("No image is currently active in the AnnotationWindow.")
+            return
+
+        source_camera = self._get_camera_for_path(image_path)
+        if source_camera is None:
+            self._warn_semantic_propagation("The active image is not loaded in MVAT.")
+            return
+
+        source_raster = self.raster_manager.get_raster(image_path) if self.raster_manager is not None else None
+        source_mask = getattr(source_raster, 'mask_annotation', None)
+        if source_mask is None:
+            self._warn_semantic_propagation("The active image does not have a semantic mask to propagate.")
+            return
+
+        label_window = getattr(self.main_window, 'label_window', None)
+        project_labels = list(getattr(label_window, 'labels', [])) if label_window is not None else []
+        if not project_labels:
+            self._warn_semantic_propagation("No project labels are available for semantic propagation.")
+            return
+
+        try:
+            source_mask.sync_label_map(project_labels)
+        except Exception:
+            pass
+
+        try:
+            source_mask.update_graphics_item()
+        except Exception:
+            pass
+
+        mask_data = getattr(source_mask, 'mask_data', None)
+        if mask_data is None:
+            self._warn_semantic_propagation("The active semantic mask is missing mask data.")
+            return
+
+        lock_bit = getattr(source_mask, 'LOCK_BIT', None)
+        try:
+            if lock_bit is not None and int(lock_bit) > 1:
+                semantic_values = np.unique(mask_data % int(lock_bit))
+            else:
+                semantic_values = np.unique(mask_data)
+        except Exception:
+            semantic_values = np.unique(mask_data)
+
+        semantic_values = semantic_values[semantic_values > 0]
+        if len(semantic_values) == 0:
+            self._warn_semantic_propagation("The active semantic mask does not contain any labels to propagate.")
+            return
+
+        if getattr(source_camera, '_raster', None) is None or getattr(source_camera._raster, 'index_map', None) is None:
+            self._warn_semantic_propagation(
+                "The active camera does not have an index map, so semantic propagation is unavailable."
+            )
+            return
+
+        target_paths = self._get_semantic_target_paths(source_camera)
+        if not target_paths:
+            self._warn_semantic_propagation("No target cameras are currently visible for semantic propagation.")
+            return
+
+        status_bar = getattr(self.main_window, 'status_bar', None)
+        source_label = getattr(source_camera, 'label', None) or os.path.basename(image_path)
+        if status_bar is not None:
+            try:
+                status_bar.showMessage(
+                    f"Propagating semantic mask from {source_label} to {len(target_paths)} target camera(s)...",
+                    0,
+                )
+            except Exception:
+                pass
+
+        try:
+            self._on_semantic_prediction_applied(image_path, source_mask)
+        except Exception as exc:
+            print(f"Error while propagating semantic mask from {image_path}: {exc}")
+            traceback.print_exc()
+            self._warn_semantic_propagation("Semantic propagation failed. See console for details.")
+            return
+
+        if status_bar is not None:
+            try:
+                status_bar.showMessage(
+                    f"Semantic mask propagated to {len(target_paths)} target camera(s).",
+                    3000,
+                )
+            except Exception:
+                pass
 
     def _is_ortho_annotation_source(self) -> bool:
         """Return True when the active annotation source is the ortho view."""

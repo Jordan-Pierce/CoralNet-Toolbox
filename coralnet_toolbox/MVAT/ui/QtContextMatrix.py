@@ -136,6 +136,7 @@ class ContextMatrixWidget(QWidget):
         contextImagePromoted: Legacy compatibility signal; not emitted by the current viewer-only interaction model.
         rankIndicatorUpdated: Emitted when rank indicator changes (start, end, total)
         multiAnnotateToggled: Emitted when multi-annotate mode is toggled (bool)
+        semanticMaskPropagationRequested: Emitted when the active semantic mask should be propagated.
         loadCamerasRequested: Emitted when the Load Cameras button is clicked
         clearSelectionsRequested: Legacy compatibility signal; kept for future workflows.
         visibleCamerasChanged: Emitted when the visible canvas set changes.
@@ -144,6 +145,7 @@ class ContextMatrixWidget(QWidget):
     contextImagePromoted = pyqtSignal(str)            # camera_path
     rankIndicatorUpdated = pyqtSignal(int, int, int)  # start, end, total
     multiAnnotateToggled = pyqtSignal(bool)           # enabled state
+    semanticMaskPropagationRequested = pyqtSignal()
 
     # Migrated from legacy CameraGrid
     loadCamerasRequested = pyqtSignal()
@@ -809,6 +811,22 @@ class ContextMatrixWidget(QWidget):
         sep0.setFrameShadow(QFrame.Sunken)
         layout.addWidget(sep0)
 
+        self._semantic_mask_btn = QToolButton()
+        self._semantic_mask_btn.setText("Propagate Mask")
+        self._semantic_mask_btn.setToolTip(
+            "Transfer the active semantic mask to the mesh and visible MVAT targets."
+        )
+        self._semantic_mask_btn.setAutoRaise(True)
+        self._semantic_mask_btn.clicked.connect(
+            lambda _checked=False: self.semanticMaskPropagationRequested.emit()
+        )
+        layout.addWidget(self._semantic_mask_btn)
+
+        sep1 = QFrame()
+        sep1.setFrameShape(QFrame.VLine)
+        sep1.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(sep1)
+
         self._multi_annotate_btn = QToolButton()
         self._multi_annotate_btn.setText("Multi-Annotate")
         self._multi_annotate_btn.setCheckable(True)
@@ -820,10 +838,10 @@ class ContextMatrixWidget(QWidget):
 
         layout.addStretch(1)
 
-        sep1 = QFrame()
-        sep1.setFrameShape(QFrame.VLine)
-        sep1.setFrameShadow(QFrame.Sunken)
-        layout.addWidget(sep1)
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.VLine)
+        sep2.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(sep2)
 
         self.size_up_btn = QToolButton()
         self.size_up_btn.setIcon(get_icon("up_chevron.svg"))
