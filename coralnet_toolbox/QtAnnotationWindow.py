@@ -2382,32 +2382,77 @@ class AnnotationWindow(BaseCanvas):
         if mask_annotation is None:
             return False
 
-        history_action = MaskEditAction(mask_annotation, description="Bake vector annotations")
-        bake_summary = mask_annotation.bake_annotations(annotations, history_action=history_action)
+        # Block signals at the source for the entire bake + delete operation.
+        #
+        # Signal blocking + ContextMatrix suspension prevent every mid-bake
+        # canvas refresh from firing.  We intentionally do NOT call
+        # clear_all_annotation_overlays() here: calling scene.removeItem() on
+        # QGraphicsPathItem objects that carry a QGraphicsDropShadowEffect
+        # schedules a deferred paint pass for the effect's source region.  When
+        # Qt services that repaint (after this function returns but before the
+        # QTimer.singleShot(0) fires), it accesses rendering state that has
+        # already been partially torn down → C-level crash.  Leaving the overlay
+        # items in their scenes is safe because no signal can rebuild or destroy
+        # them during the blocked/suspended window, and _deferred_refresh_all_canvases
+        # will cleanly replace them once the event loop is fully settled.
+        _context_matrix = getattr(getattr(self, 'main_window', None), 'context_matrix', None)
+        _annotation_manager = getattr(self, 'annotation_manager', None)
+        _has_suspend = _context_matrix is not None and hasattr(
+            _context_matrix, 'suspend_annotation_updates'
+        )
 
-        baked_annotations = bake_summary.get("baked_annotations", []) if bake_summary else []
-        skipped_annotations = bake_summary.get("skipped_annotations", []) if bake_summary else []
+        if _has_suspend:
+            _context_matrix.suspend_annotation_updates()
 
-        if not baked_annotations:
+        mask_annotation.blockSignals(True)
+        if _annotation_manager is not None:
+            _annotation_manager.blockSignals(True)
+
+        baked_annotations = []
+        skipped_annotations = []
+        history_action = None
+        delete_action = None
+        try:
+            history_action = MaskEditAction(mask_annotation, description="Bake vector annotations")
+            bake_summary = mask_annotation.bake_annotations(annotations, history_action=history_action)
+
+            baked_annotations = bake_summary.get("baked_annotations", []) if bake_summary else []
+            skipped_annotations = bake_summary.get("skipped_annotations", []) if bake_summary else []
+
+            if not baked_annotations:
+                try:
+                    self.main_window.status_bar.showMessage(
+                        "No vector annotations could be baked into the current mask.",
+                        3000,
+                    )
+                except Exception:
+                    pass
+                return False
+
+            self.unselect_annotations()
+
+            delete_action = DeleteAnnotationsAction(self, baked_annotations)
+            self.delete_annotations(baked_annotations, record_action=False)
+        finally:
+            if _annotation_manager is not None:
+                _annotation_manager.blockSignals(False)
+            mask_annotation.blockSignals(False)
+
             try:
-                self.main_window.status_bar.showMessage(
-                    "No vector annotations could be baked into the current mask.",
-                    3000,
-                )
+                mask_annotation.refresh_graphics()
+                self.refresh_mask_annotation_view(mask_annotation)
             except Exception:
                 pass
-            return False
 
-        self.unselect_annotations()
-
-        delete_action = DeleteAnnotationsAction(self, baked_annotations)
-        self.delete_annotations(baked_annotations, record_action=False)
+            if _has_suspend:
+                _context_matrix.resume_annotation_updates()
 
         compound_action = CompoundAction(
             [history_action, delete_action],
             description="Bake vector annotations",
         )
-        self.action_stack.push(compound_action)
+        if history_action is not None and delete_action is not None:
+            self.action_stack.push(compound_action)
 
         try:
             if skipped_annotations:
@@ -3406,7 +3451,7 @@ class AnnotationWindow(BaseCanvas):
         """Delete a list of annotations (Ultimate Bulk Optimization)."""
         if not annotations:
             return
-            
+
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
         # 1. Record the action stack once
@@ -3484,7 +3529,6 @@ class AnnotationWindow(BaseCanvas):
         
         # A single viewport update after the scene is completely modified
         self.viewport().update()
-        
         QApplication.restoreOverrideCursor()
 
     def delete_selected_annotations(self):
