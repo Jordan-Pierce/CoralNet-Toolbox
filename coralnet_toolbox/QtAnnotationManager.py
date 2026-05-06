@@ -50,6 +50,7 @@ class AnnotationManager(QObject):
         # Core data stores
         self.annotations_dict = {}            # {uuid: Annotation}
         self.image_annotations_dict = {}      # {image_path: [Annotation]}
+        self.mask_annotations_dict = {}       # {image_path: MaskAnnotation}
         self.selected_annotations = []        # Currently selected annotations
         self.action_stack = ActionStack()      # Undo/Redo
 
@@ -63,3 +64,35 @@ class AnnotationManager(QObject):
             list: List of Annotation objects for the image, or empty list.
         """
         return self.image_annotations_dict.get(image_path, [])
+
+    def register_mask_annotation(self, mask_annotation):
+        """Register a mask annotation as the canonical mask layer for its image."""
+        if mask_annotation is None:
+            return None
+
+        if not getattr(mask_annotation, 'is_mask_annotation', False):
+            return None
+
+        image_path = getattr(mask_annotation, 'image_path', None)
+        if not image_path:
+            return None
+
+        self.mask_annotations_dict[image_path] = mask_annotation
+        return mask_annotation
+
+    def unregister_mask_annotation(self, mask_annotation_or_path):
+        """Remove a mask annotation from the registry."""
+        image_path = mask_annotation_or_path
+        if hasattr(mask_annotation_or_path, 'image_path'):
+            image_path = mask_annotation_or_path.image_path
+
+        if image_path in self.mask_annotations_dict:
+            del self.mask_annotations_dict[image_path]
+
+    def get_mask_annotation(self, image_path):
+        """Return the registered mask annotation for an image, if one exists."""
+        return self.mask_annotations_dict.get(image_path)
+
+    def has_mask_annotations(self):
+        """Return True when at least one image has a registered mask layer."""
+        return bool(self.mask_annotations_dict)

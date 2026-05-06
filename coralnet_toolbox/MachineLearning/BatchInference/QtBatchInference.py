@@ -530,6 +530,7 @@ class BatchInferenceDialog(QDialog):
         self.thresholds_widget = ThresholdsWidget(
             self.main_window,
             show_max_detections=True,
+            show_boundary=True,
             show_uncertainty=True,
             show_iou=True,
             show_area=True,
@@ -1879,10 +1880,15 @@ class BatchInferenceDialog(QDialog):
                         cache[inf_result.batch_key] = inf_result.yolo_result
                 else:
                     # Image / tile: accumulate into a list keyed by image_path.
-                    # Stash the tile work_area so _apply_sam_to_cache can run SAM
-                    # on the tile crop when SAM is enabled.
+                    # Stash serializable tile metadata so _apply_sam_to_cache can
+                    # reconstruct the WorkArea when SAM is enabled without keeping
+                    # the Qt object itself in the cache.
                     try:
-                        inf_result.yolo_result._tile_work_area = inf_result.work_area
+                        inf_result.yolo_result._tile_work_area_data = (
+                            inf_result.work_area.to_dict()
+                            if inf_result.work_area is not None
+                            else None
+                        )
                     except Exception:
                         pass
                     if inf_result.batch_key not in cache:
@@ -2070,7 +2076,7 @@ class BatchInferenceDialog(QDialog):
 
             # Determine whether any tiles are present; if all work_areas are
             # None we can batch the full-image SAM call into a single ViT pass.
-            tile_mode = any(getattr(r, '_tile_work_area', None) is not None
+            tile_mode = any(getattr(r, '_tile_work_area_data', None) is not None
                             for r in cached)
 
             updated = []
@@ -2081,7 +2087,14 @@ class BatchInferenceDialog(QDialog):
                     # shape.  We call SAM per result to keep the remap tied to
                     # the correct work_area.
                     for result in cached:
-                        wa = getattr(result, '_tile_work_area', None)
+                        wa_data = getattr(result, '_tile_work_area_data', None)
+                        wa = None
+                        if wa_data is not None:
+                            try:
+                                from coralnet_toolbox.WorkArea import WorkArea
+                                wa = WorkArea.from_dict(wa_data, path)
+                            except Exception:
+                                wa = None
                         try:
                             if (wa is not None
                                     and result.boxes is not None
@@ -2105,7 +2118,7 @@ class BatchInferenceDialog(QDialog):
                         except Exception:
                             pass
                         try:
-                            result._tile_work_area = None
+                            result._tile_work_area_data = None
                         except Exception:
                             pass
                         updated.append(result)
@@ -2125,7 +2138,7 @@ class BatchInferenceDialog(QDialog):
                         except Exception:
                             pass
                         try:
-                            out._tile_work_area = None
+                            out._tile_work_area_data = None
                         except Exception:
                             pass
                         updated.append(out)

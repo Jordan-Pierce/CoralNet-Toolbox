@@ -19,6 +19,8 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Common import ThresholdsWidget
 
+from coralnet_toolbox.QtActions import MaskEditAction
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -168,6 +170,7 @@ class Semantic(Base):
         self.thresholds_widget = ThresholdsWidget(
             self.main_window,
             show_max_detections=False,
+            show_boundary=False,
             show_uncertainty=True,
             show_iou=False,
             show_area=False
@@ -298,24 +301,29 @@ class Semantic(Base):
                 # Get the mapping from Label UUID -> internal mask class ID (once)
                 mask_annotation_map = mask_annotation.label_id_to_class_id_map
 
-                # ── Clear the existing mask before starting new inference ────────────────
-                # Zero the data in-place so stale tiles don't accumulate across runs.
-                # Do NOT remove the graphics_item from the scene — removing it orphans
-                # the item so update_mask_with_mask() produces no visible output until
-                # load_mask_annotation() is called again at the end.
-                try:
-                    mask_annotation.mask_data[:] = 0
-                    mask_annotation.update_graphics_item()  # repaint blank in-place
-                    # If the image being processed is the one currently displayed,
-                    # ensure the graphics_item is registered in the scene now so
-                    # tile repaints are immediately visible.
-                    if image_path == self.annotation_window.current_image_path:
-                        self.annotation_window.load_mask_annotation()
-                except Exception:
-                    pass
-                
-                # Get the list of items to process
+                # Snapshot the mask state before any modification so the entire
+                # prediction can be undone/redone as a single action.
+                _before_mask_snapshot = mask_annotation.mask_data.copy()
+
+                # Work-area inference should only touch the predicted tiles.
+                # Full-image inference still clears the old mask so the result
+                # replaces the entire canvas in one pass.
                 is_full_image = self.annotation_window.get_selected_tool() != "work_area"
+
+                if is_full_image:
+                    # Zero the data in-place so stale full-image predictions do not
+                    # accumulate across runs. Work-area mode intentionally skips this
+                    # so untouched regions remain intact.
+                    try:
+                        mask_annotation.mask_data[:] = 0
+                        mask_annotation.update_graphics_item()  # repaint blank in-place
+                        # If the image being processed is the one currently displayed,
+                        # ensure the graphics_item is registered in the scene now so
+                        # tile repaints are immediately visible.
+                        if image_path == self.annotation_window.current_image_path:
+                            self.annotation_window.load_mask_annotation()
+                    except Exception:
+                        pass
 
                 # Handle video virtual-frame paths specially (video.mp4::frame_N)
                 work_items_data = None
@@ -434,16 +442,35 @@ class Semantic(Base):
                     print(f"An error occurred during prediction on {image_path}: {e}")
                     # Let the outer finally block handle cleanup
                 
-                # --- 4. Recalculate Stats ---
+                # --- 4. Push undo action ---
+                _history_action = MaskEditAction.from_snapshot(
+                    mask_annotation, _before_mask_snapshot, description="Semantic prediction"
+                )
+                if not _history_action.is_empty():
+                    self.annotation_window.action_stack.push(_history_action)
+
+                # --- 5. Recalculate Stats ---
                 # This is called *after* all tiles for an image are done
                 mask_annotation.recalculate_class_statistics()
+
+                # --- 6. Multi-annotate propagation ---
+                # When MVAT multi-annotate is active, propagate the predicted mask to
+                # all visible target cameras (perspective ↔ orthomosaic) using the same
+                # 3D index-map pipeline as brush strokes.
+                try:
+                    mvat_manager = getattr(self.main_window, 'mvat_manager', None)
+                    if (mvat_manager is not None and
+                            getattr(mvat_manager, 'multi_annotate_enabled', False)):
+                        mvat_manager._on_semantic_prediction_applied(image_path, mask_annotation)
+                except Exception:
+                    pass
 
         except Exception as e:
             print(f"A fatal error occurred during the prediction workflow: {e}")
             import traceback
             traceback.print_exc()
         finally:
-            # --- 5. Final Cleanup ---
+            # --- 6. Final Cleanup ---
             # This block now runs ONCE at the end of the entire function
             if progress_bar_created_here and progress_bar is not None:
                 progress_bar.finish_progress()

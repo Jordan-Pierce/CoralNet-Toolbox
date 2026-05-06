@@ -195,7 +195,10 @@ class ExportMaskAnnotations(QDialog):
         
         # General file format
         self.file_format_combo = QComboBox()
-        self.file_format_combo.addItems([".png", ".bmp", ".tif"])
+        self.file_format_combo.addItem(".png", ".png")
+        self.file_format_combo.addItem(".bmp", ".bmp")
+        self.file_format_combo.addItem(".tif", ".tif")
+        self.file_format_combo.addItem("RLE (.txt)", ".txt")
         self.file_format_combo.currentTextChanged.connect(self.update_georef_availability)
         options_layout.addRow("File Format:", self.file_format_combo)
 
@@ -446,7 +449,19 @@ class ExportMaskAnnotations(QDialog):
         self.labels_to_render = []
         self.label_code_to_export_value = {}
         self.background_value = 0 
-        
+
+        self.file_format = self.file_format_combo.currentData() or self.file_format_combo.currentText()
+        if not self.file_format.startswith('.'):
+            self.file_format = '.' + self.file_format
+
+        if self.file_format == '.txt' and self.mask_mode == 'rgb':
+            QMessageBox.warning(
+                self,
+                "Unsupported Export Format",
+                "RLE export is only supported for semantic and SfM mask modes."
+            )
+            return
+
         # --- Collect data from UI based on mode ---
         if self.mask_mode in ['semantic', 'sfm']:
             used_mask_values = {}
@@ -510,9 +525,6 @@ class ExportMaskAnnotations(QDialog):
         # --- Setup paths and progress bar ---
         output_dir = self.output_dir_edit.text()
         folder_name = self.output_name_edit.text().strip()
-        self.file_format = self.file_format_combo.currentText()
-        if not self.file_format.startswith('.'):
-            self.file_format = '.' + self.file_format
 
         output_path = os.path.join(output_dir, folder_name)
         os.makedirs(output_path, exist_ok=True)
@@ -598,9 +610,14 @@ class ExportMaskAnnotations(QDialog):
            not self.include_negative_samples_checkbox.isChecked():
             return
 
-        # --- 5. Save the final mask ---
         filename = f"{os.path.splitext(os.path.basename(image_path))[0]}{self.file_format}"
         mask_path = os.path.join(output_path, filename)
+
+        if self.file_format.lower() == '.txt':
+            self._save_rle_mask(mask, mask_path)
+            return
+
+        # --- 5. Save the final mask ---
 
         # Check if we need to preserve georeferencing
         use_georef = has_georef and self.preserve_georef_checkbox.isChecked() and self.file_format.lower() == '.tif'
@@ -645,6 +662,33 @@ class ExportMaskAnnotations(QDialog):
             
             # Save using the appropriate format
             cv2.imwrite(mask_path, mask)
+
+    def _encode_rle_runs(self, mask: np.ndarray):
+        """Encode a 2D mask as value/count runs in row-major order."""
+        flat_mask = np.asarray(mask).ravel(order='C')
+        if flat_mask.size == 0:
+            return []
+
+        change_points = np.flatnonzero(flat_mask[1:] != flat_mask[:-1]) + 1
+        run_starts = np.concatenate(([0], change_points))
+        run_ends = np.concatenate((change_points, [flat_mask.size]))
+
+        values = flat_mask[run_starts]
+        counts = run_ends - run_starts
+        return list(zip(values.tolist(), counts.tolist()))
+
+    def _save_rle_mask(self, mask: np.ndarray, output_path: str):
+        """Save a single-channel mask as a plain-text value/count RLE file."""
+        if mask.ndim != 2:
+            raise ValueError("RLE export only supports single-channel masks.")
+
+        height, width = mask.shape
+        rle_runs = self._encode_rle_runs(mask)
+
+        with open(output_path, 'w', encoding='utf-8') as file:
+            file.write(f"{height} {width}\n")
+            for value, count in rle_runs:
+                file.write(f"{int(value)} {int(count)}\n")
 
     def _render_mask_annotation(self, mask_annotation, height, width):
         """
@@ -815,7 +859,8 @@ class ExportMaskAnnotations(QDialog):
 
     def update_georef_availability(self):
         """Update georeferencing availability based on file format."""
-        is_tif = '.tif' in self.file_format_combo.currentText().lower()
+        selected_format = self.file_format_combo.currentData() or self.file_format_combo.currentText()
+        is_tif = str(selected_format).lower() == '.tif'
         self.preserve_georef_checkbox.setEnabled(is_tif)
         if not is_tif:
             self.preserve_georef_checkbox.setChecked(False)

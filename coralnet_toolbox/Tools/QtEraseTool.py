@@ -5,6 +5,7 @@ from PyQt5.QtGui import QColor, QPen
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtWidgets import QGraphicsEllipseItem, QGraphicsRectItem, QApplication
 
+from coralnet_toolbox.QtActions import MaskEditAction
 from coralnet_toolbox.Tools.QtBrushTool import BrushTool
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -36,11 +37,11 @@ class EraseTool(BrushTool):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         mask_annotation = self.annotation_window.current_mask_annotation
         if mask_annotation:
-            mask_annotation.mask_data[mask_annotation.mask_data < mask_annotation.LOCK_BIT] = 0
-            mask_annotation._update_full_canvas()
-            if mask_annotation.graphics_item:
-                mask_annotation.graphics_item.update()
-            mask_annotation.annotationUpdated.emit(mask_annotation)
+            history_action = MaskEditAction(mask_annotation, description="Clear mask")
+            flat_indices = np.flatnonzero((mask_annotation.mask_data.ravel() < mask_annotation.LOCK_BIT).astype(bool))
+            mask_annotation.update_mask_at_indices(flat_indices, 0, silent=False, history_action=history_action)
+            if not history_action.is_empty():
+                self.annotation_window.action_stack.push(history_action)
         QApplication.restoreOverrideCursor()
 
     def create_cursor_preview_item(self, u: float, v: float):
@@ -104,10 +105,18 @@ class EraseTool(BrushTool):
     def _on_math_finished(self, flat_indices, center_pos, combined_mask, mask_annotation, selected_label_id):
         """Executes on the Main Thread: Writes 0 (background) and triggers 3D sync."""
         self._active_workers -= 1
-        
+
         if len(flat_indices) > 0:
             # ERASER FIX: Hardcode class_id = 0
-            mask_annotation.update_mask_at_indices(flat_indices, 0, silent=True)
+            mask_annotation.update_mask_at_indices(
+                flat_indices,
+                0,
+                silent=True,
+                history_action=self._stroke_history_action,
+            )
+            # Show erased pixels in real time — eraser has no scratchpad overlay,
+            # so we refresh the mask display directly after each chunk.
+            mask_annotation.refresh_graphics()
 
         if self.post_stroke_callback:
             # We still pass selected_label_id for context routing, even though the value written is 0
@@ -116,3 +125,4 @@ class EraseTool(BrushTool):
         if self._is_finishing_stroke and self._active_workers == 0 and not self._accumulated_points:
             self._cleanup_scratchpad()
             self.annotation_window.viewport().update()
+            self._commit_stroke_history_action()

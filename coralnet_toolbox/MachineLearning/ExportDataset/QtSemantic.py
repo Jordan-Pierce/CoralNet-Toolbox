@@ -164,87 +164,101 @@ class Semantic(Base):
     def get_mask_annotations(self):
         """
         Get all mask annotations from the current images.
-        
+
+        Checks both raster.mask_annotation (set when an image is open in the
+        annotation window) AND the annotation manager's image_annotations_dict
+        (which holds all loaded annotations, including those for images the user
+        hasn't navigated to yet).  The union ensures masks are found for every
+        image in the project regardless of which images have been viewed.
+
         Returns:
-            list: List of MaskAnnotation objects
+            list: Deduplicated list of MaskAnnotation objects
         """
+        seen_ids = set()
         mask_annotations = []
-        
-        # Get images based on selection
+
         if self.filtered_images_radio.isChecked():
             images = self.image_window.table_model.filtered_paths
         else:
             images = self.image_window.raster_manager.image_paths
-            
-        # Get mask annotation for each image
+
         for image_path in images:
+            # Source 1: raster attribute (fastest lookup)
             raster = self.image_window.raster_manager.get_raster(image_path)
             if raster and raster.mask_annotation:
-                mask_annotations.append(raster.mask_annotation)
-                    
+                ann = raster.mask_annotation
+                if ann.id not in seen_ids:
+                    mask_annotations.append(ann)
+                    seen_ids.add(ann.id)
+
+            # Source 2: annotation manager (covers images not yet opened in the canvas)
+            for ann in self.annotation_window.image_annotations_dict.get(image_path, []):
+                if (getattr(ann, 'is_mask_annotation', False) and ann.id not in seen_ids):
+                    mask_annotations.append(ann)
+                    seen_ids.add(ann.id)
+
         return mask_annotations
 
     def _update_annotation_stats_cache(self):
         """
-        Iterates through ALL annotations (mask and vector) ONCE 
-        to populate the internal statistics cache.
-        This is the main fix for the performance bottleneck.
+        Rebuild the per-annotation statistics cache used by all summary and
+        filter methods.
+
+        MaskAnnotations manage their own stats cache internally; we call
+        recalculate_class_statistics() directly to guarantee fresh data
+        regardless of whether the internal cache was previously set to an
+        empty dict (e.g. computed before any pixels were painted).
+
+        Vector annotations use their own get_class_statistics() which is
+        already fast (typically just a label lookup).
         """
         self._stats_cache.clear()
-        
-        # Get all possible annotations
+        self._project_labels = list(self.main_window.label_window.labels)
+
         all_annotations = list(self.annotation_window.annotations_dict.values())
         all_annotations.extend(self.get_mask_annotations())
-        
-        # Get project labels once, needed for the raster's caching method
-        self._project_labels = self.main_window.label_window.labels
-        raster_manager = self.image_window.raster_manager
-
-        # Use a set to process unique annotations
         unique_annotations = {anno.id: anno for anno in all_annotations}.values()
 
         for anno in unique_annotations:
             try:
                 if anno.__class__.__name__ == 'MaskAnnotation':
-                    # Use the new caching method from Raster
-                    raster = raster_manager.get_raster(anno.image_path)
-                    if raster:
-                        # This call uses the Raster's *own* cache
-                        # (Assumes Raster.get_mask_class_statistics is implemented)
-                        self._stats_cache[anno.id] = raster.get_mask_class_statistics(self._project_labels)
-                
-                # Handle Vector Annotations (which are fast)
+                    # Force a fresh calculation — avoids stale {} from a prior
+                    # recalculation that ran when the mask was still empty.
+                    self._stats_cache[anno.id] = anno.recalculate_class_statistics() or {}
                 else:
                     self._stats_cache[anno.id] = anno.get_class_statistics()
-            
             except Exception as e:
-                # Ensure we have an empty dict on failure
                 if anno.id not in self._stats_cache:
                     self._stats_cache[anno.id] = {}
                 print(f"Error caching stats for annotation {anno.id}: {e}")
 
     def mask_contains_selected_labels(self, mask_annotation):
         """
-        Check if a mask annotation contains any of the selected labels
-        BY READING FROM THE CACHE.
-        
+        Check if a mask annotation contains any of the selected labels.
+
+        Reads from the pre-built export stats cache.  If the cache entry is
+        absent or empty (e.g. due to a cache miss), falls back to asking the
+        annotation directly so the answer is always authoritative.
+
         Args:
             mask_annotation (MaskAnnotation): The mask annotation to check
-            
+
         Returns:
-            bool: True if mask contains selected labels, False otherwise
+            bool: True if mask contains at least one selected label with pixels
         """
         if not self.selected_labels:
             return False
-            
-        # Get class statistics FOR THIS MASK FROM THE CACHE
-        class_stats = self._stats_cache.get(mask_annotation.id, {})
-        
-        # Check if any selected label is present in the mask
+
+        class_stats = self._stats_cache.get(mask_annotation.id) or {}
+
+        # Cache miss or stale empty entry — ask the annotation directly
+        if not class_stats:
+            class_stats = mask_annotation.get_class_statistics()
+
         for label_code in self.selected_labels:
             if label_code in class_stats and class_stats[label_code].get('pixel_count', 0) > 0:
                 return True
-                
+
         return False
 
     def filter_annotations(self):
@@ -606,6 +620,40 @@ class Semantic(Base):
             return True
 
         return True
+
+    def determine_splits(self):
+        """
+        Assign annotations in self.selected_annotations to train/val/test lists.
+
+        Overrides the base class to handle MaskAnnotation paths correctly.
+        A mask annotation's image_path is always the underlying source path
+        (e.g. 'video.mp4' for video sources) rather than a virtual frame path
+        ('video.mp4::frame_N').  The base class does an exact set membership
+        check, which fails for video masks.  This override also accepts a match
+        when the normalized source paths agree.
+        """
+        train_set = set(self.train_images)
+        val_set = set(self.val_images)
+        test_set = set(self.test_images)
+
+        # Pre-build normalized source sets so video masks can match
+        train_sources = {normalize_source_path(p) for p in train_set}
+        val_sources = {normalize_source_path(p) for p in val_set}
+        test_sources = {normalize_source_path(p) for p in test_set}
+
+        def _in_split(ann, exact_set, source_set):
+            return (ann.image_path in exact_set or
+                    normalize_source_path(ann.image_path) in source_set)
+
+        self.train_annotations = [
+            a for a in self.selected_annotations if _in_split(a, train_set, train_sources)
+        ]
+        self.val_annotations = [
+            a for a in self.selected_annotations if _in_split(a, val_set, val_sources)
+        ]
+        self.test_annotations = [
+            a for a in self.selected_annotations if _in_split(a, test_set, test_sources)
+        ]
 
     def create_dataset(self, output_dir_path):
         """

@@ -128,6 +128,7 @@ class Annotation(QObject):
     annotationDeleted = pyqtSignal(object)
     annotationUpdated = pyqtSignal(object)
     verifiedChanged = pyqtSignal(object)
+    is_mask_annotation = False
 
     def __init__(self,
                  label: 'Label',
@@ -757,11 +758,16 @@ class Annotation(QObject):
         raise NotImplementedError("Subclasses must implement this method.")
 
     def show_warning_message(self):
-        """Display a warning message about removing machine suggestions when altering an annotation."""
+        """Display a warning message about altering an unverified annotation with machine predictions."""
         msg_box = QMessageBox()
         msg_box.setIcon(QMessageBox.Warning)
         msg_box.setWindowTitle("Warning")
-        msg_box.setText("Altering an annotation with predictions will remove the machine suggestions.")
+        msg_box.setText(
+            "Altering an annotation that still has machine learning predictions and is not verified "
+            "cannot be done because it would overwrite the machine-generated label before you confirm it. "
+            "To verify an annotation, select it and press Ctrl+Space, click a label in the ConfidenceWindow, "
+            "or update the label manually."
+        )
         msg_box.setStandardButtons(QMessageBox.Ok)
         msg_box.exec_()
 

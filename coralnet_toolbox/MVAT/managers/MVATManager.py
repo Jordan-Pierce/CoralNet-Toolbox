@@ -482,6 +482,9 @@ class MVATManager(QObject):
             # Phase 5 / multi-annotate
             self.context_matrix.set_mvat_manager(self)
             self.context_matrix.multiAnnotateToggled.connect(self._on_multi_annotate_toggled)
+            self.context_matrix.semanticMaskPropagationRequested.connect(
+                self.propagate_current_semantic_mask
+            )
         
         # 7. Target-Lock Sync (Phase 5): AnnotationWindow viewNavigated -> sync engine
         if hasattr(self.annotation_window, 'viewNavigated'):
@@ -2072,6 +2075,136 @@ class MVATManager(QObject):
             paths.discard(self.selected_camera.image_path)
         return paths
 
+    def _get_semantic_target_paths(self, source_camera) -> set:
+        """Return source-aware target paths for semantic prediction propagation."""
+        if source_camera is None:
+            return set()
+
+        target_paths = set(self._get_visible_context_camera_paths())
+        target_paths.discard(source_camera.image_path)
+
+        if self.ortho_camera is not None and source_camera is not self.ortho_camera:
+            target_paths.add(self.ortho_camera.image_path)
+
+        return target_paths
+
+    def _warn_semantic_propagation(self, message: str):
+        """Show a short warning when semantic propagation cannot run."""
+        print(f"⚠️ Semantic propagation skipped: {message}")
+
+        status_bar = getattr(self.main_window, 'status_bar', None)
+        if status_bar is not None:
+            try:
+                status_bar.showMessage(message, 5000)
+                return
+            except Exception:
+                pass
+
+        try:
+            QMessageBox.warning(self.main_window, "Semantic Propagation", message)
+        except Exception:
+            pass
+
+    def propagate_current_semantic_mask(self):
+        """Propagate the active AnnotationWindow semantic mask to MVAT targets."""
+        if self._propagating_annotation:
+            self._warn_semantic_propagation("Semantic propagation is already in progress.")
+            return
+
+        annotation_window = getattr(self.main_window, 'annotation_window', None)
+        if annotation_window is None:
+            self._warn_semantic_propagation("AnnotationWindow is not available.")
+            return
+
+        image_path = getattr(annotation_window, 'current_image_path', None)
+        if not image_path:
+            self._warn_semantic_propagation("No image is currently active in the AnnotationWindow.")
+            return
+
+        source_camera = self._get_camera_for_path(image_path)
+        if source_camera is None:
+            self._warn_semantic_propagation("The active image is not loaded in MVAT.")
+            return
+
+        target_paths = self._get_semantic_target_paths(source_camera)
+        if not target_paths:
+            self._warn_semantic_propagation("No target cameras are currently visible for semantic propagation.")
+            return
+
+        status_bar = getattr(self.main_window, 'status_bar', None)
+        if status_bar is not None:
+            try:
+                status_bar.showMessage(
+                    f"Propagating semantic mask to {len(target_paths)} target camera(s)...",
+                    0,
+                )
+            except Exception:
+                pass
+
+        source_raster = self.raster_manager.get_raster(image_path) if self.raster_manager is not None else None
+        source_mask = getattr(source_raster, 'mask_annotation', None)
+        if source_mask is None:
+            self._warn_semantic_propagation("The active image does not have a semantic mask to propagate.")
+            return
+
+        label_window = getattr(self.main_window, 'label_window', None)
+        project_labels = list(getattr(label_window, 'labels', [])) if label_window is not None else []
+        if not project_labels:
+            self._warn_semantic_propagation("No project labels are available for semantic propagation.")
+            return
+
+        try:
+            source_mask.sync_label_map(project_labels)
+        except Exception:
+            pass
+
+        try:
+            source_mask.update_graphics_item()
+        except Exception:
+            pass
+
+        mask_data = getattr(source_mask, 'mask_data', None)
+        if mask_data is None:
+            self._warn_semantic_propagation("The active semantic mask is missing mask data.")
+            return
+
+        lock_bit = getattr(source_mask, 'LOCK_BIT', None)
+        try:
+            if lock_bit is not None and int(lock_bit) > 1:
+                semantic_values = np.unique(mask_data % int(lock_bit))
+            else:
+                semantic_values = np.unique(mask_data)
+        except Exception:
+            semantic_values = np.unique(mask_data)
+
+        semantic_values = semantic_values[semantic_values > 0]
+        if len(semantic_values) == 0:
+            self._warn_semantic_propagation("The active semantic mask does not contain any labels to propagate.")
+            return
+
+        if getattr(source_camera, '_raster', None) is None or getattr(source_camera._raster, 'index_map', None) is None:
+            self._warn_semantic_propagation(
+                "The active camera does not have an index map, so semantic propagation is unavailable."
+            )
+            return
+
+        try:
+            self._on_semantic_prediction_applied(image_path, source_mask)
+        except Exception as exc:
+            print(f"Error while propagating semantic mask from {image_path}: {exc}")
+            traceback.print_exc()
+            self._warn_semantic_propagation("Semantic propagation failed. See console for details.")
+            return
+
+        if status_bar is not None:
+            try:
+                status_bar.showMessage(
+                    f"Semantic mask propagated to {len(target_paths)} target camera(s).",
+                    3000,
+                )
+            except Exception:
+                pass
+
     def _is_ortho_annotation_source(self) -> bool:
         """Return True when the active annotation source is the ortho view."""
         return self.ortho_camera is not None and self.selected_camera == self.ortho_camera
@@ -2177,6 +2310,48 @@ class MVATManager(QObject):
         raw_ids = source_index_map[mask_bool]
         unique_ids = np.unique(raw_ids)
         return unique_ids[unique_ids > -1].astype(np.int64, copy=False)
+
+    def _extract_source_element_ids_from_full_mask(self,
+                                                   source_camera,
+                                                   source_mask: np.ndarray) -> Optional[np.ndarray]:
+        """Extract raw visible element IDs from a full-frame binary mask.
+
+        Unlike _extract_source_ids_from_full_mask, this preserves duplicates so
+        callers can compute per-element class votes before collapsing to one
+        class per element.
+        """
+        raster = getattr(source_camera, '_raster', None)
+        if raster is None or source_mask is None:
+            return None
+
+        source_index_map = getattr(raster, 'index_map', None)
+        if source_index_map is None:
+            return None
+
+        source_mask = np.asarray(source_mask)
+        if source_mask.ndim != 2:
+            return None
+
+        needs_resize = (
+            source_mask.shape != source_index_map.shape or
+            (getattr(raster, 'index_map_scale_factor', None) not in (None, 1.0))
+        )
+
+        if needs_resize:
+            import cv2
+            mask_bool = cv2.resize(
+                source_mask.astype(np.uint8),
+                (source_index_map.shape[1], source_index_map.shape[0]),
+                interpolation=cv2.INTER_NEAREST,
+            ).astype(bool)
+        else:
+            mask_bool = source_mask.astype(bool)
+
+        if not np.any(mask_bool):
+            return np.array([], dtype=np.int64)
+
+        raw_ids = source_index_map[mask_bool]
+        return raw_ids[raw_ids > -1].astype(np.int64, copy=False)
 
     def _get_visible_context_paths(self) -> set:
         """Return the set of image paths currently visible in the context matrix."""
@@ -3487,6 +3662,269 @@ class MVATManager(QObject):
             # Clean up the live vector scratchpads across all cameras
             if self.context_matrix is not None:
                 self.context_matrix.clear_all_scratchpads()
+
+    def _on_semantic_prediction_applied(self, image_path: str, source_mask_annotation):
+        """Propagate a full-image semantic segmentation prediction to all target cameras.
+
+        Called by Semantic.predict() after each image is processed when multi-annotate
+        is enabled. For each labeled class in the predicted mask, extracts the
+        corresponding 3D element IDs (via the source camera's index map) and paints
+        them into every visible target camera using the same 3D pipeline as brush strokes.
+
+        Perspective ↔ orthomosaic propagation is supported: when the source is an
+        OrthoCamera, targets are all visible perspective cameras; when the source is a
+        perspective camera, targets include visible context cameras plus the ortho.
+
+        Cameras without a pre-computed index map are skipped — full-image warping
+        without geometry is too imprecise to be useful for semantic masks.
+
+        Args:
+            image_path: Path of the image whose Semantic prediction just completed.
+            source_mask_annotation: The MaskAnnotation whose mask_data was just
+                                    updated by the Semantic model.
+        """
+        if self._propagating_annotation:
+            return
+
+        source_camera = self._get_camera_for_path(image_path)
+        if source_camera is None:
+            return
+
+        selected_paths = self._get_semantic_target_paths(source_camera)
+
+        if not selected_paths:
+            return
+
+        project_labels = list(self.main_window.label_window.labels)
+        semantic_mask = source_mask_annotation.mask_data
+        LOCK_BIT = source_mask_annotation.LOCK_BIT
+        source_index_map = getattr(getattr(source_camera, '_raster', None), 'index_map', None)
+        if source_index_map is None:
+            return
+
+        # Unique real class IDs in the prediction (lock bit stripped, skip background)
+        unique_real_ids = np.unique(semantic_mask % LOCK_BIT)
+        unique_real_ids = unique_real_ids[unique_real_ids > 0]
+        if len(unique_real_ids) == 0:
+            return
+
+        # Phase 1: Build per-element class votes on the main thread.
+        # Each source element is assigned to the dominant semantic class once,
+        # so we do not end up painting the same element with multiple classes.
+        element_votes = {}
+        class_labels = {}
+        for real_class_id in unique_real_ids:
+            label = source_mask_annotation.class_id_to_label_map.get(int(real_class_id))
+            if label is None:
+                continue
+            class_labels[int(real_class_id)] = label
+            binary_mask = (semantic_mask % LOCK_BIT == real_class_id).astype(bool)
+            if not np.any(binary_mask):
+                continue
+
+            source_element_ids = self._extract_source_element_ids_from_full_mask(source_camera, binary_mask)
+            if source_element_ids is None or len(source_element_ids) == 0:
+                continue
+
+            unique_element_ids, counts = np.unique(source_element_ids, return_counts=True)
+            for element_id, count in zip(unique_element_ids.tolist(), counts.tolist()):
+                vote_map = element_votes.setdefault(int(element_id), {})
+                vote_map[int(real_class_id)] = vote_map.get(int(real_class_id), 0) + int(count)
+
+        if not element_votes:
+            return
+
+        class_data = {}
+        for element_id, vote_map in element_votes.items():
+            winner_class_id = max(vote_map.items(), key=lambda item: (item[1], -item[0]))[0]
+            class_data.setdefault(winner_class_id, []).append(element_id)
+
+        class_data = {
+            class_id: (
+                np.asarray(sorted(set(element_ids)), dtype=np.int64),
+                class_labels.get(class_id),
+            )
+            for class_id, element_ids in class_data.items()
+            if class_labels.get(class_id) is not None
+        }
+
+        if not class_data:
+            return
+
+        # Phase 2: Paint the scene mesh directly so semantic batches do not
+        # lose classes to the live-stroke queue coalescing behavior.
+        primary_target = self.viewer.scene_context.get_primary_target()
+        if primary_target and hasattr(primary_target, 'apply_labels'):
+            for real_class_id, (element_ids, label) in class_data.items():
+                if element_ids is None or len(element_ids) == 0:
+                    continue
+                target_color = (label.color.red(), label.color.green(), label.color.blue())
+                try:
+                    primary_target.apply_labels(element_ids, real_class_id, target_color)
+                except Exception:
+                    continue
+
+            try:
+                primary_target.flush_labels_to_gpu()
+            except Exception:
+                pass
+
+            try:
+                self.viewer.plotter.render()
+            except Exception:
+                pass
+
+            if isinstance(primary_target, MeshProduct):
+                try:
+                    mesh = primary_target.get_render_mesh()
+                    class_ids = getattr(primary_target, 'class_ids', None)
+                    labels_cache = getattr(primary_target, '_labels_cache', None)
+                    if mesh is not None and class_ids is not None and labels_cache is not None:
+                        painted_faces = np.where(class_ids != 0)[0]
+                        if len(painted_faces) > 0:
+                            mesh_faces_flat = np.asarray(mesh.faces.reshape(-1, 4), dtype=np.int32)
+                            mesh_points = np.asarray(mesh.points, dtype=np.float32)
+
+                            selected = mesh_faces_flat[painted_faces, 1:]
+                            unique_vids, inverse = np.unique(selected, return_inverse=True)
+                            overlay_points = mesh_points[unique_vids]
+                            remapped = inverse.reshape(selected.shape)
+                            vtk_faces = np.hstack([
+                                np.full((len(painted_faces), 1), 3, dtype=np.int32),
+                                remapped.astype(np.int32),
+                            ]).ravel()
+
+                            colors = np.asarray(labels_cache[painted_faces], dtype=np.uint8)
+                            self._on_overlay_ready((overlay_points, vtk_faces, colors))
+                except Exception:
+                    pass
+
+        self._propagating_annotation = True
+        try:
+            # Phase 3: Resolve target masks and class ID maps — only cameras with
+            # index maps can receive accurate full-image 3D propagation.
+            target_masks = {}        # target_path -> MaskAnnotation
+            target_cameras_map = {}  # target_path -> Camera
+            # (target_path, real_class_id) -> target_class_id
+            target_class_id_map = {}
+
+            for target_path in list(selected_paths):
+                target_camera = self._get_camera_for_path(target_path)
+                if target_camera is None:
+                    continue
+                if (target_camera._raster is None or
+                        target_camera._raster.index_map is None):
+                    continue  # Skip cameras without geometry data
+
+                target_raster = self.raster_manager.get_raster(target_path)
+                if target_raster is None:
+                    continue
+                target_mask = target_raster.mask_annotation
+                if target_mask is None:
+                    target_mask = target_raster.get_mask_annotation(project_labels)
+                if target_mask is None:
+                    continue
+
+                target_masks[target_path] = target_mask
+                target_cameras_map[target_path] = target_camera
+
+                for real_class_id, (_, label) in class_data.items():
+                    t_class_id = target_mask.label_id_to_class_id_map.get(label.id)
+                    if t_class_id is None:
+                        target_mask.sync_label_map([label])
+                        t_class_id = target_mask.label_id_to_class_id_map.get(label.id)
+                    if t_class_id is not None:
+                        target_class_id_map[(target_path, real_class_id)] = t_class_id
+                        target_mask._get_color_map()  # Pre-warm cache
+
+            if not target_masks:
+                return
+
+            # Phase 4: Dispatch one future per target camera, batching ALL classes
+            # together so that get_pixels_for_elements is never called concurrently
+            # on the same camera object.  Concurrent calls on the same camera race on
+            # the shared _lut_buf, corrupting which pixels map to which class.
+            def _lookup_classes_for_camera(camera, class_items):
+                """Sequentially look up pixel indices for every class in class_items.
+
+                Args:
+                    camera: Camera or OrthoCamera whose index_map will be queried.
+                    class_items: list of (real_class_id, element_ids) tuples.
+
+                Returns:
+                    dict mapping real_class_id -> flat pixel index array.
+                """
+                out = {}
+                for real_class_id, element_ids in class_items:
+                    out[real_class_id] = camera.get_pixels_for_elements(element_ids)
+                return out
+
+            futures = {}  # Future -> target_path
+            for target_path, target_camera in target_cameras_map.items():
+                class_items = [
+                    (real_class_id, element_ids)
+                    for real_class_id, (element_ids, _) in class_data.items()
+                    if (target_path, real_class_id) in target_class_id_map
+                    and element_ids is not None and len(element_ids) > 0
+                ]
+                if not class_items:
+                    continue
+                future = self._propagation_executor.submit(
+                    _lookup_classes_for_camera, target_camera, class_items
+                )
+                futures[future] = target_path
+
+            # Phase 5: Collect results and apply masks (silent, Qt update deferred)
+            updated_targets = set()
+            for future in as_completed(futures):
+                target_path = futures[future]
+                try:
+                    class_pixel_map = future.result()  # {real_class_id: flat_indices}
+                except Exception:
+                    continue
+
+                target_mask = target_masks[target_path]
+
+                for real_class_id, flat_indices in class_pixel_map.items():
+                    if flat_indices is None or len(flat_indices) == 0:
+                        continue
+
+                    target_class_id = target_class_id_map.get((target_path, real_class_id))
+                    if target_class_id is None:
+                        continue
+
+                    # Pixel diff filter: only write pixels that are unlocked and differ
+                    current_vals = target_mask.mask_data.ravel()[flat_indices]
+                    changed_indices = flat_indices[
+                        (current_vals < LOCK_BIT) & (current_vals != target_class_id)
+                    ]
+                    if len(changed_indices) == 0:
+                        continue
+
+                    target_mask.update_mask_at_indices(
+                        changed_indices, target_class_id, silent=True
+                    )
+
+                    label = class_data[real_class_id][1]
+                    if label.id not in target_mask.visible_label_ids:
+                        target_mask.visible_label_ids.add(label.id)
+
+                    updated_targets.add(target_path)
+
+            # Phase 6: Qt graphics update per modified target (main thread)
+            for target_path in updated_targets:
+                target_mask = target_masks[target_path]
+                target_mask.update_graphics_item()
+
+                context_canvas = self._get_context_canvas_for_path(target_path)
+                if context_canvas is not None and context_canvas._mask_overlay_item is None:
+                    context_canvas.set_mask_overlay(target_mask)
+
+        except Exception as e:
+            print(f"Error in multi-annotate semantic propagation: {e}")
+            traceback.print_exc()
+        finally:
+            self._propagating_annotation = False
 
     def cleanup(self):
         """Clean up resources before closing."""

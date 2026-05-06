@@ -425,7 +425,10 @@ class SelectTool(Tool):
             QMessageBox.warning(
                 self.annotation_window,
                 "Cannot Combine",
-                "Cannot combine annotations with machine confidence. Confirm predictions (Ctrl+Space) first."
+                "Cannot combine annotations that still have machine learning predictions until they are verified. "
+                "This prevents changes to machine-generated labels before user confirmation. To verify an "
+                "annotation, select it and press Ctrl+Space, click a label in the ConfidenceWindow, or update "
+                "the label manually."
             )
             return
         

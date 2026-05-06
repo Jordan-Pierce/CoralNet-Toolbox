@@ -327,6 +327,8 @@ class ImageWindow(QWidget):
         self.tableView.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tableView.customContextMenuRequested.connect(self.show_context_menu)
         self.tableView.setMouseTracking(True)
+        self.tableView.setWordWrap(False)
+        self.tableView.setTextElideMode(Qt.ElideRight)
         self.tableView.viewport().installEventFilter(self)
         self.tableView.installEventFilter(self)
         

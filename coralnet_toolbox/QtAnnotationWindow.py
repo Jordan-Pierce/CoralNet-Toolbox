@@ -51,6 +51,7 @@ from coralnet_toolbox.QtActions import (
     ChangeLabelsAction,
     ResizeAnnotationAction,
     AnnotationGeometryEditAction,
+    MaskEditAction,
 )
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
@@ -768,15 +769,36 @@ class AnnotationWindow(BaseCanvas):
         """
         # Only update graphics if the annotation belongs to the currently displayed image
         # and has a valid graphics item in the scene
-        if (updated_annotation.image_path == self.current_image_path and 
-            updated_annotation.is_graphics_item_valid()):
+        if (updated_annotation.image_path == self.current_image_path and
+                updated_annotation.is_graphics_item_valid()):
             updated_annotation.update_graphics_item()
+
+        if getattr(updated_annotation, 'is_mask_annotation', False):
+            # MaskAnnotation stores its item in graphics_item, not graphics_item_group,
+            # so is_graphics_item_valid() always returns False for it.  Call
+            # refresh_graphics() directly: this recreates the QImage (busting Qt's
+            # OpenGL texture cache) and marks the item dirty so paint() is invoked.
+            if updated_annotation.image_path == self.current_image_path:
+                updated_annotation.refresh_graphics()
+            self.refresh_mask_annotation_view(updated_annotation)
 
         try:
             self.annotationModified.emit(updated_annotation.id)
         except Exception:
             pass
-            
+
+    def refresh_mask_annotation_view(self, mask_annotation):
+        """Recompute mask statistics and refresh the raster metadata for one image."""
+        if mask_annotation is None:
+            return
+
+        mask_annotation.recalculate_class_statistics()
+
+        self.main_window.image_window.update_image_annotations(mask_annotation.image_path)
+
+        if mask_annotation.image_path == self.current_image_path:
+            self.viewport().update()
+   
     def set_incoming_marker(self, u, v, color):
         """Set the incoming marker (focal point) position and color from MVAT.
         
@@ -2255,7 +2277,25 @@ class AnnotationWindow(BaseCanvas):
         is_new = raster.mask_annotation is None
         project_labels = self.main_window.label_window.labels
         mask_annotation = raster.get_mask_annotation(project_labels)
+        try:
+            self.annotation_manager.register_mask_annotation(mask_annotation)
+        except Exception:
+            pass
+        try:
+            if not getattr(mask_annotation, '_signals_connected', False):
+                mask_annotation.annotationUpdated.connect(self.on_annotation_updated)
+                mask_annotation._signals_connected = True
+        except Exception:
+            pass
         if is_new:
+            # Newly created annotation has no graphics item — add it to the scene now
+            # so paint/fill/create operations render immediately without a load cycle.
+            if mask_annotation.graphics_item and mask_annotation.graphics_item.scene():
+                mask_annotation.graphics_item.scene().removeItem(mask_annotation.graphics_item)
+            mask_annotation.create_graphics_item(self.scene)
+            if mask_annotation.graphics_item:
+                mask_annotation.graphics_item.setZValue(-5)
+            mask_annotation.update_graphics_item()
             self.main_window.status_bar.showMessage(
                 f"Creating mask annotation for {os.path.basename(self.current_image_path)}…", 3000
             )
@@ -2277,9 +2317,14 @@ class AnnotationWindow(BaseCanvas):
         
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-            
+
+        history_action = MaskEditAction(self.current_mask_annotation, description="Rasterize annotations")
+
         # The MaskAnnotation handles the efficient protection marking internally
-        self.current_mask_annotation.rasterize_annotations(annotations)
+        self.current_mask_annotation.rasterize_annotations(annotations, history_action=history_action)
+
+        if not history_action.is_empty():
+            self.action_stack.push(history_action)
 
         # Restore cursor
         QApplication.restoreOverrideCursor()
@@ -2293,7 +2338,11 @@ class AnnotationWindow(BaseCanvas):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
         if self.current_mask_annotation:
-            self.current_mask_annotation.unrasterize_annotations()
+            history_action = MaskEditAction(self.current_mask_annotation, description="Unrasterize annotations")
+            self.current_mask_annotation.unrasterize_annotations(history_action=history_action)
+
+            if not history_action.is_empty():
+                self.action_stack.push(history_action)
             
         # Restore cursor
         QApplication.restoreOverrideCursor()
@@ -3086,6 +3135,14 @@ class AnnotationWindow(BaseCanvas):
         
         # If this is a MaskAnnotation, update the raster's reference to it
         if isinstance(annotation, MaskAnnotation):
+            try:
+                self.annotation_manager.register_mask_annotation(annotation)
+            except Exception:
+                pass
+            try:
+                annotation._signals_connected = True
+            except Exception:
+                pass
             raster = self.main_window.image_window.raster_manager.get_raster(annotation.image_path)
             if raster:
                 raster.mask_annotation = annotation
@@ -3214,6 +3271,12 @@ class AnnotationWindow(BaseCanvas):
                 if annotation in self.image_annotations_dict[annotation.image_path]:
                     self.image_annotations_dict[annotation.image_path].remove(annotation)
 
+            if isinstance(annotation, MaskAnnotation):
+                try:
+                    self.annotation_manager.unregister_mask_annotation(annotation)
+                except Exception:
+                    pass
+
             annotation.delete()
             del self.annotations_dict[annotation_id]
             self.annotationDeleted.emit(annotation_id)
@@ -3281,6 +3344,12 @@ class AnnotationWindow(BaseCanvas):
         for ann in annotations:
             if ann.id in self.annotations_dict:
                 del self.annotations_dict[ann.id]
+
+            if isinstance(ann, MaskAnnotation):
+                try:
+                    self.annotation_manager.unregister_mask_annotation(ann)
+                except Exception:
+                    pass
                 
             # Block the annotation's own internal signals as well
             ann.blockSignals(True)

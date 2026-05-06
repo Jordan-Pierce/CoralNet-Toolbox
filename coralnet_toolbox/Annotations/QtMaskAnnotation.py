@@ -52,6 +52,7 @@ class MaskGraphicsItem(QGraphicsItem):
 
 class MaskAnnotation(Annotation):
     LOCK_BIT = 2**7  # For uint8, this is 128
+    is_mask_annotation = True
 
     def __init__(self,
                  image_path: str,
@@ -220,25 +221,130 @@ class MaskAnnotation(Annotation):
         self.graphics_item = MaskGraphicsItem(self)
         scene.addItem(self.graphics_item)
 
+    def refresh_graphics(self):
+        """Recreate QImage to bust Qt's OpenGL texture cache and schedule a repaint.
+
+        Call this whenever colored_mask has been updated in-place (e.g. silent brush
+        strokes) and Qt needs to re-upload the texture without a full canvas rebuild.
+        """
+        if self.graphics_item is None:
+            return
+        try:
+            if self.graphics_item.scene() is None:
+                return
+        except RuntimeError:
+            return
+        height, width = self.mask_data.shape
+        self.qimage = QImage(self.colored_mask.data, width, height, QImage.Format_RGBA8888)
+        self.graphics_item.update()
+
     def update_graphics_item(self, update_rect=None):
         """Update the graphics item when mask data has changed."""
         if self.graphics_item is None:
             return
-        
+
+        height, width = self.mask_data.shape
+
         if update_rect:
             # Localized update for brush strokes - update only the changed area
             self._update_canvas_slice(update_rect)
-            qt_rect = QRectF(update_rect[0], 
-                             update_rect[1], 
-                             update_rect[2] - update_rect[0], 
+            # Recreate QImage so Qt's OpenGL texture cache sees a new cacheKey
+            self.qimage = QImage(self.colored_mask.data, width, height, QImage.Format_RGBA8888)
+            qt_rect = QRectF(update_rect[0],
+                             update_rect[1],
+                             update_rect[2] - update_rect[0],
                              update_rect[3] - update_rect[1])
             self.graphics_item.update(qt_rect)
         else:
             # Full update for global changes (e.g., label color changes)
             self._update_full_canvas()
+            # Recreate QImage so Qt's OpenGL texture cache sees a new cacheKey
+            self.qimage = QImage(self.colored_mask.data, width, height, QImage.Format_RGBA8888)
             self.graphics_item.update()
 
-    def update_mask(self, brush_location: QPointF, brush_mask: np.ndarray, new_class_id: int, silent: bool = False, use_new_method: bool = True):
+    def apply_flat_values_at_indices(self, flat_indices, class_values, silent: bool = False, update_rect=None):
+        """Apply raw mask values at exact flat indices without lock filtering.
+
+        This is the low-level replay path used by undo/redo actions. The caller
+        is responsible for any lock validation or history capture.
+
+        Returns:
+            dict | None: Change metadata containing the applied indices and values,
+            or None if no pixels changed.
+        """
+        if flat_indices is None:
+            return None
+
+        flat_indices = np.asarray(flat_indices, dtype=np.int64).ravel()
+        if flat_indices.size == 0:
+            return None
+
+        height, width = self.mask_data.shape
+        flat_view = self.mask_data.ravel()
+        valid_mask = (flat_indices >= 0) & (flat_indices < flat_view.size)
+        if not np.any(valid_mask):
+            return None
+
+        target_indices = flat_indices[valid_mask]
+        if target_indices.size == 0:
+            return None
+
+        new_values = np.asarray(class_values, dtype=flat_view.dtype).ravel()
+        if new_values.size == 1:
+            new_values = np.full(target_indices.size, new_values.item(), dtype=flat_view.dtype)
+        elif new_values.size != target_indices.size:
+            raise ValueError("Raw mask edit values must match the number of target pixels.")
+
+        before_values = flat_view[target_indices].copy()
+        changed_mask = before_values != new_values
+        if not np.any(changed_mask):
+            return None
+
+        target_indices = target_indices[changed_mask]
+        before_values = before_values[changed_mask]
+        new_values = new_values[changed_mask]
+
+        flat_view[target_indices] = new_values
+
+        color_map = self._get_color_map()
+        colored_flat = self.colored_mask.reshape(-1, 4)
+        colored_flat[target_indices] = color_map[new_values]
+
+        if update_rect is None:
+            y_coords, x_coords = np.divmod(target_indices, width)
+            x_min, x_max = int(x_coords.min()), int(x_coords.max())
+            y_min, y_max = int(y_coords.min()), int(y_coords.max())
+            update_rect = (
+                max(0, x_min - 1),
+                max(0, y_min - 1),
+                min(width, x_max + 2),
+                min(height, y_max + 2),
+            )
+
+        if self.graphics_item is not None and not silent:
+            if target_indices.size < 250000:
+                qt_rect = QRectF(
+                    update_rect[0],
+                    update_rect[1],
+                    update_rect[2] - update_rect[0],
+                    update_rect[3] - update_rect[1],
+                )
+                self.graphics_item.update(qt_rect)
+            else:
+                self.graphics_item.update()
+
+        self._invalidate_stats_cache()
+        if not silent:
+            self.annotationUpdated.emit(self)
+
+        return {
+            "flat_indices": target_indices,
+            "before_values": before_values,
+            "after_values": new_values,
+            "update_rect": update_rect,
+        }
+
+    def update_mask(self, brush_location: QPointF, brush_mask: np.ndarray, new_class_id: int, silent: bool = False, use_new_method: bool = True, history_action=None):
         """
         Modify the mask data based on a brush stroke, respecting pre-locked pixels.
         Includes A/B testing for Diff-Filtering to skip redundant GPU/Qt updates.
@@ -277,6 +383,10 @@ class MaskAnnotation(Annotation):
             if pixels_updated == 0:
                 return
 
+            local_ys, local_xs = np.where(pixels_to_change)
+            flat_indices = ((clipped_y_start + local_ys) * mask_w + (clipped_x_start + local_xs)).astype(np.int64)
+            before_values = target_slice[pixels_to_change].copy()
+
             # 1. Apply to semantic data
             target_slice[pixels_to_change] = new_class_id
             
@@ -289,23 +399,46 @@ class MaskAnnotation(Annotation):
             if self.graphics_item is not None and not silent:
                 qt_rect = QRectF(clipped_x_start, clipped_y_start, x_end - clipped_x_start, y_end - clipped_y_start)
                 self.graphics_item.update(qt_rect)
+
+            if history_action is not None:
+                history_action.add_change(
+                    flat_indices,
+                    before_values,
+                    np.full(pixels_updated, new_class_id, dtype=self.mask_data.dtype),
+                    update_rect=(clipped_x_start, clipped_y_start, x_end, y_end),
+                )
             
         else:
             # --- OLD: RAW APPLY & CANVAS SLICE REBUILD ---
             final_brush_mask = clipped_brush_mask & unlocked_pixels_mask
             pixels_updated = np.count_nonzero(final_brush_mask)
+
+            if pixels_updated == 0:
+                return
+
+            local_ys, local_xs = np.where(final_brush_mask)
+            flat_indices = ((clipped_y_start + local_ys) * mask_w + (clipped_x_start + local_xs)).astype(np.int64)
+            before_values = target_slice[final_brush_mask].copy()
             
             target_slice[final_brush_mask] = new_class_id
             
             changed_rect_coords = (clipped_x_start, clipped_y_start, x_end, y_end)
             if not silent:
                 self.update_graphics_item(update_rect=changed_rect_coords)
+
+            if history_action is not None:
+                history_action.add_change(
+                    flat_indices,
+                    before_values,
+                    np.full(pixels_updated, new_class_id, dtype=self.mask_data.dtype),
+                    update_rect=changed_rect_coords,
+                )
             
         self._invalidate_stats_cache()
         if not silent:
             self.annotationUpdated.emit(self)
         
-    def update_mask_at_indices(self, flat_indices: np.ndarray, class_id: int, silent: bool = False, method: str = "hybrid_diff"):
+    def update_mask_at_indices(self, flat_indices: np.ndarray, class_id: int, silent: bool = False, method: str = "hybrid_diff", history_action=None):
         """
         Paint ``class_id`` at the exact pixel positions given by ``flat_indices``.
         Respects the LOCK_BIT: locked pixels are never overwritten.
@@ -343,6 +476,7 @@ class MaskAnnotation(Annotation):
                 return
 
         pixels_updated = len(target_indices)
+        before_values = flat_view[target_indices].copy()
 
         # 1. Update the semantic mask data
         flat_view[target_indices] = class_id
@@ -393,7 +527,22 @@ class MaskAnnotation(Annotation):
         if not silent:
             self.annotationUpdated.emit(self)
 
-    def update_mask_with_mask(self, subset_mask: np.ndarray, top_left: tuple[int, int], silent: bool = False, use_new_method: bool = True):
+        if history_action is not None and pixels_updated > 0:
+            y_coords, x_coords = np.divmod(target_indices, width)
+            update_rect = (
+                max(0, int(x_coords.min()) - 1),
+                max(0, int(y_coords.min()) - 1),
+                min(width, int(x_coords.max()) + 2),
+                min(height, int(y_coords.max()) + 2),
+            )
+            history_action.add_change(
+                target_indices,
+                before_values,
+                np.full(pixels_updated, class_id, dtype=flat_view.dtype),
+                update_rect=update_rect,
+            )
+
+    def update_mask_with_mask(self, subset_mask: np.ndarray, top_left: tuple[int, int], silent: bool = False, use_new_method: bool = True, history_action=None):
         """
         Updates a subset area of the mask with a provided mask containing multiple labels.
         Includes A/B testing for Diff-Filtering to skip redundant GPU/Qt updates.
@@ -429,6 +578,10 @@ class MaskAnnotation(Annotation):
             # FAST EXIT: If the predicted mask matches what is already there, skip redraw!
             if pixels_updated == 0:
                 return
+
+            before_values = target_slice[pixels_to_change].copy()
+            local_rows, local_cols = np.where(pixels_to_change)
+            flat_indices = ((y_start + local_rows) * self.mask_data.shape[1] + (x_start + local_cols)).astype(np.int64)
                 
             # 1. Apply the subset mask only to pixels that need changing
             target_slice[pixels_to_change] = subset_slice[pixels_to_change]
@@ -443,21 +596,37 @@ class MaskAnnotation(Annotation):
             if self.graphics_item is not None and not silent:
                 qt_rect = QRectF(x_start, y_start, x_end - x_start, y_end - y_start)
                 self.graphics_item.update(qt_rect)
-                
         else:
             # --- OLD: RAW APPLY & CANVAS SLICE REBUILD ---
-            pixels_updated = np.count_nonzero(unlocked_pixels_mask)
-            target_slice[unlocked_pixels_mask] = subset_slice[unlocked_pixels_mask]
+            pixels_to_change = unlocked_pixels_mask
+            pixels_updated = np.count_nonzero(pixels_to_change)
+            
+            if pixels_updated == 0:
+                return
+
+            before_values = target_slice[pixels_to_change].copy()
+            local_rows, local_cols = np.where(pixels_to_change)
+            flat_indices = ((y_start + local_rows) * self.mask_data.shape[1] + (x_start + local_cols)).astype(np.int64)
+            
+            target_slice[pixels_to_change] = subset_slice[pixels_to_change]
             
             update_rect = (x_start, y_start, x_end, y_end)
             if not silent:
                 self.update_graphics_item(update_rect=update_rect)
-            
+        
+        if history_action is not None and pixels_updated > 0:
+            history_action.add_change(
+                flat_indices,
+                before_values,
+                subset_slice[pixels_to_change].copy(),
+                update_rect=(x_start, y_start, x_end, y_end),
+            )
+        
         self._invalidate_stats_cache()
         if not silent:
             self.annotationUpdated.emit(self)
         
-    def update_mask_with_prediction_mask(self, prediction_mask, top_left=(0, 0)):
+    def update_mask_with_prediction_mask(self, prediction_mask, top_left=(0, 0), history_action=None):
         """
         Updates a full-size prediction mask with the current mask data.
 
@@ -506,7 +675,7 @@ class MaskAnnotation(Annotation):
         # 7. Call the existing update method with the *small merged tile*
         #    This reuses all your existing logic for locked pixels and
         #    graphics updates, but now only on a small, efficient region.
-        self.update_mask_with_mask(merged_tile, paste_top_left)
+        self.update_mask_with_mask(merged_tile, paste_top_left, history_action=history_action)
         
         # Proactively recalculate stats, as this signals the end of an edit session
         self.recalculate_class_statistics()
@@ -565,7 +734,7 @@ class MaskAnnotation(Annotation):
 
     # --- Data Manipulation & Editing Methods ---
 
-    def fill_region(self, point: QPointF, new_class_id: int):
+    def fill_region(self, point: QPointF, new_class_id: int, history_action=None):
         """
         Fills a contiguous region with a new class ID using optimized OpenCV floodFill, 
         respecting pre-locked pixels.
@@ -612,10 +781,14 @@ class MaskAnnotation(Annotation):
 
         # Extract the unpadded boolean mask where pixels were successfully filled
         fill_mask = cv_mask[1:-1, 1:-1] == 255
+
+        flat_indices = np.flatnonzero(fill_mask.ravel())
+        before_values = self.mask_data.ravel()[flat_indices].copy()
         
         # Apply the fill to the actual data. Locked pixels inherently stopped the floodFill
         # because they have a different class ID (e.g., old_class_id + 128), so they are safe.
         self.mask_data[fill_mask] = new_class_id
+        after_values = self.mask_data.ravel()[flat_indices].copy()
         
         # Use OpenCV's exact bounding box (x, y, w, h) for a lightning-fast localized update
         x_min, y_min, fill_w, fill_h = rect
@@ -628,6 +801,14 @@ class MaskAnnotation(Annotation):
             min(height, y_min + fill_h + 1)
         )
         self.update_graphics_item(update_rect=update_rect)
+
+        if history_action is not None and flat_indices.size > 0:
+            history_action.add_change(
+                flat_indices,
+                before_values,
+                after_values,
+                update_rect=update_rect,
+            )
 
         self._invalidate_stats_cache()
         QApplication.restoreOverrideCursor()
@@ -682,26 +863,26 @@ class MaskAnnotation(Annotation):
         else:
             raise ValueError(f"Unknown rasterization mode: {mode}. Use 'shapely' or 'rasterio'.")
         
-    def rasterize_annotations(self, all_annotations: list):
+    def rasterize_annotations(self, all_annotations: list, history_action=None):
         """
         Unified method to sync vector annotations with the mask.
         
         Args:
             all_annotations: List of vector annotations to process
-        """        
+        """
         if not all_annotations:
             return  # Nothing to do if no annotations
-        
+
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-            
+
         height, width = self.mask_data.shape
-        
+
         # Section 1: Build geometries list AND filter annotations that actually need processing
         geometries = []
         annotations_to_process = []
         all_bounds = []
-        
+
         for annotation in all_annotations:
             if not hasattr(annotation, 'get_polygon'):
                 continue
@@ -713,67 +894,71 @@ class MaskAnnotation(Annotation):
                 if len(points) < 3:
                     continue
                 shapely_poly = Polygon(points)
-                
+
                 # Get the class ID for this annotation's label
                 class_id = self.label_id_to_class_id_map.get(annotation.label.id)
                 if class_id is None:
                     continue  # Skip if label not in mask
-                    
+
                 geometries.append(shapely_poly)
                 annotations_to_process.append(annotation)
                 all_bounds.append(shapely_poly.bounds)
-                
+
             except Exception as e:
                 print(f"Warning: Could not process annotation {annotation.id}: {e}")
                 continue
-        
+
         if not geometries:
             # No valid geometries to rasterize
             QApplication.restoreOverrideCursor()
             return
-        
-        # No need to update if the mask is already empty, check before rasterization
-        update_canvas = True if np.any(self.mask_data) else False
 
         # Section 2: Rasterize geometries
         annotation_mask = self._fast_rasterize(geometries, width, height, mode="rasterio")
-        
+        flat_indices = np.flatnonzero(annotation_mask.ravel())
+        before_values = self.mask_data.ravel()[flat_indices].copy()
+
         # Section 3: Clear mask pixels under annotations FIRST
         if np.any(annotation_mask):
             # Clear mask pixels under annotations (set to 0)
             self.mask_data[annotation_mask] = 0
-        
+
         # Section 4: Apply locking to the cleared areas
         # Only lock pixels that are NOT already locked
         to_lock = annotation_mask & (self.mask_data < self.LOCK_BIT)
         if np.any(to_lock):
             self.mask_data[to_lock] += self.LOCK_BIT
-            
+
         # Invalidate the cache since we modified the mask data
         if np.any(annotation_mask) or np.any(to_lock):
             self._invalidate_stats_cache()
-        
-        if not update_canvas:
-            QApplication.restoreOverrideCursor()
-            return  # No visual update needed
-        
+
         # Calculate smart combined bounding box
         if all_bounds:
             min_x = min(b[0] for b in all_bounds)
             min_y = min(b[1] for b in all_bounds)
             max_x = max(b[2] for b in all_bounds)
             max_y = max(b[3] for b in all_bounds)
-            
+
             # Add padding (5 pixels) to handle anti-aliasing edges
             x_min = max(0, int(min_x) - 5)
             y_min = max(0, int(min_y) - 5)
             x_max = min(width, int(max_x) + 6)  # +1 for inclusive, +5 for padding
             y_max = min(height, int(max_y) + 6)
-            
+
             update_rect = (x_min, y_min, x_max, y_max)
         else:
             update_rect = None
-            
+
+        if history_action is not None and flat_indices.size > 0:
+            after_values = self.mask_data.ravel()[flat_indices].copy()
+            history_action.add_change(
+                flat_indices,
+                before_values,
+                after_values,
+                update_rect=update_rect,
+            )
+
         # Section 5: Smart localized repaint
         if np.any(to_lock) or np.any(annotation_mask):
             if update_rect and (x_max - x_min) * (y_max - y_min) < width * height * 0.3:  # If < 30% of image
@@ -783,37 +968,74 @@ class MaskAnnotation(Annotation):
                 # Fall back to full update if annotations cover too much area
                 self.update_graphics_item()
 
+            self.annotationUpdated.emit(self)
+
         # Restore cursor
         QApplication.restoreOverrideCursor()
 
-    def unrasterize_annotations(self):
+    def unrasterize_annotations(self, history_action=None):
         """
         Remove lock protection from all pixels that were marked as locked.
         This allows mask editing over previously protected vector annotation areas.
         """
         # Find all pixels that have the lock bit set and remove it
         locked_pixels = self.mask_data >= self.LOCK_BIT
-        
+        flat_indices = np.flatnonzero(locked_pixels.ravel())
+        before_values = self.mask_data.ravel()[flat_indices].copy()
+
         # Remove the lock bit from these pixels, keeping their original class
         if np.any(locked_pixels):
             self.mask_data[locked_pixels] = self.mask_data[locked_pixels] - self.LOCK_BIT
 
+        if history_action is not None and flat_indices.size > 0:
+            after_values = self.mask_data.ravel()[flat_indices].copy()
+            history_action.add_change(
+                flat_indices,
+                before_values,
+                after_values,
+                update_rect=None,
+            )
+
+        if self.graphics_item is not None and np.any(locked_pixels):
+            self.update_graphics_item()
+
         # Proactively recalculate stats, as this signals the end of an edit session
         self.recalculate_class_statistics()
+        if np.any(locked_pixels):
+            self.annotationUpdated.emit(self)
 
-    def clear_pixels_for_class(self, class_id: int):
+    def clear_pixels_for_class(self, class_id: int, history_action=None):
         """Finds all pixels matching a class ID (both locked and unlocked) and resets them to 0."""
         if class_id == 0:  # Cannot clear background class
             return
 
         # Create a boolean mask of all pixels whose real class ID matches.
         pixels_to_clear = (self.mask_data % self.LOCK_BIT) == class_id
-        
+        flat_indices = np.flatnonzero(pixels_to_clear.ravel())
+        before_values = self.mask_data.ravel()[flat_indices].copy()
+
         # Set these pixels back to 0 (unclassified).
         self.mask_data[pixels_to_clear] = 0
+        if history_action is not None and flat_indices.size > 0:
+            history_action.add_change(
+                flat_indices,
+                before_values,
+                np.zeros(flat_indices.size, dtype=self.mask_data.dtype),
+                update_rect=None,
+            )
+
+        if np.any(pixels_to_clear):
+            coords = np.where(pixels_to_clear)
+            y_min, y_max = int(coords[0].min()), int(coords[0].max())
+            x_min, x_max = int(coords[1].min()), int(coords[1].max())
+            update_rect = (max(0, x_min - 1), max(0, y_min - 1), min(self.mask_data.shape[1], x_max + 2), min(self.mask_data.shape[0], y_max + 2))
+            self.update_graphics_item(update_rect=update_rect)
+
         self._invalidate_stats_cache()
-        
-    def clear_pixels_for_annotations(self, annotations_to_clear: list):
+        if np.any(pixels_to_clear):
+            self.annotationUpdated.emit(self)
+
+    def clear_pixels_for_annotations(self, annotations_to_clear: list, history_action=None):
         """
         Rasterizes a list of vector annotations and sets the corresponding
         pixels in the mask_data to 0 (unclassified).
@@ -842,10 +1064,20 @@ class MaskAnnotation(Annotation):
             default_value=1,
             dtype=np.uint8
         ).astype(bool)
+        flat_indices = np.flatnonzero(clear_mask.ravel())
+        before_values = self.mask_data.ravel()[flat_indices].copy()
 
         # 3. Apply the mask to the data, setting pixels to 0.
         self.mask_data[clear_mask] = 0
         self._invalidate_stats_cache()
+
+        if history_action is not None and flat_indices.size > 0:
+            history_action.add_change(
+                flat_indices,
+                before_values,
+                np.zeros(flat_indices.size, dtype=self.mask_data.dtype),
+                update_rect=None,
+            )
 
         # 4. Trigger a localized repaint of the mask to show the changes efficiently.
         coords = np.where(clear_mask)
@@ -861,6 +1093,9 @@ class MaskAnnotation(Annotation):
                 min(height, y_max + 2)
             )
             self.update_graphics_item(update_rect=update_rect)
+
+        if np.any(clear_mask):
+            self.annotationUpdated.emit(self)
 
     # --- Analysis & Information Retrieval Methods ---
 
@@ -1006,19 +1241,43 @@ class MaskAnnotation(Annotation):
     # --- Serialization & Deserialization ---
 
     def to_dict(self):
-        """Serialize the annotation to a dictionary, with RLE for the mask."""
+        """Serialize the annotation to a dictionary, with crop-RLE for the mask.
+
+        Each class is cropped to its bounding box before RLE encoding.  This
+        is far more compact than full-image RLE for small or sparse classes
+        (e.g. a 200×200 object in a 4000×4000 image).  The bbox offset stored
+        alongside the RLE lets ``from_dict`` reconstruct the full mask exactly.
+        Old project files that lack the ``bbox`` key are still handled correctly.
+        """
         base_dict = super().to_dict()
-        
-        # Encode each class's binary mask using pycocotools
+
+        # Encode each class's binary mask using crop-RLE (compact format)
         rle_list = []
         unique_classes = np.unique(self.mask_data)
         for class_id in unique_classes:
             if class_id == 0:
                 continue
             binary_mask = (self.mask_data == class_id).astype(np.uint8)
-            rle = mask.encode(np.asfortranarray(binary_mask))
+
+            # Find the tight bounding box of this class's pixels.
+            rows_any = binary_mask.any(axis=1)
+            cols_any = binary_mask.any(axis=0)
+            y_idx = np.where(rows_any)[0]
+            x_idx = np.where(cols_any)[0]
+            if y_idx.size == 0:
+                continue  # class present in map but not in mask data
+            y1, y2 = int(y_idx[0]), int(y_idx[-1])
+            x1, x2 = int(x_idx[0]), int(x_idx[-1])
+
+            # RLE-encode only the crop, not the full image.
+            crop = binary_mask[y1:y2 + 1, x1:x2 + 1]
+            rle = mask.encode(np.asfortranarray(crop))
             rle['counts'] = base64.b64encode(rle['counts']).decode('ascii')
-            rle_list.append({'class_id': int(class_id), 'rle': rle})
+            rle_list.append({
+                'class_id': int(class_id),
+                'rle': rle,
+                'bbox': [x1, y1, x2, y2],  # inclusive xyxy offset for decode
+            })
         
         # Convert the label map to a serializable format
         serializable_label_map = {}
@@ -1040,7 +1299,7 @@ class MaskAnnotation(Annotation):
         if not all_project_labels:
             raise ValueError("Cannot import a MaskAnnotation without any labels loaded in the project.")
 
-        # Decode the RLE mask data
+        # Decode the RLE mask data (supports both crop-RLE and legacy full-image RLE)
         shape = tuple(data['shape'])
         mask_data = np.zeros(shape, dtype=np.uint8)
         for item in data['rle_masks']:
@@ -1048,11 +1307,19 @@ class MaskAnnotation(Annotation):
             rle = item['rle']
             try:
                 rle['counts'] = base64.b64decode(rle['counts'])
-                binary_mask = mask.decode(rle).astype(bool)
-                if binary_mask.shape != shape:
-                    print(f"Warning: RLE decoded shape {binary_mask.shape} does not match expected shape {shape}")
-                    continue
-                mask_data[binary_mask] = class_id
+                if 'bbox' in item:
+                    # Compact format: RLE covers the bounding-box crop only.
+                    x1, y1, x2, y2 = item['bbox']
+                    crop_mask = mask.decode(rle).astype(bool)
+                    sub = mask_data[y1:y2 + 1, x1:x2 + 1]
+                    sub[crop_mask] = class_id
+                else:
+                    # Legacy format: RLE covers the full image.
+                    binary_mask = mask.decode(rle).astype(bool)
+                    if binary_mask.shape != shape:
+                        print(f"Warning: RLE decoded shape {binary_mask.shape} does not match expected shape {shape}")
+                        continue
+                    mask_data[binary_mask] = class_id
             except Exception as e:
                 print(f"Error decoding RLE for class {class_id}: {e}")
                 continue

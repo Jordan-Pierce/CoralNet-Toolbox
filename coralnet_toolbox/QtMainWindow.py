@@ -538,7 +538,7 @@ class MainWindow(QMainWindow):
         self.utilities_menu.addSeparator()
 
         # Scale
-        self.scale_action = QAction("Set Scale", self)
+        self.scale_action = QAction("Set Image Scale", self)
         self.scale_action.triggered.connect(self.open_scale_dialog)
         self.utilities_menu.addAction(self.scale_action)
 
@@ -2513,8 +2513,15 @@ class MainWindow(QMainWindow):
                                 "Please load images into the project before sampling annotations.")
             return
 
-        # Check if there are any annotations
-        if not self.annotation_window.annotations_dict:
+        # Allow export when a mask layer exists even if no vector annotations are present.
+        has_vector_annotations = bool(self.annotation_window.annotations_dict)
+        has_mask_annotations = self.annotation_window.annotation_manager.has_mask_annotations()
+        if not has_mask_annotations:
+            has_mask_annotations = any(
+                raster.mask_annotation is not None
+                for raster in self.image_window.raster_manager.rasters.values()
+            )
+        if not has_vector_annotations and not has_mask_annotations:
             QMessageBox.warning(self,
                                 "Export Segmentation Masks",
                                 "No annotations are present in the project.")
@@ -2894,8 +2901,16 @@ class MainWindow(QMainWindow):
                                 "No images are present in the project.")
             return
 
-        # Check if there are annotations
-        if not len(self.annotation_window.annotations_dict):
+        # Allow export when a mask layer exists even if no vector annotations are present.
+        has_vector_annotations = bool(self.annotation_window.annotations_dict)
+        has_mask_annotations = self.annotation_window.annotation_manager.has_mask_annotations()
+        if not has_mask_annotations:
+            has_mask_annotations = any(
+                raster.mask_annotation is not None
+                for raster in self.image_window.raster_manager.rasters.values()
+            )
+
+        if not has_vector_annotations and not has_mask_annotations:
             QMessageBox.warning(self,
                                 "Export Dataset",
                                 "No annotations are present in the project.")

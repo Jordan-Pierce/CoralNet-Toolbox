@@ -741,11 +741,10 @@ class PolygonAnnotation(Annotation):
             # --- Get properties from the first annotation to transfer to the new one ---
             first_anno = annotations[0]
             common_args = {
-                "short_label_code": first_anno.label.short_label_code,
-                "long_label_code": first_anno.label.long_label_code,
-                "color": first_anno.label.color,
+                "label": first_anno.label,
                 "image_path": first_anno.image_path,
-                "label_id": first_anno.label.id
+                "transparency": first_anno.transparency,
+                "show_confidence": first_anno.show_confidence,
             }
 
             # 3. Check the result and build the appropriate new annotation.
@@ -865,11 +864,10 @@ class PolygonAnnotation(Annotation):
                 return []
 
             common_args = {
-                "short_label_code": source_annotation.label.short_label_code,
-                "long_label_code": source_annotation.label.long_label_code,
-                "color": source_annotation.label.color,
+                "label": source_annotation.label,
                 "image_path": source_annotation.image_path,
-                "label_id": source_annotation.label.id
+                "transparency": source_annotation.transparency,
+                "show_confidence": source_annotation.show_confidence,
             }
 
             if geom.geom_type == 'Polygon':

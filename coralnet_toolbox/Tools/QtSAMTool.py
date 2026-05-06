@@ -8,6 +8,7 @@ from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush
 from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem, QApplication
 
 from coralnet_toolbox.Tools.QtTool import Tool
+from coralnet_toolbox.QtActions import MaskEditAction
 
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
@@ -907,7 +908,14 @@ class SAMTool(Tool):
             prediction_mask[wa_y:wa_y + wa_height, wa_x:wa_x + wa_width] = cropped_mask_np
 
             # Update the existing mask annotation with the prediction
-            mask_annotation.update_mask_with_prediction_mask(prediction_mask)
+            history_action = MaskEditAction(mask_annotation, description="SAM prediction")
+            mask_annotation.update_mask_with_prediction_mask(
+                prediction_mask,
+                history_action=history_action,
+            )
+
+            if not history_action.is_empty():
+                self.annotation_window.action_stack.push(history_action)
 
             # Propagate the final prediction to other visible canvases if requested.
             # We send a compact binary crop (1 == predicted) and the label_id so
