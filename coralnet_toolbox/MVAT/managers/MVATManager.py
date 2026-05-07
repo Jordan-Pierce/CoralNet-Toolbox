@@ -925,10 +925,30 @@ class MVATManager(QObject):
             except Exception as e:
                 print(f"⚠️ Ortho index map build failed: {e}")
                 result = {}  # empty sentinel — _on_ortho_index_map_computed will early-exit cleanly
-            self._orthoIndexMapReady.emit(result)
+            try:
+                self._orthoIndexMapReady.emit(result)
+            except Exception as e:
+                # Manager may have been deleted while the build was running.
+                # Restore the cursor on the main thread so it doesn't get stuck.
+                print(f"⚠️ Failed to emit ortho index map ready signal: {e}")
+                try:
+                    from PyQt5.QtCore import QMetaObject, Qt
+                    from PyQt5.QtWidgets import QApplication
+                    QMetaObject.invokeMethod(
+                        QApplication.instance(),
+                        "restoreOverrideCursor",
+                        Qt.QueuedConnection,
+                    )
+                except Exception:
+                    pass
 
-        future = self._propagation_executor.submit(_build)
-        future.add_done_callback(_done)
+        try:
+            future = self._propagation_executor.submit(_build)
+            future.add_done_callback(_done)
+        except Exception as e:
+            print(f"⚠️ Failed to submit ortho index map build: {e}")
+            self._computing_ortho_index_map = False
+            QApplication.restoreOverrideCursor()
 
     def _on_ortho_index_map_computed(self, result: dict):
         """Store the completed ortho index map on the OrthoRaster (runs on main thread via signal)."""
