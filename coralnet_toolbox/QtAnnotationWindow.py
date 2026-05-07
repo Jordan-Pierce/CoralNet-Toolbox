@@ -2303,6 +2303,79 @@ class AnnotationWindow(BaseCanvas):
 
         return mask_annotation
 
+    def prompt_bake_or_unbake_annotations(self):
+        """Offer a choice to bake vectors into the mask or unbake the mask into vectors."""
+        if not self.current_image_path:
+            return False
+
+        vector_annotations = []
+        for annotation in self.get_image_annotations():
+            if getattr(annotation, 'is_mask_annotation', False):
+                continue
+
+            geometry_getter = getattr(annotation, 'get_rasterization_geometry', None)
+            geometry = None
+            if callable(geometry_getter):
+                try:
+                    geometry = geometry_getter()
+                except Exception:
+                    geometry = None
+
+            if geometry is not None and not getattr(geometry, 'is_empty', False):
+                vector_annotations.append(annotation)
+
+        raster = None
+        try:
+            raster_manager = getattr(self.main_window.image_window, 'raster_manager', None)
+            if raster_manager is not None:
+                raster = raster_manager.get_raster(self.current_image_path)
+        except Exception:
+            raster = None
+
+        mask_annotation = getattr(raster, 'mask_annotation', None) if raster is not None else None
+        has_mask_regions = False
+        if mask_annotation is not None:
+            try:
+                has_mask_regions = bool(np.any(mask_annotation.mask_data % mask_annotation.LOCK_BIT))
+            except Exception:
+                has_mask_regions = True
+
+        if not vector_annotations and not has_mask_regions:
+            try:
+                self.main_window.status_bar.showMessage(
+                    "No vector or mask annotations are available on the current image.",
+                    3000,
+                )
+            except Exception:
+                pass
+            return False
+
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Convert Current Image Annotations")
+        msg_box.setText("Choose how to convert annotations for the current image.")
+        msg_box.setInformativeText(
+            "Bake rasterizes vector annotations into the mask. Unbake vectorizes the current mask into annotations."
+        )
+        msg_box.setIcon(QMessageBox.Question)
+
+        bake_button = msg_box.addButton("Bake", QMessageBox.AcceptRole)
+        unbake_button = msg_box.addButton("Unbake", QMessageBox.ActionRole)
+        cancel_button = msg_box.addButton(QMessageBox.Cancel)
+        bake_button.setEnabled(bool(vector_annotations))
+        unbake_button.setEnabled(has_mask_regions)
+        msg_box.setEscapeButton(cancel_button)
+        msg_box.setDefaultButton(bake_button if vector_annotations else unbake_button)
+        msg_box.exec_()
+
+        clicked_button = msg_box.clickedButton()
+        if clicked_button is None or clicked_button == cancel_button:
+            return False
+        if clicked_button == bake_button:
+            return self.bake_vector_annotations(prompt_user=False)
+        if clicked_button == unbake_button:
+            return self.vectorize_mask_annotations()
+        return False
+
     def rasterize_annotations(self):
         """
         Mark vector annotation pixels as protected (locked) to prevent painting over them.
@@ -2330,7 +2403,7 @@ class AnnotationWindow(BaseCanvas):
         # Restore cursor
         QApplication.restoreOverrideCursor()
 
-    def bake_vector_annotations(self):
+    def bake_vector_annotations(self, prompt_user=True):
         """Bake current-image vector annotations into the mask and delete them.
 
         This is the destructive counterpart to rasterize_annotations(): it
@@ -2366,21 +2439,24 @@ class AnnotationWindow(BaseCanvas):
                 pass
             return False
 
-        reply = QMessageBox.question(
-            self,
-            "Bake Vector Annotations",
-            "Bake all vector annotations in the current image into the mask and remove the vectors?\n\n"
-            "Undo will restore both the mask pixels and the vector annotations.",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
+        if prompt_user:
+            reply = QMessageBox.question(
+                self,
+                "Bake Vector Annotations",
+                "Bake all vector annotations in the current image into the mask and remove the vectors?\n\n"
+                "Undo will restore both the mask pixels and the vector annotations.",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
 
-        if reply != QMessageBox.Yes:
-            return False
+            if reply != QMessageBox.Yes:
+                return False
 
         mask_annotation = self.current_mask_annotation
         if mask_annotation is None:
             return False
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
 
         # Block signals at the source for the entire bake + delete operation.
         #
@@ -2447,6 +2523,8 @@ class AnnotationWindow(BaseCanvas):
             if _has_suspend:
                 _context_matrix.resume_annotation_updates()
 
+            QApplication.restoreOverrideCursor()
+
         compound_action = CompoundAction(
             [history_action, delete_action],
             description="Bake vector annotations",
@@ -2465,6 +2543,105 @@ class AnnotationWindow(BaseCanvas):
                     f"Baked {len(baked_annotations)} vector annotations into the mask.",
                     3000,
                 )
+        except Exception:
+            pass
+
+        return True
+
+    def vectorize_mask_annotations(self):
+        """Convert the current image's mask regions into vector annotations."""
+        mask_annotation = self.current_mask_annotation
+        if mask_annotation is None:
+            try:
+                self.main_window.status_bar.showMessage(
+                    "No mask annotation is available for the current image.",
+                    3000,
+                )
+            except Exception:
+                pass
+            return False
+
+        try:
+            vector_annotations = mask_annotation.to_vector_annotations(
+                transparency=self.main_window.get_transparency_value(),
+                show_confidence=False,
+            )
+        except Exception:
+            vector_annotations = []
+
+        if not vector_annotations:
+            try:
+                self.main_window.status_bar.showMessage(
+                    "No mask regions could be vectorized from the current image.",
+                    3000,
+                )
+            except Exception:
+                pass
+            return False
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
+        _context_matrix = getattr(getattr(self, 'main_window', None), 'context_matrix', None)
+        _annotation_manager = getattr(self, 'annotation_manager', None)
+        _has_suspend = _context_matrix is not None and hasattr(
+            _context_matrix, 'suspend_annotation_updates'
+        )
+
+        if _has_suspend:
+            _context_matrix.suspend_annotation_updates()
+
+        mask_annotation.blockSignals(True)
+        if _annotation_manager is not None:
+            _annotation_manager.blockSignals(True)
+
+        add_action = None
+        clear_action = None
+        try:
+            self.unselect_annotations()
+
+            add_action = AddAnnotationsAction(self, vector_annotations)
+            add_action.do()
+
+            clear_action = MaskEditAction(mask_annotation, description="Vectorize mask annotations")
+            mask_annotation.clear_pixels_for_annotations(vector_annotations, history_action=clear_action)
+        finally:
+            if _annotation_manager is not None:
+                _annotation_manager.blockSignals(False)
+            mask_annotation.blockSignals(False)
+
+            try:
+                mask_annotation.refresh_graphics()
+                self.refresh_mask_annotation_view(mask_annotation)
+            except Exception:
+                pass
+
+            if _has_suspend:
+                _context_matrix.resume_annotation_updates()
+
+            QApplication.restoreOverrideCursor()
+
+        if clear_action is None or clear_action.is_empty():
+            try:
+                self.delete_annotations(vector_annotations, record_action=False)
+                self.main_window.status_bar.showMessage(
+                    "No editable mask pixels were changed during vectorization.",
+                    3000,
+                )
+            except Exception:
+                pass
+            return False
+
+        compound_action = CompoundAction(
+            [add_action, clear_action],
+            description="Vectorize mask annotations",
+        )
+        self.action_stack.push(compound_action)
+
+        try:
+            self.main_window.status_bar.showMessage(
+                f"Vectorized {len(vector_annotations)} mask regions into annotations.",
+                3000,
+            )
         except Exception:
             pass
 
