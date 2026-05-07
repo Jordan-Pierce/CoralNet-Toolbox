@@ -11,7 +11,9 @@ import pyqtgraph as pg
 from PyQt5.QtGui import QMouseEvent, QPixmap, QImage, QBrush
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QSize, QObject, pyqtProperty, QPropertyAnimation, QEasingCurve
 from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QGraphicsPixmapItem,
-                             QSlider, QSpinBox, QLabel, QHBoxLayout, QWidget, QComboBox, QToolButton, QToolBar, QSizePolicy)
+                             QSlider, QSpinBox, QLabel, QHBoxLayout, QVBoxLayout, QFormLayout,
+                             QDialog, QDialogButtonBox, QGroupBox,
+                             QWidget, QComboBox, QToolButton, QToolBar, QSizePolicy)
 
 from coralnet_toolbox.QtBaseCanvas import BaseCanvas
 
@@ -224,19 +226,6 @@ class AnnotationWindow(BaseCanvas):
         self.transparency_slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.transparency_slider.valueChanged.connect(self.update_label_transparency)
 
-        # --- Min Hole Area (used by vectorize_mask_annotations) ---
-        # Holes in a mask component smaller than this pixel-area threshold are
-        # filled automatically; larger holes are kept as interior rings.
-        self.min_hole_area_spinbox = QSpinBox()
-        self.min_hole_area_spinbox.setRange(0, 1_000_000)
-        self.min_hole_area_spinbox.setValue(500)
-        self.min_hole_area_spinbox.setSingleStep(100)
-        self.min_hole_area_spinbox.setSuffix(" px²")
-        self.min_hole_area_spinbox.setToolTip(
-            "Minimum hole area (px²) to preserve as an interior ring when\n"
-            "vectorizing mask annotations. Holes smaller than this are filled."
-        )
-        self.min_hole_area_spinbox.setFixedWidth(app_theme.scale_int(110))
 
         # --- Positional/Dimensional Labels ---
         self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
@@ -670,17 +659,6 @@ class AnnotationWindow(BaseCanvas):
         trans_layout.addWidget(self.transparency_slider)
         trans_layout.addWidget(self.opaque_icon_label)
         toolbar.addWidget(trans_widget)
-
-        toolbar.addSeparator()
-
-        # Min hole area spinbox (vectorize mask annotations)
-        hole_widget = QWidget()
-        hole_layout = QHBoxLayout(hole_widget)
-        hole_layout.setContentsMargins(4, 0, 4, 0)
-        hole_label = QLabel("Min Hole:")
-        hole_layout.addWidget(hole_label)
-        hole_layout.addWidget(self.min_hole_area_spinbox)
-        toolbar.addWidget(hole_widget)
 
         toolbar.addSeparator()
 
@@ -2375,30 +2353,88 @@ class AnnotationWindow(BaseCanvas):
                 pass
             return False
 
-        msg_box = QMessageBox(self)
-        msg_box.setWindowTitle("Convert Current Image Annotations")
-        msg_box.setText("Choose how to convert annotations for the current image.")
-        msg_box.setInformativeText(
-            "Bake rasterizes vector annotations into the mask. Unbake vectorizes the current mask into annotations."
-        )
-        msg_box.setIcon(QMessageBox.Question)
+        # ------------------------------------------------------------------ #
+        # Build a custom dialog so we can embed the Min Hole Area spinbox
+        # alongside the Bake / Unbake choice.
+        # ------------------------------------------------------------------ #
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Convert Current Image Annotations")
+        dialog.setModal(True)
 
-        bake_button = msg_box.addButton("Bake", QMessageBox.AcceptRole)
-        unbake_button = msg_box.addButton("Unbake", QMessageBox.ActionRole)
-        cancel_button = msg_box.addButton(QMessageBox.Cancel)
+        root_layout = QVBoxLayout(dialog)
+        root_layout.setSpacing(12)
+
+        # Description
+        desc_label = QLabel(
+            "<b>Choose how to convert annotations for the current image.</b><br>"
+            "Bake rasterizes vector annotations into the mask.<br>"
+            "Unbake vectorizes the current mask regions into vector annotations."
+        )
+        desc_label.setWordWrap(True)
+        root_layout.addWidget(desc_label)
+
+        # Unbake options group (only meaningful for Unbake)
+        unbake_group = QGroupBox("Unbake Options")
+        unbake_group.setEnabled(has_mask_regions)
+        form_layout = QFormLayout(unbake_group)
+        form_layout.setContentsMargins(8, 8, 8, 8)
+
+        min_hole_spinbox = QSpinBox()
+        min_hole_spinbox.setRange(0, 1_000_000)
+        min_hole_spinbox.setValue(500)
+        min_hole_spinbox.setSingleStep(100)
+        min_hole_spinbox.setSuffix(" px²")
+        min_hole_spinbox.setToolTip(
+            "When vectorizing (unbaking) a mask, interior voids — holes — inside\n"
+            "each region are traced as interior rings in the resulting polygon.\n\n"
+            "Holes smaller than this area are silently filled, preventing the\n"
+            "vertex explosion that comes from tracing every small gap or\n"
+            "noise-level void in the mask.\n\n"
+            "Holes at or above this threshold are preserved as true polygon\n"
+            "holes, keeping significant voids (e.g. a sand patch inside a coral\n"
+            "colony) accurately represented.\n\n"
+            "0 = preserve all holes (maximum detail, most vertices).\n"
+            "Higher values = fewer, larger holes kept (smoother polygons)."
+        )
+        min_hole_label = QLabel("Min hole area to preserve:")
+        min_hole_label.setToolTip(min_hole_spinbox.toolTip())
+        form_layout.addRow(min_hole_label, min_hole_spinbox)
+
+        root_layout.addWidget(unbake_group)
+
+        # Buttons
+        button_box = QDialogButtonBox()
+        bake_button = button_box.addButton("Bake", QDialogButtonBox.AcceptRole)
+        unbake_button = button_box.addButton("Unbake", QDialogButtonBox.AcceptRole)
+        cancel_button = button_box.addButton(QDialogButtonBox.Cancel)
+
         bake_button.setEnabled(bool(vector_annotations))
         unbake_button.setEnabled(has_mask_regions)
-        msg_box.setEscapeButton(cancel_button)
-        msg_box.setDefaultButton(bake_button if vector_annotations else unbake_button)
-        msg_box.exec_()
 
-        clicked_button = msg_box.clickedButton()
-        if clicked_button is None or clicked_button == cancel_button:
+        # Track which action button was clicked
+        chosen = [None]
+
+        def _on_bake():
+            chosen[0] = "bake"
+            dialog.accept()
+
+        def _on_unbake():
+            chosen[0] = "unbake"
+            dialog.accept()
+
+        bake_button.clicked.connect(_on_bake)
+        unbake_button.clicked.connect(_on_unbake)
+        cancel_button.clicked.connect(dialog.reject)
+
+        root_layout.addWidget(button_box)
+        dialog.setMinimumWidth(380)
+
+        if dialog.exec_() != QDialog.Accepted or chosen[0] is None:
             return False
-        if clicked_button == bake_button:
+        if chosen[0] == "bake":
             return self.bake_vector_annotations(prompt_user=False)
-        if clicked_button == unbake_button:
-            return self.vectorize_mask_annotations()
+        if chosen[0] == "unbake":
+            return self.vectorize_mask_annotations(min_hole_area=min_hole_spinbox.value())
         return False
 
     def rasterize_annotations(self):
@@ -2573,8 +2609,13 @@ class AnnotationWindow(BaseCanvas):
 
         return True
 
-    def vectorize_mask_annotations(self):
-        """Convert the current image's mask regions into vector annotations."""
+    def vectorize_mask_annotations(self, min_hole_area: int = 500):
+        """Convert the current image's mask regions into vector annotations.
+
+        Args:
+            min_hole_area: Minimum hole area in pixels to preserve as an
+                interior ring. Holes smaller than this threshold are filled.
+        """
         mask_annotation = self.current_mask_annotation
         if mask_annotation is None:
             try:
@@ -2590,7 +2631,7 @@ class AnnotationWindow(BaseCanvas):
             vector_annotations = mask_annotation.to_vector_annotations(
                 transparency=self.main_window.get_transparency_value(),
                 show_confidence=False,
-                min_hole_area=self.main_window.get_min_hole_area_value(),
+                min_hole_area=min_hole_area,
             )
         except Exception:
             vector_annotations = []

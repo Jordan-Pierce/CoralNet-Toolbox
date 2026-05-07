@@ -1484,11 +1484,6 @@ class MainWindow(QMainWindow):
             return None
         return self.annotation_window.transparency_slider.value()
 
-    def get_min_hole_area_value(self):
-        """Return the minimum hole area (px²) used during mask vectorization."""
-        if not hasattr(self, 'annotation_window') or self.annotation_window is None:
-            return 500
-        return self.annotation_window.min_hole_area_spinbox.value()
 
     def get_loaded_yolo_models(self):
         """Return the currently loaded YOLO deploy models."""
