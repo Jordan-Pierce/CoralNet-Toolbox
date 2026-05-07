@@ -5,7 +5,7 @@ import rasterio
 
 import numpy as np
 
-from scipy.ndimage import label as ndimage_label, binary_fill_holes
+from scipy.ndimage import label as ndimage_label
 from skimage.measure import find_contours
 
 from shapely.geometry import Polygon, Point
@@ -1362,14 +1362,27 @@ class MaskAnnotation(Annotation):
                 annotations.append(anno)
         return annotations
 
-    def to_vector_annotations(self, transparency=None, show_confidence: bool = False) -> list:
+    def to_vector_annotations(self, transparency=None, show_confidence: bool = False,
+                               min_hole_area: int = 500) -> list:
         """Convert all labeled regions in this mask into vector annotations.
 
         Disconnected regions become separate annotations. Four-point, axis-aligned
         square regions become PatchAnnotation objects; four-point, axis-aligned
         non-squares become RectangleAnnotation objects; everything else becomes a
-        PolygonAnnotation. Enclosed holes are filled before contour simplification
-        so unbake produces solid vector shapes.
+        PolygonAnnotation.
+
+        Holes (interior voids) are handled selectively: holes whose area in pixels
+        is at least *min_hole_area* are preserved as interior rings in the resulting
+        PolygonAnnotation, giving an accurate representation of large voids (e.g. a
+        sand patch inside a coral colony). Holes smaller than *min_hole_area* are
+        silently filled, avoiding the vertex explosion that comes from tracing every
+        noise-level gap while retaining meaningful structure.
+
+        Args:
+            transparency: Alpha value for created annotations (0-255).
+            show_confidence: Whether to display confidence scores.
+            min_hole_area: Minimum hole area in pixels to preserve as an interior
+                ring. Holes smaller than this threshold are filled. Default 500.
         """
         try:
             import cv2
@@ -1462,24 +1475,42 @@ class MaskAnnotation(Annotation):
                 if not np.any(component_mask):
                     continue
 
-                filled_component_mask = binary_fill_holes(component_mask)
-                contours, _ = cv2.findContours(
-                    filled_component_mask.astype(np.uint8),
-                    cv2.RETR_EXTERNAL,
+                contours, hierarchy = cv2.findContours(
+                    component_mask.astype(np.uint8),
+                    cv2.RETR_CCOMP,
                     cv2.CHAIN_APPROX_SIMPLE,
                 )
-                if not contours:
+                if not contours or hierarchy is None:
                     continue
 
+                # hierarchy shape: (1, N, 4) → [next, prev, first_child, parent]
+                hier = hierarchy[0]
                 component_flat_indices = np.flatnonzero(component_mask.ravel())
 
-                for contour in contours:
+                for i, contour in enumerate(contours):
+                    # Only process top-level (exterior) contours; holes are
+                    # collected below via the child index chain.
+                    if hier[i][3] != -1:
+                        continue
+
                     simplified_contour = cv2.approxPolyDP(contour, 1.0, closed=True)
                     exterior_points = _contour_to_points(simplified_contour)
                     if len(exterior_points) < 3:
                         continue
 
-                    annotation = _build_annotation(label, exterior_points, [])
+                    # Walk the child chain to collect significant holes.
+                    interior_rings = []
+                    child_idx = hier[i][2]  # index of first hole, -1 if none
+                    while child_idx != -1:
+                        hole_contour = contours[child_idx]
+                        if cv2.contourArea(hole_contour) >= min_hole_area:
+                            simplified_hole = cv2.approxPolyDP(hole_contour, 1.0, closed=True)
+                            hole_points = _contour_to_points(simplified_hole)
+                            if len(hole_points) >= 3:
+                                interior_rings.append(hole_points)
+                        child_idx = hier[child_idx][0]  # next sibling hole
+
+                    annotation = _build_annotation(label, exterior_points, interior_rings)
                     if annotation is not None:
                         annotation._source_clear_indices = component_flat_indices
                         vector_annotations.append(annotation)

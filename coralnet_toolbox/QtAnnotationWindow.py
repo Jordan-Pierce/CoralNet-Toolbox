@@ -10,8 +10,8 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt5.QtGui import QMouseEvent, QPixmap, QImage, QBrush
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QSize, QObject, pyqtProperty, QPropertyAnimation, QEasingCurve
-from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QGraphicsPixmapItem, 
-                             QSlider, QLabel, QHBoxLayout, QWidget, QComboBox, QToolButton, QToolBar, QSizePolicy)
+from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QGraphicsPixmapItem,
+                             QSlider, QSpinBox, QLabel, QHBoxLayout, QWidget, QComboBox, QToolButton, QToolBar, QSizePolicy)
 
 from coralnet_toolbox.QtBaseCanvas import BaseCanvas
 
@@ -223,6 +223,20 @@ class AnnotationWindow(BaseCanvas):
         # Let the annotation transparency slider naturally expand
         self.transparency_slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.transparency_slider.valueChanged.connect(self.update_label_transparency)
+
+        # --- Min Hole Area (used by vectorize_mask_annotations) ---
+        # Holes in a mask component smaller than this pixel-area threshold are
+        # filled automatically; larger holes are kept as interior rings.
+        self.min_hole_area_spinbox = QSpinBox()
+        self.min_hole_area_spinbox.setRange(0, 1_000_000)
+        self.min_hole_area_spinbox.setValue(500)
+        self.min_hole_area_spinbox.setSingleStep(100)
+        self.min_hole_area_spinbox.setSuffix(" px²")
+        self.min_hole_area_spinbox.setToolTip(
+            "Minimum hole area (px²) to preserve as an interior ring when\n"
+            "vectorizing mask annotations. Holes smaller than this are filled."
+        )
+        self.min_hole_area_spinbox.setFixedWidth(app_theme.scale_int(110))
 
         # --- Positional/Dimensional Labels ---
         self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
@@ -656,7 +670,18 @@ class AnnotationWindow(BaseCanvas):
         trans_layout.addWidget(self.transparency_slider)
         trans_layout.addWidget(self.opaque_icon_label)
         toolbar.addWidget(trans_widget)
-        
+
+        toolbar.addSeparator()
+
+        # Min hole area spinbox (vectorize mask annotations)
+        hole_widget = QWidget()
+        hole_layout = QHBoxLayout(hole_widget)
+        hole_layout.setContentsMargins(4, 0, 4, 0)
+        hole_label = QLabel("Min Hole:")
+        hole_layout.addWidget(hole_label)
+        hole_layout.addWidget(self.min_hole_area_spinbox)
+        toolbar.addWidget(hole_widget)
+
         toolbar.addSeparator()
 
         # Z-channel controls moved to top toolbar (to the right of annotation transparency)
@@ -2565,6 +2590,7 @@ class AnnotationWindow(BaseCanvas):
             vector_annotations = mask_annotation.to_vector_annotations(
                 transparency=self.main_window.get_transparency_value(),
                 show_confidence=False,
+                min_hole_area=self.main_window.get_min_hole_area_value(),
             )
         except Exception:
             vector_annotations = []
