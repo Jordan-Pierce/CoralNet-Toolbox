@@ -2,6 +2,7 @@ import warnings
 
 import os
 import gc
+import threading
 from collections import defaultdict
 from typing import Optional, Set, List
 
@@ -553,8 +554,12 @@ class Raster(QObject):
             self.inv_offsets = inverted_index['inv_offsets']
             self.inv_pixels  = inverted_index['inv_pixels']
         else:
+            # No prebuilt index supplied (common on cache-hit loads).
+            # Build it in a daemon thread so it's ready for the first query
+            # without blocking the UI during cache loading.
             self.inv_ids = self.inv_offsets = self.inv_pixels = None
-        
+            self._schedule_inverted_index_build(index_map)
+
         # Set visible_indices if provided
         if visible_indices is not None:
             if not isinstance(visible_indices, np.ndarray):
@@ -563,6 +568,69 @@ class Raster(QObject):
                 raise ValueError("Visible indices must be a 1D array")
             self.visible_indices = visible_indices.copy()
     
+    # ------------------------------------------------------------------
+    # Inverted-index background build
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_inverted_index(index_map: np.ndarray) -> Optional[dict]:
+        """
+        Build a CSR-style inverted index mapping each visible element ID to the
+        flat pixel positions (row-major) where it appears.
+
+        Returns a dict with keys 'inv_ids', 'inv_offsets', 'inv_pixels', or
+        None when the index_map contains no valid elements.
+        """
+        flat = index_map.ravel()
+        flat_pixel_positions = np.where(flat >= 0)[0].astype(np.int32)
+        if len(flat_pixel_positions) == 0:
+            return None
+        element_ids_at_pixels = flat[flat_pixel_positions].astype(np.int32)
+        sort_order   = np.argsort(element_ids_at_pixels, kind='stable')
+        sorted_ids   = element_ids_at_pixels[sort_order]
+        sorted_pixels = flat_pixel_positions[sort_order]
+        unique_ids, start_positions, _ = np.unique(
+            sorted_ids, return_index=True, return_counts=True
+        )
+        offsets = np.empty(len(unique_ids) + 1, dtype=np.int64)
+        offsets[:-1] = start_positions
+        offsets[-1]  = len(sorted_pixels)
+        return {
+            'inv_ids':     unique_ids.astype(np.int32),
+            'inv_offsets': offsets,
+            'inv_pixels':  sorted_pixels,
+        }
+
+    def _schedule_inverted_index_build(self, index_map_snapshot: np.ndarray) -> None:
+        """
+        Kick off a daemon thread to build the CSR inverted index from
+        *index_map_snapshot* and store the result on this raster once done.
+
+        Only one build runs at a time (guarded by a lock); any in-flight build
+        for a stale map is simply superseded when the new one finishes.
+        """
+        # Take an explicit copy so the thread works on stable data even if the
+        # raster's index_map is replaced before the build completes.
+        snapshot = index_map_snapshot.copy()
+        raster_ref = self  # capture for closure
+        cls = type(self)   # capture class explicitly — 'QtRaster' is not in thread scope
+
+        def _build_and_store():
+            inv = cls._build_inverted_index(snapshot)
+            if inv is None:
+                return
+            # Guard: only store if the raster still holds the same index_map
+            # (identity check is O(1) for numpy arrays).
+            if raster_ref.index_map is not None and raster_ref.index_map is not snapshot:
+                # The raster has been updated in the meantime; discard stale result.
+                return
+            raster_ref.inv_ids     = inv['inv_ids']
+            raster_ref.inv_offsets = inv['inv_offsets']
+            raster_ref.inv_pixels  = inv['inv_pixels']
+
+        t = threading.Thread(target=_build_and_store, daemon=True)
+        t.start()
+
     def update_index_map(self, index_map: np.ndarray, index_map_path: Optional[str] = None,
                          visible_indices: Optional[np.ndarray] = None,
                          element_type: Optional[str] = None):

@@ -1216,11 +1216,16 @@ class VisibilityManager:
             global_z_buffer = torch.full((height * width,), float('inf'), device=device, dtype=torch.float32)
             global_index_map = torch.full((height * width,), -1, device=device, dtype=torch.int32)
 
+            # Preallocate per-camera scratch buffers once; reset with fill_() each chunk
+            # to avoid repeated CUDA malloc/free overhead on large point clouds.
+            local_z_buffer = torch.empty((height * width,), device=device, dtype=torch.float32)
+            local_index_map = torch.empty((height * width,), device=device, dtype=torch.int32)
+
             print(f"   -> Processing Camera {i+1}/{M} in chunks...")
 
             for start_idx in range(0, N_total, CHUNK_SIZE):
                 end_idx = min(start_idx + CHUNK_SIZE, N_total)
-                
+
                 # Stream just this chunk to the GPU
                 chunk_pts = torch.as_tensor(points_world[start_idx:end_idx], dtype=torch.float32, device=device)
                 chunk_ids = torch.as_tensor(point_ids[start_idx:end_idx], dtype=torch.int32, device=device)
@@ -1228,34 +1233,35 @@ class VisibilityManager:
                 # 1. Transform World -> Camera
                 points_cam = chunk_pts @ R.T + t
                 x, y, z = points_cam[:, 0], points_cam[:, 1], points_cam[:, 2]
-                
+
                 # 2. Project to Image Plane
                 u = (K[0, 0] * x / z) + K[0, 2]
                 v = (K[1, 1] * y / z) + K[1, 2]
-                
+
                 # 3. Bounds check
                 u_idx, v_idx = u.round().long(), v.round().long()
                 valid_mask = (u_idx >= 0) & (u_idx < width) & (v_idx >= 0) & (v_idx < height) & (z > 0)
-                
+
                 valid_u, valid_v, valid_z = u_idx[valid_mask], v_idx[valid_mask], z[valid_mask]
                 valid_ids = chunk_ids[valid_mask]
-                
+
                 if valid_ids.numel() == 0:
                     del chunk_pts, chunk_ids, points_cam, x, y, z, u, v, u_idx, v_idx, valid_mask
                     continue
-                
+
                 flat_indices = valid_v * width + valid_u
-                
+
                 # 4. Local Z-buffering (Who won inside this specific chunk?)
-                local_z_buffer = torch.full((height * width,), float('inf'), device=device, dtype=torch.float32)
+                # Reset preallocated buffers in-place — no CUDA malloc needed.
+                local_z_buffer.fill_(float('inf'))
                 try:
                     local_z_buffer.scatter_reduce_(0, flat_indices, valid_z, reduce="amin", include_self=True)
                 except AttributeError:
                     raise RuntimeError("PyTorch version too old for scatter_reduce_.")
-                
+
                 # 5. Resolve IDs for this chunk
                 is_closest = torch.abs(valid_z - local_z_buffer[flat_indices]) < 1e-4
-                local_index_map = torch.full((height * width,), -1, device=device, dtype=torch.int32)
+                local_index_map.fill_(-1)
                 local_index_map[flat_indices[is_closest]] = valid_ids[is_closest]
 
                 # 6. MERGE WITH MASTER: Did this chunk beat the global record?
@@ -1263,9 +1269,9 @@ class VisibilityManager:
                 global_z_buffer[won_mask] = local_z_buffer[won_mask]
                 global_index_map[won_mask] = local_index_map[won_mask]
 
-                # Free VRAM immediately for the next chunk
+                # Free VRAM immediately for the next chunk (scratch buffers are reused)
                 del chunk_pts, chunk_ids, points_cam, x, y, z, u, v, u_idx, v_idx, valid_mask
-                del valid_u, valid_v, valid_z, valid_ids, flat_indices, local_z_buffer, is_closest, local_index_map, won_mask
+                del valid_u, valid_v, valid_z, valid_ids, flat_indices, is_closest, won_mask
 
             # 7. Finalize outputs for this camera
             visible_indices = torch.unique(global_index_map[global_index_map != -1], sorted=True)
@@ -1290,8 +1296,9 @@ class VisibilityManager:
             
             print(f"   ✅ Camera {i+1} completed in {time.time() - cam_start:.2f}s")
 
-            # Free global buffers
+            # Free all per-camera buffers (scratch + master)
             del K, R, t, global_z_buffer, global_index_map, visible_indices
+            del local_z_buffer, local_index_map
 
         if device == 'cuda':
             torch.cuda.empty_cache()
