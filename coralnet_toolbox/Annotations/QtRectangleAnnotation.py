@@ -199,6 +199,21 @@ class RectangleAnnotation(Annotation):
         path.closeSubpath()
         return path
 
+    def get_rasterization_geometry(self):
+        """Return a shapely rectangle for mask rasterization."""
+        try:
+            min_x = min(self.top_left.x(), self.bottom_right.x())
+            max_x = max(self.top_left.x(), self.bottom_right.x())
+            min_y = min(self.top_left.y(), self.bottom_right.y())
+            max_y = max(self.top_left.y(), self.bottom_right.y())
+
+            if min_x == max_x or min_y == max_y:
+                return None
+
+            return box(min_x, min_y, max_x, max_y)
+        except Exception:
+            return None
+
     def get_bounding_box_top_left(self):
         """Get the top-left corner of the bounding box."""
         return self.top_left

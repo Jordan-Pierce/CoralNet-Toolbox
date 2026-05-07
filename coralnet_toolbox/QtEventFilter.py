@@ -122,6 +122,12 @@ class GlobalEventFilter(QObject):
                         self.annotation_window.cycle_annotations(1)
                         return True
 
+                    if event.key() == Qt.Key_R:
+                        if not self.main_window.select_tool_action.isChecked():
+                            return True
+                        self.annotation_window.prompt_bake_or_unbake_annotations()
+                        return True
+
                     # Handle undo/redo hotkeys globally to avoid focus issues
                     if event.key() == Qt.Key_Z:
                         if self.annotation_window.selected_tool:

@@ -15,7 +15,7 @@ import warnings
 import numpy as np
 from typing import List, Optional, Dict
 
-from PyQt5.QtCore import Qt, pyqtSignal, QSize, QRect, QPoint, QVariantAnimation, QEasingCurve
+from PyQt5.QtCore import Qt, pyqtSignal, QSize, QRect, QPoint, QVariantAnimation, QEasingCurve, QTimer
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QToolBar, QToolButton, QSizePolicy, QFrame,
@@ -197,6 +197,7 @@ class ContextMatrixWidget(QWidget):
 
         # Annotation visualization state (Phase 6)
         self._annotation_manager = None
+        self._annotation_updates_suspended = False
 
         # Canvas pool
         self._canvas_pool: List[BaseCanvas] = []
@@ -1170,6 +1171,55 @@ class ContextMatrixWidget(QWidget):
 
     # ==================== Annotation Visualization (Phase 6) ====================
 
+    def clear_all_annotation_overlays(self):
+        """Synchronously remove every annotation overlay item from every
+        visible canvas.
+
+        Call this BEFORE starting any batch operation that removes annotation
+        objects (e.g. bake + delete).  By clearing the overlays while all
+        objects are still alive and consistent, we guarantee that no
+        QGraphicsDropShadowEffect item remains in a canvas scene when Qt
+        later coalesces window repaints — eliminating the C-level crash that
+        occurs when Qt tries to render a shadow effect whose item is being
+        torn down.
+        """
+        for canvas in self._visible_canvases:
+            if canvas is not None:
+                try:
+                    canvas._clear_readonly_annotations()
+                except Exception:
+                    pass
+
+    def suspend_annotation_updates(self):
+        """Suspend canvas refreshes driven by annotation-manager signals.
+
+        Call resume_annotation_updates() when the batch operation is complete.
+        """
+        self._annotation_updates_suspended = True
+
+    def resume_annotation_updates(self):
+        """Re-enable annotation change callbacks and queue one deferred refresh.
+
+        The refresh is posted via QTimer.singleShot(0) so it runs only after
+        the current call-stack fully unwinds and all pending signals settle.
+        """
+        self._annotation_updates_suspended = False
+        QTimer.singleShot(0, self._deferred_refresh_all_canvases)
+
+    def _deferred_refresh_all_canvases(self):
+        """Refresh every visible canvas once after a suspended batch operation."""
+        if not self._annotation_manager:
+            return
+        for canvas in self._visible_canvases:
+            if canvas and canvas.active_image and canvas.current_image_path:
+                path = canvas.current_image_path
+                annotations = self._annotation_manager.get_image_annotations(path)
+                canvas._render_annotations_readonly(annotations)
+                if self._raster_manager:
+                    raster = self._raster_manager.get_raster(path)
+                    if raster is not None and raster.mask_annotation is not None:
+                        canvas.set_mask_overlay(raster.mask_annotation)
+    
     def set_annotation_manager(self, manager):
         self._annotation_manager = manager
         if manager is None:
@@ -1183,14 +1233,14 @@ class ContextMatrixWidget(QWidget):
         manager.selectionChanged.connect(self._on_selection_changed)
 
     def _on_annotation_changed(self, annotation_id: str):
-        if not self._annotation_manager:
+        if self._annotation_updates_suspended or not self._annotation_manager:
             return
         annotation = self._annotation_manager.annotations_dict.get(annotation_id)
         affected_path = annotation.image_path if annotation else None
         self._refresh_annotations_for_path(affected_path)
 
     def _on_annotations_changed(self, annotation_ids: list):
-        if not self._annotation_manager:
+        if self._annotation_updates_suspended or not self._annotation_manager:
             return
         affected_paths = set()
         for ann_id in annotation_ids:
@@ -1217,6 +1267,8 @@ class ContextMatrixWidget(QWidget):
                             canvas.set_mask_overlay(raster.mask_annotation)
 
     def _on_selection_changed(self, selected_ids):
+        if self._annotation_updates_suspended:
+            return
         selected_set = set(selected_ids) if selected_ids else set()
         for canvas in self._visible_canvases:
             if canvas and canvas.active_image:

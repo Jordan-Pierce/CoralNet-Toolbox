@@ -360,6 +360,23 @@ class PolygonAnnotation(Annotation):
 
         return path
 
+    def get_rasterization_geometry(self):
+        """Return a shapely polygon with interior rings for mask rasterization."""
+        try:
+            shell_coords = [(p.x(), p.y()) for p in self.points]
+            if len(shell_coords) < 3:
+                return None
+
+            holes_coords = []
+            for hole in self.holes:
+                hole_coords = [(p.x(), p.y()) for p in hole]
+                if len(hole_coords) >= 3:
+                    holes_coords.append(hole_coords)
+
+            return Polygon(shell=shell_coords, holes=holes_coords or None)
+        except Exception:
+            return None
+
     def get_bounding_box_top_left(self):
         """Get the top-left corner of the annotation's bounding box."""
         return QPointF(self.cropped_bbox[0], self.cropped_bbox[1])

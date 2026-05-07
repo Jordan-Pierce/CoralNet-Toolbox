@@ -111,6 +111,27 @@ class MaskAnnotation(Annotation):
         if self._cached_color_map is None:
             self._cached_color_map = self._build_color_map()
         return self._cached_color_map
+
+    def _get_annotation_rasterization_geometry(self, annotation):
+        """Return a shapely geometry for an annotation if it can be rasterized."""
+        geometry_getter = getattr(annotation, 'get_rasterization_geometry', None)
+        if callable(geometry_getter):
+            try:
+                geometry = geometry_getter()
+                if geometry is not None:
+                    return geometry
+            except Exception:
+                pass
+
+        try:
+            qt_polygon = annotation.get_polygon()
+            points = [(p.x(), p.y()) for p in qt_polygon]
+            if len(points) >= 3:
+                return Polygon(points)
+        except Exception:
+            pass
+
+        return None
     
     def sync_label_map(self, current_labels_in_project: list):
         """Ensures the internal maps are synced with the project's labels."""
@@ -884,25 +905,21 @@ class MaskAnnotation(Annotation):
         all_bounds = []
 
         for annotation in all_annotations:
-            if not hasattr(annotation, 'get_polygon'):
+            if getattr(annotation, 'is_mask_annotation', False):
                 continue
             try:
-                polygon = annotation.get_polygon()
-                if polygon is None or polygon.isEmpty():
+                geometry = self._get_annotation_rasterization_geometry(annotation)
+                if geometry is None or getattr(geometry, 'is_empty', False):
                     continue
-                points = [(polygon.at(i).x(), polygon.at(i).y()) for i in range(polygon.count())]
-                if len(points) < 3:
-                    continue
-                shapely_poly = Polygon(points)
 
                 # Get the class ID for this annotation's label
                 class_id = self.label_id_to_class_id_map.get(annotation.label.id)
                 if class_id is None:
                     continue  # Skip if label not in mask
 
-                geometries.append(shapely_poly)
+                geometries.append(geometry)
                 annotations_to_process.append(annotation)
-                all_bounds.append(shapely_poly.bounds)
+                all_bounds.append(geometry.bounds)
 
             except Exception as e:
                 print(f"Warning: Could not process annotation {annotation.id}: {e}")
@@ -958,6 +975,113 @@ class MaskAnnotation(Annotation):
                 after_values,
                 update_rect=update_rect,
             )
+
+    def bake_annotations(self, all_annotations: list, history_action=None):
+        """Bake vector annotations into the semantic mask and return a summary.
+
+        Unlike rasterize_annotations(), this permanently writes the annotation
+        classes into the mask rather than locking the covered pixels. Existing
+        vector annotations should be removed by the caller as part of the same
+        undoable user action.
+        """
+        summary = {
+            "baked_annotations": [],
+            "skipped_annotations": [],
+            "changed_pixels": 0,
+            "update_rect": None,
+        }
+
+        if not all_annotations:
+            return summary
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
+        try:
+            height, width = self.mask_data.shape
+            shapes = []
+            all_bounds = []
+
+            for annotation in all_annotations:
+                if getattr(annotation, 'is_mask_annotation', False):
+                    continue
+
+                try:
+                    geometry = self._get_annotation_rasterization_geometry(annotation)
+                    if geometry is None or getattr(geometry, 'is_empty', False):
+                        summary["skipped_annotations"].append(annotation)
+                        continue
+
+                    class_id = self.label_id_to_class_id_map.get(annotation.label.id)
+                    if class_id is None:
+                        summary["skipped_annotations"].append(annotation)
+                        continue
+
+                    shapes.append((geometry, class_id))
+                    summary["baked_annotations"].append(annotation)
+                    all_bounds.append(geometry.bounds)
+
+                except Exception as e:
+                    print(f"Warning: Could not bake annotation {annotation.id}: {e}")
+                    summary["skipped_annotations"].append(annotation)
+                    continue
+
+            if not shapes:
+                return summary
+
+            baked_values = rasterize(
+                shapes,
+                out_shape=(height, width),
+                fill=0,
+                default_value=0,
+                dtype=np.uint8,
+            ).astype(np.uint8)
+
+            target_mask = baked_values != 0
+            flat_indices = np.flatnonzero(target_mask.ravel())
+            if flat_indices.size == 0:
+                return summary
+
+            flat_values = baked_values.ravel()[flat_indices]
+
+            if all_bounds:
+                min_x = min(b[0] for b in all_bounds)
+                min_y = min(b[1] for b in all_bounds)
+                max_x = max(b[2] for b in all_bounds)
+                max_y = max(b[3] for b in all_bounds)
+
+                x_min = max(0, int(min_x) - 5)
+                y_min = max(0, int(min_y) - 5)
+                x_max = min(width, int(max_x) + 6)
+                y_max = min(height, int(max_y) + 6)
+                update_rect = (x_min, y_min, x_max, y_max)
+            else:
+                update_rect = None
+
+            applied = self.apply_flat_values_at_indices(
+                flat_indices,
+                flat_values,
+                silent=False,
+                update_rect=update_rect,
+            )
+
+            if applied is None:
+                summary["update_rect"] = update_rect
+                return summary
+
+            if history_action is not None:
+                history_action.add_change(
+                    applied["flat_indices"],
+                    applied["before_values"],
+                    applied["after_values"],
+                    update_rect=applied["update_rect"],
+                )
+
+            summary["changed_pixels"] = int(applied["flat_indices"].size)
+            summary["update_rect"] = applied["update_rect"]
+            return summary
+
+        finally:
+            QApplication.restoreOverrideCursor()
 
         # Section 5: Smart localized repaint
         if np.any(to_lock) or np.any(annotation_mask):
@@ -1043,27 +1167,61 @@ class MaskAnnotation(Annotation):
         if not annotations_to_clear:
             return
 
-        # 1. Convert all annotation polygons to Shapely Polygons.
+        # 1. Build a precise mask from any stored source indices, then fall back
+        #    to rasterizing the annotation geometry when no exact indices exist.
+        exact_flat_indices = []
         geometries = []
         for anno in annotations_to_clear:
-            if hasattr(anno, 'get_polygon'):
-                qt_polygon = anno.get_polygon()
-                points = [(p.x(), p.y()) for p in qt_polygon]
-                if len(points) >= 3:
-                    geometries.append(Polygon(points))
+            source_indices = getattr(anno, '_source_clear_indices', None)
+            if source_indices is not None:
+                indices_array = np.asarray(source_indices, dtype=np.int64).ravel()
+                if indices_array.size:
+                    exact_flat_indices.append(indices_array)
+                    continue
 
-        if not geometries:
+            geometry = None
+
+            geometry_getter = getattr(anno, 'get_rasterization_geometry', None)
+            if callable(geometry_getter):
+                try:
+                    geometry = geometry_getter()
+                except Exception:
+                    geometry = None
+
+            if geometry is None and hasattr(anno, 'get_polygon'):
+                try:
+                    qt_polygon = anno.get_polygon()
+                    points = [(p.x(), p.y()) for p in qt_polygon]
+                    if len(points) >= 3:
+                        geometry = Polygon(points)
+                except Exception:
+                    geometry = None
+
+            if geometry is not None and not getattr(geometry, 'is_empty', False):
+                geometries.append(geometry)
+
+        height, width = self.mask_data.shape
+
+        clear_mask = None
+        if exact_flat_indices:
+            flat_mask = np.zeros(height * width, dtype=bool)
+            flat_mask[np.unique(np.concatenate(exact_flat_indices))] = True
+            clear_mask = flat_mask.reshape((height, width))
+
+        if geometries:
+            geometry_mask = rasterize(
+                geometries,
+                out_shape=(height, width),
+                fill=0,
+                default_value=1,
+                all_touched=True,
+                dtype=np.uint8,
+            ).astype(bool)
+            clear_mask = geometry_mask if clear_mask is None else (clear_mask | geometry_mask)
+
+        if clear_mask is None or not np.any(clear_mask):
             return
 
-        # 2. Rasterize all shapes at once into a boolean mask.
-        height, width = self.mask_data.shape
-        clear_mask = rasterize(
-            geometries,
-            out_shape=(height, width),
-            fill=0,
-            default_value=1,
-            dtype=np.uint8
-        ).astype(bool)
         flat_indices = np.flatnonzero(clear_mask.ravel())
         before_values = self.mask_data.ravel()[flat_indices].copy()
 
@@ -1203,6 +1361,161 @@ class MaskAnnotation(Annotation):
                 )
                 annotations.append(anno)
         return annotations
+
+    def to_vector_annotations(self, transparency=None, show_confidence: bool = False,
+                               min_hole_area: int = 500) -> list:
+        """Convert all labeled regions in this mask into vector annotations.
+
+        Disconnected regions become separate annotations. Four-point, axis-aligned
+        square regions become PatchAnnotation objects; four-point, axis-aligned
+        non-squares become RectangleAnnotation objects; everything else becomes a
+        PolygonAnnotation.
+
+        Holes (interior voids) are handled selectively: holes whose area in pixels
+        is at least *min_hole_area* are preserved as interior rings in the resulting
+        PolygonAnnotation, giving an accurate representation of large voids (e.g. a
+        sand patch inside a coral colony). Holes smaller than *min_hole_area* are
+        silently filled, avoiding the vertex explosion that comes from tracing every
+        noise-level gap while retaining meaningful structure.
+
+        Args:
+            transparency: Alpha value for created annotations (0-255).
+            show_confidence: Whether to display confidence scores.
+            min_hole_area: Minimum hole area in pixels to preserve as an interior
+                ring. Holes smaller than this threshold are filled. Default 500.
+        """
+        try:
+            import cv2
+
+            from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
+            from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
+        except Exception:
+            return []
+
+        if transparency is None:
+            transparency = getattr(self, 'transparency', 128)
+
+        def _contour_to_points(contour_array):
+            contour_array = np.asarray(contour_array)
+            if contour_array.size == 0:
+                return []
+            return [QPointF(float(x), float(y)) for x, y in contour_array.reshape(-1, 2)]
+
+        def _is_axis_aligned_quad(points, tolerance=1.0):
+            if len(points) != 4:
+                return False
+            coordinates = [(point.x(), point.y()) for point in points]
+            for index in range(4):
+                x1, y1 = coordinates[index]
+                x2, y2 = coordinates[(index + 1) % 4]
+                if not (abs(x2 - x1) <= tolerance or abs(y2 - y1) <= tolerance):
+                    return False
+            return True
+
+        def _build_annotation(label, exterior_points, hole_points_list):
+            if len(exterior_points) == 4 and not hole_points_list and _is_axis_aligned_quad(exterior_points):
+                min_x = min(point.x() for point in exterior_points)
+                min_y = min(point.y() for point in exterior_points)
+                max_x = max(point.x() for point in exterior_points)
+                max_y = max(point.y() for point in exterior_points)
+                width = abs(max_x - min_x)
+                height = abs(max_y - min_y)
+                center_xy = QPointF((min_x + max_x) / 2.0, (min_y + max_y) / 2.0)
+
+                if abs(width - height) <= 1.0:
+                    return PatchAnnotation(
+                        center_xy=center_xy,
+                        annotation_size=max(1, int(round(max(width, height)))),
+                        label=label,
+                        image_path=self.image_path,
+                        transparency=transparency,
+                        show_confidence=show_confidence,
+                    )
+
+                return RectangleAnnotation(
+                    top_left=QPointF(min_x, min_y),
+                    bottom_right=QPointF(max_x, max_y),
+                    label=label,
+                    image_path=self.image_path,
+                    transparency=transparency,
+                    show_confidence=show_confidence,
+                )
+
+            return PolygonAnnotation(
+                points=exterior_points,
+                holes=hole_points_list,
+                label=label,
+                image_path=self.image_path,
+                transparency=transparency,
+                show_confidence=show_confidence,
+            )
+
+        class_mask = np.where(
+            self.mask_data >= self.LOCK_BIT,
+            self.mask_data % self.LOCK_BIT,
+            self.mask_data,
+        )
+
+        vector_annotations = []
+        for class_id in [int(value) for value in np.unique(class_mask) if int(value) != 0]:
+            label = self.class_id_to_label_map.get(class_id)
+            if label is None:
+                continue
+
+            binary_mask = (class_mask == class_id).astype(np.uint8)
+            if not np.any(binary_mask):
+                continue
+
+            component_labels, component_count = ndimage_label(binary_mask)
+            if component_count <= 0:
+                continue
+
+            for component_id in range(1, component_count + 1):
+                component_mask = component_labels == component_id
+                if not np.any(component_mask):
+                    continue
+
+                contours, hierarchy = cv2.findContours(
+                    component_mask.astype(np.uint8),
+                    cv2.RETR_CCOMP,
+                    cv2.CHAIN_APPROX_SIMPLE,
+                )
+                if not contours or hierarchy is None:
+                    continue
+
+                # hierarchy shape: (1, N, 4) → [next, prev, first_child, parent]
+                hier = hierarchy[0]
+                component_flat_indices = np.flatnonzero(component_mask.ravel())
+
+                for i, contour in enumerate(contours):
+                    # Only process top-level (exterior) contours; holes are
+                    # collected below via the child index chain.
+                    if hier[i][3] != -1:
+                        continue
+
+                    simplified_contour = cv2.approxPolyDP(contour, 1.0, closed=True)
+                    exterior_points = _contour_to_points(simplified_contour)
+                    if len(exterior_points) < 3:
+                        continue
+
+                    # Walk the child chain to collect significant holes.
+                    interior_rings = []
+                    child_idx = hier[i][2]  # index of first hole, -1 if none
+                    while child_idx != -1:
+                        hole_contour = contours[child_idx]
+                        if cv2.contourArea(hole_contour) >= min_hole_area:
+                            simplified_hole = cv2.approxPolyDP(hole_contour, 1.0, closed=True)
+                            hole_points = _contour_to_points(simplified_hole)
+                            if len(hole_points) >= 3:
+                                interior_rings.append(hole_points)
+                        child_idx = hier[child_idx][0]  # next sibling hole
+
+                    annotation = _build_annotation(label, exterior_points, interior_rings)
+                    if annotation is not None:
+                        annotation._source_clear_indices = component_flat_indices
+                        vector_annotations.append(annotation)
+
+        return vector_annotations
 
     def export_as_png(self, path: str, use_label_colors: bool = True):
         """Saves the mask to a PNG file."""

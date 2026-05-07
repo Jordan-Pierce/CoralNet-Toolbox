@@ -18,7 +18,7 @@ from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QSize, QObject
 from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, 
                              QGraphicsItemGroup, QGraphicsEllipseItem, QGraphicsLineItem,
                              QGraphicsItem, QGraphicsPathItem, QLabel, QApplication,
-                             QGraphicsDropShadowEffect, QOpenGLWidget, QFrame)
+                             QOpenGLWidget, QFrame)
 
 from coralnet_toolbox import theme as app_theme
 
@@ -798,8 +798,8 @@ class BaseCanvas(QGraphicsView):
         """Remove all read-only annotation items from the scene."""
         for item in self._readonly_annotation_items:
             try:
-                if item.scene() == self.scene:
-                    self.scene.removeItem(item)
+                if item.scene() is not None:
+                    item.scene().removeItem(item)
             except Exception:
                 pass
         self._readonly_annotation_items = []
@@ -839,11 +839,21 @@ class BaseCanvas(QGraphicsView):
         item.setFlag(QGraphicsItem.ItemIsMovable, False)
         item.setAcceptHoverEvents(False)
 
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(10.0)
-        shadow.setOffset(0.0, 1.5)
-        shadow.setColor(QColor(0, 0, 0, 110))
-        item.setGraphicsEffect(shadow)
+        # No QGraphicsDropShadowEffect — it uses Qt's native effect compositing
+        # pipeline which can abort() when items are removed while paint events
+        # are queued.  Simulate the shadow with a second offset path item:
+        # outline-only (no fill) so only the border gets a dark halo, matching
+        # the visual character of the original drop shadow without the crash.
+        shadow_item = QGraphicsPathItem(path, item)  # child of item
+        shadow_pen = QPen(QColor(0, 0, 0, 90), 2.5)
+        shadow_pen.setCosmetic(True)
+        shadow_item.setBrush(QBrush(Qt.NoBrush))
+        shadow_item.setPen(shadow_pen)
+        shadow_item.setPos(0.5, 1.0)
+        shadow_item.setFlag(QGraphicsItem.ItemIsSelectable, False)
+        shadow_item.setFlag(QGraphicsItem.ItemIsMovable, False)
+        shadow_item.setAcceptHoverEvents(False)
+        shadow_item.setZValue(-0.1)  # just below the parent item
         
         # Z-value above base image but below markers
         item.setZValue(5)

@@ -917,13 +917,15 @@ class MVATManager(QObject):
             return result
 
         def _done(future):
-            # Called on the thread-pool thread — only emit a Qt signal (thread-safe)
+            # Called on the thread-pool thread — only emit a Qt signal (thread-safe).
+            # Always emit so that _on_ortho_index_map_computed's finally block runs
+            # and restores the busy cursor, even on failure.
             try:
                 result = future.result()
-                self._orthoIndexMapReady.emit(result)
             except Exception as e:
                 print(f"⚠️ Ortho index map build failed: {e}")
-                self._computing_ortho_index_map = False
+                result = {}  # empty sentinel — _on_ortho_index_map_computed will early-exit cleanly
+            self._orthoIndexMapReady.emit(result)
 
         future = self._propagation_executor.submit(_build)
         future.add_done_callback(_done)
@@ -1289,51 +1291,86 @@ class MVATManager(QObject):
         element_type = primary_target.get_element_type()
 
         cameras_needing_visibility = []
+
+        # ------------------------------------------------------------------
+        # Phase 1: Split cameras into RAM-hits and disk-cache candidates
+        # ------------------------------------------------------------------
+        cache_candidates = {}  # path -> camera  (need disk lookup)
         for path in highlighted_paths:
             camera = self.cameras.get(path)
             if not camera:
                 continue
-                
-            # 1. Check if already in active memory (RAM)
+            # Already in active memory — nothing to do
             if camera.visible_indices is not None:
                 continue
+            cache_candidates[path] = camera
 
-            # 2. Check Disk Cache [New Logic]
-            loaded_from_cache = False
-            if self.cache_manager is not None and target_file_path:
-                self.main_window.status_bar.showMessage(f"Checking cache for {camera.label}...", 1000)
-                # Use extrinsics for perspective
+        # ------------------------------------------------------------------
+        # Phase 2: Parallel disk-cache load for all candidates
+        # ------------------------------------------------------------------
+        cache_results = {}  # path -> cached_data (or None)
+        if self.cache_manager is not None and target_file_path and cache_candidates:
+            self.main_window.status_bar.showMessage(
+                f"Checking cache for {len(cache_candidates)} camera(s)...", 1000
+            )
+
+            def _load_one(path, camera):
                 cache_key = camera._raster.extrinsics
                 extra = (camera._raster.dist_coeffs.tobytes()
                          if camera.is_distorted
                          and camera._raster.dist_coeffs is not None else None)
-                cached_data = self.cache_manager.load_visibility(cache_key, target_file_path, element_type, extra)
-                
-                if cached_data is not None:
-                    self.main_window.status_bar.showMessage(f"Loaded visibility from cache for {camera.label}", 2000)
-                    cache_path = self.cache_manager.get_cache_path(cache_key, target_file_path, element_type, extra)
-                    
-                    # Store results in the camera's raster object
-                    camera._raster.add_index_map(
-                        cached_data.get('index_map'), 
-                        cache_path, 
-                        cached_data.get('visible_indices'),
-                        element_type=element_type,
-                        inverted_index=cached_data.get('inverted_index')
+                try:
+                    return path, self.cache_manager.load_visibility(
+                        cache_key, target_file_path, element_type, extra
                     )
-                    
-                    # Also restore the depth map if it exists and is enabled
-                    if self.compute_depth_maps_enabled and cached_data.get('depth_map') is not None:
-                        self.main_window.status_bar.showMessage(
-                            f"Restoring depth map from cache for {camera.label}", 2000
-                        )
-                        camera._raster.merge_or_set_depth_map(cached_data['depth_map'])
-                            
-                    loaded_from_cache = True
-                    print(f"💽 Loaded visibility from disk cache: {camera.label}")
+                except Exception as exc:
+                    print(f"⚠️ Cache load error for {camera.label}: {exc}")
+                    return path, None
 
-            # 3. Only if missing from both RAM and Disk, queue for computation
-            if not loaded_from_cache:
+            n_workers = min(8, max(1, len(cache_candidates)))
+            with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                futs = {
+                    pool.submit(_load_one, path, cam): path
+                    for path, cam in cache_candidates.items()
+                }
+                for fut in as_completed(futs):
+                    path, data = fut.result()
+                    cache_results[path] = data
+
+        # ------------------------------------------------------------------
+        # Phase 3: Apply cache results on the main (Qt) thread, queue misses
+        # ------------------------------------------------------------------
+        for path, camera in cache_candidates.items():
+            cached_data = cache_results.get(path)
+
+            if cached_data is not None:
+                self.main_window.status_bar.showMessage(
+                    f"Loaded visibility from cache for {camera.label}", 2000
+                )
+                cache_key = camera._raster.extrinsics
+                extra = (camera._raster.dist_coeffs.tobytes()
+                         if camera.is_distorted
+                         and camera._raster.dist_coeffs is not None else None)
+                cache_path = self.cache_manager.get_cache_path(
+                    cache_key, target_file_path, element_type, extra
+                )
+
+                # Store index map on raster (Qt object — must be on main thread)
+                camera._raster.add_index_map(
+                    cached_data.get('index_map'),
+                    cache_path,
+                    cached_data.get('visible_indices'),
+                    element_type=element_type,
+                    inverted_index=cached_data.get('inverted_index')
+                )
+
+                # Restore depth map if enabled
+                if self.compute_depth_maps_enabled and cached_data.get('depth_map') is not None:
+                    camera._raster.merge_or_set_depth_map(cached_data['depth_map'])
+
+                print(f"💽 Loaded visibility from disk cache: {camera.label}")
+            else:
+                # Miss — must be computed
                 cameras_needing_visibility.append(camera)
 
         if not cameras_needing_visibility:
@@ -1464,6 +1501,7 @@ class MVATManager(QObject):
         except Exception as e:
             print(f"Failed to start visibility worker: {e}")
             self._is_computing_visibility = False
+            QApplication.restoreOverrideCursor()
 
     # --- Label painter management ------------------------------------------------
     def _ensure_label_painter(self, primary_target):

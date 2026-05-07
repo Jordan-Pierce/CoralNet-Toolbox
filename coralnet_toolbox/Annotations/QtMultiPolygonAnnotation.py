@@ -2,6 +2,8 @@ import warnings
 
 from rasterio.windows import Window
 
+from shapely.geometry import MultiPolygon
+
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtWidgets import (QGraphicsScene, QGraphicsPathItem, QGraphicsItemGroup,)
 from PyQt5.QtGui import (QPixmap, QColor, QPen, 
@@ -110,6 +112,30 @@ class MultiPolygonAnnotation(Annotation):
     def get_polygon(self):
         """Return the first polygon (for compatibility)."""
         return QPolygonF(self.polygons[0].points) if self.polygons else QPolygonF()
+
+    def get_rasterization_geometry(self):
+        """Return all polygon islands as a shapely geometry for rasterization."""
+        geometries = []
+
+        for polygon in self.polygons:
+            geometry_getter = getattr(polygon, 'get_rasterization_geometry', None)
+            geometry = None
+            if callable(geometry_getter):
+                try:
+                    geometry = geometry_getter()
+                except Exception:
+                    geometry = None
+
+            if geometry is not None and not getattr(geometry, 'is_empty', False):
+                geometries.append(geometry)
+
+        if not geometries:
+            return None
+
+        if len(geometries) == 1:
+            return geometries[0]
+
+        return MultiPolygon(geometries)
 
     def get_bounding_box_top_left(self):
         """Return the top-left corner of the bounding box."""

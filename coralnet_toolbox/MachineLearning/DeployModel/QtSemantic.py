@@ -8,12 +8,12 @@ import numpy as np
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QGroupBox, QFormLayout, QCheckBox)
 
+import torch
 from torch.cuda import empty_cache
 
-from coralnet_toolbox.MachineLearning.DeployModel.QtBase import Base
-
 from ultralytics import YOLO
-import torch
+
+from coralnet_toolbox.MachineLearning.DeployModel.QtBase import Base
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -130,8 +130,8 @@ class Semantic(Base):
         super().__init__(main_window, parent)
         self.setWindowTitle("Deploy Semantic Segmentation Model (Ctrl + 4)")
 
-        # Ultralytics uses 'segment' task for semantic segmentation
-        self.task = 'segment'
+        # Ultralytics uses 'semseg' task for semantic segmentation
+        self.task = 'semseg'
 
     def showEvent(self, event):
         """
@@ -178,7 +178,7 @@ class Semantic(Base):
         self.layout.addWidget(self.thresholds_widget)
 
     def load_model(self):
-        """Load the semantic model using Ultralytics YOLO (segment task)."""
+        """Load the semantic model using Ultralytics YOLO (semseg task)."""
         if not self.model_path:
             QMessageBox.warning(self, "Warning", "Please select a model file first")
             return
@@ -188,7 +188,7 @@ class Semantic(Base):
         try:
             # Use YOLO for semantic segmentation
             # Ensure task is correct
-            self.task = 'segment'
+            self.task = 'semseg'
 
             # Adjust batch size heuristics (keep consistent with Detect)
             if self.model_path.endswith('.engine'):

@@ -1484,6 +1484,7 @@ class MainWindow(QMainWindow):
             return None
         return self.annotation_window.transparency_slider.value()
 
+
     def get_loaded_yolo_models(self):
         """Return the currently loaded YOLO deploy models."""
         loaded_models = []
