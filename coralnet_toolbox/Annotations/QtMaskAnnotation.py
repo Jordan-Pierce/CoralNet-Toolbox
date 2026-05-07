@@ -5,7 +5,7 @@ import rasterio
 
 import numpy as np
 
-from scipy.ndimage import label as ndimage_label
+from scipy.ndimage import label as ndimage_label, binary_fill_holes
 from skimage.measure import find_contours
 
 from shapely.geometry import Polygon, Point
@@ -1368,7 +1368,8 @@ class MaskAnnotation(Annotation):
         Disconnected regions become separate annotations. Four-point, axis-aligned
         square regions become PatchAnnotation objects; four-point, axis-aligned
         non-squares become RectangleAnnotation objects; everything else becomes a
-        PolygonAnnotation.
+        PolygonAnnotation. Enclosed holes are filled before contour simplification
+        so unbake produces solid vector shapes.
         """
         try:
             import cv2
@@ -1461,34 +1462,24 @@ class MaskAnnotation(Annotation):
                 if not np.any(component_mask):
                     continue
 
-                contours, hierarchy = cv2.findContours(component_mask.astype(np.uint8), cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
-                if not contours or hierarchy is None:
+                filled_component_mask = binary_fill_holes(component_mask)
+                contours, _ = cv2.findContours(
+                    filled_component_mask.astype(np.uint8),
+                    cv2.RETR_EXTERNAL,
+                    cv2.CHAIN_APPROX_SIMPLE,
+                )
+                if not contours:
                     continue
 
-                hierarchy = hierarchy[0]
                 component_flat_indices = np.flatnonzero(component_mask.ravel())
 
-                for contour_index, contour in enumerate(contours):
-                    # Only build annotations from top-level contours; their child
-                    # contours are interpreted as holes.
-                    if hierarchy[contour_index][3] != -1:
-                        continue
-
+                for contour in contours:
                     simplified_contour = cv2.approxPolyDP(contour, 1.0, closed=True)
                     exterior_points = _contour_to_points(simplified_contour)
                     if len(exterior_points) < 3:
                         continue
 
-                    hole_points_list = []
-                    child_index = hierarchy[contour_index][2]
-                    while child_index != -1:
-                        hole_contour = cv2.approxPolyDP(contours[child_index], 1.0, closed=True)
-                        hole_points = _contour_to_points(hole_contour)
-                        if len(hole_points) >= 3:
-                            hole_points_list.append(hole_points)
-                        child_index = hierarchy[child_index][0]
-
-                    annotation = _build_annotation(label, exterior_points, hole_points_list)
+                    annotation = _build_annotation(label, exterior_points, [])
                     if annotation is not None:
                         annotation._source_clear_indices = component_flat_indices
                         vector_annotations.append(annotation)

@@ -8,12 +8,12 @@ import numpy as np
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QGroupBox, QFormLayout, QCheckBox)
 
+import torch
 from torch.cuda import empty_cache
 
-from coralnet_toolbox.MachineLearning.DeployModel.QtBase import Base
-
 from ultralytics import YOLO
-import torch
+
+from coralnet_toolbox.MachineLearning.DeployModel.QtBase import Base
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 

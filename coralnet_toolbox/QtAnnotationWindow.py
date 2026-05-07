@@ -2391,17 +2391,17 @@ class AnnotationWindow(BaseCanvas):
         
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            history_action = MaskEditAction(self.current_mask_annotation, description="Protect vector annotations")
 
-        history_action = MaskEditAction(self.current_mask_annotation, description="Protect vector annotations")
+            # The MaskAnnotation handles the efficient protection marking internally
+            self.current_mask_annotation.rasterize_annotations(annotations, history_action=history_action)
 
-        # The MaskAnnotation handles the efficient protection marking internally
-        self.current_mask_annotation.rasterize_annotations(annotations, history_action=history_action)
-
-        if not history_action.is_empty():
-            self.action_stack.push(history_action)
-
-        # Restore cursor
-        QApplication.restoreOverrideCursor()
+            if not history_action.is_empty():
+                self.action_stack.push(history_action)
+        finally:
+            # Restore cursor
+            QApplication.restoreOverrideCursor()
 
     def bake_vector_annotations(self, prompt_user=True):
         """Bake current-image vector annotations into the mask and delete them.
@@ -2457,94 +2457,94 @@ class AnnotationWindow(BaseCanvas):
             return False
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
-
-        # Block signals at the source for the entire bake + delete operation.
-        #
-        # Signal blocking + ContextMatrix suspension prevent every mid-bake
-        # canvas refresh from firing.  We intentionally do NOT call
-        # clear_all_annotation_overlays() here: calling scene.removeItem() on
-        # QGraphicsPathItem objects that carry a QGraphicsDropShadowEffect
-        # schedules a deferred paint pass for the effect's source region.  When
-        # Qt services that repaint (after this function returns but before the
-        # QTimer.singleShot(0) fires), it accesses rendering state that has
-        # already been partially torn down → C-level crash.  Leaving the overlay
-        # items in their scenes is safe because no signal can rebuild or destroy
-        # them during the blocked/suspended window, and _deferred_refresh_all_canvases
-        # will cleanly replace them once the event loop is fully settled.
-        _context_matrix = getattr(getattr(self, 'main_window', None), 'context_matrix', None)
-        _annotation_manager = getattr(self, 'annotation_manager', None)
-        _has_suspend = _context_matrix is not None and hasattr(
-            _context_matrix, 'suspend_annotation_updates'
-        )
-
-        if _has_suspend:
-            _context_matrix.suspend_annotation_updates()
-
-        mask_annotation.blockSignals(True)
-        if _annotation_manager is not None:
-            _annotation_manager.blockSignals(True)
-
-        baked_annotations = []
-        skipped_annotations = []
-        history_action = None
-        delete_action = None
         try:
-            history_action = MaskEditAction(mask_annotation, description="Bake vector annotations")
-            bake_summary = mask_annotation.bake_annotations(annotations, history_action=history_action)
-
-            baked_annotations = bake_summary.get("baked_annotations", []) if bake_summary else []
-            skipped_annotations = bake_summary.get("skipped_annotations", []) if bake_summary else []
-
-            if not baked_annotations:
-                try:
-                    self.main_window.status_bar.showMessage(
-                        "No vector annotations could be baked into the current mask.",
-                        3000,
-                    )
-                except Exception:
-                    pass
-                return False
-
-            self.unselect_annotations()
-
-            delete_action = DeleteAnnotationsAction(self, baked_annotations)
-            self.delete_annotations(baked_annotations, record_action=False)
-        finally:
-            if _annotation_manager is not None:
-                _annotation_manager.blockSignals(False)
-            mask_annotation.blockSignals(False)
-
-            try:
-                mask_annotation.refresh_graphics()
-                self.refresh_mask_annotation_view(mask_annotation)
-            except Exception:
-                pass
+            # Block signals at the source for the entire bake + delete operation.
+            #
+            # Signal blocking + ContextMatrix suspension prevent every mid-bake
+            # canvas refresh from firing.  We intentionally do NOT call
+            # clear_all_annotation_overlays() here: calling scene.removeItem() on
+            # QGraphicsPathItem objects that carry a QGraphicsDropShadowEffect
+            # schedules a deferred paint pass for the effect's source region.  When
+            # Qt services that repaint (after this function returns but before the
+            # QTimer.singleShot(0) fires), it accesses rendering state that has
+            # already been partially torn down → C-level crash.  Leaving the overlay
+            # items in their scenes is safe because no signal can rebuild or destroy
+            # them during the blocked/suspended window, and _deferred_refresh_all_canvases
+            # will cleanly replace them once the event loop is fully settled.
+            _context_matrix = getattr(getattr(self, 'main_window', None), 'context_matrix', None)
+            _annotation_manager = getattr(self, 'annotation_manager', None)
+            _has_suspend = _context_matrix is not None and hasattr(
+                _context_matrix, 'suspend_annotation_updates'
+            )
 
             if _has_suspend:
-                _context_matrix.resume_annotation_updates()
+                _context_matrix.suspend_annotation_updates()
 
+            mask_annotation.blockSignals(True)
+            if _annotation_manager is not None:
+                _annotation_manager.blockSignals(True)
+
+            baked_annotations = []
+            skipped_annotations = []
+            history_action = None
+            delete_action = None
+            try:
+                history_action = MaskEditAction(mask_annotation, description="Bake vector annotations")
+                bake_summary = mask_annotation.bake_annotations(annotations, history_action=history_action)
+
+                baked_annotations = bake_summary.get("baked_annotations", []) if bake_summary else []
+                skipped_annotations = bake_summary.get("skipped_annotations", []) if bake_summary else []
+
+                if not baked_annotations:
+                    try:
+                        self.main_window.status_bar.showMessage(
+                            "No vector annotations could be baked into the current mask.",
+                            3000,
+                        )
+                    except Exception:
+                        pass
+                    return False
+
+                self.unselect_annotations()
+
+                delete_action = DeleteAnnotationsAction(self, baked_annotations)
+                self.delete_annotations(baked_annotations, record_action=False)
+            finally:
+                if _annotation_manager is not None:
+                    _annotation_manager.blockSignals(False)
+                mask_annotation.blockSignals(False)
+
+                try:
+                    mask_annotation.refresh_graphics()
+                    self.refresh_mask_annotation_view(mask_annotation)
+                except Exception:
+                    pass
+
+                if _has_suspend:
+                    _context_matrix.resume_annotation_updates()
+
+            compound_action = CompoundAction(
+                [history_action, delete_action],
+                description="Bake vector annotations",
+            )
+            if history_action is not None and delete_action is not None:
+                self.action_stack.push(compound_action)
+
+            try:
+                if skipped_annotations:
+                    self.main_window.status_bar.showMessage(
+                        f"Baked {len(baked_annotations)} vector annotations; skipped {len(skipped_annotations)} that could not be rasterized.",
+                        4000,
+                    )
+                else:
+                    self.main_window.status_bar.showMessage(
+                        f"Baked {len(baked_annotations)} vector annotations into the mask.",
+                        3000,
+                    )
+            except Exception:
+                pass
+        finally:
             QApplication.restoreOverrideCursor()
-
-        compound_action = CompoundAction(
-            [history_action, delete_action],
-            description="Bake vector annotations",
-        )
-        if history_action is not None and delete_action is not None:
-            self.action_stack.push(compound_action)
-
-        try:
-            if skipped_annotations:
-                self.main_window.status_bar.showMessage(
-                    f"Baked {len(baked_annotations)} vector annotations; skipped {len(skipped_annotations)} that could not be rasterized.",
-                    4000,
-                )
-            else:
-                self.main_window.status_bar.showMessage(
-                    f"Baked {len(baked_annotations)} vector annotations into the mask.",
-                    3000,
-                )
-        except Exception:
-            pass
 
         return True
 
@@ -2579,71 +2579,72 @@ class AnnotationWindow(BaseCanvas):
                 pass
             return False
 
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-
-        _context_matrix = getattr(getattr(self, 'main_window', None), 'context_matrix', None)
-        _annotation_manager = getattr(self, 'annotation_manager', None)
-        _has_suspend = _context_matrix is not None and hasattr(
-            _context_matrix, 'suspend_annotation_updates'
-        )
-
-        if _has_suspend:
-            _context_matrix.suspend_annotation_updates()
-
-        mask_annotation.blockSignals(True)
-        if _annotation_manager is not None:
-            _annotation_manager.blockSignals(True)
-
-        add_action = None
-        clear_action = None
         try:
-            self.unselect_annotations()
+            QApplication.setOverrideCursor(Qt.WaitCursor)
 
-            add_action = AddAnnotationsAction(self, vector_annotations)
-            add_action.do()
-
-            clear_action = MaskEditAction(mask_annotation, description="Vectorize mask annotations")
-            mask_annotation.clear_pixels_for_annotations(vector_annotations, history_action=clear_action)
-        finally:
-            if _annotation_manager is not None:
-                _annotation_manager.blockSignals(False)
-            mask_annotation.blockSignals(False)
-
-            try:
-                mask_annotation.refresh_graphics()
-                self.refresh_mask_annotation_view(mask_annotation)
-            except Exception:
-                pass
+            _context_matrix = getattr(getattr(self, 'main_window', None), 'context_matrix', None)
+            _annotation_manager = getattr(self, 'annotation_manager', None)
+            _has_suspend = _context_matrix is not None and hasattr(
+                _context_matrix, 'suspend_annotation_updates'
+            )
 
             if _has_suspend:
-                _context_matrix.resume_annotation_updates()
+                _context_matrix.suspend_annotation_updates()
 
-            QApplication.restoreOverrideCursor()
+            mask_annotation.blockSignals(True)
+            if _annotation_manager is not None:
+                _annotation_manager.blockSignals(True)
 
-        if clear_action is None or clear_action.is_empty():
+            add_action = None
+            clear_action = None
             try:
-                self.delete_annotations(vector_annotations, record_action=False)
+                self.unselect_annotations()
+
+                add_action = AddAnnotationsAction(self, vector_annotations)
+                add_action.do()
+
+                clear_action = MaskEditAction(mask_annotation, description="Vectorize mask annotations")
+                mask_annotation.clear_pixels_for_annotations(vector_annotations, history_action=clear_action)
+            finally:
+                if _annotation_manager is not None:
+                    _annotation_manager.blockSignals(False)
+                mask_annotation.blockSignals(False)
+
+                try:
+                    mask_annotation.refresh_graphics()
+                    self.refresh_mask_annotation_view(mask_annotation)
+                except Exception:
+                    pass
+
+                if _has_suspend:
+                    _context_matrix.resume_annotation_updates()
+
+            if clear_action is None or clear_action.is_empty():
+                try:
+                    self.delete_annotations(vector_annotations, record_action=False)
+                    self.main_window.status_bar.showMessage(
+                        "No editable mask pixels were changed during vectorization.",
+                        3000,
+                    )
+                except Exception:
+                    pass
+                return False
+
+            compound_action = CompoundAction(
+                [add_action, clear_action],
+                description="Vectorize mask annotations",
+            )
+            self.action_stack.push(compound_action)
+
+            try:
                 self.main_window.status_bar.showMessage(
-                    "No editable mask pixels were changed during vectorization.",
+                    f"Vectorized {len(vector_annotations)} mask regions into annotations.",
                     3000,
                 )
             except Exception:
                 pass
-            return False
-
-        compound_action = CompoundAction(
-            [add_action, clear_action],
-            description="Vectorize mask annotations",
-        )
-        self.action_stack.push(compound_action)
-
-        try:
-            self.main_window.status_bar.showMessage(
-                f"Vectorized {len(vector_annotations)} mask regions into annotations.",
-                3000,
-            )
-        except Exception:
-            pass
+        finally:
+            QApplication.restoreOverrideCursor()
 
         return True
 
@@ -2654,16 +2655,16 @@ class AnnotationWindow(BaseCanvas):
         """
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        
-        if self.current_mask_annotation:
-            history_action = MaskEditAction(self.current_mask_annotation, description="Unprotect vector annotations")
-            self.current_mask_annotation.unrasterize_annotations(history_action=history_action)
+        try:
+            if self.current_mask_annotation:
+                history_action = MaskEditAction(self.current_mask_annotation, description="Unprotect vector annotations")
+                self.current_mask_annotation.unrasterize_annotations(history_action=history_action)
 
-            if not history_action.is_empty():
-                self.action_stack.push(history_action)
-            
-        # Restore cursor
-        QApplication.restoreOverrideCursor()
+                if not history_action.is_empty():
+                    self.action_stack.push(history_action)
+        finally:
+            # Restore cursor
+            QApplication.restoreOverrideCursor()
 
     def viewportToScene(self):
         """Convert viewport coordinates to scene coordinates."""
