@@ -2457,6 +2457,86 @@ class MVATManager(QObject):
         raw_ids = source_index_map[mask_bool]
         return raw_ids[raw_ids > -1].astype(np.int64, copy=False)
 
+    def _extract_source_element_ids_from_region(self,
+                                                 source_camera,
+                                                 source_mask: np.ndarray,
+                                                 top_left) -> Optional[np.ndarray]:
+        """Extract raw visible element IDs from a partial mask region.
+
+        This mirrors the full-mask helper, but only samples the work-area tile
+        (or other region payload) so semantic propagation does not leak stale
+        pixels from untouched parts of the image.
+        """
+        raster = getattr(source_camera, '_raster', None)
+        if raster is None or source_mask is None:
+            return None
+
+        source_index_map = getattr(raster, 'index_map', None)
+        if source_index_map is None:
+            return None
+
+        source_mask = np.asarray(source_mask)
+        if source_mask.ndim != 2:
+            return None
+
+        x, y = top_left
+        mask_h, mask_w = source_mask.shape
+        scale_factor = getattr(raster, 'index_map_scale_factor', None)
+
+        if scale_factor is not None and scale_factor != 1.0:
+            map_x0 = int(x * scale_factor)
+            map_y0 = int(y * scale_factor)
+            map_w = max(1, int(mask_w * scale_factor))
+            map_h = max(1, int(mask_h * scale_factor))
+        else:
+            map_x0 = int(x)
+            map_y0 = int(y)
+            map_w = mask_w
+            map_h = mask_h
+
+        map_x1 = map_x0 + map_w
+        map_y1 = map_y0 + map_h
+
+        img_h, img_w = source_index_map.shape
+        if map_x0 >= img_w or map_y0 >= img_h or map_x1 <= 0 or map_y1 <= 0:
+            return np.array([], dtype=np.int64)
+
+        cx0 = max(map_x0, 0)
+        cy0 = max(map_y0, 0)
+        cx1 = min(map_x1, img_w)
+        cy1 = min(map_y1, img_h)
+        index_slice = source_index_map[cy0:cy1, cx0:cx1]
+
+        if index_slice.size == 0:
+            return np.array([], dtype=np.int64)
+
+        if scale_factor is not None and scale_factor != 1.0:
+            import cv2
+
+            mask_resized = cv2.resize(
+                source_mask.astype(np.uint8),
+                (map_w, map_h),
+                interpolation=cv2.INTER_NEAREST,
+            ).astype(bool)
+
+            bx0 = cx0 - map_x0
+            by0 = cy0 - map_y0
+            bx1 = bx0 + (cx1 - cx0)
+            by1 = by0 + (cy1 - cy0)
+            mask_clip = mask_resized[by0:by1, bx0:bx1]
+        else:
+            bx0 = cx0 - map_x0
+            by0 = cy0 - map_y0
+            bx1 = bx0 + (cx1 - cx0)
+            by1 = by0 + (cy1 - cy0)
+            mask_clip = source_mask[by0:by1, bx0:bx1].astype(bool)
+
+        if mask_clip.size == 0 or not np.any(mask_clip):
+            return np.array([], dtype=np.int64)
+
+        raw_ids = index_slice[mask_clip]
+        return raw_ids[raw_ids > -1].astype(np.int64, copy=False)
+
     def _get_visible_context_paths(self) -> set:
         """Return the set of image paths currently visible in the context matrix."""
         return set(self._get_visible_context_camera_paths())
@@ -3829,13 +3909,13 @@ class MVATManager(QObject):
             if self.context_matrix is not None:
                 self.context_matrix.clear_all_scratchpads()
 
-    def _on_semantic_prediction_applied(self, image_path: str, source_mask_annotation):
-        """Propagate a full-image semantic segmentation prediction to all target cameras.
+    def _on_semantic_prediction_applied(self, image_path: str, source_mask_annotation, prediction_regions=None):
+        """Propagate a semantic segmentation prediction to all target cameras.
 
         Called by Semantic.predict() after each image is processed when multi-annotate
-        is enabled. For each labeled class in the predicted mask, extracts the
-        corresponding 3D element IDs (via the source camera's index map) and paints
-        them into every visible target camera using the same 3D pipeline as brush strokes.
+        is enabled. When region payloads are supplied, only those tiles contribute
+        to the 3D element votes, which keeps work-area predictions scoped to the
+        predicted region instead of the entire source mask.
 
         Perspective ↔ orthomosaic propagation is supported: when the source is an
         OrthoCamera, targets are all visible perspective cameras; when the source is a
@@ -3868,34 +3948,70 @@ class MVATManager(QObject):
         if source_index_map is None:
             return
 
-        # Unique real class IDs in the prediction (lock bit stripped, skip background)
-        unique_real_ids = np.unique(semantic_mask % LOCK_BIT)
-        unique_real_ids = unique_real_ids[unique_real_ids > 0]
-        if len(unique_real_ids) == 0:
-            return
-
         # Phase 1: Build per-element class votes on the main thread.
         # Each source element is assigned to the dominant semantic class once,
         # so we do not end up painting the same element with multiple classes.
         element_votes = {}
         class_labels = {}
-        for real_class_id in unique_real_ids:
-            label = source_mask_annotation.class_id_to_label_map.get(int(real_class_id))
-            if label is None:
-                continue
-            class_labels[int(real_class_id)] = label
-            binary_mask = (semantic_mask % LOCK_BIT == real_class_id).astype(bool)
-            if not np.any(binary_mask):
-                continue
+        if prediction_regions is not None:
+            for region_mask, top_left in prediction_regions:
+                if region_mask is None:
+                    continue
 
-            source_element_ids = self._extract_source_element_ids_from_full_mask(source_camera, binary_mask)
-            if source_element_ids is None or len(source_element_ids) == 0:
-                continue
+                region_mask = np.asarray(region_mask)
+                if region_mask.ndim != 2:
+                    continue
 
-            unique_element_ids, counts = np.unique(source_element_ids, return_counts=True)
-            for element_id, count in zip(unique_element_ids.tolist(), counts.tolist()):
-                vote_map = element_votes.setdefault(int(element_id), {})
-                vote_map[int(real_class_id)] = vote_map.get(int(real_class_id), 0) + int(count)
+                unique_real_ids = np.unique(region_mask % LOCK_BIT)
+                unique_real_ids = unique_real_ids[unique_real_ids > 0]
+                if len(unique_real_ids) == 0:
+                    continue
+
+                for real_class_id in unique_real_ids:
+                    label = source_mask_annotation.class_id_to_label_map.get(int(real_class_id))
+                    if label is None:
+                        continue
+                    class_labels[int(real_class_id)] = label
+                    binary_mask = (region_mask % LOCK_BIT == real_class_id).astype(bool)
+                    if not np.any(binary_mask):
+                        continue
+
+                    source_element_ids = self._extract_source_element_ids_from_region(
+                        source_camera,
+                        binary_mask,
+                        top_left,
+                    )
+                    if source_element_ids is None or len(source_element_ids) == 0:
+                        continue
+
+                    unique_element_ids, counts = np.unique(source_element_ids, return_counts=True)
+                    for element_id, count in zip(unique_element_ids.tolist(), counts.tolist()):
+                        vote_map = element_votes.setdefault(int(element_id), {})
+                        vote_map[int(real_class_id)] = vote_map.get(int(real_class_id), 0) + int(count)
+        else:
+            # Unique real class IDs in the prediction (lock bit stripped, skip background)
+            unique_real_ids = np.unique(semantic_mask % LOCK_BIT)
+            unique_real_ids = unique_real_ids[unique_real_ids > 0]
+            if len(unique_real_ids) == 0:
+                return
+
+            for real_class_id in unique_real_ids:
+                label = source_mask_annotation.class_id_to_label_map.get(int(real_class_id))
+                if label is None:
+                    continue
+                class_labels[int(real_class_id)] = label
+                binary_mask = (semantic_mask % LOCK_BIT == real_class_id).astype(bool)
+                if not np.any(binary_mask):
+                    continue
+
+                source_element_ids = self._extract_source_element_ids_from_full_mask(source_camera, binary_mask)
+                if source_element_ids is None or len(source_element_ids) == 0:
+                    continue
+
+                unique_element_ids, counts = np.unique(source_element_ids, return_counts=True)
+                for element_id, count in zip(unique_element_ids.tolist(), counts.tolist()):
+                    vote_map = element_votes.setdefault(int(element_id), {})
+                    vote_map[int(real_class_id)] = vote_map.get(int(real_class_id), 0) + int(count)
 
         if not element_votes:
             return

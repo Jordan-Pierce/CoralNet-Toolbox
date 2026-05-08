@@ -131,7 +131,7 @@ class Semantic(Base):
         self.setWindowTitle("Deploy Semantic Segmentation Model (Ctrl + 4)")
 
         # Ultralytics uses 'semseg' task for semantic segmentation
-        self.task = 'semseg'
+        self.task = 'semantic'
 
     def showEvent(self, event):
         """
@@ -188,7 +188,7 @@ class Semantic(Base):
         try:
             # Use YOLO for semantic segmentation
             # Ensure task is correct
-            self.task = 'semseg'
+            self.task = 'semantic'
 
             # Adjust batch size heuristics (keep consistent with Detect)
             if self.model_path.endswith('.engine'):
@@ -304,6 +304,7 @@ class Semantic(Base):
                 # Snapshot the mask state before any modification so the entire
                 # prediction can be undone/redone as a single action.
                 _before_mask_snapshot = mask_annotation.mask_data.copy()
+                semantic_regions = []
 
                 # Work-area inference should only touch the predicted tiles.
                 # Full-image inference still clears the old mask so the result
@@ -427,6 +428,7 @@ class Semantic(Base):
                                 reconstructed_mask,
                                 top_left=offset,
                             )
+                            semantic_regions.append((reconstructed_mask, offset))
                             progress_bar.update_progress()
 
                         if not is_full_image:
@@ -461,7 +463,12 @@ class Semantic(Base):
                     mvat_manager = getattr(self.main_window, 'mvat_manager', None)
                     if (mvat_manager is not None and
                             getattr(mvat_manager, 'multi_annotate_enabled', False)):
-                        mvat_manager._on_semantic_prediction_applied(image_path, mask_annotation)
+                        if semantic_regions:
+                            mvat_manager._on_semantic_prediction_applied(
+                                image_path,
+                                mask_annotation,
+                                prediction_regions=semantic_regions,
+                            )
                 except Exception:
                     pass
 
