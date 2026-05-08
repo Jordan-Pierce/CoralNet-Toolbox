@@ -13,7 +13,7 @@ class Semantic(Base):
     def __init__(self, main_window, parent=None):
         super().__init__(main_window, parent)
         self.setWindowTitle("Evaluate Semantic Model")
-        self.task = 'semseg'
+        self.task = 'semantic'
         self.imgsz = 640
 
     def setup_info_layout(self):

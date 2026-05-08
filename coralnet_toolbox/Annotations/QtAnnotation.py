@@ -8,7 +8,7 @@ import numpy as np
 
 from PyQt5.QtGui import QColor, QPen, QBrush, QPainterPath, QFont, QPainter
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, pyqtProperty, QRectF
-from PyQt5.QtWidgets import (QMessageBox, QGraphicsRectItem, QGraphicsItem,
+from PyQt5.QtWidgets import (QGraphicsRectItem, QGraphicsItem,
                              QGraphicsScene, QGraphicsItemGroup, QGraphicsSimpleTextItem, 
                              QGraphicsPathItem)
 
@@ -154,7 +154,6 @@ class Annotation(QObject):
         self.cropped_image = None
         self._cached_cropped_image_graphic = None
 
-        self.show_message = False
         self.show_confidence = show_confidence
 
         self.center_xy = None
@@ -766,20 +765,6 @@ class Annotation(QObject):
         """Subtract cutter annotations from a base annotation."""
         raise NotImplementedError("Subclasses must implement this method.")
 
-    def show_warning_message(self):
-        """Display a warning message about altering an unverified annotation with machine predictions."""
-        msg_box = QMessageBox()
-        msg_box.setIcon(QMessageBox.Warning)
-        msg_box.setWindowTitle("Warning")
-        msg_box.setText(
-            "Altering an annotation that still has machine learning predictions and is not verified "
-            "cannot be done because it would overwrite the machine-generated label before you confirm it. "
-            "To verify an annotation, select it and press Ctrl+Space, click a label in the ConfidenceWindow, "
-            "or update the label manually."
-        )
-        msg_box.setStandardButtons(QMessageBox.Ok)
-        msg_box.exec_()
-
     def select(self):
         """Mark the annotation as selected and update its visual appearance."""
         self.is_selected = True
@@ -1305,7 +1290,6 @@ class Annotation(QObject):
 
         # Create the graphic
         self.update_graphics_item()
-        self.show_message = False
         try:
             self.annotationUpdated.emit(self)
         except Exception:
@@ -1340,7 +1324,6 @@ class Annotation(QObject):
 
             # Create the graphic
             self.update_graphics_item()
-            self.show_message = True
             try:
                 self.annotationUpdated.emit(self)
             except Exception:
@@ -1391,7 +1374,6 @@ class Annotation(QObject):
             if self.machine_confidence:
                 self.label = max(self.machine_confidence, key=self.machine_confidence.get)
             self.update_graphics_item()
-            self.show_message = True
 
         try:
             self.annotationUpdated.emit(self)

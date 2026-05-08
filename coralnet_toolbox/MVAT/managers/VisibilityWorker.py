@@ -1,5 +1,6 @@
 import traceback
 import threading
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
@@ -43,6 +44,22 @@ class VisibilityWorker(QObject):
         self.target_file_path = target_file_path
         self.signals = WorkerSignals()
 
+    # ------------------------------------------------------------------
+    def _status(self, msg: str):
+        """Thread-safe status bar update (best-effort)."""
+        try:
+            from PyQt5.QtCore import QMetaObject, Qt, Q_ARG
+            from PyQt5.QtWidgets import QApplication
+            main_win = QApplication.instance().activeWindow()
+            if main_win and hasattr(main_win, 'status_bar'):
+                QMetaObject.invokeMethod(
+                    main_win.status_bar, "showMessage",
+                    Qt.QueuedConnection,
+                    Q_ARG(str, msg)
+                )
+        except Exception:
+            pass
+
     def run(self):
         try:
             # Perspective cameras
@@ -72,18 +89,7 @@ class VisibilityWorker(QObject):
                     try:
                         # Primary: Batched VTK rasterization
                         def update_status(current, total):
-                            try:
-                                from PyQt5.QtCore import QMetaObject, Qt, Q_ARG
-                                from PyQt5.QtWidgets import QApplication
-                                main_win = QApplication.instance().activeWindow()
-                                if main_win and hasattr(main_win, 'status_bar'):
-                                    QMetaObject.invokeMethod(
-                                        main_win.status_bar, "showMessage",
-                                        Qt.QueuedConnection,
-                                        Q_ARG(str, f"Computing 3D maps... ({current}/{total} cameras at {self.scale_factor}x)")
-                                    )
-                            except Exception:
-                                pass
+                            self._status(f"Computing 3D maps... ({current}/{total} cameras at {self.scale_factor}x)")
 
                         batch_results = VisibilityManager.compute_batch_mesh_visibility_vtk(
                             self.primary_target, params_list, self.compute_depth_maps,
@@ -141,49 +147,115 @@ class VisibilityWorker(QObject):
 
             # =================================================================
             # 0. Apply distortion warp to maps generated with K_linear
+            #
+            # Optimisations applied here:
+            #   • Opt 4 – batch all cameras that share the same lens model into a
+            #             single F.grid_sample call on CUDA.
+            #   • Opt 1 – fall back to a parallel ThreadPoolExecutor of cv2.remap
+            #             calls (each releases the GIL) when CUDA is unavailable.
+            #   • Opt 2 – inverted-index rebuild is removed; the daemon thread
+            #             launched inside add_index_map handles it asynchronously.
+            #   • Opt 3 – visible_indices is derived from the warped index map
+            #             using a parallel np.unique pass instead of a serial loop.
             # =================================================================
-            for path, result in results.items():
-                warp_fn = self.warp_callables_dict.get(path)
-                if warp_fn is None:
-                    continue
+            distorted_paths = [p for p in results if p in self.warp_callables_dict]
 
-                idx_map = result.get('index_map')
-                depth_map = result.get('depth_map')
+            if distorted_paths:
+                self._status("Applying distortion corrections to visibility maps...")
 
-                if idx_map is not None:
-                    # MUST use INTER_NEAREST: interpolation would invent fake element IDs
-                    result['index_map'] = warp_fn(idx_map, border_value=-1)
-
-                    # UPDATE: Re-extract visible indices because the warp may have culled edges
-                    valid_mask = result['index_map'] >= 0
-                    result['visible_indices'] = np.unique(result['index_map'][valid_mask]).astype(np.int32)
-
-                    # UPDATE: Rebuild the inverted index for immediate RAM usage
-                    result['inverted_index'] = VisibilityManager._build_inverted_index(result['index_map'])
-
-                if depth_map is not None:
-                    # UPDATE: Use np.nan so the 3D occlusion logic ignores the curved borders
-                    result['depth_map'] = warp_fn(depth_map, border_value=np.nan)
-
-                # Normalize dtypes for downstream consumers and caching
+                # --- Phase A: warp index maps + depth maps ----------------
+                cuda_ok = False
                 try:
-                    VisibilityManager._normalize_result_dict(result, self.compute_depth_maps)
-                except Exception:
-                    pass
+                    import torch
+                    if torch.cuda.is_available():
+                        from coralnet_toolbox.Rasters.QtRaster import Raster
 
-            # Update status for distortion corrections
-            try:
-                from PyQt5.QtCore import QMetaObject, Qt, Q_ARG
-                from PyQt5.QtWidgets import QApplication
-                main_win = QApplication.instance().activeWindow()
-                if main_win and hasattr(main_win, 'status_bar'):
-                    QMetaObject.invokeMethod(
-                        main_win.status_bar, "showMessage",
-                        Qt.QueuedConnection,
-                        Q_ARG(str, "Applying distortion corrections to visibility maps...")
-                    )
-            except Exception:
-                pass
+                        # Group cameras by distortion model (same bytes → same grid)
+                        groups = defaultdict(list)
+                        for path in distorted_paths:
+                            key = self.dist_coeffs_bytes_dict.get(path, id(self.warp_callables_dict[path]))
+                            groups[key].append(path)
+
+                        for group_paths in groups.values():
+                            # Ensure warp maps cached on the representative raster
+                            rep_raster = self.warp_callables_dict[group_paths[0]].__self__
+                            rep_raster._ensure_warp_maps()
+                            if not hasattr(rep_raster, '_torch_grid_gpu'):
+                                # Force GPU grid build via single-map warp on a tiny dummy
+                                dummy = np.zeros((1, 1), dtype=np.float32)
+                                rep_raster._warp_pytorch_cuda(dummy, 0)
+
+                            grid_gpu  = rep_raster._torch_grid_gpu
+                            oob_mask  = rep_raster._torch_oob_mask
+
+                            # Collect index maps
+                            idx_paths = [p for p in group_paths if results[p].get('index_map') is not None]
+                            if idx_paths:
+                                warped = Raster.warp_batch_cuda(
+                                    [results[p]['index_map'] for p in idx_paths],
+                                    [-1] * len(idx_paths),
+                                    grid_gpu, oob_mask
+                                )
+                                for p, w in zip(idx_paths, warped):
+                                    results[p]['index_map'] = w
+
+                            # Collect depth maps
+                            dep_paths = [p for p in group_paths if results[p].get('depth_map') is not None]
+                            if dep_paths:
+                                warped = Raster.warp_batch_cuda(
+                                    [results[p]['depth_map'] for p in dep_paths],
+                                    [float('nan')] * len(dep_paths),
+                                    grid_gpu, oob_mask
+                                )
+                                for p, w in zip(dep_paths, warped):
+                                    results[p]['depth_map'] = w
+
+                        cuda_ok = True
+
+                except Exception as e:
+                    print(f"CUDA batch warp failed ({e}), falling back to parallel CPU remap")
+
+                if not cuda_ok:
+                    # Parallel CPU path — cv2.remap releases the GIL so threads help
+                    def _cpu_warp(path):
+                        warp_fn = self.warp_callables_dict[path]
+                        r = results[path]
+                        if r.get('index_map') is not None:
+                            r['index_map'] = warp_fn(r['index_map'], border_value=-1)
+                        if r.get('depth_map') is not None:
+                            r['depth_map'] = warp_fn(r['depth_map'], border_value=np.nan)
+
+                    n_workers = min(8, len(distorted_paths))
+                    with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                        futs = [pool.submit(_cpu_warp, p) for p in distorted_paths]
+                        for fut in as_completed(futs):
+                            try:
+                                fut.result()
+                            except Exception as exc:
+                                print(f"CPU warp failed: {exc}")
+
+                # --- Phase B: visible_indices + normalize (parallel) ------
+                # Opt 2: inverted index is NOT rebuilt here; add_index_map's
+                # daemon thread handles it so we don't block the emit.
+                def _post_warp(path):
+                    r = results[path]
+                    idx_map = r.get('index_map')
+                    if idx_map is not None:
+                        valid_mask = idx_map >= 0
+                        r['visible_indices'] = np.unique(idx_map[valid_mask]).astype(np.int32)
+                    try:
+                        VisibilityManager._normalize_result_dict(r, self.compute_depth_maps)
+                    except Exception:
+                        pass
+
+                n_workers = min(8, len(distorted_paths))
+                with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                    futs = [pool.submit(_post_warp, p) for p in distorted_paths]
+                    for fut in as_completed(futs):
+                        try:
+                            fut.result()
+                        except Exception:
+                            pass
 
             # =================================================================
             # 1. Pre-fill cache paths so the main thread knows not to save them
@@ -240,19 +312,7 @@ class VisibilityWorker(QObject):
                     args=(results, self.cache_manager, self.target_file_path, self.cache_keys_dict, self.dist_coeffs_bytes_dict),
                     daemon=True
                 )
-                # Update status for saving
-                try:
-                    from PyQt5.QtCore import QMetaObject, Qt, Q_ARG
-                    from PyQt5.QtWidgets import QApplication
-                    main_win = QApplication.instance().activeWindow()
-                    if main_win and hasattr(main_win, 'status_bar'):
-                        QMetaObject.invokeMethod(
-                            main_win.status_bar, "showMessage",
-                            Qt.QueuedConnection,
-                            Q_ARG(str, "Saving visibility maps to cache...")
-                        )
-                except Exception:
-                    pass
+                self._status("Saving visibility maps to cache...")
                 io_thread.start()
 
             # =================================================================

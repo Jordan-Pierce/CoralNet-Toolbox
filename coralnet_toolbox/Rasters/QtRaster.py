@@ -34,6 +34,22 @@ warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarni
 
 
 # ----------------------------------------------------------------------------------------------------------------------
+# Module-level warp-grid cache (opt 5)
+# Cameras sharing the same lens model (K + dist_coeffs + image size) share one
+# GPU tensor and one pair of CPU flow maps instead of each allocating their own.
+# ----------------------------------------------------------------------------------------------------------------------
+
+_WARP_GRID_CACHE: dict = {}          # key -> {'map_x', 'map_y', 'grid_gpu', 'oob_mask'}
+_WARP_GRID_LOCK  = threading.Lock()  # guards both reads and writes
+
+
+def _warp_grid_cache_key(intrinsics, dist_coeffs, h, w):
+    K_bytes   = intrinsics.tobytes()  if intrinsics  is not None else b''
+    d_bytes   = dist_coeffs.tobytes() if dist_coeffs is not None else b''
+    return (K_bytes, d_bytes, h, w)
+
+
+# ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
@@ -435,13 +451,34 @@ class Raster(QObject):
         self._map_x = linear_coords[:, 0, 0].reshape(h, w)
         self._map_y = linear_coords[:, 0, 1].reshape(h, w)
 
+        # Populate the module-level cache so sibling cameras with the same lens
+        # skip this expensive computation entirely (opt 5).
+        cache_key = _warp_grid_cache_key(self.intrinsics, self.dist_coeffs, h, w)
+        with _WARP_GRID_LOCK:
+            entry = _WARP_GRID_CACHE.setdefault(cache_key, {})
+            entry.setdefault('map_x', self._map_x)
+            entry.setdefault('map_y', self._map_y)
+
+    def _ensure_warp_maps(self):
+        """Idempotent: populate CPU warp maps, pulling from module cache when possible."""
+        if hasattr(self, '_map_x'):
+            return
+        cache_key = _warp_grid_cache_key(self.intrinsics, self.dist_coeffs,
+                                          self.height, self.width)
+        with _WARP_GRID_LOCK:
+            entry = _WARP_GRID_CACHE.get(cache_key)
+        if entry and 'map_x' in entry:
+            self._map_x = entry['map_x']
+            self._map_y = entry['map_y']
+        else:
+            self._cache_warp_maps()
+
     def warp_linear_map_to_distorted(self, linear_map, border_value=-1):
         """
         Warp a perfectly linear VTK/Open3D render back into the distorted photo space.
         Uses CUDA via PyTorch if available, falling back to cached cv2.remap.
         """
-        if not hasattr(self, '_map_x'):
-            self._cache_warp_maps()
+        self._ensure_warp_maps()
 
         # Try CUDA path first
         import torch
@@ -469,21 +506,35 @@ class Raster(QObject):
 
         h, w = self.height, self.width
 
-        # Lazily initialize and cache the PyTorch grid and out-of-bounds mask on the GPU
+        # Lazily initialize and cache the PyTorch grid and out-of-bounds mask on the GPU.
+        # Pull from module-level cache first so all cameras with the same lens share
+        # one GPU tensor (opt 5).
         if not hasattr(self, '_torch_grid_gpu'):
-            # F.grid_sample expects coordinates normalized to [-1, 1]
-            norm_map_x = (self._map_x / (w - 1)) * 2.0 - 1.0
-            norm_map_y = (self._map_y / (h - 1)) * 2.0 - 1.0
-            grid = np.stack([norm_map_x, norm_map_y], axis=-1)
-            
-            # Send to GPU: shape (1, H, W, 2)
-            self._torch_grid_gpu = torch.tensor(grid, device='cuda', dtype=torch.float32).unsqueeze(0)
-            
-            # Pre-compute out-of-bounds mask to handle OpenCV's border_value correctly
-            self._torch_oob_mask = (
-                (self._torch_grid_gpu[0, ..., 0] < -1.0) | (self._torch_grid_gpu[0, ..., 0] > 1.0) |
-                (self._torch_grid_gpu[0, ..., 1] < -1.0) | (self._torch_grid_gpu[0, ..., 1] > 1.0)
-            )
+            cache_key = _warp_grid_cache_key(self.intrinsics, self.dist_coeffs, h, w)
+            with _WARP_GRID_LOCK:
+                entry = _WARP_GRID_CACHE.get(cache_key, {})
+                if 'grid_gpu' in entry:
+                    self._torch_grid_gpu = entry['grid_gpu']
+                    self._torch_oob_mask = entry['oob_mask']
+                else:
+                    # F.grid_sample expects coordinates normalized to [-1, 1]
+                    norm_map_x = (self._map_x / (w - 1)) * 2.0 - 1.0
+                    norm_map_y = (self._map_y / (h - 1)) * 2.0 - 1.0
+                    grid = np.stack([norm_map_x, norm_map_y], axis=-1)
+                    # Send to GPU: shape (1, H, W, 2)
+                    self._torch_grid_gpu = torch.tensor(
+                        grid, device='cuda', dtype=torch.float32).unsqueeze(0)
+                    # Pre-compute out-of-bounds mask
+                    self._torch_oob_mask = (
+                        (self._torch_grid_gpu[0, ..., 0] < -1.0) |
+                        (self._torch_grid_gpu[0, ..., 0] > 1.0)  |
+                        (self._torch_grid_gpu[0, ..., 1] < -1.0) |
+                        (self._torch_grid_gpu[0, ..., 1] > 1.0)
+                    )
+                    # Store back so sibling cameras share this tensor
+                    entry['grid_gpu'] = self._torch_grid_gpu
+                    entry['oob_mask'] = self._torch_oob_mask
+                    _WARP_GRID_CACHE[cache_key] = entry
 
         # F.grid_sample requires float32 tensors, shape (N, C, H, W)
         is_int = linear_map.dtype in [np.int32, np.int64]
@@ -508,7 +559,55 @@ class Raster(QObject):
             return warped_np.astype(np.int32)
         return warped_np
 
-    def add_index_map(self, index_map: np.ndarray, index_map_path: Optional[str] = None, 
+    @classmethod
+    def warp_batch_cuda(cls, maps, border_values, grid_gpu, oob_mask):
+        """
+        Warp N maps in a single F.grid_sample call (opt 4).
+
+        All maps must share the same (H, W) and the same lens model (same grid).
+
+        Args:
+            maps          : list of np.ndarray, each shape (H, W)
+            border_values : list of scalars — border fill per map (-1 for index, nan for depth)
+            grid_gpu      : torch.Tensor shape (1, H, W, 2) already on CUDA
+            oob_mask      : bool torch.Tensor shape (H, W) — out-of-bounds pixels
+
+        Returns:
+            list of np.ndarray, same dtypes as inputs
+        """
+        import torch
+        import torch.nn.functional as F
+
+        if not maps:
+            return []
+
+        is_int = [m.dtype in (np.int32, np.int64) for m in maps]
+        n = len(maps)
+
+        # Stack → (N, 1, H, W) float32
+        stacked = np.stack(maps, axis=0).astype(np.float32)[:, np.newaxis, :, :]
+        tensor  = torch.from_numpy(stacked).to(grid_gpu.device)   # zero-copy when possible
+
+        # Expand grid: (1, H, W, 2) → (N, H, W, 2)
+        grid_n = grid_gpu.expand(n, -1, -1, -1)
+
+        warped = F.grid_sample(tensor, grid_n, mode='nearest',
+                               padding_mode='zeros', align_corners=True)
+        # warped: (N, 1, H, W)
+
+        # Apply per-map border values to OOB pixels
+        for i, bv in enumerate(border_values):
+            if bv != 0 and not (isinstance(bv, float) and bv == 0.0):
+                warped[i, 0, oob_mask] = float(bv)
+
+        # Move back to CPU and convert dtypes
+        warped_cpu = warped.squeeze(1).cpu().numpy()   # (N, H, W)
+        return [
+            row.astype(np.int32) if flag else row
+            for row, flag in zip(warped_cpu, is_int)
+        ]
+
+    def add_index_map(self, index_map: np.ndarray, index_map_path: Optional[str] = None,
                       visible_indices: Optional[np.ndarray] = None,
                       element_type: Optional[str] = 'point',
                       inverted_index: Optional[dict] = None):
@@ -1524,165 +1623,66 @@ class Raster(QObject):
             
         return raster_data
     
-    @classmethod
-    def from_dict(cls, raster_dict):
+    def update_from_dict(self, raster_dict: dict):
         """
-        Create a Raster instance from a dictionary (from project loading).
-        
-        Args:
-            raster_dict (dict): Dictionary containing raster data
-            
-        Returns:
-            Raster: A new Raster instance with loaded properties
-        """
-        # Create the raster with the image path
-        image_path = raster_dict['path']
-        raster = cls(image_path)
-        # Restore canonical raster_type if present, but do not overwrite
-        # a subclass-provided raster_type (e.g., VideoRaster) unless the
-        # current type is the default 'ImageRaster' or unset.
-        try:
-            incoming_type = raster_dict.get('raster_type', None)
-            if incoming_type and (not hasattr(raster, 'raster_type') or raster.raster_type in (None, 'ImageRaster')):
-                raster.raster_type = incoming_type
-        except Exception:
-            pass
-        
-        # Load state information
-        state = raster_dict.get('state', {})
-        raster.checkbox_state = state.get('checkbox_state', False)
-        
-        # Load work areas
-        work_areas_list = raster_dict.get('work_areas', [])
-        for work_area_data in work_areas_list:
-            try:
-                from coralnet_toolbox.WorkArea import WorkArea
-                work_area = WorkArea.from_dict(work_area_data, image_path)
-                raster.add_work_area(work_area)
-            except Exception as e:
-                print(f"Error loading work area for {image_path}: {str(e)}")
-        
-        # Load scale information if available
-        scale_data = raster_dict.get('scale')
-        if scale_data:
-            try:
-                raster.update_scale(
-                    scale_data['scale_x'], 
-                    scale_data['scale_y'], 
-                    scale_data['scale_units']
-                )
-            except Exception as e:
-                print(f"Error loading scale information for {image_path}: {str(e)}")
-        
-        # Load camera calibration information if available
-        intrinsics_data = raster_dict.get('intrinsics')
-        if intrinsics_data:
-            try:
-                # Convert list back to numpy array
-                intrinsics_array = np.array(intrinsics_data)
-                raster.add_intrinsics(intrinsics_array)
-            except Exception as e:
-                print(f"Error loading intrinsics for {image_path}: {str(e)}")
-                
-        extrinsics_data = raster_dict.get('extrinsics')
-        if extrinsics_data:
-            try:
-                # Convert list back to numpy array
-                extrinsics_array = np.array(extrinsics_data)
-                raster.add_extrinsics(extrinsics_array)
-            except Exception as e:
-                print(f"Error loading extrinsics for {image_path}: {str(e)}")
+        Restore raster state from a dictionary (in-place).
+        Called by from_dict and by project-loading code that already holds a
+        Raster instance and just needs to update its fields.
 
-        # Load lens distortion information
-        dist_data = raster_dict.get('dist_coeffs')
-        is_distorted = raster_dict.get('is_distorted', False)
-        if dist_data is not None:
-            try:
-                raster.add_distortion(np.array(dist_data, dtype=np.float64), is_distorted=is_distorted)
-            except Exception as e:
-                print(f"Error loading distortion for {image_path}: {str(e)}")
-        else:
-            raster.is_distorted = is_distorted
-
-        # Load z_channel path if available and attempt to load the z-channel data
-        z_channel_path = raster_dict.get('z_channel_path')
-        if z_channel_path:
-            raster.set_z_channel_path(z_channel_path, auto_load=False)  # Defer loading
-            
-        # Load z_unit if available
-        z_unit = raster_dict.get('z_unit')
-        if z_unit:
-            raster.z_unit = z_unit
-            
-        # Load z_data_type if available
-        z_data_type = raster_dict.get('z_data_type')
-        if z_data_type:
-            raster.z_data_type = z_data_type
-        
-        return raster
-    
-    def update_from_dict(self, raster_dict):
-        """
-        Update this raster instance with data from a dictionary (from project loading).
-        This is useful when the raster already exists and you want to update its properties.
-        
         Args:
-            raster_dict (dict): Dictionary containing raster data
+            raster_dict (dict): Dictionary previously produced by to_dict()
         """
-        # Update state information
-        state = raster_dict.get('state', {})
-        self.checkbox_state = state.get('checkbox_state', False)
-        # Restore canonical raster_type if present, but only if current
-        # raster_type is the default or unset to avoid overwriting subclass
-        # values (e.g., VideoRaster) created during import.
+        # Restore canonical raster_type without overwriting a subclass value
         try:
             incoming_type = raster_dict.get('raster_type', None)
             if incoming_type and (not hasattr(self, 'raster_type') or self.raster_type in (None, 'ImageRaster')):
                 self.raster_type = incoming_type
         except Exception:
             pass
-        
-        # Update work areas
+
+        # State
+        state = raster_dict.get('state', {})
+        self.checkbox_state = state.get('checkbox_state', False)
+
+        # Work areas
         work_areas_list = raster_dict.get('work_areas', [])
         for work_area_data in work_areas_list:
             try:
+                from coralnet_toolbox.WorkArea import WorkArea
                 work_area = WorkArea.from_dict(work_area_data, self.image_path)
                 self.add_work_area(work_area)
             except Exception as e:
                 print(f"Error loading work area for {self.image_path}: {str(e)}")
-        
-        # Update scale information if available (overriding any auto-detected scale)
+
+        # Scale
         scale_data = raster_dict.get('scale')
         if scale_data:
             try:
                 self.update_scale(
-                    scale_data['scale_x'], 
-                    scale_data['scale_y'], 
+                    scale_data['scale_x'],
+                    scale_data['scale_y'],
                     scale_data['scale_units']
                 )
             except Exception as e:
                 print(f"Error loading scale information for {self.image_path}: {str(e)}")
-        
-        # Update camera calibration information if available
+
+        # Camera intrinsics
         intrinsics_data = raster_dict.get('intrinsics')
         if intrinsics_data:
             try:
-                # Convert list back to numpy array
-                intrinsics_array = np.array(intrinsics_data)
-                self.add_intrinsics(intrinsics_array)
+                self.add_intrinsics(np.array(intrinsics_data))
             except Exception as e:
                 print(f"Error loading intrinsics for {self.image_path}: {str(e)}")
-                
+
+        # Camera extrinsics
         extrinsics_data = raster_dict.get('extrinsics')
         if extrinsics_data:
             try:
-                # Convert list back to numpy array
-                extrinsics_array = np.array(extrinsics_data)
-                self.add_extrinsics(extrinsics_array)
+                self.add_extrinsics(np.array(extrinsics_data))
             except Exception as e:
                 print(f"Error loading extrinsics for {self.image_path}: {str(e)}")
 
-        # Load lens distortion information
+        # Lens distortion
         dist_data = raster_dict.get('dist_coeffs')
         is_distorted = raster_dict.get('is_distorted', False)
         if dist_data is not None:
@@ -1693,35 +1693,48 @@ class Raster(QObject):
         else:
             self.is_distorted = is_distorted
 
-        # Update index_map path and visible_indices if available
+        # Index map path (lazy — do not load data yet)
         index_map_path = raster_dict.get('index_map_path')
         if index_map_path:
-            self.index_map_path = index_map_path  # Store path but don't load yet (lazy loading)
-        
+            self.index_map_path = index_map_path
+
+        # Visible indices
         visible_indices_data = raster_dict.get('visible_indices')
         if visible_indices_data:
             try:
-                # Convert list back to numpy array
                 self.visible_indices = np.array(visible_indices_data, dtype=np.int32)
             except Exception as e:
                 print(f"Error loading visible_indices for {self.image_path}: {str(e)}")
-        
-        # Update z_channel path if available but don't load the data yet
+
+        # Z-channel path (lazy — do not load data yet)
         z_channel_path = raster_dict.get('z_channel_path')
         if z_channel_path:
-            self.set_z_channel_path(z_channel_path, auto_load=False)  # Defer loading
-            
-        # Update z_unit if available
+            self.set_z_channel_path(z_channel_path, auto_load=False)
+
+        # Z-channel metadata
         z_unit = raster_dict.get('z_unit')
         if z_unit:
             self.z_unit = z_unit
-            
-        # Update z_data_type if available
+
         z_data_type = raster_dict.get('z_data_type')
         if z_data_type:
             self.z_data_type = z_data_type
-        
-        # Note: z_channel data is not loaded from dictionary as it's typically stored separately
+
+    @classmethod
+    def from_dict(cls, raster_dict):
+        """
+        Create a Raster instance from a dictionary (from project loading).
+
+        Args:
+            raster_dict (dict): Dictionary containing raster data
+
+        Returns:
+            Raster: A new Raster instance with loaded properties
+        """
+        image_path = raster_dict['path']
+        raster = cls(image_path)
+        raster.update_from_dict(raster_dict)
+        return raster
 
     def cleanup(self, collect_garbage: bool = True):
         """Release all resources associated with this raster."""
