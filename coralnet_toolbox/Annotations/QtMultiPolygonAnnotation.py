@@ -50,8 +50,8 @@ class MultiPolygonAnnotation(Annotation):
         self.set_centroid()
         self.set_cropped_bbox()
 
-        if polygons and hasattr(polygons[0], 'show_message'):
-            self.show_message = polygons[0].show_message
+        if polygons and hasattr(polygons[0], 'verified'):
+            self.verified = polygons[0].verified
 
     def set_precision(self, reduce: bool = True):
         """Round coordinates of all polygons to 3 decimal places."""

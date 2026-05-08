@@ -1895,11 +1895,32 @@ class AnnotationWindow(BaseCanvas):
         self.scene.update()
         self.viewport().update()
         
-    def is_annotation_moveable(self, annotation):
-        """Check if an annotation can be moved and show a warning if not."""
-        if annotation.show_message:
+    def is_annotation_moveable(self, annotation, use_status_bar=False):
+        """Check if an annotation can be moved and show a warning if not verified."""
+        if not annotation.verified:
             self.unselect_annotations()
-            annotation.show_warning_message()
+            if use_status_bar:
+                try:
+                    self.main_window.status_bar.showMessage(
+                        "Verify by selecting and pressing Ctrl+Space, "
+                        "clicking a label in the ConfidenceWindow, "
+                        "or updating the label manually.",
+                        4000,
+                    )
+                except Exception:
+                    pass
+            else:
+                msg_box = QMessageBox(self)
+                msg_box.setIcon(QMessageBox.Warning)
+                msg_box.setWindowTitle("Warning")
+                msg_box.setText(
+                    "Altering an annotation that still has machine learning predictions and is not verified "
+                    "cannot be done because it would overwrite the machine-generated label before you confirm it. "
+                    "To verify an annotation, select it and press Ctrl+Space, click a label in the ConfidenceWindow, "
+                    "or update the label manually."
+                )
+                msg_box.setStandardButtons(QMessageBox.Ok)
+                msg_box.exec_()
             return False
         return True
 

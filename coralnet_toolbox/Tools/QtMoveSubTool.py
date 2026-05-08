@@ -47,7 +47,7 @@ class MoveSubTool(SubTool):
         # that is moveable. A more complex version could move all of them.
         selected_annotation = self.parent_tool.selected_annotations[0]
         
-        if not self.annotation_window.is_annotation_moveable(selected_annotation):
+        if not self.annotation_window.is_annotation_moveable(selected_annotation, use_status_bar=True):
             # If it's not moveable, stop the operation.
             self.parent_tool.deactivate_subtool()
             return
