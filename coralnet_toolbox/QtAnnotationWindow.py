@@ -1898,7 +1898,7 @@ class AnnotationWindow(BaseCanvas):
     def is_annotation_moveable(self, annotation, use_status_bar=False):
         """Check if an annotation can be moved and show a warning if not verified."""
         if not annotation.verified:
-            self.unselect_annotations()
+            # self.unselect_annotations()
             if use_status_bar:
                 try:
                     self.main_window.status_bar.showMessage(
