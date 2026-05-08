@@ -755,7 +755,7 @@ class MaskAnnotation(Annotation):
 
     # --- Data Manipulation & Editing Methods ---
 
-    def fill_region(self, point: QPointF, new_class_id: int, history_action=None):
+    def fill_region(self, point: QPointF, new_class_id: int, history_action=None, silent: bool = False, return_update_rect: bool = False):
         """
         Fills a contiguous region with a new class ID using optimized OpenCV floodFill, 
         respecting pre-locked pixels.
@@ -763,24 +763,29 @@ class MaskAnnotation(Annotation):
         Returns:
             numpy.ndarray or None: Boolean mask of pixels that were filled, or None if fill failed
         """
+        def _maybe_return(fill_result, rect=None):
+            if return_update_rect:
+                return fill_result, rect
+            return fill_result
+
         x, y = int(point.x()), int(point.y())
         height, width = self.mask_data.shape
         if not (0 <= y < height and 0 <= x < width):
-            return None
+            return _maybe_return(None)
 
         # Check if the starting pixel is locked. If so, we cannot fill from it.
         if self.mask_data[y, x] >= self.LOCK_BIT:
-            return None
+            return _maybe_return(None)
 
         old_class_id = self.mask_data[y, x]
         if old_class_id == new_class_id:
-            return None
-        
+            return _maybe_return(None)
+
         import cv2
-        from PyQt5.QtWidgets import QApplication
-        from PyQt5.QtCore import Qt
-        
-        QApplication.setOverrideCursor(Qt.WaitCursor)
+        if not silent:
+            from PyQt5.QtWidgets import QApplication
+            from PyQt5.QtCore import Qt
+            QApplication.setOverrideCursor(Qt.WaitCursor)
 
         # Create a mask padded by 1 pixel on all sides (required by OpenCV)
         cv_mask = np.zeros((height + 2, width + 2), dtype=np.uint8)
@@ -832,11 +837,12 @@ class MaskAnnotation(Annotation):
             )
 
         self._invalidate_stats_cache()
-        QApplication.restoreOverrideCursor()
-        self.annotationUpdated.emit(self)
+        if not silent:
+            QApplication.restoreOverrideCursor()
+            self.annotationUpdated.emit(self)
         
         # Return the fill_mask so callers can know which pixels were filled
-        return fill_mask
+        return _maybe_return(fill_mask, update_rect)
 
     def _fast_rasterize(self, geometries, width, height, mode="rasterio"):
         """

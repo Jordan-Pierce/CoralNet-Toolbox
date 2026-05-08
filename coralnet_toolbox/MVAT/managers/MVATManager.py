@@ -2115,6 +2115,43 @@ class MVATManager(QObject):
                 return canvas
         return None
 
+    def _compute_dirty_rect_from_flat_indices(self, flat_indices, width: int, height: int, padding: int = 1):
+        """Return an x/y dirty rectangle for a flat index set, or None if empty."""
+        if flat_indices is None or width <= 0 or height <= 0:
+            return None
+
+        flat_indices = np.asarray(flat_indices, dtype=np.int64).ravel()
+        if flat_indices.size == 0:
+            return None
+
+        y_coords, x_coords = np.divmod(flat_indices, width)
+        return (
+            max(0, int(x_coords.min()) - padding),
+            max(0, int(y_coords.min()) - padding),
+            min(width, int(x_coords.max()) + padding + 1),
+            min(height, int(y_coords.max()) + padding + 1),
+        )
+
+    def _apply_mask_visual_update(self, target_path: str, target_mask, label_id: Optional[str] = None, update_rect=None):
+        """Apply the minimal UI refresh needed after a silent mask write."""
+        if target_mask is None:
+            return
+
+        if label_id is not None and label_id not in target_mask.visible_label_ids:
+            target_mask.visible_label_ids.add(label_id)
+
+        try:
+            target_mask.update_graphics_item(update_rect=update_rect)
+        except Exception:
+            pass
+
+        context_canvas = self._get_context_canvas_for_path(target_path)
+        if context_canvas is not None and context_canvas._mask_overlay_item is None:
+            try:
+                context_canvas.set_mask_overlay(target_mask)
+            except Exception:
+                pass
+
     def _get_visible_context_camera_paths(self) -> list:
         """Return the ordered list of image paths currently visible in the context matrix."""
         if self.context_matrix is None:
@@ -2989,19 +3026,19 @@ class MVATManager(QObject):
         """Single-camera propagation — runs in thread pool, no Qt calls."""
         target_camera = self._get_camera_for_path(target_path)
         if target_camera is None:
-            return target_path, False
+            return target_path, False, None
 
         target_raster = self.raster_manager.get_raster(target_path)
         if target_raster is None:
-            return target_path, False
+            return target_path, False, None
 
         target_mask = target_raster.mask_annotation
         if target_mask is None:
-            return target_path, False
+            return target_path, False, None
 
         target_class_id = target_class_id_map.get(target_path)
         if target_class_id is None:
-            return target_path, False
+            return target_path, False, None
 
         target_has_index = target_camera._raster.index_map is not None
 
@@ -3016,27 +3053,40 @@ class MVATManager(QObject):
 
             flat_indices = target_camera.get_pixels_for_elements(painted_ids, bbox=bbox)
             if len(flat_indices) == 0:
-                return target_path, False
+                return target_path, False, None
 
             if hasattr(target_mask, 'mask_data'):
                 current_vals = target_mask.mask_data.ravel()[flat_indices]
                 flat_indices = flat_indices[(current_vals < target_mask.LOCK_BIT) & 
                                             (current_vals != target_class_id)]
             if len(flat_indices) == 0:
-                return target_path, False
+                return target_path, False, None
 
             target_mask.update_mask_at_indices(flat_indices, target_class_id, silent=True)
+            update_rect = self._compute_dirty_rect_from_flat_indices(
+                flat_indices,
+                target_camera.width,
+                target_camera.height,
+            )
         else:
             proj = projections.get(target_path)
             if proj is None:
-                return target_path, False
+                return target_path, False, None
             u, v, is_valid = proj
             if not is_valid or not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
-                return target_path, False
+                return target_path, False, None
             brush_location = QPointF(u - brush_w / 2.0, v - brush_h / 2.0)
             target_mask.update_mask(brush_location, brush_mask, target_class_id, silent=True)
+            x_start = max(0, int(u - brush_w / 2.0))
+            y_start = max(0, int(v - brush_h / 2.0))
+            update_rect = (
+                x_start,
+                y_start,
+                min(target_camera.width, x_start + brush_w),
+                min(target_camera.height, y_start + brush_h),
+            )
 
-        return target_path, True
+        return target_path, True, update_rect
 
     def _on_brush_stroke_applied(self, scene_pos, label_id: str, brush_mask):
         """Propagate a brush stroke into all visible context cameras.
@@ -3152,18 +3202,17 @@ class MVATManager(QObject):
                 for target_path in target_class_id_map
             }
             for future in as_completed(futures):
-                target_path, did_update = future.result()
+                target_path, did_update, update_rect = future.result()
                 if did_update:
                     target_raster = self.raster_manager.get_raster(target_path)
                     if target_raster and target_raster.mask_annotation:
                         target_mask = target_raster.mask_annotation
-                        if label_id not in target_mask.visible_label_ids:
-                            target_mask.visible_label_ids.add(label_id)
-                            target_mask.update_graphics_item()  # Qt call back on main thread
-                        # Only mount the overlay if it isn't already attached to the canvas
-                        context_canvas = self._get_context_canvas_for_path(target_path)
-                        if context_canvas is not None and context_canvas._mask_overlay_item is None:
-                            context_canvas.set_mask_overlay(target_mask)
+                        self._apply_mask_visual_update(
+                            target_path,
+                            target_mask,
+                            label_id,
+                            update_rect=update_rect,
+                        )
         finally:
             self._propagating_annotation = False
 
@@ -3296,15 +3345,23 @@ class MVATManager(QObject):
                         
                         from PyQt5.QtCore import QPointF
                         fill_pos = QPointF(u, v)
-                        target_mask.fill_region(fill_pos, target_class_id)
-                        
-                        if label_id not in target_mask.visible_label_ids:
-                            target_mask.visible_label_ids.add(label_id)
-                            target_mask.update_graphics_item()
-                            
-                        context_canvas = self._get_context_canvas_for_path(target_path)
-                        if context_canvas is not None and context_canvas._mask_overlay_item is None:
-                            context_canvas.set_mask_overlay(target_mask)
+                        fill_result = target_mask.fill_region(
+                            fill_pos,
+                            target_class_id,
+                            silent=True,
+                            return_update_rect=True,
+                        )
+                        if fill_result is None:
+                            continue
+                        fill_mask_result, fill_rect = fill_result
+                        if fill_mask_result is None:
+                            continue
+                        self._apply_mask_visual_update(
+                            target_path,
+                            target_mask,
+                            label_id,
+                            update_rect=fill_rect,
+                        )
 
             # 4. Catch 3D Thread results and repaint
             for future in as_completed(futures):
@@ -3324,14 +3381,17 @@ class MVATManager(QObject):
                         
                         if len(flat_indices) > 0:
                             target_mask.update_mask_at_indices(flat_indices, target_class_id, silent=True)
-                            
-                            if label_id not in target_mask.visible_label_ids:
-                                target_mask.visible_label_ids.add(label_id)
-                            target_mask.update_graphics_item()
-                            
-                            context_canvas = self._get_context_canvas_for_path(target_path)
-                            if context_canvas is not None and context_canvas._mask_overlay_item is None:
-                                context_canvas.set_mask_overlay(target_mask)
+                            dirty_rect = self._compute_dirty_rect_from_flat_indices(
+                                flat_indices,
+                                target_mask.mask_data.shape[1],
+                                target_mask.mask_data.shape[0],
+                            )
+                            self._apply_mask_visual_update(
+                                target_path,
+                                target_mask,
+                                label_id,
+                                update_rect=dirty_rect,
+                            )
 
         except Exception as e:
             print(f"Error in multi-annotate fill: {e}")
@@ -3418,13 +3478,11 @@ class MVATManager(QObject):
                         # The silent update in _propagate_to_camera already wrote to
                         # colored_mask, so only a lightweight Qt repaint is needed here —
                         # not a full _update_full_canvas() rebuild.
-                        if target_mask.graphics_item is not None:
-                            target_mask.graphics_item.update()
-
-                        # Mount the overlay if it isn't already attached
-                        context_canvas = self._get_context_canvas_for_path(target_path)
-                        if context_canvas is not None and context_canvas._mask_overlay_item is None:
-                            context_canvas.set_mask_overlay(target_mask)
+                        self._apply_mask_visual_update(
+                            target_path,
+                            target_mask,
+                            label_id,
+                        )
 
         except Exception as e:
             print(f"Error in multi-annotate erase: {e}")
@@ -3494,10 +3552,6 @@ class MVATManager(QObject):
         Runs entirely off the main thread.  All Qt UI updates are deferred and
         executed on the main thread via ``_sam_repaint_signal``.
         """
-        import time as _time
-        _t0 = _time.perf_counter()
-        print(f"\n[SAM PROFILE] ── _do_sam_propagation START (background) ─────────────")
-
         repaint_tasks = []   # UI update tasks flushed to main thread via signal
 
         try:
@@ -3576,11 +3630,6 @@ class MVATManager(QObject):
 
             use_3d = painted_ids is not None and len(painted_ids) > 0
 
-            _t1 = _time.perf_counter()
-            _n_ids = len(painted_ids) if use_3d else 0
-            print(f"[SAM PROFILE] T1 Phase 1 (source ID extraction): {(_t1-_t0)*1000:.1f} ms"
-                  f"  |  painted_ids={_n_ids}  use_3d={use_3d}")
-
             # ------------------------------------------------------------------
             # Queue the 3D Model paint — executed on main thread via signal
             # (_ensure_label_painter / QThread.start must be on the main thread)
@@ -3605,9 +3654,6 @@ class MVATManager(QObject):
                             'source_class_id': source_class_id,
                             'primary_target': primary_target,
                         })
-
-            _t2 = _time.perf_counter()
-            print(f"[SAM PROFILE] T2 3D paint prep:                   {(_t2-_t1)*1000:.1f} ms")
 
             # ------------------------------------------------------------------
             # 1. Pre-resolve class IDs and sort cameras into 3D / 2D buckets
@@ -3638,10 +3684,6 @@ class MVATManager(QObject):
                 else:
                     target_cameras_2d.append((target_path, target_camera))
 
-            _t3 = _time.perf_counter()
-            print(f"[SAM PROFILE] T3 Camera bucketing/class-ID resolve: {(_t3-_t2)*1000:.1f} ms"
-                  f"  |  3D={len(target_cameras_3d)}  2D={len(target_cameras_2d)}")
-
             # ------------------------------------------------------------------
             # 2. Submit per-camera 3D index searches
             # ------------------------------------------------------------------
@@ -3662,10 +3704,6 @@ class MVATManager(QObject):
                     future = self._propagation_executor.submit(
                         target_camera.get_pixels_for_elements, painted_ids, bbox=bbox)
                     futures[future] = target_path
-
-            _t4 = _time.perf_counter()
-            print(f"[SAM PROFILE] T4 3D futures submitted:              {(_t4-_t3)*1000:.1f} ms"
-                  f"  |  futures={len(futures)}")
 
             # ------------------------------------------------------------------
             # 3. Process 2D fallbacks — numpy writes here, Qt repaints via signal
@@ -3703,9 +3741,6 @@ class MVATManager(QObject):
                             'update_rect': dirty,
                         })
 
-            _t5 = _time.perf_counter()
-            print(f"[SAM PROFILE] T5 2D fallback mask writes:           {(_t5-_t4)*1000:.1f} ms")
-
             # ------------------------------------------------------------------
             # 4. Collect 3D thread results — numpy writes here, Qt via signal
             # ------------------------------------------------------------------
@@ -3740,16 +3775,9 @@ class MVATManager(QObject):
                                 'update_rect': dirty,
                             })
 
-            _t6 = _time.perf_counter()
-            print(f"[SAM PROFILE] T6 3D results collected + mask writes: {(_t6-_t5)*1000:.1f} ms")
-
         except Exception as e:
-            print(f"[SAM PROFILE] Worker error: {e}")
             import traceback; traceback.print_exc()
         finally:
-            _t7 = _time.perf_counter()
-            print(f"[SAM PROFILE] ── WORKER TOTAL: {(_t7-_t0)*1000:.1f} ms"
-                  f"  (UI tasks queued: {len(repaint_tasks)}) ──────────────\n")
             # Always emit — the slot is responsible for clearing _propagating_annotation
             self._sam_repaint_signal.emit(repaint_tasks)
 
@@ -4005,7 +4033,7 @@ class MVATManager(QObject):
                 futures[future] = target_path
 
             # Phase 5: Collect results and apply masks (silent, Qt update deferred)
-            updated_targets = set()
+            updated_targets = {}
             for future in as_completed(futures):
                 target_path = futures[future]
                 try:
@@ -4034,20 +4062,35 @@ class MVATManager(QObject):
                         changed_indices, target_class_id, silent=True
                     )
 
+                    dirty_rect = self._compute_dirty_rect_from_flat_indices(
+                        changed_indices,
+                        target_mask.mask_data.shape[1],
+                        target_mask.mask_data.shape[0],
+                    )
+                    existing_rect = updated_targets.get(target_path)
+                    if existing_rect is None:
+                        updated_targets[target_path] = dirty_rect
+                    elif dirty_rect is not None:
+                        updated_targets[target_path] = (
+                            min(existing_rect[0], dirty_rect[0]),
+                            min(existing_rect[1], dirty_rect[1]),
+                            max(existing_rect[2], dirty_rect[2]),
+                            max(existing_rect[3], dirty_rect[3]),
+                        )
+
                     label = class_data[real_class_id][1]
                     if label.id not in target_mask.visible_label_ids:
                         target_mask.visible_label_ids.add(label.id)
 
-                    updated_targets.add(target_path)
-
             # Phase 6: Qt graphics update per modified target (main thread)
-            for target_path in updated_targets:
+            for target_path, update_rect in updated_targets.items():
                 target_mask = target_masks[target_path]
-                target_mask.update_graphics_item()
-
-                context_canvas = self._get_context_canvas_for_path(target_path)
-                if context_canvas is not None and context_canvas._mask_overlay_item is None:
-                    context_canvas.set_mask_overlay(target_mask)
+                self._apply_mask_visual_update(
+                    target_path,
+                    target_mask,
+                    None,
+                    update_rect=update_rect,
+                )
 
         except Exception as e:
             print(f"Error in multi-annotate semantic propagation: {e}")
