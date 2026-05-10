@@ -2032,15 +2032,41 @@ class MVATManager(QObject):
         except Exception:
             brush_shape = None
 
+        selected_camera = self.selected_camera
+        world_point = None
+        if selected_camera is not None:
+            if scene_pos is not None:
+                try:
+                    scene_x = int(round(scene_pos.x()))
+                    scene_y = int(round(scene_pos.y()))
+                    world_point = self._get_world_point_at_pixel(selected_camera, scene_x, scene_y)
+                except Exception:
+                    world_point = None
+
+            if world_point is None:
+                context = self._hover_overlay_context or {}
+                world_point = context.get('center')
+
+            if world_point is None:
+                try:
+                    world_point = np.asarray(self.viewer.plotter.camera.focal_point, dtype=np.float64)
+                except Exception:
+                    world_point = None
+
         if brush_shape in ('circle', 'square'):
             sphere_manager = getattr(self.viewer, '_sphere_manager', None)
             if sphere_manager is not None:
                 try:
                     setter = getattr(sphere_manager, 'set_shape', None)
                     if callable(setter):
-                        setter(brush_shape)
+                        setter(brush_shape, center=world_point)
                     else:
                         sphere_manager.shape = brush_shape
+                        if world_point is not None:
+                            try:
+                                sphere_manager.current_position = np.asarray(world_point, dtype=np.float64)
+                            except Exception:
+                                pass
                 except Exception:
                     pass
 
@@ -2053,28 +2079,14 @@ class MVATManager(QObject):
             except Exception:
                 pass
 
-        selected_camera = self.selected_camera
+            if world_point is not None:
+                try:
+                    self.update_sphere_hover_overlay(world_point, render=False)
+                except Exception:
+                    pass
+
         if selected_camera is None:
             return
-
-        world_point = None
-        if scene_pos is not None:
-            try:
-                scene_x = int(round(scene_pos.x()))
-                scene_y = int(round(scene_pos.y()))
-                world_point = self._get_world_point_at_pixel(selected_camera, scene_x, scene_y)
-            except Exception:
-                world_point = None
-
-        if world_point is None:
-            context = self._hover_overlay_context or {}
-            world_point = context.get('center')
-
-        if world_point is None:
-            try:
-                world_point = np.asarray(self.viewer.plotter.camera.focal_point, dtype=np.float64)
-            except Exception:
-                world_point = None
 
         if world_point is None:
             return

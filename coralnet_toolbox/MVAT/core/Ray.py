@@ -534,7 +534,7 @@ class SphereActorManager:
                 except Exception:
                     pass
 
-    def set_shape(self, shape: str):
+    def set_shape(self, shape: str, center: np.ndarray = None):
         """Update the preview mesh shape and rebuild the cached geometry."""
         if shape is None:
             return
@@ -547,7 +547,15 @@ class SphereActorManager:
         if shape not in ('circle', 'square'):
             return
 
-        if self.shape == shape and self._preview_mesh_shape == shape:
+        if center is not None:
+            try:
+                center = np.asarray(center, dtype=np.float64).reshape(-1)
+                if center.size >= 3:
+                    self.current_position = center[:3].copy()
+            except Exception:
+                center = None
+
+        if self.shape == shape and self._preview_mesh_shape == shape and center is None:
             return
 
         was_visible = False

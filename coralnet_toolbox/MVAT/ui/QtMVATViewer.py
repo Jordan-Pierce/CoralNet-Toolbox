@@ -1120,6 +1120,20 @@ class MVATViewer(QFrame):
                         manager.clear_sphere_hover_overlay(reset_context=True, render=False)
                     except Exception:
                         pass
+            manager = getattr(self, 'mvat_manager', None)
+            if manager is not None:
+                try:
+                    manager.clear_all_markers()
+                except Exception:
+                    pass
+            try:
+                self.clear_ray()
+            except Exception:
+                pass
+            try:
+                self.clear_ortho_ray()
+            except Exception:
+                pass
             return False
 
         if event.type() in (QEvent.KeyPress, QEvent.KeyRelease) and event.key() == Qt.Key_Control:
@@ -1769,14 +1783,43 @@ class MVATViewer(QFrame):
             if active_tool is not None:
                 current_shape = str(getattr(active_tool, 'brush_shape', 'circle')).strip().lower()
                 next_shape = 'square' if current_shape == 'circle' else 'circle'
+                center = getattr(active_tool, '_last_hover_world_pos', None)
+                if center is None:
+                    sphere_manager = getattr(self, '_sphere_manager', None)
+                    if sphere_manager is not None:
+                        center = getattr(sphere_manager, 'current_position', None)
+                if center is None:
+                    try:
+                        center = np.asarray(self.plotter.camera.focal_point, dtype=np.float64)
+                    except Exception:
+                        center = None
+
+                sphere_manager = getattr(self, '_sphere_manager', None)
+                if sphere_manager is not None:
+                    setter = getattr(sphere_manager, 'set_shape', None)
+                    if callable(setter):
+                        try:
+                            setter(next_shape, center=center)
+                        except Exception:
+                            pass
+                    else:
+                        sphere_manager.shape = next_shape
+
                 setter = getattr(active_tool, 'set_brush_shape', None)
                 if callable(setter):
                     try:
-                        setter(next_shape)
+                        setter(next_shape, center=center)
                     except Exception:
                         pass
+                else:
+                    active_tool.brush_shape = next_shape
 
-            event.accept()
+                manager = getattr(self, 'mvat_manager', None)
+                if manager is not None and center is not None:
+                    try:
+                        manager.update_sphere_hover_overlay(center, render=False)
+                    except Exception:
+                        pass
             return
 
         if key == Qt.Key_W:
