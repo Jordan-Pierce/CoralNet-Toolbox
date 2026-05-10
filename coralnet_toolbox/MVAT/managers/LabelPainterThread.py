@@ -88,7 +88,7 @@ class LabelPainterThread(QThread):
 
     @staticmethod
     def build_overlay(mesh_points: np.ndarray, mesh_faces_flat: np.ndarray,
-                      face_ids: np.ndarray, color_rgb) -> pv.PolyData | None:
+                      face_ids: np.ndarray, color_rgb, attach_colors: bool = True) -> pv.PolyData | None:
         """Build a tiny colored PolyData from a subset of face IDs."""
         try:
             face_ids = np.asarray(face_ids, dtype=np.int32)
@@ -106,6 +106,9 @@ class LabelPainterThread(QThread):
             ]).ravel()
 
             overlay = pv.PolyData(overlay_points.astype(np.float32), vtk_faces)
+
+            if not attach_colors:
+                return overlay
 
             colors = np.asarray(color_rgb, dtype=np.uint8)
             if colors.ndim == 1:

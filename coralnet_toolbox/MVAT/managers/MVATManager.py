@@ -450,6 +450,8 @@ class MVATManager(QObject):
         self._label_overlay_actor = None
         self._hover_overlay_actor = None
         self._hover_overlay_context = None
+        self._hover_overlay_face_ids = None
+        self._hover_overlay_color_rgb = None
 
         self.contextStatsComputed.connect(self._on_context_stats_computed)
 
@@ -1692,6 +1694,109 @@ class MVATManager(QObject):
         except Exception:
             return 0.1
 
+    def _normalize_color_rgb(self, color_rgb):
+        try:
+            return tuple(int(c) for c in color_rgb[:3])
+        except Exception:
+            return None
+
+    def _apply_hover_overlay_color(self, color_rgb, render: bool = False):
+        if self._hover_overlay_actor is None or color_rgb is None:
+            return
+
+        try:
+            normalized = self._normalize_color_rgb(color_rgb)
+            if normalized is None:
+                return
+            r, g, b = normalized
+            prop = self._hover_overlay_actor.GetProperty()
+            prop.SetColor(r / 255.0, g / 255.0, b / 255.0)
+            prop.SetOpacity(0.45)
+            self._hover_overlay_actor.SetVisibility(True)
+            self._hover_overlay_color_rgb = (r, g, b)
+            if render:
+                try:
+                    self.viewer.plotter.render()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _set_hover_overlay_geometry(self, overlay, color_rgb, render: bool = True):
+        try:
+            if overlay is None:
+                if self._hover_overlay_actor is not None:
+                    try:
+                        self._hover_overlay_actor.SetVisibility(False)
+                    except Exception:
+                        pass
+                self._hover_overlay_color_rgb = self._normalize_color_rgb(color_rgb) if color_rgb is not None else self._hover_overlay_color_rgb
+                if render:
+                    try:
+                        self.viewer.plotter.render()
+                    except Exception:
+                        pass
+                return
+
+            if self._hover_overlay_actor is None:
+                self._hover_overlay_actor = self.viewer.plotter.add_mesh(
+                    overlay,
+                    color=tuple(c / 255.0 for c in self._normalize_color_rgb(color_rgb) or (255, 255, 255)),
+                    copy_mesh=False,
+                    lighting=False,
+                    opacity=0.45,
+                    show_scalar_bar=False,
+                    smooth_shading=False,
+                    pickable=False,
+                    name='_sphere_hover_overlay',
+                    reset_camera=False,
+                )
+            else:
+                mapper = None
+                try:
+                    mapper = self._hover_overlay_actor.GetMapper()
+                except Exception:
+                    mapper = None
+
+                updated = False
+                if mapper is not None:
+                    for method_name in ('SetInputDataObject', 'SetInputData'):
+                        method = getattr(mapper, method_name, None)
+                        if callable(method):
+                            try:
+                                method(overlay)
+                                updated = True
+                                break
+                            except Exception:
+                                continue
+                if not updated:
+                    try:
+                        self.viewer.plotter.remove_actor(self._hover_overlay_actor, render=False)
+                    except Exception:
+                        pass
+                    self._hover_overlay_actor = self.viewer.plotter.add_mesh(
+                        overlay,
+                        color=tuple(c / 255.0 for c in self._normalize_color_rgb(color_rgb) or (255, 255, 255)),
+                        copy_mesh=False,
+                        lighting=False,
+                        opacity=0.45,
+                        show_scalar_bar=False,
+                        smooth_shading=False,
+                        pickable=False,
+                        name='_sphere_hover_overlay',
+                        reset_camera=False,
+                    )
+
+            self._apply_hover_overlay_color(color_rgb, render=False)
+            self._hover_overlay_actor.SetVisibility(True)
+            if render:
+                try:
+                    self.viewer.plotter.render()
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"⚠️ Hover overlay update failed: {e}")
+
     def _get_faces_within_sphere(self, primary_target, center, radius):
         try:
             primary_target.prepare_geometry()
@@ -1733,55 +1838,34 @@ class MVATManager(QObject):
         distances_sq = np.einsum('ij,ij->i', deltas, deltas)
         return np.flatnonzero(distances_sq <= radius_sq).astype(np.int32)
 
-    def _swap_hover_overlay_actor(self, overlay, render: bool = True):
-        try:
-            if self._hover_overlay_actor is not None:
-                try:
-                    self.viewer.plotter.remove_actor(self._hover_overlay_actor, render=False)
-                except Exception:
-                    pass
-                self._hover_overlay_actor = None
-
-            if overlay is not None:
-                self._hover_overlay_actor = self.viewer.plotter.add_mesh(
-                    overlay,
-                    scalars='OverlayColors',
-                    rgb=True,
-                    copy_mesh=False,
-                    lighting=False,
-                    opacity=0.45,
-                    show_scalar_bar=False,
-                    smooth_shading=False,
-                    pickable=False,
-                    name='_sphere_hover_overlay',
-                )
-
-            if render:
-                try:
-                    self.viewer.plotter.render()
-                except Exception:
-                    pass
-        except Exception as e:
-            print(f"⚠️ Hover overlay swap failed: {e}")
-
     def clear_sphere_hover_overlay(self, reset_context: bool = False, render: bool = True):
         if reset_context:
             self._hover_overlay_context = None
-        self._swap_hover_overlay_actor(None, render=render)
+            self._hover_overlay_face_ids = None
+        if self._hover_overlay_actor is not None:
+            try:
+                self._hover_overlay_actor.SetVisibility(False)
+            except Exception:
+                pass
+        if render:
+            try:
+                self.viewer.plotter.render()
+            except Exception:
+                pass
 
     def refresh_sphere_hover_overlay(self, render: bool = True):
         context = self._hover_overlay_context
         if not context:
-            self._swap_hover_overlay_actor(None, render=render)
+            self.clear_sphere_hover_overlay(reset_context=False, render=render)
             return
 
         try:
             if not bool(getattr(self.viewer, '_sphere_visible', True)):
-                self._swap_hover_overlay_actor(None, render=render)
+                self.clear_sphere_hover_overlay(reset_context=False, render=render)
                 return
             passthrough_active = getattr(self.viewer, '_is_sphere_passthrough_active', None)
             if callable(passthrough_active) and passthrough_active():
-                self._swap_hover_overlay_actor(None, render=render)
+                self.clear_sphere_hover_overlay(reset_context=False, render=render)
                 return
         except Exception:
             pass
@@ -1793,29 +1877,42 @@ class MVATManager(QObject):
 
         color_rgb = self._get_active_label_color_rgb()
         if color_rgb is None:
-            self._swap_hover_overlay_actor(None, render=render)
+            self.clear_sphere_hover_overlay(reset_context=False, render=render)
             return
 
-        center = context.get('center')
-        if center is None:
-            self._swap_hover_overlay_actor(None, render=render)
-            return
-
-        radius = self._get_sphere_hover_radius()
-        face_ids = self._get_faces_within_sphere(primary_target, center, radius)
+        face_ids = self._hover_overlay_face_ids
         if face_ids is None or len(face_ids) == 0:
-            self._swap_hover_overlay_actor(None, render=render)
+            center = context.get('center')
+            if center is None:
+                self.clear_sphere_hover_overlay(reset_context=True, render=render)
+                return
+
+            radius = self._get_sphere_hover_radius()
+            face_ids = self._get_faces_within_sphere(primary_target, center, radius)
+            if face_ids is None or len(face_ids) == 0:
+                self.clear_sphere_hover_overlay(reset_context=True, render=render)
+                return
+
+            mesh = primary_target.get_render_mesh()
+            if mesh is None:
+                self.clear_sphere_hover_overlay(reset_context=True, render=render)
+                return
+
+            mesh_points = np.asarray(mesh.points, dtype=np.float32)
+            mesh_faces_flat = np.asarray(mesh.faces.reshape(-1, 4), dtype=np.int32)
+            overlay = LabelPainterThread.build_overlay(mesh_points, mesh_faces_flat, face_ids, color_rgb, attach_colors=False)
+            self._hover_overlay_face_ids = np.asarray(face_ids, dtype=np.int32)
+            self._hover_overlay_color_rgb = self._normalize_color_rgb(color_rgb)
+            self._set_hover_overlay_geometry(overlay, color_rgb, render=render)
             return
 
-        mesh = primary_target.get_render_mesh()
-        if mesh is None:
-            self.clear_sphere_hover_overlay(reset_context=True, render=render)
+        # Geometry already exists; only update the color when the active label changes.
+        if self._hover_overlay_actor is None:
+            self._hover_overlay_face_ids = None
+            self.refresh_sphere_hover_overlay(render=render)
             return
 
-        mesh_points = np.asarray(mesh.points, dtype=np.float32)
-        mesh_faces_flat = np.asarray(mesh.faces.reshape(-1, 4), dtype=np.int32)
-        overlay = LabelPainterThread.build_overlay(mesh_points, mesh_faces_flat, face_ids, color_rgb)
-        self._swap_hover_overlay_actor(overlay, render=render)
+        self._apply_hover_overlay_color(color_rgb, render=render)
 
     def update_sphere_hover_overlay(self, center, render: bool = True):
         primary_target = self._get_primary_mesh_target()
@@ -1840,11 +1937,47 @@ class MVATManager(QObject):
             self.clear_sphere_hover_overlay(reset_context=True, render=render)
             return
 
+        color_rgb = self._get_active_label_color_rgb()
+        if color_rgb is None:
+            self._hover_overlay_context = {
+                'product_id': getattr(primary_target, 'product_id', None),
+                'center': center,
+            }
+            self.clear_sphere_hover_overlay(reset_context=False, render=render)
+            return
+
+        previous_face_ids = self._hover_overlay_face_ids
         self._hover_overlay_context = {
             'product_id': getattr(primary_target, 'product_id', None),
             'center': center,
         }
-        self.refresh_sphere_hover_overlay(render=render)
+
+        radius = self._get_sphere_hover_radius()
+        face_ids = self._get_faces_within_sphere(primary_target, center, radius)
+        if face_ids is None or len(face_ids) == 0:
+            self.clear_sphere_hover_overlay(reset_context=True, render=render)
+            return
+
+        face_ids = np.asarray(face_ids, dtype=np.int32)
+        same_faces = previous_face_ids is not None and len(previous_face_ids) == len(face_ids) and np.array_equal(previous_face_ids, face_ids)
+        same_color = self._hover_overlay_color_rgb == self._normalize_color_rgb(color_rgb)
+
+        self._hover_overlay_face_ids = face_ids
+        self._hover_overlay_color_rgb = self._normalize_color_rgb(color_rgb)
+
+        if same_faces and same_color and self._hover_overlay_actor is not None:
+            self._apply_hover_overlay_color(color_rgb, render=render)
+            return
+
+        mesh = primary_target.get_render_mesh()
+        if mesh is None:
+            self.clear_sphere_hover_overlay(reset_context=True, render=render)
+            return
+
+        mesh_points = np.asarray(mesh.points, dtype=np.float32)
+        mesh_faces_flat = np.asarray(mesh.faces.reshape(-1, 4), dtype=np.int32)
+        overlay = LabelPainterThread.build_overlay(mesh_points, mesh_faces_flat, face_ids, color_rgb, attach_colors=False)
+        self._set_hover_overlay_geometry(overlay, color_rgb, render=render)
 
     # Note: full-GPU flush is intentionally removed. The overlay actor
     # is treated as the authoritative visualization for painted faces
