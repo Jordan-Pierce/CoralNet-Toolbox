@@ -258,13 +258,21 @@ class BrushTool(Tool):
             scene_pos = self.annotation_window.mapToScene(event.pos())
             self.update_cursor_annotation(scene_pos)
 
-    def create_cursor_preview_item(self, u: float, v: float):
+            manager = getattr(self.main_window, 'mvat_manager', None)
+            if manager is not None:
+                try:
+                    manager.on_2d_tool_size_changed(self, scene_pos)
+                except Exception:
+                    pass
+
+    def create_cursor_preview_item(self, u: float, v: float, radius: float = None):
         if not self.annotation_window.selected_label:
             return None
         
         label = self.annotation_window.selected_label
         transparency = self.annotation_window.main_window.get_transparency_value()
-        radius = self.brush_size / 2.0
+        radius = self.brush_size / 2.0 if radius is None else float(radius)
+        diameter = max(1.0, radius * 2.0)
         c = QColor(label.color)
         fill = QColor(c)
         fill.setAlpha(transparency)
@@ -272,9 +280,9 @@ class BrushTool(Tool):
         pen.setCosmetic(True)
         
         if self.shape == 'circle':
-            item = QGraphicsEllipseItem(u - radius, v - radius, self.brush_size, self.brush_size)
+            item = QGraphicsEllipseItem(u - radius, v - radius, diameter, diameter)
         else:
-            item = QGraphicsRectItem(u - radius, v - radius, self.brush_size, self.brush_size)
+            item = QGraphicsRectItem(u - radius, v - radius, diameter, diameter)
         
         item.setBrush(QBrush(fill))
         item.setPen(pen)

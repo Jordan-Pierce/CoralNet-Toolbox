@@ -400,6 +400,7 @@ class MVATManager(QObject):
         self.hovered_camera = None
         self.current_focal_point = None
         self._context_view_path = None
+        self._projected_cursor_context = None
         
         # Data Settings
         self.compute_depth_maps_enabled = True
@@ -1706,6 +1707,357 @@ class MVATManager(QObject):
         except Exception:
             return 0.1
 
+    def _get_active_3d_tool(self):
+        getter = getattr(self.viewer, 'get_selected_3d_tool', None)
+        if callable(getter):
+            try:
+                return getter()
+            except Exception:
+                return getattr(self.viewer, '_active_3d_tool', None)
+        return getattr(self.viewer, '_active_3d_tool', None)
+
+    def _get_active_3d_tool_kind(self):
+        active_tool = self._get_active_3d_tool()
+        if active_tool is None:
+            return None, None
+
+        tool_name = type(active_tool).__name__
+        if tool_name == 'Brush3DTool':
+            return 'brush', active_tool
+        if tool_name == 'Erase3DTool':
+            return 'erase', active_tool
+        return None, active_tool
+
+    def _get_2d_tool(self, tool_kind: str):
+        tools = getattr(self.annotation_window, 'tools', None)
+        if not isinstance(tools, dict):
+            return None
+        return tools.get(tool_kind)
+
+    def _get_camera_view_normal(self, camera, world_point):
+        if camera is None:
+            return None
+
+        if hasattr(camera, 'get_vertical_direction_world'):
+            try:
+                normal = np.asarray(camera.get_vertical_direction_world(), dtype=np.float64)
+                if normal.size >= 3:
+                    normal = normal[:3]
+                    length = float(np.linalg.norm(normal))
+                    if length >= 1e-8:
+                        return normal / length
+            except Exception:
+                pass
+
+        camera_pos = getattr(camera, 'position', None)
+        if camera_pos is not None and world_point is not None:
+            try:
+                camera_pos = np.asarray(camera_pos, dtype=np.float64).reshape(-1)
+                world_point = np.asarray(world_point, dtype=np.float64).reshape(-1)
+                if camera_pos.size >= 3 and world_point.size >= 3:
+                    normal = world_point[:3] - camera_pos[:3]
+                    length = float(np.linalg.norm(normal))
+                    if length >= 1e-8:
+                        return normal / length
+            except Exception:
+                pass
+
+        return np.array([0.0, 0.0, 1.0], dtype=np.float64)
+
+    def _estimate_pixels_per_world_unit(self, camera, world_point):
+        if camera is None or world_point is None:
+            return None
+
+        try:
+            world_point = np.asarray(world_point, dtype=np.float64).reshape(-1)
+            if world_point.size < 3:
+                return None
+            world_point = world_point[:3]
+
+            center_pixel = np.asarray(camera.project(world_point), dtype=np.float64)
+            if center_pixel is None or np.isnan(center_pixel).any():
+                return None
+
+            view_normal = self._get_camera_view_normal(camera, world_point)
+            if view_normal is None:
+                return None
+
+            reference_vectors = (
+                np.array([0.0, 0.0, 1.0], dtype=np.float64),
+                np.array([0.0, 1.0, 0.0], dtype=np.float64),
+                np.array([1.0, 0.0, 0.0], dtype=np.float64),
+            )
+            tangent = None
+            for reference in reference_vectors:
+                candidate = np.cross(view_normal, reference)
+                candidate_norm = float(np.linalg.norm(candidate))
+                if candidate_norm >= 1e-8:
+                    tangent = candidate / candidate_norm
+                    break
+            if tangent is None:
+                return None
+
+            tangent_2 = np.cross(view_normal, tangent)
+            tangent_2_norm = float(np.linalg.norm(tangent_2))
+            if tangent_2_norm < 1e-8:
+                return None
+            tangent_2 = tangent_2 / tangent_2_norm
+
+            camera_pos = getattr(camera, 'position', None)
+            if camera_pos is not None:
+                try:
+                    camera_pos = np.asarray(camera_pos, dtype=np.float64).reshape(-1)
+                except Exception:
+                    camera_pos = None
+
+            probe_distance = 0.01
+            if camera_pos is not None and camera_pos.size >= 3:
+                distance_to_camera = float(np.linalg.norm(world_point - camera_pos[:3]))
+                probe_distance = max(1e-4, min(0.25, distance_to_camera * 0.001))
+
+            samples = []
+            for direction in (tangent, tangent_2):
+                try:
+                    projected = np.asarray(camera.project(world_point + direction * probe_distance), dtype=np.float64)
+                except Exception:
+                    continue
+                if projected is None or np.isnan(projected).any():
+                    continue
+                delta = float(np.linalg.norm(projected - center_pixel))
+                if np.isfinite(delta) and delta > 0.0:
+                    samples.append(delta / probe_distance)
+
+            if not samples:
+                return None
+
+            scale = float(np.mean(samples))
+            if not np.isfinite(scale) or scale <= 0.0:
+                return None
+            return scale
+        except Exception:
+            return None
+
+    def _project_cursor_preview_for_camera(self, camera, world_point, world_radius):
+        if camera is None or world_point is None:
+            return None
+
+        try:
+            world_radius = float(world_radius)
+        except Exception:
+            return None
+
+        if world_radius <= 0.0:
+            return None
+
+        try:
+            pixel = np.asarray(camera.project(world_point), dtype=np.float64)
+        except Exception:
+            return None
+
+        if pixel is None or np.isnan(pixel).any():
+            return None
+
+        u = float(pixel[0])
+        v = float(pixel[1])
+
+        cam_w = getattr(camera, 'width', 0)
+        cam_h = getattr(camera, 'height', 0)
+        if cam_w and cam_h and not (0 <= u < cam_w and 0 <= v < cam_h):
+            return None
+
+        pixels_per_world = self._estimate_pixels_per_world_unit(camera, world_point)
+        if pixels_per_world is None:
+            return None
+
+        radius_px = max(0.5, world_radius * pixels_per_world)
+        return u, v, radius_px
+
+    def _build_projected_cursor_factory(self, tool_kind: str, radius_px: float):
+        tool = self._get_2d_tool(tool_kind)
+        if tool is None:
+            return None
+
+        radius_px = max(0.5, float(radius_px))
+
+        def factory(u, v):
+            try:
+                return tool.create_cursor_preview_item(u, v, radius=radius_px)
+            except TypeError:
+                return tool.create_cursor_preview_item(u, v)
+            except Exception:
+                return None
+
+        return factory
+
+    def _sync_projected_cursor_previews(self, world_point, render: bool = False):
+        tool_kind, active_tool = self._get_active_3d_tool_kind()
+        if tool_kind not in ('brush', 'erase') or active_tool is None or world_point is None:
+            self._clear_projected_cursor_previews(render=render)
+            return
+
+        world_radius = self._get_sphere_hover_radius()
+        if world_radius <= 0.0:
+            self._clear_projected_cursor_previews(render=render)
+            return
+
+        selected_camera = self.selected_camera
+        projected_main = None
+        if selected_camera is not None:
+            projected_main = self._project_cursor_preview_for_camera(selected_camera, world_point, world_radius)
+
+        # Keep the active 2D tool's internal size aligned with the current
+        # selected camera projection so future 2D strokes reuse the same radius.
+        if projected_main is not None:
+            main_radius_px = projected_main[2]
+            main_tool = self._get_2d_tool(tool_kind)
+            if main_tool is not None:
+                diameter_px = max(1, int(round(main_radius_px * 2.0)))
+                try:
+                    setter = getattr(main_tool, 'set_brush_size', None)
+                    if callable(setter):
+                        setter(diameter_px)
+                    else:
+                        main_tool.brush_size = diameter_px
+                        brush_mask_factory = getattr(main_tool, '_create_brush_mask', None)
+                        if callable(brush_mask_factory):
+                            main_tool.brush_mask = brush_mask_factory()
+                except Exception:
+                    pass
+
+        self._clear_projected_cursor_previews(render=False)
+
+        if projected_main is not None and selected_camera is not None:
+            current_image_path = getattr(self.annotation_window, 'current_image_path', None)
+            if current_image_path == selected_camera.image_path:
+                factory = self._build_projected_cursor_factory(tool_kind, projected_main[2])
+                if factory is not None:
+                    try:
+                        self.annotation_window.update_cursor_preview(projected_main[0], projected_main[1], factory)
+                    except Exception:
+                        pass
+
+        if self.context_matrix is not None:
+            canvas_map = {}
+            try:
+                canvas_map = self.context_matrix._get_canvas_camera_map()
+            except Exception:
+                canvas_map = {}
+
+            for path, canvas in canvas_map.items():
+                if canvas is None or not canvas.isVisible() or not canvas.current_image_path:
+                    continue
+
+                camera = self.cameras.get(path)
+                projected = self._project_cursor_preview_for_camera(camera, world_point, world_radius)
+                if projected is None:
+                    try:
+                        canvas.clear_cursor_preview()
+                    except Exception:
+                        pass
+                    continue
+
+                factory = self._build_projected_cursor_factory(tool_kind, projected[2])
+                if factory is None:
+                    continue
+
+                try:
+                    canvas.update_cursor_preview(projected[0], projected[1], factory)
+                except Exception:
+                    pass
+
+        if render:
+            try:
+                self.viewer.plotter.render()
+            except Exception:
+                pass
+
+    def _clear_projected_cursor_previews(self, render: bool = False):
+        self._projected_cursor_context = None
+
+        try:
+            if hasattr(self.annotation_window, 'toggle_cursor_annotation'):
+                self.annotation_window.toggle_cursor_annotation(None)
+        except Exception:
+            pass
+
+        try:
+            self.annotation_window.clear_cursor_preview()
+        except Exception:
+            pass
+
+        if self.context_matrix is not None:
+            try:
+                self.context_matrix.clear_all_cursor_previews()
+            except Exception:
+                pass
+
+        if render:
+            try:
+                self.viewer.plotter.render()
+            except Exception:
+                pass
+
+    def on_2d_tool_size_changed(self, tool, scene_pos: QPointF = None):
+        """Sync a 2D brush/erase size change into the active 3D tool."""
+        tool_kind, active_tool = self._get_active_3d_tool_kind()
+        if tool_kind not in ('brush', 'erase') or active_tool is None:
+            return
+
+        selected_camera = self.selected_camera
+        if selected_camera is None:
+            return
+
+        world_point = None
+        if scene_pos is not None:
+            try:
+                scene_x = int(round(scene_pos.x()))
+                scene_y = int(round(scene_pos.y()))
+                world_point = self._get_world_point_at_pixel(selected_camera, scene_x, scene_y)
+            except Exception:
+                world_point = None
+
+        if world_point is None:
+            context = self._hover_overlay_context or {}
+            world_point = context.get('center')
+
+        if world_point is None:
+            try:
+                world_point = np.asarray(self.viewer.plotter.camera.focal_point, dtype=np.float64)
+            except Exception:
+                world_point = None
+
+        if world_point is None:
+            return
+
+        pixels_per_world = self._estimate_pixels_per_world_unit(selected_camera, world_point)
+        if pixels_per_world is None or pixels_per_world <= 0.0:
+            return
+
+        try:
+            diameter_px = float(getattr(tool, 'brush_size', 1))
+        except Exception:
+            diameter_px = 1.0
+
+        world_radius = max(1e-6, (diameter_px / 2.0) / pixels_per_world)
+
+        try:
+            setter = getattr(active_tool, 'set_brush_size', None)
+            if callable(setter):
+                setter(world_radius, center=world_point)
+            else:
+                active_tool.brush_size = world_radius
+                updater = getattr(active_tool, '_update_preview_sphere', None)
+                if callable(updater):
+                    updater(world_point)
+        except Exception:
+            pass
+
+        if self._hover_overlay_context is not None:
+            try:
+                self.refresh_sphere_hover_overlay(render=False)
+            except Exception:
+                pass
+
     def _normalize_color_rgb(self, color_rgb):
         try:
             return tuple(int(c) for c in color_rgb[:3])
@@ -1859,6 +2211,7 @@ class MVATManager(QObject):
                 self._hover_overlay_actor.SetVisibility(False)
             except Exception:
                 pass
+        self._clear_projected_cursor_previews(render=False)
         if render:
             try:
                 self.viewer.plotter.render()
@@ -1916,6 +2269,7 @@ class MVATManager(QObject):
             self._hover_overlay_face_ids = np.asarray(face_ids, dtype=np.int32)
             self._hover_overlay_color_rgb = self._normalize_color_rgb(color_rgb)
             self._set_hover_overlay_geometry(overlay, color_rgb, render=render)
+            self._sync_projected_cursor_previews(center, render=False)
             return
 
         # Geometry already exists; only update the color when the active label changes.
@@ -1925,6 +2279,9 @@ class MVATManager(QObject):
             return
 
         self._apply_hover_overlay_color(color_rgb, render=render)
+        center = context.get('center')
+        if center is not None:
+            self._sync_projected_cursor_previews(center, render=False)
 
     def update_sphere_hover_overlay(self, center, render: bool = True):
         primary_target = self._get_primary_mesh_target()
@@ -1979,6 +2336,7 @@ class MVATManager(QObject):
 
         if same_faces and same_color and self._hover_overlay_actor is not None:
             self._apply_hover_overlay_color(color_rgb, render=render)
+            self._sync_projected_cursor_previews(center, render=False)
             return
 
         mesh = primary_target.get_render_mesh()
@@ -1990,6 +2348,7 @@ class MVATManager(QObject):
         mesh_faces_flat = np.asarray(mesh.faces.reshape(-1, 4), dtype=np.int32)
         overlay = LabelPainterThread.build_overlay(mesh_points, mesh_faces_flat, face_ids, color_rgb, attach_colors=False)
         self._set_hover_overlay_geometry(overlay, color_rgb, render=render)
+        self._sync_projected_cursor_previews(center, render=False)
 
     # Note: full-GPU flush is intentionally removed. The overlay actor
     # is treated as the authoritative visualization for painted faces

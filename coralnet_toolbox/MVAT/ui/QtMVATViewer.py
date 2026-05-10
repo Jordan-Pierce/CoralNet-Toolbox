@@ -1090,6 +1090,22 @@ class MVATViewer(QFrame):
         if event.type() == QEvent.ContextMenu:
             return True
 
+        if event.type() == QEvent.Leave:
+            active_tool = getattr(self, '_active_3d_tool', None)
+            if active_tool is not None:
+                try:
+                    active_tool.mouseMoveEvent(None, -1, None)
+                except Exception:
+                    pass
+            else:
+                manager = getattr(self, 'mvat_manager', None)
+                if manager is not None:
+                    try:
+                        manager.clear_sphere_hover_overlay(reset_context=True, render=False)
+                    except Exception:
+                        pass
+            return False
+
         if event.type() in (QEvent.KeyPress, QEvent.KeyRelease) and event.key() == Qt.Key_Control:
             self._set_sphere_modifier_passthrough_active(
                 event.type() == QEvent.KeyPress and self.is_sphere_tracking_enabled()
@@ -1182,8 +1198,18 @@ class MVATViewer(QFrame):
         except Exception:
             pass
 
-    def _is_valid_scene_pick(self, picked) -> bool:
-        """Return True only when PyVista reports a real hit on scene geometry."""
+    def _get_primary_target_actor(self):
+        """Return the currently active actor for the primary mesh target, if any."""
+        try:
+            target = self.scene_context.get_primary_target()
+            if target is None:
+                return None
+            return self._product_actors.get(getattr(target, 'product_id', None))
+        except Exception:
+            return None
+
+    def _is_valid_scene_pick(self, picked, expected_actor=None) -> bool:
+        """Return True only when PyVista reports a hit on the expected scene geometry."""
         if picked is None:
             return False
 
@@ -1195,6 +1221,13 @@ class MVATViewer(QFrame):
                         return False
                 except Exception:
                     pass
+            if expected_actor is not None and picker is not None and hasattr(picker, 'GetActor'):
+                try:
+                    picked_actor = picker.GetActor()
+                    if picked_actor is None or picked_actor is not expected_actor:
+                        return False
+                except Exception:
+                    return False
         except Exception:
             pass
 
@@ -1242,8 +1275,9 @@ class MVATViewer(QFrame):
                     pass
 
                 picked = self.plotter.pick_mouse_position()
+                expected_actor = self._get_primary_target_actor()
 
-                if not self._is_valid_scene_pick(picked):
+                if not self._is_valid_scene_pick(picked, expected_actor=expected_actor):
                     try:
                         active_tool.mouseMoveEvent(None, -1, None)
                     except Exception:
@@ -1281,8 +1315,9 @@ class MVATViewer(QFrame):
                 pass
 
             picked = self.plotter.pick_mouse_position()
+            expected_actor = self._get_primary_target_actor()
 
-            if not self._is_valid_scene_pick(picked):
+            if not self._is_valid_scene_pick(picked, expected_actor=expected_actor):
                 if self._sphere_manager.sphere_actor is not None:
                     try:
                         if self._sphere_manager.sphere_actor.GetVisibility():

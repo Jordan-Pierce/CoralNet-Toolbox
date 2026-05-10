@@ -1878,9 +1878,21 @@ class MainWindow(QMainWindow):
 
         try:
             selected_tool = None
+            selected_tool_object = None
             if hasattr(self, 'annotation_window') and self.annotation_window is not None:
                 selected_tool = self.annotation_window.get_selected_tool()
+                tool_map = getattr(self.annotation_window, 'tools', None)
+                if isinstance(tool_map, dict):
+                    selected_tool_object = tool_map.get(selected_tool)
             self.mvat_viewer.set_selected_3d_tool(selected_tool if selected_tool in ('brush', 'erase') else None)
+
+            if selected_tool in ('brush', 'erase') and selected_tool_object is not None:
+                manager = getattr(self, 'mvat_manager', None)
+                if manager is not None:
+                    try:
+                        manager.on_2d_tool_size_changed(selected_tool_object)
+                    except Exception:
+                        pass
         except Exception:
             pass
         
@@ -2376,6 +2388,17 @@ class MainWindow(QMainWindow):
                 if hasattr(self, 'annotation_window') and self.annotation_window is not None:
                     selected_tool = self.annotation_window.get_selected_tool()
                 self.mvat_viewer.set_selected_3d_tool(selected_tool if selected_tool in ('brush', 'erase') else None)
+
+                if selected_tool in ('brush', 'erase'):
+                    manager = getattr(self, 'mvat_manager', None)
+                    tool_map = getattr(self.annotation_window, 'tools', None)
+                    if manager is not None and isinstance(tool_map, dict):
+                        selected_tool_object = tool_map.get(selected_tool)
+                        if selected_tool_object is not None:
+                            try:
+                                manager.on_2d_tool_size_changed(selected_tool_object)
+                            except Exception:
+                                pass
             except Exception:
                 pass
     

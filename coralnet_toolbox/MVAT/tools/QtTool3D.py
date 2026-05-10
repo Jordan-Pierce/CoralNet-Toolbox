@@ -102,6 +102,28 @@ class Tool3D:
         self._remove_preview_sphere()
         self.active = False
 
+    def set_brush_size(self, brush_size, center=None):
+        """Set the world-space brush radius and refresh the preview sphere."""
+        try:
+            self.brush_size = max(1e-6, float(brush_size))
+        except Exception:
+            return
+
+        if not self.active:
+            return
+
+        if center is None:
+            center = self._last_hover_world_pos
+
+        if center is None:
+            try:
+                center = np.asarray(self.mvat_viewer.plotter.camera.focal_point, dtype=np.float64)
+            except Exception:
+                center = None
+
+        if center is not None:
+            self._update_preview_sphere(center)
+
     def stop_current_drawing(self):
         """
         Force-stop any in-progress drawing / stroke operation.
@@ -194,7 +216,7 @@ class Tool3D:
                 center = None
 
         if center is not None:
-            self._update_preview_sphere(center)
+            self.set_brush_size(self.brush_size, center=center)
             manager = getattr(self, 'mvat_manager', None)
             if manager is not None:
                 try:
