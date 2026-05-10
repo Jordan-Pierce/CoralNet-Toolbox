@@ -379,6 +379,7 @@ class MVATViewer(QFrame):
 
     def __init__(self, parent=None, point_size=1, show_rays=True):
         super().__init__(parent)
+        self.mvat_manager = None
         self.setFrameShape(QFrame.NoFrame)
         self.setAcceptDrops(True)
         
@@ -835,7 +836,12 @@ class MVATViewer(QFrame):
         # 2. Apply Custom Trackball Style
         # This cleanly maps Right Drag -> Pan without complex state management.
         # left='rotate' is implied default.
-        self.plotter.enable_custom_trackball_style(right='pan')
+        self.plotter.enable_custom_trackball_style(
+            left='rotate',
+            control_left='rotate',
+            right='pan',
+            control_right='pan',
+        )
         inertia_style = self._get_vtk_interaction_style(interactor)
         if hasattr(self, '_camera_inertia') and self._camera_inertia is not None:
             self._camera_inertia.bind(inertia_style)
@@ -938,10 +944,16 @@ class MVATViewer(QFrame):
                     self._sphere_manager.set_visibility(False)
                 except Exception:
                     pass
+            manager = getattr(self, 'mvat_manager', None)
+            if manager is not None:
                 try:
-                    self.plotter.render()
+                    manager.clear_sphere_hover_overlay(reset_context=False, render=False)
                 except Exception:
                     pass
+            try:
+                self.plotter.render()
+            except Exception:
+                pass
         else:
             self._request_sphere_hover_refresh()
 
@@ -959,6 +971,12 @@ class MVATViewer(QFrame):
             return
 
         self._sphere_manager.set_radius(new_radius)
+        manager = getattr(self, 'mvat_manager', None)
+        if manager is not None:
+            try:
+                manager.refresh_sphere_hover_overlay(render=False)
+            except Exception:
+                pass
         try:
             if self._sphere_manager.sphere_actor is not None:
                 self._sphere_manager.sphere_actor.SetVisibility(not self._is_sphere_passthrough_active())
@@ -987,7 +1005,7 @@ class MVATViewer(QFrame):
             self._set_sphere_modifier_passthrough_active(
                 event.type() == QEvent.KeyPress and self.is_sphere_tracking_enabled()
             )
-            return True
+            return False
 
         if event.type() == QEvent.Wheel:
             delta_y = event.angleDelta().y()
@@ -1030,6 +1048,10 @@ class MVATViewer(QFrame):
 
     def _on_left_press(self, obj, event):
         """Handle Left Click to detect Double Clicks."""
+        if self.is_sphere_tracking_enabled() and not self._is_sphere_passthrough_active():
+            self._last_click_time = time.time() * 1000
+            return
+
         # Get current time in milliseconds
         current_time = time.time() * 1000
         
@@ -1139,14 +1161,13 @@ class MVATViewer(QFrame):
                             self._sphere_manager.set_visibility(False)
                             visibility_ms = (time.perf_counter() - visibility_start) * 1000.0
                             print(f"[SphereTiming] hide invalid sphere: {visibility_ms:.2f} ms", flush=True)
+                    except Exception:
+                        pass
 
-                            render_start = time.perf_counter()
-                            try:
-                                self.plotter.render()
-                            except Exception:
-                                pass
-                            render_ms = (time.perf_counter() - render_start) * 1000.0
-                            print(f"[SphereTiming] hide render: {render_ms:.2f} ms", flush=True)
+                manager = getattr(self, 'mvat_manager', None)
+                if manager is not None:
+                    try:
+                        manager.clear_sphere_hover_overlay(reset_context=True, render=True)
                     except Exception:
                         pass
 
@@ -1169,20 +1190,30 @@ class MVATViewer(QFrame):
                 visibility_ms = (time.perf_counter() - visibility_start) * 1000.0
                 print(f"[SphereTiming] set_visibility(True): {visibility_ms:.2f} ms", flush=True)
 
-                render_start = time.perf_counter()
-                # Trigger a render update
-                try:
-                    self.plotter.render()
-                except Exception:
-                    pass  # Silent failure
-                render_ms = (time.perf_counter() - render_start) * 1000.0
-                print(f"[SphereTiming] plotter.render: {render_ms:.2f} ms", flush=True)
+                manager = getattr(self, 'mvat_manager', None)
+                if manager is not None:
+                    try:
+                        manager.update_sphere_hover_overlay(picked, render=False)
+                    except Exception:
+                        pass
             else:
                 visibility_start = time.perf_counter()
                 # No pick - hide the sphere when cursor is over background
                 self._sphere_manager.set_visibility(False)
                 visibility_ms = (time.perf_counter() - visibility_start) * 1000.0
                 print(f"[SphereTiming] no hit -> set_visibility(False): {visibility_ms:.2f} ms", flush=True)
+
+                manager = getattr(self, 'mvat_manager', None)
+                if manager is not None:
+                    try:
+                        manager.clear_sphere_hover_overlay(reset_context=True, render=False)
+                    except Exception:
+                        pass
+
+            try:
+                self.plotter.render()
+            except Exception:
+                pass
 
             total_ms = (time.perf_counter() - batch_start) * 1000.0
             print(f"[SphereTiming] mouse_move batch total: {total_ms:.2f} ms", flush=True)
@@ -2290,6 +2321,12 @@ class MVATViewer(QFrame):
         if self._sphere_manager is not None:
             # Keep it invisible initially - it will show when mouse picks geometry
             self._sphere_manager.set_visibility(False)
+        manager = getattr(self, 'mvat_manager', None)
+        if manager is not None:
+            try:
+                manager.clear_sphere_hover_overlay(reset_context=not visible, render=False)
+            except Exception:
+                pass
         self._sync_sphere_hover_binding()
         if visible:
             self._request_sphere_hover_refresh()
@@ -2849,6 +2886,13 @@ class MVATViewer(QFrame):
             except Exception:
                 pass
             self._sphere_manager.clear()
+
+        manager = getattr(self, 'mvat_manager', None)
+        if manager is not None:
+            try:
+                manager.clear_sphere_hover_overlay(reset_context=True, render=False)
+            except Exception:
+                pass
 
         # Remove mouse move observer
         if (hasattr(self, '_mouse_sphere_observer_id') and

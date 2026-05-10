@@ -383,6 +383,10 @@ class MVATManager(QObject):
         self.image_window = main_window.image_window
         
         self.viewer = viewer
+        try:
+            self.viewer.mvat_manager = self
+        except Exception:
+            pass
         self.context_matrix = getattr(main_window, 'context_matrix', None)
         
         # State
@@ -444,6 +448,8 @@ class MVATManager(QObject):
 
         # Overlay actor handle (tiny actor swapped during painting)
         self._label_overlay_actor = None
+        self._hover_overlay_actor = None
+        self._hover_overlay_context = None
 
         self.contextStatsComputed.connect(self._on_context_stats_computed)
 
@@ -477,6 +483,9 @@ class MVATManager(QObject):
             self.annotation_window.mouseMoved.connect(self.mouse_bridge.on_mouse_moved)
         if hasattr(self.image_window, 'imageLoaded'):
             self.image_window.imageLoaded.connect(self._on_main_image_loaded)
+        label_window = getattr(self.main_window, 'label_window', None)
+        if label_window is not None and hasattr(label_window, 'labelSelected'):
+            label_window.labelSelected.connect(self._on_label_window_selected)
         # 6. Context Matrix Signals
         if self.context_matrix is not None:
             # Toolbar buttons
@@ -856,6 +865,7 @@ class MVATManager(QObject):
     def _on_primary_target_changed(self, product_id: str):
         """A new 3D model was loaded — clear stale ortho index map and rebuild."""
         self._computing_ortho_index_map = False  # reset any in-flight build
+        self.clear_sphere_hover_overlay(reset_context=True)
         if self.ortho_camera is not None:
             self.ortho_camera._raster.index_map = None
             self.ortho_camera._raster.index_map_scale_factor = None
@@ -1627,6 +1637,214 @@ class MVATManager(QObject):
                 pass
         except Exception as e:
             print(f"⚠️ Overlay swap failed: {e}")
+
+    def _on_label_window_selected(self, *_args):
+        """Refresh the hover overlay when the active label changes."""
+        try:
+            self.refresh_sphere_hover_overlay()
+        except Exception:
+            pass
+
+    def _get_active_label_widget(self):
+        label_window = getattr(self.main_window, 'label_window', None)
+        label = getattr(label_window, 'active_label', None) if label_window is not None else None
+        if label is None:
+            label = getattr(self.annotation_window, 'selected_label', None)
+
+        if label is not None and not hasattr(label, 'color'):
+            label_id = getattr(label, 'id', label)
+            if isinstance(label_id, str) and label_window is not None:
+                try:
+                    label = label_window.get_label_by_id(label_id, return_review=True)
+                except Exception:
+                    label = None
+
+        return label if label is not None and hasattr(label, 'color') else None
+
+    def _get_active_label_color_rgb(self):
+        label = self._get_active_label_widget()
+        if label is None:
+            return None
+
+        try:
+            return (
+                int(label.color.red()),
+                int(label.color.green()),
+                int(label.color.blue()),
+            )
+        except Exception:
+            return None
+
+    def _get_primary_mesh_target(self):
+        try:
+            primary_target = self.viewer.scene_context.get_primary_target()
+        except Exception:
+            primary_target = None
+
+        if primary_target is None or not isinstance(primary_target, MeshProduct):
+            return None
+        return primary_target
+
+    def _get_sphere_hover_radius(self):
+        sphere_manager = getattr(self.viewer, '_sphere_manager', None)
+        try:
+            return float(getattr(sphere_manager, 'radius', 0.1))
+        except Exception:
+            return 0.1
+
+    def _get_faces_within_sphere(self, primary_target, center, radius):
+        try:
+            primary_target.prepare_geometry()
+        except Exception:
+            pass
+
+        centers = getattr(primary_target, '_element_centers_np', None)
+        if centers is None or len(centers) == 0:
+            return np.empty(0, dtype=np.int32)
+
+        center = np.asarray(center, dtype=np.float64)
+
+        try:
+            from scipy.spatial import cKDTree
+        except Exception:
+            cKDTree = None
+
+        tree = getattr(primary_target, '_hover_face_kdtree', None)
+        tree_product_id = getattr(primary_target, '_hover_face_kdtree_product_id', None)
+        if tree is None or tree_product_id != getattr(primary_target, 'product_id', None):
+            tree = None
+            if cKDTree is not None:
+                try:
+                    tree = cKDTree(np.asarray(centers, dtype=np.float32))
+                    primary_target._hover_face_kdtree = tree
+                    primary_target._hover_face_kdtree_product_id = getattr(primary_target, 'product_id', None)
+                except Exception:
+                    tree = None
+
+        if tree is not None:
+            try:
+                face_ids = tree.query_ball_point(center, float(radius))
+                return np.asarray(face_ids, dtype=np.int32)
+            except Exception:
+                pass
+
+        radius_sq = float(radius) * float(radius)
+        deltas = np.asarray(centers, dtype=np.float32) - center.astype(np.float32)
+        distances_sq = np.einsum('ij,ij->i', deltas, deltas)
+        return np.flatnonzero(distances_sq <= radius_sq).astype(np.int32)
+
+    def _swap_hover_overlay_actor(self, overlay, render: bool = True):
+        try:
+            if self._hover_overlay_actor is not None:
+                try:
+                    self.viewer.plotter.remove_actor(self._hover_overlay_actor, render=False)
+                except Exception:
+                    pass
+                self._hover_overlay_actor = None
+
+            if overlay is not None:
+                self._hover_overlay_actor = self.viewer.plotter.add_mesh(
+                    overlay,
+                    scalars='OverlayColors',
+                    rgb=True,
+                    copy_mesh=False,
+                    lighting=False,
+                    opacity=0.45,
+                    show_scalar_bar=False,
+                    smooth_shading=False,
+                    pickable=False,
+                    name='_sphere_hover_overlay',
+                )
+
+            if render:
+                try:
+                    self.viewer.plotter.render()
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"⚠️ Hover overlay swap failed: {e}")
+
+    def clear_sphere_hover_overlay(self, reset_context: bool = False, render: bool = True):
+        if reset_context:
+            self._hover_overlay_context = None
+        self._swap_hover_overlay_actor(None, render=render)
+
+    def refresh_sphere_hover_overlay(self, render: bool = True):
+        context = self._hover_overlay_context
+        if not context:
+            self._swap_hover_overlay_actor(None, render=render)
+            return
+
+        try:
+            if not bool(getattr(self.viewer, '_sphere_visible', True)):
+                self._swap_hover_overlay_actor(None, render=render)
+                return
+            passthrough_active = getattr(self.viewer, '_is_sphere_passthrough_active', None)
+            if callable(passthrough_active) and passthrough_active():
+                self._swap_hover_overlay_actor(None, render=render)
+                return
+        except Exception:
+            pass
+
+        primary_target = self._get_primary_mesh_target()
+        if primary_target is None or getattr(primary_target, 'product_id', None) != context.get('product_id'):
+            self.clear_sphere_hover_overlay(reset_context=True, render=render)
+            return
+
+        color_rgb = self._get_active_label_color_rgb()
+        if color_rgb is None:
+            self._swap_hover_overlay_actor(None, render=render)
+            return
+
+        center = context.get('center')
+        if center is None:
+            self._swap_hover_overlay_actor(None, render=render)
+            return
+
+        radius = self._get_sphere_hover_radius()
+        face_ids = self._get_faces_within_sphere(primary_target, center, radius)
+        if face_ids is None or len(face_ids) == 0:
+            self._swap_hover_overlay_actor(None, render=render)
+            return
+
+        mesh = primary_target.get_render_mesh()
+        if mesh is None:
+            self.clear_sphere_hover_overlay(reset_context=True, render=render)
+            return
+
+        mesh_points = np.asarray(mesh.points, dtype=np.float32)
+        mesh_faces_flat = np.asarray(mesh.faces.reshape(-1, 4), dtype=np.int32)
+        overlay = LabelPainterThread.build_overlay(mesh_points, mesh_faces_flat, face_ids, color_rgb)
+        self._swap_hover_overlay_actor(overlay, render=render)
+
+    def update_sphere_hover_overlay(self, center, render: bool = True):
+        primary_target = self._get_primary_mesh_target()
+        if primary_target is None:
+            self.clear_sphere_hover_overlay(reset_context=True, render=render)
+            return
+
+        try:
+            if not bool(getattr(self.viewer, '_sphere_visible', True)):
+                self.clear_sphere_hover_overlay(reset_context=True, render=render)
+                return
+            passthrough_active = getattr(self.viewer, '_is_sphere_passthrough_active', None)
+            if callable(passthrough_active) and passthrough_active():
+                self.clear_sphere_hover_overlay(reset_context=False, render=render)
+                return
+        except Exception:
+            pass
+
+        try:
+            center = np.asarray(center, dtype=np.float64)
+        except Exception:
+            self.clear_sphere_hover_overlay(reset_context=True, render=render)
+            return
+
+        self._hover_overlay_context = {
+            'product_id': getattr(primary_target, 'product_id', None),
+            'center': center,
+        }
+        self.refresh_sphere_hover_overlay(render=render)
 
     # Note: full-GPU flush is intentionally removed. The overlay actor
     # is treated as the authoritative visualization for painted faces
@@ -4253,6 +4471,11 @@ class MVATManager(QObject):
                 except Exception:
                     pass
                 self._label_overlay_actor = None
+        except Exception:
+            pass
+
+        try:
+            self.clear_sphere_hover_overlay(reset_context=True, render=False)
         except Exception:
             pass
 

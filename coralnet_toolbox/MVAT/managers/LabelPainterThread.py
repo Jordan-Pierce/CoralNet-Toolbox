@@ -86,6 +86,42 @@ class LabelPainterThread(QThread):
                 break
         self._queue.put((face_ids.copy(), color_rgb, class_id))
 
+    @staticmethod
+    def build_overlay(mesh_points: np.ndarray, mesh_faces_flat: np.ndarray,
+                      face_ids: np.ndarray, color_rgb) -> pv.PolyData | None:
+        """Build a tiny colored PolyData from a subset of face IDs."""
+        try:
+            face_ids = np.asarray(face_ids, dtype=np.int32)
+            if face_ids.size == 0:
+                return None
+
+            selected = mesh_faces_flat[face_ids, 1:]
+            unique_vids, inverse = np.unique(selected, return_inverse=True)
+            overlay_points = mesh_points[unique_vids]
+
+            remapped = inverse.reshape(selected.shape)
+            vtk_faces = np.hstack([
+                np.full((len(face_ids), 1), 3, dtype=np.int64),
+                remapped.astype(np.int64),
+            ]).ravel()
+
+            overlay = pv.PolyData(overlay_points.astype(np.float32), vtk_faces)
+
+            colors = np.asarray(color_rgb, dtype=np.uint8)
+            if colors.ndim == 1:
+                if colors.size < 3:
+                    return None
+                colors = np.tile(colors[:3], (len(face_ids), 1))
+            elif colors.shape[0] != len(face_ids):
+                colors = np.tile(colors[0, :3], (len(face_ids), 1))
+
+            overlay.cell_data['OverlayColors'] = colors[:, :3]
+            return overlay
+
+        except Exception as e:
+            print(f"⚠️ LabelPainterThread.build_overlay failed: {e}")
+            return None
+
     def stop(self):
         self._running = False
         self._queue.put(None)  # unblock the get()
@@ -145,34 +181,4 @@ class LabelPainterThread(QThread):
         
         Complexity: O(M) where M = len(face_ids). Does NOT traverse the full mesh.
         """
-        try:
-            # Grab the vertex-index triplets for only these faces
-            selected = self._faces4[face_ids, 1:]          # (M, 3) vertex indices
-            unique_vids, inverse = np.unique(selected, return_inverse=True)
-
-            # Vertices for the overlay (tiny subset)
-            overlay_points = self._points[unique_vids]     # (K, 3)
-
-            # Remap global vertex IDs → local IDs within overlay_points
-            remapped = inverse.reshape(selected.shape)     # (M, 3)
-            vtk_faces = np.hstack([
-                np.full((len(face_ids), 1), 3, dtype=np.int64),
-                remapped.astype(np.int64)
-            ]).ravel()
-
-            overlay = pv.PolyData(overlay_points.astype(np.float32), vtk_faces)
-
-            # Uniform color for this stroke (all painted faces same label)
-            if isinstance(color_rgb, tuple):
-                colors = np.tile(
-                    np.array(color_rgb, dtype=np.uint8),
-                    (len(face_ids), 1)
-                )
-            else:
-                colors = color_rgb
-            overlay.cell_data['OverlayColors'] = colors
-            return overlay
-
-        except Exception as e:
-            print(f"⚠️ LabelPainterThread._build_overlay failed: {e}")
-            return None
+        return self.build_overlay(self._points, self._faces4, face_ids, color_rgb)
