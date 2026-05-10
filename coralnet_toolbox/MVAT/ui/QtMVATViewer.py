@@ -1079,8 +1079,6 @@ class MVATViewer(QFrame):
         except Exception:
             pass
 
-        print(f"[SphereTiming] sphere radius -> {new_radius:.4f}", flush=True)
-
     def is_sphere_tracking_enabled(self) -> bool:
         """Return whether sphere hover tracking is currently enabled."""
         return bool(self._sphere_visible)
@@ -1226,13 +1224,9 @@ class MVATViewer(QFrame):
             if pending_events <= 0:
                 return
 
-            batch_start = time.perf_counter()
-            print(f"[SphereTiming] processing coalesced batch: {pending_events} queued mouse moves", flush=True)
-
             active_tool = getattr(self, '_active_3d_tool', None)
             if active_tool is not None:
                 if self._sphere_manager is None:
-                    print("[SphereTiming] skip batch: no sphere manager", flush=True)
                     return
 
                 if not self._sphere_visible or self._is_sphere_passthrough_active():
@@ -1240,30 +1234,21 @@ class MVATViewer(QFrame):
                         active_tool.mouseMoveEvent(None, -1, None)
                     except Exception:
                         pass
-                    print("[SphereTiming] skip batch: 3D preview disabled", flush=True)
                     return
 
                 try:
                     self.plotter.store_mouse_position()
-                    print(f"[SphereTiming] hover mouse_position={self.plotter.mouse_position}", flush=True)
                 except Exception:
                     pass
 
-                pick_start = time.perf_counter()
                 picked = self.plotter.pick_mouse_position()
-                pick_ms = (time.perf_counter() - pick_start) * 1000.0
-                print(f"[SphereTiming] pick_mouse_position: {pick_ms:.2f} ms", flush=True)
 
                 if not self._is_valid_scene_pick(picked):
-                    print("[SphereTiming] invalid pick -> hide active 3D preview", flush=True)
                     try:
                         active_tool.mouseMoveEvent(None, -1, None)
                     except Exception:
                         pass
-                    total_ms = (time.perf_counter() - batch_start) * 1000.0
-                    print(f"[SphereTiming] mouse_move batch total: {total_ms:.2f} ms", flush=True)
                     if self._sphere_hover_pending_events > 0:
-                        print(f"[SphereTiming] rescheduling batch for {self._sphere_hover_pending_events} new mouse moves", flush=True)
                         self._sphere_hover_timer.start()
                     return
 
@@ -1279,42 +1264,29 @@ class MVATViewer(QFrame):
                     except Exception:
                         pass
 
-                total_ms = (time.perf_counter() - batch_start) * 1000.0
-                print(f"[SphereTiming] mouse_move batch total: {total_ms:.2f} ms", flush=True)
                 if self._sphere_hover_pending_events > 0:
-                    print(f"[SphereTiming] rescheduling batch for {self._sphere_hover_pending_events} new mouse moves", flush=True)
                     self._sphere_hover_timer.start()
                 return
 
             if self._sphere_manager is None:
-                print("[SphereTiming] skip batch: no sphere manager", flush=True)
                 return
 
             if not self._sphere_visible or self._is_sphere_passthrough_active():
-                print("[SphereTiming] skip batch: sphere tracking disabled", flush=True)
                 return
 
             # Get the current mouse position and perform a pick once per batch.
             try:
                 self.plotter.store_mouse_position()
-                print(f"[SphereTiming] hover mouse_position={self.plotter.mouse_position}", flush=True)
             except Exception:
                 pass
 
-            pick_start = time.perf_counter()
             picked = self.plotter.pick_mouse_position()
-            pick_ms = (time.perf_counter() - pick_start) * 1000.0
-            print(f"[SphereTiming] pick_mouse_position: {pick_ms:.2f} ms", flush=True)
 
             if not self._is_valid_scene_pick(picked):
-                print("[SphereTiming] invalid pick -> skip sphere update", flush=True)
                 if self._sphere_manager.sphere_actor is not None:
                     try:
                         if self._sphere_manager.sphere_actor.GetVisibility():
-                            visibility_start = time.perf_counter()
                             self._sphere_manager.set_visibility(False)
-                            visibility_ms = (time.perf_counter() - visibility_start) * 1000.0
-                            print(f"[SphereTiming] hide invalid sphere: {visibility_ms:.2f} ms", flush=True)
                     except Exception:
                         pass
 
@@ -1325,24 +1297,16 @@ class MVATViewer(QFrame):
                     except Exception:
                         pass
 
-                total_ms = (time.perf_counter() - batch_start) * 1000.0
-                print(f"[SphereTiming] mouse_move batch total: {total_ms:.2f} ms", flush=True)
                 return
 
             if picked is not None:
                 picked = np.asarray(picked, dtype=np.float64)
 
-                update_start = time.perf_counter()
                 # Update sphere position to where mouse intersects mesh
                 self._sphere_manager.set_position(picked)
-                update_ms = (time.perf_counter() - update_start) * 1000.0
-                print(f"[SphereTiming] set_position: {update_ms:.2f} ms", flush=True)
 
-                visibility_start = time.perf_counter()
                 # Ensure sphere is visible
                 self._sphere_manager.set_visibility(True)
-                visibility_ms = (time.perf_counter() - visibility_start) * 1000.0
-                print(f"[SphereTiming] set_visibility(True): {visibility_ms:.2f} ms", flush=True)
 
                 manager = getattr(self, 'mvat_manager', None)
                 if manager is not None:
@@ -1351,11 +1315,8 @@ class MVATViewer(QFrame):
                     except Exception:
                         pass
             else:
-                visibility_start = time.perf_counter()
                 # No pick - hide the sphere when cursor is over background
                 self._sphere_manager.set_visibility(False)
-                visibility_ms = (time.perf_counter() - visibility_start) * 1000.0
-                print(f"[SphereTiming] no hit -> set_visibility(False): {visibility_ms:.2f} ms", flush=True)
 
                 manager = getattr(self, 'mvat_manager', None)
                 if manager is not None:
@@ -1369,13 +1330,9 @@ class MVATViewer(QFrame):
             except Exception:
                 pass
 
-            total_ms = (time.perf_counter() - batch_start) * 1000.0
-            print(f"[SphereTiming] mouse_move batch total: {total_ms:.2f} ms", flush=True)
-
             # If more mouse moves arrived while we were processing this batch,
             # schedule another coalesced update for the latest cursor position.
             if self._sphere_hover_pending_events > 0:
-                print(f"[SphereTiming] rescheduling batch for {self._sphere_hover_pending_events} new mouse moves", flush=True)
                 self._sphere_hover_timer.start()
         except Exception:
             # Silent failure
@@ -1405,10 +1362,6 @@ class MVATViewer(QFrame):
 
             self._sphere_hover_pending_events += 1
             if not self._sphere_hover_timer.isActive():
-                print(
-                    f"[SphereTiming] queued hover batch: {self._sphere_hover_pending_events} mouse moves (timer {self._sphere_hover_timer.interval()} ms)",
-                    flush=True,
-                )
                 self._sphere_hover_timer.start()
         except Exception as e:
             # Silent failure
