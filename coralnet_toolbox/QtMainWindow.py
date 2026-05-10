@@ -1868,6 +1868,12 @@ class MainWindow(QMainWindow):
         
         # Set the tool in the annotation window
         self.annotation_window.set_selected_tool(tool, preserve_selection=preserve_selection)
+
+        if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
+            try:
+                self.mvat_viewer.set_selected_3d_tool(tool if tool in ('brush', 'erase') else None)
+            except Exception:
+                pass
         
     def toggle_tool(self, state):
         """Toggle the selected tool and emit the toolChanged signal."""
@@ -1964,8 +1970,18 @@ class MainWindow(QMainWindow):
                 self.work_area_tool_action.setChecked(False)
 
                 self.toolChanged.emit("brush")
+                if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
+                    try:
+                        self.mvat_viewer.set_selected_3d_tool("brush")
+                    except Exception:
+                        pass
             else:
                 self.toolChanged.emit(None)
+                if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
+                    try:
+                        self.mvat_viewer.set_selected_3d_tool(None)
+                    except Exception:
+                        pass
 
         elif action == self.erase_tool_action:
             if state:
@@ -1981,8 +1997,18 @@ class MainWindow(QMainWindow):
                 self.work_area_tool_action.setChecked(False)
 
                 self.toolChanged.emit("erase")
+                if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
+                    try:
+                        self.mvat_viewer.set_selected_3d_tool("erase")
+                    except Exception:
+                        pass
             else:
                 self.toolChanged.emit(None)
+                if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
+                    try:
+                        self.mvat_viewer.set_selected_3d_tool(None)
+                    except Exception:
+                        pass
 
         elif action == self.dropper_tool_action:
             if state:
@@ -2330,6 +2356,15 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
+
+        if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
+            try:
+                selected_tool = None
+                if hasattr(self, 'annotation_window') and self.annotation_window is not None:
+                    selected_tool = self.annotation_window.get_selected_tool()
+                self.mvat_viewer.set_selected_3d_tool(selected_tool if selected_tool in ('brush', 'erase') else None)
+            except Exception:
+                pass
     
     def get_available_devices(self):
         """Get a list of available devices for PyTorch."""

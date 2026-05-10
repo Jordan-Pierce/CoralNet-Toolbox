@@ -1,10 +1,9 @@
 """
-Erase3DTool — erases labels from mesh faces (writes class_id = 0 / background).
+Erase3DTool — erase-specific 3D tool logic built on top of Brush3DTool.
 
-Extends Brush3DTool, mirroring exactly how Tools/QtEraseTool.EraseTool extends
-Tools/QtBrushTool.BrushTool in 2D.  The only semantic difference is that
-_resolve_label() always returns class_id=0 with a white color, so the painter
-thread erases rather than paints regardless of which label is selected.
+The shared preview sphere, hover batching, and label-colored highlight are
+owned by Tool3D.  Erase3DTool only changes the preview fallback color and the
+label resolution so the brush plumbing would erase rather than paint.
 """
 
 import warnings
@@ -23,11 +22,11 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 class Erase3DTool(Brush3DTool):
     """
-    Erases labels from mesh faces within the brush radius.
+    Previews the erase tool within the brush radius.
 
     Inherits the full stroke / KD-tree / preview sphere / projection machinery
-    from Brush3DTool.  Only the visual style (red wireframe sphere) and the
-    label resolution (always background) differ.
+    from Brush3DTool.  Only the fallback preview color and the label
+    resolution (always background) differ.
 
     Mirrors EraseTool._on_math_finished which hardcodes class_id = 0, and
     EraseTool.create_cursor_preview_item which renders a red dashed outline.
@@ -36,6 +35,9 @@ class Erase3DTool(Brush3DTool):
     # Red wireframe to match the 2D EraseTool's dashed-red cursor convention.
     _PREVIEW_COLOR   = 'red'
     _PREVIEW_OPACITY = 0.45
+
+    def _use_active_label_preview_color(self):
+        return False
 
     def _resolve_label(self, label):
         """

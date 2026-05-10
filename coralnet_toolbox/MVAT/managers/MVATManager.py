@@ -387,6 +387,10 @@ class MVATManager(QObject):
             self.viewer.mvat_manager = self
         except Exception:
             pass
+        try:
+            self.viewer.initialize_3d_tools(self)
+        except Exception:
+            pass
         self.context_matrix = getattr(main_window, 'context_matrix', None)
         
         # State
@@ -1688,6 +1692,14 @@ class MVATManager(QObject):
         return primary_target
 
     def _get_sphere_hover_radius(self):
+        active_tool = getattr(self.viewer, '_active_3d_tool', None)
+        try:
+            radius = getattr(active_tool, 'brush_size', None)
+            if radius is not None:
+                return float(radius)
+        except Exception:
+            pass
+
         sphere_manager = getattr(self.viewer, '_sphere_manager', None)
         try:
             return float(getattr(sphere_manager, 'radius', 0.1))

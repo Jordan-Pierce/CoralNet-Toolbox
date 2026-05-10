@@ -1,17 +1,9 @@
 """
-Brush3DTool — paints labels directly onto mesh faces in world space.
+Brush3DTool — brush-specific 3D tool logic built on top of Tool3D.
 
-Analogous to Tools/QtBrushTool.BrushTool but operates on 3D geometry:
-
-  Picking:    VTK cell picker (viewport → face_id) inside MVATViewer.eventFilter.
-  Brush:      scipy.spatial.cKDTree radius query on cached face centres.
-  Painting:   MVATManager._label_painter_thread (already used by propagation code).
-  Preview:    A persistent VTK wireframe sphere actor updated in-place each frame
-              (no actor creation/destruction on mouse move).
-  Projection: On stroke commit, painted face IDs are forwarded to
-              MVATManager._on_3d_brush_stroke_applied which propagates them to
-              all visible camera masks via their index maps — but only when
-              MVATManager.multi_annotate_enabled is True.
+The shared preview sphere, hover batching, and label-colored highlight are
+owned by Tool3D.  Brush3DTool keeps only the brush-specific stroke plumbing,
+including the KD-tree lookup and the optional paint projection path.
 
 The tool is camera-independent: the VTK cell picker works against the rendered
 mesh geometry regardless of whether any annotation cameras are loaded.
@@ -22,6 +14,7 @@ import warnings
 import numpy as np
 
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import QMessageBox
 
 from coralnet_toolbox.MVAT.tools.QtTool3D import Tool3D
@@ -36,7 +29,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 class Brush3DTool(Tool3D):
     """
-    Paints the active label onto all mesh faces within a world-space brush radius.
+    Brush-specific 3D tool logic.
 
     Attributes:
         brush_size (float): World-space radius of the brush sphere.
@@ -55,16 +48,11 @@ class Brush3DTool(Tool3D):
     def __init__(self, mvat_viewer, mvat_manager):
         super().__init__(mvat_viewer, mvat_manager)
 
-        self.brush_size: float = 0.1   # world units; calibrated on activate()
         self.painting:   bool  = False
 
         # KD-tree over face centres — rebuilt only when the primary target changes.
         self._kdtree              = None
         self._kdtree_product_id   = None
-
-        # Persistent VTK preview actor (created once, updated in-place).
-        self._sphere_source = None
-        self._preview_actor = None
 
         # Accumulates face IDs painted in the current stroke.
         self._stroke_face_ids: set = set()
@@ -72,23 +60,6 @@ class Brush3DTool(Tool3D):
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
-
-    def activate(self):
-        super().activate()
-        self._calibrate_brush_size()
-        self._ensure_kdtree()
-        self._init_preview_actor()
-        try:
-            fp = np.array(self.mvat_viewer.plotter.camera.focal_point)
-            self._update_preview_sphere(fp)
-        except Exception:
-            pass
-
-    def deactivate(self):
-        if self.painting:
-            self._finish_stroke()
-        self._remove_preview_sphere()
-        super().deactivate()
 
     def stop_current_drawing(self):
         if self.painting:
@@ -100,6 +71,9 @@ class Brush3DTool(Tool3D):
 
     def mousePressEvent(self, event, face_id: int, world_pos):
         if event.button() != Qt.LeftButton:
+            return
+
+        if self.preview_only:
             return
 
         if not self._has_selected_label():
@@ -125,27 +99,18 @@ class Brush3DTool(Tool3D):
             self._finish_stroke()
 
     def mouseMoveEvent(self, event, face_id: int, world_pos):
-        if world_pos is not None:
-            self._update_preview_sphere(world_pos)
-
-        if self.painting and world_pos is not None:
+        super().mouseMoveEvent(event, face_id, world_pos)
+        if not self.preview_only and self.painting and world_pos is not None:
             self._apply_brush(world_pos)
 
     def mouseReleaseEvent(self, event):
+        if self.preview_only:
+            return
         if self.painting:
             self._finish_stroke()
 
     def wheelEvent(self, event, delta_y: int):
-        if not (event.modifiers() & Qt.ControlModifier):
-            return
-        notches = delta_y / 120.0
-        factor  = 1.15 ** notches
-        self.brush_size = max(1e-6, self.brush_size * factor)
-        try:
-            fp = np.array(self.mvat_viewer.plotter.camera.focal_point)
-            self._update_preview_sphere(fp)
-        except Exception:
-            pass
+        super().wheelEvent(event, delta_y)
 
     # ------------------------------------------------------------------
     # Core brush logic
@@ -200,91 +165,6 @@ class Brush3DTool(Tool3D):
                     print(f"⚠️  Brush3DTool: could not propagate stroke: {e}")
 
         self._stroke_face_ids.clear()
-
-    # ------------------------------------------------------------------
-    # Preview sphere — persistent VTK actor updated in-place each frame
-    # ------------------------------------------------------------------
-
-    def _preview_color_rgb_float(self):
-        """Return (r, g, b) in [0.0, 1.0] from the class-level color name."""
-        try:
-            import pyvista as pv
-            c = pv.Color(self._PREVIEW_COLOR)
-            return c.float_rgb   # (r, g, b) each in [0,1]
-        except Exception:
-            return (1.0, 1.0, 1.0)
-
-    def _init_preview_actor(self):
-        """
-        Create the wireframe sphere actor once and add it to the renderer.
-        Subsequent calls to _update_preview_sphere only mutate the source — zero
-        actor allocation overhead on every mouse-move frame.
-        """
-        # Skip if already initialised.
-        if self._preview_actor is not None:
-            return
-        try:
-            try:
-                from vtkmodules.vtkFiltersSources import vtkSphereSource
-                from vtkmodules.vtkRenderingCore import vtkPolyDataMapper, vtkActor
-            except ImportError:
-                from vtk import vtkSphereSource, vtkPolyDataMapper, vtkActor
-
-            src = vtkSphereSource()
-            src.SetThetaResolution(16)
-            src.SetPhiResolution(16)
-            src.SetRadius(self.brush_size)
-
-            mapper = vtkPolyDataMapper()
-            mapper.SetInputConnection(src.GetOutputPort())
-
-            actor = vtkActor()
-            actor.SetMapper(mapper)
-            prop = actor.GetProperty()
-            prop.SetRepresentationToWireframe()
-            r, g, b = self._preview_color_rgb_float()
-            prop.SetColor(r, g, b)
-            prop.SetOpacity(self._PREVIEW_OPACITY)
-            actor.VisibilityOff()   # hidden until first mouse move
-
-            self.mvat_viewer.plotter.renderer.AddActor(actor)
-
-            self._sphere_source = src
-            self._preview_actor = actor
-        except Exception as e:
-            print(f"⚠️  Brush3DTool: could not create preview actor: {e}")
-            self._sphere_source = None
-            self._preview_actor = None
-
-    def _update_preview_sphere(self, center: np.ndarray):
-        """
-        Move/resize the existing actor in-place.  No Python object creation,
-        no actor removal — O(1) per frame.
-        """
-        if self._sphere_source is None or self._preview_actor is None:
-            self._init_preview_actor()
-        if self._sphere_source is None:
-            return
-        try:
-            c = center.tolist() if hasattr(center, 'tolist') else list(center)
-            self._sphere_source.SetCenter(c[0], c[1], c[2])
-            self._sphere_source.SetRadius(self.brush_size)
-            self._sphere_source.Modified()
-            self._preview_actor.VisibilityOn()
-            self.mvat_viewer.plotter.render()
-        except Exception:
-            pass
-
-    def _remove_preview_sphere(self):
-        """Detach the persistent actor from the renderer on deactivation."""
-        if self._preview_actor is not None:
-            try:
-                self.mvat_viewer.plotter.renderer.RemoveActor(self._preview_actor)
-                self.mvat_viewer.plotter.render()
-            except Exception:
-                pass
-            self._preview_actor = None
-            self._sphere_source = None
 
     # ------------------------------------------------------------------
     # KD-tree management

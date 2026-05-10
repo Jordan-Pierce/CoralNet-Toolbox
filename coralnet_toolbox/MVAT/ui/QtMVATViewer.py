@@ -30,6 +30,7 @@ from coralnet_toolbox.MVAT.core.Model import PointCloudProduct, MeshProduct
 from coralnet_toolbox.MVAT.core.SceneContext import SceneContext
 from coralnet_toolbox.MVAT.core.SceneProduct import AbstractSceneProduct
 from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED
+from coralnet_toolbox.MVAT.tools import Brush3DTool, Erase3DTool
 from coralnet_toolbox.MVAT.ui.CameraAnimator import CameraAnimator
 from coralnet_toolbox import theme as app_theme
 
@@ -420,7 +421,10 @@ class MVATViewer(QFrame):
         self._ortho_ray_manager = BatchedRayManager()
         # Sphere actor for mouse tracking on mesh
         self._sphere_manager = SphereActorManager(radius=0.1)
-        self._sphere_visible = True
+        self._sphere_visible = False
+        self._brush_3d_tool = None
+        self._erase_3d_tool = None
+        self._active_3d_tool = None
         self._mouse_sphere_observer_id = None
         self._sphere_hover_observer_bound = False
         self._sphere_modifier_passthrough_active = False
@@ -481,7 +485,7 @@ class MVATViewer(QFrame):
         self.layout.addWidget(self._stack_container)
 
         # Point size hint (spinbox removed; use Ctrl + mouse wheel)
-        hint_label = QLabel("Ctrl + Mouse Wheel: resize sphere when tracking is on, otherwise point size")
+        hint_label = QLabel("Ctrl + Mouse Wheel: resize the brush/erase preview sphere when those tools are active, otherwise point size")
         hint_label.setStyleSheet(f"color: {app_theme.TEXT_PRIMARY_COLOR.name()};")
         bottom_layout.addStretch(1)
         bottom_layout.addWidget(hint_label)
@@ -707,13 +711,6 @@ class MVATViewer(QFrame):
         action_rays.toggled.connect(self.set_ray_visible)
         view_menu.addAction(action_rays)
 
-        action_sphere = QAction("Show Sphere", self)
-        action_sphere.setCheckable(True)
-        action_sphere.setChecked(self._sphere_visible)
-        action_sphere.setToolTip("Toggle hollow sphere tracking; Ctrl+wheel resizes the sphere and Ctrl+click passes through to camera controls")
-        action_sphere.toggled.connect(self.set_sphere_visible)
-        view_menu.addAction(action_sphere)
-
         action_wireframes = QAction("Show Wireframes", self)
         action_wireframes.setCheckable(True)
         action_wireframes.setChecked(self._show_wireframes_enabled)
@@ -801,6 +798,77 @@ class MVATViewer(QFrame):
         toolbar.addWidget(self.bottom_toolbar_widget)
         
         return toolbar
+
+    def initialize_3d_tools(self, mvat_manager):
+        """Create the preview-only 3D brush and erase tools once the manager exists."""
+        if self._brush_3d_tool is not None or self._erase_3d_tool is not None:
+            return
+
+        self._brush_3d_tool = Brush3DTool(self, mvat_manager)
+        self._erase_3d_tool = Erase3DTool(self, mvat_manager)
+        self._active_3d_tool = None
+
+    def get_selected_3d_tool(self):
+        return self._active_3d_tool
+
+    def set_selected_3d_tool(self, tool_name):
+        """Activate the Brush3DTool or Erase3DTool preview, or clear it."""
+        tool_map = {
+            'brush': self._brush_3d_tool,
+            'erase': self._erase_3d_tool,
+        }
+        next_tool = tool_map.get(tool_name)
+        current_tool = self._active_3d_tool
+
+        if current_tool is next_tool:
+            self._sphere_visible = next_tool is not None
+            if next_tool is not None:
+                self._request_sphere_hover_refresh()
+                try:
+                    self._process_sphere_hover_update()
+                except Exception:
+                    pass
+            return
+
+        if current_tool is not None:
+            try:
+                current_tool.deactivate()
+            except Exception:
+                pass
+
+        self._active_3d_tool = next_tool
+        self._sphere_visible = next_tool is not None
+
+        if next_tool is not None:
+            try:
+                next_tool.activate()
+            except Exception:
+                pass
+            self._sync_sphere_hover_binding()
+            self._request_sphere_hover_refresh()
+            try:
+                self._process_sphere_hover_update()
+            except Exception:
+                pass
+        else:
+            if hasattr(self, '_sphere_hover_timer'):
+                try:
+                    self._sphere_hover_timer.stop()
+                    self._sphere_hover_pending_events = 0
+                except Exception:
+                    pass
+            self._sphere_modifier_passthrough_active = False
+            manager = getattr(self, 'mvat_manager', None)
+            if manager is not None:
+                try:
+                    manager.clear_sphere_hover_overlay(reset_context=True, render=False)
+                except Exception:
+                    pass
+
+        try:
+            self.plotter.render()
+        except Exception:
+            pass
 
     # --------------------------------------------------------------------------
     # Custom Interaction Logic
@@ -1013,7 +1081,13 @@ class MVATViewer(QFrame):
             # Ctrl + wheel → adjust sphere size when sphere tracking is enabled.
             if event.modifiers() & Qt.ControlModifier:
                 if delta_y != 0:
-                    if self.is_sphere_tracking_enabled() and self._sphere_manager is not None:
+                    active_tool = getattr(self, '_active_3d_tool', None)
+                    if active_tool is not None:
+                        try:
+                            active_tool.wheelEvent(event, delta_y)
+                        except Exception:
+                            pass
+                    elif self.is_sphere_tracking_enabled() and self._sphere_manager is not None:
                         self._adjust_sphere_size_from_wheel(delta_y)
                     else:
                         step = 1 if delta_y > 0 else -1
@@ -1131,6 +1205,63 @@ class MVATViewer(QFrame):
 
             batch_start = time.perf_counter()
             print(f"[SphereTiming] processing coalesced batch: {pending_events} queued mouse moves", flush=True)
+
+            active_tool = getattr(self, '_active_3d_tool', None)
+            if active_tool is not None:
+                if self._sphere_manager is None:
+                    print("[SphereTiming] skip batch: no sphere manager", flush=True)
+                    return
+
+                if not self._sphere_visible or self._is_sphere_passthrough_active():
+                    try:
+                        active_tool.mouseMoveEvent(None, -1, None)
+                    except Exception:
+                        pass
+                    print("[SphereTiming] skip batch: 3D preview disabled", flush=True)
+                    return
+
+                try:
+                    self.plotter.store_mouse_position()
+                    print(f"[SphereTiming] hover mouse_position={self.plotter.mouse_position}", flush=True)
+                except Exception:
+                    pass
+
+                pick_start = time.perf_counter()
+                picked = self.plotter.pick_mouse_position()
+                pick_ms = (time.perf_counter() - pick_start) * 1000.0
+                print(f"[SphereTiming] pick_mouse_position: {pick_ms:.2f} ms", flush=True)
+
+                if not self._is_valid_scene_pick(picked):
+                    print("[SphereTiming] invalid pick -> hide active 3D preview", flush=True)
+                    try:
+                        active_tool.mouseMoveEvent(None, -1, None)
+                    except Exception:
+                        pass
+                    total_ms = (time.perf_counter() - batch_start) * 1000.0
+                    print(f"[SphereTiming] mouse_move batch total: {total_ms:.2f} ms", flush=True)
+                    if self._sphere_hover_pending_events > 0:
+                        print(f"[SphereTiming] rescheduling batch for {self._sphere_hover_pending_events} new mouse moves", flush=True)
+                        self._sphere_hover_timer.start()
+                    return
+
+                if picked is not None:
+                    picked = np.asarray(picked, dtype=np.float64)
+                    try:
+                        active_tool.mouseMoveEvent(None, -1, picked)
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        active_tool.mouseMoveEvent(None, -1, None)
+                    except Exception:
+                        pass
+
+                total_ms = (time.perf_counter() - batch_start) * 1000.0
+                print(f"[SphereTiming] mouse_move batch total: {total_ms:.2f} ms", flush=True)
+                if self._sphere_hover_pending_events > 0:
+                    print(f"[SphereTiming] rescheduling batch for {self._sphere_hover_pending_events} new mouse moves", flush=True)
+                    self._sphere_hover_timer.start()
+                return
 
             if self._sphere_manager is None:
                 print("[SphereTiming] skip batch: no sphere manager", flush=True)
@@ -2869,6 +3000,14 @@ class MVATViewer(QFrame):
 
     def close(self):
         """Clean up the plotter resources."""
+        active_tool = getattr(self, '_active_3d_tool', None)
+        if active_tool is not None:
+            try:
+                active_tool.deactivate()
+            except Exception:
+                pass
+            self._active_3d_tool = None
+
         # Clean up ray manager
         if hasattr(self, '_ray_manager'):
             self._ray_manager.clear()
