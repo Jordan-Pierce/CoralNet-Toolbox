@@ -1869,11 +1869,20 @@ class MainWindow(QMainWindow):
         # Set the tool in the annotation window
         self.annotation_window.set_selected_tool(tool, preserve_selection=preserve_selection)
 
-        if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
-            try:
-                self.mvat_viewer.set_selected_3d_tool(tool if tool in ('brush', 'erase') else None)
-            except Exception:
-                pass
+        self._sync_mvat_3d_tool_selection()
+
+    def _sync_mvat_3d_tool_selection(self):
+        """Keep the MVAT viewer aligned with the final annotation tool state."""
+        if not hasattr(self, 'mvat_viewer') or not self.mvat_viewer:
+            return
+
+        try:
+            selected_tool = None
+            if hasattr(self, 'annotation_window') and self.annotation_window is not None:
+                selected_tool = self.annotation_window.get_selected_tool()
+            self.mvat_viewer.set_selected_3d_tool(selected_tool if selected_tool in ('brush', 'erase') else None)
+        except Exception:
+            pass
         
     def toggle_tool(self, state):
         """Toggle the selected tool and emit the toolChanged signal."""
@@ -2107,6 +2116,8 @@ class MainWindow(QMainWindow):
             else:
                 self.toolChanged.emit(None)
 
+        self._sync_mvat_3d_tool_selection()
+
     def untoggle_all_tools(self):
         """Untoggle all tool actions and unlock the label lock."""
         # Unlock the label lock
@@ -2127,6 +2138,7 @@ class MainWindow(QMainWindow):
 
         # Emit to reset the tool
         self.toolChanged.emit(None)
+        self._sync_mvat_3d_tool_selection()
 
     def set_video_playback_tools_enabled(self, enabled: bool):
         """Enable or disable tools that are incompatible with live video playback."""
@@ -2153,6 +2165,7 @@ class MainWindow(QMainWindow):
                 action.setChecked(False)
             if needs_reset:
                 self.toolChanged.emit(None)
+                self._sync_mvat_3d_tool_selection()
 
     def handle_tool_changed(self, tool):
         """Update the toolbar UI to reflect the currently selected tool."""

@@ -821,13 +821,15 @@ class MVATViewer(QFrame):
         current_tool = self._active_3d_tool
 
         if current_tool is next_tool:
-            self._sphere_visible = next_tool is not None
             if next_tool is not None:
+                self._sphere_visible = True
                 self._request_sphere_hover_refresh()
                 try:
                     self._process_sphere_hover_update()
                 except Exception:
                     pass
+            else:
+                self._restore_viewer_navigation_mode()
             return
 
         if current_tool is not None:
@@ -837,9 +839,9 @@ class MVATViewer(QFrame):
                 pass
 
         self._active_3d_tool = next_tool
-        self._sphere_visible = next_tool is not None
 
         if next_tool is not None:
+            self._sphere_visible = True
             try:
                 next_tool.activate()
             except Exception:
@@ -851,19 +853,40 @@ class MVATViewer(QFrame):
             except Exception:
                 pass
         else:
-            if hasattr(self, '_sphere_hover_timer'):
-                try:
-                    self._sphere_hover_timer.stop()
-                    self._sphere_hover_pending_events = 0
-                except Exception:
-                    pass
-            self._sphere_modifier_passthrough_active = False
-            manager = getattr(self, 'mvat_manager', None)
-            if manager is not None:
-                try:
-                    manager.clear_sphere_hover_overlay(reset_context=True, render=False)
-                except Exception:
-                    pass
+            self._restore_viewer_navigation_mode()
+
+        try:
+            self.plotter.render()
+        except Exception:
+            pass
+
+    def _restore_viewer_navigation_mode(self):
+        """Return the MVAT viewer to the normal rotate / focal-point / pan interaction path."""
+        self._sphere_visible = False
+        self._sphere_modifier_passthrough_active = False
+
+        if hasattr(self, '_sphere_hover_timer'):
+            try:
+                self._sphere_hover_timer.stop()
+                self._sphere_hover_pending_events = 0
+            except Exception:
+                pass
+
+        self._last_click_time = 0
+        self._sync_sphere_hover_binding()
+
+        if self._sphere_manager is not None:
+            try:
+                self._sphere_manager.set_visibility(False)
+            except Exception:
+                pass
+
+        manager = getattr(self, 'mvat_manager', None)
+        if manager is not None:
+            try:
+                manager.clear_sphere_hover_overlay(reset_context=True, render=False)
+            except Exception:
+                pass
 
         try:
             self.plotter.render()
