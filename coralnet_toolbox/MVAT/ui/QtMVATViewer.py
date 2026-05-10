@@ -830,6 +830,16 @@ class MVATViewer(QFrame):
                     pass
             else:
                 self._restore_viewer_navigation_mode()
+                sphere_manager = getattr(self, '_sphere_manager', None)
+                if sphere_manager is not None:
+                    try:
+                        setter = getattr(sphere_manager, 'set_shape', None)
+                        if callable(setter):
+                            setter('circle')
+                        else:
+                            sphere_manager.shape = 'circle'
+                    except Exception:
+                        pass
             return
 
         if current_tool is not None:
@@ -848,11 +858,17 @@ class MVATViewer(QFrame):
                 pass
             self._sync_sphere_hover_binding()
             self._request_sphere_hover_refresh()
-            try:
-                self._process_sphere_hover_update()
-            except Exception:
-                pass
         else:
+            sphere_manager = getattr(self, '_sphere_manager', None)
+            if sphere_manager is not None:
+                try:
+                    setter = getattr(sphere_manager, 'set_shape', None)
+                    if callable(setter):
+                        setter('circle')
+                    else:
+                        sphere_manager.shape = 'circle'
+                except Exception:
+                    pass
             self._restore_viewer_navigation_mode()
 
         try:
@@ -1721,6 +1737,47 @@ class MVATViewer(QFrame):
         """
         key = event.key()
         ang = np.radians(self.rotate_speed)
+
+        if (event.modifiers() & Qt.ControlModifier) and (event.modifiers() & Qt.ShiftModifier):
+            manager = getattr(self, 'mvat_manager', None)
+            annotation_window = getattr(manager, 'annotation_window', None) if manager is not None else None
+            selected_tool = None
+            tool_map = None
+
+            if annotation_window is not None:
+                try:
+                    selected_tool = annotation_window.get_selected_tool()
+                except Exception:
+                    selected_tool = None
+                tool_map = getattr(annotation_window, 'tools', None)
+
+            tool = None
+            if isinstance(tool_map, dict) and selected_tool in ('brush', 'erase'):
+                tool = tool_map.get(selected_tool)
+
+            if tool is not None:
+                toggle = getattr(tool, '_toggle_shape', None)
+                if callable(toggle):
+                    try:
+                        toggle()
+                        event.accept()
+                        return
+                    except Exception:
+                        pass
+
+            active_tool = getattr(self, '_active_3d_tool', None)
+            if active_tool is not None:
+                current_shape = str(getattr(active_tool, 'brush_shape', 'circle')).strip().lower()
+                next_shape = 'square' if current_shape == 'circle' else 'circle'
+                setter = getattr(active_tool, 'set_brush_shape', None)
+                if callable(setter):
+                    try:
+                        setter(next_shape)
+                    except Exception:
+                        pass
+
+            event.accept()
+            return
 
         if key == Qt.Key_W:
             # Pitch up (rotate view direction in-place)

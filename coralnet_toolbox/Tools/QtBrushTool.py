@@ -244,10 +244,18 @@ class BrushTool(Tool):
     def _toggle_shape(self):
         self.shape = 'square' if self.shape == 'circle' else 'circle'
         self.brush_mask = self._create_brush_mask()
+        cursor_pos = self.annotation_window.mapFromGlobal(self.annotation_window.cursor().pos())
+        scene_pos = self.annotation_window.mapToScene(cursor_pos)
+
         if self.cursor_annotation:
-            cursor_pos = self.annotation_window.mapFromGlobal(self.annotation_window.cursor().pos())
-            scene_pos = self.annotation_window.mapToScene(cursor_pos)
             self.update_cursor_annotation(scene_pos)
+
+        manager = getattr(self.main_window, 'mvat_manager', None)
+        if manager is not None:
+            try:
+                manager.on_2d_tool_size_changed(self, scene_pos)
+            except Exception:
+                pass
 
     def wheelEvent(self, event):
         if event.modifiers() & Qt.ControlModifier:

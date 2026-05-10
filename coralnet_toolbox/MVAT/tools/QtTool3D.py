@@ -60,9 +60,11 @@ class Tool3D:
         self.active = False
         self.preview_only = True
         self.brush_size = 0.1
+        self.brush_shape = 'circle'
 
         self._sphere_source = None
         self._preview_actor = None
+        self._preview_actor_shape = None
         self._last_hover_world_pos = None
 
     # ------------------------------------------------------------------
@@ -108,6 +110,33 @@ class Tool3D:
             self.brush_size = max(1e-6, float(brush_size))
         except Exception:
             return
+
+        if not self.active:
+            return
+
+        if center is None:
+            center = self._last_hover_world_pos
+
+        if center is None:
+            try:
+                center = np.asarray(self.mvat_viewer.plotter.camera.focal_point, dtype=np.float64)
+            except Exception:
+                center = None
+
+        if center is not None:
+            self._update_preview_sphere(center)
+
+    def set_brush_shape(self, brush_shape, center=None):
+        """Set the preview shape and refresh the actor in-place."""
+        try:
+            brush_shape = str(brush_shape).strip().lower()
+        except Exception:
+            return
+
+        if brush_shape not in ('circle', 'square'):
+            return
+
+        self.brush_shape = brush_shape
 
         if not self.active:
             return
@@ -262,15 +291,22 @@ class Tool3D:
 
         try:
             try:
-                from vtkmodules.vtkFiltersSources import vtkSphereSource
+                from vtkmodules.vtkFiltersSources import vtkCubeSource, vtkSphereSource
                 from vtkmodules.vtkRenderingCore import vtkPolyDataMapper, vtkActor
             except ImportError:
-                from vtk import vtkSphereSource, vtkPolyDataMapper, vtkActor
+                from vtk import vtkCubeSource, vtkSphereSource, vtkPolyDataMapper, vtkActor
 
-            src = vtkSphereSource()
-            src.SetThetaResolution(16)
-            src.SetPhiResolution(16)
-            src.SetRadius(self.brush_size)
+            if self.brush_shape == 'square':
+                src = vtkCubeSource()
+                side = self.brush_size * 2.0
+                src.SetXLength(side)
+                src.SetYLength(side)
+                src.SetZLength(side)
+            else:
+                src = vtkSphereSource()
+                src.SetThetaResolution(16)
+                src.SetPhiResolution(16)
+                src.SetRadius(self.brush_size)
 
             mapper = vtkPolyDataMapper()
             mapper.SetInputConnection(src.GetOutputPort())
@@ -288,10 +324,12 @@ class Tool3D:
 
             self._sphere_source = src
             self._preview_actor = actor
+            self._preview_actor_shape = self.brush_shape
         except Exception as e:
             print(f"⚠️  {self.__class__.__name__}: could not create preview actor: {e}")
             self._sphere_source = None
             self._preview_actor = None
+            self._preview_actor_shape = None
 
     def _hide_preview_sphere(self):
         if self._preview_actor is None:
@@ -304,7 +342,19 @@ class Tool3D:
 
     def _update_preview_sphere(self, center: np.ndarray):
         """Move/resize the existing actor in-place."""
-        if self._sphere_source is None or self._preview_actor is None:
+        if (
+            self._sphere_source is None or
+            self._preview_actor is None or
+            self._preview_actor_shape != self.brush_shape
+        ):
+            if self._preview_actor is not None:
+                try:
+                    self.mvat_viewer.plotter.renderer.RemoveActor(self._preview_actor)
+                except Exception:
+                    pass
+            self._preview_actor = None
+            self._sphere_source = None
+            self._preview_actor_shape = None
             self._init_preview_actor()
         if self._sphere_source is None:
             return
@@ -312,7 +362,13 @@ class Tool3D:
         try:
             c = center.tolist() if hasattr(center, 'tolist') else list(center)
             self._sphere_source.SetCenter(c[0], c[1], c[2])
-            self._sphere_source.SetRadius(self.brush_size)
+            if self.brush_shape == 'square':
+                side = self.brush_size * 2.0
+                self._sphere_source.SetXLength(side)
+                self._sphere_source.SetYLength(side)
+                self._sphere_source.SetZLength(side)
+            else:
+                self._sphere_source.SetRadius(self.brush_size)
             self._sphere_source.Modified()
             r, g, b = self._preview_color_rgb_float()
             prop = self._preview_actor.GetProperty()
@@ -338,3 +394,4 @@ class Tool3D:
                 pass
             self._preview_actor = None
             self._sphere_source = None
+            self._preview_actor_shape = None

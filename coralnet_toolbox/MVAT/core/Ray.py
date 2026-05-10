@@ -5,13 +5,19 @@ Provides ray casting functionality for projecting 2D pixel coordinates through
 camera frustums into 3D space and back onto other camera views.
 Uses PyVista for 3D ray-mesh intersection when available.
 """
-from typing import Optional, Dict, Tuple, List
+from typing import Optional, Dict, Tuple, List, TYPE_CHECKING
 
 import numpy as np
 
 import pyvista as pv
 
 from coralnet_toolbox.MVAT.core.Camera import Camera
+
+if TYPE_CHECKING:
+    try:
+        from vtkmodules.vtkRenderingCore import vtkActor
+    except ImportError:
+        from vtk import vtkActor
 
 
 from coralnet_toolbox.MVAT.core.constants import (
@@ -345,9 +351,9 @@ class CameraRay:
 
 class SphereActorManager:
     """
-    Manages a single hollow sphere actor that follows the mouse on the mesh.
+    Manages a single hollow sphere or cube actor that follows the mouse on the mesh.
 
-    Creates a sphere actor once at startup and only updates its position
+    Creates a preview actor once at startup and only updates its position
     when the mouse moves, following the same pattern as BatchedRayManager
     for efficient rendering.
 
@@ -368,8 +374,10 @@ class SphereActorManager:
         self.sphere_actor = None
         self.sphere_mesh = None
         self._original_sphere_mesh = None
+        self._preview_mesh_shape = None
         self.current_position = np.array([0.0, 0.0, 0.0], dtype=np.float64)  # Start at origin
         self.radius = radius
+        self.shape = 'circle'
         self._plotter = None
         self._last_color = (144, 238, 144)
         self._last_line_width = 1.0
@@ -379,9 +387,15 @@ class SphereActorManager:
             self.sphere_mesh.translate(self.current_position)
 
     def _create_sphere(self):
-        """Create the hollow sphere mesh (sphere wireframe)."""
-        # Create a sphere using PyVista
-        base_sphere = pv.Sphere(radius=self.radius, theta_resolution=16, phi_resolution=16)
+        """Create the hollow preview mesh (sphere or cube wireframe)."""
+        if self.shape == 'square':
+            base_sphere = pv.Cube(
+                x_length=self.radius * 2.0,
+                y_length=self.radius * 2.0,
+                z_length=self.radius * 2.0,
+            )
+        else:
+            base_sphere = pv.Sphere(radius=self.radius, theta_resolution=16, phi_resolution=16)
         # Extract edges to create wireframe effect
         try:
             self._original_sphere_mesh = base_sphere.extract_all_edges()
@@ -390,6 +404,7 @@ class SphereActorManager:
             self._original_sphere_mesh = base_sphere.copy()
         # Create a copy for the working mesh
         self.sphere_mesh = self._original_sphere_mesh.copy()
+        self._preview_mesh_shape = self.shape
 
     def set_position(self, position: np.ndarray):
         """
@@ -500,6 +515,50 @@ class SphereActorManager:
 
         plotter = self._plotter
         self.radius = radius
+        self._create_sphere()
+
+        if self.current_position is not None and self.sphere_mesh is not None and self._original_sphere_mesh is not None:
+            self.sphere_mesh.points = self._original_sphere_mesh.points + self.current_position
+            self.sphere_mesh.Modified()
+
+        if plotter is not None and self.sphere_actor is not None:
+            try:
+                plotter.remove_actor(self.sphere_actor)
+            except Exception:
+                pass
+            self.sphere_actor = None
+            self.add_to_plotter(plotter, color=self._last_color, line_width=self._last_line_width)
+            if self.sphere_actor is not None and not was_visible:
+                try:
+                    self.sphere_actor.SetVisibility(False)
+                except Exception:
+                    pass
+
+    def set_shape(self, shape: str):
+        """Update the preview mesh shape and rebuild the cached geometry."""
+        if shape is None:
+            return
+
+        try:
+            shape = str(shape).strip().lower()
+        except Exception:
+            return
+
+        if shape not in ('circle', 'square'):
+            return
+
+        if self.shape == shape and self._preview_mesh_shape == shape:
+            return
+
+        was_visible = False
+        if self.sphere_actor is not None:
+            try:
+                was_visible = bool(self.sphere_actor.GetVisibility())
+            except Exception:
+                pass
+
+        plotter = self._plotter
+        self.shape = shape
         self._create_sphere()
 
         if self.current_position is not None and self.sphere_mesh is not None and self._original_sphere_mesh is not None:

@@ -1707,6 +1707,29 @@ class MVATManager(QObject):
         except Exception:
             return 0.1
 
+    def _get_sphere_hover_shape(self):
+        active_tool = getattr(self.viewer, '_active_3d_tool', None)
+        try:
+            shape = getattr(active_tool, 'brush_shape', None)
+            if shape is not None:
+                shape = str(shape).strip().lower()
+                if shape in ('circle', 'square'):
+                    return shape
+        except Exception:
+            pass
+
+        sphere_manager = getattr(self.viewer, '_sphere_manager', None)
+        try:
+            shape = getattr(sphere_manager, 'shape', None)
+            if shape is not None:
+                shape = str(shape).strip().lower()
+                if shape in ('circle', 'square'):
+                    return shape
+        except Exception:
+            pass
+
+        return 'circle'
+
     def _get_active_3d_tool(self):
         getter = getattr(self.viewer, 'get_selected_3d_tool', None)
         if callable(getter):
@@ -1998,10 +2021,37 @@ class MVATManager(QObject):
                 pass
 
     def on_2d_tool_size_changed(self, tool, scene_pos: QPointF = None):
-        """Sync a 2D brush/erase size change into the active 3D tool."""
+        """Sync a 2D brush/erase size or shape change into the active 3D tool."""
         tool_kind, active_tool = self._get_active_3d_tool_kind()
         if tool_kind not in ('brush', 'erase') or active_tool is None:
             return
+
+        brush_shape = getattr(tool, 'shape', None)
+        try:
+            brush_shape = str(brush_shape).strip().lower() if brush_shape is not None else None
+        except Exception:
+            brush_shape = None
+
+        if brush_shape in ('circle', 'square'):
+            sphere_manager = getattr(self.viewer, '_sphere_manager', None)
+            if sphere_manager is not None:
+                try:
+                    setter = getattr(sphere_manager, 'set_shape', None)
+                    if callable(setter):
+                        setter(brush_shape)
+                    else:
+                        sphere_manager.shape = brush_shape
+                except Exception:
+                    pass
+
+            try:
+                setter = getattr(active_tool, 'set_brush_shape', None)
+                if callable(setter):
+                    setter(brush_shape, center=world_point)
+                else:
+                    active_tool.brush_shape = brush_shape
+            except Exception:
+                pass
 
         selected_camera = self.selected_camera
         if selected_camera is None:
@@ -2039,6 +2089,17 @@ class MVATManager(QObject):
             diameter_px = 1.0
 
         world_radius = max(1e-6, (diameter_px / 2.0) / pixels_per_world)
+
+        sphere_manager = getattr(self.viewer, '_sphere_manager', None)
+        if sphere_manager is not None:
+            try:
+                setter = getattr(sphere_manager, 'set_radius', None)
+                if callable(setter):
+                    setter(world_radius)
+                else:
+                    sphere_manager.radius = world_radius
+            except Exception:
+                pass
 
         try:
             setter = getattr(active_tool, 'set_brush_size', None)
@@ -2161,7 +2222,7 @@ class MVATManager(QObject):
         except Exception as e:
             print(f"⚠️ Hover overlay update failed: {e}")
 
-    def _get_faces_within_sphere(self, primary_target, center, radius):
+    def _get_faces_within_sphere(self, primary_target, center, radius, shape: str = 'circle'):
         try:
             primary_target.prepare_geometry()
         except Exception:
@@ -2172,6 +2233,9 @@ class MVATManager(QObject):
             return np.empty(0, dtype=np.int32)
 
         center = np.asarray(center, dtype=np.float64)
+        shape = str(shape).strip().lower()
+        if shape not in ('circle', 'square'):
+            shape = 'circle'
 
         try:
             from scipy.spatial import cKDTree
@@ -2192,15 +2256,29 @@ class MVATManager(QObject):
 
         if tree is not None:
             try:
+                if shape == 'square':
+                    candidate_ids = tree.query_ball_point(center, float(radius) * np.sqrt(3.0))
+                    if not candidate_ids:
+                        return np.empty(0, dtype=np.int32)
+                    candidate_ids = np.asarray(candidate_ids, dtype=np.int32)
+                    candidate_centers = np.asarray(centers, dtype=np.float32)[candidate_ids]
+                    deltas = np.abs(candidate_centers - center.astype(np.float32))
+                    within = np.max(deltas, axis=1) <= float(radius)
+                    return candidate_ids[within]
+
                 face_ids = tree.query_ball_point(center, float(radius))
                 return np.asarray(face_ids, dtype=np.int32)
             except Exception:
                 pass
 
-        radius_sq = float(radius) * float(radius)
         deltas = np.asarray(centers, dtype=np.float32) - center.astype(np.float32)
-        distances_sq = np.einsum('ij,ij->i', deltas, deltas)
-        return np.flatnonzero(distances_sq <= radius_sq).astype(np.int32)
+        if shape == 'square':
+            within = np.max(np.abs(deltas), axis=1) <= float(radius)
+        else:
+            radius_sq = float(radius) * float(radius)
+            distances_sq = np.einsum('ij,ij->i', deltas, deltas)
+            within = distances_sq <= radius_sq
+        return np.flatnonzero(within).astype(np.int32)
 
     def clear_sphere_hover_overlay(self, reset_context: bool = False, render: bool = True):
         if reset_context:
@@ -2223,6 +2301,8 @@ class MVATManager(QObject):
         if not context:
             self.clear_sphere_hover_overlay(reset_context=False, render=render)
             return
+
+        brush_shape = self._get_sphere_hover_shape()
 
         try:
             if not bool(getattr(self.viewer, '_sphere_visible', True)):
@@ -2253,7 +2333,7 @@ class MVATManager(QObject):
                 return
 
             radius = self._get_sphere_hover_radius()
-            face_ids = self._get_faces_within_sphere(primary_target, center, radius)
+            face_ids = self._get_faces_within_sphere(primary_target, center, radius, shape=brush_shape)
             if face_ids is None or len(face_ids) == 0:
                 self.clear_sphere_hover_overlay(reset_context=True, render=render)
                 return
@@ -2289,6 +2369,8 @@ class MVATManager(QObject):
             self.clear_sphere_hover_overlay(reset_context=True, render=render)
             return
 
+        brush_shape = self._get_sphere_hover_shape()
+
         try:
             if not bool(getattr(self.viewer, '_sphere_visible', True)):
                 self.clear_sphere_hover_overlay(reset_context=True, render=render)
@@ -2322,7 +2404,7 @@ class MVATManager(QObject):
         }
 
         radius = self._get_sphere_hover_radius()
-        face_ids = self._get_faces_within_sphere(primary_target, center, radius)
+        face_ids = self._get_faces_within_sphere(primary_target, center, radius, shape=brush_shape)
         if face_ids is None or len(face_ids) == 0:
             self.clear_sphere_hover_overlay(reset_context=True, render=render)
             return

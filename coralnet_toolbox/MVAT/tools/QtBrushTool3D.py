@@ -132,16 +132,59 @@ class Brush3DTool(Tool3D):
         if class_id is None:
             return
 
-        face_ids = self._kdtree.query_ball_point(world_pos, self.brush_size)
-        if not face_ids:
+        face_ids = self._get_face_ids_in_brush_volume(world_pos)
+        if face_ids is None or len(face_ids) == 0:
             return
 
-        face_ids_arr = np.array(face_ids, dtype=np.int32)
-        self._stroke_face_ids.update(face_ids)
+        face_ids_arr = np.asarray(face_ids, dtype=np.int32)
+        self._stroke_face_ids.update(int(face_id) for face_id in face_ids_arr.tolist())
 
         painter = self.mvat_manager._label_painter_thread
         if painter is not None and painter.isRunning():
             painter.submit(face_ids_arr, color_rgb, class_id)
+
+    def _get_face_ids_in_brush_volume(self, world_pos: np.ndarray):
+        primary = self._get_primary_mesh()
+        if primary is None or not self._ensure_kdtree():
+            return None
+
+        centers = getattr(primary, '_element_centers_np', None)
+        if centers is None or len(centers) == 0:
+            return None
+
+        try:
+            world_pos = np.asarray(world_pos, dtype=np.float64).reshape(-1)
+        except Exception:
+            return None
+
+        if world_pos.size < 3:
+            return None
+
+        shape = str(getattr(self, 'brush_shape', 'circle')).strip().lower()
+        radius = float(getattr(self, 'brush_size', 0.0))
+        if radius <= 0.0:
+            return None
+
+        if shape == 'square':
+            candidate_radius = radius * np.sqrt(3.0)
+            try:
+                candidate_ids = self._kdtree.query_ball_point(world_pos[:3], candidate_radius)
+            except Exception:
+                candidate_ids = []
+            if not candidate_ids:
+                return np.empty(0, dtype=np.int32)
+
+            candidate_ids = np.asarray(candidate_ids, dtype=np.int32)
+            candidate_centers = np.asarray(centers, dtype=np.float32)[candidate_ids]
+            deltas = np.abs(candidate_centers - world_pos[:3].astype(np.float32))
+            within = np.max(deltas, axis=1) <= radius
+            return candidate_ids[within]
+
+        try:
+            face_ids = self._kdtree.query_ball_point(world_pos[:3], radius)
+        except Exception:
+            return None
+        return np.asarray(face_ids, dtype=np.int32)
 
     def _finish_stroke(self):
         """
