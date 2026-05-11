@@ -14,6 +14,7 @@ to read side-by-side.
 import warnings
 
 import numpy as np
+import pyvista as pv
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor
@@ -62,7 +63,8 @@ class Tool3D:
         self.brush_size = 0.1
         self.brush_shape = 'circle'
 
-        self._sphere_source = None
+        self._preview_mesh = None            # pv.PolyData shared with the plotter
+        self._preview_mesh_points_unit = None  # unit-scale points (radius=1) for fast transforms
         self._preview_actor = None
         self._preview_actor_shape = None
         self._last_hover_world_pos = None
@@ -280,56 +282,50 @@ class Tool3D:
                     pass
 
         try:
-            import pyvista as pv
             c = pv.Color(self._PREVIEW_COLOR)
             return c.float_rgb
         except Exception:
             return (1.0, 1.0, 1.0)
 
     def _init_preview_actor(self):
-        """Create the wireframe sphere actor once and add it to the renderer."""
+        """
+        Create the wireframe preview mesh once and register it with the plotter.
+
+        Uses a PyVista mesh so position/size updates are pure numpy point-array
+        assignments rather than VTK pipeline re-executions.  The mesh is built at
+        unit scale (radius = 1) so that a single multiply+add can apply both
+        brush_size and world position without ever rebuilding geometry.
+        """
         if self._preview_actor is not None:
             return
 
         try:
-            try:
-                from vtkmodules.vtkFiltersSources import vtkCubeSource, vtkSphereSource
-                from vtkmodules.vtkRenderingCore import vtkPolyDataMapper, vtkActor
-            except ImportError:
-                from vtk import vtkCubeSource, vtkSphereSource, vtkPolyDataMapper, vtkActor
-
             if self.brush_shape == 'square':
-                src = vtkCubeSource()
-                side = self.brush_size * 2.0
-                src.SetXLength(side)
-                src.SetYLength(side)
-                src.SetZLength(side)
+                # Box with half-extents of ±1 — scale by brush_size at update time
+                base = pv.Box(bounds=(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0))
             else:
-                src = vtkSphereSource()
-                src.SetThetaResolution(16)
-                src.SetPhiResolution(16)
-                src.SetRadius(self.brush_size)
+                base = pv.Sphere(radius=1.0, theta_resolution=16, phi_resolution=16)
 
-            mapper = vtkPolyDataMapper()
-            mapper.SetInputConnection(src.GetOutputPort())
+            mesh = base.extract_all_edges()
+            self._preview_mesh = mesh
+            self._preview_mesh_points_unit = mesh.points.copy()  # immutable reference
 
-            actor = vtkActor()
-            actor.SetMapper(mapper)
-            prop = actor.GetProperty()
-            prop.SetRepresentationToWireframe()
             r, g, b = self._preview_color_rgb_float()
-            prop.SetColor(r, g, b)
-            prop.SetOpacity(self._PREVIEW_OPACITY)
+            actor = self.mvat_viewer.plotter.add_mesh(
+                mesh,
+                color=(r, g, b),
+                opacity=self._PREVIEW_OPACITY,
+                style='wireframe',
+                render=False,
+            )
             actor.VisibilityOff()
 
-            self.mvat_viewer.plotter.renderer.AddActor(actor)
-
-            self._sphere_source = src
             self._preview_actor = actor
             self._preview_actor_shape = self.brush_shape
         except Exception as e:
             print(f"⚠️  {self.__class__.__name__}: could not create preview actor: {e}")
-            self._sphere_source = None
+            self._preview_mesh = None
+            self._preview_mesh_points_unit = None
             self._preview_actor = None
             self._preview_actor_shape = None
 
@@ -338,45 +334,52 @@ class Tool3D:
             return
         try:
             self._preview_actor.VisibilityOff()
-            self.mvat_viewer.plotter.render()
+            if self._preview_mesh is not None:
+                self._preview_mesh.Modified()
         except Exception:
             pass
 
     def _update_preview_sphere(self, center: np.ndarray):
-        """Move/resize the existing actor in-place."""
+        """
+        Move and resize the preview actor in-place.
+
+        Translates and scales the pre-built unit mesh via a single numpy
+        expression — no VTK pipeline re-execution, no forced render().
+        The plotter's own render loop picks up the Modified() flag.
+        """
+        # Rebuild actor if shape changed or not yet initialised
         if (
-            self._sphere_source is None or
+            self._preview_mesh is None or
             self._preview_actor is None or
             self._preview_actor_shape != self.brush_shape
         ):
             if self._preview_actor is not None:
                 try:
-                    self.mvat_viewer.plotter.renderer.RemoveActor(self._preview_actor)
+                    self.mvat_viewer.plotter.remove_actor(self._preview_actor, render=False)
                 except Exception:
                     pass
+            self._preview_mesh = None
+            self._preview_mesh_points_unit = None
             self._preview_actor = None
-            self._sphere_source = None
             self._preview_actor_shape = None
             self._init_preview_actor()
-        if self._sphere_source is None:
+
+        if self._preview_mesh is None:
             return
 
         try:
-            c = center.tolist() if hasattr(center, 'tolist') else list(center)
-            self._sphere_source.SetCenter(c[0], c[1], c[2])
-            if self.brush_shape == 'square':
-                side = self.brush_size * 2.0
-                self._sphere_source.SetXLength(side)
-                self._sphere_source.SetYLength(side)
-                self._sphere_source.SetZLength(side)
-            else:
-                self._sphere_source.SetRadius(self.brush_size)
-            self._sphere_source.Modified()
+            c = np.asarray(center, dtype=np.float64)
+
+            # Single numpy op: scale unit geometry by brush_size, then translate
+            self._preview_mesh.points = self._preview_mesh_points_unit * self.brush_size + c
+
+            # Update color in case the active label changed (cheap property set, not pipeline)
             r, g, b = self._preview_color_rgb_float()
-            prop = self._preview_actor.GetProperty()
-            prop.SetColor(r, g, b)
+            self._preview_actor.GetProperty().SetColor(r, g, b)
             self._preview_actor.VisibilityOn()
-            self.mvat_viewer.plotter.render()
+
+            # Notify VTK the points changed — render loop picks this up automatically
+            self._preview_mesh.Modified()
         except Exception:
             pass
 
@@ -390,10 +393,10 @@ class Tool3D:
                         manager.clear_sphere_hover_overlay(reset_context=True, render=False)
                     except Exception:
                         pass
-                self.mvat_viewer.plotter.renderer.RemoveActor(self._preview_actor)
-                self.mvat_viewer.plotter.render()
+                self.mvat_viewer.plotter.remove_actor(self._preview_actor, render=False)
             except Exception:
                 pass
+            self._preview_mesh = None
+            self._preview_mesh_points_unit = None
             self._preview_actor = None
-            self._sphere_source = None
             self._preview_actor_shape = None
