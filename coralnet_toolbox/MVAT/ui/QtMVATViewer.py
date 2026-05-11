@@ -2151,6 +2151,13 @@ class MVATViewer(QFrame):
                     actor.SetVisibility(should_be_visible)
                 except Exception:
                     pass
+
+            refresh_overlay = getattr(self.mvat_manager, 'refresh_primary_mesh_overlay', None)
+            if callable(refresh_overlay):
+                try:
+                    refresh_overlay(force_recreate=True, render=False)
+                except Exception:
+                    pass
             
             self.plotter.render()
             print(f"Rendered {len(self.scene_context)} scene products")

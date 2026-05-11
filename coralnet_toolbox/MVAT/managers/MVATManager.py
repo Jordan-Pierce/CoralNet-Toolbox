@@ -1601,7 +1601,71 @@ class MVATManager(QObject):
         except Exception as e:
             print(f"⚠️ _ensure_label_painter failed: {e}")
 
-    def _on_overlay_ready(self, overlay):
+    def _build_primary_mesh_overlay(self):
+        """Snapshot the current painted mesh faces into a tiny overlay payload."""
+        try:
+            primary_target = self.viewer.scene_context.get_primary_target()
+        except Exception:
+            primary_target = None
+
+        if primary_target is None or not isinstance(primary_target, MeshProduct):
+            return None
+
+        try:
+            mesh = primary_target.get_render_mesh()
+        except Exception:
+            mesh = None
+
+        if mesh is None:
+            return None
+
+        class_ids = getattr(primary_target, 'class_ids', None)
+        labels_cache = getattr(primary_target, '_labels_cache', None)
+
+        if labels_cache is None:
+            try:
+                labels_cache = np.asarray(mesh.cell_data['Labels']).copy()
+                primary_target._labels_cache = labels_cache
+            except Exception:
+                labels_cache = None
+
+        if class_ids is None or labels_cache is None:
+            return None
+
+        painted_faces = np.flatnonzero(np.asarray(class_ids) != 0)
+        if painted_faces.size == 0:
+            return None
+
+        try:
+            mesh_faces_flat = np.asarray(mesh.faces.reshape(-1, 4), dtype=np.int32)
+            mesh_points = np.asarray(mesh.points, dtype=np.float32)
+
+            selected = mesh_faces_flat[painted_faces, 1:]
+            unique_vids, inverse = np.unique(selected, return_inverse=True)
+            overlay_points = mesh_points[unique_vids]
+
+            remapped = inverse.reshape(selected.shape)
+            vtk_faces = np.hstack([
+                np.full((len(painted_faces), 1), 3, dtype=np.int32),
+                remapped.astype(np.int32),
+            ]).ravel()
+
+            colors = np.asarray(labels_cache[painted_faces], dtype=np.uint8)
+            return overlay_points, vtk_faces, colors
+        except Exception:
+            return None
+
+    def refresh_primary_mesh_overlay(self, force_recreate: bool = False, render: bool = True):
+        """Rebuild the visible mesh-label overlay from the current mesh state."""
+        overlay = self._build_primary_mesh_overlay()
+        if overlay is None:
+            if self._label_overlay_actor is not None:
+                self._on_overlay_ready(None, render=render)
+            return
+
+        self._on_overlay_ready(overlay, force_recreate=force_recreate, render=render)
+
+    def _on_overlay_ready(self, overlay, force_recreate: bool = False, render: bool = True):
         """Main thread: update the overlay actor in place when possible."""
         try:
             if overlay is None:
@@ -1611,10 +1675,11 @@ class MVATManager(QObject):
                     except Exception:
                         pass
                     self._label_overlay_actor = None
-                    try:
-                        self.viewer.plotter.render()
-                    except Exception:
-                        pass
+                    if render:
+                        try:
+                            self.viewer.plotter.render()
+                        except Exception:
+                            pass
                 return
 
             def _add_overlay_actor(mesh_to_add):
@@ -1641,6 +1706,13 @@ class MVATManager(QObject):
             else:
                 # Backwards-compat: already a pv.PolyData.
                 mesh_to_add = overlay
+
+            if force_recreate and self._label_overlay_actor is not None:
+                try:
+                    self.viewer.plotter.remove_actor(self._label_overlay_actor, render=False)
+                except Exception:
+                    pass
+                self._label_overlay_actor = None
 
             if self._label_overlay_actor is None:
                 self._label_overlay_actor = _add_overlay_actor(mesh_to_add)
@@ -1678,10 +1750,11 @@ class MVATManager(QObject):
                 self._label_overlay_actor.SetVisibility(True)
             except Exception:
                 pass
-            try:
-                self.viewer.plotter.render()
-            except Exception:
-                pass
+            if render:
+                try:
+                    self.viewer.plotter.render()
+                except Exception:
+                    pass
         except Exception as e:
             print(f"⚠️ Overlay swap failed: {e}")
 
