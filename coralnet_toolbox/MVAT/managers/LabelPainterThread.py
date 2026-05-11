@@ -65,13 +65,16 @@ class LabelPainterThread(QThread):
         self._class_ids = class_ids         # written by this thread
 
         self._face_to_buf = np.full(len(class_ids), -1, dtype=np.int32)
+        self._buf_face_ids = np.full(len(class_ids), -1, dtype=np.int32)
         self._buf_colors = np.zeros((len(class_ids), 3), dtype=np.uint8)
         self._n_faces = 0
         self._last_emit_time = 0
         self._min_emit_interval = 0.016
+        self._overlay_state_dirty = False
 
         self._queue: Queue = Queue()
         self._running = True
+        self._rebuild_overlay_buffer_from_state()
 
     def submit(self, face_ids: np.ndarray, color_rgb: tuple, class_id: int):
         """
@@ -85,6 +88,76 @@ class LabelPainterThread(QThread):
             except Empty:
                 break
         self._queue.put((face_ids.copy(), color_rgb, class_id))
+
+    def _clear_overlay_buffer(self):
+        self._n_faces = 0
+        self._face_to_buf.fill(-1)
+        self._buf_face_ids.fill(-1)
+        self._buf_colors.fill(0)
+        self._overlay_state_dirty = False
+
+    def _rebuild_overlay_buffer_from_state(self):
+        painted_faces = np.flatnonzero(self._class_ids != 0)
+        self._clear_overlay_buffer()
+        if painted_faces.size == 0:
+            return
+
+        n_faces = int(painted_faces.size)
+        self._buf_face_ids[:n_faces] = painted_faces.astype(np.int32, copy=False)
+        self._buf_colors[:n_faces] = self._labels_view[painted_faces]
+        self._face_to_buf[painted_faces] = np.arange(n_faces, dtype=np.int32)
+        self._n_faces = n_faces
+
+    def mark_state_dirty(self):
+        """Flag that shared label buffers changed outside the painter thread."""
+        self._overlay_state_dirty = True
+
+    def _remove_face_from_buffer(self, face_id: int):
+        buf_index = int(self._face_to_buf[face_id])
+        if buf_index < 0:
+            return
+
+        last_index = self._n_faces - 1
+        if buf_index != last_index:
+            last_face_id = int(self._buf_face_ids[last_index])
+            self._buf_face_ids[buf_index] = last_face_id
+            self._buf_colors[buf_index] = self._buf_colors[last_index]
+            self._face_to_buf[last_face_id] = buf_index
+
+        self._buf_face_ids[last_index] = -1
+        self._buf_colors[last_index] = 0
+        self._face_to_buf[face_id] = -1
+        self._n_faces -= 1
+
+    def _upsert_face_in_buffer(self, face_id: int, color_rgb):
+        buf_index = int(self._face_to_buf[face_id])
+        if buf_index < 0:
+            buf_index = self._n_faces
+            self._buf_face_ids[buf_index] = face_id
+            self._face_to_buf[face_id] = buf_index
+            self._n_faces += 1
+
+        color_arr = np.asarray(color_rgb, dtype=np.uint8).reshape(-1)
+        if color_arr.size >= 3:
+            self._buf_colors[buf_index, :3] = color_arr[:3]
+
+    def _apply_item_to_overlay_buffer(self, face_ids, color_rgb, class_id: int):
+        face_ids_arr = np.asarray(face_ids, dtype=np.int32).ravel()
+        if face_ids_arr.size == 0:
+            return
+
+        limit = self._face_to_buf.size
+        if class_id == 0:
+            for face_id in face_ids_arr:
+                face_id = int(face_id)
+                if 0 <= face_id < limit:
+                    self._remove_face_from_buffer(face_id)
+            return
+
+        for face_id in face_ids_arr:
+            face_id = int(face_id)
+            if 0 <= face_id < limit:
+                self._upsert_face_in_buffer(face_id, color_rgb)
 
     @staticmethod
     def build_overlay(mesh_points: np.ndarray, mesh_faces_flat: np.ndarray,
@@ -139,8 +212,7 @@ class LabelPainterThread(QThread):
             if item is None:
                 break
             if item == 'clear':
-                self._n_faces = 0
-                self._face_to_buf[:] = -1
+                self._clear_overlay_buffer()
                 continue
 
             try:
@@ -151,6 +223,7 @@ class LabelPainterThread(QThread):
                 # -----------------------------------------------------------------
                 self._class_ids[face_ids] = class_id
                 self._labels_view[face_ids] = color_rgb
+                self._apply_item_to_overlay_buffer(face_ids, color_rgb, class_id)
             except Exception as e:
                 print(f"⚠️ LabelPainterThread processing error: {e}")
                 # Thread stays alive — don't re-raise
@@ -172,10 +245,16 @@ class LabelPainterThread(QThread):
                     self.overlay_ready.emit(overlay)
 
     def _snapshot_overlay(self):
-        painted_faces = np.where(self._class_ids != 0)[0]
-        if len(painted_faces) == 0:
+        if self._overlay_state_dirty:
+            self._rebuild_overlay_buffer_from_state()
+
+        if self._n_faces == 0:
             return None
-        return self._build_overlay(painted_faces, self._labels_view[painted_faces])
+
+        return self._build_overlay(
+            self._buf_face_ids[:self._n_faces],
+            self._buf_colors[:self._n_faces],
+        )
 
     def _build_overlay(self, face_ids: np.ndarray,
                        color_rgb) -> pv.PolyData | None:

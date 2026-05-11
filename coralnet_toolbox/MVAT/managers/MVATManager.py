@@ -1602,34 +1602,23 @@ class MVATManager(QObject):
             print(f"⚠️ _ensure_label_painter failed: {e}")
 
     def _on_overlay_ready(self, overlay):
-        """Main thread: swap the overlay actor. Only tiny PolyData hits the GPU."""
+        """Main thread: update the overlay actor in place when possible."""
         try:
-            if self._label_overlay_actor is not None:
-                try:
-                    # Remove without triggering a full upload
-                    self.viewer.plotter.remove_actor(self._label_overlay_actor, render=False)
-                except Exception:
-                    pass
-                self._label_overlay_actor = None
-            # Add the new tiny overlay actor. The worker emits numpy arrays
-            # (points, faces_flat, colors) to avoid VTK work off the GUI thread.
-            try:
-                # If overlay is a tuple/list from the worker: assemble PolyData here
-                if isinstance(overlay, (list, tuple)) and len(overlay) == 3:
-                    pts, faces_flat, colors = overlay
-                    import pyvista as pv
-                    pts_arr = np.asarray(pts, dtype=np.float32)
-                    faces_arr = np.asarray(faces_flat, dtype=np.int32)
-                    colors_arr = np.asarray(colors, dtype=np.uint8)
+            if overlay is None:
+                if self._label_overlay_actor is not None:
+                    try:
+                        self.viewer.plotter.remove_actor(self._label_overlay_actor, render=False)
+                    except Exception:
+                        pass
+                    self._label_overlay_actor = None
+                    try:
+                        self.viewer.plotter.render()
+                    except Exception:
+                        pass
+                return
 
-                    tiny = pv.PolyData(pts_arr, faces_arr)
-                    tiny.cell_data['OverlayColors'] = colors_arr
-                    mesh_to_add = tiny
-                else:
-                    # Backwards-compat: already a pv.PolyData
-                    mesh_to_add = overlay
-
-                self._label_overlay_actor = self.viewer.plotter.add_mesh(
+            def _add_overlay_actor(mesh_to_add):
+                return self.viewer.plotter.add_mesh(
                     mesh_to_add,
                     scalars='OverlayColors',
                     rgb=True,
@@ -1637,8 +1626,58 @@ class MVATManager(QObject):
                     lighting=False,
                     show_scalar_bar=False,
                 )
-            except Exception as e:
-                print(f"⚠️ Failed to assemble overlay on main thread: {e}")
+
+            # If overlay is a tuple/list from the worker: assemble PolyData here.
+            if isinstance(overlay, (list, tuple)) and len(overlay) == 3:
+                pts, faces_flat, colors = overlay
+                import pyvista as pv
+                pts_arr = np.asarray(pts, dtype=np.float32)
+                faces_arr = np.asarray(faces_flat, dtype=np.int32)
+                colors_arr = np.asarray(colors, dtype=np.uint8)
+
+                tiny = pv.PolyData(pts_arr, faces_arr)
+                tiny.cell_data['OverlayColors'] = colors_arr
+                mesh_to_add = tiny
+            else:
+                # Backwards-compat: already a pv.PolyData.
+                mesh_to_add = overlay
+
+            if self._label_overlay_actor is None:
+                self._label_overlay_actor = _add_overlay_actor(mesh_to_add)
+            else:
+                mapper = None
+                try:
+                    mapper = self._label_overlay_actor.GetMapper()
+                except Exception:
+                    mapper = None
+
+                updated = False
+                if mapper is not None:
+                    for method_name in ('SetInputDataObject', 'SetInputData'):
+                        method = getattr(mapper, method_name, None)
+                        if callable(method):
+                            try:
+                                method(mesh_to_add)
+                                try:
+                                    mapper.Update()
+                                except Exception:
+                                    pass
+                                updated = True
+                                break
+                            except Exception:
+                                continue
+
+                if not updated:
+                    try:
+                        self.viewer.plotter.remove_actor(self._label_overlay_actor, render=False)
+                    except Exception:
+                        pass
+                    self._label_overlay_actor = _add_overlay_actor(mesh_to_add)
+
+            try:
+                self._label_overlay_actor.SetVisibility(True)
+            except Exception:
+                pass
             try:
                 self.viewer.plotter.render()
             except Exception:
@@ -5168,6 +5207,13 @@ class MVATManager(QObject):
                 primary_target.flush_labels_to_gpu()
             except Exception:
                 pass
+
+            painter = self._label_painter_thread
+            if painter is not None and painter.isRunning():
+                try:
+                    painter.mark_state_dirty()
+                except Exception:
+                    pass
 
             try:
                 self.viewer.plotter.render()
