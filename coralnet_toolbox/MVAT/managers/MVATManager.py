@@ -2054,22 +2054,6 @@ class MVATManager(QObject):
                     world_point = None
 
         if brush_shape in ('circle', 'square'):
-            sphere_manager = getattr(self.viewer, '_sphere_manager', None)
-            if sphere_manager is not None:
-                try:
-                    setter = getattr(sphere_manager, 'set_shape', None)
-                    if callable(setter):
-                        setter(brush_shape, center=world_point)
-                    else:
-                        sphere_manager.shape = brush_shape
-                        if world_point is not None:
-                            try:
-                                sphere_manager.current_position = np.asarray(world_point, dtype=np.float64)
-                            except Exception:
-                                pass
-                except Exception:
-                    pass
-
             try:
                 setter = getattr(active_tool, 'set_brush_shape', None)
                 if callable(setter):
@@ -2101,17 +2085,6 @@ class MVATManager(QObject):
             diameter_px = 1.0
 
         world_radius = max(1e-6, (diameter_px / 2.0) / pixels_per_world)
-
-        sphere_manager = getattr(self.viewer, '_sphere_manager', None)
-        if sphere_manager is not None:
-            try:
-                setter = getattr(sphere_manager, 'set_radius', None)
-                if callable(setter):
-                    setter(world_radius)
-                else:
-                    sphere_manager.radius = world_radius
-            except Exception:
-                pass
 
         try:
             setter = getattr(active_tool, 'set_brush_size', None)
@@ -4388,6 +4361,147 @@ class MVATManager(QObject):
             # Clean up the live vector scratchpads across all cameras
             if self.context_matrix is not None:
                 self.context_matrix.clear_all_scratchpads()
+
+    def _propagate_3d_face_ids_to_context_cameras(self, face_ids, label, erase: bool = False):
+        """Propagate a 3D brush/erase stroke into visible context cameras."""
+        if self._propagating_annotation:
+            return
+        if self.selected_camera is None:
+            return
+
+        selected_paths = self._get_annotation_target_paths()
+        if not selected_paths:
+            return
+
+        try:
+            face_ids_arr = np.asarray(sorted({int(face_id) for face_id in face_ids if int(face_id) >= 0}), dtype=np.int64)
+        except Exception:
+            return
+
+        if face_ids_arr.size == 0:
+            return
+
+        project_labels = list(self.main_window.label_window.labels)
+        label_id = getattr(label, 'id', None)
+
+        target_masks = {}
+        target_cameras = {}
+        target_class_ids = {}
+
+        for target_path in selected_paths:
+            target_camera = self._get_camera_for_path(target_path)
+            if target_camera is None:
+                continue
+
+            target_raster = self.raster_manager.get_raster(target_path)
+            if target_raster is None:
+                continue
+
+            if getattr(target_camera, '_raster', None) is None or target_camera._raster.index_map is None:
+                continue
+
+            target_mask = target_raster.mask_annotation
+            if target_mask is None:
+                target_mask = target_raster.get_mask_annotation(project_labels)
+            if target_mask is None:
+                continue
+
+            if erase:
+                class_id = 0
+            else:
+                if label is None or label_id is None:
+                    continue
+                class_id = target_mask.label_id_to_class_id_map.get(label_id)
+                if class_id is None:
+                    target_mask.sync_label_map([label])
+                    class_id = target_mask.label_id_to_class_id_map.get(label_id)
+                if class_id is None:
+                    continue
+
+            target_masks[target_path] = target_mask
+            target_cameras[target_path] = target_camera
+            target_class_ids[target_path] = int(class_id)
+
+        if not target_masks:
+            return
+
+        self._propagating_annotation = True
+        try:
+            from concurrent.futures import as_completed
+
+            futures = {
+                self._propagation_executor.submit(
+                    target_camera.get_pixels_for_elements,
+                    face_ids_arr,
+                ): target_path
+                for target_path, target_camera in target_cameras.items()
+            }
+
+            updated_targets = {}
+            for future in as_completed(futures):
+                target_path = futures[future]
+                try:
+                    flat_indices = future.result()
+                except Exception:
+                    continue
+
+                if flat_indices is None or len(flat_indices) == 0:
+                    continue
+
+                target_mask = target_masks[target_path]
+                target_camera = target_cameras[target_path]
+                target_class_id = target_class_ids[target_path]
+
+                if hasattr(target_mask, 'mask_data'):
+                    current_vals = target_mask.mask_data.ravel()[flat_indices]
+                    flat_indices = flat_indices[
+                        (current_vals < target_mask.LOCK_BIT) &
+                        (current_vals != target_class_id)
+                    ]
+                    if len(flat_indices) == 0:
+                        continue
+
+                target_mask.update_mask_at_indices(flat_indices, target_class_id, silent=True)
+                dirty_rect = self._compute_dirty_rect_from_flat_indices(
+                    flat_indices,
+                    target_camera.width,
+                    target_camera.height,
+                )
+
+                if label_id is not None and label_id not in target_mask.visible_label_ids:
+                    target_mask.visible_label_ids.add(label_id)
+
+                existing_rect = updated_targets.get(target_path)
+                if existing_rect is None:
+                    updated_targets[target_path] = dirty_rect
+                elif dirty_rect is not None:
+                    updated_targets[target_path] = (
+                        min(existing_rect[0], dirty_rect[0]),
+                        min(existing_rect[1], dirty_rect[1]),
+                        max(existing_rect[2], dirty_rect[2]),
+                        max(existing_rect[3], dirty_rect[3]),
+                    )
+
+            for target_path, update_rect in updated_targets.items():
+                target_mask = target_masks[target_path]
+                self._apply_mask_visual_update(
+                    target_path,
+                    target_mask,
+                    label_id,
+                    update_rect=update_rect,
+                )
+        except Exception as e:
+            stroke_kind = 'erase' if erase else 'brush'
+            print(f"Error in 3D {stroke_kind} propagation: {e}")
+            traceback.print_exc()
+        finally:
+            self._propagating_annotation = False
+
+    def _on_3d_brush_stroke_applied(self, face_ids, label):
+        self._propagate_3d_face_ids_to_context_cameras(face_ids, label, erase=False)
+
+    def _on_3d_erase_stroke_applied(self, face_ids, label):
+        self._propagate_3d_face_ids_to_context_cameras(face_ids, label, erase=True)
 
     def _on_sam_prediction_applied(self, scene_pos, label_id: str, binary_mask: np.ndarray):
         """Propagate a final SAM mask prediction into all visible context cameras.

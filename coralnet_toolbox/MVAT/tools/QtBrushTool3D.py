@@ -49,6 +49,7 @@ class Brush3DTool(Tool3D):
         super().__init__(mvat_viewer, mvat_manager)
 
         self.painting:   bool  = False
+        self._stroke_label = None
 
         # KD-tree over face centres — rebuilt only when the primary target changes.
         self._kdtree              = None
@@ -70,10 +71,22 @@ class Brush3DTool(Tool3D):
     # ------------------------------------------------------------------
 
     def mousePressEvent(self, event, face_id: int, world_pos):
-        if event.button() != Qt.LeftButton:
+        button = Qt.LeftButton
+        try:
+            event_button = getattr(event, 'button', None)
+            if callable(event_button):
+                button = event_button()
+        except Exception:
+            button = Qt.LeftButton
+
+        if button != Qt.LeftButton:
             return
 
         if self.preview_only:
+            return
+
+        if self.painting:
+            self._finish_stroke()
             return
 
         if not self._has_selected_label():
@@ -87,16 +100,13 @@ class Brush3DTool(Tool3D):
         if face_id < 0 or world_pos is None:
             return
 
-        self.painting = not self.painting
-
-        if self.painting:
-            self._stroke_face_ids.clear()
-            primary = self._get_primary_mesh()
-            if primary is not None:
-                self.mvat_manager._ensure_label_painter(primary)
-            self._apply_brush(world_pos)
-        else:
-            self._finish_stroke()
+        self.painting = True
+        self._stroke_label = self._get_selected_label()
+        self._stroke_face_ids.clear()
+        primary = self._get_primary_mesh()
+        if primary is not None:
+            self.mvat_manager._ensure_label_painter(primary)
+        self._apply_brush(world_pos)
 
     def mouseMoveEvent(self, event, face_id: int, world_pos):
         super().mouseMoveEvent(event, face_id, world_pos)
@@ -104,10 +114,7 @@ class Brush3DTool(Tool3D):
             self._apply_brush(world_pos)
 
     def mouseReleaseEvent(self, event):
-        if self.preview_only:
-            return
-        if self.painting:
-            self._finish_stroke()
+        return
 
     def wheelEvent(self, event, delta_y: int):
         super().wheelEvent(event, delta_y)
@@ -124,7 +131,7 @@ class Brush3DTool(Tool3D):
         if not self._ensure_kdtree():
             return
 
-        selected_label = self._get_selected_label()
+        selected_label = self._stroke_label or self._get_selected_label()
         if selected_label is None:
             return
 
@@ -195,19 +202,25 @@ class Brush3DTool(Tool3D):
         self.painting = False
 
         if not self._stroke_face_ids:
+            self._stroke_label = None
             return
 
         if self.mvat_manager.multi_annotate_enabled:
-            selected_label = self._get_selected_label()
-            if selected_label is not None:
+            selected_label = self._stroke_label or self._get_selected_label()
+            handler_name = (
+                '_on_3d_erase_stroke_applied'
+                if type(self).__name__ == 'Erase3DTool'
+                else '_on_3d_brush_stroke_applied'
+            )
+            handler = getattr(self.mvat_manager, handler_name, None)
+            if callable(handler):
                 try:
-                    self.mvat_manager._on_3d_brush_stroke_applied(
-                        self._stroke_face_ids, selected_label
-                    )
+                    handler(self._stroke_face_ids, selected_label)
                 except Exception as e:
                     print(f"⚠️  Brush3DTool: could not propagate stroke: {e}")
 
         self._stroke_face_ids.clear()
+        self._stroke_label = None
 
     # ------------------------------------------------------------------
     # KD-tree management

@@ -79,6 +79,7 @@ class Tool3D:
         tool.activate().
         """
         self.active = True
+        self.preview_only = False
         calibrate_brush_size = getattr(self, '_calibrate_brush_size', None)
         if callable(calibrate_brush_size):
             try:
@@ -103,6 +104,7 @@ class Tool3D:
         self._last_hover_world_pos = None
         self._remove_preview_sphere()
         self.active = False
+        self.preview_only = True
 
     def set_brush_size(self, brush_size, center=None):
         """Set the world-space brush radius and refresh the preview sphere."""

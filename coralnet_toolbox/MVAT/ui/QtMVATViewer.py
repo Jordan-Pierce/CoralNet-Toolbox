@@ -1189,6 +1189,42 @@ class MVATViewer(QFrame):
 
     def _on_left_press(self, obj, event):
         """Handle Left Click to detect Double Clicks."""
+        active_tool = getattr(self, '_active_3d_tool', None)
+        if active_tool is not None and not bool(getattr(active_tool, 'preview_only', True)):
+            try:
+                self.plotter.store_mouse_position()
+            except Exception:
+                pass
+
+            picked = self.plotter.pick_mouse_position()
+            expected_actor = self._get_primary_target_actor()
+            if self._is_valid_scene_pick(picked, expected_actor=expected_actor):
+                try:
+                    world_pos = np.asarray(picked, dtype=np.float64)
+                except Exception:
+                    world_pos = None
+
+                face_id = 0
+                try:
+                    picker = getattr(getattr(self.plotter, 'iren', None), 'picker', None)
+                    if picker is not None and hasattr(picker, 'GetCellId'):
+                        candidate_face_id = int(picker.GetCellId())
+                        if candidate_face_id >= 0:
+                            face_id = candidate_face_id
+                except Exception:
+                    pass
+
+                try:
+                    active_tool.mousePressEvent(event, face_id, world_pos)
+                except Exception:
+                    pass
+            else:
+                try:
+                    active_tool.mousePressEvent(event, -1, None)
+                except Exception:
+                    pass
+            return
+
         if self.is_sphere_tracking_enabled() and not self._is_sphere_passthrough_active():
             self._last_click_time = time.time() * 1000
             return
@@ -1785,25 +1821,10 @@ class MVATViewer(QFrame):
                 next_shape = 'square' if current_shape == 'circle' else 'circle'
                 center = getattr(active_tool, '_last_hover_world_pos', None)
                 if center is None:
-                    sphere_manager = getattr(self, '_sphere_manager', None)
-                    if sphere_manager is not None:
-                        center = getattr(sphere_manager, 'current_position', None)
-                if center is None:
                     try:
                         center = np.asarray(self.plotter.camera.focal_point, dtype=np.float64)
                     except Exception:
                         center = None
-
-                sphere_manager = getattr(self, '_sphere_manager', None)
-                if sphere_manager is not None:
-                    setter = getattr(sphere_manager, 'set_shape', None)
-                    if callable(setter):
-                        try:
-                            setter(next_shape, center=center)
-                        except Exception:
-                            pass
-                    else:
-                        sphere_manager.shape = next_shape
 
                 setter = getattr(active_tool, 'set_brush_shape', None)
                 if callable(setter):
