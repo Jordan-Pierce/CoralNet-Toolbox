@@ -1923,7 +1923,60 @@ class MVATManager(QObject):
             self._clear_projected_cursor_previews(render=render)
             return
 
+        try:
+            world_point = np.asarray(world_point, dtype=np.float64)
+        except Exception:
+            self._clear_projected_cursor_previews(render=render)
+            return
+
         selected_camera = self.selected_camera
+        selected_camera_path = getattr(selected_camera, 'image_path', None)
+        selected_label = getattr(self.annotation_window, 'selected_label', None)
+        selected_label_id = getattr(selected_label, 'id', None)
+        selected_label_color = getattr(selected_label, 'color', None)
+        brush_shape = self._get_sphere_hover_shape()
+
+        current_state = {
+            'tool_kind': tool_kind,
+            'selected_camera_path': selected_camera_path,
+            'selected_label_id': selected_label_id,
+            'selected_label_color': selected_label_color,
+            'brush_shape': brush_shape,
+            'world_radius': float(world_radius),
+            'world_point': world_point.copy(),
+        }
+
+        previous_state = self._projected_cursor_context
+        if previous_state is not None:
+            try:
+                same_state = (
+                    previous_state.get('tool_kind') == tool_kind and
+                    previous_state.get('selected_camera_path') == selected_camera_path and
+                    previous_state.get('selected_label_id') == selected_label_id and
+                    previous_state.get('selected_label_color') == selected_label_color and
+                    previous_state.get('brush_shape') == brush_shape and
+                    previous_state.get('world_radius') is not None and
+                    np.isclose(float(previous_state.get('world_radius')), float(world_radius))
+                )
+            except Exception:
+                same_state = False
+
+            if same_state:
+                try:
+                    prev_world_point = np.asarray(previous_state.get('world_point'), dtype=np.float64)
+                    center_delta = float(np.linalg.norm(world_point - prev_world_point))
+                except Exception:
+                    center_delta = None
+
+                # Tiny cursor jitter is visually insignificant, but it still
+                # forces a full cross-camera preview recompute. Skip that work
+                # until the brush center has actually moved by a meaningful amount.
+                if center_delta is not None and center_delta <= max(1e-6, float(world_radius) * 0.02):
+                    self._projected_cursor_context = current_state
+                    return
+
+        self._projected_cursor_context = current_state
+
         projected_main = None
         if selected_camera is not None:
             projected_main = self._project_cursor_preview_for_camera(selected_camera, world_point, world_radius)
@@ -1947,7 +2000,7 @@ class MVATManager(QObject):
                 except Exception:
                     pass
 
-        self._clear_projected_cursor_previews(render=False)
+        self._clear_projected_cursor_previews(render=False, reset_context=False)
 
         if projected_main is not None and selected_camera is not None:
             current_image_path = getattr(self.annotation_window, 'current_image_path', None)
@@ -1994,8 +2047,9 @@ class MVATManager(QObject):
             except Exception:
                 pass
 
-    def _clear_projected_cursor_previews(self, render: bool = False):
-        self._projected_cursor_context = None
+    def _clear_projected_cursor_previews(self, render: bool = False, reset_context: bool = True):
+        if reset_context:
+            self._projected_cursor_context = None
 
         try:
             if hasattr(self.annotation_window, 'toggle_cursor_annotation'):
