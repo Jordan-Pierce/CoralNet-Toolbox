@@ -1284,31 +1284,35 @@ class MVATViewer(QFrame):
 
                 picked = self.plotter.pick_mouse_position()
                 t2 = time.perf_counter()
-                expected_actor = self._get_primary_target_actor()
-                t3 = time.perf_counter()
+                t3 = t2  # expected_actor check removed for active-tool path
+                print(f"picked={picked}, type={type(picked)}")  # add this
 
-                if not self._is_valid_scene_pick(picked, expected_actor=expected_actor):
-                    try:
-                        active_tool.mouseMoveEvent(None, -1, None)
-                    except Exception:
-                        pass
-                    if self._sphere_hover_pending_events > 0:
-                        self._sphere_hover_timer.start()
-                    return
-
+                # For the active-tool path, skip the full _is_valid_scene_pick check.
+                # pick_mouse_position() called from a Qt timer (not a VTK button event)
+                # does not always populate picker.GetDataSet(), so the dataset check
+                # inside _is_valid_scene_pick always fails for hover. We just need a
+                # finite world coordinate — do a lightweight sanity check instead.
+                world_pos = None
                 if picked is not None:
-                    picked = np.asarray(picked, dtype=np.float64)
                     try:
-                        active_tool.mouseMoveEvent(None, -1, picked)
+                        p = np.asarray(picked, dtype=np.float64)
+                        if np.all(np.isfinite(p)):
+                            world_pos = p
                     except Exception:
                         pass
-                else:
-                    try:
-                        active_tool.mouseMoveEvent(None, -1, None)
-                    except Exception:
-                        pass
+
+                try:
+                    active_tool.mouseMoveEvent(None, -1, world_pos)
+                except Exception:
+                    pass
 
                 t4 = time.perf_counter()
+
+                # Flush the frame — mesh.Modified() alone does not trigger a redraw.
+                try:
+                    self.plotter.render()
+                except Exception:
+                    pass
 
                 if self._sphere_hover_pending_events > 0:
                     self._sphere_hover_timer.start()
