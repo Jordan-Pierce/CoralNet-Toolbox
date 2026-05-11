@@ -1253,12 +1253,16 @@ class MVATViewer(QFrame):
 
     def _process_sphere_hover_update(self):
         """Process the most recent queued mouse-move batch for the sphere actor."""
+        import time
+
         try:
             pending_events = self._sphere_hover_pending_events
             self._sphere_hover_pending_events = 0
 
             if pending_events <= 0:
                 return
+            
+            t0 = time.perf_counter()
 
             active_tool = getattr(self, '_active_3d_tool', None)
             if active_tool is not None:
@@ -1274,11 +1278,14 @@ class MVATViewer(QFrame):
 
                 try:
                     self.plotter.store_mouse_position()
+                    t1 = time.perf_counter()
                 except Exception:
                     pass
 
                 picked = self.plotter.pick_mouse_position()
+                t2 = time.perf_counter()
                 expected_actor = self._get_primary_target_actor()
+                t3 = time.perf_counter()
 
                 if not self._is_valid_scene_pick(picked, expected_actor=expected_actor):
                     try:
@@ -1301,6 +1308,8 @@ class MVATViewer(QFrame):
                     except Exception:
                         pass
 
+                t4 = time.perf_counter()
+
                 if self._sphere_hover_pending_events > 0:
                     self._sphere_hover_timer.start()
                 return
@@ -1318,7 +1327,9 @@ class MVATViewer(QFrame):
                 pass
 
             picked = self.plotter.pick_mouse_position()
+            t5 = time.perf_counter()
             expected_actor = self._get_primary_target_actor()
+            t6 = time.perf_counter()
 
             if not self._is_valid_scene_pick(picked, expected_actor=expected_actor):
                 if self._sphere_manager.sphere_actor is not None:
@@ -1336,6 +1347,8 @@ class MVATViewer(QFrame):
                         pass
 
                 return
+            
+            t7 = time.perf_counter()
 
             if picked is not None:
                 picked = np.asarray(picked, dtype=np.float64)
@@ -1363,10 +1376,14 @@ class MVATViewer(QFrame):
                     except Exception:
                         pass
 
+            t8 = time.perf_counter()
+
             try:
                 self.plotter.render()
             except Exception:
                 pass
+
+            t9 = time.perf_counter()
 
             # If more mouse moves arrived while we were processing this batch,
             # schedule another coalesced update for the latest cursor position.
@@ -1375,6 +1392,13 @@ class MVATViewer(QFrame):
         except Exception:
             # Silent failure
             pass
+
+        print(f"Sphere hover update timing (s): "
+              f"total={t9 - t0:.3f}, "
+              f"pick={t2 - t1:.3f}, "
+              f"validation={t3 - t2:.3f}, " 
+              f"update={t8 - t7:.3f}, "
+              f"render={t9 - t8:.3f}")
 
     def _on_mouse_move(self, obj, event):
         """

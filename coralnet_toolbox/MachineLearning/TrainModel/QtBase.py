@@ -900,7 +900,7 @@ class Base(QDialog):
             'exist_ok': True,
             'plots': True,
 
-            'mask_ratio': 1,  # Determines downsampling resolution of masks; high val = blockier masks
+            'mask_ratio': 4,  # Determines downsampling resolution of masks; high val = blockier masks
         }
         # Default project folder
         project = 'Data/Training'

@@ -316,6 +316,7 @@ class Tool3D:
                 color=(r, g, b),
                 opacity=self._PREVIEW_OPACITY,
                 style='wireframe',
+                pickable=False,
                 render=False,
             )
             actor.VisibilityOff()
