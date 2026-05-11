@@ -458,6 +458,7 @@ class MVATManager(QObject):
         self._hover_overlay_face_ids = None
         self._hover_overlay_color_rgb = None
         self._hover_overlay_last_state = None
+        self._hover_overlay_enabled = False  # True
 
         self.contextStatsComputed.connect(self._on_context_stats_computed)
 
@@ -2164,8 +2165,39 @@ class MVATManager(QObject):
         except Exception:
             return None
 
+    def set_hover_overlay_enabled(self, enabled: bool):
+        """Enable or disable the 3D label hover overlay without touching the rest of the brush path."""
+        enabled = bool(enabled)
+        if self._hover_overlay_enabled == enabled:
+            return
+
+        self._hover_overlay_enabled = enabled
+
+        if not enabled:
+            self._hover_overlay_face_ids = None
+            self._hover_overlay_last_state = None
+            if self._hover_overlay_actor is not None:
+                try:
+                    self._hover_overlay_actor.SetVisibility(False)
+                except Exception:
+                    pass
+        elif self._hover_overlay_context is not None:
+            try:
+                self.refresh_sphere_hover_overlay(render=False)
+            except Exception:
+                pass
+
+        try:
+            self.viewer.plotter.render()
+        except Exception:
+            pass
+
+    def is_hover_overlay_enabled(self) -> bool:
+        """Return whether the 3D label hover overlay is currently enabled."""
+        return bool(self._hover_overlay_enabled)
+
     def _apply_hover_overlay_color(self, color_rgb, render: bool = False):
-        if self._hover_overlay_actor is None or color_rgb is None:
+        if not self._hover_overlay_enabled or self._hover_overlay_actor is None or color_rgb is None:
             return
 
         try:
@@ -2188,6 +2220,20 @@ class MVATManager(QObject):
 
     def _set_hover_overlay_geometry(self, overlay, color_rgb, render: bool = True):
         try:
+            if not self._hover_overlay_enabled:
+                if self._hover_overlay_actor is not None:
+                    try:
+                        self._hover_overlay_actor.SetVisibility(False)
+                    except Exception:
+                        pass
+                self._hover_overlay_color_rgb = self._normalize_color_rgb(color_rgb) if color_rgb is not None else self._hover_overlay_color_rgb
+                if render:
+                    try:
+                        self.viewer.plotter.render()
+                    except Exception:
+                        pass
+                return
+
             if overlay is None:
                 if self._hover_overlay_actor is not None:
                     try:
@@ -2342,6 +2388,22 @@ class MVATManager(QObject):
             self.clear_sphere_hover_overlay(reset_context=False, render=render)
             return
 
+        if not self._hover_overlay_enabled:
+            if self._hover_overlay_actor is not None:
+                try:
+                    self._hover_overlay_actor.SetVisibility(False)
+                except Exception:
+                    pass
+            center = context.get('center')
+            if center is not None:
+                self._sync_projected_cursor_previews(center, render=False)
+            if render:
+                try:
+                    self.viewer.plotter.render()
+                except Exception:
+                    pass
+            return
+
         brush_shape = self._get_sphere_hover_shape()
 
         try:
@@ -2453,6 +2515,24 @@ class MVATManager(QObject):
             'radius': radius,
             'color_rgb': color_rgb,
         }
+
+        if not self._hover_overlay_enabled:
+            self._hover_overlay_context = current_state
+            self._hover_overlay_face_ids = None
+            self._hover_overlay_last_state = None
+            if self._hover_overlay_actor is not None:
+                try:
+                    self._hover_overlay_actor.SetVisibility(False)
+                except Exception:
+                    pass
+
+            self._sync_projected_cursor_previews(center, render=False)
+            if render:
+                try:
+                    self.viewer.plotter.render()
+                except Exception:
+                    pass
+            return
 
         previous_state = self._hover_overlay_last_state
         if previous_state is not None and self._hover_overlay_actor is not None:
