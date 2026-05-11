@@ -3,7 +3,7 @@ Brush3DTool — brush-specific 3D tool logic built on top of Tool3D.
 
 The shared preview sphere, hover batching, and label-colored highlight are
 owned by Tool3D.  Brush3DTool keeps only the brush-specific stroke plumbing,
-including the KD-tree lookup and the optional paint projection path.
+including the brush-volume lookup and the optional paint projection path.
 
 The tool is camera-independent: the VTK cell picker works against the rendered
 mesh geometry regardless of whether any annotation cameras are loaded.
@@ -51,12 +51,9 @@ class Brush3DTool(Tool3D):
         self.painting:   bool  = False
         self._stroke_label = None
 
-        # KD-tree over face centres — rebuilt only when the primary target changes.
-        self._kdtree              = None
-        self._kdtree_product_id   = None
-
         # Accumulates face IDs painted in the current stroke.
         self._stroke_face_ids: set = set()
+        self._last_brush_volume_state = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -103,6 +100,7 @@ class Brush3DTool(Tool3D):
         self.painting = True
         self._stroke_label = self._get_selected_label()
         self._stroke_face_ids.clear()
+        self._last_brush_volume_state = None
         primary = self._get_primary_mesh()
         if primary is not None:
             self.mvat_manager._ensure_label_painter(primary)
@@ -128,9 +126,6 @@ class Brush3DTool(Tool3D):
         if primary is None:
             return
 
-        if not self._ensure_kdtree():
-            return
-
         selected_label = self._stroke_label or self._get_selected_label()
         if selected_label is None:
             return
@@ -139,24 +134,73 @@ class Brush3DTool(Tool3D):
         if class_id is None:
             return
 
+        try:
+            brush_shape = str(getattr(self, 'brush_shape', 'circle')).strip().lower()
+        except Exception:
+            brush_shape = 'circle'
+
+        try:
+            radius = float(getattr(self, 'brush_size', 0.0))
+        except Exception:
+            radius = 0.0
+
+        if radius <= 0.0:
+            return
+
+        try:
+            world_pos = np.asarray(world_pos, dtype=np.float64).reshape(-1)
+        except Exception:
+            return
+
+        if world_pos.size < 3:
+            return
+
+        product_id = getattr(primary, 'product_id', None)
+        label_id = getattr(selected_label, 'id', None)
+        current_center = world_pos[:3].copy()
+
+        if self._should_skip_brush_volume_update(
+            product_id=product_id,
+            label_id=label_id,
+            brush_shape=brush_shape,
+            radius=radius,
+            center=current_center,
+        ):
+            return
+
         face_ids = self._get_face_ids_in_brush_volume(world_pos)
         if face_ids is None or len(face_ids) == 0:
             return
 
         face_ids_arr = np.asarray(face_ids, dtype=np.int32)
-        self._stroke_face_ids.update(int(face_id) for face_id in face_ids_arr.tolist())
+        new_face_ids = [int(face_id) for face_id in face_ids_arr.tolist() if int(face_id) not in self._stroke_face_ids]
+        if not new_face_ids:
+            self._last_brush_volume_state = (
+                product_id,
+                label_id,
+                brush_shape,
+                radius,
+                current_center.copy(),
+            )
+            return
+
+        self._stroke_face_ids.update(new_face_ids)
 
         painter = self.mvat_manager._label_painter_thread
         if painter is not None and painter.isRunning():
-            painter.submit(face_ids_arr, color_rgb, class_id)
+            painter.submit(np.asarray(new_face_ids, dtype=np.int32), color_rgb, class_id)
+
+        self._last_brush_volume_state = (
+            product_id,
+            label_id,
+            brush_shape,
+            radius,
+            current_center.copy(),
+        )
 
     def _get_face_ids_in_brush_volume(self, world_pos: np.ndarray):
         primary = self._get_primary_mesh()
-        if primary is None or not self._ensure_kdtree():
-            return None
-
-        centers = getattr(primary, '_element_centers_np', None)
-        if centers is None or len(centers) == 0:
+        if primary is None:
             return None
 
         try:
@@ -172,24 +216,16 @@ class Brush3DTool(Tool3D):
         if radius <= 0.0:
             return None
 
-        if shape == 'square':
-            candidate_radius = radius * np.sqrt(3.0)
-            try:
-                candidate_ids = self._kdtree.query_ball_point(world_pos[:3], candidate_radius)
-            except Exception:
-                candidate_ids = []
-            if not candidate_ids:
-                return np.empty(0, dtype=np.int32)
-
-            candidate_ids = np.asarray(candidate_ids, dtype=np.int32)
-            candidate_centers = np.asarray(centers, dtype=np.float32)[candidate_ids]
-            deltas = np.abs(candidate_centers - world_pos[:3].astype(np.float32))
-            within = np.max(deltas, axis=1) <= radius
-            return candidate_ids[within]
-
         try:
-            face_ids = self._kdtree.query_ball_point(world_pos[:3], radius)
+            manager = getattr(self, 'mvat_manager', None)
+            query_faces = getattr(manager, '_get_faces_within_sphere', None)
+            if not callable(query_faces):
+                return None
+            face_ids = query_faces(primary, world_pos[:3], radius, shape=shape)
         except Exception:
+            return None
+
+        if face_ids is None:
             return None
         return np.asarray(face_ids, dtype=np.int32)
 
@@ -200,6 +236,7 @@ class Brush3DTool(Tool3D):
         face IDs to all visible camera masks via their index maps.
         """
         self.painting = False
+        self._last_brush_volume_state = None
 
         if not self._stroke_face_ids:
             self._stroke_label = None
@@ -222,40 +259,30 @@ class Brush3DTool(Tool3D):
         self._stroke_face_ids.clear()
         self._stroke_label = None
 
-    # ------------------------------------------------------------------
-    # KD-tree management
-    # ------------------------------------------------------------------
-
-    def _ensure_kdtree(self) -> bool:
-        try:
-            from scipy.spatial import cKDTree
-        except ImportError:
-            print("⚠️  Brush3DTool requires scipy (pip install scipy).")
+    def _should_skip_brush_volume_update(self, product_id, label_id, brush_shape, radius, center):
+        previous_state = self._last_brush_volume_state
+        if previous_state is None:
             return False
 
-        primary = self._get_primary_mesh()
-        if primary is None:
+        prev_product_id, prev_label_id, prev_shape, prev_radius, prev_center = previous_state
+        if prev_product_id != product_id or prev_label_id != label_id or prev_shape != brush_shape:
             return False
-
-        product_id = primary.product_id
-        if self._kdtree is not None and self._kdtree_product_id == product_id:
-            return True
 
         try:
-            primary.prepare_geometry()
-        except Exception as e:
-            print(f"⚠️  Brush3DTool: prepare_geometry() failed: {e}")
+            if not np.isclose(float(prev_radius), float(radius)):
+                return False
+
+            prev_center = np.asarray(prev_center, dtype=np.float64).reshape(-1)
+            center = np.asarray(center, dtype=np.float64).reshape(-1)
+            if prev_center.size < 3 or center.size < 3:
+                return False
+
+            center_delta = float(np.linalg.norm(center[:3] - prev_center[:3]))
+        except Exception:
             return False
 
-        centers = getattr(primary, '_element_centers_np', None)
-        if centers is None or len(centers) == 0:
-            return False
-
-        self._kdtree            = cKDTree(centers)
-        self._kdtree_product_id = product_id
-        print(f"🌳 Brush3DTool: KD-tree built over {len(centers):,} face centres "
-              f"for '{product_id}'")
-        return True
+        # Ignore tiny jitter that is very unlikely to change the brush volume.
+        return center_delta <= max(1e-6, float(radius) * 0.02)
 
     # ------------------------------------------------------------------
     # Helpers

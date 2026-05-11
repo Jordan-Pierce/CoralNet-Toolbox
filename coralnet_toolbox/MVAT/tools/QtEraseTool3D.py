@@ -24,7 +24,7 @@ class Erase3DTool(Brush3DTool):
     """
     Previews the erase tool within the brush radius.
 
-    Inherits the full stroke / KD-tree / preview sphere / projection machinery
+    Inherits the full stroke / preview sphere / projection machinery
     from Brush3DTool.  Only the fallback preview color and the label
     resolution (always background) differ.
 
