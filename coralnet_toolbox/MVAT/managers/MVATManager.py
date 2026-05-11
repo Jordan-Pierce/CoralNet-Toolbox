@@ -639,8 +639,7 @@ class MVATManager(QObject):
                 extra = (cam._raster.dist_coeffs.tobytes()
                          if cam.is_distorted
                          and cam._raster.dist_coeffs is not None else None)
-                cache_path = self.cache_manager.get_cache_path(cache_key, target_path, element_type, extra)
-                if not os.path.exists(cache_path):
+                if not self.cache_manager.has_visibility_cache(cache_key, target_path, element_type, extra):
                     uncached_cameras.append(cam)
 
             if uncached_cameras:
@@ -4370,6 +4369,10 @@ class MVATManager(QObject):
             return
 
         selected_paths = self._get_annotation_target_paths()
+        annotation_window = getattr(self.main_window, 'annotation_window', None)
+        primary_path = getattr(annotation_window, 'current_image_path', None)
+        if primary_path:
+            selected_paths.add(primary_path)
         if not selected_paths:
             return
 

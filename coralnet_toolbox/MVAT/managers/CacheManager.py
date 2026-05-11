@@ -248,10 +248,21 @@ class CacheManager:
                 (see _generate_cache_key).
 
         Returns:
-            str: Full path to the cache file (.npz)
+            str: Canonical cache key path (.npz anchor used by both legacy and split formats)
         """
         cache_key = self._generate_cache_key(extrinsics, point_cloud_path, element_type, extra_hash_data)
         return os.path.join(self.cache_dir, f"{cache_key}.npz")
+
+    def has_visibility_cache(self, extrinsics: np.ndarray, point_cloud_path: str,
+                             element_type: str = 'point',
+                             extra_hash_data: Optional[bytes] = None) -> bool:
+        """Return True when either the legacy .npz cache or the newer split cache exists."""
+        cache_path = self.get_cache_path(extrinsics, point_cloud_path, element_type, extra_hash_data)
+        if os.path.exists(cache_path):
+            return True
+
+        npy_base = os.path.splitext(cache_path)[0]
+        return os.path.exists(_npy_paths(npy_base)['meta'])
 
     def _generate_ortho_cache_key(self,
                                   ortho_image_path: str,

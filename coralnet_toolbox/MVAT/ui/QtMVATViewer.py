@@ -427,7 +427,6 @@ class MVATViewer(QFrame):
         self._active_3d_tool = None
         self._mouse_sphere_observer_id = None
         self._sphere_hover_observer_bound = False
-        self._sphere_modifier_passthrough_active = False
         self._sphere_hover_timer = QTimer(self)
         self._sphere_hover_timer.setSingleShot(True)
         self._sphere_hover_timer.setInterval(16)
@@ -879,7 +878,6 @@ class MVATViewer(QFrame):
     def _restore_viewer_navigation_mode(self):
         """Return the MVAT viewer to the normal rotate / focal-point / pan interaction path."""
         self._sphere_visible = False
-        self._sphere_modifier_passthrough_active = False
 
         if hasattr(self, '_sphere_hover_timer'):
             try:
@@ -1000,26 +998,9 @@ class MVATViewer(QFrame):
         else:
             self._unbind_sphere_hover_observer()
 
-    def _is_sphere_passthrough_active(self) -> bool:
-        """Return True when sphere hover should temporarily yield to camera controls."""
-        if self._sphere_modifier_passthrough_active:
-            return True
-
-        try:
-            interactor = getattr(self.plotter, 'interactor', None)
-            if interactor is not None and hasattr(interactor, 'GetControlKey'):
-                return bool(interactor.GetControlKey())
-        except Exception:
-            pass
-
-        return False
-
     def _request_sphere_hover_refresh(self):
-        """Queue a hover refresh so the sphere snaps back after Ctrl is released."""
+        """Queue a hover refresh for the current mouse position."""
         if not self._sphere_visible or self._sphere_manager is None:
-            return
-
-        if self._is_sphere_passthrough_active():
             return
 
         try:
@@ -1030,39 +1011,6 @@ class MVATViewer(QFrame):
         self._sphere_hover_pending_events = max(1, self._sphere_hover_pending_events)
         if not self._sphere_hover_timer.isActive():
             self._sphere_hover_timer.start()
-
-    def _set_sphere_modifier_passthrough_active(self, active: bool):
-        """Suspend or resume hover tracking while Ctrl is held."""
-        active = bool(active)
-        if self._sphere_modifier_passthrough_active == active:
-            return
-
-        self._sphere_modifier_passthrough_active = active
-
-        if active:
-            try:
-                self._sphere_hover_timer.stop()
-            except Exception:
-                pass
-            self._sphere_hover_pending_events = 0
-
-            if self._sphere_manager is not None:
-                try:
-                    self._sphere_manager.set_visibility(False)
-                except Exception:
-                    pass
-            manager = getattr(self, 'mvat_manager', None)
-            if manager is not None:
-                try:
-                    manager.clear_sphere_hover_overlay(reset_context=False, render=False)
-                except Exception:
-                    pass
-            try:
-                self.plotter.render()
-            except Exception:
-                pass
-        else:
-            self._request_sphere_hover_refresh()
 
     def _adjust_sphere_size_from_wheel(self, delta_y: int):
         """Scale the sphere radius from Ctrl+wheel input."""
@@ -1084,11 +1032,6 @@ class MVATViewer(QFrame):
                 manager.refresh_sphere_hover_overlay(render=False)
             except Exception:
                 pass
-        try:
-            if self._sphere_manager.sphere_actor is not None:
-                self._sphere_manager.sphere_actor.SetVisibility(not self._is_sphere_passthrough_active())
-        except Exception:
-            pass
 
         try:
             self.plotter.render()
@@ -1134,12 +1077,6 @@ class MVATViewer(QFrame):
                 self.clear_ortho_ray()
             except Exception:
                 pass
-            return False
-
-        if event.type() in (QEvent.KeyPress, QEvent.KeyRelease) and event.key() == Qt.Key_Control:
-            self._set_sphere_modifier_passthrough_active(
-                event.type() == QEvent.KeyPress and self.is_sphere_tracking_enabled()
-            )
             return False
 
         if event.type() == QEvent.Wheel:
@@ -1225,7 +1162,7 @@ class MVATViewer(QFrame):
                     pass
             return
 
-        if self.is_sphere_tracking_enabled() and not self._is_sphere_passthrough_active():
+        if self.is_sphere_tracking_enabled():
             self._last_click_time = time.time() * 1000
             return
 
@@ -1328,7 +1265,7 @@ class MVATViewer(QFrame):
                 if self._sphere_manager is None:
                     return
 
-                if not self._sphere_visible or self._is_sphere_passthrough_active():
+                if not self._sphere_visible:
                     try:
                         active_tool.mouseMoveEvent(None, -1, None)
                     except Exception:
@@ -1371,7 +1308,7 @@ class MVATViewer(QFrame):
             if self._sphere_manager is None:
                 return
 
-            if not self._sphere_visible or self._is_sphere_passthrough_active():
+            if not self._sphere_visible:
                 return
 
             # Get the current mouse position and perform a pick once per batch.
@@ -1451,7 +1388,7 @@ class MVATViewer(QFrame):
                 return
 
             # Only track if sphere feature is enabled
-            if not self._sphere_visible or self._is_sphere_passthrough_active():
+            if not self._sphere_visible:
                 return
 
             # Refresh PyVista's stored mouse position immediately so the batch
@@ -2580,7 +2517,6 @@ class MVATViewer(QFrame):
                 self._sphere_hover_pending_events = 0
             except Exception:
                 pass
-            self._sphere_modifier_passthrough_active = False
         if self._sphere_manager is not None:
             # Keep it invisible initially - it will show when mouse picks geometry
             self._sphere_manager.set_visibility(False)
@@ -3178,7 +3114,6 @@ class MVATViewer(QFrame):
                 self._sphere_hover_timer.stop()
             except Exception:
                 pass
-        self._sphere_modifier_passthrough_active = False
 
         try:
             self._cancel_camera_motion()
