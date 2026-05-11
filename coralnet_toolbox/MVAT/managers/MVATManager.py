@@ -457,6 +457,7 @@ class MVATManager(QObject):
         self._hover_overlay_context = None
         self._hover_overlay_face_ids = None
         self._hover_overlay_color_rgb = None
+        self._hover_overlay_last_state = None
 
         self.contextStatsComputed.connect(self._on_context_stats_computed)
 
@@ -2268,6 +2269,7 @@ class MVATManager(QObject):
         if reset_context:
             self._hover_overlay_context = None
             self._hover_overlay_face_ids = None
+            self._hover_overlay_last_state = None
         if self._hover_overlay_actor is not None:
             try:
                 self._hover_overlay_actor.SetVisibility(False)
@@ -2354,6 +2356,7 @@ class MVATManager(QObject):
             return
 
         brush_shape = self._get_sphere_hover_shape()
+        radius = self._get_sphere_hover_radius()
 
         try:
             if not bool(getattr(self.viewer, '_sphere_visible', True)):
@@ -2377,17 +2380,62 @@ class MVATManager(QObject):
             self._hover_overlay_context = {
                 'product_id': getattr(primary_target, 'product_id', None),
                 'center': center,
+                'brush_shape': brush_shape,
+                'radius': radius,
             }
             self.clear_sphere_hover_overlay(reset_context=False, render=render)
             return
 
-        previous_face_ids = self._hover_overlay_face_ids
-        self._hover_overlay_context = {
-            'product_id': getattr(primary_target, 'product_id', None),
+        color_rgb = self._normalize_color_rgb(color_rgb)
+        if color_rgb is None:
+            self.clear_sphere_hover_overlay(reset_context=True, render=render)
+            return
+
+        product_id = getattr(primary_target, 'product_id', None)
+        current_state = {
+            'product_id': product_id,
             'center': center,
+            'brush_shape': brush_shape,
+            'radius': radius,
+            'color_rgb': color_rgb,
         }
 
-        radius = self._get_sphere_hover_radius()
+        previous_state = self._hover_overlay_last_state
+        if previous_state is not None and self._hover_overlay_actor is not None:
+            try:
+                actor_visible = bool(self._hover_overlay_actor.GetVisibility())
+            except Exception:
+                actor_visible = False
+
+            if actor_visible:
+                prev_product_id = previous_state.get('product_id')
+                prev_shape = previous_state.get('brush_shape')
+                prev_radius = previous_state.get('radius')
+                prev_color = previous_state.get('color_rgb')
+                prev_center = previous_state.get('center')
+
+                if (
+                    prev_product_id == product_id and
+                    prev_shape == brush_shape and
+                    prev_color == color_rgb and
+                    prev_center is not None and
+                    prev_radius is not None and
+                    np.isclose(float(prev_radius), radius)
+                ):
+                    try:
+                        center_delta = float(np.linalg.norm(center - np.asarray(prev_center, dtype=np.float64)))
+                    except Exception:
+                        center_delta = None
+
+                    # Tiny cursor jitter usually keeps the same face set; skip the
+                    # KD-tree lookup and overlay rebuild until the movement is meaningful.
+                    if center_delta is not None and center_delta <= max(1e-6, radius * 0.02):
+                        self._hover_overlay_context = current_state
+                        self._hover_overlay_last_state = current_state.copy()
+                        return
+
+        previous_face_ids = self._hover_overlay_face_ids
+        self._hover_overlay_context = current_state
         face_ids = self._get_faces_within_sphere(primary_target, center, radius, shape=brush_shape)
         if face_ids is None or len(face_ids) == 0:
             self.clear_sphere_hover_overlay(reset_context=True, render=render)
@@ -2395,14 +2443,15 @@ class MVATManager(QObject):
 
         face_ids = np.asarray(face_ids, dtype=np.int32)
         same_faces = previous_face_ids is not None and len(previous_face_ids) == len(face_ids) and np.array_equal(previous_face_ids, face_ids)
-        same_color = self._hover_overlay_color_rgb == self._normalize_color_rgb(color_rgb)
+        same_color = self._hover_overlay_color_rgb == color_rgb
 
         self._hover_overlay_face_ids = face_ids
-        self._hover_overlay_color_rgb = self._normalize_color_rgb(color_rgb)
+        self._hover_overlay_color_rgb = color_rgb
 
         if same_faces and same_color and self._hover_overlay_actor is not None:
             self._apply_hover_overlay_color(color_rgb, render=render)
             self._sync_projected_cursor_previews(center, render=False)
+            self._hover_overlay_last_state = current_state
             return
 
         mesh = primary_target.get_render_mesh()
@@ -2415,6 +2464,7 @@ class MVATManager(QObject):
         overlay = LabelPainterThread.build_overlay(mesh_points, mesh_faces_flat, face_ids, color_rgb, attach_colors=False)
         self._set_hover_overlay_geometry(overlay, color_rgb, render=render)
         self._sync_projected_cursor_previews(center, render=False)
+        self._hover_overlay_last_state = current_state
 
     # Note: full-GPU flush is intentionally removed. The overlay actor
     # is treated as the authoritative visualization for painted faces
