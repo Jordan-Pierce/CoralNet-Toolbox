@@ -262,7 +262,12 @@ class CacheManager:
             return True
 
         npy_base = os.path.splitext(cache_path)[0]
-        return os.path.exists(_npy_paths(npy_base)['meta'])
+        paths = _npy_paths(npy_base)
+        return (
+            os.path.exists(paths['meta'])
+            and os.path.exists(paths['idx'])
+            and os.path.exists(paths['vis'])
+        )
 
     def _generate_ortho_cache_key(self,
                                   ortho_image_path: str,
