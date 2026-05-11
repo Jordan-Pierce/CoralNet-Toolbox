@@ -315,7 +315,7 @@ class Tool3D:
                 mesh,
                 color=(r, g, b),
                 opacity=self._PREVIEW_OPACITY,
-                style='wireframe',
+                line_width=2.0,
                 pickable=False,
                 render=False,
             )
