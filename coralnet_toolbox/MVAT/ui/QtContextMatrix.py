@@ -19,7 +19,8 @@ from PyQt5.QtCore import Qt, pyqtSignal, QSize, QRect, QPoint, QVariantAnimation
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QToolBar, QToolButton, QSizePolicy, QFrame,
-    QScrollArea, QLayout, QLayoutItem, QGraphicsOpacityEffect
+    QScrollArea, QLayout, QLayoutItem, QGraphicsOpacityEffect,
+    QSpinBox, QAbstractSpinBox
 )
 
 from coralnet_toolbox.Icons import get_icon
@@ -198,6 +199,11 @@ class ContextMatrixWidget(QWidget):
         # Annotation visualization state (Phase 6)
         self._annotation_manager = None
         self._annotation_updates_suspended = False
+
+        # Optional typed camera-count control in the bottom toolbar.
+        self.camera_count_input = None
+        self.camera_total_label = None
+        self.camera_count_panel = None
 
         # Canvas pool
         self._canvas_pool: List[BaseCanvas] = []
@@ -629,6 +635,7 @@ class ContextMatrixWidget(QWidget):
 
         self._apply_active_canvas_perimeter()
 
+        self._sync_camera_status_label()
         self._update_canvas_count_controls()
         self._emit_visible_cameras_changed()
 
@@ -657,6 +664,63 @@ class ContextMatrixWidget(QWidget):
             self.count_down_btn.setEnabled(can_decrease)
         if hasattr(self, 'count_up_btn'):
             self.count_up_btn.setEnabled(can_increase)
+
+        camera_count_input = getattr(self, 'camera_count_input', None)
+        if camera_count_input is not None:
+            try:
+                camera_count_input.blockSignals(True)
+                if available > 0:
+                    camera_count_input.setEnabled(True)
+                    camera_count_input.setRange(self._canvas_count_min, max_allowed)
+                    camera_count_input.setValue(max(self._canvas_count_min, min(self.target_camera_count, max_allowed)))
+                else:
+                    camera_count_input.setEnabled(False)
+                    camera_count_input.setRange(self._canvas_count_min, self._canvas_count_min)
+                    camera_count_input.setValue(self._canvas_count_min)
+            finally:
+                camera_count_input.blockSignals(False)
+
+    def _sync_camera_status_label(self, visible_count: Optional[int] = None, total_count: Optional[int] = None):
+        if not hasattr(self, 'stats_label'):
+            return
+
+        if visible_count is None:
+            visible_count = self._last_rebuilt_count
+
+        if total_count is None:
+            total_count = len(self._camera_paths)
+
+        try:
+            visible_count = int(visible_count)
+        except Exception:
+            visible_count = 0
+
+        try:
+            total_count = int(total_count)
+        except Exception:
+            total_count = 0
+
+        camera_count_input = getattr(self, 'camera_count_input', None)
+        if camera_count_input is not None:
+            try:
+                camera_count_input.blockSignals(True)
+                camera_count_input.setValue(max(self._canvas_count_min, visible_count))
+            finally:
+                camera_count_input.blockSignals(False)
+
+        camera_total_label = getattr(self, 'camera_total_label', None)
+        if camera_total_label is not None:
+            camera_total_label.setText(f"/ {total_count}")
+
+    def _on_camera_count_input_finished(self):
+        camera_count_input = getattr(self, 'camera_count_input', None)
+        if camera_count_input is None:
+            return
+
+        try:
+            self.set_target_camera_count(int(camera_count_input.value()))
+        except Exception:
+            pass
 
     def _set_canvas_tile_size(self, size: int):
         clamped_size = max(self._canvas_tile_min, min(self._canvas_tile_max, size))
@@ -780,9 +844,43 @@ class ContextMatrixWidget(QWidget):
             if button is not None:
                 button.setIconSize(icon_size)
 
+        camera_count_input = getattr(self, 'camera_count_input', None)
+        if camera_count_input is not None:
+            try:
+                camera_count_input.setMinimumWidth(app_theme.scale_int(72))
+            except Exception:
+                pass
+
+        camera_count_panel = getattr(self, 'camera_count_panel', None)
+        if camera_count_panel is not None:
+            try:
+                camera_count_panel.setStyleSheet(
+                    "QFrame#cameraCountPanel {"
+                    "background-color: rgba(255, 255, 255, 0.04);"
+                    "border: 1px solid rgba(255, 255, 255, 0.10);"
+                    f"border-radius: {app_theme.scale_int(8)}px;"
+                    "}"
+                    "QFrame#cameraCountPanel QLabel {"
+                    "background: transparent;"
+                    "}"
+                    "QFrame#cameraCountPanel QSpinBox {"
+                    "background: transparent;"
+                    "border: none;"
+                    "padding: 0px 4px;"
+                    "margin: 0px;"
+                    "font-weight: bold;"
+                    "}"
+                )
+            except Exception:
+                pass
+
         if hasattr(self, 'stats_label'):
             self.stats_label.setStyleSheet(
                 f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; padding: 0px {app_theme.scale_int(8)}px; font-weight: bold;"
+            )
+        if hasattr(self, 'camera_total_label') and self.camera_total_label is not None:
+            self.camera_total_label.setStyleSheet(
+                f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; padding: 0px {app_theme.scale_int(2)}px 0px 0px; font-weight: bold;"
             )
 
     # ==================== Toolbar (Context Matrix) ====================
@@ -877,12 +975,45 @@ class ContextMatrixWidget(QWidget):
         layout.setContentsMargins(app_theme.scale_int(5), app_theme.scale_int(5), app_theme.scale_int(5), app_theme.scale_int(5))
         layout.setSpacing(app_theme.scale_int(5))
 
-        self.stats_label = QLabel("Cameras 0 / 0")
+        self.camera_count_panel = QFrame()
+        self.camera_count_panel.setObjectName("cameraCountPanel")
+        self.camera_count_panel.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
+        camera_count_layout = QHBoxLayout(self.camera_count_panel)
+        camera_count_layout.setContentsMargins(
+            app_theme.scale_int(8),
+            app_theme.scale_int(4),
+            app_theme.scale_int(8),
+            app_theme.scale_int(4),
+        )
+        camera_count_layout.setSpacing(0)
+
+        self.stats_label = QLabel("Cameras")
         self.stats_label.setStyleSheet(
-            f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; padding: 0px {app_theme.scale_int(8)}px; font-weight: bold;"
+            f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; padding: 0px {app_theme.scale_int(8)}px 0px 0px; font-weight: bold;"
+        )
+        self.stats_label.setToolTip("Visible cameras in the matrix / total loaded cameras")
+
+        self.camera_count_input = QSpinBox()
+        self.camera_count_input.setToolTip("Type a camera count and press Enter to load that many cameras.")
+        self.camera_count_input.setAlignment(Qt.AlignCenter)
+        self.camera_count_input.setButtonSymbols(QAbstractSpinBox.NoButtons)
+        self.camera_count_input.setKeyboardTracking(False)
+        self.camera_count_input.setRange(self._canvas_count_min, self._canvas_count_min)
+        self.camera_count_input.setValue(self._canvas_count_min)
+        self.camera_count_input.editingFinished.connect(self._on_camera_count_input_finished)
+
+        self.camera_total_label = QLabel("/ 0")
+        self.camera_total_label.setToolTip("Total loaded cameras")
+        self.camera_total_label.setStyleSheet(
+            f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; padding: 0px 0px 0px {app_theme.scale_int(2)}px; font-weight: bold;"
         )
 
-        layout.addWidget(self.stats_label)
+        camera_count_layout.addWidget(self.stats_label)
+        camera_count_layout.addWidget(self.camera_count_input)
+        camera_count_layout.addWidget(self.camera_total_label)
+
+        layout.addWidget(self.camera_count_panel)
+
         layout.addStretch(1)
 
         sep0 = QFrame()
@@ -912,8 +1043,8 @@ class ContextMatrixWidget(QWidget):
 
     def update_stats_label(self, visible_count: int, overlapping_count: int):
         """Updates the bottom toolbar text."""
-        if hasattr(self, 'stats_label'):
-            self.stats_label.setText(f"Cameras {visible_count} / {overlapping_count}")
+        total_count = len(self._camera_paths) if self._camera_paths else overlapping_count
+        self._sync_camera_status_label(visible_count, total_count)
 
         try:
             overlapping_count = int(overlapping_count)
