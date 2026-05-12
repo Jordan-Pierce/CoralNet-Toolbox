@@ -661,7 +661,7 @@ class VisibilityManager:
                                           mesh_product: 'AbstractSceneProduct',
                                           camera_params_list: list,
                                           compute_depth_map: bool = True,
-                                          scale_factor: float = 1.0,
+                                          pixel_budget: Optional[int] = None,
                                           progress_callback=None) -> list:
         """
         Batched VTK-based mesh rasterization.
@@ -670,10 +670,17 @@ class VisibilityManager:
         """
         import pyvista as pv
         import time
+
+        def _scale_for_dimensions(width: int, height: int) -> float:
+            native_pixels = width * height
+            if pixel_budget is None or pixel_budget <= 0 or native_pixels <= pixel_budget:
+                return 1.0
+            return float(np.sqrt(pixel_budget / native_pixels))
         
         start_time = time.time()
+        budget_str = "Native" if pixel_budget is None or pixel_budget <= 0 else f"{pixel_budget / 1_000_000:.1f}MP"
         print(f"\n{'='*50}")
-        print(f"🎨 STARTING BATCH VTK RASTERIZATION FOR {len(camera_params_list)} CAMERAS AT {scale_factor}x SCALE")
+        print(f"🎨 STARTING BATCH VTK RASTERIZATION FOR {len(camera_params_list)} CAMERAS (Budget: {budget_str})")
         print(f"{'='*50}")
         
         mesh = mesh_product.get_mesh()
@@ -686,6 +693,7 @@ class VisibilityManager:
                 'visible_indices': np.array([], dtype=np.int32),
                 'depth_map': np.full((h, w), np.nan, dtype=np.float32) if compute_depth_map else None,
                 'inverted_index': None,
+                'scale_factor': _scale_for_dimensions(w, h),
             } for _, _, _, w, h in camera_params_list]
             
         print(f"   Mesh: {n_cells:,} cells")
@@ -706,9 +714,12 @@ class VisibilityManager:
         
         print("   -> Creating off-screen plotter...")
         
-        # FIX: Grab scaled dimensions from the first camera to set initial plotter size
-        first_w = max(1, int(camera_params_list[0][3] * scale_factor))
-        first_h = max(1, int(camera_params_list[0][4] * scale_factor))
+        # Use the first camera's budget-derived scale only to size the initial plotter.
+        first_w = camera_params_list[0][3]
+        first_h = camera_params_list[0][4]
+        first_scale = _scale_for_dimensions(first_w, first_h)
+        first_w = max(1, int(round(first_w * first_scale)))
+        first_h = max(1, int(round(first_h * first_scale)))
         plotter = pv.Plotter(off_screen=True, window_size=(first_w, first_h))
         plotter.set_background('black') 
         plotter.disable_anti_aliasing()
@@ -739,7 +750,7 @@ class VisibilityManager:
         # -----------------------------------------------------------
 
         # --- 2. RENDER LOOP ---
-        print(f"\n   -> Rendering {len(camera_params_list)} cameras at {scale_factor}x scale...")
+        print(f"\n   -> Rendering {len(camera_params_list)} cameras (Budget: {budget_str})...")
         render_start_time = time.time()
         results = []
         
@@ -750,9 +761,10 @@ class VisibilityManager:
             if progress_callback is not None:
                 progress_callback(i + 1, len(camera_params_list))
 
-            # Calculate scaled render dimensions
-            render_w = max(1, int(width * scale_factor))
-            render_h = max(1, int(height * scale_factor))
+            # Calculate budget-derived render dimensions for this camera.
+            dynamic_scale = _scale_for_dimensions(width, height)
+            render_w = max(1, int(round(width * dynamic_scale)))
+            render_h = max(1, int(round(height * dynamic_scale)))
 
             # 1. Resize check (to scaled dimensions)
             current_size = plotter.window_size
@@ -761,8 +773,8 @@ class VisibilityManager:
 
             # Scale the intrinsic matrix
             K_scaled = K.copy()
-            K_scaled[0, :3] *= scale_factor
-            K_scaled[1, :3] *= scale_factor
+            K_scaled[0, :3] *= dynamic_scale
+            K_scaled[1, :3] *= dynamic_scale
 
             # 2. Config & Render using scaled parameters
             t0 = time.time()
@@ -803,7 +815,7 @@ class VisibilityManager:
                 visible_indices = np.unique(small_index_map[valid_mask]).astype(np.int32)
 
             # Upsample to native resolution using nearest-neighbour interpolation
-            if scale_factor != 1.0:
+            if dynamic_scale != 1.0:
                 import cv2
                 index_map = cv2.resize(small_index_map, (width, height), interpolation=cv2.INTER_NEAREST)
             else:
@@ -835,8 +847,8 @@ class VisibilityManager:
                     # 4. Map the Face IDs directly to their computed Depths!
                     small_depth_tensor = z_cam_padded[small_index_map_tensor.long()]
                     small_depth = small_depth_tensor.cpu().numpy()
-                    
-                    if scale_factor != 1.0:
+
+                    if dynamic_scale != 1.0:
                         import cv2
                         depth_map = cv2.resize(small_depth, (width, height), interpolation=cv2.INTER_NEAREST)
                     else:
@@ -847,7 +859,7 @@ class VisibilityManager:
                         vtk_depth = plotter.get_image_depth(fill_value=np.nan)
                         small_depth = -vtk_depth.astype(np.float32)
 
-                        if scale_factor != 1.0:
+                        if dynamic_scale != 1.0:
                             import cv2
                             depth_map = cv2.resize(small_depth, (width, height), interpolation=cv2.INTER_NEAREST)
                         else:
@@ -862,6 +874,7 @@ class VisibilityManager:
                 'visible_indices': visible_indices,
                 'depth_map': depth_map,
                 'inverted_index': None,
+                'scale_factor': dynamic_scale,
             })
             results[-1] = cls._normalize_result_dict(results[-1], compute_depth_map)
             # 7. UI Yielding
@@ -961,13 +974,14 @@ class VisibilityManager:
     def compute_ortho_index_map_vtk(cls,
                                     ortho_camera,
                                     mesh_product: 'AbstractSceneProduct',
-                                    scale_factor: float = 1.0) -> dict:
+                                    pixel_budget: Optional[int] = None) -> dict:
         """Build a downsampled face-ID index map for an OrthoCamera.
 
         Renders the mesh off-screen with VTK orthographic projection looking
         straight down over the ortho's world-space extent.  The result is stored
-        at a resolution derived from the shared MVAT quality scale factor, where
-        1.0 means full-resolution and lower values trade fidelity for speed.
+        at a resolution derived from the shared MVAT pixel budget, where values
+        at or above the native resolution keep the full image and lower budgets
+        trade fidelity for speed.
 
         Args:
             ortho_camera:    OrthoCamera instance (must be is_valid).
@@ -1000,11 +1014,11 @@ class VisibilityManager:
         n_cells = mesh.n_cells
         ortho_w, ortho_h = ortho_camera.width, ortho_camera.height
 
-        # Quality scales directly from the native orthomosaic resolution.
-        scale = float(scale_factor)
-        if not np.isfinite(scale) or scale <= 0:
+        native_pixels = ortho_w * ortho_h
+        if pixel_budget is None or pixel_budget <= 0 or native_pixels <= pixel_budget:
             scale = 1.0
-        scale = min(1.0, scale)
+        else:
+            scale = float(np.sqrt(pixel_budget / native_pixels))
         render_w = max(1, int(round(ortho_w * scale)))
         render_h = max(1, int(round(ortho_h * scale)))
         print(f"   Ortho: {ortho_w}×{ortho_h}  →  render: {render_w}×{render_h}  (scale={scale:.4f})")

@@ -27,13 +27,13 @@ class VisibilityWorker(QObject):
     Now safely handles Meshes (via Open3D), PointClouds, and DEMs.
     """
     def __init__(self, primary_target, camera_params_dict, compute_depth_maps=True,
-                 cache_manager=None, cache_keys_dict=None, target_file_path="", scale_factor=1.0,
+                 cache_manager=None, cache_keys_dict=None, target_file_path="", pixel_budget=None,
                  warp_callables_dict=None, dist_coeffs_bytes_dict=None):
         super().__init__()
         self.primary_target = primary_target
         self.camera_params_dict = camera_params_dict
         self.compute_depth_maps = compute_depth_maps
-        self.scale_factor = scale_factor
+        self.pixel_budget = pixel_budget
         self.warp_callables_dict = warp_callables_dict or {}
         # path -> dist_coeffs.tobytes() for distorted cameras; used for cache-key disambiguation
         self.dist_coeffs_bytes_dict = dist_coeffs_bytes_dict or {}
@@ -89,11 +89,15 @@ class VisibilityWorker(QObject):
                     try:
                         # Primary: Batched VTK rasterization
                         def update_status(current, total):
-                            self._status(f"Computing 3D maps... ({current}/{total} cameras at {self.scale_factor}x)")
+                            if self.pixel_budget is None or self.pixel_budget <= 0:
+                                budget_str = "Native"
+                            else:
+                                budget_str = f"{self.pixel_budget / 1_000_000:.1f}MP"
+                            self._status(f"Computing 3D maps... ({current}/{total} cameras at {budget_str} budget)")
 
                         batch_results = VisibilityManager.compute_batch_mesh_visibility_vtk(
                             self.primary_target, params_list, self.compute_depth_maps,
-                            scale_factor=self.scale_factor,
+                            pixel_budget=self.pixel_budget,
                             progress_callback=update_status
                         )
                         for p, r in zip(paths, batch_results):
