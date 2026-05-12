@@ -899,6 +899,8 @@ class Base(QDialog):
             'val': self.val_combo.currentText() == "True",
             'exist_ok': True,
             'plots': True,
+
+            'mask_ratio': 4,  # Determines downsampling resolution of masks; high val = blockier masks
         }
         # Default project folder
         project = 'Data/Training'

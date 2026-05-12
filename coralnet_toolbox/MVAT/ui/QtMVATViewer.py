@@ -24,12 +24,13 @@ from PyQt5.QtWidgets import (
     QVBoxLayout, QLabel, QHBoxLayout
 )
 
-from coralnet_toolbox.MVAT.core.Ray import CameraRay, BatchedRayManager
+from coralnet_toolbox.MVAT.core.Ray import CameraRay, BatchedRayManager, SphereActorManager
 from coralnet_toolbox.MVAT.core.Frustum import BatchedFrustumManager
 from coralnet_toolbox.MVAT.core.Model import PointCloudProduct, MeshProduct
 from coralnet_toolbox.MVAT.core.SceneContext import SceneContext
 from coralnet_toolbox.MVAT.core.SceneProduct import AbstractSceneProduct
 from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED
+from coralnet_toolbox.MVAT.tools import Brush3DTool, Erase3DTool
 from coralnet_toolbox.MVAT.ui.CameraAnimator import CameraAnimator
 from coralnet_toolbox import theme as app_theme
 
@@ -379,6 +380,7 @@ class MVATViewer(QFrame):
 
     def __init__(self, parent=None, point_size=1, show_rays=True):
         super().__init__(parent)
+        self.mvat_manager = None
         self.setFrameShape(QFrame.NoFrame)
         self.setAcceptDrops(True)
         
@@ -417,6 +419,19 @@ class MVATViewer(QFrame):
         self._ray_visible = True
         self._ray_manager = BatchedRayManager()
         self._ortho_ray_manager = BatchedRayManager()
+        # Sphere actor for mouse tracking on mesh
+        self._sphere_manager = SphereActorManager(radius=0.1)
+        self._sphere_visible = False
+        self._brush_3d_tool = None
+        self._erase_3d_tool = None
+        self._active_3d_tool = None
+        self._mouse_sphere_observer_id = None
+        self._sphere_hover_observer_bound = False
+        self._sphere_hover_timer = QTimer(self)
+        self._sphere_hover_timer.setSingleShot(True)
+        self._sphere_hover_timer.setInterval(16)
+        self._sphere_hover_timer.timeout.connect(self._process_sphere_hover_update)
+        self._sphere_hover_pending_events = 0
         # Frustum and thumbnail management
         self._frustum_manager = BatchedFrustumManager()
         self._camera_animator = CameraAnimator(self.plotter, duration_ms=400)
@@ -469,7 +484,7 @@ class MVATViewer(QFrame):
         self.layout.addWidget(self._stack_container)
 
         # Point size hint (spinbox removed; use Ctrl + mouse wheel)
-        hint_label = QLabel("Point Size: Ctrl + Mouse Wheel")
+        hint_label = QLabel("Ctrl + Mouse Wheel: resize the brush/erase preview sphere when those tools are active, otherwise point size")
         hint_label.setStyleSheet(f"color: {app_theme.TEXT_PRIMARY_COLOR.name()};")
         bottom_layout.addStretch(1)
         bottom_layout.addWidget(hint_label)
@@ -783,9 +798,130 @@ class MVATViewer(QFrame):
         
         return toolbar
 
+    def initialize_3d_tools(self, mvat_manager):
+        """Create the preview-only 3D brush and erase tools once the manager exists."""
+        if self._brush_3d_tool is not None or self._erase_3d_tool is not None:
+            return
+
+        self._brush_3d_tool = Brush3DTool(self, mvat_manager)
+        self._erase_3d_tool = Erase3DTool(self, mvat_manager)
+        self._active_3d_tool = None
+
+    def get_selected_3d_tool(self):
+        return self._active_3d_tool
+
+    def set_selected_3d_tool(self, tool_name):
+        """Activate the Brush3DTool or Erase3DTool preview, or clear it."""
+        tool_map = {
+            'brush': self._brush_3d_tool,
+            'erase': self._erase_3d_tool,
+        }
+        next_tool = tool_map.get(tool_name)
+        current_tool = self._active_3d_tool
+
+        if current_tool is next_tool:
+            if next_tool is not None:
+                self._sphere_visible = True
+                self._request_sphere_hover_refresh()
+                try:
+                    self._process_sphere_hover_update()
+                except Exception:
+                    pass
+            else:
+                self._restore_viewer_navigation_mode()
+                sphere_manager = getattr(self, '_sphere_manager', None)
+                if sphere_manager is not None:
+                    try:
+                        setter = getattr(sphere_manager, 'set_shape', None)
+                        if callable(setter):
+                            setter('circle')
+                        else:
+                            sphere_manager.shape = 'circle'
+                    except Exception:
+                        pass
+            return
+
+        if current_tool is not None:
+            try:
+                current_tool.deactivate()
+            except Exception:
+                pass
+
+        self._active_3d_tool = next_tool
+
+        if next_tool is not None:
+            self._sphere_visible = True
+            try:
+                next_tool.activate()
+            except Exception:
+                pass
+            self._sync_sphere_hover_binding()
+            self._request_sphere_hover_refresh()
+        else:
+            sphere_manager = getattr(self, '_sphere_manager', None)
+            if sphere_manager is not None:
+                try:
+                    setter = getattr(sphere_manager, 'set_shape', None)
+                    if callable(setter):
+                        setter('circle')
+                    else:
+                        sphere_manager.shape = 'circle'
+                except Exception:
+                    pass
+            self._restore_viewer_navigation_mode()
+
+        try:
+            self.plotter.render()
+        except Exception:
+            pass
+
+    def _restore_viewer_navigation_mode(self):
+        """Return the MVAT viewer to the normal rotate / focal-point / pan interaction path."""
+        self._sphere_visible = False
+
+        if hasattr(self, '_sphere_hover_timer'):
+            try:
+                self._sphere_hover_timer.stop()
+                self._sphere_hover_pending_events = 0
+            except Exception:
+                pass
+
+        self._last_click_time = 0
+        self._sync_sphere_hover_binding()
+
+        if self._sphere_manager is not None:
+            try:
+                self._sphere_manager.set_visibility(False)
+            except Exception:
+                pass
+
+        manager = getattr(self, 'mvat_manager', None)
+        if manager is not None:
+            try:
+                manager.clear_sphere_hover_overlay(reset_context=True, render=False)
+            except Exception:
+                pass
+
+        try:
+            self.plotter.render()
+        except Exception:
+            pass
+
     # --------------------------------------------------------------------------
     # Custom Interaction Logic
     # --------------------------------------------------------------------------
+
+    def _get_vtk_interaction_style(self, interactor):
+        """Return the active VTK interaction style, or the interactor itself."""
+        if interactor is None:
+            return None
+
+        try:
+            style = interactor.GetInteractorStyle()
+        except Exception:
+            style = None
+
+        return style if style is not None else interactor
     
     def _configure_interaction(self):
         """
@@ -805,12 +941,106 @@ class MVATViewer(QFrame):
         # 2. Apply Custom Trackball Style
         # This cleanly maps Right Drag -> Pan without complex state management.
         # left='rotate' is implied default.
-        self.plotter.enable_custom_trackball_style(right='pan')
-        inertia_style = getattr(getattr(self.plotter, 'iren', None), 'style', None)
-        if inertia_style is None:
-            inertia_style = interactor
+        self.plotter.enable_custom_trackball_style(
+            left='rotate',
+            control_left='rotate',
+            right='pan',
+            control_right='pan',
+        )
+        inertia_style = self._get_vtk_interaction_style(interactor)
         if hasattr(self, '_camera_inertia') and self._camera_inertia is not None:
             self._camera_inertia.bind(inertia_style)
+
+        # 3. Add sphere actor to plotter and bind mouse move event
+        if hasattr(self, '_sphere_manager') and self._sphere_manager is not None:
+            # Add sphere actor (it's created empty initially)
+            from coralnet_toolbox.MVAT.core.constants import SELECT_COLOR_RGB
+            self._sphere_manager.add_to_plotter(self.plotter, color=SELECT_COLOR_RGB, line_width=1.5)
+            self._sphere_manager.set_visibility(False)  # Hidden by default
+            self._sync_sphere_hover_binding()
+
+    def _bind_sphere_hover_observer(self):
+        """Bind the sphere hover observer if sphere tracking is enabled."""
+        if self._sphere_hover_observer_bound:
+            return
+
+        interactor = self.plotter.interactor
+        style = self._get_vtk_interaction_style(interactor)
+        if style is None:
+            return
+
+        try:
+            self._mouse_sphere_observer_id = style.AddObserver("MouseMoveEvent", self._on_mouse_move)
+            self._sphere_hover_observer_bound = self._mouse_sphere_observer_id is not None
+            print(f"✅ Mouse move observer bound to style: {self._mouse_sphere_observer_id}")
+        except Exception as e:
+            print(f"⚠️ Failed to bind mouse move observer: {e}")
+
+    def _unbind_sphere_hover_observer(self):
+        """Unbind the sphere hover observer so only camera interactions remain."""
+        if not self._sphere_hover_observer_bound:
+            return
+
+        try:
+            style = self._get_vtk_interaction_style(getattr(self.plotter, 'interactor', None))
+            if style is not None and self._mouse_sphere_observer_id is not None:
+                style.RemoveObserver(self._mouse_sphere_observer_id)
+        except Exception:
+            pass
+
+        self._mouse_sphere_observer_id = None
+        self._sphere_hover_observer_bound = False
+
+    def _sync_sphere_hover_binding(self):
+        """Keep the sphere hover observer aligned with the feature toggle."""
+        if self._sphere_visible:
+            self._bind_sphere_hover_observer()
+        else:
+            self._unbind_sphere_hover_observer()
+
+    def _request_sphere_hover_refresh(self):
+        """Queue a hover refresh for the current mouse position."""
+        if not self._sphere_visible or self._sphere_manager is None:
+            return
+
+        try:
+            self.plotter.store_mouse_position()
+        except Exception:
+            pass
+
+        self._sphere_hover_pending_events = max(1, self._sphere_hover_pending_events)
+        if not self._sphere_hover_timer.isActive():
+            self._sphere_hover_timer.start()
+
+    def _adjust_sphere_size_from_wheel(self, delta_y: int):
+        """Scale the sphere radius from Ctrl+wheel input."""
+        if self._sphere_manager is None:
+            return
+
+        current_radius = float(getattr(self._sphere_manager, 'radius', 0.1))
+        wheel_step = float(delta_y) / 120.0
+        scale_factor = float(np.exp(wheel_step * 0.12))
+        new_radius = float(np.clip(current_radius * scale_factor, 0.01, 10.0))
+
+        if np.isclose(current_radius, new_radius):
+            return
+
+        self._sphere_manager.set_radius(new_radius)
+        manager = getattr(self, 'mvat_manager', None)
+        if manager is not None:
+            try:
+                manager.refresh_sphere_hover_overlay(render=False)
+            except Exception:
+                pass
+
+        try:
+            self.plotter.render()
+        except Exception:
+            pass
+
+    def is_sphere_tracking_enabled(self) -> bool:
+        """Return whether sphere hover tracking is currently enabled."""
+        return bool(self._sphere_visible)
 
     def eventFilter(self, obj, event):
         """Intercept key press events."""
@@ -819,20 +1049,59 @@ class MVATViewer(QFrame):
         if event.type() == QEvent.ContextMenu:
             return True
 
+        if event.type() == QEvent.Leave:
+            active_tool = getattr(self, '_active_3d_tool', None)
+            if active_tool is not None:
+                try:
+                    active_tool.mouseMoveEvent(None, -1, None)
+                except Exception:
+                    pass
+            else:
+                manager = getattr(self, 'mvat_manager', None)
+                if manager is not None:
+                    try:
+                        manager.clear_sphere_hover_overlay(reset_context=True, render=False)
+                    except Exception:
+                        pass
+            manager = getattr(self, 'mvat_manager', None)
+            if manager is not None:
+                try:
+                    manager.clear_all_markers()
+                except Exception:
+                    pass
+            try:
+                self.clear_ray()
+            except Exception:
+                pass
+            try:
+                self.clear_ortho_ray()
+            except Exception:
+                pass
+            return False
+
         if event.type() == QEvent.Wheel:
             delta_y = event.angleDelta().y()
 
-            # Ctrl + wheel → adjust point size; consume so zoom is not triggered.
+            # Ctrl + wheel → adjust sphere size when sphere tracking is enabled.
             if event.modifiers() & Qt.ControlModifier:
                 if delta_y != 0:
-                    step = 1 if delta_y > 0 else -1
-                    new_size = max(1, min(20, self.point_size + step))
-                    if new_size != self.point_size:
-                        self.set_point_size(new_size)
+                    active_tool = getattr(self, '_active_3d_tool', None)
+                    if active_tool is not None:
                         try:
-                            self.pointSizeChanged.emit(new_size)
+                            active_tool.wheelEvent(event, delta_y)
                         except Exception:
                             pass
+                    elif self.is_sphere_tracking_enabled() and self._sphere_manager is not None:
+                        self._adjust_sphere_size_from_wheel(delta_y)
+                    else:
+                        step = 1 if delta_y > 0 else -1
+                        new_size = max(1, min(20, self.point_size + step))
+                        if new_size != self.point_size:
+                            self.set_point_size(new_size)
+                            try:
+                                self.pointSizeChanged.emit(new_size)
+                            except Exception:
+                                pass
                 return True  # consumed
 
             # Regular wheel → zoom via inertia controller.
@@ -857,6 +1126,46 @@ class MVATViewer(QFrame):
 
     def _on_left_press(self, obj, event):
         """Handle Left Click to detect Double Clicks."""
+        active_tool = getattr(self, '_active_3d_tool', None)
+        if active_tool is not None and not bool(getattr(active_tool, 'preview_only', True)):
+            try:
+                self.plotter.store_mouse_position()
+            except Exception:
+                pass
+
+            picked = self.plotter.pick_mouse_position()
+            expected_actor = self._get_primary_target_actor()
+            if self._is_valid_scene_pick(picked, expected_actor=expected_actor):
+                try:
+                    world_pos = np.asarray(picked, dtype=np.float64)
+                except Exception:
+                    world_pos = None
+
+                face_id = 0
+                try:
+                    picker = getattr(getattr(self.plotter, 'iren', None), 'picker', None)
+                    if picker is not None and hasattr(picker, 'GetCellId'):
+                        candidate_face_id = int(picker.GetCellId())
+                        if candidate_face_id >= 0:
+                            face_id = candidate_face_id
+                except Exception:
+                    pass
+
+                try:
+                    active_tool.mousePressEvent(event, face_id, world_pos)
+                except Exception:
+                    pass
+            else:
+                try:
+                    active_tool.mousePressEvent(event, -1, None)
+                except Exception:
+                    pass
+            return
+
+        if self.is_sphere_tracking_enabled():
+            self._last_click_time = time.time() * 1000
+            return
+
         # Get current time in milliseconds
         current_time = time.time() * 1000
         
@@ -883,31 +1192,221 @@ class MVATViewer(QFrame):
             self._cancel_camera_motion()
 
             picked = self.plotter.pick_mouse_position()
-            if picked is None:
+            if not self._is_valid_scene_pick(picked):
                 return
 
             picked = np.asarray(picked, dtype=float)
 
-            # Validate: if the pick landed at the exact origin while the camera
-            # is nowhere near it, it almost certainly means "no geometry hit".
-            # We reject the pick rather than snapping the focal point to [0,0,0].
-            try:
-                cam_pos  = np.asarray(self.plotter.camera.position,    dtype=float)
-                cam_fp   = np.asarray(self.plotter.camera.focal_point, dtype=float)
-                cam_dist = float(np.linalg.norm(cam_pos - cam_fp))
-                pick_dist_from_cam = float(np.linalg.norm(picked - cam_pos))
-
-                # Heuristic: a valid pick should be within ~50× the current
-                # focal distance.  Beyond that it's almost certainly a miss.
-                if cam_dist > 1e-4 and pick_dist_from_cam > cam_dist * 50.0:
-                    return
-            except Exception:
-                pass  # validation failed — proceed optimistically
-
             self.set_focal_point(picked)
         except Exception:
             pass
-        
+
+    def _get_primary_target_actor(self):
+        """Return the currently active actor for the primary mesh target, if any."""
+        try:
+            target = self.scene_context.get_primary_target()
+            if target is None:
+                return None
+            return self._product_actors.get(getattr(target, 'product_id', None))
+        except Exception:
+            return None
+
+    def _is_valid_scene_pick(self, picked, expected_actor=None) -> bool:
+        """Return True only when PyVista reports a hit on the expected scene geometry."""
+        if picked is None:
+            return False
+
+        try:
+            picker = getattr(getattr(self.plotter, 'iren', None), 'picker', None)
+            if picker is not None and hasattr(picker, 'GetDataSet'):
+                try:
+                    if picker.GetDataSet() is None:
+                        return False
+                except Exception:
+                    pass
+            if expected_actor is not None and picker is not None and hasattr(picker, 'GetActor'):
+                try:
+                    picked_actor = picker.GetActor()
+                    if picked_actor is None or picked_actor is not expected_actor:
+                        return False
+                except Exception:
+                    return False
+        except Exception:
+            pass
+
+        try:
+            picked = np.asarray(picked, dtype=float)
+            if not np.all(np.isfinite(picked)):
+                return False
+
+            # Secondary sanity check: reject pathological values far outside the scene.
+            cam_pos = np.asarray(self.plotter.camera.position, dtype=float)
+            cam_fp = np.asarray(self.plotter.camera.focal_point, dtype=float)
+            cam_dist = float(np.linalg.norm(cam_pos - cam_fp))
+            pick_dist_from_cam = float(np.linalg.norm(picked - cam_pos))
+            if cam_dist > 1e-4 and pick_dist_from_cam > cam_dist * 50.0:
+                return False
+        except Exception:
+            pass
+
+        return True
+
+    def _process_sphere_hover_update(self):
+        """Process the most recent queued mouse-move batch for the sphere actor."""
+        try:
+            pending_events = self._sphere_hover_pending_events
+            self._sphere_hover_pending_events = 0
+
+            if pending_events <= 0:
+                return
+            
+            active_tool = getattr(self, '_active_3d_tool', None)
+            if active_tool is not None:
+                if self._sphere_manager is None:
+                    return
+
+                if not self._sphere_visible:
+                    try:
+                        active_tool.mouseMoveEvent(None, -1, None)
+                    except Exception:
+                        pass
+                    return
+
+                try:
+                    self.plotter.store_mouse_position()
+                except Exception:
+                    pass
+
+                picked = self.plotter.pick_mouse_position()
+
+                # For the active-tool path, skip the full _is_valid_scene_pick check.
+                # pick_mouse_position() called from a Qt timer (not a VTK button event)
+                # does not always populate picker.GetDataSet(), so the dataset check
+                # inside _is_valid_scene_pick always fails for hover. We just need a
+                # finite world coordinate — do a lightweight sanity check instead.
+                world_pos = None
+                if picked is not None:
+                    try:
+                        p = np.asarray(picked, dtype=np.float64)
+                        if np.all(np.isfinite(p)):
+                            world_pos = p
+                    except Exception:
+                        pass
+
+                try:
+                    active_tool.mouseMoveEvent(None, -1, world_pos)
+                except Exception:
+                    pass
+
+                # Flush the frame — mesh.Modified() alone does not trigger a redraw.
+                try:
+                    self.plotter.render()
+                except Exception:
+                    pass
+
+                if self._sphere_hover_pending_events > 0:
+                    self._sphere_hover_timer.start()
+                return
+
+            if self._sphere_manager is None:
+                return
+
+            if not self._sphere_visible:
+                return
+
+            # Get the current mouse position and perform a pick once per batch.
+            try:
+                self.plotter.store_mouse_position()
+            except Exception:
+                pass
+
+            picked = self.plotter.pick_mouse_position()
+            expected_actor = self._get_primary_target_actor()
+
+            if not self._is_valid_scene_pick(picked, expected_actor=expected_actor):
+                if self._sphere_manager.sphere_actor is not None:
+                    try:
+                        if self._sphere_manager.sphere_actor.GetVisibility():
+                            self._sphere_manager.set_visibility(False)
+                    except Exception:
+                        pass
+
+                manager = getattr(self, 'mvat_manager', None)
+                if manager is not None:
+                    try:
+                        manager.clear_sphere_hover_overlay(reset_context=True, render=True)
+                    except Exception:
+                        pass
+
+                return
+            
+            if picked is not None:
+                picked = np.asarray(picked, dtype=np.float64)
+
+                # Update sphere position to where mouse intersects mesh
+                self._sphere_manager.set_position(picked)
+
+                # Ensure sphere is visible
+                self._sphere_manager.set_visibility(True)
+
+                manager = getattr(self, 'mvat_manager', None)
+                if manager is not None:
+                    try:
+                        manager.update_sphere_hover_overlay(picked, render=False)
+                    except Exception:
+                        pass
+            else:
+                # No pick - hide the sphere when cursor is over background
+                self._sphere_manager.set_visibility(False)
+
+                manager = getattr(self, 'mvat_manager', None)
+                if manager is not None:
+                    try:
+                        manager.clear_sphere_hover_overlay(reset_context=True, render=False)
+                    except Exception:
+                        pass
+            try:
+                self.plotter.render()
+            except Exception:
+                pass
+
+            # If more mouse moves arrived while we were processing this batch,
+            # schedule another coalesced update for the latest cursor position.
+            if self._sphere_hover_pending_events > 0:
+                self._sphere_hover_timer.start()
+        except Exception:
+            # Silent failure
+            pass
+
+    def _on_mouse_move(self, obj, event):
+        """
+        Handle mouse movement to update the sphere position on mesh.
+
+        Mouse moves are coalesced into a short timer so we only pick and render
+        once per burst instead of on every raw event.
+        """
+        try:
+            if self._sphere_manager is None:
+                return
+
+            # Only track if sphere feature is enabled
+            if not self._sphere_visible:
+                return
+
+            # Refresh PyVista's stored mouse position immediately so the batch
+            # processor picks the live hover location instead of the last click.
+            try:
+                self.plotter.store_mouse_position()
+            except Exception:
+                pass
+
+            self._sphere_hover_pending_events += 1
+            if not self._sphere_hover_timer.isActive():
+                self._sphere_hover_timer.start()
+        except Exception as e:
+            # Silent failure
+            pass
+
     # ------------------------------------------------------------------
     # Camera movement helpers
     # ------------------------------------------------------------------
@@ -1227,6 +1726,61 @@ class MVATViewer(QFrame):
         """
         key = event.key()
         ang = np.radians(self.rotate_speed)
+
+        if (event.modifiers() & Qt.ControlModifier) and (event.modifiers() & Qt.ShiftModifier):
+            manager = getattr(self, 'mvat_manager', None)
+            annotation_window = getattr(manager, 'annotation_window', None) if manager is not None else None
+            selected_tool = None
+            tool_map = None
+
+            if annotation_window is not None:
+                try:
+                    selected_tool = annotation_window.get_selected_tool()
+                except Exception:
+                    selected_tool = None
+                tool_map = getattr(annotation_window, 'tools', None)
+
+            tool = None
+            if isinstance(tool_map, dict) and selected_tool in ('brush', 'erase'):
+                tool = tool_map.get(selected_tool)
+
+            if tool is not None:
+                toggle = getattr(tool, '_toggle_shape', None)
+                if callable(toggle):
+                    try:
+                        toggle()
+                        event.accept()
+                        return
+                    except Exception:
+                        pass
+
+            active_tool = getattr(self, '_active_3d_tool', None)
+            if active_tool is not None:
+                current_shape = str(getattr(active_tool, 'brush_shape', 'circle')).strip().lower()
+                next_shape = 'square' if current_shape == 'circle' else 'circle'
+                center = getattr(active_tool, '_last_hover_world_pos', None)
+                if center is None:
+                    try:
+                        center = np.asarray(self.plotter.camera.focal_point, dtype=np.float64)
+                    except Exception:
+                        center = None
+
+                setter = getattr(active_tool, 'set_brush_shape', None)
+                if callable(setter):
+                    try:
+                        setter(next_shape, center=center)
+                    except Exception:
+                        pass
+                else:
+                    active_tool.brush_shape = next_shape
+
+                manager = getattr(self, 'mvat_manager', None)
+                if manager is not None and center is not None:
+                    try:
+                        manager.update_sphere_hover_overlay(center, render=False)
+                    except Exception:
+                        pass
+            return
 
         if key == Qt.Key_W:
             # Pitch up (rotate view direction in-place)
@@ -1597,6 +2151,13 @@ class MVATViewer(QFrame):
                     actor.SetVisibility(should_be_visible)
                 except Exception:
                     pass
+
+            refresh_overlay = getattr(self.mvat_manager, 'refresh_primary_mesh_overlay', None)
+            if callable(refresh_overlay):
+                try:
+                    refresh_overlay(force_recreate=True, render=False)
+                except Exception:
+                    pass
             
             self.plotter.render()
             print(f"Rendered {len(self.scene_context)} scene products")
@@ -1942,7 +2503,7 @@ class MVATViewer(QFrame):
     def set_ray_visible(self, visible: bool):
         """
         Toggle ray visualization visibility.
-        
+
         Args:
             visible: Whether the ray should be visible.
         """
@@ -1950,6 +2511,37 @@ class MVATViewer(QFrame):
         self._ray_manager.set_visibility(visible)
         self._ortho_ray_manager.set_visibility(visible)
         self.plotter.render()
+
+    def set_sphere_visible(self, visible: bool):
+        """
+        Toggle sphere hover tracking.
+
+        Args:
+            visible: Whether the sphere tracking feature should be enabled.
+        """
+        self._sphere_visible = visible
+        if not visible and hasattr(self, '_sphere_hover_timer'):
+            try:
+                self._sphere_hover_timer.stop()
+                self._sphere_hover_pending_events = 0
+            except Exception:
+                pass
+        if self._sphere_manager is not None:
+            # Keep it invisible initially - it will show when mouse picks geometry
+            self._sphere_manager.set_visibility(False)
+        manager = getattr(self, 'mvat_manager', None)
+        if manager is not None:
+            try:
+                manager.clear_sphere_hover_overlay(reset_context=not visible, render=False)
+            except Exception:
+                pass
+        self._sync_sphere_hover_binding()
+        if visible:
+            self._request_sphere_hover_refresh()
+        try:
+            self.plotter.render()
+        except Exception:
+            pass
         
     def get_scene_median_depth(self, camera_position: np.ndarray) -> float:
         """
@@ -2485,6 +3077,14 @@ class MVATViewer(QFrame):
 
     def close(self):
         """Clean up the plotter resources."""
+        active_tool = getattr(self, '_active_3d_tool', None)
+        if active_tool is not None:
+            try:
+                active_tool.deactivate()
+            except Exception:
+                pass
+            self._active_3d_tool = None
+
         # Clean up ray manager
         if hasattr(self, '_ray_manager'):
             self._ray_manager.clear()
@@ -2494,6 +3094,35 @@ class MVATViewer(QFrame):
             except Exception:
                 pass
             self._ortho_ray_manager.clear()
+
+        # Clean up sphere manager
+        if hasattr(self, '_sphere_manager'):
+            try:
+                self._sphere_manager.remove_from_plotter(self.plotter)
+            except Exception:
+                pass
+            self._sphere_manager.clear()
+
+        manager = getattr(self, 'mvat_manager', None)
+        if manager is not None:
+            try:
+                manager.clear_sphere_hover_overlay(reset_context=True, render=False)
+            except Exception:
+                pass
+
+        # Remove mouse move observer
+        if (hasattr(self, '_mouse_sphere_observer_id') and
+            self._mouse_sphere_observer_id is not None):
+            try:
+                self._unbind_sphere_hover_observer()
+            except Exception:
+                pass
+
+        if hasattr(self, '_sphere_hover_timer'):
+            try:
+                self._sphere_hover_timer.stop()
+            except Exception:
+                pass
 
         try:
             self._cancel_camera_motion()
@@ -2506,7 +3135,7 @@ class MVATViewer(QFrame):
                 controller.unbind()
             except Exception:
                 pass
-        
+
         if self.plotter:
             self.plotter.close()
 

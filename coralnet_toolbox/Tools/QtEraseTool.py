@@ -44,14 +44,15 @@ class EraseTool(BrushTool):
                 self.annotation_window.action_stack.push(history_action)
         QApplication.restoreOverrideCursor()
 
-    def create_cursor_preview_item(self, u: float, v: float):
+    def create_cursor_preview_item(self, u: float, v: float, radius: float = None):
         """Return a styled eraser shape QGraphicsItem centred at image pixel (u, v)."""
-        radius = self.brush_size / 2.0
+        radius = self.brush_size / 2.0 if radius is None else float(radius)
+        diameter = max(1.0, radius * 2.0)
         
         if self.shape == 'circle':
-            item = QGraphicsEllipseItem(u - radius, v - radius, self.brush_size, self.brush_size)
+            item = QGraphicsEllipseItem(u - radius, v - radius, diameter, diameter)
         else:
-            item = QGraphicsRectItem(u - radius, v - radius, self.brush_size, self.brush_size)
+            item = QGraphicsRectItem(u - radius, v - radius, diameter, diameter)
         
         item.setBrush(QColor(0, 0, 0, 0))
         pen = QPen(QColor(255, 0, 0, 200), 2)
