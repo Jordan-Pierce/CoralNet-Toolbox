@@ -112,6 +112,131 @@ class VisibilityManager:
         return result
 
     @classmethod
+    def reconstruct_depth_map(cls,
+                              index_map: np.ndarray,
+                              scene_product: 'AbstractSceneProduct',
+                              R: np.ndarray,
+                              t: np.ndarray) -> np.ndarray:
+        """
+        Reconstruct a camera-space depth map from an element index map.
+
+        The visible element IDs in ``index_map`` are used to gather the
+        corresponding 3D element coordinates from the scene product. Their
+        world coordinates are then transformed into camera space using only
+        ``R`` and ``t``. Intrinsics and lens distortion are not required.
+        """
+        if index_map is None:
+            raise ValueError("index_map must not be None")
+        if scene_product is None:
+            raise ValueError("scene_product must not be None")
+        if R is None or t is None:
+            raise ValueError("R and t must not be None")
+
+        index_map_np = np.asarray(index_map)
+        if index_map_np.ndim != 2:
+            raise ValueError("index_map must be a 2-D numpy array")
+
+        valid_mask = index_map_np >= 0
+        if not np.any(valid_mask):
+            return np.full(index_map_np.shape, np.nan, dtype=np.float32)
+
+        element_ids = np.unique(index_map_np[valid_mask].astype(np.int64, copy=False))
+        if element_ids.size == 0:
+            return np.full(index_map_np.shape, np.nan, dtype=np.float32)
+
+        try:
+            element_count = int(scene_product.get_element_count())
+        except Exception:
+            element_count = None
+
+        if element_count is not None and element_count <= 0:
+            return np.full(index_map_np.shape, np.nan, dtype=np.float32)
+
+        # Prepare cached geometry where available so repeated reconstructions
+        # reuse the same underlying element-coordinate arrays/tensors.
+        if hasattr(scene_product, 'prepare_geometry'):
+            try:
+                scene_product.prepare_geometry()
+            except Exception:
+                pass
+
+        # Fast GPU path using cached coordinates when available.
+        if HAS_TORCH and torch.cuda.is_available():
+            coords_t = getattr(scene_product, '_cached_face_centers_pt', None)
+            if coords_t is None:
+                coords_np = getattr(scene_product, '_element_centers_np', None)
+                if coords_np is None and hasattr(scene_product, 'get_points_array'):
+                    coords_np = scene_product.get_points_array()
+                if coords_np is None and hasattr(scene_product, 'get_face_centers'):
+                    coords_np = scene_product.get_face_centers()
+                if coords_np is not None:
+                    coords_t = torch.as_tensor(np.asarray(coords_np, dtype=np.float32), device='cuda')
+
+            if coords_t is not None:
+                coords_t = coords_t.to(device='cuda', dtype=torch.float32)
+                coords_count = int(coords_t.shape[0])
+                if int(element_ids.max()) < coords_count:
+                    element_ids_t = torch.as_tensor(element_ids, dtype=torch.long, device='cuda')
+                    coords_selected = coords_t.index_select(0, element_ids_t)
+                    R_t = torch.as_tensor(R, dtype=torch.float32, device='cuda')
+                    t_t = torch.as_tensor(t, dtype=torch.float32, device='cuda')
+                    z_values = torch.matmul(coords_selected, R_t.T)[:, 2] + t_t[2]
+                    lookup = torch.full((coords_count + 1,), float('nan'), dtype=torch.float32, device='cuda')
+                    lookup[element_ids_t] = z_values.to(torch.float32)
+                    index_map_t = torch.as_tensor(index_map_np.astype(np.int64, copy=False), dtype=torch.long, device='cuda')
+                    index_map_t = index_map_t.clone()
+                    index_map_t[index_map_t < 0] = coords_count
+                    return lookup[index_map_t].cpu().numpy().astype(np.float32, copy=False)
+
+        # CPU path using cached arrays when available.
+        coords_np = getattr(scene_product, '_element_centers_np', None)
+        if coords_np is None and hasattr(scene_product, 'get_points_array'):
+            coords_np = scene_product.get_points_array()
+        if coords_np is None and hasattr(scene_product, 'get_face_centers'):
+            coords_np = scene_product.get_face_centers()
+
+        if coords_np is not None:
+            coords_np = np.asarray(coords_np, dtype=np.float32)
+            coords_count = int(coords_np.shape[0])
+            if int(element_ids.max()) < coords_count:
+                coords_selected = coords_np[element_ids]
+                R_np = np.asarray(R, dtype=np.float32)
+                t_np = np.asarray(t, dtype=np.float32)
+                z_values = (coords_selected @ R_np.T)[:, 2] + t_np[2]
+                lookup = np.full((coords_count + 1,), np.nan, dtype=np.float32)
+                lookup[element_ids] = z_values.astype(np.float32, copy=False)
+                index_map_safe = index_map_np.astype(np.int64, copy=True)
+                index_map_safe[index_map_safe < 0] = coords_count
+                return lookup[index_map_safe].astype(np.float32, copy=False)
+
+        # Slow fallback for products that only expose per-element lookup.
+        coords_list = []
+        filtered_ids = []
+        for element_id in element_ids:
+            coord = scene_product.get_element_coordinate(int(element_id))
+            if coord is None:
+                continue
+            coords_list.append(np.asarray(coord, dtype=np.float32))
+            filtered_ids.append(int(element_id))
+
+        if not coords_list:
+            return np.full(index_map_np.shape, np.nan, dtype=np.float32)
+
+        element_ids = np.asarray(filtered_ids, dtype=np.int64)
+        coords_selected = np.vstack(coords_list)
+        if element_count is None:
+            element_count = int(element_ids.max())
+
+        R_np = np.asarray(R, dtype=np.float32)
+        t_np = np.asarray(t, dtype=np.float32)
+        z_values = (coords_selected @ R_np.T)[:, 2] + t_np[2]
+        lookup = np.full((element_count + 1,), np.nan, dtype=np.float32)
+        lookup[element_ids] = z_values.astype(np.float32, copy=False)
+        index_map_safe = index_map_np.astype(np.int64, copy=True)
+        index_map_safe[index_map_safe < 0] = element_count
+        return lookup[index_map_safe].astype(np.float32, copy=False)
+
+    @classmethod
     def compute_visibility_from_scene(cls,
                                       scene_context: 'SceneContext',
                                       K: np.ndarray,

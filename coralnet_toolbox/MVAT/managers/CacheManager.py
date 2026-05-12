@@ -125,25 +125,21 @@ def _save_npy_format(base: str, index_map: np.ndarray,
                      depth_map: Optional[np.ndarray],
                      element_type: str) -> bool:
     """
-    Atomically write index_map, visible_indices, depth_map, and metadata as
-    separate files rooted at *base*.  Returns True on success.
+    Atomically write index_map, visible_indices, and metadata as separate
+    files rooted at *base*.  Returns True on success.
     """
     paths = _npy_paths(base)
     tmp = {k: _tmp_path(v) for k, v in paths.items()}
     try:
         _save_npy_fast(index_map, tmp['idx'])
         _save_npy_fast(visible_indices, tmp['vis'])
-        if depth_map is not None:
-            _save_npy_fast(depth_map, tmp['dep'])
-        meta = {'element_type': element_type, 'has_depth_map': depth_map is not None}
+        meta = {'element_type': element_type, 'has_depth_map': False}
         with open(tmp['meta'], 'w') as f:
             json.dump(meta, f)
         # Atomic rename — temp names already carry the right extension so
         # os.replace() finds them on both Windows and POSIX.
         os.replace(tmp['idx'],  paths['idx'])
         os.replace(tmp['vis'],  paths['vis'])
-        if depth_map is not None:
-            os.replace(tmp['dep'], paths['dep'])
         os.replace(tmp['meta'], paths['meta'])
         return True
     except Exception as e:
@@ -493,7 +489,8 @@ class CacheManager:
             point_cloud_path (str): Path to the geometry file
             index_map (np.ndarray): 2D index map (H x W)
             visible_indices (np.ndarray): 1D array of visible element IDs
-            depth_map (np.ndarray, optional): 2D depth map (H x W)
+            depth_map (np.ndarray, optional): Accepted for backward compatibility;
+                ignored by the current cache format.
             element_type (str): Type of indexed elements ('point', 'face', or 'cell')
             inverted_index (dict, optional): CSR inverted index with keys
                 'inv_ids', 'inv_offsets', 'inv_pixels'.
@@ -517,8 +514,6 @@ class CacheManager:
         try:
             index_map       = index_map.astype(np.int32, copy=False)
             visible_indices = np.asarray(visible_indices).astype(np.int32, copy=False)
-            if depth_map is not None:
-                depth_map = depth_map.astype(np.float16, copy=False)
         except Exception:
             pass
 
@@ -535,15 +530,13 @@ class CacheManager:
 
         # ------------------------------------------------------------------
         # Legacy / compressed .npz fallback
-        # NOTE: Inverted index is no longer saved to disk (~115 MB per camera).
+        # NOTE: Inverted index and depth maps are no longer saved to disk.
         # ------------------------------------------------------------------
         save_dict = {
             'index_map':      index_map,
             'visible_indices': visible_indices,
             'element_type':   element_type,
         }
-        if depth_map is not None:
-            save_dict['depth_map'] = depth_map
 
         # Atomic write: temp file → rename
         temp_path = os.path.splitext(cache_path)[0] + '_tmp.npz'
