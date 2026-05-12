@@ -406,8 +406,8 @@ class MVATManager(QObject):
         self.compute_depth_maps_enabled = True
         # New toggle: whether to compute index maps in background
         self.compute_index_maps_enabled = True
-        # Scale factor for visibility map resolution (1.0 = native, 0.1 = lowest)
-        self.visibility_scale_factor = 1.0
+        # Maximum pixel budget for background index map computation
+        self.pixel_budget = 4_000_000  # Default to ~4 Megapixels
         # Safety flag to prevent concurrent visibility computations
         self._is_computing_visibility = False
         # Track active worker threads to prevent GC
@@ -657,26 +657,46 @@ class MVATManager(QObject):
 
                 if reply == QMessageBox.Yes:
                     from PyQt5.QtWidgets import QInputDialog
-                    qualities = ["Highest (100%)", "High (75%)", "Medium (50%)", "Low (25%)", "Lowest (10%)"]
-                    quality_map = dict(zip(qualities, [1.0, 0.75, 0.50, 0.25, 0.10]))
+                    
+                    # 1. Define the extended smart Pixel Budgets
+                    qualities = [
+                        "Native (Full Resolution)", 
+                        "Highest (~12 Megapixels)", 
+                        "High (~4 Megapixels)", 
+                        "Medium (~2 Megapixels)", 
+                        "Low (~1 Megapixel)",
+                        "Lowest (~0.5 Megapixel)"
+                    ]
+                    
+                    # Map to exact pixel counts (None means Native/No scaling)
+                    quality_map = {
+                        "Native (Full Resolution)": None,
+                        "Highest (~12 Megapixels)": 12_000_000,
+                        "High (~4 Megapixels)": 4_000_000,
+                        "Medium (~2 Megapixels)": 2_000_000,
+                        "Low (~1 Megapixel)": 1_000_000,
+                        "Lowest (~0.5 Megapixel)": 500_000
+                    }
 
-                    current_idx = 0
-                    for i, s in enumerate([1.0, 0.75, 0.50, 0.25, 0.10]):
-                        if self.visibility_scale_factor == s:
+                    # Determine default index based on current settings
+                    current_idx = 2  # Default to "High (~4 Megapixels)"
+                    for i, (key, budget) in enumerate(quality_map.items()):
+                        if getattr(self, 'pixel_budget', 4_000_000) == budget:
                             current_idx = i
                             break
 
                     choice, ok = QInputDialog.getItem(
                         self.main_window,
-                        "Select Quality",
-                        "Choose the resolution scale for the maps:\n(Lower is faster but less accurate)",
+                        "Select Visibility Quality",
+                        "Choose the maximum resolution budget per image:\n(Lower is faster but edges may become slightly blocky)",
                         qualities,
                         current_idx,
                         False
                     )
 
                     if ok and choice:
-                        self.visibility_scale_factor = quality_map[choice]
+                        # 2. Store the pixel budget instead of a static scale factor
+                        self.pixel_budget = quality_map[choice]
                         self._compute_visibility_async(primary_target, uncached_cameras)
 
         # ------------------------------------------------------------------
@@ -895,10 +915,24 @@ class MVATManager(QObject):
 
         ortho_raster = self.ortho_camera._raster
 
-        current_scale = float(self.visibility_scale_factor)
+        native_pixels = self.ortho_camera.width * self.ortho_camera.height
+        pixel_budget = self.pixel_budget
+        if pixel_budget is None or native_pixels <= pixel_budget:
+            current_scale = 1.0
+        else:
+            current_scale = float(np.sqrt(pixel_budget / native_pixels))
 
+        existing_scale = getattr(ortho_raster, 'index_map_scale_factor', None)
         if ortho_raster.index_map is not None:
-            return
+            if existing_scale is not None and np.isclose(float(existing_scale), current_scale):
+                return
+            ortho_raster.index_map = None
+            ortho_raster.index_map_path = None
+            ortho_raster.index_map_scale_factor = None
+            ortho_raster.visible_indices = None
+            ortho_raster.inv_ids = None
+            ortho_raster.inv_offsets = None
+            ortho_raster.inv_pixels = None
 
         if self.cache_manager is not None:
             try:
@@ -931,17 +965,15 @@ class MVATManager(QObject):
 
         ortho_camera   = self.ortho_camera
         mesh_product   = primary_target
-        requested_scale = current_scale
+        requested_budget = self.pixel_budget
 
         def _build():
             from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
-            result = VisibilityManager.compute_ortho_index_map_vtk(
+            return VisibilityManager.compute_ortho_index_map_vtk(
                 ortho_camera,
                 mesh_product,
-                scale_factor=requested_scale,
+                pixel_budget=requested_budget,
             )
-            result['scale_factor'] = requested_scale
-            return result
 
         def _done(future):
             # Called on the thread-pool thread — only emit a Qt signal (thread-safe).
@@ -980,11 +1012,18 @@ class MVATManager(QObject):
     def _on_ortho_index_map_computed(self, result: dict):
         """Store the completed ortho index map on the OrthoRaster (runs on main thread via signal)."""
         try:
-            result_scale = float(result.get('scale_factor', self.visibility_scale_factor))
-            if not np.isclose(result_scale, float(self.visibility_scale_factor)):
+            native_pixels = self.ortho_camera.width * self.ortho_camera.height
+            pixel_budget = self.pixel_budget
+            if pixel_budget is None or native_pixels <= pixel_budget:
+                current_scale = 1.0
+            else:
+                current_scale = float(np.sqrt(pixel_budget / native_pixels))
+
+            result_scale = float(result.get('scale_factor', current_scale))
+            if not np.isclose(result_scale, current_scale):
                 print(
                     f"⚠️ Discarding stale ortho index map at scale {result_scale:.4f}; "
-                    f"current quality is {self.visibility_scale_factor:.4f}"
+                    f"current quality is {current_scale:.4f}"
                 )
                 return
 
@@ -1522,7 +1561,7 @@ class MVATManager(QObject):
                 cache_manager=self.cache_manager,
                 cache_keys_dict=cache_keys_dict,
                 target_file_path=primary_target.file_path if primary_target else "",
-                scale_factor=self.visibility_scale_factor,
+                pixel_budget=self.pixel_budget,
                 warp_callables_dict=warp_callables_dict,
                 dist_coeffs_bytes_dict=dist_coeffs_bytes_dict,
             )

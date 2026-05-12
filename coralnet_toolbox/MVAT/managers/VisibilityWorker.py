@@ -27,13 +27,13 @@ class VisibilityWorker(QObject):
     Now safely handles Meshes (via Open3D), PointClouds, and DEMs.
     """
     def __init__(self, primary_target, camera_params_dict, compute_depth_maps=True,
-                 cache_manager=None, cache_keys_dict=None, target_file_path="", scale_factor=1.0,
+                 cache_manager=None, cache_keys_dict=None, target_file_path="", pixel_budget=None,
                  warp_callables_dict=None, dist_coeffs_bytes_dict=None):
         super().__init__()
         self.primary_target = primary_target
         self.camera_params_dict = camera_params_dict
         self.compute_depth_maps = compute_depth_maps
-        self.scale_factor = scale_factor
+        self.pixel_budget = pixel_budget
         self.warp_callables_dict = warp_callables_dict or {}
         # path -> dist_coeffs.tobytes() for distorted cameras; used for cache-key disambiguation
         self.dist_coeffs_bytes_dict = dist_coeffs_bytes_dict or {}
@@ -89,11 +89,15 @@ class VisibilityWorker(QObject):
                     try:
                         # Primary: Batched VTK rasterization
                         def update_status(current, total):
-                            self._status(f"Computing 3D maps... ({current}/{total} cameras at {self.scale_factor}x)")
+                            if self.pixel_budget is None or self.pixel_budget <= 0:
+                                budget_str = "Native"
+                            else:
+                                budget_str = f"{self.pixel_budget / 1_000_000:.1f}MP"
+                            self._status(f"Computing 3D maps... ({current}/{total} cameras at {budget_str} budget)")
 
                         batch_results = VisibilityManager.compute_batch_mesh_visibility_vtk(
                             self.primary_target, params_list, self.compute_depth_maps,
-                            scale_factor=self.scale_factor,
+                            pixel_budget=self.pixel_budget,
                             progress_callback=update_status
                         )
                         for p, r in zip(paths, batch_results):
@@ -181,34 +185,53 @@ class VisibilityWorker(QObject):
                             rep_raster = self.warp_callables_dict[group_paths[0]].__self__
                             rep_raster._ensure_warp_maps()
                             if not hasattr(rep_raster, '_torch_grid_gpu'):
-                                # Force GPU grid build via single-map warp on a tiny dummy
                                 dummy = np.zeros((1, 1), dtype=np.float32)
                                 rep_raster._warp_pytorch_cuda(dummy, 0)
 
                             grid_gpu  = rep_raster._torch_grid_gpu
                             oob_mask  = rep_raster._torch_oob_mask
 
+                            # --- DYNAMIC VRAM BATCHING ---
+                            # 1. Check free VRAM on the GPU
+                            free_vram, total_vram = torch.cuda.mem_get_info()
+                            safe_vram = free_vram * 0.8  # Leave 20% headroom for safety
+                            
+                            # 2. Calculate footprint of a single image (~16 bytes per pixel)
+                            test_path = group_paths[0]
+                            test_shape = results[test_path].get('index_map').shape
+                            pixels_per_img = test_shape[0] * test_shape[1]
+                            bytes_per_img = pixels_per_img * 16  
+                            
+                            # 3. Determine optimal chunk size
+                            batch_size = max(1, int(safe_vram / bytes_per_img))
+                            
                             # Collect index maps
                             idx_paths = [p for p in group_paths if results[p].get('index_map') is not None]
                             if idx_paths:
-                                warped = Raster.warp_batch_cuda(
-                                    [results[p]['index_map'] for p in idx_paths],
-                                    [-1] * len(idx_paths),
-                                    grid_gpu, oob_mask
-                                )
-                                for p, w in zip(idx_paths, warped):
-                                    results[p]['index_map'] = w
+                                # Chunk the list based on our dynamic batch size
+                                for i in range(0, len(idx_paths), batch_size):
+                                    chunk = idx_paths[i:i + batch_size]
+                                    warped = Raster.warp_batch_cuda(
+                                        [results[p]['index_map'] for p in chunk],
+                                        [-1] * len(chunk),
+                                        grid_gpu, oob_mask
+                                    )
+                                    for p, w in zip(chunk, warped):
+                                        results[p]['index_map'] = w
 
                             # Collect depth maps
                             dep_paths = [p for p in group_paths if results[p].get('depth_map') is not None]
                             if dep_paths:
-                                warped = Raster.warp_batch_cuda(
-                                    [results[p]['depth_map'] for p in dep_paths],
-                                    [float('nan')] * len(dep_paths),
-                                    grid_gpu, oob_mask
-                                )
-                                for p, w in zip(dep_paths, warped):
-                                    results[p]['depth_map'] = w
+                                # Chunk the list based on our dynamic batch size
+                                for i in range(0, len(dep_paths), batch_size):
+                                    chunk = dep_paths[i:i + batch_size]
+                                    warped = Raster.warp_batch_cuda(
+                                        [results[p]['depth_map'] for p in chunk],
+                                        [float('nan')] * len(chunk),
+                                        grid_gpu, oob_mask
+                                    )
+                                    for p, w in zip(chunk, warped):
+                                        results[p]['depth_map'] = w
 
                         cuda_ok = True
 
