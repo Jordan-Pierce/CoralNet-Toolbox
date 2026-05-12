@@ -731,6 +731,13 @@ class VisibilityManager:
         plotter_setup_time = time.time() - setup_start - encode_time
         print(f"   ✅ Setup completed in {encode_time + plotter_setup_time:.4f}s")
         
+        # --- Prepare face centers for GPU depth mapping ---
+        print("   -> Preparing face centers for GPU depth mapping...")
+        if HAS_TORCH and torch.cuda.is_available():
+            face_centers_np = mesh.cell_centers().points.astype(np.float32)
+            face_centers_pt = torch.from_numpy(face_centers_np).cuda()
+        # -----------------------------------------------------------
+
         # --- 2. RENDER LOOP ---
         print(f"\n   -> Rendering {len(camera_params_list)} cameras at {scale_factor}x scale...")
         render_start_time = time.time()
@@ -812,18 +819,42 @@ class VisibilityManager:
             t0 = time.time()
             depth_map = None
             if compute_depth_map:
-                try:
-                    vtk_depth = plotter.get_image_depth(fill_value=np.nan)
-                    small_depth = -vtk_depth.astype(np.float32)
-
+                if HAS_TORCH and torch.cuda.is_available():
+                    # 1. Transfer camera parameters to GPU
+                    R_pt = torch.from_numpy(R).to(torch.float32).cuda()
+                    t_pt = torch.from_numpy(t).to(torch.float32).cuda()
+                    
+                    # 2. Calculate Z-depth in camera space for all face centers simultaneously
+                    # P_cam = P_world @ R.T + t. We only need the Z coordinate (index 2).
+                    z_cam = torch.matmul(face_centers_pt, R_pt.T)[:, 2] + t_pt[2]
+                    
+                    # 3. Pad with NaN. Since background pixels in our index map are -1, 
+                    # PyTorch negative indexing will automatically grab this last element!
+                    z_cam_padded = torch.cat([z_cam, torch.tensor([float('nan')], device='cuda')])
+                    
+                    # 4. Map the Face IDs directly to their computed Depths!
+                    small_depth_tensor = z_cam_padded[small_index_map_tensor.long()]
+                    small_depth = small_depth_tensor.cpu().numpy()
+                    
                     if scale_factor != 1.0:
                         import cv2
                         depth_map = cv2.resize(small_depth, (width, height), interpolation=cv2.INTER_NEAREST)
                     else:
                         depth_map = small_depth
-                except Exception as e:
-                    print(f"   ⚠️ Failed to extract depth for camera {i}: {e}")
-                    depth_map = np.full((height, width), np.nan, dtype=np.float32)
+                else:
+                    # Fallback to slow VTK depth extraction
+                    try:
+                        vtk_depth = plotter.get_image_depth(fill_value=np.nan)
+                        small_depth = -vtk_depth.astype(np.float32)
+
+                        if scale_factor != 1.0:
+                            import cv2
+                            depth_map = cv2.resize(small_depth, (width, height), interpolation=cv2.INTER_NEAREST)
+                        else:
+                            depth_map = small_depth
+                    except Exception as e:
+                        print(f"   ⚠️ Failed to extract depth for camera {i}: {e}")
+                        depth_map = np.full((height, width), np.nan, dtype=np.float32)
             t_depth = time.time() - t0
             
             results.append({

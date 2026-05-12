@@ -275,10 +275,15 @@ class VisibilityWorker(QObject):
             # 2. Define the background saving task (parallel I/O)
             # =================================================================
             def save_to_disk_task(save_results, cache_mgr, target_path, keys_dict, extra_bytes_dict):
+                import time
+                start_cache_time = time.time()
+                total_to_save = len(save_results)
+                saved_count = 0
+
                 def _save_one(path, result_dict):
                     cache_key = keys_dict.get(path)
                     if cache_key is None:
-                        return
+                        return False
                     extra = extra_bytes_dict.get(path)
                     cache_mgr.save_visibility(
                         cache_key,
@@ -290,18 +295,31 @@ class VisibilityWorker(QObject):
                         inverted_index=None,  # No longer storing inverted_index to save RAM
                         extra_hash_data=extra,
                     )
+                    return True
 
                 n_workers = min(4, max(1, len(save_results)))
+                print(f"💽 Starting background cache save for {total_to_save} cameras...")
+                
                 with ThreadPoolExecutor(max_workers=n_workers) as pool:
                     futs = {
                         pool.submit(_save_one, path, result_dict): path
                         for path, result_dict in save_results.items()
                     }
                     for fut in as_completed(futs):
+                        path = futs[fut]
                         try:
-                            fut.result()
+                            success = fut.result()
+                            if success:
+                                saved_count += 1
+                                # Safe cross-thread UI update
+                                self._status(f"Caching visibility maps to disk... ({saved_count}/{total_to_save})")
                         except Exception as exc:
-                            print(f"Cache save failed for {futs[fut]}: {exc}")
+                            print(f"⚠️ Cache save failed for {path}: {exc}")
+                
+                # Final cleanup messages
+                elapsed = time.time() - start_cache_time
+                print(f"✅ Cached {saved_count}/{total_to_save} visibility maps to disk in {elapsed:.2f}s")
+                self._status("Visibility maps cached successfully.")
 
             # =================================================================
             # 3. Fire and forget the disk writing on a separate daemon thread
