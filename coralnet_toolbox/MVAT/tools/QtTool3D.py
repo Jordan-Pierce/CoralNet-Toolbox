@@ -62,6 +62,7 @@ class Tool3D:
         self.preview_only = True
         self.brush_size = 0.1
         self.brush_shape = 'circle'
+        self._brush_size_customized = False
 
         self._preview_mesh = None            # pv.PolyData shared with the plotter
         self._preview_mesh_points_unit = None  # unit-scale points (radius=1) for fast transforms
@@ -83,7 +84,7 @@ class Tool3D:
         self.active = True
         self.preview_only = False
         calibrate_brush_size = getattr(self, '_calibrate_brush_size', None)
-        if callable(calibrate_brush_size):
+        if not self._brush_size_customized and callable(calibrate_brush_size):
             try:
                 calibrate_brush_size()
             except Exception:
@@ -112,6 +113,7 @@ class Tool3D:
         """Set the world-space brush radius and refresh the preview sphere."""
         try:
             self.brush_size = max(1e-6, float(brush_size))
+            self._brush_size_customized = True
         except Exception:
             return
 

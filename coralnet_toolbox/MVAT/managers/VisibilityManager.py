@@ -580,23 +580,34 @@ class VisibilityManager:
         render_start = time.time()
         plotter.render()
         
-        # Get screenshot (RGB image)
-        screenshot = plotter.screenshot(return_img=True)  # Shape: (H, W, 3) or (H, W, 4)
-        
+        screenshot = plotter.screenshot(return_img=True)
         if screenshot.shape[2] == 4:
-            screenshot = screenshot[:, :, :3]  # Drop alpha channel
+            screenshot = screenshot[:, :, :3]
         
-        # Decode RGB back to face IDs
-        # face_id = R + G*256 + B*65536 - 1  (subtract 1 because we added 1 during encoding)
-        decoded = (screenshot[:, :, 0].astype(np.int32) +
-                   screenshot[:, :, 1].astype(np.int32) * 256 +
-                   screenshot[:, :, 2].astype(np.int32) * 65536)
-        
-        # Background (0,0,0) decodes to 0, subtract 1 to get -1 for no-face
-        index_map = decoded - 1
-        index_map = index_map.astype(np.int32)
+        # Decode RGB back to face IDs (GPU Accelerated)
+        if HAS_TORCH and torch.cuda.is_available():
+            # Force contiguous memory to fix the negative stride from PyVista's vertical flip
+            ss_tensor = torch.from_numpy(np.ascontiguousarray(screenshot)).cuda()
+            decoded = (ss_tensor[..., 0].to(torch.int32) +
+                       ss_tensor[..., 1].to(torch.int32) * 256 +
+                       ss_tensor[..., 2].to(torch.int32) * 65536)
+            index_map_tensor = decoded - 1
+            
+            valid_mask = index_map_tensor >= 0
+            visible_indices = torch.unique(index_map_tensor[valid_mask]).cpu().numpy().astype(np.int32)
+            index_map = index_map_tensor.cpu().numpy()
+        else:
+            decoded = (screenshot[:, :, 0].astype(np.int32) +
+                       screenshot[:, :, 1].astype(np.int32) * 256 +
+                       screenshot[:, :, 2].astype(np.int32) * 65536)
+            index_map = (decoded - 1).astype(np.int32)
+            visible_indices = np.unique(index_map[index_map >= 0]).astype(np.int32)
+            
         render_time = time.time() - render_start
         print(f"   ✅ Rendering and decoding completed in {render_time:.4f}s")
+        
+        # NOTE: You can delete the "Extract visible face IDs" line at the bottom 
+        # of the method since it is handled above.
         
         # --- 5. Extract depth buffer ---
         depth_map = None
@@ -619,9 +630,6 @@ class VisibilityManager:
             except Exception as e:
                 print(f"   ⚠️ Failed to extract depth buffer: {e}")
                 depth_map = np.full((height, width), np.nan, dtype=np.float32)
-        
-        # --- 6. Extract visible face IDs ---
-        visible_indices = np.unique(index_map[index_map >= 0]).astype(np.int32)
         
         # Cleanup
         plotter.close()
@@ -762,12 +770,30 @@ class VisibilityManager:
                 screenshot = screenshot[:, :, :3]
             t_screenshot = time.time() - t0
                 
-            # 4. Decoding (Numpy Math)
+            # 4. Decoding & Unique Extraction (GPU Math)
             t0 = time.time()
-            decoded = (screenshot[:, :, 0].astype(np.int32) +
-                       screenshot[:, :, 1].astype(np.int32) * 256 +
-                       screenshot[:, :, 2].astype(np.int32) * 65536)
-            small_index_map = decoded - 1
+            if HAS_TORCH and torch.cuda.is_available():
+                # Force contiguous memory to fix the negative stride from PyVista's vertical flip
+                ss_tensor = torch.from_numpy(np.ascontiguousarray(screenshot)).cuda()
+                decoded = (ss_tensor[..., 0].to(torch.int32) +
+                           ss_tensor[..., 1].to(torch.int32) * 256 +
+                           ss_tensor[..., 2].to(torch.int32) * 65536)
+                small_index_map_tensor = decoded - 1
+                
+                # Extract unique visible IDs directly on the GPU
+                valid_mask = small_index_map_tensor >= 0
+                visible_indices = torch.unique(small_index_map_tensor[valid_mask]).cpu().numpy().astype(np.int32)
+                
+                # Pull back to CPU for resizing
+                small_index_map = small_index_map_tensor.cpu().numpy()
+            else:
+                # Fallback
+                decoded = (screenshot[:, :, 0].astype(np.int32) +
+                           screenshot[:, :, 1].astype(np.int32) * 256 +
+                           screenshot[:, :, 2].astype(np.int32) * 65536)
+                small_index_map = decoded - 1
+                valid_mask = small_index_map >= 0
+                visible_indices = np.unique(small_index_map[valid_mask]).astype(np.int32)
 
             # Upsample to native resolution using nearest-neighbour interpolation
             if scale_factor != 1.0:
@@ -775,7 +801,12 @@ class VisibilityManager:
                 index_map = cv2.resize(small_index_map, (width, height), interpolation=cv2.INTER_NEAREST)
             else:
                 index_map = small_index_map
+                
             t_decode = time.time() - t0
+            
+            # NOTE: You can now completely delete Step 6 (Extract unique visible IDs)
+            # since `visible_indices` is already calculated above!
+            t_unique = 0.0
             
             # 5. Depth Extraction
             t0 = time.time()
@@ -794,12 +825,6 @@ class VisibilityManager:
                     print(f"   ⚠️ Failed to extract depth for camera {i}: {e}")
                     depth_map = np.full((height, width), np.nan, dtype=np.float32)
             t_depth = time.time() - t0
-            
-            # 6. Extract unique visible IDs (No CSR index stored, will use on-the-fly np.where() if needed)
-            t0 = time.time()
-            valid_mask = index_map >= 0
-            visible_indices = np.unique(index_map[valid_mask]).astype(np.int32)
-            t_unique = time.time() - t0
             
             results.append({
                 'index_map': index_map,
@@ -990,13 +1015,29 @@ class VisibilityManager:
         if screenshot.shape[2] == 4:
             screenshot = screenshot[:, :, :3]
 
-        decoded   = (screenshot[:, :, 0].astype(np.int32)
-                     + screenshot[:, :, 1].astype(np.int32) * 256
-                     + screenshot[:, :, 2].astype(np.int32) * 65536)
-        index_map = np.fliplr((decoded - 1).astype(np.int32))
-        plotter.close()
+        if HAS_TORCH and torch.cuda.is_available():
+            # Force contiguous memory to fix the negative stride from PyVista's vertical flip
+            ss_tensor = torch.from_numpy(np.ascontiguousarray(screenshot)).cuda()
+            decoded = (ss_tensor[..., 0].to(torch.int32) +
+                       ss_tensor[..., 1].to(torch.int32) * 256 +
+                       ss_tensor[..., 2].to(torch.int32) * 65536)
+            index_map_tensor = decoded - 1
+            
+            # Extract unique IDs on GPU
+            valid_mask = index_map_tensor >= 0
+            visible_indices = torch.unique(index_map_tensor[valid_mask]).cpu().numpy().astype(np.int32)
+            
+            # Transfer back to CPU and flip
+            index_map = np.fliplr(index_map_tensor.cpu().numpy())
+        else:
+            decoded   = (screenshot[:, :, 0].astype(np.int32)
+                         + screenshot[:, :, 1].astype(np.int32) * 256
+                         + screenshot[:, :, 2].astype(np.int32) * 65536)
+            index_map = np.fliplr((decoded - 1).astype(np.int32))
+            visible_indices = np.unique(index_map[index_map >= 0]).astype(np.int32)
 
-        visible_indices = np.unique(index_map[index_map >= 0]).astype(np.int32)
+        plotter.close()
+        
         total = time.time() - start
         n_vis = len(visible_indices)
         cov   = np.sum(index_map >= 0) / (render_w * render_h) * 100
