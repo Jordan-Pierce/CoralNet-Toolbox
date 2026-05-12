@@ -192,7 +192,8 @@ class VisibilityManager:
                                  t: np.ndarray,
                                  width: int,
                                  height: int,
-                                 compute_depth_map: bool = True) -> dict:
+                                 compute_depth_map: bool = True,
+                                 pixel_budget: Optional[int] = None) -> dict:
         """
         Strategy B: Compute visibility for mesh products.
         Attempts VTK rasterization first, falls back to Open3D raycasting,
@@ -200,8 +201,9 @@ class VisibilityManager:
         """
         try:
             # First Choice: VTK (Pixel-perfect, supports all mesh types)
+            # Now passes the pixel_budget down for dynamic scaling and fast caching!
             return cls._compute_mesh_visibility_vtk(
-                mesh_product, K, R, t, width, height, compute_depth_map
+                mesh_product, K, R, t, width, height, compute_depth_map, pixel_budget=pixel_budget
             )
         except Exception as e:
             print(f"⚠️ VTK mesh rasterization failed: {e}. Trying Open3D raycasting...")
@@ -484,71 +486,68 @@ class VisibilityManager:
                                      t: np.ndarray,
                                      width: int,
                                      height: int,
-                                     compute_depth_map: bool = True) -> dict:
+                                     compute_depth_map: bool = True,
+                                     pixel_budget: Optional[int] = None) -> dict:
         """
         VTK-based mesh rasterization for pixel-perfect face ID and depth maps.
-        
-        Workflow:
-        1. Create off-screen plotter matching image dimensions
-        2. Configure VTK camera from K, R, t (OpenCV conventions)
-        3. Assign face IDs as cell scalars with RGB encoding
-        4. Render and decode face IDs from screenshot
-        5. Extract depth buffer and convert to camera-space depth
+        Now dynamically scales resolution and offloads decode/depth to PyTorch.
         """
         import pyvista as pv
         import time
-        
+
         start_time = time.time()
         print(f"\n{'='*50}")
         print(f"🎨 VTK MESH VISIBILITY RASTERIZATION")
         print(f"{'='*50}")
-        
+
         mesh = mesh_product.get_mesh()
         n_cells = mesh.n_cells
-        
+
+        # --- DYNAMIC SCALING ---
+        native_pixels = width * height
+        if pixel_budget is None or native_pixels <= pixel_budget:
+            dynamic_scale = 1.0
+        else:
+            dynamic_scale = float(np.sqrt(pixel_budget / native_pixels))
+
+        render_w = max(1, int(width * dynamic_scale))
+        render_h = max(1, int(height * dynamic_scale))
+
+        K_scaled = K.copy()
+        K_scaled[0, :3] *= dynamic_scale
+        K_scaled[1, :3] *= dynamic_scale
+
         if n_cells == 0:
             print("   ⚠️ No cells in mesh. Returning empty maps.")
             return cls._normalize_result_dict({
-                'index_map': np.full((height, width), -1, dtype=np.int32),
+                'index_map': np.full((render_h, render_w), -1, dtype=np.int32),
                 'visible_indices': np.array([], dtype=np.int32),
-                'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
+                'depth_map': np.full((render_h, render_w), np.nan, dtype=np.float32) if compute_depth_map else None,
                 'inverted_index': None,
+                'scale_factor': dynamic_scale
             }, compute_depth_map)
-        
-        print(f"   Mesh: {n_cells:,} cells | Render: {width}x{height} pixels")
-        
+
+        print(f"   Mesh: {n_cells:,} cells | Render: {render_w}x{render_h} pixels (Scale: {dynamic_scale:.4f})")
+
         # --- 1. Encode face IDs as RGB colors ---
-        print("   -> Encoding face IDs as RGB colors...")
         encode_start = time.time()
-        
-        # Use 24-bit encoding: R + G*256 + B*65536 = face_id
-        # This supports up to 16.7M faces
         face_ids = np.arange(n_cells, dtype=np.int32)
-        
-        # Encode face_id into RGB (shifted by 1 so face_id=0 maps to RGB(1,0,0))
-        # We reserve RGB(0,0,0) for background
         encoded_ids = face_ids + 1
         r = (encoded_ids % 256).astype(np.uint8)
         g = ((encoded_ids // 256) % 256).astype(np.uint8)
         b = ((encoded_ids // 65536) % 256).astype(np.uint8)
-        
-        # Create RGB array for cell data
         rgb_colors = np.column_stack([r, g, b])
-        
-        # Clone mesh and assign face ID colors as cell data
+
         mesh_with_ids = mesh.copy()
         mesh_with_ids.cell_data['FaceID_RGB'] = rgb_colors
         encode_time = time.time() - encode_start
-        print(f"   ✅ RGB encoding completed in {encode_time:.4f}s")
-        
+
         # --- 2. Create off-screen plotter ---
-        print("   -> Creating off-screen plotter...")
         plotter_start = time.time()
-        plotter = pv.Plotter(off_screen=True, window_size=(width, height))
-        plotter.set_background('black')  # Background = RGB(0,0,0) = "no face"
+        plotter = pv.Plotter(off_screen=True, window_size=(render_w, render_h))
+        plotter.set_background('black')
         plotter.disable_anti_aliasing()
-        
-        # Add mesh with RGB scalars, no lighting/interpolation
+
         plotter.add_mesh(
             mesh_with_ids,
             scalars='FaceID_RGB',
@@ -558,43 +557,39 @@ class VisibilityManager:
             show_edges=False,
             style='surface'
         )
-
-        # Force Python to garbage collect the copy immediately!
-        # VTK already has what it needs in its internal C++ pipeline.
         del mesh_with_ids
-        import gc
-        gc.collect()
-
+        import gc; gc.collect()
         plotter_time = time.time() - plotter_start
-        print(f"   ✅ Plotter setup completed in {plotter_time:.4f}s")
-        
-        # --- 3. Configure VTK camera from K, R, t ---
-        print("   -> Configuring VTK camera from OpenCV intrinsics/extrinsics...")
+
+        # Prepare face centers for GPU depth mapping
+        if compute_depth_map and HAS_TORCH and torch.cuda.is_available():
+            face_centers_np = mesh.cell_centers().points.astype(np.float32)
+            face_centers_pt = torch.from_numpy(face_centers_np).cuda()
+
+        # --- 3. Configure VTK camera ---
         camera_start = time.time()
-        cls._configure_vtk_camera(plotter, K, R, t, width, height, mesh.bounds)
+        cls._configure_vtk_camera(plotter, K_scaled, R, t, render_w, render_h, mesh.bounds)
         camera_time = time.time() - camera_start
-        print(f"   ✅ Camera configuration completed in {camera_time:.4f}s")
-        
+
         # --- 4. Render and extract face IDs ---
-        print("   -> Rendering and extracting index map...")
         render_start = time.time()
         plotter.render()
-        
         screenshot = plotter.screenshot(return_img=True)
         if screenshot.shape[2] == 4:
             screenshot = screenshot[:, :, :3]
-        
-        # Decode RGB back to face IDs (GPU Accelerated)
+
         if HAS_TORCH and torch.cuda.is_available():
-            # Force contiguous memory to fix the negative stride from PyVista's vertical flip
+            # Fix negative stride with np.ascontiguousarray
             ss_tensor = torch.from_numpy(np.ascontiguousarray(screenshot)).cuda()
             decoded = (ss_tensor[..., 0].to(torch.int32) +
                        ss_tensor[..., 1].to(torch.int32) * 256 +
                        ss_tensor[..., 2].to(torch.int32) * 65536)
             index_map_tensor = decoded - 1
-            
+
             valid_mask = index_map_tensor >= 0
             visible_indices = torch.unique(index_map_tensor[valid_mask]).cpu().numpy().astype(np.int32)
+            
+            # Keep small, NO resizing!
             index_map = index_map_tensor.cpu().numpy()
         else:
             decoded = (screenshot[:, :, 0].astype(np.int32) +
@@ -602,58 +597,53 @@ class VisibilityManager:
                        screenshot[:, :, 2].astype(np.int32) * 65536)
             index_map = (decoded - 1).astype(np.int32)
             visible_indices = np.unique(index_map[index_map >= 0]).astype(np.int32)
-            
+
         render_time = time.time() - render_start
-        print(f"   ✅ Rendering and decoding completed in {render_time:.4f}s")
-        
-        # NOTE: You can delete the "Extract visible face IDs" line at the bottom 
-        # of the method since it is handled above.
-        
+
         # --- 5. Extract depth buffer ---
+        depth_start = time.time()
         depth_map = None
         if compute_depth_map:
-            print("   -> Extracting depth buffer...")
-            depth_start = time.time()
-            try:
-                # Get VTK depth buffer
-                # PyVista's get_image_depth() returns actual Z-coordinates in camera space
-                # VTK convention: camera looks down -Z, so visible objects have negative Z
-                # OpenCV convention: camera looks down +Z, depth is positive
-                vtk_depth = plotter.get_image_depth(fill_value=np.nan)
+            if HAS_TORCH and torch.cuda.is_available():
+                R_pt = torch.from_numpy(R).to(torch.float32).cuda()
+                t_pt = torch.from_numpy(t).to(torch.float32).cuda()
                 
-                # Negate to convert from VTK (-Z forward) to OpenCV (+Z forward) convention
-                # Keep depth in float32 during computation, normalize to float16 on return
-                depth_map = -vtk_depth.astype(np.float32)
-                depth_time = time.time() - depth_start
-                print(f"   ✅ Depth buffer extracted in {depth_time:.4f}s")
+                # Z-depth in camera space
+                z_cam = torch.matmul(face_centers_pt, R_pt.T)[:, 2] + t_pt[2]
+                z_cam_padded = torch.cat([z_cam, torch.tensor([float('nan')], device='cuda')])
                 
-            except Exception as e:
-                print(f"   ⚠️ Failed to extract depth buffer: {e}")
-                depth_map = np.full((height, width), np.nan, dtype=np.float32)
-        
-        # Cleanup
+                # Map Face IDs directly to their computed depths
+                depth_tensor = z_cam_padded[index_map_tensor.long()]
+                # Keep small, NO resizing!
+                depth_map = depth_tensor.cpu().numpy()
+            else:
+                try:
+                    vtk_depth = plotter.get_image_depth(fill_value=np.nan)
+                    # Keep small, NO resizing!
+                    depth_map = -vtk_depth.astype(np.float32)
+                except Exception as e:
+                    print(f"   ⚠️ Failed to extract depth: {e}")
+                    depth_map = np.full((render_h, render_w), np.nan, dtype=np.float32)
+
+        depth_time = time.time() - depth_start
         plotter.close()
-        
-        n_visible = len(visible_indices)
-        coverage = np.sum(index_map >= 0) / (width * height) * 100
+
         total_time = time.time() - start_time
-        
-        print(f"\n📊 SUMMARY: VTK Rasterization")
-        print(f"   - RGB Encoding   : {encode_time:.4f}s")
-        print(f"   - Plotter Setup  : {plotter_time:.4f}s")
-        print(f"   - Camera Config  : {camera_time:.4f}s")
+        print(f"\n📊 SUMMARY: Single VTK Rasterization")
+        print(f"   - Setup          : {encode_time + plotter_time:.4f}s")
         print(f"   - Render & Decode: {render_time:.4f}s")
         if compute_depth_map:
-            print(f"   - Depth Extraction: {depth_time:.4f}s")
+            print(f"   - Depth Tricks   : {depth_time:.4f}s")
         print(f"   - Total Time     : {total_time:.4f}s")
-        print(f"   - Result: {n_visible:,} visible faces, {coverage:.1f}% pixel coverage")
         print(f"{'='*50}\n")
-        
+
+        # Crucial: Include the dynamic_scale so caching knows the resolution mapping
         return cls._normalize_result_dict({
             'index_map': index_map,
             'visible_indices': visible_indices,
             'depth_map': depth_map,
             'inverted_index': None,
+            'scale_factor': dynamic_scale
         }, compute_depth_map)
     
     @classmethod
@@ -814,59 +804,33 @@ class VisibilityManager:
                 valid_mask = small_index_map >= 0
                 visible_indices = np.unique(small_index_map[valid_mask]).astype(np.int32)
 
-            # Upsample to native resolution using nearest-neighbour interpolation
-            if dynamic_scale != 1.0:
-                import cv2
-                index_map = cv2.resize(small_index_map, (width, height), interpolation=cv2.INTER_NEAREST)
-            else:
-                index_map = small_index_map
-                
-            t_decode = time.time() - t0
-            
-            # NOTE: You can now completely delete Step 6 (Extract unique visible IDs)
-            # since `visible_indices` is already calculated above!
-            t_unique = 0.0
+            # NO RESIZING! Just pull the small map directly.
+            index_map = small_index_map_tensor.cpu().numpy()
             
             # 5. Depth Extraction
             t0 = time.time()
             depth_map = None
             if compute_depth_map:
                 if HAS_TORCH and torch.cuda.is_available():
-                    # 1. Transfer camera parameters to GPU
                     R_pt = torch.from_numpy(R).to(torch.float32).cuda()
                     t_pt = torch.from_numpy(t).to(torch.float32).cuda()
                     
-                    # 2. Calculate Z-depth in camera space for all face centers simultaneously
-                    # P_cam = P_world @ R.T + t. We only need the Z coordinate (index 2).
                     z_cam = torch.matmul(face_centers_pt, R_pt.T)[:, 2] + t_pt[2]
-                    
-                    # 3. Pad with NaN. Since background pixels in our index map are -1, 
-                    # PyTorch negative indexing will automatically grab this last element!
                     z_cam_padded = torch.cat([z_cam, torch.tensor([float('nan')], device='cuda')])
                     
-                    # 4. Map the Face IDs directly to their computed Depths!
                     small_depth_tensor = z_cam_padded[small_index_map_tensor.long()]
-                    small_depth = small_depth_tensor.cpu().numpy()
-
-                    if dynamic_scale != 1.0:
-                        import cv2
-                        depth_map = cv2.resize(small_depth, (width, height), interpolation=cv2.INTER_NEAREST)
-                    else:
-                        depth_map = small_depth
+                    
+                    # NO RESIZING!
+                    depth_map = small_depth_tensor.cpu().numpy()
                 else:
-                    # Fallback to slow VTK depth extraction
                     try:
                         vtk_depth = plotter.get_image_depth(fill_value=np.nan)
-                        small_depth = -vtk_depth.astype(np.float32)
-
-                        if dynamic_scale != 1.0:
-                            import cv2
-                            depth_map = cv2.resize(small_depth, (width, height), interpolation=cv2.INTER_NEAREST)
-                        else:
-                            depth_map = small_depth
+                        # NO RESIZING!
+                        depth_map = -vtk_depth.astype(np.float32)
                     except Exception as e:
                         print(f"   ⚠️ Failed to extract depth for camera {i}: {e}")
-                        depth_map = np.full((height, width), np.nan, dtype=np.float32)
+                        # Create an empty map matching the SMALL dimensions
+                        depth_map = np.full((render_h, render_w), np.nan, dtype=np.float32)
             t_depth = time.time() - t0
             
             results.append({
@@ -889,7 +853,7 @@ class VisibilityManager:
             t_events = time.time() - t0
             
             cam_time = time.time() - cam_start
-            print(f"      Cam {i+1}: {cam_time:.4f}s | Render: {t_render:.3f} | Snap: {t_screenshot:.3f} | Decode: {t_decode:.3f} | Depth: {t_depth:.3f} | Index: {t_unique:.3f} | UI Events: {t_events:.3f}")
+            print(f"      Cam {i+1}: {cam_time:.4f}s | Render: {t_render:.3f} | Snap: {t_screenshot:.3f} | Depth: {t_depth:.3f} | UI Events: {t_events:.3f}")
 
         plotter.close()
         
