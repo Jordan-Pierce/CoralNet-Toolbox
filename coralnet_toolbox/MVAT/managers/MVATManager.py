@@ -545,11 +545,8 @@ class MVATManager(QObject):
         window.  On subsequent calls with new cameras, the frustums are
         refreshed but the view is not reset.
         """
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        QApplication.processEvents()
         all_paths = self.raster_manager.image_paths
         if not all_paths:
-            QApplication.restoreOverrideCursor()
             return
 
         # ------------------------------------------------------------------
@@ -581,7 +578,6 @@ class MVATManager(QObject):
         # Nothing genuinely new to do — report and exit cleanly.
         if not new_perspective_rasters and not need_ortho:
             self.main_window.status_bar.showMessage("All cameras already loaded.", 3000)
-            QApplication.restoreOverrideCursor()
             return
 
         # ------------------------------------------------------------------
@@ -604,7 +600,6 @@ class MVATManager(QObject):
 
         if valid_count == 0 and not need_ortho:
             QMessageBox.information(self.main_window, "No Camera Data", "No valid camera parameters found.")
-            QApplication.restoreOverrideCursor()
             return
 
         # =====================================================================
@@ -629,7 +624,6 @@ class MVATManager(QObject):
                 oc = OrthoCamera(raster, raster.chunk_transform_matrix)
                 if oc.is_valid:
                     self.ortho_camera = oc
-                    self._maybe_compute_ortho_index_map()
                     break
                 else:
                     print(f"⚠️ OrthoRaster {raster.basename} missing geo transform — skipping.")
@@ -639,6 +633,8 @@ class MVATManager(QObject):
         # =====================================================================
         primary_target = self.viewer.scene_context.get_primary_target()
         newly_added_cameras = [self.cameras[p] for p, _ in new_perspective_rasters if p in self.cameras]
+        should_compute_visibility = False
+        cameras_to_compute = []
 
         if (primary_target is not None
                 and self.cache_manager is not None
@@ -709,7 +705,16 @@ class MVATManager(QObject):
                     if ok and choice:
                         # 2. Store the pixel budget instead of a static scale factor
                         self.pixel_budget = quality_map[choice]
-                        self._compute_visibility_async(primary_target, uncached_cameras)
+                        should_compute_visibility = True
+                        cameras_to_compute = uncached_cameras
+
+        # Build the ortho index map only after the quality budget has been
+        # resolved, and before any perspective visibility maps are started.
+        if need_ortho:
+            self._maybe_compute_ortho_index_map()
+
+        if should_compute_visibility:
+            self._compute_visibility_async(primary_target, cameras_to_compute)
 
         # ------------------------------------------------------------------
         # Update the context matrix with the full (now-extended) camera set.
@@ -733,8 +738,6 @@ class MVATManager(QObject):
                 self.selection_model.set_active(current_image_path)
             elif self.cameras:
                 self.selection_model.set_active(next(iter(self.cameras)))
-
-        QApplication.restoreOverrideCursor()
 
     def _render_frustums(self):
         """
