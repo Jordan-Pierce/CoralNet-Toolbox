@@ -131,7 +131,7 @@ class Semantic(Base):
         self.setWindowTitle("Deploy Semantic Segmentation Model (Ctrl + 4)")
 
         # Ultralytics uses 'semseg' task for semantic segmentation
-        self.task = 'semantic'
+        self.task = 'semseg'
 
     def showEvent(self, event):
         """
@@ -188,7 +188,7 @@ class Semantic(Base):
         try:
             # Use YOLO for semantic segmentation
             # Ensure task is correct
-            self.task = 'semantic'
+            self.task = 'semseg'
 
             # Adjust batch size heuristics (keep consistent with Detect)
             if self.model_path.endswith('.engine'):

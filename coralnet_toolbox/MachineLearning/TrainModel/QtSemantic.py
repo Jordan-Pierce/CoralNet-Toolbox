@@ -27,7 +27,7 @@ class Semantic(Base):
     def setup_dataset_layout(self):
         """Setup the dataset layout."""
         
-        self.task = "semantic"
+        self.task = "semseg"
         self.imgsz = 640
         self.batch = 4
         
