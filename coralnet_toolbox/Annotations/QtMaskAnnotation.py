@@ -5,9 +5,6 @@ import rasterio
 
 import numpy as np
 
-from scipy.ndimage import label as ndimage_label
-from skimage.measure import find_contours
-
 from shapely.geometry import Polygon, Point
 
 from rasterio.features import rasterize
@@ -1345,21 +1342,31 @@ class MaskAnnotation(Annotation):
         return self.mask_data == class_id
 
     def to_instance_polygons(self, class_id: int) -> list:
-        """Converts all contiguous regions of a class ID into PolygonAnnotations."""
-        binary_mask = self.get_binary_mask(class_id)
-        # Add padding to handle contours touching the border
-        padded_mask = np.pad(binary_mask, pad_width=1, mode='constant', constant_values=0)
-        
-        # Level is 0.5 to find contours between 0 and 1 values
-        contours = find_contours(padded_mask, level=0.5)
-        
+        """Converts all contiguous regions of a class ID into PolygonAnnotations.
+
+        Uses cv2.findContours with CHAIN_APPROX_TC89_KCOS (replaces skimage
+        find_contours) for consistency with to_vector_annotations and better
+        performance. No padding needed — OpenCV handles image-border contours.
+        """
+        import cv2
+
+        label = self.class_id_to_label_map.get(class_id)
+        if label is None:
+            return []
+
+        binary_mask = self.get_binary_mask(class_id).astype(np.uint8)
+
+        # TC89_KCOS pre-filters dominant points at extraction time,
+        # reducing vertex count before approxPolyDP even runs.
+        contours, _ = cv2.findContours(
+            binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_TC89_KCOS
+        )
+
         annotations = []
         for contour in contours:
-            # Remove padding offset and swap (row, col) to (x, y)
-            points = [QPointF(p[1] - 1, p[0] - 1) for p in contour]
-            if len(points) > 2:  # Must have at least 3 points for a valid polygon
-                # Use the label associated with the class_id for the new annotation
-                label = self.class_id_to_label_map[class_id]
+            simplified = cv2.approxPolyDP(contour, 1.0, closed=True)
+            points = [QPointF(float(x), float(y)) for x, y in simplified.reshape(-1, 2)]
+            if len(points) >= 3:
                 anno = PolygonAnnotation(
                     points=points,
                     label=label,
@@ -1369,7 +1376,7 @@ class MaskAnnotation(Annotation):
         return annotations
 
     def to_vector_annotations(self, transparency=None, show_confidence: bool = False,
-                               min_hole_area: int = 500) -> list:
+                               min_hole_area: int = 500, min_component_area: int = 5) -> list:
         """Convert all labeled regions in this mask into vector annotations.
 
         Disconnected regions become separate annotations. Four-point, axis-aligned
@@ -1384,15 +1391,29 @@ class MaskAnnotation(Annotation):
         silently filled, avoiding the vertex explosion that comes from tracing every
         noise-level gap while retaining meaningful structure.
 
+        Performance notes
+        -----------------
+        * ``cv2.connectedComponentsWithStats`` replaces ``scipy.ndimage.label`` —
+          ~2-4x faster and returns bounding-box + area for every component for free,
+          enabling early noise rejection before any contour work is done.
+        * Contour extraction is ROI-based: each component is cropped to its own
+          bounding rect before ``findContours`` runs, so a 200×200 px object in a
+          4000×4000 image operates on a ~200×200 patch rather than the full image.
+        * ``CHAIN_APPROX_TC89_KCOS`` pre-filters dominant points at extraction
+          time, reducing the vertex count fed to ``approxPolyDP``.
+        * ``_source_clear_indices`` is derived by filtering the class's pre-built
+          flat-index array rather than running a full O(H×W) ``flatnonzero`` scan
+          inside the inner loop.
         Args:
             transparency: Alpha value for created annotations (0-255).
             show_confidence: Whether to display confidence scores.
             min_hole_area: Minimum hole area in pixels to preserve as an interior
                 ring. Holes smaller than this threshold are filled. Default 500.
+            min_component_area: Minimum component area in pixels. Components
+                smaller than this are skipped as noise. Default 5.
         """
         try:
             import cv2
-
             from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
             from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
         except Exception:
@@ -1456,12 +1477,14 @@ class MaskAnnotation(Annotation):
                 show_confidence=show_confidence,
             )
 
+        # Strip lock bits to recover the true class IDs for every pixel.
         class_mask = np.where(
             self.mask_data >= self.LOCK_BIT,
             self.mask_data % self.LOCK_BIT,
             self.mask_data,
         )
 
+        mask_h, mask_w = class_mask.shape
         vector_annotations = []
         for class_id in [int(value) for value in np.unique(class_mask) if int(value) != 0]:
             label = self.class_id_to_label_map.get(class_id)
@@ -1472,34 +1495,77 @@ class MaskAnnotation(Annotation):
             if not np.any(binary_mask):
                 continue
 
-            component_labels, component_count = ndimage_label(binary_mask)
-            if component_count <= 0:
-                continue
+            # --- Fast connected-component analysis with free per-component stats ---
+            # cv2.connectedComponentsWithStats is ~2-4x faster than scipy.ndimage.label
+            # and returns bounding-box + area for every component at no extra cost,
+            # enabling early noise rejection before any contour work is done.
+            num_labels, label_img, stats, _ = cv2.connectedComponentsWithStats(
+                binary_mask, connectivity=4
+            )
+            if num_labels <= 1:
+                continue  # nothing but background
 
-            for component_id in range(1, component_count + 1):
-                component_mask = component_labels == component_id
-                if not np.any(component_mask):
+            # Pre-compute flat indices for ALL pixels of this class in one O(N) pass.
+            # Per-component sets are derived by filtering this sparse array, avoiding
+            # a full O(H×W) flatnonzero scan inside the inner loop.
+            all_class_flat_indices = np.flatnonzero(binary_mask.ravel())
+            label_flat = label_img.ravel()
+
+            for comp_id in range(1, num_labels):
+
+                # --- Early noise reject (bounding-box stats are free from above) ---
+                area = int(stats[comp_id, cv2.CC_STAT_AREA])
+                if area < min_component_area:
                     continue
 
+                # --- ROI-based contour extraction ---
+                # Crop to this component's bounding rect so that findContours operates
+                # on a small patch rather than the full image. For a 200×200 px object
+                # in a 4000×4000 image, that is roughly a 400x reduction in pixels
+                # scanned.
+                cx = int(stats[comp_id, cv2.CC_STAT_LEFT])
+                cy = int(stats[comp_id, cv2.CC_STAT_TOP])
+                cw = int(stats[comp_id, cv2.CC_STAT_WIDTH])
+                ch = int(stats[comp_id, cv2.CC_STAT_HEIGHT])
+
+                # 1 px padding ensures contours that touch the crop edge are captured.
+                x1 = max(0, cx - 1)
+                y1 = max(0, cy - 1)
+                x2 = min(mask_w, cx + cw + 1)
+                y2 = min(mask_h, cy + ch + 1)
+
+                roi = (label_img[y1:y2, x1:x2] == comp_id).astype(np.uint8)
+
+                # TC89_KCOS applies the Teh-Chin dominant-point algorithm at
+                # extraction time, pre-thinning the contour before approxPolyDP
+                # runs — fewer input vertices means faster simplification.
                 contours, hierarchy = cv2.findContours(
-                    component_mask.astype(np.uint8),
-                    cv2.RETR_CCOMP,
-                    cv2.CHAIN_APPROX_SIMPLE,
+                    roi, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_TC89_KCOS
                 )
                 if not contours or hierarchy is None:
                     continue
 
-                # hierarchy shape: (1, N, 4) → [next, prev, first_child, parent]
                 hier = hierarchy[0]
-                component_flat_indices = np.flatnonzero(component_mask.ravel())
+
+                # Efficient per-component flat-index set: filter the pre-built
+                # class index array by this component's label ID — no full image scan.
+                component_flat_indices = all_class_flat_indices[
+                    label_flat[all_class_flat_indices] == comp_id
+                ]
 
                 for i, contour in enumerate(contours):
                     # Only process top-level (exterior) contours; holes are
-                    # collected below via the child index chain.
+                    # collected below via the child-index chain.
                     if hier[i][3] != -1:
                         continue
 
-                    simplified_contour = cv2.approxPolyDP(contour, 1.0, closed=True)
+                    # Offset contour points from ROI-local space back to full-image
+                    # space before running approxPolyDP.
+                    contour_offset = contour.copy()
+                    contour_offset[:, :, 0] += x1
+                    contour_offset[:, :, 1] += y1
+
+                    simplified_contour = cv2.approxPolyDP(contour_offset, 1.0, closed=True)
                     exterior_points = _contour_to_points(simplified_contour)
                     if len(exterior_points) < 3:
                         continue
@@ -1510,7 +1576,10 @@ class MaskAnnotation(Annotation):
                     while child_idx != -1:
                         hole_contour = contours[child_idx]
                         if cv2.contourArea(hole_contour) >= min_hole_area:
-                            simplified_hole = cv2.approxPolyDP(hole_contour, 1.0, closed=True)
+                            hole_offset = hole_contour.copy()
+                            hole_offset[:, :, 0] += x1
+                            hole_offset[:, :, 1] += y1
+                            simplified_hole = cv2.approxPolyDP(hole_offset, 1.0, closed=True)
                             hole_points = _contour_to_points(simplified_hole)
                             if len(hole_points) >= 3:
                                 interior_rings.append(hole_points)
@@ -1522,6 +1591,7 @@ class MaskAnnotation(Annotation):
                         vector_annotations.append(annotation)
 
         return vector_annotations
+
 
     def export_as_png(self, path: str, use_label_colors: bool = True):
         """Saves the mask to a PNG file."""
