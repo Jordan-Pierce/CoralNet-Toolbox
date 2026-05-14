@@ -1182,7 +1182,7 @@ class Base(QDialog):
         elif task == "segment":
             deploy_dialog = self.main_window.segment_deploy_model_dialog
         elif task == "semseg":
-            deploy_dialog = self.main_window.semseg_deploy_model_dialog
+            deploy_dialog = self.main_window.semantic_deploy_model_dialog
         else:
             QMessageBox.warning(self, "Deploy Model", "Unknown task type for deployment.")
             return
