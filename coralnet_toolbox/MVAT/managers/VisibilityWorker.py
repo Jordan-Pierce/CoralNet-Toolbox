@@ -96,7 +96,7 @@ class VisibilityWorker(QObject):
                             self._status(f"Computing 3D maps... ({current}/{total} cameras at {budget_str} budget)")
 
                         batch_results = VisibilityManager.compute_batch_mesh_visibility_vtk(
-                            self.primary_target, params_list, self.compute_depth_maps,
+                            self.primary_target, params_list, False,
                             pixel_budget=self.pixel_budget,
                             progress_callback=update_status
                         )
@@ -109,7 +109,7 @@ class VisibilityWorker(QObject):
                         try:
                             # Fallback: Batched Open3D raycasting
                             batch_results = VisibilityManager.compute_batch_mesh_visibility_open3d(
-                                self.primary_target, params_list, self.compute_depth_maps
+                                self.primary_target, params_list, False
                             )
                             for p, r in zip(paths, batch_results):
                                 r['element_type'] = element_type
@@ -121,7 +121,7 @@ class VisibilityWorker(QObject):
                             for path, params in perspective_params.items():
                                 K, R, t, width, height = params
                                 result = VisibilityManager._compute_mesh_visibility(
-                                    self.primary_target, K, R, t, width, height, self.compute_depth_maps
+                                    self.primary_target, K, R, t, width, height, False
                                 )
                                 result['element_type'] = element_type
                                 results[path] = result
@@ -142,7 +142,7 @@ class VisibilityWorker(QObject):
                             points_world=points_world,
                             camera_params_list=params_list,
                             point_ids=element_ids,
-                            compute_depth_map=self.compute_depth_maps
+                            compute_depth_map=False
                         )
 
                         for p, r in zip(paths, batch_results):
@@ -157,8 +157,6 @@ class VisibilityWorker(QObject):
             #             single F.grid_sample call on CUDA.
             #   • Opt 1 – fall back to a parallel ThreadPoolExecutor of cv2.remap
             #             calls (each releases the GIL) when CUDA is unavailable.
-            #   • Opt 2 – inverted-index rebuild is removed; the daemon thread
-            #             launched inside add_index_map handles it asynchronously.
             #   • Opt 3 – visible_indices is derived from the warped index map
             #             using a parallel np.unique pass instead of a serial loop.
             # =================================================================
@@ -167,7 +165,7 @@ class VisibilityWorker(QObject):
             if distorted_paths:
                 self._status("Applying distortion corrections to visibility maps...")
 
-                # --- Phase A: warp index maps + depth maps ----------------
+                # --- Phase A: warp index maps -----------------------------
                 cuda_ok = False
                 try:
                     import torch
@@ -219,20 +217,6 @@ class VisibilityWorker(QObject):
                                     for p, w in zip(chunk, warped):
                                         results[p]['index_map'] = w
 
-                            # Collect depth maps
-                            dep_paths = [p for p in group_paths if results[p].get('depth_map') is not None]
-                            if dep_paths:
-                                # Chunk the list based on our dynamic batch size
-                                for i in range(0, len(dep_paths), batch_size):
-                                    chunk = dep_paths[i:i + batch_size]
-                                    warped = Raster.warp_batch_cuda(
-                                        [results[p]['depth_map'] for p in chunk],
-                                        [float('nan')] * len(chunk),
-                                        grid_gpu, oob_mask
-                                    )
-                                    for p, w in zip(chunk, warped):
-                                        results[p]['depth_map'] = w
-
                         cuda_ok = True
 
                 except Exception as e:
@@ -245,8 +229,6 @@ class VisibilityWorker(QObject):
                         r = results[path]
                         if r.get('index_map') is not None:
                             r['index_map'] = warp_fn(r['index_map'], border_value=-1)
-                        if r.get('depth_map') is not None:
-                            r['depth_map'] = warp_fn(r['depth_map'], border_value=np.nan)
 
                     n_workers = min(8, len(distorted_paths))
                     with ThreadPoolExecutor(max_workers=n_workers) as pool:
@@ -281,7 +263,29 @@ class VisibilityWorker(QObject):
                             pass
 
             # =================================================================
-            # 1. Pre-fill cache paths so the main thread knows not to save them
+            # 1. Reconstruct depth maps from the final index maps when enabled
+            # =================================================================
+            if self.compute_depth_maps:
+                self._status("Reconstructing depth maps from visibility indices...")
+                for path, result_dict in results.items():
+                    if result_dict.get('depth_map') is not None:
+                        continue
+                    index_map = result_dict.get('index_map')
+                    if index_map is None:
+                        continue
+                    try:
+                        _, R, t, _, _ = self.camera_params_dict[path]
+                        result_dict['depth_map'] = VisibilityManager.reconstruct_depth_map(
+                            index_map,
+                            self.primary_target,
+                            R,
+                            t,
+                        )
+                    except Exception as exc:
+                        print(f"⚠️ Depth reconstruction failed for {path}: {exc}")
+
+            # =================================================================
+            # 2. Pre-fill cache paths so the main thread knows not to save them
             # =================================================================
             if self.cache_manager is not None and self.target_file_path and self.cache_keys_dict:
                 for path, result_dict in results.items():
@@ -295,7 +299,7 @@ class VisibilityWorker(QObject):
                         result_dict['cache_path'] = expected_cache_path
 
             # =================================================================
-            # 2. Define the background saving task (parallel I/O)
+            # 3. Define the background saving task (parallel I/O)
             # =================================================================
             def save_to_disk_task(save_results, cache_mgr, target_path, keys_dict, extra_bytes_dict):
                 import time
@@ -313,7 +317,7 @@ class VisibilityWorker(QObject):
                         target_path,
                         result_dict.get('index_map'),
                         result_dict.get('visible_indices'),
-                        result_dict.get('depth_map') if self.compute_depth_maps else None,
+                        None,
                         element_type=result_dict.get('element_type', 'point'),
                         inverted_index=None,  # No longer storing inverted_index to save RAM
                         extra_hash_data=extra,
@@ -345,7 +349,7 @@ class VisibilityWorker(QObject):
                 self._status("Visibility maps cached successfully.")
 
             # =================================================================
-            # 3. Fire and forget the disk writing on a separate daemon thread
+            # 4. Fire and forget the disk writing on a separate daemon thread
             # =================================================================
             if self.cache_manager is not None and self.target_file_path and self.cache_keys_dict:
                 io_thread = threading.Thread(
@@ -357,7 +361,7 @@ class VisibilityWorker(QObject):
                 io_thread.start()
 
             # =================================================================
-            # 4. Emit final results back to the main thread IMMEDIATELY
+            # 5. Emit final results back to the main thread IMMEDIATELY
             # =================================================================
             self.signals.finished.emit(results)
 

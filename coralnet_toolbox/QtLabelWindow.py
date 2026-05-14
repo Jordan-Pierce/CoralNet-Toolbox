@@ -1059,7 +1059,7 @@ class LabelWindow(QWidget):
         """Get a list of all labels whose visibility checkbox is checked."""
         return [label for label in self.labels if label.is_visible]
 
-    def set_active_label(self, selected_label):
+    def set_active_label(self, selected_label, emit_selection_signal=True, update_annotations=True):
         """
         Set the currently active label, updating UI and emitting signals.
         
@@ -1103,7 +1103,9 @@ class LabelWindow(QWidget):
             return
             
         self.active_label.select()
-        self.labelSelected.emit(selected_label)
+
+        if emit_selection_signal:
+            self.labelSelected.emit(selected_label)
 
         # Transparency changes are now instant - emit freely!
         if self.active_label:
@@ -1111,7 +1113,7 @@ class LabelWindow(QWidget):
         
         # Skip expensive annotation updates in mask editing mode
         # Vector annotations don't need updates when switching labels in mask mode
-        if not self.annotation_window._is_in_mask_editing_mode():
+        if update_annotations and not self.annotation_window._is_in_mask_editing_mode():
             self.update_annotations_with_label(selected_label)
 
         # Only enable edit/delete buttons if not locked
@@ -1318,7 +1320,8 @@ class LabelWindow(QWidget):
         """Set the active label based on the provided label ID."""
         for lbl in self.labels:
             if lbl.id == label_id:
-                self.set_active_label(lbl)
+                # Canvas selection should only sync the highlighted label, not reapply it.
+                self.set_active_label(lbl, emit_selection_signal=False, update_annotations=False)
                 break
 
     def update_label_properties(self, label_to_update, new_short, new_long, new_color):

@@ -33,6 +33,10 @@ try:
     HAS_TORCH = True
 except ImportError:
     HAS_TORCH = False
+
+
+FACE_ID_RGB_BASE = 1 << 24
+FACE_ID_RGB_LIMIT = FACE_ID_RGB_BASE - 1
     
     
 # ----------------------------------------------------------------------------------------------------------------------
@@ -110,6 +114,228 @@ class VisibilityManager:
             # Be conservative on failure: leave original arrays unchanged
             pass
         return result
+
+    @staticmethod
+    def _decode_face_id_screenshot(screenshot_low: np.ndarray,
+                                   screenshot_high: Optional[np.ndarray] = None):
+        """Decode one or two RGB screenshots into an int32 face-ID map.
+
+        When `screenshot_high` is provided, the red channel holds the upper 8 bits
+        of the encoded face ID and is combined with the lower 24 bits from the
+        first pass.
+        """
+        low_rgb = np.ascontiguousarray(np.asarray(screenshot_low)[..., :3])
+        high_rgb = None if screenshot_high is None else np.ascontiguousarray(np.asarray(screenshot_high)[..., :3])
+
+        if HAS_TORCH and torch.cuda.is_available():
+            low_tensor = torch.from_numpy(low_rgb).cuda()
+            decoded = (
+                low_tensor[..., 0].to(torch.int64)
+                + low_tensor[..., 1].to(torch.int64) * 256
+                + low_tensor[..., 2].to(torch.int64) * 65536
+            )
+
+            if high_rgb is not None:
+                high_tensor = torch.from_numpy(high_rgb).cuda()
+                decoded += high_tensor[..., 0].to(torch.int64) * FACE_ID_RGB_BASE
+
+            index_map_tensor = (decoded - 1).to(torch.int32)
+            valid_mask = index_map_tensor >= 0
+            visible_indices = torch.unique(index_map_tensor[valid_mask]).cpu().numpy().astype(np.int32)
+            return index_map_tensor.cpu().numpy(), visible_indices, index_map_tensor
+
+        decoded = (
+            low_rgb[..., 0].astype(np.int64, copy=False)
+            + low_rgb[..., 1].astype(np.int64, copy=False) * 256
+            + low_rgb[..., 2].astype(np.int64, copy=False) * 65536
+        )
+
+        if high_rgb is not None:
+            decoded += high_rgb[..., 0].astype(np.int64, copy=False) * FACE_ID_RGB_BASE
+
+        index_map = (decoded - 1).astype(np.int32, copy=False)
+        visible_indices = np.unique(index_map[index_map >= 0]).astype(np.int32)
+        return index_map, visible_indices, None
+
+    @classmethod
+    def _create_face_id_mesh_actors(cls, plotter, mesh, n_cells: int):
+        """Create the RGB face-ID mesh actor(s) used by the VTK rasterizers."""
+        face_ids = np.arange(n_cells, dtype=np.int64)
+        encoded_ids = face_ids + 1
+
+        r_low = (encoded_ids % 256).astype(np.uint8)
+        g_low = ((encoded_ids // 256) % 256).astype(np.uint8)
+        b_low = ((encoded_ids // 65536) % 256).astype(np.uint8)
+        rgb_low = np.column_stack([r_low, g_low, b_low])
+
+        is_dual_pass = n_cells > FACE_ID_RGB_LIMIT
+        if is_dual_pass:
+            print(f"   ⚠️ Massive mesh detected ({n_cells:,} faces). Activating Dual-Pass 32-bit rasterization.")
+
+        mesh_low = mesh.copy()
+        low_scalar_name = 'FaceID_Low' if is_dual_pass else 'FaceID_RGB'
+        mesh_low.cell_data[low_scalar_name] = rgb_low
+
+        actor_low = plotter.add_mesh(
+            mesh_low,
+            scalars=low_scalar_name,
+            rgb=True,
+            lighting=False,
+            interpolate_before_map=False,
+            show_edges=False,
+            style='surface'
+        )
+
+        actor_high = None
+        if is_dual_pass:
+            r_high = ((encoded_ids // FACE_ID_RGB_BASE) % 256).astype(np.uint8)
+            rgb_high = np.column_stack([r_high, np.zeros_like(r_high), np.zeros_like(r_high)])
+
+            mesh_high = mesh.copy()
+            mesh_high.cell_data['FaceID_High'] = rgb_high
+
+            actor_high = plotter.add_mesh(
+                mesh_high,
+                scalars='FaceID_High',
+                rgb=True,
+                lighting=False,
+                interpolate_before_map=False,
+                show_edges=False,
+                style='surface'
+            )
+            actor_high.SetVisibility(False)
+            del mesh_high
+
+        del mesh_low
+        import gc
+        gc.collect()
+
+        return actor_low, actor_high, is_dual_pass
+
+    @classmethod
+    def reconstruct_depth_map(cls,
+                              index_map: np.ndarray,
+                              scene_product: 'AbstractSceneProduct',
+                              R: np.ndarray,
+                              t: np.ndarray) -> np.ndarray:
+        """
+        Reconstruct a camera-space depth map from an element index map.
+
+        The visible element IDs in ``index_map`` are used to gather the
+        corresponding 3D element coordinates from the scene product. Their
+        world coordinates are then transformed into camera space using only
+        ``R`` and ``t``. Intrinsics and lens distortion are not required.
+        """
+        if index_map is None:
+            raise ValueError("index_map must not be None")
+        if scene_product is None:
+            raise ValueError("scene_product must not be None")
+        if R is None or t is None:
+            raise ValueError("R and t must not be None")
+
+        index_map_np = np.asarray(index_map)
+        if index_map_np.ndim != 2:
+            raise ValueError("index_map must be a 2-D numpy array")
+
+        valid_mask = index_map_np >= 0
+        if not np.any(valid_mask):
+            return np.full(index_map_np.shape, np.nan, dtype=np.float32)
+
+        element_ids = np.unique(index_map_np[valid_mask].astype(np.int64, copy=False))
+        if element_ids.size == 0:
+            return np.full(index_map_np.shape, np.nan, dtype=np.float32)
+
+        try:
+            element_count = int(scene_product.get_element_count())
+        except Exception:
+            element_count = None
+
+        if element_count is not None and element_count <= 0:
+            return np.full(index_map_np.shape, np.nan, dtype=np.float32)
+
+        # Prepare cached geometry where available so repeated reconstructions
+        # reuse the same underlying element-coordinate arrays/tensors.
+        if hasattr(scene_product, 'prepare_geometry'):
+            try:
+                scene_product.prepare_geometry()
+            except Exception:
+                pass
+
+        # Fast GPU path using cached coordinates when available.
+        if HAS_TORCH and torch.cuda.is_available():
+            coords_t = getattr(scene_product, '_cached_face_centers_pt', None)
+            if coords_t is None:
+                coords_np = getattr(scene_product, '_element_centers_np', None)
+                if coords_np is None and hasattr(scene_product, 'get_points_array'):
+                    coords_np = scene_product.get_points_array()
+                if coords_np is None and hasattr(scene_product, 'get_face_centers'):
+                    coords_np = scene_product.get_face_centers()
+                if coords_np is not None:
+                    coords_t = torch.as_tensor(np.asarray(coords_np, dtype=np.float32), device='cuda')
+
+            if coords_t is not None:
+                coords_t = coords_t.to(device='cuda', dtype=torch.float32)
+                coords_count = int(coords_t.shape[0])
+                if int(element_ids.max()) < coords_count:
+                    element_ids_t = torch.as_tensor(element_ids, dtype=torch.long, device='cuda')
+                    coords_selected = coords_t.index_select(0, element_ids_t)
+                    R_t = torch.as_tensor(R, dtype=torch.float32, device='cuda')
+                    t_t = torch.as_tensor(t, dtype=torch.float32, device='cuda')
+                    z_values = torch.matmul(coords_selected, R_t.T)[:, 2] + t_t[2]
+                    lookup = torch.full((coords_count + 1,), float('nan'), dtype=torch.float32, device='cuda')
+                    lookup[element_ids_t] = z_values.to(torch.float32)
+                    index_map_t = torch.as_tensor(index_map_np.astype(np.int64, copy=False), dtype=torch.long, device='cuda')
+                    index_map_t = index_map_t.clone()
+                    index_map_t[index_map_t < 0] = coords_count
+                    return lookup[index_map_t].cpu().numpy().astype(np.float32, copy=False)
+
+        # CPU path using cached arrays when available.
+        coords_np = getattr(scene_product, '_element_centers_np', None)
+        if coords_np is None and hasattr(scene_product, 'get_points_array'):
+            coords_np = scene_product.get_points_array()
+        if coords_np is None and hasattr(scene_product, 'get_face_centers'):
+            coords_np = scene_product.get_face_centers()
+
+        if coords_np is not None:
+            coords_np = np.asarray(coords_np, dtype=np.float32)
+            coords_count = int(coords_np.shape[0])
+            if int(element_ids.max()) < coords_count:
+                coords_selected = coords_np[element_ids]
+                R_np = np.asarray(R, dtype=np.float32)
+                t_np = np.asarray(t, dtype=np.float32)
+                z_values = (coords_selected @ R_np.T)[:, 2] + t_np[2]
+                lookup = np.full((coords_count + 1,), np.nan, dtype=np.float32)
+                lookup[element_ids] = z_values.astype(np.float32, copy=False)
+                index_map_safe = index_map_np.astype(np.int64, copy=True)
+                index_map_safe[index_map_safe < 0] = coords_count
+                return lookup[index_map_safe].astype(np.float32, copy=False)
+
+        # Slow fallback for products that only expose per-element lookup.
+        coords_list = []
+        filtered_ids = []
+        for element_id in element_ids:
+            coord = scene_product.get_element_coordinate(int(element_id))
+            if coord is None:
+                continue
+            coords_list.append(np.asarray(coord, dtype=np.float32))
+            filtered_ids.append(int(element_id))
+
+        if not coords_list:
+            return np.full(index_map_np.shape, np.nan, dtype=np.float32)
+
+        element_ids = np.asarray(filtered_ids, dtype=np.int64)
+        coords_selected = np.vstack(coords_list)
+        if element_count is None:
+            element_count = int(element_ids.max())
+
+        R_np = np.asarray(R, dtype=np.float32)
+        t_np = np.asarray(t, dtype=np.float32)
+        z_values = (coords_selected @ R_np.T)[:, 2] + t_np[2]
+        lookup = np.full((element_count + 1,), np.nan, dtype=np.float32)
+        lookup[element_ids] = z_values.astype(np.float32, copy=False)
+        index_map_safe = index_map_np.astype(np.int64, copy=True)
+        index_map_safe[index_map_safe < 0] = element_count
+        return lookup[index_map_safe].astype(np.float32, copy=False)
 
     @classmethod
     def compute_visibility_from_scene(cls,
@@ -529,37 +755,14 @@ class VisibilityManager:
 
         print(f"   Mesh: {n_cells:,} cells | Render: {render_w}x{render_h} pixels (Scale: {dynamic_scale:.4f})")
 
-        # --- 1. Encode face IDs as RGB colors ---
-        encode_start = time.time()
-        face_ids = np.arange(n_cells, dtype=np.int32)
-        encoded_ids = face_ids + 1
-        r = (encoded_ids % 256).astype(np.uint8)
-        g = ((encoded_ids // 256) % 256).astype(np.uint8)
-        b = ((encoded_ids // 65536) % 256).astype(np.uint8)
-        rgb_colors = np.column_stack([r, g, b])
-
-        mesh_with_ids = mesh.copy()
-        mesh_with_ids.cell_data['FaceID_RGB'] = rgb_colors
-        encode_time = time.time() - encode_start
-
-        # --- 2. Create off-screen plotter ---
-        plotter_start = time.time()
+        # --- 1. Setup face-ID rendering actors ---
+        setup_start = time.time()
         plotter = pv.Plotter(off_screen=True, window_size=(render_w, render_h))
         plotter.set_background('black')
         plotter.disable_anti_aliasing()
-
-        plotter.add_mesh(
-            mesh_with_ids,
-            scalars='FaceID_RGB',
-            rgb=True,
-            lighting=False,
-            interpolate_before_map=False,
-            show_edges=False,
-            style='surface'
-        )
-        del mesh_with_ids
-        import gc; gc.collect()
-        plotter_time = time.time() - plotter_start
+        actor_low, actor_high, is_dual_pass = cls._create_face_id_mesh_actors(plotter, mesh, n_cells)
+        encode_time = time.time() - setup_start
+        plotter_time = 0.0
 
         # Prepare face centers for GPU depth mapping
         if compute_depth_map and HAS_TORCH and torch.cuda.is_available():
@@ -573,30 +776,27 @@ class VisibilityManager:
 
         # --- 4. Render and extract face IDs ---
         render_start = time.time()
+        if is_dual_pass and actor_high is not None:
+            actor_low.SetVisibility(True)
+            actor_high.SetVisibility(False)
         plotter.render()
-        screenshot = plotter.screenshot(return_img=True)
-        if screenshot.shape[2] == 4:
-            screenshot = screenshot[:, :, :3]
+        screenshot_low = plotter.screenshot(return_img=True)
+        if screenshot_low.shape[2] == 4:
+            screenshot_low = screenshot_low[:, :, :3]
 
-        if HAS_TORCH and torch.cuda.is_available():
-            # Fix negative stride with np.ascontiguousarray
-            ss_tensor = torch.from_numpy(np.ascontiguousarray(screenshot)).cuda()
-            decoded = (ss_tensor[..., 0].to(torch.int32) +
-                       ss_tensor[..., 1].to(torch.int32) * 256 +
-                       ss_tensor[..., 2].to(torch.int32) * 65536)
-            index_map_tensor = decoded - 1
+        screenshot_high = None
+        if is_dual_pass and actor_high is not None:
+            actor_low.SetVisibility(False)
+            actor_high.SetVisibility(True)
+            plotter.render()
+            screenshot_high = plotter.screenshot(return_img=True)
+            if screenshot_high.shape[2] == 4:
+                screenshot_high = screenshot_high[:, :, :3]
 
-            valid_mask = index_map_tensor >= 0
-            visible_indices = torch.unique(index_map_tensor[valid_mask]).cpu().numpy().astype(np.int32)
-            
-            # Keep small, NO resizing!
-            index_map = index_map_tensor.cpu().numpy()
-        else:
-            decoded = (screenshot[:, :, 0].astype(np.int32) +
-                       screenshot[:, :, 1].astype(np.int32) * 256 +
-                       screenshot[:, :, 2].astype(np.int32) * 65536)
-            index_map = (decoded - 1).astype(np.int32)
-            visible_indices = np.unique(index_map[index_map >= 0]).astype(np.int32)
+        index_map, visible_indices, index_map_tensor = cls._decode_face_id_screenshot(
+            screenshot_low,
+            screenshot_high,
+        )
 
         render_time = time.time() - render_start
 
@@ -691,17 +891,6 @@ class VisibilityManager:
         # --- 1. SETUP PHASE (Done Once) ---
         setup_start = time.time()
         print("   -> Encoding face IDs as RGB colors...")
-        face_ids = np.arange(n_cells, dtype=np.int32)
-        encoded_ids = face_ids + 1
-        r = (encoded_ids % 256).astype(np.uint8)
-        g = ((encoded_ids // 256) % 256).astype(np.uint8)
-        b = ((encoded_ids // 65536) % 256).astype(np.uint8)
-        rgb_colors = np.column_stack([r, g, b])
-        
-        mesh_with_ids = mesh.copy()
-        mesh_with_ids.cell_data['FaceID_RGB'] = rgb_colors
-        encode_time = time.time() - setup_start
-        
         print("   -> Creating off-screen plotter...")
         
         # Use the first camera's budget-derived scale only to size the initial plotter.
@@ -714,22 +903,9 @@ class VisibilityManager:
         plotter.set_background('black') 
         plotter.disable_anti_aliasing()
         
-        plotter.add_mesh(
-            mesh_with_ids,
-            scalars='FaceID_RGB',
-            rgb=True,
-            lighting=False,
-            interpolate_before_map=False,
-            show_edges=False,
-            style='surface'
-        )
-
-        # Delete the Python-side copy immediately
-        del mesh_with_ids
-        import gc
-        gc.collect()
-
-        plotter_setup_time = time.time() - setup_start - encode_time
+        actor_low, actor_high, is_dual_pass = cls._create_face_id_mesh_actors(plotter, mesh, n_cells)
+        encode_time = time.time() - setup_start
+        plotter_setup_time = 0.0
         print(f"   ✅ Setup completed in {encode_time + plotter_setup_time:.4f}s")
         
         # --- Prepare face centers for GPU depth mapping ---
@@ -756,7 +932,7 @@ class VisibilityManager:
             render_w = max(1, int(round(width * dynamic_scale)))
             render_h = max(1, int(round(height * dynamic_scale)))
 
-            # 1. Resize check (to scaled dimensions)
+            # 2. Resize check (to scaled dimensions)
             current_size = plotter.window_size
             if current_size[0] != render_w or current_size[1] != render_h:
                 plotter.window_size = (render_w, render_h)
@@ -769,43 +945,34 @@ class VisibilityManager:
             # 2. Config & Render using scaled parameters
             t0 = time.time()
             cls._configure_vtk_camera(plotter, K_scaled, R, t, render_w, render_h, mesh.bounds)
+            if is_dual_pass and actor_high is not None:
+                actor_low.SetVisibility(True)
+                actor_high.SetVisibility(False)
             plotter.render()
             t_render = time.time() - t0
-            
+
             # 3. Screenshot transfer (GPU -> CPU)
             t0 = time.time()
-            screenshot = plotter.screenshot(return_img=True)
-            if screenshot.shape[2] == 4:
-                screenshot = screenshot[:, :, :3]
+            screenshot_low = plotter.screenshot(return_img=True)
+            if screenshot_low.shape[2] == 4:
+                screenshot_low = screenshot_low[:, :, :3]
+
+            screenshot_high = None
+            if is_dual_pass and actor_high is not None:
+                actor_low.SetVisibility(False)
+                actor_high.SetVisibility(True)
+                plotter.render()
+                screenshot_high = plotter.screenshot(return_img=True)
+                if screenshot_high.shape[2] == 4:
+                    screenshot_high = screenshot_high[:, :, :3]
             t_screenshot = time.time() - t0
-                
+
             # 4. Decoding & Unique Extraction (GPU Math)
             t0 = time.time()
-            if HAS_TORCH and torch.cuda.is_available():
-                # Force contiguous memory to fix the negative stride from PyVista's vertical flip
-                ss_tensor = torch.from_numpy(np.ascontiguousarray(screenshot)).cuda()
-                decoded = (ss_tensor[..., 0].to(torch.int32) +
-                           ss_tensor[..., 1].to(torch.int32) * 256 +
-                           ss_tensor[..., 2].to(torch.int32) * 65536)
-                small_index_map_tensor = decoded - 1
-                
-                # Extract unique visible IDs directly on the GPU
-                valid_mask = small_index_map_tensor >= 0
-                visible_indices = torch.unique(small_index_map_tensor[valid_mask]).cpu().numpy().astype(np.int32)
-                
-                # Pull back to CPU for resizing
-                small_index_map = small_index_map_tensor.cpu().numpy()
-            else:
-                # Fallback
-                decoded = (screenshot[:, :, 0].astype(np.int32) +
-                           screenshot[:, :, 1].astype(np.int32) * 256 +
-                           screenshot[:, :, 2].astype(np.int32) * 65536)
-                small_index_map = decoded - 1
-                valid_mask = small_index_map >= 0
-                visible_indices = np.unique(small_index_map[valid_mask]).astype(np.int32)
-
-            # NO RESIZING! Just pull the small map directly.
-            index_map = small_index_map_tensor.cpu().numpy()
+            index_map, visible_indices, index_map_tensor = cls._decode_face_id_screenshot(
+                screenshot_low,
+                screenshot_high,
+            )
             
             # 5. Depth Extraction
             t0 = time.time()
@@ -818,7 +985,7 @@ class VisibilityManager:
                     z_cam = torch.matmul(face_centers_pt, R_pt.T)[:, 2] + t_pt[2]
                     z_cam_padded = torch.cat([z_cam, torch.tensor([float('nan')], device='cuda')])
                     
-                    small_depth_tensor = z_cam_padded[small_index_map_tensor.long()]
+                    small_depth_tensor = z_cam_padded[index_map_tensor.long()]
                     
                     # NO RESIZING!
                     depth_map = small_depth_tensor.cpu().numpy()
@@ -988,62 +1155,38 @@ class VisibilityManager:
         print(f"   Ortho: {ortho_w}×{ortho_h}  →  render: {render_w}×{render_h}  (scale={scale:.4f})")
         print(f"   Mesh: {n_cells:,} cells")
 
-        # --- 1. Encode face IDs as RGB (same scheme as perspective pipeline) ---
-        face_ids    = np.arange(n_cells, dtype=np.int32)
-        encoded_ids = face_ids + 1                          # 0 reserved for background
-        r = (encoded_ids % 256).astype(np.uint8)
-        g = ((encoded_ids // 256) % 256).astype(np.uint8)
-        b = ((encoded_ids // 65536) % 256).astype(np.uint8)
-        rgb_colors = np.column_stack([r, g, b])
-
-        mesh_with_ids = mesh.copy()
-        mesh_with_ids.cell_data['FaceID_RGB'] = rgb_colors
-
-        # --- 2. Off-screen plotter ---
+        # --- 1. Setup face-ID rendering actors ---
         plotter = pv.Plotter(off_screen=True, window_size=(render_w, render_h))
         plotter.set_background('black')
         plotter.disable_anti_aliasing()
-        plotter.add_mesh(
-            mesh_with_ids,
-            scalars='FaceID_RGB',
-            rgb=True,
-            lighting=False,
-            interpolate_before_map=False,
-            show_edges=False,
-            style='surface',
-        )
-        del mesh_with_ids
-        import gc; gc.collect()
+        actor_low, actor_high, is_dual_pass = cls._create_face_id_mesh_actors(plotter, mesh, n_cells)
 
         # --- 3. Configure orthographic camera ---
         cls._configure_vtk_camera_ortho(plotter, ortho_camera, mesh.bounds)
 
         # --- 4. Render and decode ---
+        if is_dual_pass and actor_high is not None:
+            actor_low.SetVisibility(True)
+            actor_high.SetVisibility(False)
         plotter.render()
-        screenshot = plotter.screenshot(return_img=True)
-        if screenshot.shape[2] == 4:
-            screenshot = screenshot[:, :, :3]
+        screenshot_low = plotter.screenshot(return_img=True)
+        if screenshot_low.shape[2] == 4:
+            screenshot_low = screenshot_low[:, :, :3]
 
-        if HAS_TORCH and torch.cuda.is_available():
-            # Force contiguous memory to fix the negative stride from PyVista's vertical flip
-            ss_tensor = torch.from_numpy(np.ascontiguousarray(screenshot)).cuda()
-            decoded = (ss_tensor[..., 0].to(torch.int32) +
-                       ss_tensor[..., 1].to(torch.int32) * 256 +
-                       ss_tensor[..., 2].to(torch.int32) * 65536)
-            index_map_tensor = decoded - 1
-            
-            # Extract unique IDs on GPU
-            valid_mask = index_map_tensor >= 0
-            visible_indices = torch.unique(index_map_tensor[valid_mask]).cpu().numpy().astype(np.int32)
-            
-            # Transfer back to CPU and flip
-            index_map = np.fliplr(index_map_tensor.cpu().numpy())
-        else:
-            decoded   = (screenshot[:, :, 0].astype(np.int32)
-                         + screenshot[:, :, 1].astype(np.int32) * 256
-                         + screenshot[:, :, 2].astype(np.int32) * 65536)
-            index_map = np.fliplr((decoded - 1).astype(np.int32))
-            visible_indices = np.unique(index_map[index_map >= 0]).astype(np.int32)
+        screenshot_high = None
+        if is_dual_pass and actor_high is not None:
+            actor_low.SetVisibility(False)
+            actor_high.SetVisibility(True)
+            plotter.render()
+            screenshot_high = plotter.screenshot(return_img=True)
+            if screenshot_high.shape[2] == 4:
+                screenshot_high = screenshot_high[:, :, :3]
+
+        index_map, visible_indices, _ = cls._decode_face_id_screenshot(
+            screenshot_low,
+            screenshot_high,
+        )
+        index_map = np.fliplr(index_map)
 
         plotter.close()
         

@@ -464,6 +464,18 @@ class MVATManager(QObject):
 
         self._setup_connections()
 
+    @property
+    def ortho_pixel_budget(self):
+        """
+        Dynamically scale the perspective pixel budget up for the orthomosaic.
+
+        Ortho maps cover the whole site, so they use 16x the single-camera
+        pixel budget without introducing extra state.
+        """
+        if self.pixel_budget is None:
+            return None
+        return self.pixel_budget * 16
+
     def _setup_connections(self):
         """
         Bind all signals between UI views and this controller.
@@ -533,11 +545,8 @@ class MVATManager(QObject):
         window.  On subsequent calls with new cameras, the frustums are
         refreshed but the view is not reset.
         """
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        QApplication.processEvents()
         all_paths = self.raster_manager.image_paths
         if not all_paths:
-            QApplication.restoreOverrideCursor()
             return
 
         # ------------------------------------------------------------------
@@ -569,7 +578,6 @@ class MVATManager(QObject):
         # Nothing genuinely new to do — report and exit cleanly.
         if not new_perspective_rasters and not need_ortho:
             self.main_window.status_bar.showMessage("All cameras already loaded.", 3000)
-            QApplication.restoreOverrideCursor()
             return
 
         # ------------------------------------------------------------------
@@ -592,7 +600,6 @@ class MVATManager(QObject):
 
         if valid_count == 0 and not need_ortho:
             QMessageBox.information(self.main_window, "No Camera Data", "No valid camera parameters found.")
-            QApplication.restoreOverrideCursor()
             return
 
         # =====================================================================
@@ -617,7 +624,6 @@ class MVATManager(QObject):
                 oc = OrthoCamera(raster, raster.chunk_transform_matrix)
                 if oc.is_valid:
                     self.ortho_camera = oc
-                    self._maybe_compute_ortho_index_map()
                     break
                 else:
                     print(f"⚠️ OrthoRaster {raster.basename} missing geo transform — skipping.")
@@ -627,6 +633,8 @@ class MVATManager(QObject):
         # =====================================================================
         primary_target = self.viewer.scene_context.get_primary_target()
         newly_added_cameras = [self.cameras[p] for p, _ in new_perspective_rasters if p in self.cameras]
+        should_compute_visibility = False
+        cameras_to_compute = []
 
         if (primary_target is not None
                 and self.cache_manager is not None
@@ -697,7 +705,16 @@ class MVATManager(QObject):
                     if ok and choice:
                         # 2. Store the pixel budget instead of a static scale factor
                         self.pixel_budget = quality_map[choice]
-                        self._compute_visibility_async(primary_target, uncached_cameras)
+                        should_compute_visibility = True
+                        cameras_to_compute = uncached_cameras
+
+        # Build the ortho index map only after the quality budget has been
+        # resolved, and before any perspective visibility maps are started.
+        if need_ortho:
+            self._maybe_compute_ortho_index_map()
+
+        if should_compute_visibility:
+            self._compute_visibility_async(primary_target, cameras_to_compute)
 
         # ------------------------------------------------------------------
         # Update the context matrix with the full (now-extended) camera set.
@@ -721,8 +738,6 @@ class MVATManager(QObject):
                 self.selection_model.set_active(current_image_path)
             elif self.cameras:
                 self.selection_model.set_active(next(iter(self.cameras)))
-
-        QApplication.restoreOverrideCursor()
 
     def _render_frustums(self):
         """
@@ -916,7 +931,7 @@ class MVATManager(QObject):
         ortho_raster = self.ortho_camera._raster
 
         native_pixels = self.ortho_camera.width * self.ortho_camera.height
-        pixel_budget = self.pixel_budget
+        pixel_budget = self.ortho_pixel_budget
         if pixel_budget is None or native_pixels <= pixel_budget:
             current_scale = 1.0
         else:
@@ -965,7 +980,7 @@ class MVATManager(QObject):
 
         ortho_camera   = self.ortho_camera
         mesh_product   = primary_target
-        requested_budget = self.pixel_budget
+        requested_budget = self.ortho_pixel_budget
 
         def _build():
             from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
@@ -1013,7 +1028,7 @@ class MVATManager(QObject):
         """Store the completed ortho index map on the OrthoRaster (runs on main thread via signal)."""
         try:
             native_pixels = self.ortho_camera.width * self.ortho_camera.height
-            pixel_budget = self.pixel_budget
+            pixel_budget = self.ortho_pixel_budget
             if pixel_budget is None or native_pixels <= pixel_budget:
                 current_scale = 1.0
             else:
@@ -1068,6 +1083,17 @@ class MVATManager(QObject):
             QApplication.restoreOverrideCursor()
             self.main_window.status_bar.showMessage("Ortho index map ready.", 3000)
 
+    def _reconstruct_depth_map_for_camera(self, primary_target, camera, index_map):
+        if not self.compute_depth_maps_enabled or primary_target is None or index_map is None:
+            return None
+
+        try:
+            from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
+            return VisibilityManager.reconstruct_depth_map(index_map, primary_target, camera.R, camera.t)
+        except Exception as exc:
+            print(f"⚠️ Failed to reconstruct depth map for {camera.label}: {exc}")
+            return None
+
     def _process_visibility_results(self, results: dict, target_file_path: str):
         """
         Process visibility computation results and store in cameras.
@@ -1079,6 +1105,12 @@ class MVATManager(QObject):
             results: Dict mapping image_path -> visibility result dict
             target_file_path: Path to primary target for cache key
         """
+        primary_target = None
+        try:
+            primary_target = self.viewer.scene_context.get_primary_target()
+        except Exception:
+            pass
+
         for path, result in results.items():
             camera = self.cameras.get(path)
             if not camera:
@@ -1122,11 +1154,19 @@ class MVATManager(QObject):
             except Exception:
                 pass
 
-            if self.compute_depth_maps_enabled and result.get('depth_map') is not None:
-                try:
-                    camera._raster.merge_or_set_depth_map(result.get('depth_map'))
-                except Exception:
-                    pass
+            if self.compute_depth_maps_enabled:
+                depth_map = result.get('depth_map')
+                if depth_map is None:
+                    depth_map = self._reconstruct_depth_map_for_camera(
+                        primary_target,
+                        camera,
+                        result.get('index_map'),
+                    )
+                if depth_map is not None:
+                    try:
+                        camera._raster.merge_or_set_depth_map(depth_map)
+                    except Exception:
+                        pass
             
     def _on_visibility_error(self, error_str: str):
         print(f"Visibility worker error:\n{error_str}")
@@ -1450,9 +1490,18 @@ class MVATManager(QObject):
                     inverted_index=cached_data.get('inverted_index')
                 )
 
-                # Restore depth map if enabled
-                if self.compute_depth_maps_enabled and cached_data.get('depth_map') is not None:
-                    camera._raster.merge_or_set_depth_map(cached_data['depth_map'])
+                # Restore depth map if enabled. New cache entries are index-map-only,
+                # so reconstruct from the final stored index map when needed.
+                if self.compute_depth_maps_enabled:
+                    depth_map = cached_data.get('depth_map')
+                    if depth_map is None:
+                        depth_map = self._reconstruct_depth_map_for_camera(
+                            primary_target,
+                            camera,
+                            camera._raster.index_map,
+                        )
+                    if depth_map is not None:
+                        camera._raster.merge_or_set_depth_map(depth_map)
 
                 print(f"💽 Loaded visibility from disk cache: {camera.label}")
             else:
@@ -1499,7 +1548,7 @@ class MVATManager(QObject):
                         mesh_product,
                         K_for_render, camera.R, camera.t,
                         camera.width, camera.height,
-                        compute_depth_map=self.compute_depth_maps_enabled
+                        compute_depth_map=False
                     )
                     result['element_type'] = 'face'
                     # Warp result back to distorted-pixel space if needed
@@ -1507,8 +1556,16 @@ class MVATManager(QObject):
                         warp_fn = camera._raster.warp_linear_map_to_distorted
                         if result.get('index_map') is not None:
                             result['index_map'] = warp_fn(result['index_map'], nodata=-1)
-                        if result.get('depth_map') is not None:
-                            result['depth_map'] = warp_fn(result['depth_map'], nodata=0.0)
+                    if self.compute_depth_maps_enabled and result.get('index_map') is not None:
+                        try:
+                            result['depth_map'] = VisibilityManager.reconstruct_depth_map(
+                                result['index_map'],
+                                mesh_product,
+                                camera.R,
+                                camera.t,
+                            )
+                        except Exception as exc:
+                            print(f"⚠️ Failed to reconstruct depth map for {camera.label}: {exc}")
                     results[camera.image_path] = result
                 except Exception as e:
                     print(f"⚠️ Failed to compute mesh visibility for {camera.label}: {e}")

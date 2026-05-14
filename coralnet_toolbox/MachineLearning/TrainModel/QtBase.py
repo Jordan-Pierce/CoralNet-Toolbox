@@ -899,8 +899,6 @@ class Base(QDialog):
             'val': self.val_combo.currentText() == "True",
             'exist_ok': True,
             'plots': True,
-
-            'mask_ratio': 4,  # Determines downsampling resolution of masks; high val = blockier masks
         }
         # Default project folder
         project = 'Data/Training'
@@ -1183,6 +1181,8 @@ class Base(QDialog):
             deploy_dialog = self.main_window.detect_deploy_model_dialog
         elif task == "segment":
             deploy_dialog = self.main_window.segment_deploy_model_dialog
+        elif task == "semseg":
+            deploy_dialog = self.main_window.semantic_deploy_model_dialog
         else:
             QMessageBox.warning(self, "Deploy Model", "Unknown task type for deployment.")
             return

@@ -370,7 +370,7 @@ class AnnotationWindow(BaseCanvas):
                 self.scale_unit_dropdown.blockSignals(False)
 
             # Manually call the update function to display the new values
-            self.on_scale_unit_changed(self.scale_unit_dropdown.currentText())
+            self.on_scale_unit_changed(self.scale_unit_dropdown.currentText(), refresh_confidence=False)
 
         else:
             # No scale, disable and reset
@@ -487,7 +487,7 @@ class AnnotationWindow(BaseCanvas):
             self.z_colormap_dropdown.setCurrentText("None")
             self.enable_z_visualization_controls(False)
 
-    def on_scale_unit_changed(self, to_unit):
+    def on_scale_unit_changed(self, to_unit, refresh_confidence=True):
         """
         Converts stored meter values to the selected unit and updates the label.
         """
@@ -508,7 +508,7 @@ class AnnotationWindow(BaseCanvas):
         # Refresh the confidence window if an annotation is selected
         # This is the only refresh needed, as it's the only
         # change that can happen *while* an annotation is displayed.
-        if self.main_window.confidence_window.annotation:
+        if refresh_confidence and self.main_window.confidence_window.annotation:
             self.main_window.confidence_window.refresh_display()
 
     def on_z_unit_changed(self, selected_unit):

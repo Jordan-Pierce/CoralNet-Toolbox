@@ -674,7 +674,7 @@ class Semantic(Base):
         # SHIFT LOGIC: Inject Background at 0 if selected
         names_dict = {}
         if treat_as_background:
-            names_dict[0] = "Background"
+            names_dict[0] = "background"
             for i, name in enumerate(names):
                 names_dict[i + 1] = name
             num_classes = len(names) + 1
