@@ -502,7 +502,7 @@ class Semantic(Base):
             conf=confidence,
             device=self.main_window.device,
             imgsz=self.imgsz,
-            # retina_masks=True,
+            retina_masks=True,
             stream=True,
         )
 
