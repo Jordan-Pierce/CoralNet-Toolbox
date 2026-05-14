@@ -19,7 +19,7 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Common import ThresholdsWidget
 
-from coralnet_toolbox.QtActions import MaskEditAction
+from coralnet_toolbox.QtActions import AddAnnotationsAction, CompoundAction, MaskEditAction
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -154,10 +154,46 @@ class Semantic(Base):
         self.predict_background_checkbox = QCheckBox("Predict 'background' class")
         # Default: do not predict background unless user enables it
         self.predict_background_checkbox.setChecked(False)
+        self.predict_background_checkbox.setToolTip("Cannot be used at the same time as auto-vectorize.")
 
         layout.addRow("Include background:", self.predict_background_checkbox)
+
+        # Allow users to turn the semantic mask into vector annotations after prediction.
+        self.auto_vectorize_checkbox = QCheckBox("Convert output to vector polygons")
+        self.auto_vectorize_checkbox.setChecked(False)
+        self.auto_vectorize_checkbox.setToolTip("Cannot be used at the same time as Predict 'background' class.")
+        layout.addRow("Auto-vectorize:", self.auto_vectorize_checkbox)
+
+        self.predict_background_checkbox.toggled.connect(
+            lambda checked: self._sync_semantic_prediction_options(self.predict_background_checkbox)
+        )
+        self.auto_vectorize_checkbox.toggled.connect(
+            lambda checked: self._sync_semantic_prediction_options(self.auto_vectorize_checkbox)
+        )
+
+        self._sync_semantic_prediction_options()
+
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
+
+    def _sync_semantic_prediction_options(self, active_checkbox=None):
+        """Keep background prediction and auto-vectorize mutually exclusive."""
+        if not hasattr(self, 'predict_background_checkbox') or not hasattr(self, 'auto_vectorize_checkbox'):
+            return
+
+        if active_checkbox is self.predict_background_checkbox and self.predict_background_checkbox.isChecked():
+            if self.auto_vectorize_checkbox.isChecked():
+                self.auto_vectorize_checkbox.blockSignals(True)
+                self.auto_vectorize_checkbox.setChecked(False)
+                self.auto_vectorize_checkbox.blockSignals(False)
+        elif active_checkbox is self.auto_vectorize_checkbox and self.auto_vectorize_checkbox.isChecked():
+            if self.predict_background_checkbox.isChecked():
+                self.predict_background_checkbox.blockSignals(True)
+                self.predict_background_checkbox.setChecked(False)
+                self.predict_background_checkbox.blockSignals(False)
+
+        self.predict_background_checkbox.setEnabled(not self.auto_vectorize_checkbox.isChecked())
+        self.auto_vectorize_checkbox.setEnabled(not self.predict_background_checkbox.isChecked())
     
     def setup_sam_layout(self):
         pass
@@ -445,11 +481,62 @@ class Semantic(Base):
                     # Let the outer finally block handle cleanup
                 
                 # --- 4. Push undo action ---
+                auto_vectorize = (
+                    getattr(self, 'auto_vectorize_checkbox', None) is not None
+                    and self.auto_vectorize_checkbox.isChecked()
+                )
+
+                # Background prediction and vectorization are mutually exclusive.
+                if include_bg and auto_vectorize:
+                    auto_vectorize = False
+
+                actions_for_this_image = []
+                history_description = "Semantic prediction"
+                vector_annotations = []
+                vectors_added = False
+
+                if auto_vectorize:
+                    history_description = "Semantic prediction & vectorize"
+                    try:
+                        vector_annotations = mask_annotation.to_vector_annotations(
+                            transparency=self.main_window.get_transparency_value(),
+                            show_confidence=False,
+                            min_hole_area=500,
+                        )
+                    except Exception as e:
+                        print(f"Warning: Failed to vectorize semantic prediction for {image_path}: {e}")
+                        vector_annotations = []
+
+                    if vector_annotations:
+                        try:
+                            self.annotation_window.add_annotations(vector_annotations, record_action=False)
+                        except Exception as e:
+                            print(f"Warning: Failed to apply vector annotations for {image_path}: {e}")
+                            vector_annotations = []
+                        else:
+                            vectors_added = True
+                            try:
+                                mask_annotation.clear_pixels_for_annotations(vector_annotations)
+                            except Exception as e:
+                                print(f"Warning: Failed to clear semantic pixels for {image_path}: {e}")
+
                 _history_action = MaskEditAction.from_snapshot(
-                    mask_annotation, _before_mask_snapshot, description="Semantic prediction"
+                    mask_annotation, _before_mask_snapshot, description=history_description
                 )
                 if not _history_action.is_empty():
-                    self.annotation_window.action_stack.push(_history_action)
+                    actions_for_this_image.append(_history_action)
+
+                if vectors_added:
+                    actions_for_this_image.append(
+                        AddAnnotationsAction(self.annotation_window, vector_annotations)
+                    )
+
+                if actions_for_this_image:
+                    if len(actions_for_this_image) > 1:
+                        compound_action = CompoundAction(actions_for_this_image, description=history_description)
+                        self.annotation_window.action_stack.push(compound_action)
+                    else:
+                        self.annotation_window.action_stack.push(actions_for_this_image[0])
 
                 # --- 5. Recalculate Stats ---
                 # This is called *after* all tiles for an image are done
