@@ -1,3 +1,4 @@
+import os
 import warnings
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -6,6 +7,9 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox)
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
+
+
+SUPPORTED_IMAGE_EXTENSIONS = {'.bmp', '.jpeg', '.jpg', '.png', '.tif', '.tiff'}
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -19,6 +23,10 @@ class ImportImages:
         self.image_window = main_window.image_window
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
+
+    @staticmethod
+    def _is_supported_image_file(file_name: str) -> bool:
+        return os.path.splitext(file_name)[1].lower() in SUPPORTED_IMAGE_EXTENSIONS
 
     def import_images(self):
         self.main_window.untoggle_all_tools()
@@ -43,23 +51,34 @@ class ImportImages:
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
-            event.acceptProposedAction()
+            file_names = [url.toLocalFile() for url in event.mimeData().urls() if url.isLocalFile()]
+            if any(self._is_supported_image_file(file_name) for file_name in file_names):
+                event.acceptProposedAction()
+            else:
+                event.ignore()
 
     def dropEvent(self, event):
         urls = event.mimeData().urls()
-        file_names = [url.toLocalFile() for url in urls if url.isLocalFile()]
+        file_names = [url.toLocalFile() for url in urls
+                      if url.isLocalFile() and self._is_supported_image_file(url.toLocalFile())]
 
         if file_names:
-            self._process_image_files(file_names)
+            self._process_image_files(file_names, suppress_errors=True)
+        else:
+            event.ignore()
 
     def dragMoveEvent(self, event):
         if event.mimeData().hasUrls():
-            event.acceptProposedAction()
+            file_names = [url.toLocalFile() for url in event.mimeData().urls() if url.isLocalFile()]
+            if any(self._is_supported_image_file(file_name) for file_name in file_names):
+                event.acceptProposedAction()
+            else:
+                event.ignore()
 
     def dragLeaveEvent(self, event):
         event.accept()
     
-    def _process_image_files(self, file_names, raster_type: str = None):
+    def _process_image_files(self, file_names, raster_type: str = None, suppress_errors: bool = False):
         """Helper method to process a list of image files with progress tracking.
 
         Args:
@@ -79,17 +98,21 @@ class ImportImages:
             
             # Add images directly to the manager without emitting signals
             for file_name in file_names:
-                if file_name not in self.image_window.raster_manager.image_paths:
-                    # Call the manager directly to add the raster silently,
-                    # bypassing ImageWindow.add_image and its signal handlers.
-                    if raster_type == 'OrthoRaster':
-                        if self.image_window.raster_manager.add_ortho_raster(file_name, emit_signal=False):
-                            imported_paths.append(file_name)
+                try:
+                    if file_name not in self.image_window.raster_manager.image_paths:
+                        # Call the manager directly to add the raster silently,
+                        # bypassing ImageWindow.add_image and its signal handlers.
+                        if raster_type == 'OrthoRaster':
+                            if self.image_window.raster_manager.add_ortho_raster(file_name, emit_signal=False):
+                                imported_paths.append(file_name)
+                        else:
+                            if self.image_window.raster_manager.add_raster(file_name, emit_signal=False):
+                                imported_paths.append(file_name)
                     else:
-                        if self.image_window.raster_manager.add_raster(file_name, emit_signal=False):
-                            imported_paths.append(file_name)
-                else:
-                    imported_paths.append(file_name)
+                        imported_paths.append(file_name)
+                except Exception:
+                    if not suppress_errors:
+                        raise
 
                 # Batch progress updates to reduce UI thread load
                 progress_batch += 1
@@ -107,7 +130,8 @@ class ImportImages:
             self.image_window.filter_images(use_threading=False)
 
         except Exception as e:
-            self._show_error_message(str(e))
+            if not suppress_errors:
+                self._show_error_message(str(e))
         finally:
             QApplication.restoreOverrideCursor()
             progress_bar.stop_progress()
