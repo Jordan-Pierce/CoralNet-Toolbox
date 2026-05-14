@@ -63,18 +63,18 @@ class Semantic(Base):
         self.model_combo.setEditable(True)
 
         standard_models = [
-            'yolo26n-semseg.yaml',
-            'yolo26s-semseg.yaml',
-            'yolo26m-semseg.yaml',
-            'yolo26l-semseg.yaml',
-            'yolo26x-semseg.yaml'
+            'yolo26n-semseg.pt',
+            'yolo26s-semseg.pt',
+            'yolo26m-semseg.pt',
+            'yolo26l-semseg.pt',
+            'yolo26x-semseg.pt'
         ]
 
         self.model_combo.addItems(standard_models)
 
         # Default to the nano model if available
         try:
-            self.model_combo.setCurrentIndex(standard_models.index('yolo26n-semseg.yaml'))
+            self.model_combo.setCurrentIndex(standard_models.index('yolo26n-semseg.pt'))
         except ValueError:
             if standard_models:
                 self.model_combo.setCurrentIndex(0)
