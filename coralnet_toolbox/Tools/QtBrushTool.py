@@ -145,6 +145,9 @@ class BrushTool(Tool):
         self._accumulated_points = []
         self._stroke_history_action = None
         self._stroke_mask_annotation = None
+        self._last_scratchpad_pos = None
+        self._stroke_accumulated_indices = []
+        self.live_stroke_callback = None
         
         self.scratchpad_item = None
         self.scratchpad_path = QPainterPath()
@@ -186,26 +189,37 @@ class BrushTool(Tool):
         self.painting = not self.painting
         
         if self.painting:
-            # 1. Setup the Qt Scratchpad
+            # 1. Setup the Qt Scratchpad (Thick Polyline)
             self._is_finishing_stroke = False
+            self._stroke_accumulated_indices.clear()
+            self._last_scratchpad_pos = None
+
             self._stroke_mask_annotation = self.annotation_window.current_mask_annotation
             self._stroke_history_action = MaskEditAction(
                 self._stroke_mask_annotation,
                 description=f"{self.__class__.__name__} stroke",
             )
             self.scratchpad_path = QPainterPath()
-            self.scratchpad_path.setFillRule(Qt.WindingFill)
             self.scratchpad_item = QGraphicsPathItem()
             
             label = self.annotation_window.selected_label
             transparency = self.annotation_window.main_window.get_transparency_value()
             
             c = QColor(label.color)
-            fill = QColor(c)
-            fill.setAlpha(transparency)
-            
-            self.scratchpad_item.setBrush(QBrush(fill))
-            self.scratchpad_item.setPen(QPen(Qt.NoPen))
+            c.setAlpha(transparency)
+
+            # Use a thick Pen instead of a filled polygon
+            pen = QPen(c)
+            pen.setWidth(self.brush_size)
+            if self.shape == 'circle':
+                pen.setCapStyle(Qt.RoundCap)
+                pen.setJoinStyle(Qt.RoundJoin)
+            else:
+                pen.setCapStyle(Qt.SquareCap)
+                pen.setJoinStyle(Qt.BevelJoin)
+
+            self.scratchpad_item.setPen(pen)
+            self.scratchpad_item.setBrush(QBrush(Qt.NoBrush))
             self.scratchpad_item.setZValue(3)
             
             self.annotation_window.scene.addItem(self.scratchpad_item)
@@ -420,17 +434,28 @@ class BrushTool(Tool):
     def _apply_brush(self, event):
         """Draws visually on the Qt Scratchpad and accumulates points (Zero NumPy)."""
         scene_pos = self.annotation_window.mapToScene(event.pos())
-        radius = self.brush_size / 2.0
         
         if self.scratchpad_item:
-            if self.shape == 'circle':
-                self.scratchpad_path.addEllipse(scene_pos.x() - radius, scene_pos.y() - radius, self.brush_size, self.brush_size)
+            if self._last_scratchpad_pos is None:
+                self.scratchpad_path.moveTo(scene_pos)
+                # Draw a tiny micro-line to itself to ensure a single click renders a dot
+                self.scratchpad_path.lineTo(scene_pos.x() + 0.1, scene_pos.y())
             else:
-                self.scratchpad_path.addRect(scene_pos.x() - radius, scene_pos.y() - radius, self.brush_size, self.brush_size)
-                
+                self.scratchpad_path.lineTo(scene_pos)
+
             self.scratchpad_item.setPath(self.scratchpad_path)
+            self._last_scratchpad_pos = scene_pos
 
         self._accumulated_points.append(scene_pos)
+
+        # Fire the lightning-fast 2D sync trail to the context matrix canvases
+        if self.live_stroke_callback and self.annotation_window.selected_label:
+            self.live_stroke_callback(
+                scene_pos,
+                self.brush_size,
+                self.shape,
+                self.annotation_window.selected_label.color,
+            )
 
     def _stream_stroke_chunk(self):
         """Grabs the recent points and sends them to the background worker."""
@@ -482,26 +507,56 @@ class BrushTool(Tool):
         self._stream_stroke_chunk()
 
     def _on_math_finished(self, flat_indices, center_pos, combined_mask, mask_annotation, selected_label_id):
-        """Executes on the Main Thread: Writes the arrays and triggers 3D sync."""
+        """Executes on the Main Thread: Writes the arrays locally and defers 3D sync."""
         self._active_workers -= 1
         
         class_id = mask_annotation.label_id_to_class_id_map.get(selected_label_id)
         if class_id is not None and len(flat_indices) > 0:
-            # silent=True locally so we don't double-draw under the opaque Qt scratchpad
+            # Update the active canvas instantly
             mask_annotation.update_mask_at_indices(
                 flat_indices,
                 class_id,
                 silent=True,
                 history_action=self._stroke_history_action,
             )
+            # Accumulate the flat indices for deferred global propagation
+            self._stroke_accumulated_indices.append(flat_indices)
 
-        # Trigger Multi-Annotate (Projects this 40ms chunk instantly to context cameras)
-        if self.post_stroke_callback:
-            self.post_stroke_callback(center_pos, selected_label_id, combined_mask)
-        
-        # Clean up the Scratchpad if the user has released the mouse AND all threads are done
-        if self._is_finishing_stroke and self._active_workers == 0 and not self._accumulated_points:
+        # CLEANUP & DEFERRED GLOBAL PROPAGATION
+        # Only trigger the heavy 3D math when the user has released the stroke
+        # AND all background workers have finished computing the arrays.
+        if self._is_finishing_stroke and self._active_workers == 0:
+
+            # Did we actually paint anything?
+            if self._stroke_accumulated_indices and self.post_stroke_callback:
+                # 1. Flatten all painted pixels across the entire stroke into one array
+                combined_flat = np.unique(np.concatenate(self._stroke_accumulated_indices))
+
+                if len(combined_flat) > 0:
+                    h, w = mask_annotation.mask_data.shape
+
+                    # 2. Find the tight bounding box of the entire stroke
+                    y_coords, x_coords = np.divmod(combined_flat, w)
+                    min_x, max_x = int(x_coords.min()), int(x_coords.max())
+                    min_y, max_y = int(y_coords.min()), int(y_coords.max())
+
+                    crop_w = (max_x - min_x) + 1
+                    crop_h = (max_y - min_y) + 1
+
+                    # 3. Create a compact boolean mask of just the painted area
+                    cropped_mask = np.zeros((crop_h, crop_w), dtype=bool)
+                    local_y = y_coords - min_y
+                    local_x = x_coords - min_x
+                    cropped_mask[local_y, local_x] = True
+
+                    # 4. Fire ONE heavy payload to the MVAT Manager
+                    final_center = QPointF(min_x + crop_w / 2.0, min_y + crop_h / 2.0)
+                    self.post_stroke_callback(final_center, selected_label_id, cropped_mask)
+
+            # Final Cleanup
             self._cleanup_scratchpad()
+            self._last_scratchpad_pos = None
+            self._stroke_accumulated_indices.clear()
             # Final local repaint so the baked pixels show up
             self.annotation_window.viewport().update()
             self._commit_stroke_history_action()
