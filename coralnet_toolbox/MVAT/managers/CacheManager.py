@@ -24,7 +24,7 @@ except ImportError:
 
 
 # ---------------------------------------------------------------------------
-# Module-level LRU-cached MD5 helper — avoids recomputing hashes on every
+# Module-level LRU-cached MD5 helper — avoid recomputing hashes on every
 # load/save call for the same camera + geometry combination.
 # ---------------------------------------------------------------------------
 
@@ -32,13 +32,12 @@ except ImportError:
 def _cached_md5(extrinsics_bytes: bytes, path: str, element_type: str,
                 extra: Optional[bytes],
                 pixel_budget: Optional[int] = None) -> str:
-    """Return the hex MD5 digest for a (extrinsics, path, element_type, extra,
-    pixel_budget) tuple.
+    """Return the hex MD5 digest for a (extrinsics, path, element_type, extra)
+    tuple.
 
-    ``pixel_budget`` is only mixed into the hash when it is a positive integer.
-    Passing ``None`` (or ``0`` / a negative value) reproduces the legacy hash so
-    pre-existing caches written before quality-aware keying remain valid for
-    Native-quality (full-resolution) computations.
+    ``pixel_budget`` is intentionally ignored in the current cache key so the
+    same scene reuses one cache file across quality settings. The parameter is
+    retained for call-site compatibility.
     """
     h = hashlib.md5()
     h.update(extrinsics_bytes)
@@ -46,9 +45,6 @@ def _cached_md5(extrinsics_bytes: bytes, path: str, element_type: str,
     h.update(element_type.encode('utf-8'))
     if extra is not None:
         h.update(extra)
-    if pixel_budget is not None and pixel_budget > 0:
-        h.update(b"|pb=")
-        h.update(str(int(pixel_budget)).encode('ascii'))
     return h.hexdigest()
 
 
@@ -226,7 +222,7 @@ class CacheManager:
                              pixel_budget: Optional[int] = None) -> str:
         """
         Generate a unique cache key based on camera extrinsics, geometry path,
-        element type, and (optionally) the pixel-budget that produced the data.
+        element type, and optional extra hash data.
 
         Args:
             extrinsics (np.ndarray): Camera extrinsic matrix (4x4)
@@ -235,11 +231,9 @@ class CacheManager:
             extra_hash_data (bytes, optional): Additional bytes mixed into the hash.
                 Pass ``raster.dist_coeffs.tobytes()`` for distorted cameras so their
                 warped maps never collide with undistorted maps from the same camera.
-            pixel_budget (int, optional): Maximum render budget in pixels for the
-                visibility computation. Mixed into the hash so caches produced at
-                different qualities don't collide. ``None`` (or 0/negative) means
-                "Native / full resolution" and matches the legacy hash, preserving
-                older cache files.
+            pixel_budget (int, optional): Retained for call-site compatibility.
+                The current cache key ignores it so a scene reuses the same cache
+                file across quality settings.
 
         Returns:
             str: MD5 hash string to use as cache key
@@ -267,8 +261,8 @@ class CacheManager:
             element_type (str): Type of indexed elements ('point', 'face', or 'cell')
             extra_hash_data (bytes, optional): Additional bytes mixed into the hash
                 (see _generate_cache_key).
-            pixel_budget (int, optional): Render pixel budget mixed into the hash
-                (see _generate_cache_key).
+            pixel_budget (int, optional): Retained for compatibility; ignored by
+                the current cache key (see _generate_cache_key).
 
         Returns:
             str: Canonical cache key path (.npz anchor used by both legacy and split formats)
@@ -297,30 +291,12 @@ class CacheManager:
                                      element_type: str,
                                      extra_hash_data: Optional[bytes],
                                      pixel_budget: Optional[int]) -> Optional[str]:
-        """Locate a cache file on disk, preferring the budget-aware key.
-
-        Cache keys were changed to include ``pixel_budget`` so caches written at
-        different qualities don't collide. Sessions that wrote cache files
-        *before* that change used a key with no budget mixed in. To keep those
-        legacy files usable, we look up the budget-aware path first and, if
-        nothing is there, fall back to the legacy path (computed with
-        ``pixel_budget=None``). Returns the resolved path or ``None`` if no
-        cache exists in either form.
-        """
+        """Locate a cache file on disk using the current quality-agnostic key."""
         primary = self.get_cache_path(
             extrinsics, point_cloud_path, element_type, extra_hash_data, pixel_budget,
         )
         if self._cache_path_exists(primary):
             return primary
-
-        # Legacy fallback: pre-budget key. Only attempt when a budget was
-        # actually supplied, otherwise the two paths are identical.
-        if pixel_budget is not None and pixel_budget > 0:
-            legacy = self.get_cache_path(
-                extrinsics, point_cloud_path, element_type, extra_hash_data, None,
-            )
-            if self._cache_path_exists(legacy):
-                return legacy
 
         return None
 
@@ -328,9 +304,7 @@ class CacheManager:
                              element_type: str = 'point',
                              extra_hash_data: Optional[bytes] = None,
                              pixel_budget: Optional[int] = None) -> bool:
-        """Return True when either the budget-aware cache or a legacy
-        (budget-omitted) cache file exists on disk in either supported format.
-        """
+        """Return True when a current cache file exists on disk."""
         return self._resolve_existing_cache_path(
             extrinsics, point_cloud_path, element_type, extra_hash_data, pixel_budget,
         ) is not None
@@ -490,9 +464,7 @@ class CacheManager:
             dict or None: Dictionary with 'index_map', 'visible_indices', 'depth_map',
                          and 'element_type' if cache exists, None otherwise
         """
-        # Resolve the actual on-disk cache file. Prefers the budget-aware key
-        # but transparently falls back to the legacy (budget-omitted) key so
-        # caches written before quality-aware keying are still loaded.
+        # Resolve the actual on-disk cache file using the quality-agnostic key.
         cache_path = self._resolve_existing_cache_path(
             extrinsics, point_cloud_path, element_type, extra_hash_data, pixel_budget,
         )

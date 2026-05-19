@@ -655,79 +655,34 @@ class MVATManager(QObject):
                     uncached_cameras.append(cam)
 
             if uncached_cameras:
-                reply = QMessageBox.question(
-                    self.main_window,
-                    "Pre-compute Visibility?",
-                    f"Found {len(uncached_cameras)} cameras without cached visibility maps.\n\n"
-                    "Would you like to compute them all now? (This will take time upfront, but makes navigating the scene instantly responsive.)\n\n"
-                    "Select 'No' to compute them in the background as you click them.",
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.No
+                choice_mode, new_budget = self._prompt_visibility_quality_dialog(
+                    len(uncached_cameras)
                 )
 
-                if reply == QMessageBox.Yes:
-                    from PyQt5.QtWidgets import QInputDialog
-                    
-                    # 1. Define the extended smart Pixel Budgets
-                    qualities = [
-                        "Native (Full Resolution)", 
-                        "Highest (~12 Megapixels)", 
-                        "High (~4 Megapixels)", 
-                        "Medium (~2 Megapixels)", 
-                        "Low (~1 Megapixel)",
-                        "Lowest (~0.5 Megapixel)"
-                    ]
-                    
-                    # Map to exact pixel counts (None means Native/No scaling)
-                    quality_map = {
-                        "Native (Full Resolution)": None,
-                        "Highest (~12 Megapixels)": 12_000_000,
-                        "High (~4 Megapixels)": 4_000_000,
-                        "Medium (~2 Megapixels)": 2_000_000,
-                        "Low (~1 Megapixel)": 1_000_000,
-                        "Lowest (~0.5 Megapixel)": 500_000
-                    }
+                if choice_mode is None:
+                    return
 
-                    # Determine default index based on current settings
-                    current_idx = 2  # Default to "High (~4 Megapixels)"
-                    for i, (key, budget) in enumerate(quality_map.items()):
-                        if getattr(self, 'pixel_budget', 4_000_000) == budget:
-                            current_idx = i
-                            break
+                previous_budget = getattr(self, 'pixel_budget', None)
+                self.pixel_budget = new_budget
 
-                    choice, ok = QInputDialog.getItem(
-                        self.main_window,
-                        "Select Visibility Quality",
-                        "Choose the maximum resolution budget per image:\n(Lower is faster but edges may become slightly blocky)",
-                        qualities,
-                        current_idx,
-                        False
-                    )
+                # If the budget actually changed, the previously cached
+                # visibility maps (in RAM) were produced at a different
+                # resolution. Invalidate them so later visibility work does not
+                # mix face-ID sets sampled at different resolutions.
+                if previous_budget != new_budget:
+                    self._invalidate_perspective_visibility_state()
 
-                    if ok and choice:
-                        # 2. Store the pixel budget instead of a static scale factor
-                        previous_budget = getattr(self, 'pixel_budget', None)
-                        new_budget = quality_map[choice]
-                        self.pixel_budget = new_budget
-
-                        # If the budget actually changed, the previously cached
-                        # visibility maps (in RAM) were produced at a different
-                        # resolution. Invalidate them on every camera so the
-                        # neighbor-detection in count_overlapping_cameras
-                        # doesn't mix face-ID sets sampled at different
-                        # resolutions, and so the next selection triggers a
-                        # cache-aware reload at the new budget.
-                        if previous_budget != new_budget:
-                            self._invalidate_perspective_visibility_state()
-                            # Recompute everything that was already loaded at the
-                            # old quality, not just the brand-new uncached cameras.
-                            cameras_to_compute = list(newly_added_cameras) + [
-                                cam for cam in self.cameras.values()
-                                if cam not in newly_added_cameras
-                            ]
-                        else:
-                            cameras_to_compute = uncached_cameras
-                        should_compute_visibility = True
+                if choice_mode == 'compute':
+                    # Recompute everything that was already loaded at the old
+                    # quality, not just the brand-new uncached cameras.
+                    if previous_budget != new_budget:
+                        cameras_to_compute = list(newly_added_cameras) + [
+                            cam for cam in self.cameras.values()
+                            if cam not in newly_added_cameras
+                        ]
+                    else:
+                        cameras_to_compute = uncached_cameras
+                    should_compute_visibility = True
 
         # Build the ortho index map only after the quality budget has been
         # resolved, and before any perspective visibility maps are started.
@@ -787,6 +742,88 @@ class MVATManager(QObject):
             hovered_camera=self.hovered_camera,
             context_highlighted_paths=visible_paths,
         )
+
+    def _prompt_visibility_quality_dialog(self, camera_count: int):
+        """Prompt for visibility quality and whether to compute now or defer."""
+        from PyQt5.QtWidgets import (
+            QComboBox,
+            QDialog,
+            QDialogButtonBox,
+            QFormLayout,
+            QLabel,
+            QVBoxLayout,
+        )
+
+        qualities = [
+            "Native (Full Resolution)",
+            "Highest (~12 Megapixels)",
+            "High (~4 Megapixels)",
+            "Medium (~2 Megapixels)",
+            "Low (~1 Megapixel)",
+            "Lowest (~0.5 Megapixel)",
+        ]
+        quality_map = {
+            "Native (Full Resolution)": None,
+            "Highest (~12 Megapixels)": 12_000_000,
+            "High (~4 Megapixels)": 4_000_000,
+            "Medium (~2 Megapixels)": 2_000_000,
+            "Low (~1 Megapixel)": 1_000_000,
+            "Lowest (~0.5 Megapixel)": 500_000,
+        }
+
+        dialog = QDialog(self.main_window)
+        dialog.setWindowTitle("Pre-compute Visibility")
+        dialog.setModal(True)
+        dialog.resize(520, 180)
+
+        selected_mode = {'mode': None}
+
+        def _accept_compute():
+            selected_mode['mode'] = 'compute'
+            dialog.accept()
+
+        def _reject_background():
+            selected_mode['mode'] = 'background'
+            dialog.reject()
+
+        layout = QVBoxLayout(dialog)
+
+        message_label = QLabel(
+            f"Found {camera_count} cameras without cached visibility maps.<br><br>"
+            "Choose a visibility quality, then either compute them now or defer "
+            "to background loading."
+        )
+        message_label.setWordWrap(True)
+        layout.addWidget(message_label)
+
+        form_layout = QFormLayout()
+        quality_combo = QComboBox(dialog)
+        quality_combo.addItems(qualities)
+
+        current_idx = 2  # Default to "High (~4 Megapixels)"
+        for i, budget in enumerate(quality_map.values()):
+            if getattr(self, 'pixel_budget', 4_000_000) == budget:
+                current_idx = i
+                break
+        quality_combo.setCurrentIndex(current_idx)
+        form_layout.addRow("Visibility Quality:", quality_combo)
+        layout.addLayout(form_layout)
+
+        button_box = QDialogButtonBox(dialog)
+        compute_button = button_box.addButton("Compute Now", QDialogButtonBox.AcceptRole)
+        background_button = button_box.addButton("Background", QDialogButtonBox.RejectRole)
+        compute_button.clicked.connect(_accept_compute)
+        background_button.clicked.connect(_reject_background)
+        layout.addWidget(button_box)
+
+        dialog.exec_()
+
+        mode = selected_mode['mode']
+        if mode is None:
+            return None, None
+
+        chosen_quality = quality_combo.currentText()
+        return mode, quality_map[chosen_quality]
 
     # --- Signal Handlers ---
 
@@ -1500,9 +1537,9 @@ class MVATManager(QObject):
                 extra = (camera._raster.dist_coeffs.tobytes()
                          if camera.is_distorted
                          and camera._raster.dist_coeffs is not None else None)
-                # Prefer the path the loader actually used (may be a legacy,
-                # pre-budget cache file). Fall back to rebuilding the
-                # budget-aware path when the loader didn't supply one.
+                # Prefer the path the loader actually used. Fall back to
+                # rebuilding the canonical cache path when the loader didn't
+                # supply one.
                 cache_path = cached_data.get('cache_path') or self.cache_manager.get_cache_path(
                     cache_key, target_file_path, element_type, extra,
                     pixel_budget=self.pixel_budget,
