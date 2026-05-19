@@ -938,26 +938,43 @@ class MVATViewer(QFrame):
         interactor.RemoveObservers("RightButtonPressEvent")
         interactor.RemoveObservers("RightButtonReleaseEvent")
         
-        # 2. Apply Custom Trackball Style
-        # This cleanly maps Right Drag -> Pan without complex state management.
-        # left='rotate' is implied default.
+        # 2. Apply Custom Trackball Style. Left=rotate is the only binding we
+        # really want VTK to manage; right=pan is set here for backward compat
+        # but its observers are stripped immediately below so VTK never moves
+        # the camera from a right-drag. Our Qt-level _apply_right_pan_delta
+        # (see eventFilter) is the sole driver of right-button pan — that path
+        # is decoupled from the camera-inertia controller, so a tiny right-drag
+        # no longer triggers VTK's pan + the inertia coast that together
+        # propelled the camera after the user released the button.
         self.plotter.enable_custom_trackball_style(
             left='rotate',
             control_left='rotate',
             right='pan',
             control_right='pan',
         )
+
         inertia_style = self._get_vtk_interaction_style(interactor)
         if hasattr(self, '_camera_inertia') and self._camera_inertia is not None:
             self._camera_inertia.bind(inertia_style)
 
-        # 2a. Belt-and-braces pan: we drive right-button pan from the Qt
-        # eventFilter rather than from VTK interactor observers, because
-        # VTK's RightButtonReleaseEvent can be swallowed by the active
-        # interactor style (especially while a 3D tool's left-press has
-        # captured the interaction state), which would leave our pan stuck
-        # in the "right is down" state forever. Qt mouse press/release
-        # always fire, regardless of style.
+        # Strip the right-button handlers that enable_custom_trackball_style
+        # just re-installed. This removes the VTK-side pan and, because the
+        # inertia controller listens for StartInteraction / InteractionEvent
+        # on the style itself, also prevents inertia coasting from a
+        # right-drag. Left-button rotate + inertia is untouched.
+        try:
+            interactor.RemoveObservers("RightButtonPressEvent")
+            interactor.RemoveObservers("RightButtonReleaseEvent")
+        except Exception:
+            pass
+        if inertia_style is not None and inertia_style is not interactor:
+            try:
+                inertia_style.RemoveObservers("RightButtonPressEvent")
+                inertia_style.RemoveObservers("RightButtonReleaseEvent")
+            except Exception:
+                pass
+
+        # 2a. Qt-driven right-button pan (see eventFilter). Track state here.
         self._right_pan_active = False
         self._right_pan_last_xy = None
 
