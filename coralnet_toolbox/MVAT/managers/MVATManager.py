@@ -38,6 +38,51 @@ from coralnet_toolbox.MVAT.core.Model import MeshProduct
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 
 
+def resolve_class_conflicts_vectorized(element_ids: np.ndarray, class_ids: np.ndarray):
+    """Resolve per-element class conflicts using vectorized vote counts."""
+    try:
+        element_ids = np.asarray(element_ids, dtype=np.int64).ravel()
+        class_ids = np.asarray(class_ids, dtype=np.int64).ravel()
+    except Exception:
+        return np.array([], dtype=np.int64), np.array([], dtype=np.int64)
+
+    if element_ids.size == 0 or class_ids.size == 0 or element_ids.size != class_ids.size:
+        return np.array([], dtype=np.int64), np.array([], dtype=np.int64)
+
+    max_classes = max(100000, int(np.max(class_ids)) + 1)
+    compound_ids = (element_ids * max_classes) + class_ids
+
+    unique_compounds, vote_counts = np.unique(compound_ids, return_counts=True)
+    unique_elements = unique_compounds // max_classes
+    unique_classes = unique_compounds % max_classes
+
+    # Within each element group, keep the highest vote count and prefer the
+    # smaller class ID when the vote count is tied.
+    sort_indices = np.lexsort((-unique_classes, vote_counts, unique_elements))
+    sorted_elements = unique_elements[sort_indices]
+    sorted_classes = unique_classes[sort_indices]
+
+    _, winner_indices = np.unique(sorted_elements[::-1], return_index=True)
+    winner_indices = (len(sorted_elements) - 1) - winner_indices
+
+    return sorted_elements[winner_indices], sorted_classes[winner_indices]
+
+
+def _merge_update_rects(existing_rect, new_rect):
+    """Return the union of two update rects in (x1, y1, x2, y2) form."""
+    if new_rect is None:
+        return existing_rect
+    if existing_rect is None:
+        return new_rect
+
+    return (
+        min(existing_rect[0], new_rect[0]),
+        min(existing_rect[1], new_rect[1]),
+        max(existing_rect[2], new_rect[2]),
+        max(existing_rect[3], new_rect[3]),
+    )
+
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
@@ -372,7 +417,7 @@ class MVATManager(QObject):
     cameraSelectedInMVAT = pyqtSignal(str)
     contextStatsComputed = pyqtSignal(int, str, int, int)
     _orthoIndexMapReady  = pyqtSignal(object)  # internal: carries result dict from worker thread
-    _sam_repaint_signal  = pyqtSignal(list)    # internal: UI update tasks from background SAM worker
+    _universal_repaint_signal = pyqtSignal(list)  # internal: UI update tasks from unified propagation worker
     
     def __init__(self, main_window, viewer):
         super().__init__()
@@ -418,6 +463,7 @@ class MVATManager(QObject):
         # Multi-camera annotation state
         self.multi_annotate_enabled = False
         self._propagating_annotation = False
+        self._pending_unified_propagation_jobs = 0
 
         # Ortho state: chunk transform T and OrthoCamera (set during load_cameras
         # when an OrthoRaster is present in the project)
@@ -436,13 +482,12 @@ class MVATManager(QObject):
             thread_name_prefix='mvat_propagate'
         )
 
-        # Single background thread for SAM propagation — keeps the main thread free
-        # during Phase 1 (cv2 erode/distanceTransform) and mask array writes.
-        self._sam_bg_executor = ThreadPoolExecutor(
+        # Single background worker for all 2D/3D propagation writes.
+        self._unified_bg_executor = ThreadPoolExecutor(
             max_workers=1,
-            thread_name_prefix='mvat_sam_bg'
+            thread_name_prefix='mvat_unified_bg'
         )
-        self._sam_repaint_signal.connect(self._on_sam_repaint, Qt.QueuedConnection)
+        self._universal_repaint_signal.connect(self._on_universal_repaint, Qt.QueuedConnection)
 
         # --- Label Painter Thread ---
         self._label_painter_thread = None
@@ -4123,7 +4168,7 @@ class MVATManager(QObject):
                 return
             self.contextStatsComputed.emit(request_id, active_path, n_visible, m_overlapping)
 
-    def _build_projection(self, px: int, py: int) -> dict:
+    def _build_projection(self, px: int, py: int, source_camera=None) -> dict:
         """Cast a ray from the selected camera at (px, py) and return projections.
 
         Handles both perspective cameras and OrthoCamera (orthomosaic):
@@ -4133,10 +4178,10 @@ class MVATManager(QObject):
         Returns:
             dict mapping image_path -> (u, v, is_valid), or empty dict on failure.
         """
-        if self.selected_camera is None:
+        camera = source_camera if source_camera is not None else self.selected_camera
+        if camera is None:
             return {}
 
-        camera = self.selected_camera
         primary_target = self.viewer.scene_context.get_primary_target()
         ray = None
 
@@ -4568,7 +4613,7 @@ class MVATManager(QObject):
 
             if hasattr(target_mask, 'mask_data'):
                 current_vals = target_mask.mask_data.ravel()[flat_indices]
-                flat_indices = flat_indices[(current_vals < target_mask.LOCK_BIT) & 
+                flat_indices = flat_indices[(current_vals < target_mask.LOCK_BIT) &
                                             (current_vals != target_class_id)]
             if len(flat_indices) == 0:
                 return target_path, False, None
@@ -4599,6 +4644,213 @@ class MVATManager(QObject):
 
         return target_path, True, update_rect
 
+    def _resolve_source_mask_class_context(self, source_camera, label_id: str, project_labels: list):
+        """Resolve the source label, mask, and internal class ID for propagation."""
+        if source_camera is None:
+            return None, None, None
+
+        source_label = next((lbl for lbl in project_labels if lbl.id == label_id), None)
+        if source_label is None:
+            return None, None, None
+
+        source_raster = self.raster_manager.get_raster(source_camera.image_path)
+        if source_raster is None:
+            return source_label, None, None
+
+        source_mask = source_raster.mask_annotation
+        if source_mask is None:
+            source_mask = source_raster.get_mask_annotation(project_labels)
+        if source_mask is None:
+            return source_label, None, None
+
+        source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
+        if source_class_id is None:
+            source_mask.sync_label_map([source_label])
+            source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
+
+        return source_label, source_mask, source_class_id
+
+    def _extract_source_ids_from_sam_prediction(self,
+                                                source_camera,
+                                                binary_mask: np.ndarray,
+                                                px: int,
+                                                py: int) -> Optional[np.ndarray]:
+        """Extract source element IDs for a SAM prediction on the active image."""
+        if source_camera is None or binary_mask is None:
+            return None
+
+        binary_mask = np.asarray(binary_mask)
+        if binary_mask.ndim != 2 or not np.any(binary_mask):
+            return np.array([], dtype=np.int64)
+
+        if self.ortho_camera is not None and source_camera is self.ortho_camera:
+            return self._extract_source_ids_from_crop_mask(
+                source_camera,
+                binary_mask.astype(bool),
+                px,
+                py,
+            )
+
+        raster = getattr(source_camera, '_raster', None)
+        source_index_map = getattr(raster, 'index_map', None)
+        if source_index_map is None:
+            return None
+
+        mask_h, mask_w = binary_mask.shape
+        x0 = px - mask_w // 2
+        y0 = py - mask_h // 2
+        x1 = x0 + mask_w
+        y1 = y0 + mask_h
+
+        img_h, img_w = source_index_map.shape
+        if x0 >= img_w or y0 >= img_h or x1 <= 0 or y1 <= 0:
+            return np.array([], dtype=np.int64)
+
+        cx0 = max(x0, 0)
+        cy0 = max(y0, 0)
+        cx1 = min(x1, img_w)
+        cy1 = min(y1, img_h)
+
+        bx0 = cx0 - x0
+        by0 = cy0 - y0
+        bx1 = bx0 + (cx1 - cx0)
+        by1 = by0 + (cy1 - cy0)
+
+        index_slice = source_index_map[cy0:cy1, cx0:cx1]
+        mask_clip = binary_mask[by0:by1, bx0:bx1]
+        valid_mask = mask_clip.astype(bool)
+        if not np.any(valid_mask):
+            return np.array([], dtype=np.int64)
+
+        source_depth_map = getattr(raster, 'z_channel', None)
+        if source_depth_map is not None:
+            try:
+                import cv2
+
+                depth_slice = source_depth_map[cy0:cy1, cx0:cx1]
+                erosion_r = int(np.clip(min(mask_clip.shape) * 0.03, 2, 12))
+                kernel = cv2.getStructuringElement(
+                    cv2.MORPH_ELLIPSE,
+                    (2 * erosion_r + 1, 2 * erosion_r + 1),
+                )
+                interior_mask = cv2.erode(
+                    valid_mask.astype(np.uint8),
+                    kernel,
+                    iterations=1,
+                ).astype(bool)
+                perimeter_mask = valid_mask & ~interior_mask
+
+                interior_depths = depth_slice[interior_mask]
+                interior_depths = interior_depths[~np.isnan(interior_depths)]
+
+                if len(interior_depths) >= 10 and perimeter_mask.any():
+                    ref_depth = np.median(interior_depths)
+                    interior_spread = np.std(interior_depths)
+                    abs_floor = max(0.02, ref_depth * 0.005)
+                    full_tol = interior_spread * 2.0 + abs_floor
+                    dist = cv2.distanceTransform(valid_mask.astype(np.uint8), cv2.DIST_L2, 5)
+                    norm_dist = np.clip(dist / max(erosion_r, 1), 0.0, 1.0)
+                    per_pixel_tol = abs_floor + (full_tol - abs_floor) * norm_dist
+                    with np.errstate(invalid='ignore'):
+                        perimeter_depth_ok = np.abs(depth_slice - ref_depth) <= per_pixel_tol
+                    valid_mask = interior_mask | (perimeter_mask & perimeter_depth_ok)
+            except Exception:
+                pass
+
+        raw_ids = index_slice[valid_mask]
+        unique_ids = np.unique(raw_ids)
+        return unique_ids[unique_ids > -1].astype(np.int64, copy=False)
+
+    def _extract_semantic_element_votes(self,
+                                        source_camera,
+                                        source_mask_annotation,
+                                        prediction_regions=None):
+        """Build raw element/class vote arrays for semantic propagation."""
+        if source_camera is None or source_mask_annotation is None:
+            return np.array([], dtype=np.int64), np.array([], dtype=np.int64), {}
+
+        raster = getattr(source_camera, '_raster', None)
+        if getattr(raster, 'index_map', None) is None:
+            return np.array([], dtype=np.int64), np.array([], dtype=np.int64), {}
+
+        lock_bit = source_mask_annotation.LOCK_BIT
+        element_chunks = []
+        class_chunks = []
+        class_label_ids = {}
+
+        def _append_votes(real_class_id, label, raw_element_ids):
+            if label is None or raw_element_ids is None:
+                return
+
+            raw_element_ids = np.asarray(raw_element_ids, dtype=np.int64).ravel()
+            raw_element_ids = raw_element_ids[raw_element_ids > -1]
+            if raw_element_ids.size == 0:
+                return
+
+            real_class_id = int(real_class_id)
+            class_label_ids[real_class_id] = label.id
+            element_chunks.append(raw_element_ids)
+            class_chunks.append(
+                np.full(raw_element_ids.size, real_class_id, dtype=np.int64)
+            )
+
+        if prediction_regions is not None:
+            for region_mask, top_left in prediction_regions:
+                if region_mask is None:
+                    continue
+
+                region_mask = np.asarray(region_mask)
+                if region_mask.ndim != 2:
+                    continue
+
+                unique_real_ids = np.unique(region_mask % lock_bit)
+                unique_real_ids = unique_real_ids[unique_real_ids > 0]
+                for real_class_id in unique_real_ids:
+                    label = source_mask_annotation.class_id_to_label_map.get(int(real_class_id))
+                    if label is None:
+                        continue
+
+                    binary_mask = (region_mask % lock_bit == real_class_id)
+                    if not np.any(binary_mask):
+                        continue
+
+                    raw_element_ids = self._extract_source_element_ids_from_region(
+                        source_camera,
+                        binary_mask,
+                        top_left,
+                    )
+                    _append_votes(real_class_id, label, raw_element_ids)
+        else:
+            semantic_mask = np.asarray(source_mask_annotation.mask_data)
+            if semantic_mask.ndim != 2:
+                return np.array([], dtype=np.int64), np.array([], dtype=np.int64), {}
+
+            unique_real_ids = np.unique(semantic_mask % lock_bit)
+            unique_real_ids = unique_real_ids[unique_real_ids > 0]
+            for real_class_id in unique_real_ids:
+                label = source_mask_annotation.class_id_to_label_map.get(int(real_class_id))
+                if label is None:
+                    continue
+
+                binary_mask = (semantic_mask % lock_bit == real_class_id)
+                if not np.any(binary_mask):
+                    continue
+
+                raw_element_ids = self._extract_source_element_ids_from_full_mask(
+                    source_camera,
+                    binary_mask,
+                )
+                _append_votes(real_class_id, label, raw_element_ids)
+
+        if not element_chunks or not class_chunks:
+            return np.array([], dtype=np.int64), np.array([], dtype=np.int64), {}
+
+        return (
+            np.concatenate(element_chunks).astype(np.int64, copy=False),
+            np.concatenate(class_chunks).astype(np.int64, copy=False),
+            class_label_ids,
+        )
+
     def _on_brush_stroke_applied(self, scene_pos, label_id: str, brush_mask):
         """Propagate a brush stroke into all visible context cameras.
 
@@ -4615,9 +4867,6 @@ class MVATManager(QObject):
         Falls back to the legacy 2D center-stamp when the index map is absent
         (e.g., visibility not yet computed) or when no scene geometry was hit.
         """
-
-        if self._propagating_annotation:
-            return
         if self.selected_camera is None:
             return
 
@@ -4632,104 +4881,41 @@ class MVATManager(QObject):
         if not selected_paths:
             return
 
-        source_label = next((lbl for lbl in project_labels if lbl.id == label_id), None)
-        if source_label is None:
+        source_label, _source_mask, source_class_id = self._resolve_source_mask_class_context(
+            self.selected_camera,
+            label_id,
+            project_labels,
+        )
+        if source_label is None or source_class_id is None:
             return
 
-        brush_h, brush_w = brush_mask.shape
-
-        # ------------------------------------------------------------------
-        # Phase 1: Source ID Extraction (2D → 3D)
-        # ------------------------------------------------------------------
         painted_ids = self._extract_source_ids_from_crop_mask(
             self.selected_camera,
             brush_mask,
             px,
             py,
         )
+        painted_ids = np.asarray(painted_ids if painted_ids is not None else [], dtype=np.int64)
+        class_ids = np.full(painted_ids.size, int(source_class_id), dtype=np.int64)
 
-        # Whether the source camera has valid 3D geometry hits to propagate
-        use_3d = painted_ids is not None and len(painted_ids) > 0
-
-        # ------------------------------------------------------------------
-        # Paint the 3D Model directly
-        # ------------------------------------------------------------------
-        if use_3d:  # Slow?
-            primary_target = self.viewer.scene_context.get_primary_target()
-            if primary_target and hasattr(primary_target, 'apply_labels'):
-                # 1. Convert QColor to RGB tuple
-                target_color = (source_label.color.red(), source_label.color.green(), source_label.color.blue())
-
-                # 2. Get the integer class_id mapped to this label from the source mask
-                source_raster = self.raster_manager.get_raster(self.selected_camera.image_path)
-                source_mask = source_raster.get_mask_annotation(project_labels) if source_raster else None
-
-                if source_mask:
-                    source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
-                    # Sync if it's a brand new label
-                    if source_class_id is None:
-                        source_mask.sync_label_map([source_label])
-                        source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
-                    # 3. Paint the 3D model arrays — offload to background painter thread
-                    self.submit_3d_face_paint(
-                        painted_ids,
-                        target_color,
-                        source_class_id,
-                        primary_target=primary_target,
-                    )
-
-        # Projections for 2D fallback — computed lazily inside the loop
-        projections = None
-
-        self._propagating_annotation = True
-        try:
-            # Pre-resolve class IDs for ALL cameras before entering threads
-            # (avoids repeated dict lookups and sync_label_map calls inside threads)
-            target_class_id_map = {}
-            for target_path in selected_paths:
-                target_camera = self._get_camera_for_path(target_path)
-                target_raster = self.raster_manager.get_raster(target_path)
-                if target_raster is None:
-                    continue
-                target_mask = target_raster.mask_annotation
-                if target_mask is None:
-                    target_mask = target_raster.get_mask_annotation(project_labels)
-                if target_mask is None:
-                    continue
-                class_id = target_mask.label_id_to_class_id_map.get(label_id)
-                if class_id is None:
-                    target_mask.sync_label_map([source_label])
-                    class_id = target_mask.label_id_to_class_id_map.get(label_id)
-                if class_id is not None:
-                    target_class_id_map[target_path] = class_id
-                    # Pre-warm color map cache to avoid cold cache hit in threads
-                    target_mask._get_color_map()
-
-            if projections is None:
-                projections = self._build_projection(px, py)
-
-            futures = {
-                self._propagation_executor.submit(
-                    self._propagate_to_camera,
-                    target_path, painted_ids, target_class_id_map,
-                    projections, brush_w, brush_h, brush_mask, use_3d
-                ): target_path
-                for target_path in target_class_id_map
-            }
-            for future in as_completed(futures):
-                target_path, did_update, update_rect = future.result()
-                if did_update:
-                    target_raster = self.raster_manager.get_raster(target_path)
-                    if target_raster and target_raster.mask_annotation:
-                        target_mask = target_raster.mask_annotation
-                        self._apply_mask_visual_update(
-                            target_path,
-                            target_mask,
-                            label_id,
-                            update_rect=update_rect,
-                        )
-        finally:
-            self._propagating_annotation = False
+        self._execute_mask_propagation(
+            source_camera=self.selected_camera,
+            element_ids=painted_ids,
+            class_ids=class_ids,
+            target_paths=selected_paths,
+            project_labels=project_labels,
+            class_label_ids={int(source_class_id): label_id},
+            fallback_payload={
+                'mode': 'brush',
+                'label_id': label_id,
+                'source_class_id': int(source_class_id),
+                'mask': np.asarray(brush_mask, dtype=bool),
+                'center': (px, py),
+                'search_radius': float(max(brush_mask.shape) * 2.5),
+                'skip_ortho_index_lookup': True,
+            },
+            clear_scratchpads=True,
+        )
 
     def _on_fill_stroke_applied(self, scene_pos, label_id: str, fill_mask=None):
         """Propagate a fill operation into all visible context cameras.
@@ -5185,320 +5371,418 @@ class MVATManager(QObject):
             label_id: UUID of the label used for the prediction.
             binary_mask: small (H,W) uint8 array with 1 for predicted pixels.
         """
-        if self._propagating_annotation:
-            return
         if self.selected_camera is None:
             return
 
-        self._propagating_annotation = True
-
-        # Snapshot all main-thread state the background worker needs.
-        # Do NOT read self.selected_camera or self.ortho_camera inside the worker.
         selected_camera = self.selected_camera
         selected_paths  = self._get_annotation_target_paths()
-        project_labels  = list(self.main_window.label_window.labels)
-        primary_target  = self.viewer.scene_context.get_primary_target()
-        is_ortho_source = (self.ortho_camera is not None and
-                           selected_camera is self.ortho_camera)
-        ortho_camera    = self.ortho_camera  # captured for bucket test in worker
+        if not selected_paths:
+            return
 
-        self._sam_bg_executor.submit(
-            self._do_sam_propagation,
-            scene_pos, label_id, binary_mask,
-            selected_camera, selected_paths, project_labels,
-            primary_target, is_ortho_source, ortho_camera,
+        project_labels  = list(self.main_window.label_window.labels)
+        source_label, _source_mask, source_class_id = self._resolve_source_mask_class_context(
+            selected_camera,
+            label_id,
+            project_labels,
+        )
+        if source_label is None or source_class_id is None:
+            return
+
+        px = int(scene_pos.x())
+        py = int(scene_pos.y())
+        painted_ids = self._extract_source_ids_from_sam_prediction(
+            selected_camera,
+            binary_mask,
+            px,
+            py,
+        )
+        painted_ids = np.asarray(painted_ids if painted_ids is not None else [], dtype=np.int64)
+        class_ids = np.full(painted_ids.size, int(source_class_id), dtype=np.int64)
+
+        self._execute_mask_propagation(
+            source_camera=selected_camera,
+            element_ids=painted_ids,
+            class_ids=class_ids,
+            target_paths=selected_paths,
+            project_labels=project_labels,
+            class_label_ids={int(source_class_id): label_id},
+            fallback_payload={
+                'mode': 'sam',
+                'label_id': label_id,
+                'source_class_id': int(source_class_id),
+                'mask': np.asarray(binary_mask, dtype=np.uint8),
+                'center': (px, py),
+                'search_radius': float(max(binary_mask.shape) * 2.5),
+            },
+            clear_scratchpads=True,
         )
 
-    # ------------------------------------------------------------------
-    # SAM background worker  (runs off the main thread)
-    # ------------------------------------------------------------------
-
-    def _do_sam_propagation(
-        self,
-        scene_pos, label_id: str, binary_mask: np.ndarray,
-        selected_camera, selected_paths, project_labels,
-        primary_target, is_ortho_source: bool, ortho_camera,
-    ):
-        """Background worker for SAM prediction propagation.
-
-        Runs entirely off the main thread.  All Qt UI updates are deferred and
-        executed on the main thread via ``_sam_repaint_signal``.
-        """
-        repaint_tasks = []   # UI update tasks flushed to main thread via signal
+    def _execute_mask_propagation(self,
+                                  source_camera,
+                                  element_ids: np.ndarray,
+                                  class_ids: np.ndarray,
+                                  target_paths: set,
+                                  project_labels: list,
+                                  class_label_ids: dict,
+                                  fallback_payload=None,
+                                  clear_scratchpads: bool = False):
+        """Queue a propagation job onto the single unified background worker."""
+        if source_camera is None or not target_paths:
+            return
 
         try:
-            px = int(scene_pos.x())
-            py = int(scene_pos.y())
+            element_ids = np.asarray(element_ids, dtype=np.int64).ravel()
+        except Exception:
+            element_ids = np.array([], dtype=np.int64)
 
-            source_label = next(
-                (lbl for lbl in project_labels if lbl.id == label_id), None)
-            if source_label is None:
-                return
+        try:
+            class_ids = np.asarray(class_ids, dtype=np.int64).ravel()
+        except Exception:
+            class_ids = np.array([], dtype=np.int64)
 
-            mask_h, mask_w = binary_mask.shape
+        has_3d_payload = (
+            element_ids.size > 0 and
+            class_ids.size > 0 and
+            element_ids.size == class_ids.size
+        )
+        if not has_3d_payload:
+            element_ids = np.array([], dtype=np.int64)
+            class_ids = np.array([], dtype=np.int64)
 
-            # ------------------------------------------------------------------
-            # Phase 1: Source ID Extraction (2D → 3D)
-            # ------------------------------------------------------------------
-            painted_ids = None
-            if is_ortho_source:
-                painted_ids = self._extract_source_ids_from_crop_mask(
-                    selected_camera,
-                    binary_mask.astype(bool),
-                    px, py,
+        if not has_3d_payload and fallback_payload is None:
+            return
+
+        if self._propagating_annotation and self._pending_unified_propagation_jobs == 0:
+            return
+
+        target_paths = tuple(sorted({path for path in target_paths if path}))
+        if not target_paths:
+            return
+
+        primary_target = self.viewer.scene_context.get_primary_target()
+        self._pending_unified_propagation_jobs += 1
+        self._propagating_annotation = True
+
+        try:
+            payload = dict(fallback_payload) if isinstance(fallback_payload, dict) else fallback_payload
+            self._unified_bg_executor.submit(
+                self._do_universal_propagation,
+                source_camera,
+                element_ids.copy(),
+                class_ids.copy(),
+                target_paths,
+                list(project_labels),
+                dict(class_label_ids or {}),
+                primary_target,
+                payload,
+                bool(clear_scratchpads),
+            )
+        except Exception:
+            self._pending_unified_propagation_jobs = max(
+                0,
+                self._pending_unified_propagation_jobs - 1,
+            )
+            self._propagating_annotation = self._pending_unified_propagation_jobs > 0
+            traceback.print_exc()
+
+    def _do_universal_propagation(self,
+                                  source_camera,
+                                  element_ids: np.ndarray,
+                                  class_ids: np.ndarray,
+                                  target_paths,
+                                  project_labels,
+                                  class_label_ids,
+                                  primary_target,
+                                  fallback_payload=None,
+                                  clear_scratchpads: bool = False):
+        """Background worker for brush, SAM, and semantic mask propagation."""
+        repaint_tasks = []
+        if clear_scratchpads:
+            repaint_tasks.append({'type': 'clear_scratchpads'})
+
+        try:
+            labels_by_id = {
+                getattr(label, 'id', None): label
+                for label in project_labels
+                if getattr(label, 'id', None) is not None
+            }
+
+            winning_elements = np.array([], dtype=np.int64)
+            winning_classes = np.array([], dtype=np.int64)
+            if element_ids is not None and class_ids is not None:
+                winning_elements, winning_classes = resolve_class_conflicts_vectorized(
+                    element_ids,
+                    class_ids,
                 )
-            else:
-                import cv2
-                source_index_map = selected_camera._raster.index_map
-                if source_index_map is not None:
-                    x0 = px - mask_w // 2
-                    y0 = py - mask_h // 2
-                    x1 = x0 + mask_w
-                    y1 = y0 + mask_h
-                    img_h, img_w = source_index_map.shape
 
-                    if x0 < img_w and y0 < img_h and x1 > 0 and y1 > 0:
-                        cx0 = max(x0, 0);  cy0 = max(y0, 0)
-                        cx1 = min(x1, img_w); cy1 = min(y1, img_h)
-                        bx0 = cx0 - x0;    by0 = cy0 - y0
-                        bx1 = bx0 + (cx1 - cx0); by1 = by0 + (cy1 - cy0)
+            class_to_elements = {}
+            if winning_elements.size > 0 and winning_classes.size > 0:
+                for source_class_id in np.unique(winning_classes):
+                    class_to_elements[int(source_class_id)] = winning_elements[
+                        winning_classes == source_class_id
+                    ]
 
-                        index_slice = source_index_map[cy0:cy1, cx0:cx1]
-                        mask_clip   = binary_mask[by0:by1, bx0:bx1]
-                        valid_mask  = mask_clip.astype(bool)
+            if primary_target and hasattr(primary_target, 'apply_labels'):
+                for source_class_id, subset_elements in class_to_elements.items():
+                    if subset_elements.size == 0:
+                        continue
 
-                        source_depth_map = selected_camera._raster.z_channel
-                        if source_depth_map is not None:
-                            depth_slice = source_depth_map[cy0:cy1, cx0:cx1]
+                    label_id = class_label_ids.get(int(source_class_id))
+                    label = labels_by_id.get(label_id)
+                    if label is None:
+                        continue
 
-                            # Gradient depth filtering at the mask perimeter
-                            erosion_r = int(np.clip(min(mask_clip.shape) * 0.03, 2, 12))
-                            kernel = cv2.getStructuringElement(
-                                cv2.MORPH_ELLIPSE, (2 * erosion_r + 1, 2 * erosion_r + 1))
-                            interior_mask = cv2.erode(
-                                valid_mask.astype(np.uint8), kernel, iterations=1).astype(bool)
-                            perimeter_mask = valid_mask & ~interior_mask
+                    repaint_tasks.append({
+                        'type': '3d_paint',
+                        'painted_ids': subset_elements.copy(),
+                        'target_color': (
+                            label.color.red(),
+                            label.color.green(),
+                            label.color.blue(),
+                        ),
+                        'source_class_id': int(source_class_id),
+                        'primary_target': primary_target,
+                    })
 
-                            interior_depths = depth_slice[interior_mask]
-                            interior_depths = interior_depths[~np.isnan(interior_depths)]
+            fallback_mode = None
+            fallback_mask = None
+            fallback_center = None
+            fallback_search_radius = 0.0
+            fallback_skip_ortho_index_lookup = False
+            fallback_label_id = None
 
-                            if len(interior_depths) >= 10 and perimeter_mask.any():
-                                ref_depth       = np.median(interior_depths)
-                                interior_spread = np.std(interior_depths)
-                                abs_floor       = max(0.02, ref_depth * 0.005)
-                                full_tol        = interior_spread * 2.0 + abs_floor
-                                dist = cv2.distanceTransform(
-                                    valid_mask.astype(np.uint8), cv2.DIST_L2, 5)
-                                norm_dist = np.clip(dist / max(erosion_r, 1), 0.0, 1.0)
-                                per_pixel_tol = abs_floor + (full_tol - abs_floor) * norm_dist
-                                with np.errstate(invalid='ignore'):
-                                    perimeter_depth_ok = (
-                                        np.abs(depth_slice - ref_depth) <= per_pixel_tol)
-                                valid_mask = interior_mask | (perimeter_mask & perimeter_depth_ok)
+            if isinstance(fallback_payload, dict):
+                fallback_mode = str(fallback_payload.get('mode', '')).strip().lower()
+                if fallback_payload.get('mask') is not None:
+                    fallback_mask = np.asarray(fallback_payload.get('mask'))
+                fallback_center = fallback_payload.get('center')
+                fallback_search_radius = float(fallback_payload.get('search_radius', 0.0) or 0.0)
+                fallback_skip_ortho_index_lookup = bool(
+                    fallback_payload.get('skip_ortho_index_lookup', False)
+                )
+                fallback_label_id = fallback_payload.get('label_id')
 
-                        raw_ids = index_slice[valid_mask]
-                        unique_ids = np.unique(raw_ids)
-                        painted_ids = unique_ids[unique_ids > -1]
+            projections = None
 
-            use_3d = painted_ids is not None and len(painted_ids) > 0
-
-            # ------------------------------------------------------------------
-            # Queue the 3D Model paint — executed on main thread via signal
-            # (_ensure_label_painter / QThread.start must be on the main thread)
-            # ------------------------------------------------------------------
-            if use_3d and primary_target and hasattr(primary_target, 'apply_labels'):
-                target_color  = (source_label.color.red(),
-                                 source_label.color.green(),
-                                 source_label.color.blue())
-                source_raster = self.raster_manager.get_raster(selected_camera.image_path)
-                source_mask   = (source_raster.get_mask_annotation(project_labels)
-                                 if source_raster else None)
-                if source_mask:
-                    source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
-                    if source_class_id is None:
-                        source_mask.sync_label_map([source_label])
-                        source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
-                    if source_class_id is not None:
-                        repaint_tasks.append({
-                            'type': '3d_paint',
-                            'painted_ids':    painted_ids.copy(),
-                            'target_color':   target_color,
-                            'source_class_id': source_class_id,
-                            'primary_target': primary_target,
-                        })
-
-            # ------------------------------------------------------------------
-            # 1. Pre-resolve class IDs and sort cameras into 3D / 2D buckets
-            # ------------------------------------------------------------------
-            target_class_id_map = {}
-            target_cameras_3d   = []
-            target_cameras_2d   = []
-
-            for target_path in selected_paths:
+            for target_path in target_paths:
                 target_camera = self._get_camera_for_path(target_path)
-                if not target_camera: continue
+                if target_camera is None:
+                    continue
+
                 target_raster = self.raster_manager.get_raster(target_path)
-                if not target_raster: continue
+                if target_raster is None:
+                    continue
+
                 target_mask = target_raster.mask_annotation
                 if target_mask is None:
                     target_mask = target_raster.get_mask_annotation(project_labels)
-                if target_mask is None: continue
-                target_class_id = target_mask.label_id_to_class_id_map.get(label_id)
-                if target_class_id is None:
-                    target_mask.sync_label_map([source_label])
-                    target_class_id = target_mask.label_id_to_class_id_map.get(label_id)
-                if target_class_id is None: continue
-                target_class_id_map[target_path] = target_class_id
-                target_has_index = (target_camera._raster is not None and
-                                    target_camera._raster.index_map is not None)
-                if use_3d and target_has_index:
-                    target_cameras_3d.append((target_path, target_camera))
-                else:
-                    target_cameras_2d.append((target_path, target_camera))
+                if target_mask is None:
+                    continue
 
-            # ------------------------------------------------------------------
-            # 2. Submit per-camera 3D index searches
-            # ------------------------------------------------------------------
-            from concurrent.futures import as_completed
-            futures    = {}
-            projections = None  # computed lazily — shared by 3D bbox and 2D fallback
+                target_has_index = (
+                    getattr(target_camera, '_raster', None) is not None and
+                    target_camera._raster.index_map is not None
+                )
+                use_index_lookup = (
+                    winning_elements.size > 0 and
+                    target_has_index and
+                    not (fallback_skip_ortho_index_lookup and target_camera is self.ortho_camera)
+                )
 
-            if use_3d and len(painted_ids) > 0:
-                projections = self._build_projection(px, py)
-                for target_path, target_camera in target_cameras_3d:
+                target_rect = None
+                target_label_ids = set()
+                bbox = None
+
+                if use_index_lookup and fallback_center is not None and fallback_search_radius > 0.0:
+                    if projections is None:
+                        projections = self._build_projection(
+                            int(fallback_center[0]),
+                            int(fallback_center[1]),
+                            source_camera=source_camera,
+                        )
                     proj = projections.get(target_path)
-                    bbox = None
                     if proj is not None and proj[2]:
                         target_u, target_v = proj[0], proj[1]
-                        search_radius = max(mask_w, mask_h) * 2.5
-                        bbox = (target_u - search_radius, target_u + search_radius,
-                                target_v - search_radius, target_v + search_radius)
-                    future = self._propagation_executor.submit(
-                        target_camera.get_pixels_for_elements, painted_ids, bbox=bbox)
-                    futures[future] = target_path
-
-            # ------------------------------------------------------------------
-            # 3. Process 2D fallbacks — numpy writes here, Qt repaints via signal
-            # ------------------------------------------------------------------
-            if target_cameras_2d:
-                if projections is None:
-                    projections = self._build_projection(px, py)
-                for target_path, target_camera in target_cameras_2d:
-                    proj = projections.get(target_path)
-                    if proj is None or not proj[2]: continue
-                    u, v, _ = proj
-                    if 0 <= u < target_camera.width and 0 <= v < target_camera.height:
-                        target_class_id   = target_class_id_map[target_path]
-                        target_raster     = self.raster_manager.get_raster(target_path)
-                        target_mask_obj   = target_raster.mask_annotation
-                        subset_class_mask = binary_mask.astype(np.uint8) * int(target_class_id)
-                        top_left_x = int(u - mask_w / 2.0)
-                        top_left_y = int(v - mask_h / 2.0)
-                        # Pure numpy write — safe from background thread (silent=True)
-                        target_mask_obj.update_mask_with_mask(
-                            subset_class_mask, (top_left_x, top_left_y), silent=True)
-                        # Compute tight dirty rect so the slot does a localized repaint
-                        mh, mw = subset_class_mask.shape
-                        dirty = (
-                            max(0, top_left_x),
-                            max(0, top_left_y),
-                            min(target_mask_obj.mask_data.shape[1], top_left_x + mw),
-                            min(target_mask_obj.mask_data.shape[0], top_left_y + mh),
+                        bbox = (
+                            target_u - fallback_search_radius,
+                            target_u + fallback_search_radius,
+                            target_v - fallback_search_radius,
+                            target_v + fallback_search_radius,
                         )
-                        repaint_tasks.append({
-                            'type':        'repaint',
-                            'path':        target_path,
-                            'mask':        target_mask_obj,
-                            'label_id':    label_id,
-                            'update_rect': dirty,
-                        })
 
-            # ------------------------------------------------------------------
-            # 4. Collect 3D thread results — numpy writes here, Qt via signal
-            # ------------------------------------------------------------------
-            for future in as_completed(futures):
-                target_path     = futures[future]
-                flat_indices    = future.result()
-                target_class_id = target_class_id_map[target_path]
-                if len(flat_indices) > 0:
-                    target_raster = self.raster_manager.get_raster(target_path)
-                    target_mask_obj = target_raster.mask_annotation
-                    if hasattr(target_mask_obj, 'mask_data'):
-                        current_vals = target_mask_obj.mask_data.ravel()[flat_indices]
-                        changed_mask = current_vals != target_class_id
-                        flat_indices = flat_indices[changed_mask]
-                        if len(flat_indices) > 0:
-                            target_mask_obj.update_mask_at_indices(
-                                flat_indices, target_class_id, silent=True)
-                            # Compute dirty rect from the actual changed pixels
-                            mask_w_full = target_mask_obj.mask_data.shape[1]
-                            y_c, x_c = np.divmod(flat_indices, mask_w_full)
-                            dirty = (
-                                max(0, int(x_c.min()) - 1),
-                                max(0, int(y_c.min()) - 1),
-                                min(mask_w_full, int(x_c.max()) + 2),
-                                min(target_mask_obj.mask_data.shape[0], int(y_c.max()) + 2),
-                            )
-                            repaint_tasks.append({
-                                'type':        'repaint',
-                                'path':        target_path,
-                                'mask':        target_mask_obj,
-                                'label_id':    label_id,
-                                'update_rect': dirty,
-                            })
+                if use_index_lookup:
+                    for source_class_id, subset_elements in class_to_elements.items():
+                        if subset_elements.size == 0:
+                            continue
 
-        except Exception as e:
-            import traceback; traceback.print_exc()
+                        label_id = class_label_ids.get(int(source_class_id))
+                        label = labels_by_id.get(label_id)
+                        if label is None:
+                            continue
+
+                        target_class_id = target_mask.label_id_to_class_id_map.get(label_id)
+                        if target_class_id is None:
+                            target_mask.sync_label_map([label])
+                            target_class_id = target_mask.label_id_to_class_id_map.get(label_id)
+                        if target_class_id is None:
+                            continue
+
+                        flat_indices = target_camera.get_pixels_for_elements(subset_elements, bbox=bbox)
+                        if flat_indices is None or len(flat_indices) == 0:
+                            continue
+
+                        flat_indices = np.asarray(flat_indices, dtype=np.int64).ravel()
+                        current_vals = target_mask.mask_data.ravel()[flat_indices]
+                        changed_indices = flat_indices[
+                            (current_vals < target_mask.LOCK_BIT) &
+                            (current_vals != target_class_id)
+                        ]
+                        if changed_indices.size == 0:
+                            continue
+
+                        target_mask.update_mask_at_indices(
+                            changed_indices,
+                            int(target_class_id),
+                            silent=True,
+                        )
+                        target_rect = _merge_update_rects(
+                            target_rect,
+                            self._compute_dirty_rect_from_flat_indices(
+                                changed_indices,
+                                target_mask.mask_data.shape[1],
+                                target_mask.mask_data.shape[0],
+                            ),
+                        )
+                        target_label_ids.add(label_id)
+
+                if fallback_mask is not None and fallback_center is not None and not use_index_lookup:
+                    label = labels_by_id.get(fallback_label_id)
+                    if label is not None:
+                        target_class_id = target_mask.label_id_to_class_id_map.get(fallback_label_id)
+                        if target_class_id is None:
+                            target_mask.sync_label_map([label])
+                            target_class_id = target_mask.label_id_to_class_id_map.get(fallback_label_id)
+
+                        if target_class_id is not None:
+                            if projections is None:
+                                projections = self._build_projection(
+                                    int(fallback_center[0]),
+                                    int(fallback_center[1]),
+                                    source_camera=source_camera,
+                                )
+                            proj = projections.get(target_path)
+                            if proj is not None:
+                                u, v, is_valid = proj
+                                if is_valid and 0 <= u < target_camera.width and 0 <= v < target_camera.height:
+                                    if fallback_mode == 'brush':
+                                        brush_mask = fallback_mask.astype(bool)
+                                        brush_h, brush_w = brush_mask.shape
+                                        brush_location = QPointF(
+                                            u - brush_w / 2.0,
+                                            v - brush_h / 2.0,
+                                        )
+                                        target_mask.update_mask(
+                                            brush_location,
+                                            brush_mask,
+                                            int(target_class_id),
+                                            silent=True,
+                                        )
+                                        target_rect = _merge_update_rects(
+                                            target_rect,
+                                            (
+                                                max(0, int(u - brush_w / 2.0)),
+                                                max(0, int(v - brush_h / 2.0)),
+                                                min(target_camera.width, int(u - brush_w / 2.0) + brush_w),
+                                                min(target_camera.height, int(v - brush_h / 2.0) + brush_h),
+                                            ),
+                                        )
+                                        target_label_ids.add(fallback_label_id)
+                                    elif fallback_mode == 'sam':
+                                        subset_mask = fallback_mask.astype(np.uint8) * int(target_class_id)
+                                        mask_h, mask_w = subset_mask.shape
+                                        top_left_x = int(u - mask_w / 2.0)
+                                        top_left_y = int(v - mask_h / 2.0)
+                                        target_mask.update_mask_with_mask(
+                                            subset_mask,
+                                            (top_left_x, top_left_y),
+                                            silent=True,
+                                        )
+                                        target_rect = _merge_update_rects(
+                                            target_rect,
+                                            (
+                                                max(0, top_left_x),
+                                                max(0, top_left_y),
+                                                min(target_mask.mask_data.shape[1], top_left_x + mask_w),
+                                                min(target_mask.mask_data.shape[0], top_left_y + mask_h),
+                                            ),
+                                        )
+                                        target_label_ids.add(fallback_label_id)
+
+                if target_rect is not None:
+                    repaint_tasks.append({
+                        'type': 'repaint',
+                        'path': target_path,
+                        'mask': target_mask,
+                        'label_ids': tuple(sorted(target_label_ids)),
+                        'update_rect': target_rect,
+                    })
+
+        except Exception:
+            traceback.print_exc()
         finally:
-            # Always emit — the slot is responsible for clearing _propagating_annotation
-            self._sam_repaint_signal.emit(repaint_tasks)
+            self._universal_repaint_signal.emit(repaint_tasks)
 
-    # ------------------------------------------------------------------
-    # SAM repaint slot  (runs on main thread via Qt.QueuedConnection)
-    # ------------------------------------------------------------------
-
-    def _on_sam_repaint(self, repaint_tasks: list):
-        """Apply all deferred Qt UI updates produced by ``_do_sam_propagation``.
-
-        Called on the main thread via ``_sam_repaint_signal``.  Executes
-        localized repaints using the dirty rects computed in the worker,
-        avoiding full-canvas rebuilds on large ortho masks.
-        """
+    def _on_universal_repaint(self, repaint_tasks: list):
+        """Apply localized UI updates produced by the unified propagation worker."""
+        should_clear_scratchpads = False
         try:
             for task in repaint_tasks:
                 task_type = task.get('type')
+                if task_type == 'clear_scratchpads':
+                    should_clear_scratchpads = True
+                    continue
 
                 if task_type == '3d_paint':
-                    # The helper keeps QThread startup and queue submission centralized.
                     self.submit_3d_face_paint(
                         task['painted_ids'],
                         task['target_color'],
                         task['source_class_id'],
                         primary_target=task.get('primary_target'),
                     )
+                    continue
 
-                elif task_type == 'repaint':
-                    target_mask = task['mask']
-                    label_id    = task['label_id']
-                    update_rect = task.get('update_rect')
-                    target_path = task['path']
+                if task_type != 'repaint':
+                    continue
 
-                    if label_id not in target_mask.visible_label_ids:
+                target_mask = task.get('mask')
+                if target_mask is None:
+                    continue
+
+                for label_id in task.get('label_ids', ()):
+                    if label_id is not None and label_id not in target_mask.visible_label_ids:
                         target_mask.visible_label_ids.add(label_id)
 
-                    # Localized repaint — avoids full np.copyto on gigapixel masks
-                    target_mask.update_graphics_item(update_rect=update_rect)
+                target_mask.update_graphics_item(update_rect=task.get('update_rect'))
 
-                    context_canvas = self._get_context_canvas_for_path(target_path)
-                    if context_canvas is not None and context_canvas._mask_overlay_item is None:
-                        context_canvas.set_mask_overlay(target_mask)
+                target_path = task.get('path')
+                context_canvas = self._get_context_canvas_for_path(target_path)
+                if context_canvas is not None and context_canvas._mask_overlay_item is None:
+                    context_canvas.set_mask_overlay(target_mask)
 
         except Exception as e:
-            print(f"Error in _on_sam_repaint: {e}")
+            print(f"Error in _on_universal_repaint: {e}")
         finally:
-            self._propagating_annotation = False
-            if self.context_matrix is not None:
-                self.context_matrix.clear_all_scratchpads()
+            if should_clear_scratchpads and self.context_matrix is not None:
+                try:
+                    self.context_matrix.clear_all_scratchpads()
+                except Exception:
+                    pass
+
+            self._pending_unified_propagation_jobs = max(
+                0,
+                self._pending_unified_propagation_jobs - 1,
+            )
+            self._propagating_annotation = self._pending_unified_propagation_jobs > 0
 
     def _on_semantic_prediction_applied(self, image_path: str, source_mask_annotation, prediction_regions=None):
         """Propagate a semantic segmentation prediction to all target cameras.
@@ -5520,9 +5804,6 @@ class MVATManager(QObject):
             source_mask_annotation: The MaskAnnotation whose mask_data was just
                                     updated by the Semantic model.
         """
-        if self._propagating_annotation:
-            return
-
         source_camera = self._get_camera_for_path(image_path)
         if source_camera is None:
             return
@@ -5533,284 +5814,22 @@ class MVATManager(QObject):
             return
 
         project_labels = list(self.main_window.label_window.labels)
-        semantic_mask = source_mask_annotation.mask_data
-        LOCK_BIT = source_mask_annotation.LOCK_BIT
-        source_index_map = getattr(getattr(source_camera, '_raster', None), 'index_map', None)
-        if source_index_map is None:
+        element_ids, class_ids, class_label_ids = self._extract_semantic_element_votes(
+            source_camera,
+            source_mask_annotation,
+            prediction_regions=prediction_regions,
+        )
+        if element_ids.size == 0 or class_ids.size == 0 or not class_label_ids:
             return
 
-        # Phase 1: Build per-element class votes on the main thread.
-        # Each source element is assigned to the dominant semantic class once,
-        # so we do not end up painting the same element with multiple classes.
-        element_votes = {}
-        class_labels = {}
-        if prediction_regions is not None:
-            for region_mask, top_left in prediction_regions:
-                if region_mask is None:
-                    continue
-
-                region_mask = np.asarray(region_mask)
-                if region_mask.ndim != 2:
-                    continue
-
-                unique_real_ids = np.unique(region_mask % LOCK_BIT)
-                unique_real_ids = unique_real_ids[unique_real_ids > 0]
-                if len(unique_real_ids) == 0:
-                    continue
-
-                for real_class_id in unique_real_ids:
-                    label = source_mask_annotation.class_id_to_label_map.get(int(real_class_id))
-                    if label is None:
-                        continue
-                    class_labels[int(real_class_id)] = label
-                    binary_mask = (region_mask % LOCK_BIT == real_class_id).astype(bool)
-                    if not np.any(binary_mask):
-                        continue
-
-                    source_element_ids = self._extract_source_element_ids_from_region(
-                        source_camera,
-                        binary_mask,
-                        top_left,
-                    )
-                    if source_element_ids is None or len(source_element_ids) == 0:
-                        continue
-
-                    unique_element_ids, counts = np.unique(source_element_ids, return_counts=True)
-                    for element_id, count in zip(unique_element_ids.tolist(), counts.tolist()):
-                        vote_map = element_votes.setdefault(int(element_id), {})
-                        vote_map[int(real_class_id)] = vote_map.get(int(real_class_id), 0) + int(count)
-        else:
-            # Unique real class IDs in the prediction (lock bit stripped, skip background)
-            unique_real_ids = np.unique(semantic_mask % LOCK_BIT)
-            unique_real_ids = unique_real_ids[unique_real_ids > 0]
-            if len(unique_real_ids) == 0:
-                return
-
-            for real_class_id in unique_real_ids:
-                label = source_mask_annotation.class_id_to_label_map.get(int(real_class_id))
-                if label is None:
-                    continue
-                class_labels[int(real_class_id)] = label
-                binary_mask = (semantic_mask % LOCK_BIT == real_class_id).astype(bool)
-                if not np.any(binary_mask):
-                    continue
-
-                source_element_ids = self._extract_source_element_ids_from_full_mask(source_camera, binary_mask)
-                if source_element_ids is None or len(source_element_ids) == 0:
-                    continue
-
-                unique_element_ids, counts = np.unique(source_element_ids, return_counts=True)
-                for element_id, count in zip(unique_element_ids.tolist(), counts.tolist()):
-                    vote_map = element_votes.setdefault(int(element_id), {})
-                    vote_map[int(real_class_id)] = vote_map.get(int(real_class_id), 0) + int(count)
-
-        if not element_votes:
-            return
-
-        class_data = {}
-        for element_id, vote_map in element_votes.items():
-            winner_class_id = max(vote_map.items(), key=lambda item: (item[1], -item[0]))[0]
-            class_data.setdefault(winner_class_id, []).append(element_id)
-
-
-        class_data = {
-            class_id: (
-                np.asarray(sorted(set(element_ids)), dtype=np.int64),
-                class_labels.get(class_id),
-            )
-            for class_id, element_ids in class_data.items()
-            if class_labels.get(class_id) is not None
-        }
-
-        if not class_data:
-            return
-
-        # Phase 2: Paint the scene mesh directly so semantic batches do not
-        # lose classes to the live-stroke queue coalescing behavior.
-        primary_target = self.viewer.scene_context.get_primary_target()
-        if primary_target and hasattr(primary_target, 'apply_labels'):
-            for real_class_id, (element_ids, label) in class_data.items():
-                if element_ids is None or len(element_ids) == 0:
-                    continue
-                target_color = (label.color.red(), label.color.green(), label.color.blue())
-                try:
-                    primary_target.apply_labels(element_ids, real_class_id, target_color)
-                except Exception:
-                    continue
-
-            try:
-                primary_target.flush_labels_to_gpu()
-            except Exception:
-                pass
-
-            painter = self._label_painter_thread
-            if painter is not None and painter.isRunning():
-                try:
-                    painter.mark_state_dirty()
-                except Exception:
-                    pass
-
-            try:
-                self.viewer.plotter.render()
-            except Exception:
-                pass
-
-            if isinstance(primary_target, MeshProduct):
-                try:
-                    mesh = primary_target.get_render_mesh()
-                    class_ids = getattr(primary_target, 'class_ids', None)
-                    labels_cache = getattr(primary_target, '_labels_cache', None)
-                    if mesh is not None and class_ids is not None and labels_cache is not None:
-                        painted_faces = np.where(class_ids != 0)[0]
-                        if len(painted_faces) > 0:
-                            mesh_faces_flat = np.asarray(mesh.faces.reshape(-1, 4), dtype=np.int32)
-                            mesh_points = np.asarray(mesh.points, dtype=np.float32)
-
-                            selected = mesh_faces_flat[painted_faces, 1:]
-                            unique_vids, inverse = np.unique(selected, return_inverse=True)
-                            overlay_points = mesh_points[unique_vids]
-                            remapped = inverse.reshape(selected.shape)
-                            vtk_faces = np.hstack([
-                                np.full((len(painted_faces), 1), 3, dtype=np.int32),
-                                remapped.astype(np.int32),
-                            ]).ravel()
-
-                            colors = np.asarray(labels_cache[painted_faces], dtype=np.uint8)
-                            self._on_overlay_ready((overlay_points, vtk_faces, colors))
-                except Exception:
-                    pass
-
-        self._propagating_annotation = True
-        try:
-            # Phase 3: Resolve target masks and class ID maps — only cameras with
-            # index maps can receive accurate full-image 3D propagation.
-            target_masks = {}        # target_path -> MaskAnnotation
-            target_cameras_map = {}  # target_path -> Camera
-            # (target_path, real_class_id) -> target_class_id
-            target_class_id_map = {}
-
-            for target_path in list(selected_paths):
-                target_camera = self._get_camera_for_path(target_path)
-                if target_camera is None:
-                    continue
-                if (target_camera._raster is None or
-                        target_camera._raster.index_map is None):
-                    continue  # Skip cameras without geometry data
-
-                target_raster = self.raster_manager.get_raster(target_path)
-                if target_raster is None:
-                    continue
-                target_mask = target_raster.mask_annotation
-                if target_mask is None:
-                    target_mask = target_raster.get_mask_annotation(project_labels)
-                if target_mask is None:
-                    continue
-
-                target_masks[target_path] = target_mask
-                target_cameras_map[target_path] = target_camera
-
-                for real_class_id, (_, label) in class_data.items():
-                    t_class_id = target_mask.label_id_to_class_id_map.get(label.id)
-                    if t_class_id is None:
-                        target_mask.sync_label_map([label])
-                        t_class_id = target_mask.label_id_to_class_id_map.get(label.id)
-                    if t_class_id is not None:
-                        target_class_id_map[(target_path, real_class_id)] = t_class_id
-                        target_mask._get_color_map()  # Pre-warm cache
-
-            if not target_masks:
-                return
-
-            # Phase 4: Dispatch one future per target camera, batching ALL classes
-            # together so that get_pixels_for_elements is never called concurrently
-            # on the same camera object.
-            def _lookup_classes_for_camera(camera, class_items):
-                out = {}
-                for real_class_id, element_ids in class_items:
-                    out[real_class_id] = camera.get_pixels_for_elements(element_ids)
-                return out
-
-            from concurrent.futures import as_completed
-            futures = {}
-            for target_path, target_camera in target_cameras_map.items():
-                class_items = [
-                    (real_class_id, element_ids)
-                    for real_class_id, (element_ids, _) in class_data.items()
-                    if (target_path, real_class_id) in target_class_id_map
-                    and element_ids is not None and len(element_ids) > 0
-                ]
-                if not class_items:
-                    continue
-                future = self._propagation_executor.submit(
-                    _lookup_classes_for_camera, target_camera, class_items
-                )
-                futures[future] = target_path
-
-            # Phase 5: Collect results and apply masks (silent, Qt update deferred)
-            updated_targets = {}
-            for future in as_completed(futures):
-                target_path = futures[future]
-                try:
-                    class_pixel_map = future.result()
-                except Exception:
-                    continue
-
-                target_mask = target_masks[target_path]
-
-                for real_class_id, flat_indices in class_pixel_map.items():
-                    if flat_indices is None or len(flat_indices) == 0:
-                        continue
-
-                    target_class_id = target_class_id_map.get((target_path, real_class_id))
-                    if target_class_id is None:
-                        continue
-
-                    current_vals = target_mask.mask_data.ravel()[flat_indices]
-                    changed_indices = flat_indices[
-                        (current_vals < LOCK_BIT) & (current_vals != target_class_id)
-                    ]
-                    if len(changed_indices) == 0:
-                        continue
-
-                    target_mask.update_mask_at_indices(
-                        changed_indices, target_class_id, silent=True
-                    )
-
-                    dirty_rect = self._compute_dirty_rect_from_flat_indices(
-                        changed_indices,
-                        target_mask.mask_data.shape[1],
-                        target_mask.mask_data.shape[0],
-                    )
-                    existing_rect = updated_targets.get(target_path)
-                    if existing_rect is None:
-                        updated_targets[target_path] = dirty_rect
-                    elif dirty_rect is not None:
-                        updated_targets[target_path] = (
-                            min(existing_rect[0], dirty_rect[0]),
-                            min(existing_rect[1], dirty_rect[1]),
-                            max(existing_rect[2], dirty_rect[2]),
-                            max(existing_rect[3], dirty_rect[3]),
-                        )
-
-                    label = class_data[real_class_id][1]
-                    if label.id not in target_mask.visible_label_ids:
-                        target_mask.visible_label_ids.add(label.id)
-
-            # Phase 6: Qt graphics update per modified target (main thread)
-            for target_path, update_rect in updated_targets.items():
-                target_mask = target_masks[target_path]
-                self._apply_mask_visual_update(
-                    target_path,
-                    target_mask,
-                    None,
-                    update_rect=update_rect,
-                )
-
-        except Exception as e:
-            print(f"Error in multi-annotate semantic propagation: {e}")
-            traceback.print_exc()
-        finally:
-            self._propagating_annotation = False
+        self._execute_mask_propagation(
+            source_camera=source_camera,
+            element_ids=element_ids,
+            class_ids=class_ids,
+            target_paths=selected_paths,
+            project_labels=project_labels,
+            class_label_ids=class_label_ids,
+        )
 
     def cleanup(self):
         """Clean up resources before closing."""
@@ -5836,10 +5855,10 @@ class MVATManager(QObject):
         except Exception:
             pass
 
-        # Shutdown SAM background executor
+        # Shutdown unified propagation executor
         try:
-            if hasattr(self, '_sam_bg_executor'):
-                self._sam_bg_executor.shutdown(wait=False)
+            if hasattr(self, '_unified_bg_executor'):
+                self._unified_bg_executor.shutdown(wait=False)
         except Exception:
             pass
 
