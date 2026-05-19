@@ -163,7 +163,7 @@ class ContextMatrixWidget(QWidget):
         super().__init__(parent)
 
         # Matrix state
-        self.target_camera_count = 10
+        self.target_camera_count = 6
         self._camera_count_cap = None
         self._last_rebuilt_count = 0
         self._canvas_count_step = 1

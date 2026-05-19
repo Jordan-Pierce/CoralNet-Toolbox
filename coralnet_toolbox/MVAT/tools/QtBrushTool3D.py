@@ -186,9 +186,14 @@ class Brush3DTool(Tool3D):
 
         self._stroke_face_ids.update(new_face_ids)
 
-        painter = self.mvat_manager._label_painter_thread
-        if painter is not None and painter.isRunning():
-            painter.submit(np.asarray(new_face_ids, dtype=np.int32), color_rgb, class_id)
+        submit_3d_face_paint = getattr(self.mvat_manager, 'submit_3d_face_paint', None)
+        if callable(submit_3d_face_paint):
+            submit_3d_face_paint(
+                np.asarray(new_face_ids, dtype=np.int32),
+                color_rgb,
+                class_id,
+                primary_target=primary,
+            )
 
         self._last_brush_volume_state = (
             product_id,

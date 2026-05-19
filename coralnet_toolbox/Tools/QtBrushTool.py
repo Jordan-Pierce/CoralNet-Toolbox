@@ -304,7 +304,22 @@ class BrushTool(Tool):
     def wheelEvent(self, event):
         if event.modifiers() & Qt.ControlModifier:
             delta = event.angleDelta().y()
-            self.set_brush_size(self.brush_size + (5 if delta > 0 else -5))
+
+            # Multiplicative resize so the step feels the same regardless of
+            # image resolution. A fixed +/-5 px step is barely visible on a
+            # multi-thousand-pixel raster (which is why users were complaining
+            # the 2D brush size "doesn't change"). Mirror the 3D tool's 15%
+            # per-notch behaviour: positive notch grows, negative shrinks.
+            notches = (delta / 120.0) if delta else (1.0 if delta >= 0 else -1.0)
+            factor = 1.15 ** notches
+
+            current = max(1, int(self.brush_size))
+            target = current * factor
+            # Ensure each notch actually changes the integer pixel size so
+            # tiny brushes (e.g. 1–6 px) still respond to the wheel.
+            if abs(target - current) < 1.0:
+                target = current + (1.0 if notches > 0 else -1.0)
+            self.set_brush_size(max(1, int(round(target))))
 
             scene_pos = self.annotation_window.mapToScene(event.pos())
             self.update_cursor_annotation(scene_pos)

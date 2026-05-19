@@ -1674,6 +1674,36 @@ class MVATManager(QObject):
             QApplication.restoreOverrideCursor()
 
     # --- Label painter management ------------------------------------------------
+    def submit_3d_face_paint(self, face_ids, color_rgb, class_id: int, primary_target=None):
+        """Queue a 3D face paint update through the shared overlay painter.
+
+        Tool code should compute the covered face IDs, then call this helper
+        instead of reaching into ``_label_painter_thread`` directly.  The helper
+        keeps thread lifecycle, mesh validation, and queue submission in one
+        place while leaving geometry selection in the caller.
+        """
+        try:
+            face_ids = np.asarray(face_ids, dtype=np.int32).ravel()
+        except Exception:
+            return
+
+        if face_ids.size == 0:
+            return
+
+        if primary_target is None:
+            primary_target = self._get_primary_mesh_target()
+
+        if primary_target is None:
+            return
+
+        if int(class_id) == 0:
+            color_rgb = (255, 255, 255)
+
+        self._ensure_label_painter(primary_target)
+        painter = self._label_painter_thread
+        if painter is not None and painter.isRunning():
+            painter.submit(face_ids, color_rgb, int(class_id))
+
     def _ensure_label_painter(self, primary_target):
         """Start the painter thread the first time a mesh is annotated."""
         try:
@@ -4604,8 +4634,12 @@ class MVATManager(QObject):
                         source_mask.sync_label_map([source_label])
                         source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
                     # 3. Paint the 3D model arrays — offload to background painter thread
-                    self._ensure_label_painter(primary_target)
-                    self._label_painter_thread.submit(painted_ids, target_color, source_class_id)
+                    self.submit_3d_face_paint(
+                        painted_ids,
+                        target_color,
+                        source_class_id,
+                        primary_target=primary_target,
+                    )
 
         # Projections for 2D fallback — computed lazily inside the loop
         projections = None
@@ -4721,8 +4755,12 @@ class MVATManager(QObject):
                         source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
                     
                     # 3. Paint the 3D model arrays — offload to background painter thread
-                    self._ensure_label_painter(primary_target)
-                    self._label_painter_thread.submit(painted_ids, target_color, source_class_id)
+                    self.submit_3d_face_paint(
+                        painted_ids,
+                        target_color,
+                        source_class_id,
+                        primary_target=primary_target,
+                    )
         
         # Projections for 2D fallback — computed lazily
         projections = None
@@ -4885,8 +4923,12 @@ class MVATManager(QObject):
         if use_3d:
             primary_target = self.viewer.scene_context.get_primary_target()
             if primary_target and hasattr(primary_target, 'apply_labels'):
-                self._ensure_label_painter(primary_target)
-                self._label_painter_thread.submit(painted_ids, (255, 255, 255), 0)
+                self.submit_3d_face_paint(
+                    painted_ids,
+                    (255, 255, 255),
+                    0,
+                    primary_target=primary_target,
+                )
 
         # Projections for 2D fallback — computed lazily inside the loop
         projections = None
@@ -5390,14 +5432,13 @@ class MVATManager(QObject):
                 task_type = task.get('type')
 
                 if task_type == '3d_paint':
-                    # _ensure_label_painter starts a QThread — main thread only
-                    self._ensure_label_painter(task['primary_target'])
-                    if self._label_painter_thread is not None:
-                        self._label_painter_thread.submit(
-                            task['painted_ids'],
-                            task['target_color'],
-                            task['source_class_id'],
-                        )
+                    # The helper keeps QThread startup and queue submission centralized.
+                    self.submit_3d_face_paint(
+                        task['painted_ids'],
+                        task['target_color'],
+                        task['source_class_id'],
+                        primary_target=task.get('primary_target'),
+                    )
 
                 elif task_type == 'repaint':
                     target_mask = task['mask']
