@@ -1500,7 +1500,10 @@ class MVATManager(QObject):
                 extra = (camera._raster.dist_coeffs.tobytes()
                          if camera.is_distorted
                          and camera._raster.dist_coeffs is not None else None)
-                cache_path = self.cache_manager.get_cache_path(
+                # Prefer the path the loader actually used (may be a legacy,
+                # pre-budget cache file). Fall back to rebuilding the
+                # budget-aware path when the loader didn't supply one.
+                cache_path = cached_data.get('cache_path') or self.cache_manager.get_cache_path(
                     cache_key, target_file_path, element_type, extra,
                     pixel_budget=self.pixel_budget,
                 )
@@ -2385,11 +2388,30 @@ class MVATManager(QObject):
         except Exception:
             pass
 
+        # The 3D tool's brush_size has now changed. Three previews depend on it
+        # and must be refreshed explicitly, otherwise old-size artifacts linger
+        # alongside the new wireframe sphere:
+        #
+        #  1. The label-colored hover overlay on the mesh. refresh_sphere_hover_overlay
+        #     takes a fast path when face IDs are already populated, which keeps
+        #     the overlay sized to the previous radius. Invalidate the cached
+        #     face IDs so the new radius forces a real recompute.
+        #  2. The projected cursor previews on the AnnotationWindow's BaseCanvas
+        #     and every ContextMatrix canvas. These were updated with the old
+        #     radius earlier in this method (when update_sphere_hover_overlay
+        #     ran before set_brush_size). Re-sync them now at the new radius.
         if self._hover_overlay_context is not None:
+            self._hover_overlay_face_ids = None
+            self._hover_overlay_last_state = None
             try:
                 self.refresh_sphere_hover_overlay(render=False)
             except Exception:
                 pass
+
+        try:
+            self._sync_projected_cursor_previews(world_point, render=False)
+        except Exception:
+            pass
 
     def _normalize_color_rgb(self, color_rgb):
         try:

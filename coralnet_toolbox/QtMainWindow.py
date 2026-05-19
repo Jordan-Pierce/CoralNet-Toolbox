@@ -13,7 +13,7 @@ import PyQt5.QtCore
 import PyQtAds
 from PyQtAds import ads
 
-from PyQt5.QtGui import QMouseEvent
+from PyQt5.QtGui import QMouseEvent, QIcon
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QActionGroup, QSizePolicy,
                              QMessageBox, QWidget, QVBoxLayout, QLabel, QHBoxLayout,
@@ -1090,14 +1090,22 @@ class MainWindow(QMainWindow):
         
         # Instantiate the ADS dock manager.
         self.dock_manager = ads.CDockManager(self)
-        
+
         # Disable the "List all tabs" button in the dock tab bars
         self.dock_manager.setConfigFlags(
             self.dock_manager.configFlags() & ~ads.CDockManager.DockAreaHasTabsMenuButton
         )
-        
+
         # Apply the shared dock tab theme
         self.dock_manager.setStyleSheet(app_theme.build_dock_stylesheet())
+
+        # ADS ships title-bar button glyphs that are almost invisible against
+        # the dark theme. The dock stylesheet above re-skins them via QSS,
+        # but some PyQtAds builds construct those buttons from C++ style
+        # hints that bypass QSS. Register explicit QIcons through the dock
+        # manager's icon provider as a defensive fallback so the buttons
+        # render the new icons regardless of which path ADS uses.
+        self._apply_dock_icon_provider()
 
         # --------------------------------------------------
         # 2. Create the Docks & Containers
@@ -2808,6 +2816,59 @@ class MainWindow(QMainWindow):
         finally:
             if cursor_set:
                 QApplication.restoreOverrideCursor()
+
+    def _apply_dock_icon_provider(self):
+        """Register clear, high-contrast icons for every ADS title-bar button.
+
+        ADS exposes a programmatic icon provider in addition to QSS so a
+        host application can swap individual icons without theming the
+        whole library. We register each known button id defensively — only
+        the ids that exist in this PyQtAds build are actually applied. The
+        QSS in build_dock_stylesheet() also reskins these buttons; this
+        method is a belt-and-braces fallback for ADS builds where the
+        QToolButtons bypass QSS and read their pixmap from the provider.
+        """
+        try:
+            provider = self.dock_manager.iconProvider()
+        except Exception:
+            return
+
+        if provider is None:
+            return
+
+        def _icon(path):
+            return QIcon(path)
+
+        # Map ADS eIcon ids → our asset paths. Each entry is only
+        # registered if the corresponding eIcon member exists in this
+        # build (PyQtAds versions differ slightly on which ids are exposed).
+        mapping = [
+            ('DockAreaCloseIcon',         _icon(app_theme.DOCK_CLOSE_ICON)),
+            ('DockAreaUndockIcon',        _icon(app_theme.DOCK_DETACH_ICON)),
+            ('DockAreaMinimizeIcon',      _icon(app_theme.DOCK_DETACH_ICON)),
+            ('AutoHideIcon',              _icon(app_theme.DOCK_DETACH_ICON)),
+            ('TabCloseIcon',              _icon(app_theme.DOCK_CLOSE_ICON)),
+            ('FloatingWidgetCloseIcon',   _icon(app_theme.DOCK_CLOSE_ICON)),
+            ('FloatingWidgetMaximizeIcon', _icon(app_theme.DOCK_MAXIMIZE_ICON)),
+            ('FloatingWidgetNormalIcon',  _icon(app_theme.DOCK_RESTORE_ICON)),
+        ]
+
+        e_icon = getattr(ads, 'eIcon', None)
+        for attr_name, icon in mapping:
+            icon_id = None
+            if e_icon is not None and hasattr(e_icon, attr_name):
+                icon_id = getattr(e_icon, attr_name)
+            elif hasattr(ads, attr_name):
+                icon_id = getattr(ads, attr_name)
+            if icon_id is None:
+                continue
+            try:
+                provider.registerCustomIcon(icon_id, icon)
+            except Exception:
+                # Older PyQtAds versions name the method differently or
+                # require an int — swallow rather than fail-loud, the QSS
+                # fallback in build_dock_stylesheet() still applies.
+                pass
 
     def refresh_scale_sensitive_ui(self):
         """Refresh widget sizes and styles that depend on the selected UI scale."""

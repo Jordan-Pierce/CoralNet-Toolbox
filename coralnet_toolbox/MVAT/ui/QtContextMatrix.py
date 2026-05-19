@@ -264,6 +264,7 @@ class ContextMatrixWidget(QWidget):
             canvas.setFixedSize(self._canvas_tile_size, self._canvas_tile_size)
             canvas.mouseDoubleClickEvent = self._make_canvas_double_click_handler(canvas)
             canvas.mousePressEvent = self._make_canvas_mouse_press_handler(canvas)
+            canvas.wheelEvent = self._make_canvas_wheel_handler(canvas)
             self._canvas_pool.append(canvas)
 
     def _update_canvas_size_bounds(self, camera_objects: Optional[List] = None):
@@ -429,6 +430,26 @@ class ContextMatrixWidget(QWidget):
                 if path:
                     self.camera_highlighted_single.emit(path)
             BaseCanvas.mouseDoubleClickEvent(canvas, event)
+        return handler
+
+    def _make_canvas_wheel_handler(self, canvas: BaseCanvas):
+        """Keep wheel events on the hovered canvas instead of letting them
+        bubble up to the surrounding QScrollArea.
+
+        Qt propagates a wheel event to the parent widget whenever the receiver
+        leaves the event unaccepted. BaseCanvas.wheelEvent returns silently
+        when no image is loaded, and even when zoom is applied the event isn't
+        explicitly accepted — so the matrix's scroll area scrolls vertically
+        on top of (or instead of) the canvas zoom. Always accept() here so the
+        wheel acts purely on the hovered tile.
+        """
+        def handler(event):
+            try:
+                BaseCanvas.wheelEvent(canvas, event)
+            finally:
+                # Mark consumed regardless of what BaseCanvas did so the event
+                # never reaches the QScrollArea above us.
+                event.accept()
         return handler
 
     # ==================== Input / Scroll Events ====================

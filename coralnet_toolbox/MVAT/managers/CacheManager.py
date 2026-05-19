@@ -278,14 +278,8 @@ class CacheManager:
         )
         return os.path.join(self.cache_dir, f"{cache_key}.npz")
 
-    def has_visibility_cache(self, extrinsics: np.ndarray, point_cloud_path: str,
-                             element_type: str = 'point',
-                             extra_hash_data: Optional[bytes] = None,
-                             pixel_budget: Optional[int] = None) -> bool:
-        """Return True when either the legacy .npz cache or the newer split cache exists."""
-        cache_path = self.get_cache_path(
-            extrinsics, point_cloud_path, element_type, extra_hash_data, pixel_budget,
-        )
+    def _cache_path_exists(self, cache_path: str) -> bool:
+        """Return True if either the .npz or the split .npy form for *cache_path* is on disk."""
         if os.path.exists(cache_path):
             return True
 
@@ -296,6 +290,50 @@ class CacheManager:
             and os.path.exists(paths['idx'])
             and os.path.exists(paths['vis'])
         )
+
+    def _resolve_existing_cache_path(self,
+                                     extrinsics: np.ndarray,
+                                     point_cloud_path: str,
+                                     element_type: str,
+                                     extra_hash_data: Optional[bytes],
+                                     pixel_budget: Optional[int]) -> Optional[str]:
+        """Locate a cache file on disk, preferring the budget-aware key.
+
+        Cache keys were changed to include ``pixel_budget`` so caches written at
+        different qualities don't collide. Sessions that wrote cache files
+        *before* that change used a key with no budget mixed in. To keep those
+        legacy files usable, we look up the budget-aware path first and, if
+        nothing is there, fall back to the legacy path (computed with
+        ``pixel_budget=None``). Returns the resolved path or ``None`` if no
+        cache exists in either form.
+        """
+        primary = self.get_cache_path(
+            extrinsics, point_cloud_path, element_type, extra_hash_data, pixel_budget,
+        )
+        if self._cache_path_exists(primary):
+            return primary
+
+        # Legacy fallback: pre-budget key. Only attempt when a budget was
+        # actually supplied, otherwise the two paths are identical.
+        if pixel_budget is not None and pixel_budget > 0:
+            legacy = self.get_cache_path(
+                extrinsics, point_cloud_path, element_type, extra_hash_data, None,
+            )
+            if self._cache_path_exists(legacy):
+                return legacy
+
+        return None
+
+    def has_visibility_cache(self, extrinsics: np.ndarray, point_cloud_path: str,
+                             element_type: str = 'point',
+                             extra_hash_data: Optional[bytes] = None,
+                             pixel_budget: Optional[int] = None) -> bool:
+        """Return True when either the budget-aware cache or a legacy
+        (budget-omitted) cache file exists on disk in either supported format.
+        """
+        return self._resolve_existing_cache_path(
+            extrinsics, point_cloud_path, element_type, extra_hash_data, pixel_budget,
+        ) is not None
 
     def _generate_ortho_cache_key(self,
                                   ortho_image_path: str,
@@ -452,9 +490,14 @@ class CacheManager:
             dict or None: Dictionary with 'index_map', 'visible_indices', 'depth_map',
                          and 'element_type' if cache exists, None otherwise
         """
-        cache_path = self.get_cache_path(
+        # Resolve the actual on-disk cache file. Prefers the budget-aware key
+        # but transparently falls back to the legacy (budget-omitted) key so
+        # caches written before quality-aware keying are still loaded.
+        cache_path = self._resolve_existing_cache_path(
             extrinsics, point_cloud_path, element_type, extra_hash_data, pixel_budget,
         )
+        if cache_path is None:
+            return None
         npy_base   = os.path.splitext(cache_path)[0]  # strip .npz for new-format paths
 
         # ------------------------------------------------------------------
