@@ -27,7 +27,7 @@ class Semantic(Base):
     def setup_dataset_layout(self):
         """Setup the dataset layout."""
         
-        self.task = "semseg"
+        self.task = "sem"
         self.imgsz = 640
         self.batch = 4
         
@@ -58,23 +58,23 @@ class Semantic(Base):
         self.layout.addWidget(group_box)
 
     def load_model_combobox(self):
-        """Populate the model combobox with supported semseg YAMLs."""
+        """Populate the model combobox with supported sem YAMLs."""
         self.model_combo.clear()
         self.model_combo.setEditable(True)
 
         standard_models = [
-            'yolo26n-semseg.pt',
-            'yolo26s-semseg.pt',
-            'yolo26m-semseg.pt',
-            'yolo26l-semseg.pt',
-            'yolo26x-semseg.pt'
+            'yolo26n-sem.pt',
+            'yolo26s-sem.pt',
+            'yolo26m-sem.pt',
+            'yolo26l-sem.pt',
+            'yolo26x-sem.pt'
         ]
 
         self.model_combo.addItems(standard_models)
 
         # Default to the nano model if available
         try:
-            self.model_combo.setCurrentIndex(standard_models.index('yolo26n-semseg.pt'))
+            self.model_combo.setCurrentIndex(standard_models.index('yolo26n-sem.pt'))
         except ValueError:
             if standard_models:
                 self.model_combo.setCurrentIndex(0)
