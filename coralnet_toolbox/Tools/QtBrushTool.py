@@ -257,12 +257,55 @@ class BrushTool(Tool):
             except Exception:
                 pass
 
+    def set_brush_size(self, size, propagate: bool = True):
+        """Set brush diameter (in image pixels) and mirror it to the sibling tool.
+
+        Brush and Erase are separate Tool instances but the user expects them
+        to share a size — switching between them should keep the same brush
+        footprint. When propagate=True we copy the new size onto whichever
+        sibling tool (brush↔erase) lives on the same AnnotationWindow.
+        """
+        try:
+            new_size = max(1, int(round(float(size))))
+        except Exception:
+            return
+
+        if new_size == self.brush_size:
+            return
+
+        self.brush_size = new_size
+        try:
+            self.brush_mask = self._create_brush_mask()
+        except Exception:
+            pass
+
+        if not propagate:
+            return
+
+        # Mirror onto the sibling tool (brush ↔ erase) so size is shared.
+        try:
+            tools = getattr(self.annotation_window, 'tools', {})
+        except Exception:
+            tools = {}
+        sibling_name = 'erase' if type(self).__name__ == 'BrushTool' else 'brush'
+        sibling = tools.get(sibling_name)
+        if sibling is not None and sibling is not self:
+            try:
+                sibling.set_brush_size(new_size, propagate=False)
+            except Exception:
+                # Fallback: directly poke the attributes if the sibling
+                # doesn't expose the setter for any reason.
+                try:
+                    sibling.brush_size = new_size
+                    sibling.brush_mask = sibling._create_brush_mask()
+                except Exception:
+                    pass
+
     def wheelEvent(self, event):
         if event.modifiers() & Qt.ControlModifier:
             delta = event.angleDelta().y()
-            self.brush_size = max(1, self.brush_size + (5 if delta > 0 else -5))
-            self.brush_mask = self._create_brush_mask()
-            
+            self.set_brush_size(self.brush_size + (5 if delta > 0 else -5))
+
             scene_pos = self.annotation_window.mapToScene(event.pos())
             self.update_cursor_annotation(scene_pos)
 

@@ -2148,7 +2148,14 @@ class MVATManager(QObject):
 
         return factory
 
-    def _sync_projected_cursor_previews(self, world_point, render: bool = False):
+    def _sync_projected_cursor_previews(self, world_point, render: bool = False, sync_2d_size: bool = True):
+        """Update projected cursor previews on the AnnotationWindow + context canvases.
+
+        ``sync_2d_size`` controls whether the active 2D tool's brush_size is
+        rewritten to match the projected world_radius. Pass False when the
+        2D size was just set by the user (e.g. 2D Ctrl+wheel); otherwise the
+        projection round-trip will overwrite the value they just chose.
+        """
         tool_kind, active_tool = self._get_active_3d_tool_kind()
         if tool_kind not in ('brush', 'erase') or active_tool is None or world_point is None:
             self._clear_projected_cursor_previews(render=render)
@@ -2219,7 +2226,14 @@ class MVATManager(QObject):
 
         # Keep the active 2D tool's internal size aligned with the current
         # selected camera projection so future 2D strokes reuse the same radius.
-        if projected_main is not None:
+        # Suppressed when the call originated from a 2D wheel resize — that
+        # path already wrote a deliberate 2D size and we must not clobber it
+        # with the round-trip projection of the (about-to-be-updated) 3D radius.
+        # _suspend_2d_size_sync covers nested internal callers (e.g. update_sphere_hover_overlay
+        # → _sync_projected_cursor_previews) that pass the default sync_2d_size=True.
+        if getattr(self, '_suspend_2d_size_sync', False):
+            sync_2d_size = False
+        if sync_2d_size and projected_main is not None:
             main_radius_px = projected_main[2]
             main_tool = self._get_2d_tool(tool_kind)
             if main_tool is not None:
@@ -2311,10 +2325,19 @@ class MVATManager(QObject):
                 pass
 
     def on_2d_tool_size_changed(self, tool, scene_pos: QPointF = None):
-        """Sync a 2D brush/erase size or shape change into the active 3D tool."""
+        """Sync a 2D brush/erase size or shape change into the active 3D tool.
+
+        The 2D wheel is the authoritative source of size during this call,
+        so we suspend the 3D→2D auto-sync inside _sync_projected_cursor_previews
+        for the duration. Without that guard, the projection round-trip
+        (3D world_radius → projected pixel diameter → 2D set_brush_size)
+        immediately overwrites the value the user just chose.
+        """
         tool_kind, active_tool = self._get_active_3d_tool_kind()
         if tool_kind not in ('brush', 'erase') or active_tool is None:
             return
+
+        self._suspend_2d_size_sync = True
 
         brush_shape = getattr(tool, 'shape', None)
         try:
@@ -2412,6 +2435,38 @@ class MVATManager(QObject):
             self._sync_projected_cursor_previews(world_point, render=False)
         except Exception:
             pass
+
+        # When the resize came from a 2D Ctrl+wheel, the AnnotationWindow's
+        # BaseCanvas-side projected preview is redundant — the 2D brush tool
+        # already paints its own cursor_annotation there. Worse, regular 2D
+        # mouse moves don't refresh the BaseCanvas preview (cursor_move_callback
+        # only updates the context-matrix canvases), so the projected ellipse
+        # sticks at the wheel position until the user mouses out. Clear it now.
+        try:
+            self.annotation_window.clear_cursor_preview()
+        except Exception:
+            pass
+
+        # Same problem in 3D: the wireframe preview sphere and the
+        # label-colored hover overlay were repositioned to the projected
+        # world_point during this resize, but the 3D viewer never receives a
+        # mouse-move event from inside the AnnotationWindow, so they stay
+        # parked there until the user actually hovers the 3D viewer. Hide
+        # them now; mouseMoveEvent in Tool3D will bring them back the next
+        # time the cursor enters the 3D viewport.
+        try:
+            hide_preview = getattr(active_tool, '_hide_preview_sphere', None)
+            if callable(hide_preview):
+                hide_preview()
+        except Exception:
+            pass
+        try:
+            self.clear_sphere_hover_overlay(reset_context=False, render=False)
+        except Exception:
+            pass
+
+        # Re-arm the 3D→2D auto-sync for subsequent hover-driven updates.
+        self._suspend_2d_size_sync = False
 
     def _normalize_color_rgb(self, color_rgb):
         try:
@@ -4857,7 +4912,10 @@ class MVATManager(QObject):
             
             # Catch the results on the Main Thread and repaint
             for future in as_completed(futures):
-                target_path, did_update = future.result()
+                # _propagate_to_camera returns (target_path, did_update, update_rect);
+                # earlier this site only unpacked the first two and raised
+                # "too many values to unpack" on every erase stroke.
+                target_path, did_update, update_rect = future.result()
 
                 if did_update:
                     target_raster = self.raster_manager.get_raster(target_path)
@@ -4871,6 +4929,7 @@ class MVATManager(QObject):
                             target_path,
                             target_mask,
                             label_id,
+                            update_rect=update_rect,
                         )
 
         except Exception as e:

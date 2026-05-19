@@ -109,28 +109,51 @@ class Tool3D:
         self.active = False
         self.preview_only = True
 
-    def set_brush_size(self, brush_size, center=None):
-        """Set the world-space brush radius and refresh the preview sphere."""
+    def set_brush_size(self, brush_size, center=None, propagate: bool = True):
+        """Set the world-space brush radius and refresh the preview sphere.
+
+        When propagate=True the new radius is also pushed onto the sibling
+        3D tool (Brush3DTool ↔ Erase3DTool), so toggling between paint and
+        erase preserves the user's chosen size in 3D — mirroring the same
+        sharing we do for the 2D BrushTool / EraseTool pair.
+        """
         try:
-            self.brush_size = max(1e-6, float(brush_size))
-            self._brush_size_customized = True
+            new_size = max(1e-6, float(brush_size))
         except Exception:
             return
 
-        if not self.active:
+        self.brush_size = new_size
+        self._brush_size_customized = True
+
+        if self.active:
+            if center is None:
+                center = self._last_hover_world_pos
+            if center is None:
+                try:
+                    center = np.asarray(self.mvat_viewer.plotter.camera.focal_point, dtype=np.float64)
+                except Exception:
+                    center = None
+            if center is not None:
+                self._update_preview_sphere(center)
+
+        if not propagate:
             return
 
-        if center is None:
-            center = self._last_hover_world_pos
-
-        if center is None:
+        # Mirror the new size onto the sibling 3D tool (held by MVATViewer).
+        viewer = getattr(self, 'mvat_viewer', None)
+        if viewer is None:
+            return
+        sibling_attr = '_erase_3d_tool' if type(self).__name__ == 'Brush3DTool' else '_brush_3d_tool'
+        sibling = getattr(viewer, sibling_attr, None)
+        if sibling is not None and sibling is not self:
             try:
-                center = np.asarray(self.mvat_viewer.plotter.camera.focal_point, dtype=np.float64)
+                sibling.set_brush_size(new_size, center=None, propagate=False)
             except Exception:
-                center = None
-
-        if center is not None:
-            self._update_preview_sphere(center)
+                try:
+                    sibling.brush_size = new_size
+                    sibling._brush_size_customized = True
+                except Exception:
+                    pass
 
     def set_brush_shape(self, brush_shape, center=None):
         """Set the preview shape and refresh the actor in-place."""

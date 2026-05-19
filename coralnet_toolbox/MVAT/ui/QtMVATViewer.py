@@ -951,6 +951,16 @@ class MVATViewer(QFrame):
         if hasattr(self, '_camera_inertia') and self._camera_inertia is not None:
             self._camera_inertia.bind(inertia_style)
 
+        # 2a. Belt-and-braces pan: we drive right-button pan from the Qt
+        # eventFilter rather than from VTK interactor observers, because
+        # VTK's RightButtonReleaseEvent can be swallowed by the active
+        # interactor style (especially while a 3D tool's left-press has
+        # captured the interaction state), which would leave our pan stuck
+        # in the "right is down" state forever. Qt mouse press/release
+        # always fire, regardless of style.
+        self._right_pan_active = False
+        self._right_pan_last_xy = None
+
         # 3. Add sphere actor to plotter and bind mouse move event
         if hasattr(self, '_sphere_manager') and self._sphere_manager is not None:
             # Add sphere actor (it's created empty initially)
@@ -1048,6 +1058,31 @@ class MVATViewer(QFrame):
         # default Qt context menu does not appear on single right-click.
         if event.type() == QEvent.ContextMenu:
             return True
+
+        # ---- Right-button drag → manual camera pan -----------------
+        # Qt mouse events are reliable in a way VTK's interactor observers
+        # aren't when a 3D tool has captured the interaction style, so we
+        # drive pan from here regardless of tool state.
+        etype = event.type()
+        if etype == QEvent.MouseButtonPress and event.button() == Qt.RightButton:
+            try:
+                pos = event.pos()
+                self._right_pan_last_xy = (int(pos.x()), int(pos.y()))
+                self._right_pan_active = True
+            except Exception:
+                self._right_pan_active = False
+                self._right_pan_last_xy = None
+            # Don't consume — VTK may also want to react, and not consuming
+            # keeps the trackball style's right=pan working as a backup.
+        elif etype == QEvent.MouseMove and self._right_pan_active:
+            try:
+                pos = event.pos()
+                self._apply_right_pan_delta(int(pos.x()), int(pos.y()))
+            except Exception:
+                pass
+        elif etype in (QEvent.MouseButtonRelease, QEvent.MouseButtonDblClick) and event.button() == Qt.RightButton:
+            self._right_pan_active = False
+            self._right_pan_last_xy = None
 
         if event.type() == QEvent.Leave:
             active_tool = getattr(self, '_active_3d_tool', None)
@@ -1178,6 +1213,51 @@ class MVATViewer(QFrame):
             
         self._last_click_time = current_time
         # Pass event through so standard rotation (Left Drag) still works
+
+    def _apply_right_pan_delta(self, x: int, y: int):
+        """Pan the camera based on the latest Qt mouse-move position.
+
+        Coordinates are in Qt widget space (origin top-left). VTK's display
+        coords have origin bottom-left, so dy is negated before being fed
+        into the WorldToDisplay/DisplayToWorld round-trip.
+        """
+        last = self._right_pan_last_xy
+        if last is None:
+            self._right_pan_last_xy = (x, y)
+            return
+
+        dx = x - last[0]
+        dy = y - last[1]
+        self._right_pan_last_xy = (x, y)
+        if dx == 0 and dy == 0:
+            return
+
+        # Qt top-left vs VTK bottom-left
+        dy_vtk = -dy
+
+        renderer = self.plotter.renderer
+        cam = self.plotter.camera
+
+        fp = np.asarray(cam.focal_point, dtype=np.float64)
+        renderer.SetWorldPoint(fp[0], fp[1], fp[2], 1.0)
+        renderer.WorldToDisplay()
+        disp = renderer.GetDisplayPoint()
+        focal_display = (disp[0] - dx, disp[1] - dy_vtk, disp[2])
+        renderer.SetDisplayPoint(*focal_display)
+        renderer.DisplayToWorld()
+        new_fp_h = renderer.GetWorldPoint()
+        w = new_fp_h[3] if new_fp_h[3] != 0 else 1.0
+        new_fp = np.array([new_fp_h[0] / w, new_fp_h[1] / w, new_fp_h[2] / w])
+
+        shift = new_fp - fp
+        pos = np.asarray(cam.position, dtype=np.float64) + shift
+        cam.position = tuple(pos)
+        cam.focal_point = tuple(new_fp)
+
+        try:
+            self.plotter.render()
+        except Exception:
+            pass
 
     def _handle_double_click(self):
         """
