@@ -4647,28 +4647,28 @@ class MVATManager(QObject):
     def _resolve_source_mask_class_context(self, source_camera, label_id: str, project_labels: list):
         """Resolve the source label, mask, and internal class ID for propagation."""
         if source_camera is None:
-            return None, None, None
+            return None, None
 
         source_label = next((lbl for lbl in project_labels if lbl.id == label_id), None)
         if source_label is None:
-            return None, None, None
+            return None, None
 
         source_raster = self.raster_manager.get_raster(source_camera.image_path)
         if source_raster is None:
-            return source_label, None, None
+            return source_label, None
 
         source_mask = source_raster.mask_annotation
         if source_mask is None:
             source_mask = source_raster.get_mask_annotation(project_labels)
         if source_mask is None:
-            return source_label, None, None
+            return source_label, None
 
         source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
         if source_class_id is None:
             source_mask.sync_label_map([source_label])
             source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
 
-        return source_label, source_mask, source_class_id
+        return source_label, source_class_id
 
     def _extract_source_ids_from_sam_prediction(self,
                                                 source_camera,
@@ -4881,7 +4881,7 @@ class MVATManager(QObject):
         if not selected_paths:
             return
 
-        source_label, _source_mask, source_class_id = self._resolve_source_mask_class_context(
+        source_label, source_class_id = self._resolve_source_mask_class_context(
             self.selected_camera,
             label_id,
             project_labels,
@@ -5380,7 +5380,7 @@ class MVATManager(QObject):
             return
 
         project_labels  = list(self.main_window.label_window.labels)
-        source_label, _source_mask, source_class_id = self._resolve_source_mask_class_context(
+        source_label, source_class_id = self._resolve_source_mask_class_context(
             selected_camera,
             label_id,
             project_labels,
