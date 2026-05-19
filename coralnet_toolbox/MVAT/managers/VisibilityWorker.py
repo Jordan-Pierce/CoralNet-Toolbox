@@ -294,14 +294,15 @@ class VisibilityWorker(QObject):
                         element_type = result_dict.get('element_type', 'point')
                         extra = self.dist_coeffs_bytes_dict.get(path)
                         expected_cache_path = self.cache_manager.get_cache_path(
-                            cache_key, self.target_file_path, element_type, extra
+                            cache_key, self.target_file_path, element_type, extra,
+                            pixel_budget=self.pixel_budget,
                         )
                         result_dict['cache_path'] = expected_cache_path
 
             # =================================================================
             # 3. Define the background saving task (parallel I/O)
             # =================================================================
-            def save_to_disk_task(save_results, cache_mgr, target_path, keys_dict, extra_bytes_dict):
+            def save_to_disk_task(save_results, cache_mgr, target_path, keys_dict, extra_bytes_dict, pixel_budget):
                 import time
                 start_cache_time = time.time()
                 total_to_save = len(save_results)
@@ -321,6 +322,7 @@ class VisibilityWorker(QObject):
                         element_type=result_dict.get('element_type', 'point'),
                         inverted_index=None,  # No longer storing inverted_index to save RAM
                         extra_hash_data=extra,
+                        pixel_budget=pixel_budget,
                     )
                     return True
 
@@ -354,7 +356,7 @@ class VisibilityWorker(QObject):
             if self.cache_manager is not None and self.target_file_path and self.cache_keys_dict:
                 io_thread = threading.Thread(
                     target=save_to_disk_task,
-                    args=(results, self.cache_manager, self.target_file_path, self.cache_keys_dict, self.dist_coeffs_bytes_dict),
+                    args=(results, self.cache_manager, self.target_file_path, self.cache_keys_dict, self.dist_coeffs_bytes_dict, self.pixel_budget),
                     daemon=True
                 )
                 self._status("Saving visibility maps to cache...")

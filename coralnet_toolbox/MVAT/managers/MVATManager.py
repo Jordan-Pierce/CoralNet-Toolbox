@@ -649,7 +649,9 @@ class MVATManager(QObject):
                 extra = (cam._raster.dist_coeffs.tobytes()
                          if cam.is_distorted
                          and cam._raster.dist_coeffs is not None else None)
-                if not self.cache_manager.has_visibility_cache(cache_key, target_path, element_type, extra):
+                if not self.cache_manager.has_visibility_cache(
+                        cache_key, target_path, element_type, extra,
+                        pixel_budget=self.pixel_budget):
                     uncached_cameras.append(cam)
 
             if uncached_cameras:
@@ -704,9 +706,28 @@ class MVATManager(QObject):
 
                     if ok and choice:
                         # 2. Store the pixel budget instead of a static scale factor
-                        self.pixel_budget = quality_map[choice]
+                        previous_budget = getattr(self, 'pixel_budget', None)
+                        new_budget = quality_map[choice]
+                        self.pixel_budget = new_budget
+
+                        # If the budget actually changed, the previously cached
+                        # visibility maps (in RAM) were produced at a different
+                        # resolution. Invalidate them on every camera so the
+                        # neighbor-detection in count_overlapping_cameras
+                        # doesn't mix face-ID sets sampled at different
+                        # resolutions, and so the next selection triggers a
+                        # cache-aware reload at the new budget.
+                        if previous_budget != new_budget:
+                            self._invalidate_perspective_visibility_state()
+                            # Recompute everything that was already loaded at the
+                            # old quality, not just the brand-new uncached cameras.
+                            cameras_to_compute = list(newly_added_cameras) + [
+                                cam for cam in self.cameras.values()
+                                if cam not in newly_added_cameras
+                            ]
+                        else:
+                            cameras_to_compute = uncached_cameras
                         should_compute_visibility = True
-                        cameras_to_compute = uncached_cameras
 
         # Build the ortho index map only after the quality budget has been
         # resolved, and before any perspective visibility maps are started.
@@ -1138,6 +1159,7 @@ class MVATManager(QObject):
                         result.get('depth_map') if self.compute_depth_maps_enabled else None,
                         element_type=element_type,
                         extra_hash_data=extra,
+                        pixel_budget=self.pixel_budget,
                     )
                 except Exception:
                     cache_path = None
@@ -1447,7 +1469,8 @@ class MVATManager(QObject):
                          and camera._raster.dist_coeffs is not None else None)
                 try:
                     return path, self.cache_manager.load_visibility(
-                        cache_key, target_file_path, element_type, extra
+                        cache_key, target_file_path, element_type, extra,
+                        pixel_budget=self.pixel_budget,
                     )
                 except Exception as exc:
                     print(f"⚠️ Cache load error for {camera.label}: {exc}")
@@ -1478,7 +1501,8 @@ class MVATManager(QObject):
                          if camera.is_distorted
                          and camera._raster.dist_coeffs is not None else None)
                 cache_path = self.cache_manager.get_cache_path(
-                    cache_key, target_file_path, element_type, extra
+                    cache_key, target_file_path, element_type, extra,
+                    pixel_budget=self.pixel_budget,
                 )
 
                 # Store index map on raster (Qt object — must be on main thread)
@@ -3769,10 +3793,73 @@ class MVATManager(QObject):
         except Exception:
             return None
 
+    def _invalidate_perspective_visibility_state(self):
+        """Clear cached visibility data on every perspective camera.
+
+        Called when the user-selected pixel budget changes so the in-memory
+        index_map / visible_indices left over from the previous quality
+        setting don't get mixed with newly computed maps. The next visibility
+        pass will repopulate each camera from the (quality-aware) disk cache
+        or by recomputing.
+
+        This intentionally also clears the OrthoCamera raster so that the
+        next call to _maybe_compute_ortho_index_map sees a stale-scale state
+        and rebuilds at the new budget.
+        """
+        for cam in self.cameras.values():
+            raster = getattr(cam, '_raster', None)
+            if raster is None:
+                continue
+            try:
+                raster.visible_indices = None
+                raster.index_map = None
+                if hasattr(raster, 'index_map_path'):
+                    raster.index_map_path = None
+                if hasattr(raster, 'index_map_scale_factor'):
+                    raster.index_map_scale_factor = None
+                if hasattr(raster, 'inv_ids'):
+                    raster.inv_ids = None
+                if hasattr(raster, 'inv_offsets'):
+                    raster.inv_offsets = None
+                if hasattr(raster, 'inv_pixels'):
+                    raster.inv_pixels = None
+            except Exception:
+                pass
+
+        if self.ortho_camera is not None:
+            ortho_raster = getattr(self.ortho_camera, '_raster', None)
+            if ortho_raster is not None:
+                try:
+                    ortho_raster.visible_indices = None
+                    ortho_raster.index_map = None
+                    if hasattr(ortho_raster, 'index_map_path'):
+                        ortho_raster.index_map_path = None
+                    if hasattr(ortho_raster, 'index_map_scale_factor'):
+                        ortho_raster.index_map_scale_factor = None
+                    if hasattr(ortho_raster, 'inv_ids'):
+                        ortho_raster.inv_ids = None
+                    if hasattr(ortho_raster, 'inv_offsets'):
+                        ortho_raster.inv_offsets = None
+                    if hasattr(ortho_raster, 'inv_pixels'):
+                        ortho_raster.inv_pixels = None
+                except Exception:
+                    pass
+
     def count_overlapping_cameras(self, active_camera, camera_items=None, scene_size=None):
         """
         Calculates how many cameras share a view of the same 3D geometry.
         Uses proximity scoring as a fast-reject to keep UI thread performance high.
+
+        Important: the "true geometric overlap" branch compares unique mesh
+        face IDs sampled by each camera's rasterized index map. That signal
+        is reliable only at Native (full-resolution) rendering. At reduced
+        pixel budgets the rasterizer aliases many faces into a single pixel,
+        so each camera ends up with a sparse, *different* subset of the
+        shared geometry's face IDs — the intersection collapses even when
+        the cameras are genuinely overlapping. To avoid the matrix's
+        camera-count cap shrinking to 1 at low quality, we use proximity
+        alone (which is what _reorder_cameras uses to pick neighbors)
+        whenever the pixel budget is non-Native.
 
         TODO (Threading): If this begins to block the UI on extreme datasets
         (e.g., >10M polygons and >1,000 cameras), move this loop into
@@ -3794,6 +3881,13 @@ class MVATManager(QObject):
                 getattr(active_camera, 'R', None) is None):
             return len(camera_items)
 
+        # When the user picked anything other than "Native (Full Resolution)"
+        # the face-ID intersection is unreliable (see docstring). Fall back to
+        # proximity-only counting so the matrix's camera-count cap reflects how
+        # many neighbors _reorder_cameras would actually surface.
+        pixel_budget = getattr(self, 'pixel_budget', None)
+        use_proximity_only = pixel_budget is not None and pixel_budget > 0
+
         for path, cam in camera_items:
             if path == active_camera.image_path:
                 overlap_count += 1  # Always counts itself
@@ -3806,14 +3900,27 @@ class MVATManager(QObject):
             if score == 0.0:
                 continue
 
-            # OPTIMIZATION 2: True Geometric Overlap
-            if active_indices is not None and cam.visible_indices is not None:
+            if use_proximity_only:
+                # Non-Native budget: trust proximity, which is render-quality-
+                # independent and matches what _reorder_cameras uses.
+                overlap_count += 1
+                continue
+
+            # OPTIMIZATION 2: True Geometric Overlap (Native quality only)
+            if (active_indices is not None
+                    and cam.visible_indices is not None
+                    and active_visible_count > 0):
                 # Both arrays are pre-sorted and unique thanks to VisibilityWorker.
                 # assume_unique=True makes this incredibly fast.
                 shared = np.intersect1d(active_indices, cam.visible_indices, assume_unique=True)
 
-                if active_visible_count > 0 and (len(shared) / active_visible_count) >= min_overlap_ratio:
+                if (len(shared) / active_visible_count) >= min_overlap_ratio:
                     overlap_count += 1
+            else:
+                # Visibility maps not ready yet (e.g. cache miss still being
+                # computed). Fall back to the proximity score we already
+                # computed above so the cap doesn't collapse to 1.
+                overlap_count += 1
 
         return overlap_count
 

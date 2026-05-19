@@ -30,14 +30,25 @@ except ImportError:
 
 @functools.lru_cache(maxsize=2048)
 def _cached_md5(extrinsics_bytes: bytes, path: str, element_type: str,
-                extra: Optional[bytes]) -> str:
-    """Return the hex MD5 digest for a (extrinsics, path, element_type, extra) tuple."""
+                extra: Optional[bytes],
+                pixel_budget: Optional[int] = None) -> str:
+    """Return the hex MD5 digest for a (extrinsics, path, element_type, extra,
+    pixel_budget) tuple.
+
+    ``pixel_budget`` is only mixed into the hash when it is a positive integer.
+    Passing ``None`` (or ``0`` / a negative value) reproduces the legacy hash so
+    pre-existing caches written before quality-aware keying remain valid for
+    Native-quality (full-resolution) computations.
+    """
     h = hashlib.md5()
     h.update(extrinsics_bytes)
     h.update(path.encode('utf-8'))
     h.update(element_type.encode('utf-8'))
     if extra is not None:
         h.update(extra)
+    if pixel_budget is not None and pixel_budget > 0:
+        h.update(b"|pb=")
+        h.update(str(int(pixel_budget)).encode('ascii'))
     return h.hexdigest()
 
 
@@ -211,9 +222,11 @@ class CacheManager:
     
     def _generate_cache_key(self, extrinsics: np.ndarray, point_cloud_path: str,
                              element_type: str = 'point',
-                             extra_hash_data: Optional[bytes] = None) -> str:
+                             extra_hash_data: Optional[bytes] = None,
+                             pixel_budget: Optional[int] = None) -> str:
         """
-        Generate a unique cache key based on camera extrinsics, geometry path, and element type.
+        Generate a unique cache key based on camera extrinsics, geometry path,
+        element type, and (optionally) the pixel-budget that produced the data.
 
         Args:
             extrinsics (np.ndarray): Camera extrinsic matrix (4x4)
@@ -222,17 +235,29 @@ class CacheManager:
             extra_hash_data (bytes, optional): Additional bytes mixed into the hash.
                 Pass ``raster.dist_coeffs.tobytes()`` for distorted cameras so their
                 warped maps never collide with undistorted maps from the same camera.
+            pixel_budget (int, optional): Maximum render budget in pixels for the
+                visibility computation. Mixed into the hash so caches produced at
+                different qualities don't collide. ``None`` (or 0/negative) means
+                "Native / full resolution" and matches the legacy hash, preserving
+                older cache files.
 
         Returns:
             str: MD5 hash string to use as cache key
         """
         # Delegate to the module-level LRU-cached function so repeated calls
         # for the same camera skip the MD5 computation entirely.
-        return _cached_md5(extrinsics.tobytes(), point_cloud_path, element_type, extra_hash_data)
-    
+        return _cached_md5(
+            extrinsics.tobytes(),
+            point_cloud_path,
+            element_type,
+            extra_hash_data,
+            pixel_budget,
+        )
+
     def get_cache_path(self, extrinsics: np.ndarray, point_cloud_path: str,
                         element_type: str = 'point',
-                        extra_hash_data: Optional[bytes] = None) -> str:
+                        extra_hash_data: Optional[bytes] = None,
+                        pixel_budget: Optional[int] = None) -> str:
         """
         Get the full path to the cache file for given parameters.
 
@@ -242,18 +267,25 @@ class CacheManager:
             element_type (str): Type of indexed elements ('point', 'face', or 'cell')
             extra_hash_data (bytes, optional): Additional bytes mixed into the hash
                 (see _generate_cache_key).
+            pixel_budget (int, optional): Render pixel budget mixed into the hash
+                (see _generate_cache_key).
 
         Returns:
             str: Canonical cache key path (.npz anchor used by both legacy and split formats)
         """
-        cache_key = self._generate_cache_key(extrinsics, point_cloud_path, element_type, extra_hash_data)
+        cache_key = self._generate_cache_key(
+            extrinsics, point_cloud_path, element_type, extra_hash_data, pixel_budget,
+        )
         return os.path.join(self.cache_dir, f"{cache_key}.npz")
 
     def has_visibility_cache(self, extrinsics: np.ndarray, point_cloud_path: str,
                              element_type: str = 'point',
-                             extra_hash_data: Optional[bytes] = None) -> bool:
+                             extra_hash_data: Optional[bytes] = None,
+                             pixel_budget: Optional[int] = None) -> bool:
         """Return True when either the legacy .npz cache or the newer split cache exists."""
-        cache_path = self.get_cache_path(extrinsics, point_cloud_path, element_type, extra_hash_data)
+        cache_path = self.get_cache_path(
+            extrinsics, point_cloud_path, element_type, extra_hash_data, pixel_budget,
+        )
         if os.path.exists(cache_path):
             return True
 
@@ -402,7 +434,8 @@ class CacheManager:
     
     def load_visibility(self, extrinsics: np.ndarray, point_cloud_path: str,
                          element_type: str = 'point',
-                         extra_hash_data: Optional[bytes] = None) -> Optional[Dict]:
+                         extra_hash_data: Optional[bytes] = None,
+                         pixel_budget: Optional[int] = None) -> Optional[Dict]:
         """
         Load visibility data from cache if it exists.
 
@@ -412,12 +445,16 @@ class CacheManager:
             element_type (str): Type of indexed elements ('point', 'face', or 'cell')
             extra_hash_data (bytes, optional): Additional bytes mixed into the hash
                 (see _generate_cache_key).
+            pixel_budget (int, optional): Render pixel budget for the desired quality.
+                See _generate_cache_key for backward-compatibility semantics.
 
         Returns:
             dict or None: Dictionary with 'index_map', 'visible_indices', 'depth_map',
                          and 'element_type' if cache exists, None otherwise
         """
-        cache_path = self.get_cache_path(extrinsics, point_cloud_path, element_type, extra_hash_data)
+        cache_path = self.get_cache_path(
+            extrinsics, point_cloud_path, element_type, extra_hash_data, pixel_budget,
+        )
         npy_base   = os.path.splitext(cache_path)[0]  # strip .npz for new-format paths
 
         # ------------------------------------------------------------------
@@ -474,13 +511,14 @@ class CacheManager:
             print(f"Warning: Failed to load visibility cache from {cache_path}: {e}")
             return None
     
-    def save_visibility(self, extrinsics: np.ndarray, point_cloud_path: str, 
+    def save_visibility(self, extrinsics: np.ndarray, point_cloud_path: str,
                         index_map: np.ndarray, visible_indices: np.ndarray,
                         depth_map: Optional[np.ndarray] = None,
                         element_type: str = 'point',
                         inverted_index: Optional[Dict] = None,
                         compressed: bool = False,
-                        extra_hash_data: Optional[bytes] = None) -> str:
+                        extra_hash_data: Optional[bytes] = None,
+                        pixel_budget: Optional[int] = None) -> str:
         """
         Save visibility data to cache.
 
@@ -497,11 +535,15 @@ class CacheManager:
             compressed (bool): Whether to use compressed .npz format (default: False)
             extra_hash_data (bytes, optional): Additional bytes mixed into the hash
                 (see _generate_cache_key).
+            pixel_budget (int, optional): Render pixel budget that produced this map.
+                See _generate_cache_key for backward-compatibility semantics.
 
         Returns:
             str: Path to the saved cache file
         """
-        cache_path = self.get_cache_path(extrinsics, point_cloud_path, element_type, extra_hash_data)
+        cache_path = self.get_cache_path(
+            extrinsics, point_cloud_path, element_type, extra_hash_data, pixel_budget,
+        )
         
         # Ensure cache directory exists
         try:
