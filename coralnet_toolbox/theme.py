@@ -55,10 +55,18 @@ ICON_DIR = Path(__file__).resolve().parent / "Icons"
 SPINBOX_UP_ARROW_ICON = (ICON_DIR / "spinbox-arrow-up.svg").as_posix()
 SPINBOX_DOWN_ARROW_ICON = (ICON_DIR / "spinbox-arrow-down.svg").as_posix()
 
+# Dock-window title-bar icons (used by the ADS docking system). Centralised so
+# all four buttons read the same way — a clear ×, a hollow square for maximize,
+# overlapping squares for restore, and an "out of box" arrow for detach/float.
+DOCK_CLOSE_ICON = (ICON_DIR / "dock-close.svg").as_posix()
+DOCK_MAXIMIZE_ICON = (ICON_DIR / "dock-maximize.svg").as_posix()
+DOCK_RESTORE_ICON = (ICON_DIR / "dock-restore.svg").as_posix()
+DOCK_DETACH_ICON = (ICON_DIR / "dock-detach.svg").as_posix()
+
 SCALE_MODE_AUTO = "auto"
 SCALE_MODE_MANUAL = "manual"
-SCALE_PRESETS = (0.75, 1.0, 1.25, 1.5, 1.75, 2.0)
-SCALE_MIN = 0.75
+SCALE_PRESETS = (0.25, 0.50, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0)
+SCALE_MIN = 0.25
 SCALE_MAX = 2.0
 SCALE_STEP = 0.25
 
@@ -737,6 +745,57 @@ ads--CDockWidgetTab:focus {{
 ads--CDockArea {{
     background-color: {BACKGROUND_COLOR.name()};
     border: 1px solid {SURFACE_BORDER_COLOR.name()};
+}}
+
+/* ── Dock title-bar button icons ──────────────────────────────
+   ADS ships extremely faint default glyphs for these buttons, so they
+   read as blank squares against the dark theme. Override with explicit
+   high-contrast icons for every spot ADS draws a button.
+
+   Selector legend (ADS object names are stable across versions):
+     - ads--CDockWidgetTab QToolButton  → small × on each tab
+     - #detachGroupButton               → "make floating" arrow
+     - #dockAreaCloseButton             → close the whole tab group
+     - #dockAreaAutoHideButton          → toggle auto-hide
+     - #floatingTitleCloseButton        → × on a floating window
+     - #floatingTitleMaximizeButton     → maximize / restore on a floating window
+*/
+ads--CDockWidgetTab QToolButton {{
+    qproperty-icon: url("{DOCK_CLOSE_ICON}");
+    qproperty-iconSize: 12px 12px;
+}}
+
+ads--CDockAreaTitleBar QToolButton#detachGroupButton,
+ads--CTitleBarButton#detachGroupButton {{
+    qproperty-icon: url("{DOCK_DETACH_ICON}");
+    qproperty-iconSize: 14px 14px;
+}}
+
+ads--CDockAreaTitleBar QToolButton#dockAreaCloseButton,
+ads--CTitleBarButton#dockAreaCloseButton {{
+    qproperty-icon: url("{DOCK_CLOSE_ICON}");
+    qproperty-iconSize: 14px 14px;
+}}
+
+ads--CDockAreaTitleBar QToolButton#dockAreaAutoHideButton,
+ads--CTitleBarButton#dockAreaAutoHideButton {{
+    qproperty-icon: url("{DOCK_DETACH_ICON}");
+    qproperty-iconSize: 14px 14px;
+}}
+
+ads--CFloatingWidgetTitleBar QToolButton#floatingTitleCloseButton {{
+    qproperty-icon: url("{DOCK_CLOSE_ICON}");
+    qproperty-iconSize: 14px 14px;
+}}
+
+ads--CFloatingWidgetTitleBar QToolButton#floatingTitleMaximizeButton {{
+    qproperty-icon: url("{DOCK_MAXIMIZE_ICON}");
+    qproperty-iconSize: 14px 14px;
+}}
+
+ads--CFloatingWidgetTitleBar QToolButton#floatingTitleMaximizeButton:checked {{
+    qproperty-icon: url("{DOCK_RESTORE_ICON}");
+    qproperty-iconSize: 14px 14px;
 }}
 """
     return scale_qss(stylesheet, scale_factor)

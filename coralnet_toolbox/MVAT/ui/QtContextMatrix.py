@@ -163,7 +163,7 @@ class ContextMatrixWidget(QWidget):
         super().__init__(parent)
 
         # Matrix state
-        self.target_camera_count = 10
+        self.target_camera_count = 6
         self._camera_count_cap = None
         self._last_rebuilt_count = 0
         self._canvas_count_step = 1
@@ -218,6 +218,9 @@ class ContextMatrixWidget(QWidget):
         self._canvas_host_layout.setContentsMargins(0, 0, 0, 0)
         self._canvas_host_layout.setSpacing(0)
 
+        self._pending_repaints = set()
+        self._pending_repaint_tasks: Dict[str, dict] = {}
+
         self._placeholder_label = QLabel(
             "No cameras available\nLoad camera lists to populate the matrix.",
             self._canvas_host_widget,
@@ -243,6 +246,7 @@ class ContextMatrixWidget(QWidget):
         self._scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self._scroll_area.setWidget(self._canvas_host_widget)
+        self._scroll_area.verticalScrollBar().valueChanged.connect(self._flush_pending_repaints)
 
         # UI Setup
         self._main_layout = QVBoxLayout(self)
@@ -264,6 +268,7 @@ class ContextMatrixWidget(QWidget):
             canvas.setFixedSize(self._canvas_tile_size, self._canvas_tile_size)
             canvas.mouseDoubleClickEvent = self._make_canvas_double_click_handler(canvas)
             canvas.mousePressEvent = self._make_canvas_mouse_press_handler(canvas)
+            canvas.wheelEvent = self._make_canvas_wheel_handler(canvas)
             self._canvas_pool.append(canvas)
 
     def _update_canvas_size_bounds(self, camera_objects: Optional[List] = None):
@@ -431,6 +436,26 @@ class ContextMatrixWidget(QWidget):
             BaseCanvas.mouseDoubleClickEvent(canvas, event)
         return handler
 
+    def _make_canvas_wheel_handler(self, canvas: BaseCanvas):
+        """Keep wheel events on the hovered canvas instead of letting them
+        bubble up to the surrounding QScrollArea.
+
+        Qt propagates a wheel event to the parent widget whenever the receiver
+        leaves the event unaccepted. BaseCanvas.wheelEvent returns silently
+        when no image is loaded, and even when zoom is applied the event isn't
+        explicitly accepted — so the matrix's scroll area scrolls vertically
+        on top of (or instead of) the canvas zoom. Always accept() here so the
+        wheel acts purely on the hovered tile.
+        """
+        def handler(event):
+            try:
+                BaseCanvas.wheelEvent(canvas, event)
+            finally:
+                # Mark consumed regardless of what BaseCanvas did so the event
+                # never reaches the QScrollArea above us.
+                event.accept()
+        return handler
+
     # ==================== Input / Scroll Events ====================
 
     def set_target_camera_count(self, count: int):
@@ -554,6 +579,88 @@ class ContextMatrixWidget(QWidget):
         """Auto-adjust layout on resize without changing camera count."""
         super().resizeEvent(event)
         self._flow_widget.updateGeometry()
+        self._flush_pending_repaints()
+
+    def is_canvas_on_screen(self, canvas: BaseCanvas) -> bool:
+        """Return True when a canvas intersects the scroll viewport."""
+        if canvas is None or not canvas.isVisible() or not canvas.active_image:
+            return False
+
+        viewport = self._scroll_area.viewport() if self._scroll_area is not None else None
+        if viewport is None:
+            return False
+
+        top_left = canvas.mapTo(viewport, canvas.rect().topLeft())
+        bottom_right = canvas.mapTo(viewport, canvas.rect().bottomRight())
+        canvas_rect = QRect(top_left, bottom_right).normalized()
+        return canvas_rect.intersects(viewport.rect())
+
+    def queue_pending_repaint(self, path: str, mask_annotation, update_rect=None, label_ids=()):
+        """Defer a repaint until the matching canvas scrolls into view."""
+        if not path or mask_annotation is None:
+            return
+
+        label_ids = tuple(sorted({label_id for label_id in label_ids if label_id is not None}))
+        existing = self._pending_repaint_tasks.get(path)
+        if existing is None:
+            self._pending_repaints.add(path)
+            self._pending_repaint_tasks[path] = {
+                'path': path,
+                'mask': mask_annotation,
+                'update_rect': update_rect,
+                'label_ids': label_ids,
+            }
+            return
+
+        existing['mask'] = mask_annotation
+        existing['label_ids'] = tuple(sorted(set(existing.get('label_ids', ())) | set(label_ids)))
+        existing_rect = existing.get('update_rect')
+        if existing_rect is None:
+            existing['update_rect'] = update_rect
+        elif update_rect is not None:
+            existing['update_rect'] = (
+                min(existing_rect[0], update_rect[0]),
+                min(existing_rect[1], update_rect[1]),
+                max(existing_rect[2], update_rect[2]),
+                max(existing_rect[3], update_rect[3]),
+            )
+
+    def _flush_pending_repaints(self, *_args):
+        if not self._pending_repaints:
+            return
+
+        for path in list(self._pending_repaints):
+            task = self._pending_repaint_tasks.get(path)
+            if not task:
+                self._pending_repaints.discard(path)
+                continue
+
+            canvas = None
+            for candidate in self._visible_canvases:
+                if candidate and candidate.current_image_path == path:
+                    canvas = candidate
+                    break
+
+            if canvas is None or not self.is_canvas_on_screen(canvas):
+                continue
+
+            target_mask = task.get('mask')
+            if target_mask is None:
+                self._pending_repaints.discard(path)
+                self._pending_repaint_tasks.pop(path, None)
+                continue
+
+            try:
+                for label_id in task.get('label_ids', ()):
+                    if label_id is not None and label_id not in target_mask.visible_label_ids:
+                        target_mask.visible_label_ids.add(label_id)
+                target_mask.update_graphics_item(update_rect=task.get('update_rect'))
+                if canvas._mask_overlay_item is None:
+                    canvas.set_mask_overlay(target_mask)
+                self._pending_repaints.discard(path)
+                self._pending_repaint_tasks.pop(path, None)
+            except Exception:
+                pass
 
     # ==================== Data Feed ====================
 
@@ -638,6 +745,7 @@ class ContextMatrixWidget(QWidget):
         self._sync_camera_status_label()
         self._update_canvas_count_controls()
         self._emit_visible_cameras_changed()
+        self._flush_pending_repaints()
 
     def _get_visible_capacity(self) -> int:
         """Return the current number of visible canvas slots in the layout."""
@@ -768,7 +876,24 @@ class ContextMatrixWidget(QWidget):
 
             q_image = raster.get_qimage()
             if q_image:
-                canvas.load_visuals(q_image, camera_path, raster)
+                original_width = q_image.width()
+                original_height = q_image.height()
+                display_q_image = q_image
+                longest_edge = max(original_width, original_height)
+                if longest_edge > self._canvas_tile_max:
+                    display_q_image = q_image.scaled(
+                        self._canvas_tile_max,
+                        self._canvas_tile_max,
+                        Qt.KeepAspectRatio,
+                        Qt.SmoothTransformation,
+                    )
+
+                canvas.load_visuals(
+                    display_q_image,
+                    camera_path,
+                    raster,
+                    image_dimensions=(original_width, original_height),
+                )
                 canvas.fit_to_image()
 
                 # Fresh load should always restore full visibility for this canvas.
@@ -1443,32 +1568,6 @@ class ContextMatrixWidget(QWidget):
         """Hide cursor previews on all canvases in the pool."""
         for canvas in self._canvas_pool:
             canvas.clear_cursor_preview()
-
-    # --- NEW METHODS ---
-    def update_live_scratchpads(self, projections, size, shape, color):
-        """Draws a live vector trail on all visible context cameras."""
-        canvas_map = self._get_canvas_camera_map()
-
-        for path, canvas in canvas_map.items():
-            proj = projections.get(path)
-            if not proj:
-                continue
-
-            u, v, is_valid = proj
-            # Only draw if the 3D point is actually visible to this camera
-            if is_valid:
-                try:
-                    canvas.add_to_scratchpad(u, v, size, shape, color)
-                except Exception:
-                    pass
-
-    def clear_all_scratchpads(self):
-        """Clears the fake vector trails across all cameras."""
-        for canvas in self._canvas_pool:
-            try:
-                canvas.clear_scratchpad()
-            except Exception:
-                pass
 
     # ==================== Z-Channel Synchronization ====================
 
