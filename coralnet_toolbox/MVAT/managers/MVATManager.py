@@ -4897,7 +4897,6 @@ class MVATManager(QObject):
                 'mask': np.asarray(brush_mask, dtype=bool),
                 'center': (px, py),
                 'search_radius': float(max(brush_mask.shape) * 2.5),
-                'skip_ortho_index_lookup': True,
             },
         )
 
@@ -4981,7 +4980,6 @@ class MVATManager(QObject):
                 'mask': np.asarray(brush_mask, dtype=bool),
                 'center': (px, py),
                 'search_radius': float(max(brush_mask.shape) * 2.5),
-                'skip_ortho_index_lookup': True,
             },
         )
 
@@ -5355,7 +5353,7 @@ class MVATManager(QObject):
                         if label_id is not None:
                             target_label_ids.add(label_id)
 
-                if fallback_mask is not None and fallback_center is not None and not use_index_lookup:
+                if fallback_mask is not None and fallback_center is not None and (not use_index_lookup or target_rect is None):
                     if fallback_mode == 'erase':
                         target_class_id = 0
                         label = None
