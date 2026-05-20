@@ -94,6 +94,7 @@ _SCALEABLE_QSS_PROPERTIES = {
     "spacing",
     "border-radius",
     "icon-size",
+    "qproperty-iconsize",
     "letter-spacing",
     "text-indent",
 }
