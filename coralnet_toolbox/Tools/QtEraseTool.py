@@ -96,13 +96,6 @@ class EraseTool(BrushTool):
         scene_pos = self.annotation_window.mapToScene(event.pos())
         self._accumulated_points.append(scene_pos)
 
-        if hasattr(self, 'live_stroke_callback') and callable(self.live_stroke_callback):
-            try:
-                eraser_color = QColor(255, 0, 0, 120)
-                self.live_stroke_callback(scene_pos, self.brush_size, self.shape, eraser_color)
-            except Exception:
-                pass
-
     def _on_math_finished(self, flat_indices, center_pos, combined_mask, mask_annotation, selected_label_id):
         """Executes on the Main Thread: Writes 0 (background) locally and defers 3D sync."""
         self._active_workers -= 1

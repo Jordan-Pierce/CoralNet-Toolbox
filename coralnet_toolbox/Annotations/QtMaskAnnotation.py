@@ -823,7 +823,8 @@ class MaskAnnotation(Annotation):
             min(width, x_min + fill_w + 1), 
             min(height, y_min + fill_h + 1)
         )
-        self.update_graphics_item(update_rect=update_rect)
+        if not silent:
+            self.update_graphics_item(update_rect=update_rect)
 
         if history_action is not None and flat_indices.size > 0:
             history_action.add_change(

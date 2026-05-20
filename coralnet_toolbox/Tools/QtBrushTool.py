@@ -147,7 +147,6 @@ class BrushTool(Tool):
         self._stroke_mask_annotation = None
         self._last_scratchpad_pos = None
         self._stroke_accumulated_indices = []
-        self.live_stroke_callback = None
         
         self.scratchpad_item = None
         self.scratchpad_path = QPainterPath()
@@ -447,15 +446,6 @@ class BrushTool(Tool):
             self._last_scratchpad_pos = scene_pos
 
         self._accumulated_points.append(scene_pos)
-
-        # Fire the lightning-fast 2D sync trail to the context matrix canvases
-        if self.live_stroke_callback and self.annotation_window.selected_label:
-            self.live_stroke_callback(
-                scene_pos,
-                self.brush_size,
-                self.shape,
-                self.annotation_window.selected_label.color,
-            )
 
     def _stream_stroke_chunk(self):
         """Grabs the recent points and sends them to the background worker."""

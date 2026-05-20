@@ -13,7 +13,7 @@ import numpy as np
 
 import pyqtgraph as pg
 from PyQt5.QtGui import (QMouseEvent, QPixmap, QImage, QBrush, QColor, QPen, 
-                         QPainterPath, QTransform, QSurfaceFormat, QPainter)
+                         QTransform, QSurfaceFormat, QPainter)
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QSize, QObject
 from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, 
                              QGraphicsItemGroup, QGraphicsEllipseItem, QGraphicsLineItem,
@@ -35,6 +35,7 @@ class FastImageItem(QGraphicsItem):
     def __init__(self):
         super().__init__()
         self._image = None
+        self._scene_rect = QRectF(0, 0, 100, 100)
         self._readonly_paths = []
         # Cached QImage of all readonly paths rendered at base-image resolution.
         # Built lazily on first paint after set_readonly_annotations() so that the
@@ -49,12 +50,28 @@ class FastImageItem(QGraphicsItem):
         # Optimize for rapidly changing content
         self.setCacheMode(QGraphicsItem.NoCache)
 
-    def set_image(self, qimage):
+    def set_image(self, qimage, target_size=None):
         """Set the image to be drawn by this item, keeping a reference to the original QImage."""
         if qimage is not None and not qimage.isNull():
             self._image = qimage.copy()
         else:
             self._image = qimage
+        if target_size is None and self._image is not None and not self._image.isNull():
+            target_width = self._image.width()
+            target_height = self._image.height()
+        else:
+            try:
+                target_width = int(target_size.width())
+                target_height = int(target_size.height())
+            except Exception:
+                try:
+                    target_width = int(target_size[0])
+                    target_height = int(target_size[1])
+                except Exception:
+                    target_width = self._image.width() if self._image is not None and not self._image.isNull() else 100
+                    target_height = self._image.height() if self._image is not None and not self._image.isNull() else 100
+
+        self._scene_rect = QRectF(0, 0, max(1, int(target_width)), max(1, int(target_height)))
         # Image dimensions changed — invalidate the readonly cache so it rebuilds
         # at the correct resolution on next paint.
         self._readonly_cache = None
@@ -104,7 +121,7 @@ class FastImageItem(QGraphicsItem):
             self._readonly_cache = None
             return
 
-        img = QImage(self._image.size(), QImage.Format_ARGB32_Premultiplied)
+        img = QImage(max(1, int(round(self._scene_rect.width()))), max(1, int(round(self._scene_rect.height()))), QImage.Format_ARGB32_Premultiplied)
         img.fill(Qt.transparent)
 
         painter = QPainter(img)
@@ -140,13 +157,13 @@ class FastImageItem(QGraphicsItem):
         """Return the bounding rectangle of the image for proper redraw regions."""
         if self._image is None or self._image.isNull():
             return QRectF(0, 0, 100, 100) # Fallback safe rect
-        return QRectF(0, 0, self._image.width(), self._image.height())
+        return QRectF(self._scene_rect)
 
     def paint(self, painter, option, widget):
         """Custom paint method to draw the image, mask, and annotations in a single pass."""
         # 1. Draw the video frame directly from RAM to the OpenGL Viewport
         if self._image is not None and not self._image.isNull():
-            painter.drawImage(0, 0, self._image)
+            painter.drawImage(self._scene_rect, self._image)
 
         # 2. Draw the mask overlay natively (using getattr as a failsafe)
         mask = getattr(self, '_mask_image', None)
@@ -217,6 +234,7 @@ class BaseCanvas(QGraphicsView):
         self.active_image = False
         self.current_image_path = None
         self._base_image_item = None  # Reference to the base image QGraphicsPixmapItem
+        self._image_dimensions = None
         
         # Navigation state
         self.zoom_factor = 1.0
@@ -243,10 +261,6 @@ class BaseCanvas(QGraphicsView):
         self._dynamic_range_timer.timeout.connect(self.update_dynamic_range)
         # default debounce delay (ms) — AnnotationWindow can override
         self.dynamic_range_update_delay = 500
-        # Scratchpad for live vector trails from context canvases
-        self.scratchpad_item = None
-        self.scratchpad_path = QPainterPath()
-        
         # Marker slots (containers; Phase 4 will populate these)
         self._static_marker = None
         self._dynamic_marker = None
@@ -532,6 +546,7 @@ class BaseCanvas(QGraphicsView):
         # Reset image references
         self._base_image_item = None
         self.z_item = None
+        self._image_dimensions = None
         
         # Clear read-only annotation overlay references
         self._readonly_annotation_items = []
@@ -544,10 +559,6 @@ class BaseCanvas(QGraphicsView):
         self.z_data_shape = None
         self.z_nodata_mask = None
 
-        # Reset scratchpad state
-        self.scratchpad_item = None
-        self.scratchpad_path = QPainterPath()
-        
         # Allow subclasses to clean up their scene-dependent items
         self._on_scene_cleared()
         
@@ -564,7 +575,7 @@ class BaseCanvas(QGraphicsView):
     
     # ==================== Image Loading ====================
     
-    def load_visuals(self, q_image, image_path, raster=None):
+    def load_visuals(self, q_image, image_path, raster=None, image_dimensions=None):
         """
         Load and display a QImage with optional Z-channel visualization.
         
@@ -574,6 +585,8 @@ class BaseCanvas(QGraphicsView):
             q_image (QImage): The full-resolution image to display
             image_path (str): Path identifier for the image
             raster (Raster, optional): Raster object with Z-channel data
+            image_dimensions (tuple[int, int], optional): Logical image dimensions
+                to preserve scene coordinates when q_image is downscaled.
         """
         # Clear previous state
         self.clear_scene()
@@ -583,15 +596,28 @@ class BaseCanvas(QGraphicsView):
         
         # Create and store pixmap (keep this for legacy fallbacks if needed)
         self.pixmap_image = QPixmap.fromImage(q_image) if isinstance(q_image, QImage) else QPixmap(q_image)
+
+        if image_dimensions is None:
+            image_dimensions = (self.pixmap_image.width(), self.pixmap_image.height())
+
+        try:
+            image_width = max(1, int(image_dimensions[0]))
+            image_height = max(1, int(image_dimensions[1]))
+        except Exception:
+            image_width = self.pixmap_image.width()
+            image_height = self.pixmap_image.height()
+
+        self._image_dimensions = (image_width, image_height)
         
         # --- PHASE 3: USE FAST IMAGE ITEM ---
         self._base_image_item = FastImageItem()
         # If q_image is a QImage, pass it directly. If it's a QPixmap (from legacy code), convert to image
         img_to_pass = q_image if isinstance(q_image, QImage) else self.pixmap_image.toImage()
-        self._base_image_item.set_image(img_to_pass)
+        self._base_image_item.set_image(img_to_pass, target_size=self._image_dimensions)
         
         self._base_image_item.setZValue(-10)
         self.scene.addItem(self._base_image_item)
+        self.scene.setSceneRect(QRectF(0, 0, image_width, image_height))
         # ------------------------------------
         
         # Update state
@@ -751,12 +777,16 @@ class BaseCanvas(QGraphicsView):
     
     def get_image_dimensions(self):
         """Get the dimensions of the currently loaded image."""
+        if self._image_dimensions is not None:
+            return self._image_dimensions
         if self.pixmap_image:
             return self.pixmap_image.size().width(), self.pixmap_image.size().height()
         return 0, 0
     
     def get_image_rect(self):
         """Get the bounding rectangle of the currently loaded image in scene coordinates."""
+        if self._image_dimensions is not None:
+            return QRectF(0, 0, self._image_dimensions[0], self._image_dimensions[1])
         if self.pixmap_image:
             return QRectF(0, 0, self.pixmap_image.width(), self.pixmap_image.height())
         return QRectF()
@@ -1375,29 +1405,3 @@ class BaseCanvas(QGraphicsView):
                 pass
             self._mask_overlay_item = None
 
-    # --- NEW SCRATCHPAD METHODS ---
-    def add_to_scratchpad(self, u, v, size, shape, color):
-        """Adds a vector shape to the canvas's live scratchpad."""
-        if not self.scratchpad_item:
-            self.scratchpad_item = QGraphicsPathItem()
-            self.scratchpad_item.setZValue(3) # Hover above mask, below markers
-            self.scratchpad_item.setPen(QPen(Qt.NoPen))
-            self.scratchpad_item.setBrush(QBrush(color))
-            self.scene.addItem(self.scratchpad_item)
-
-        radius = size / 2.0
-        if shape == 'circle':
-            self.scratchpad_path.addEllipse(u - radius, v - radius, size, size)
-        else:
-            self.scratchpad_path.addRect(u - radius, v - radius, size, size)
-            
-        # WindingFill prevents the "striation/checkerboard" overlap bug
-        self.scratchpad_path.setFillRule(Qt.WindingFill)
-        self.scratchpad_item.setPath(self.scratchpad_path)
-
-    def clear_scratchpad(self):
-        """Removes the scratchpad overlay when the real NumPy mask is ready."""
-        if self.scratchpad_item and self.scratchpad_item.scene():
-            self.scene.removeItem(self.scratchpad_item)
-        self.scratchpad_item = None
-        self.scratchpad_path = QPainterPath()
