@@ -65,8 +65,8 @@ DOCK_DETACH_ICON = (ICON_DIR / "dock-detach.svg").as_posix()
 
 SCALE_MODE_AUTO = "auto"
 SCALE_MODE_MANUAL = "manual"
-SCALE_PRESETS = (0.75, 1.0, 1.25, 1.5, 1.75, 2.0)
-SCALE_MIN = 0.75
+SCALE_PRESETS = (0.25, 0.50, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0)
+SCALE_MIN = 0.25
 SCALE_MAX = 2.0
 SCALE_STEP = 0.25
 

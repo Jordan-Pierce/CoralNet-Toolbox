@@ -452,7 +452,34 @@ class BrushTool(Tool):
         if not self._accumulated_points:
             # Safely cleanup if we are waiting to finish and no workers are running
             if self._is_finishing_stroke and self._active_workers == 0:
+                if self._stroke_accumulated_indices and self.post_stroke_callback:
+                    combined_flat = np.unique(np.concatenate(self._stroke_accumulated_indices))
+
+                    if len(combined_flat) > 0:
+                        mask_annotation = self._stroke_mask_annotation or self.annotation_window.current_mask_annotation
+                        h, w = mask_annotation.mask_data.shape
+
+                        y_coords, x_coords = np.divmod(combined_flat, w)
+                        min_x, max_x = int(x_coords.min()), int(x_coords.max())
+                        min_y, max_y = int(y_coords.min()), int(y_coords.max())
+
+                        crop_w = (max_x - min_x) + 1
+                        crop_h = (max_y - min_y) + 1
+
+                        cropped_mask = np.zeros((crop_h, crop_w), dtype=bool)
+                        local_y = y_coords - min_y
+                        local_x = x_coords - min_x
+                        cropped_mask[local_y, local_x] = True
+
+                        final_center = QPointF(min_x + crop_w / 2.0, min_y + crop_h / 2.0)
+
+                        # Use the active tool's label ID
+                        selected_label_id = self.annotation_window.selected_label.id
+                        self.post_stroke_callback(final_center, selected_label_id, cropped_mask)
+
                 self._cleanup_scratchpad()
+                self._last_scratchpad_pos = None
+                self._stroke_accumulated_indices.clear()
                 self.annotation_window.viewport().update()
                 self._commit_stroke_history_action()
             return
