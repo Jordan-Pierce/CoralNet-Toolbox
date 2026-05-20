@@ -861,13 +861,15 @@ class VisibilityManager:
         import pyvista as pv
         import time
 
+        perf_counter = time.perf_counter
+
         def _scale_for_dimensions(width: int, height: int) -> float:
             native_pixels = width * height
             if pixel_budget is None or pixel_budget <= 0 or native_pixels <= pixel_budget:
                 return 1.0
             return float(np.sqrt(pixel_budget / native_pixels))
         
-        start_time = time.time()
+        start_time = perf_counter()
         budget_str = "Native" if pixel_budget is None or pixel_budget <= 0 else f"{pixel_budget / 1_000_000:.1f}MP"
         print(f"\n{'='*50}")
         print(f"🎨 STARTING BATCH VTK RASTERIZATION FOR {len(camera_params_list)} CAMERAS (Budget: {budget_str})")
@@ -889,7 +891,7 @@ class VisibilityManager:
         print(f"   Mesh: {n_cells:,} cells")
         
         # --- 1. SETUP PHASE (Done Once) ---
-        setup_start = time.time()
+        setup_start = perf_counter()
         print("   -> Encoding face IDs as RGB colors...")
         print("   -> Creating off-screen plotter...")
         
@@ -904,24 +906,31 @@ class VisibilityManager:
         plotter.disable_anti_aliasing()
         
         actor_low, actor_high, is_dual_pass = cls._create_face_id_mesh_actors(plotter, mesh, n_cells)
-        encode_time = time.time() - setup_start
+        encode_time = perf_counter() - setup_start
         plotter_setup_time = 0.0
         print(f"   ✅ Setup completed in {encode_time + plotter_setup_time:.4f}s")
         
         # --- Prepare face centers for GPU depth mapping ---
         print("   -> Preparing face centers for GPU depth mapping...")
+        face_center_prep_time = 0.0
         if HAS_TORCH and torch.cuda.is_available():
+            face_center_prep_start = perf_counter()
             face_centers_np = mesh.cell_centers().points.astype(np.float32)
             face_centers_pt = torch.from_numpy(face_centers_np).cuda()
+            face_center_prep_time = perf_counter() - face_center_prep_start
+        print(f"      Face center prep completed in {face_center_prep_time:.4f}s")
         # -----------------------------------------------------------
 
         # --- 2. RENDER LOOP ---
         print(f"\n   -> Rendering {len(camera_params_list)} cameras (Budget: {budget_str})...")
-        render_start_time = time.time()
+        render_start_time = perf_counter()
         results = []
+        camera_total_sum = 0.0
         
         for i, (K, R, t, width, height) in enumerate(camera_params_list):
-            cam_start = time.time()
+            cam_start = perf_counter()
+
+            prep_start = perf_counter()
 
             # Progress callback (thread-safe status bar update)
             if progress_callback is not None:
@@ -943,16 +952,17 @@ class VisibilityManager:
             K_scaled[1, :3] *= dynamic_scale
 
             # 2. Config & Render using scaled parameters
-            t0 = time.time()
+            t0 = perf_counter()
             cls._configure_vtk_camera(plotter, K_scaled, R, t, render_w, render_h, mesh.bounds)
             if is_dual_pass and actor_high is not None:
                 actor_low.SetVisibility(True)
                 actor_high.SetVisibility(False)
             plotter.render()
-            t_render = time.time() - t0
+            t_render = perf_counter() - t0
+            t_prep = t0 - prep_start
 
             # 3. Screenshot transfer (GPU -> CPU)
-            t0 = time.time()
+            t0 = perf_counter()
             screenshot_low = plotter.screenshot(return_img=True)
             if screenshot_low.shape[2] == 4:
                 screenshot_low = screenshot_low[:, :, :3]
@@ -965,17 +975,18 @@ class VisibilityManager:
                 screenshot_high = plotter.screenshot(return_img=True)
                 if screenshot_high.shape[2] == 4:
                     screenshot_high = screenshot_high[:, :, :3]
-            t_screenshot = time.time() - t0
+            t_screenshot = perf_counter() - t0
 
             # 4. Decoding & Unique Extraction (GPU Math)
-            t0 = time.time()
+            t0 = perf_counter()
             index_map, visible_indices, index_map_tensor = cls._decode_face_id_screenshot(
                 screenshot_low,
                 screenshot_high,
             )
+            t_decode = perf_counter() - t0
             
             # 5. Depth Extraction
-            t0 = time.time()
+            t0 = perf_counter()
             depth_map = None
             if compute_depth_map:
                 if HAS_TORCH and torch.cuda.is_available():
@@ -998,7 +1009,10 @@ class VisibilityManager:
                         print(f"   ⚠️ Failed to extract depth for camera {i}: {e}")
                         # Create an empty map matching the SMALL dimensions
                         depth_map = np.full((render_h, render_w), np.nan, dtype=np.float32)
-            t_depth = time.time() - t0
+            t_depth = perf_counter() - t0
+
+            # 6. Finalize results and pump the Qt event loop.
+            t0 = perf_counter()
             
             results.append({
                 'index_map': index_map,
@@ -1009,7 +1023,6 @@ class VisibilityManager:
             })
             results[-1] = cls._normalize_result_dict(results[-1], compute_depth_map)
             # 7. UI Yielding
-            t0 = time.time()
             try:
                 from PyQt5.QtWidgets import QApplication
                 app = QApplication.instance()
@@ -1017,18 +1030,32 @@ class VisibilityManager:
                     app.processEvents()
             except ImportError:
                 pass
-            t_events = time.time() - t0
+            t_finalize = perf_counter() - t0
             
-            cam_time = time.time() - cam_start
-            print(f"      Cam {i+1}: {cam_time:.4f}s | Render: {t_render:.3f} | Snap: {t_screenshot:.3f} | Depth: {t_depth:.3f} | UI Events: {t_events:.3f}")
+            cam_time = perf_counter() - cam_start
+            camera_total_sum += cam_time
+            accounted_time = t_prep + t_render + t_screenshot + t_decode + t_depth + t_finalize
+            residual_time = max(0.0, cam_time - accounted_time)
+            print(
+                f"      Cam {i+1}: {cam_time:.4f}s | Prep: {t_prep:.3f} | Render: {t_render:.3f} | "
+                f"Snap: {t_screenshot:.3f} | Decode: {t_decode:.3f} | Depth: {t_depth:.3f} | "
+                f"Finalize: {t_finalize:.3f} | Residual: {residual_time:.3f}"
+            )
 
+        close_start = perf_counter()
         plotter.close()
+        plotter_close_time = perf_counter() - close_start
         
-        total_render_time = time.time() - render_start_time
-        total_time = time.time() - start_time
+        total_render_time = perf_counter() - render_start_time
+        total_time = perf_counter() - start_time
+        loop_residual = max(0.0, total_render_time - camera_total_sum - plotter_close_time)
         
         print(f"\n📊 SUMMARY: Batch VTK Rasterization")
         print(f"   - Setup Time     : {encode_time + plotter_setup_time:.4f}s")
+        print(f"   - Face Center Prep: {face_center_prep_time:.4f}s")
+        print(f"   - Camera Time Sum: {camera_total_sum:.4f}s")
+        print(f"   - Plotter Close   : {plotter_close_time:.4f}s")
+        print(f"   - Loop Residual   : {loop_residual:.4f}s")
         print(f"   - Render Loop    : {total_render_time:.4f}s")
         print(f"   - Total Time     : {total_time:.4f}s (Avg: {total_time/len(camera_params_list):.4f}s per camera)")
         print(f"{'='*50}\n")
