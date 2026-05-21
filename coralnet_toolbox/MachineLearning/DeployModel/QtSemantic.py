@@ -37,7 +37,7 @@ def _reconstruct_semantic_mask(results, model_class_names, label_window, mask_an
     """
     # Prefer using a dense semantic mask if the model produced one
     if hasattr(results, 'semantic_mask') and results.semantic_mask is not None:
-        sem = results.semantic_mask
+        sem = results.semantic_mask.data
         # Convert tensors to numpy arrays if needed
         try:
             sem = sem.cpu().numpy()
@@ -130,8 +130,8 @@ class Semantic(Base):
         super().__init__(main_window, parent)
         self.setWindowTitle("Deploy Semantic Segmentation Model (Ctrl + 4)")
 
-        # Ultralytics uses 'sem' task for semantic segmentation
-        self.task = 'sem'
+        # Ultralytics uses 'semantic' task for semantic segmentation
+        self.task = 'semantic'
 
     def showEvent(self, event):
         """
@@ -224,7 +224,7 @@ class Semantic(Base):
         try:
             # Use YOLO for semantic segmentation
             # Ensure task is correct
-            self.task = 'sem'
+            self.task = 'semantic'
 
             # Adjust batch size heuristics (keep consistent with Detect)
             if self.model_path.endswith('.engine'):
@@ -242,6 +242,10 @@ class Semantic(Base):
 
             # Warm up the model
             self.loaded_model(np.zeros((imgsz, imgsz, 3), dtype=np.uint8))
+
+            if self.loaded_model.task != 'semantic':
+                # Force the task to semantic if the model was loaded with a different task (e.g., due to old YOLO version)
+                self.loaded_model.task = 'semantic'
 
             # Get class names from the loaded model (preserves background if present)
             try:

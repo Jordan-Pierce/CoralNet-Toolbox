@@ -498,6 +498,10 @@ class Base(QDialog):
         self.workers_spinbox.setValue(0)
         form_layout.addRow("Workers:", self.workers_spinbox)
 
+        # Cache
+        self.cache_combo = self._create_cache_combo()
+        form_layout.addRow("Cache:", self.cache_combo)
+
         # Save
         self.save_combo = create_bool_combo()
         form_layout.addRow("Save:", self.save_combo)
@@ -539,6 +543,51 @@ class Base(QDialog):
         form_layout.addRow("", self.remove_param_button)
 
         self.layout.addWidget(group_box)
+
+    def _create_cache_combo(self):
+        """Create the Ultralytics cache mode combo box."""
+        combo = QComboBox()
+        cache_options = [
+            ("False", False,
+             "cache=False: disables image caching completely. Lowest RAM usage, slowest training."),
+            ("True / ram", True,
+             "cache=True or cache='ram': caches preprocessed images in system RAM. Fastest training, highest RAM usage."),
+            ("disk", "disk",
+             "cache='disk': caches preprocessed images on disk. Minimal RAM usage, moderate training speed."),
+        ]
+
+        for text, value, tooltip in cache_options:
+            combo.addItem(text, value)
+            combo.setItemData(combo.count() - 1, tooltip, Qt.ToolTipRole)
+
+        combo.setCurrentIndex(0)
+        combo.setToolTip(
+            "Ultralytics cache mode for training. False disables caching, True/ram caches to RAM, and disk caches to storage."
+        )
+        combo.setStatusTip(combo.toolTip())
+        return combo
+
+    def _set_cache_combo_value(self, value):
+        """Select the cache combo option that matches a boolean or string value."""
+        if not hasattr(self, 'cache_combo'):
+            return
+
+        if isinstance(value, bool):
+            index = 1 if value else 0
+        elif isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {'true', 'ram', 'true/ram', 'true (ram)'} or normalized.startswith('true'):
+                index = 1
+            elif normalized == 'disk':
+                index = 2
+            else:
+                index = 0
+        else:
+            index = 0
+
+        self.cache_combo.blockSignals(True)
+        self.cache_combo.setCurrentIndex(index)
+        self.cache_combo.blockSignals(False)
 
     def add_parameter_pair(self):
         """
@@ -742,6 +791,7 @@ class Base(QDialog):
                 'patience': self.patience_spinbox,
                 'imgsz': self.imgsz_spinbox,
                 'batch': self.batch_spinbox,
+                'cache': self.cache_combo,
                 'workers': self.workers_spinbox,
                 'save_period': self.save_period_spinbox,
                 'freeze_layers': self.freeze_layers_spinbox,
@@ -768,7 +818,9 @@ class Base(QDialog):
                         if isinstance(converted_value, (int, float)):
                             widget.setValue(float(converted_value))
                     elif isinstance(widget, QComboBox):
-                        if param_name in ['save', 'weighted', 'val', 'verbose']:
+                        if param_name == 'cache':
+                            self._set_cache_combo_value(converted_value)
+                        elif param_name in ['save', 'weighted', 'val', 'verbose']:
                             widget.setCurrentText("True" if converted_value else "False")
                         elif str(converted_value) in [widget.itemText(i) for i in range(widget.count())]:
                             widget.setCurrentText(str(converted_value))
@@ -812,6 +864,7 @@ class Base(QDialog):
             export_data['patience'] = self.patience_spinbox.value()
             export_data['imgsz'] = self.imgsz_spinbox.value()
             export_data['batch'] = self.batch_spinbox.value()
+            export_data['cache'] = self.cache_combo.currentData()
             export_data['workers'] = self.workers_spinbox.value()
             export_data['save_period'] = self.save_period_spinbox.value()
             export_data['freeze_layers'] = self.freeze_layers_spinbox.value()
@@ -887,6 +940,7 @@ class Base(QDialog):
             'patience': self.patience_spinbox.value(),
             'batch': self.batch_spinbox.value(),
             'imgsz': self.imgsz_spinbox.value(),
+            'cache': self.cache_combo.currentData(),
             'save': self.save_combo.currentText() == "True",
             'save_period': self.save_period_spinbox.value(),
             'workers': self.workers_spinbox.value(),
@@ -1181,7 +1235,7 @@ class Base(QDialog):
             deploy_dialog = self.main_window.detect_deploy_model_dialog
         elif task == "segment":
             deploy_dialog = self.main_window.segment_deploy_model_dialog
-        elif task == "sem":
+        elif task == "semantic":
             deploy_dialog = self.main_window.semantic_deploy_model_dialog
         else:
             QMessageBox.warning(self, "Deploy Model", "Unknown task type for deployment.")
