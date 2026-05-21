@@ -6,10 +6,23 @@ from typing import Optional
 import cv2
 import numpy as np
 
+try:
+    import torch
+except ImportError:
+    torch = None
+
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtCore import QObject, QThread, QMutex, pyqtSignal
 
 from coralnet_toolbox.Rasters.QtRaster import Raster
+
+try:
+    from PyNvVideoCodec import SimpleDecoder, OutputColorType
+    HAS_PYNVVIDEO_CODEC = True
+except ImportError:
+    SimpleDecoder = None  # type: ignore[assignment]
+    OutputColorType = None  # type: ignore[assignment]
+    HAS_PYNVVIDEO_CODEC = False
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -297,6 +310,9 @@ class VideoRaster(Raster):
 
         # Thumbnail cache (populated on first call to get_thumbnail)
         self._video_thumbnail: Optional[QImage] = None
+        self._nvcodec_decoder = None
+        self._nvcodec_output_is_planar = False
+        self._nvcodec_disabled = False
 
         # Background decode worker (created by start_decode_worker; None when stopped)
         self._decode_worker: Optional[VideoDecodeWorker] = None
@@ -387,6 +403,122 @@ class VideoRaster(Raster):
         self._shim._current_bgr = bgr
         self._current_frame_idx = frame_idx
         return bgr
+
+    @staticmethod
+    def _rgb_to_qimage(rgb: np.ndarray) -> QImage:
+        """Convert an RGB numpy array to a QImage (RGB888)."""
+        rgb = np.ascontiguousarray(rgb)
+        h, w, ch = rgb.shape
+        bytes_per_line = ch * w
+        return QImage(rgb.data, w, h, bytes_per_line, QImage.Format_RGB888).copy()
+
+    def _resolve_nvcodec_output_color_type(self):
+        """Pick the most useful PyNvVideoCodec output color type for PyTorch."""
+        if not HAS_PYNVVIDEO_CODEC:
+            return None, False
+
+        for attr_name in ("RGBP", "RGB_PLANAR"):
+            color_type = getattr(OutputColorType, attr_name, None)
+            if color_type is not None:
+                return color_type, True
+
+        color_type = getattr(OutputColorType, "RGB", None)
+        return color_type, False
+
+    def _get_nvcodec_decoder(self):
+        """Return a cached SimpleDecoder when the NVIDIA fast path is available."""
+        if not HAS_PYNVVIDEO_CODEC or getattr(self, "_nvcodec_disabled", False):
+            return None
+
+        decoder = getattr(self, "_nvcodec_decoder", None)
+        if decoder is not None:
+            return decoder
+
+        output_color_type, is_planar = self._resolve_nvcodec_output_color_type()
+        if output_color_type is None:
+            return None
+
+        try:
+            decoder = SimpleDecoder(
+                self.image_path,
+                use_device_memory=True,
+                output_color_type=output_color_type,
+            )
+        except Exception:
+            self._nvcodec_disabled = True
+            return None
+
+        self._nvcodec_decoder = decoder
+        self._nvcodec_output_is_planar = is_planar
+        return decoder
+
+    def get_frame_for_inference(self, frame_idx: int, device=None):
+        """Return a model-ready frame tensor and preview QImage for ``frame_idx``.
+
+        The NVIDIA path decodes directly into device memory, converts the
+        decoded surface to a PyTorch tensor with DLPack, and only copies to the
+        CPU once for the Qt preview bitmap.
+        """
+        torch_device = None
+        if torch is not None and device is not None:
+            try:
+                torch_device = device if isinstance(device, torch.device) else torch.device(device)
+            except Exception:
+                torch_device = None
+
+        if self._video_frame_count > 0:
+            frame_idx = max(0, min(frame_idx, self._video_frame_count - 1))
+        else:
+            frame_idx = max(0, frame_idx)
+
+        use_nvcodec = (
+            torch is not None
+            and torch_device is not None
+            and torch_device.type == "cuda"
+            and HAS_PYNVVIDEO_CODEC
+            and torch.cuda.is_available()
+        )
+
+        if use_nvcodec:
+            decoder = self._get_nvcodec_decoder()
+            if decoder is not None:
+                try:
+                    tensor = torch.from_dlpack(decoder[frame_idx])
+
+                    if self._nvcodec_output_is_planar:
+                        rgb_tensor = tensor
+                        rgb_cpu = rgb_tensor.detach().permute(1, 2, 0).contiguous().cpu().numpy()
+                        inference_tensor = rgb_tensor.contiguous().float().div(255.0).unsqueeze(0)
+                    else:
+                        rgb_tensor = tensor.permute(2, 0, 1)
+                        rgb_cpu = tensor.detach().contiguous().cpu().numpy()
+                        inference_tensor = rgb_tensor.contiguous().float().div(255.0).unsqueeze(0)
+
+                    q_image = self._rgb_to_qimage(rgb_cpu)
+                    if getattr(self, "_shim", None) is not None:
+                        self._shim._current_bgr = np.ascontiguousarray(rgb_cpu[:, :, ::-1])
+                    self._current_frame_idx = frame_idx
+                    return inference_tensor, q_image
+                except Exception:
+                    self._nvcodec_disabled = True
+                    pass
+
+        bgr = self.get_bgr_frame(frame_idx)
+        if bgr is None:
+            bgr = np.zeros((640, 640, 3), dtype=np.uint8)
+
+        rgb = bgr[:, :, ::-1]
+        q_image = self._rgb_to_qimage(rgb)
+
+        if torch is None:
+            return np.ascontiguousarray(rgb), q_image
+
+        tensor = torch.from_numpy(np.ascontiguousarray(rgb))
+        if torch_device is not None and (torch_device.type != "cuda" or torch.cuda.is_available()):
+            tensor = tensor.to(torch_device)
+        tensor = tensor.permute(2, 0, 1).contiguous().float().div(255.0).unsqueeze(0)
+
+        return tensor, q_image
 
     def save_frame(self, frame_idx: int, output_path: str, write_params: Optional[list] = None) -> bool:
         """Save a specific frame to disk and return True on success."""
@@ -589,6 +721,9 @@ class VideoRaster(Raster):
             self._cap = None
 
         self._video_thumbnail = None
+        self._nvcodec_decoder = None
+        self._nvcodec_output_is_planar = False
+        self._nvcodec_disabled = False
 
         # Clear shim reference (don't call close on parent's _rasterio_src
         # because the base class cleanup() will try to close it)
