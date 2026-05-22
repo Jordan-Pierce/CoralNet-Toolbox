@@ -536,6 +536,9 @@ class Raster(QObject):
                     entry['oob_mask'] = self._torch_oob_mask
                     _WARP_GRID_CACHE[cache_key] = entry
 
+                    tensor_mb = (self._torch_grid_gpu.element_size() * self._torch_grid_gpu.nelement()) / (1024 * 1024)
+                    print(f"🚨 [VRAM DEBUG] Cached new grid! Unique models in cache: {len(_WARP_GRID_CACHE)}. This grid: {tensor_mb:.1f} MB")
+
         # F.grid_sample requires float32 tensors, shape (N, C, H, W)
         is_int = linear_map.dtype in [np.int32, np.int64]
         map_tensor = torch.tensor(linear_map, device='cuda', dtype=torch.float32).unsqueeze(0).unsqueeze(0)
@@ -747,27 +750,23 @@ class Raster(QObject):
             'inv_pixels':  sorted_pixels,
         }
 
-    def _schedule_inverted_index_build(self, index_map_snapshot: np.ndarray) -> None:
+    def _schedule_inverted_index_build(self, index_map_reference: np.ndarray) -> None:
         """
-        Kick off a daemon thread to build the CSR inverted index from
-        *index_map_snapshot* and store the result on this raster once done.
+        Kick off a daemon thread to build the CSR inverted index.
 
-        Only one build runs at a time (guarded by a lock); any in-flight build
-        for a stale map is simply superseded when the new one finishes.
+        The index map is treated as read-only geometric reference data, so the
+        thread can work on the original array without duplicating it in RAM.
         """
-        # Take an explicit copy so the thread works on stable data even if the
-        # raster's index_map is replaced before the build completes.
-        snapshot = index_map_snapshot.copy()
         raster_ref = self  # capture for closure
         cls = type(self)   # capture class explicitly — 'QtRaster' is not in thread scope
 
         def _build_and_store():
-            inv = cls._build_inverted_index(snapshot)
+            inv = cls._build_inverted_index(index_map_reference)
             if inv is None:
                 return
             # Guard: only store if the raster still holds the same index_map
-            # (identity check is O(1) for numpy arrays).
-            if raster_ref.index_map is not None and raster_ref.index_map is not snapshot:
+            # object.
+            if raster_ref.index_map is not None and raster_ref.index_map is not index_map_reference:
                 # The raster has been updated in the meantime; discard stale result.
                 return
             raster_ref.inv_ids     = inv['inv_ids']
@@ -1323,11 +1322,14 @@ class Raster(QObject):
         Args:
             annotations (list): List of annotation objects
         """
-        self.annotations = annotations
-        self.annotation_count = len(annotations)
-        self.has_annotations = bool(annotations)
+        vector_annotations = [annotation for annotation in annotations if not getattr(annotation, 'is_mask_annotation', False)]
+        has_mask_annotation = self.has_mask_content
+
+        self.annotations = vector_annotations
+        self.annotation_count = len(vector_annotations) + (1 if has_mask_annotation else 0)
+        self.has_annotations = bool(vector_annotations) or has_mask_annotation
         
-        predictions = [a.machine_confidence for a in annotations if a.machine_confidence]
+        predictions = [a.machine_confidence for a in vector_annotations if a.machine_confidence]
         self.has_predictions = len(predictions) > 0
         
         # Clear previous data
@@ -1338,7 +1340,7 @@ class Raster(QObject):
         # Use a defaultdict to simplify the aggregation logic
         temp_map = defaultdict(set)
 
-        for annotation in annotations:
+        for annotation in vector_annotations:
             # Process label information
             if annotation.label:
                 if hasattr(annotation.label, 'short_label_code'):
@@ -1514,17 +1516,37 @@ class Raster(QObject):
     @property
     def mask_statistics(self) -> dict | None:
         """
-        Returns the cached mask statistics if they exist, without
-        triggering a recalculation.
+        Returns mask class statistics, using the cached value when available.
+        Falls back to a one-time recalculation so callers can reliably display
+        the mask breakdown even before the cache has been populated.
         """
         if self.mask_annotation:
-            return self.mask_annotation.cached_statistics
+            cached_statistics = self.mask_annotation.cached_statistics
+            if cached_statistics is not None:
+                return cached_statistics
+            try:
+                return self.mask_annotation.get_class_statistics()
+            except Exception:
+                return None
         return None
-            
+
+    @property
+    def has_mask_content(self) -> bool:
+        """Return True when the attached mask annotation contains any labeled pixels."""
+        if self.mask_annotation is None:
+            return False
+
+        try:
+            return self.mask_annotation.get_area() > 0
+        except Exception:
+            try:
+                return bool(np.any(self.mask_annotation.mask_data % self.mask_annotation.LOCK_BIT))
+            except Exception:
+                return True
+
     def add_work_area(self, work_area):
-        """
-        Add a work area to the raster.
-        
+        """Add a work area to the raster.
+
         Args:
             work_area: Work area object to add
         """
@@ -1537,7 +1559,6 @@ class Raster(QObject):
         Get all work areas for this raster.
         
         Returns:
-            list: List of work area objects
         """
         return self.work_areas
         

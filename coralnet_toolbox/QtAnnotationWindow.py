@@ -3854,6 +3854,10 @@ class AnnotationWindow(BaseCanvas):
                 self._display_video_frame(self._current_frame_idx)
             if raster:
                 raster.delete_mask_annotation()
+                try:
+                    self.main_window.image_window.update_image_annotations(image_path)
+                except Exception:
+                    pass
             return
 
         # 1. Access label lock state once
@@ -3874,6 +3878,10 @@ class AnnotationWindow(BaseCanvas):
         # 4. Handle Mask/Semantic Reset
         if raster:
             raster.delete_mask_annotation()
+            try:
+                self.main_window.image_window.update_image_annotations(image_path)
+            except Exception:
+                pass
         
         # --- THE FIX ---
         # Removed redundant self.scene.update() and self.viewport().update() calls.

@@ -245,12 +245,13 @@ class VisibilityWorker(QObject):
 
                                     chunk_start = __import__('time').perf_counter()
                                     warped = Raster.warp_batch_cuda(maps, [-1] * len(chunk), grid_gpu, oob_mask)
+                                    chunk_elapsed = __import__('time').perf_counter() - chunk_start
+                                    per_cam_elapsed = chunk_elapsed / max(1, len(chunk))
                                     for p, w in zip(chunk, warped):
                                         results[p]['index_map'] = w
 
                                         cam_name = self._cam_label(p, camera_labels)
-                                        cam_elapsed = __import__('time').perf_counter() - chunk_start
-                                        log_cam_stage(cam_name, "Distortion", cam_elapsed, logger)
+                                        log_cam_stage(cam_name, "Distortion", per_cam_elapsed, logger)
 
                         cuda_ok = True
 

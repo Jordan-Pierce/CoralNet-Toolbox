@@ -1746,6 +1746,13 @@ class MVATManager(QObject):
             worker.signals.finished.connect(worker.deleteLater)
             thread.finished.connect(thread.deleteLater)
 
+            # Drop finished workers so the retention list only tracks live work.
+            self._active_workers = [
+                (active_thread, active_worker)
+                for active_thread, active_worker in self._active_workers
+                if active_thread.isRunning()
+            ]
+
             # Keep references to avoid GC
             self._active_workers.append((thread, worker))
 

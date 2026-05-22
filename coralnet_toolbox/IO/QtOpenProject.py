@@ -497,6 +497,26 @@ class OpenProject(QDialog):
             # Load the mask annotation for the current image into the scene
             self.annotation_window.load_mask_annotation()
 
+            # Refresh every raster that received a mask so the table count reflects
+            # the new mask layer immediately, including mask-only images.
+            mask_images_to_refresh = {image_path for image_path, _ in mask_annotations_to_set}
+            for image_path in mask_images_to_refresh:
+                try:
+                    self.image_window.update_image_annotations(image_path, update_counts=False)
+                except Exception:
+                    pass
+
+            if mask_images_to_refresh:
+                try:
+                    self.main_window.label_window.update_annotation_count()
+                except Exception:
+                    pass
+
+                try:
+                    self.image_window.filter_images(use_threading=False)
+                except Exception:
+                    pass
+
         except Exception as e:
             QMessageBox.warning(self.annotation_window,
                                 "Error Importing Annotations",

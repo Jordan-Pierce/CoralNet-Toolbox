@@ -196,6 +196,8 @@ class ContextMatrixWidget(QWidget):
         self._pending_sync = None
         self._active_camera_path = None
 
+        self._scene_controls_enabled = False
+
         # Annotation visualization state (Phase 6)
         self._annotation_manager = None
         self._annotation_updates_suspended = False
@@ -668,6 +670,18 @@ class ContextMatrixWidget(QWidget):
         """Provide a RasterManager instance for image loading."""
         self._raster_manager = raster_manager
 
+    def set_scene_controls_enabled(self, enabled: bool):
+        """Enable or disable toolbar controls that depend on loaded 3D scene data."""
+        self._scene_controls_enabled = bool(enabled)
+        if hasattr(self, 'load_btn'):
+            self.load_btn.setEnabled(self._scene_controls_enabled)
+        if hasattr(self, '_multi_annotate_btn'):
+            self._multi_annotate_btn.setEnabled(self._scene_controls_enabled)
+        if hasattr(self, '_propagate_mask_btn'):
+            self._propagate_mask_btn.setEnabled(self._scene_controls_enabled)
+        self._update_canvas_size_controls()
+        self._update_canvas_count_controls()
+
     def set_camera_data(self, camera_objects: List, ordered_paths: List[str]):
         """Update the camera list and refresh the layout.  Camera objects are used to derive tile size bounds."""
         self._camera_paths = list(ordered_paths)
@@ -755,10 +769,11 @@ class ContextMatrixWidget(QWidget):
         canvas.setFixedSize(self._canvas_tile_size, self._canvas_tile_size)
 
     def _update_canvas_size_controls(self):
+        scene_controls_enabled = self._scene_controls_enabled
         if hasattr(self, 'size_down_btn'):
-            self.size_down_btn.setEnabled(self._canvas_tile_size > self._canvas_tile_min)
+            self.size_down_btn.setEnabled(scene_controls_enabled and self._canvas_tile_size > self._canvas_tile_min)
         if hasattr(self, 'size_up_btn'):
-            self.size_up_btn.setEnabled(self._canvas_tile_size < self._canvas_tile_max)
+            self.size_up_btn.setEnabled(scene_controls_enabled and self._canvas_tile_size < self._canvas_tile_max)
 
     def _update_canvas_count_controls(self):
         available = len(self._camera_paths)
@@ -768,19 +783,20 @@ class ContextMatrixWidget(QWidget):
         max_allowed = max(self._canvas_count_min, max_allowed) if available > 0 else 0
         can_decrease = available > 0 and self.target_camera_count > self._canvas_count_min
         can_increase = available > 0 and self.target_camera_count < max_allowed
+        scene_controls_enabled = self._scene_controls_enabled
         if hasattr(self, 'count_down_btn'):
-            self.count_down_btn.setEnabled(can_decrease)
+            self.count_down_btn.setEnabled(scene_controls_enabled and can_decrease)
         if hasattr(self, 'count_up_btn'):
-            self.count_up_btn.setEnabled(can_increase)
+            self.count_up_btn.setEnabled(scene_controls_enabled and can_increase)
 
         camera_count_input = getattr(self, 'camera_count_input', None)
         if camera_count_input is not None:
             try:
                 camera_count_input.blockSignals(True)
                 if available > 0:
-                    camera_count_input.setEnabled(True)
                     camera_count_input.setRange(self._canvas_count_min, max_allowed)
                     camera_count_input.setValue(max(self._canvas_count_min, min(self.target_camera_count, max_allowed)))
+                    camera_count_input.setEnabled(scene_controls_enabled)
                 else:
                     camera_count_input.setEnabled(False)
                     camera_count_input.setRange(self._canvas_count_min, self._canvas_count_min)
@@ -1050,14 +1066,14 @@ class ContextMatrixWidget(QWidget):
         sep1.setFrameShadow(QFrame.Sunken)
         layout.addWidget(sep1)
 
-        self._semantic_mask_btn = QToolButton()
-        self._semantic_mask_btn.setText("Propagate Mask")
-        self._semantic_mask_btn.setToolTip(
+        self._propagate_mask_btn = QToolButton()
+        self._propagate_mask_btn.setText("Propagate Mask")
+        self._propagate_mask_btn.setToolTip(
             "Transfer the active semantic mask to the mesh and visible MVAT targets."
         )
-        self._semantic_mask_btn.setAutoRaise(True)
-        self._semantic_mask_btn.clicked.connect(self._on_propagate_mask_clicked)
-        layout.addWidget(self._semantic_mask_btn)
+        self._propagate_mask_btn.setAutoRaise(True)
+        self._propagate_mask_btn.clicked.connect(self._on_propagate_mask_clicked)
+        layout.addWidget(self._propagate_mask_btn)
 
         layout.addStretch(1)
 
@@ -1083,7 +1099,7 @@ class ContextMatrixWidget(QWidget):
         toolbar.addWidget(container)
 
         self._sync_context_toolbar_scaling()
-        self._update_canvas_size_controls()
+        self.set_scene_controls_enabled(self._scene_controls_enabled)
         return toolbar
 
     def create_bottom_toolbar(self) -> QToolBar:
@@ -1163,7 +1179,7 @@ class ContextMatrixWidget(QWidget):
         toolbar.addWidget(container)
 
         self._sync_context_toolbar_scaling()
-        self._update_canvas_count_controls()
+        self.set_scene_controls_enabled(self._scene_controls_enabled)
         return toolbar
 
     def update_stats_label(self, visible_count: int, overlapping_count: int):

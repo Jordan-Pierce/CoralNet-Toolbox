@@ -896,19 +896,7 @@ class ImageWindow(QWidget):
                         all_annotations.extend(anns)
                 self.raster_manager.update_annotation_info(image_path, all_annotations)
             else:
-                annotations = list(self.annotation_window.get_image_annotations(image_path))
-
-                # Mask annotations are tracked separately from the vector annotation list.
-                # Include the registered mask layer here so raster-level annotation state
-                # and the "Has Annotations" filter stay in sync for mask-only images.
-                try:
-                    mask_annotation = self.annotation_window.annotation_manager.get_mask_annotation(image_path)
-                except Exception:
-                    mask_annotation = None
-
-                if mask_annotation is not None and mask_annotation not in annotations:
-                    annotations.append(mask_annotation)
-
+                annotations = self.annotation_window.get_image_annotations(image_path)
                 self.raster_manager.update_annotation_info(image_path, annotations)
         
         if update_counts:
