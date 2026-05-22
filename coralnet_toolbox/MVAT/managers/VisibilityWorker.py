@@ -60,6 +60,10 @@ class VisibilityWorker(QObject):
         except Exception:
             pass
 
+    @staticmethod
+    def _cam_label(path: str, fallback: str = "cam") -> str:
+        return fallback if path is None else str(path)
+
     def run(self):
         try:
             # Perspective cameras
@@ -262,6 +266,9 @@ class VisibilityWorker(QObject):
                 # Opt 2: inverted index is NOT rebuilt here; add_index_map's
                 # daemon thread handles it so we don't block the emit.
                 def _post_warp(path):
+                    import time
+
+                    stage_start = time.perf_counter()
                     r = results[path]
                     idx_map = r.get('index_map')
                     if idx_map is not None:
@@ -271,6 +278,9 @@ class VisibilityWorker(QObject):
                         VisibilityManager._normalize_result_dict(r, self.compute_depth_maps)
                     except Exception:
                         pass
+
+                    elapsed = time.perf_counter() - stage_start
+                    print(f"   Cam {self._cam_label(path)}: {elapsed:.4f}s | Normalize: {elapsed:.3f}s")
 
                 n_workers = min(8, len(distorted_paths))
                 with ThreadPoolExecutor(max_workers=n_workers) as pool:
@@ -293,6 +303,7 @@ class VisibilityWorker(QObject):
                     if index_map is None:
                         continue
                     try:
+                        depth_start = __import__('time').perf_counter()
                         _, R, t, _, _ = self.camera_params_dict[path]
                         result_dict['depth_map'] = VisibilityManager.reconstruct_depth_map(
                             index_map,
@@ -300,6 +311,8 @@ class VisibilityWorker(QObject):
                             R,
                             t,
                         )
+                        elapsed = __import__('time').perf_counter() - depth_start
+                        print(f"   Cam {self._cam_label(path)}: {elapsed:.4f}s | Depth: {elapsed:.3f}s")
                     except Exception as exc:
                         print(f"⚠️ Depth reconstruction failed for {path}: {exc}")
 
@@ -328,10 +341,13 @@ class VisibilityWorker(QObject):
                 saved_count = 0
 
                 def _save_one(path, result_dict):
+                    import time
+
                     cache_key = keys_dict.get(path)
                     if cache_key is None:
                         return False
                     extra = extra_bytes_dict.get(path)
+                    save_start = time.perf_counter()
                     cache_mgr.save_visibility(
                         cache_key,
                         target_path,
@@ -343,6 +359,8 @@ class VisibilityWorker(QObject):
                         extra_hash_data=extra,
                         pixel_budget=pixel_budget,
                     )
+                    elapsed = time.perf_counter() - save_start
+                    print(f"   Cam {self._cam_label(path)}: {elapsed:.4f}s | Cache: {elapsed:.3f}s")
                     return True
 
                 n_workers = min(4, max(1, len(save_results)))
