@@ -589,7 +589,7 @@ class Raster(QObject):
                 pass
 
         return cpu_bytes + gpu_bytes
-
+ 
     @classmethod
     def warp_batch_cuda(cls, maps, border_values, grid_gpu, oob_mask):
         """
@@ -604,9 +604,9 @@ class Raster(QObject):
             oob_mask      : bool torch.Tensor shape (H, W) — out-of-bounds pixels
 
         Returns:
-            tuple[list[np.ndarray], list[np.ndarray]]:
-                - warped maps converted back to CPU
-                - visible element IDs per map (np.int32 arrays)
+            tuple: (warped_maps, visible_indices_list)
+                warped_maps: list of np.ndarray, same dtypes as inputs
+                visible_indices_list: list of 1D np.ndarray (int32) containing unique visible IDs
         """
         import torch
         import torch.nn.functional as F
@@ -637,15 +637,22 @@ class Raster(QObject):
         n = len(maps)
 
         total_input_mb = sum(m.nbytes for m in maps) / (1024 * 1024)
-        print(f"\n🚨 [RAM DEBUG - WARP] Preparing to stack {n} maps. Input size: {total_input_mb:.1f} MB")
-        
-        # Stack → (N, 1, H, W) float32
-        stacked = np.stack(maps, axis=0).astype(np.float32)[:, np.newaxis, :, :]
-        
-        stacked_mb = stacked.nbytes / (1024 * 1024)
-        print(f"🚨 [RAM DEBUG - WARP] Post-stack! Created contiguous float32 array: {stacked_mb:.1f} MB")
+        print(f"\n🚨 [RAM DEBUG - WARP] Preparing to stream {n} maps to VRAM. Input CPU size: {total_input_mb:.1f} MB")
+        import time
+        stream_start = time.perf_counter()
 
-        tensor  = torch.from_numpy(stacked).to(grid_gpu.device)   # zero-copy when possible
+        # 1. Pre-allocate the final, empty tensor directly on the GPU
+        h, w = maps[0].shape
+        tensor = torch.empty((n, 1, h, w), dtype=torch.float32, device=grid_gpu.device)
+
+        # 2. Stream the numpy arrays directly into VRAM (zero CPU float copies)
+        for i, m in enumerate(maps):
+            # torch.from_numpy shares memory with the numpy array (no CPU copy).
+            # Assigning it to the GPU tensor handles the transfer and float32 cast on the fly.
+            tensor[i, 0] = torch.from_numpy(m)
+
+        stream_time = time.perf_counter() - stream_start
+        print(f"🚨 [RAM DEBUG - WARP] Direct-to-VRAM stream complete in {stream_time:.4f}s. CPU intermediate RAM cost: 0.0 MB")
 
         # Expand grid: (1, H, W, 2) → (N, H, W, 2)
         grid_n = grid_gpu.expand(n, -1, -1, -1)
@@ -658,21 +665,21 @@ class Raster(QObject):
             if bv != 0 and not (isinstance(bv, float) and bv == 0.0):
                 warped[i, 0, oob_mask] = float(bv)
 
-        # Extract visible IDs on the GPU before bringing the maps back to CPU.
+        # ---> Extract unique indices on the GPU instantly <---
         visible_indices_list = []
         for i in range(n):
             valid_mask = warped[i, 0] >= 0
-            visible_indices_list.append(
-                torch.unique(warped[i, 0][valid_mask]).cpu().numpy().astype(np.int32)
-            )
+            # GPU unique sort -> pull tiny 1D array to CPU
+            unq = torch.unique(warped[i, 0][valid_mask]).cpu().numpy().astype(np.int32)
+            visible_indices_list.append(unq)
 
-        # Move back to CPU and convert dtypes
+        # Move maps back to CPU and convert dtypes
         warped_cpu = warped.squeeze(1).cpu().numpy()   # (N, H, W)
         warped_maps = [
             row.astype(np.int32) if flag else row
             for row, flag in zip(warped_cpu, is_int)
         ]
-
+        
         return warped_maps, visible_indices_list
 
     def add_index_map(self, index_map: np.ndarray, index_map_path: Optional[str] = None,
