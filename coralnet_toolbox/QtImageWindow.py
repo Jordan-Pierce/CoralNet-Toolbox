@@ -906,13 +906,7 @@ class ImageWindow(QWidget):
                 except Exception:
                     mask_annotation = None
 
-                has_labeled_pixels = getattr(mask_annotation, 'has_labeled_pixels', None)
-                if callable(has_labeled_pixels):
-                    mask_has_labels = has_labeled_pixels()
-                else:
-                    mask_has_labels = bool(getattr(mask_annotation, 'get_area', lambda: 0)())
-
-                if mask_has_labels and mask_annotation is not None and mask_annotation not in annotations:
+                if mask_annotation is not None and mask_annotation not in annotations:
                     annotations.append(mask_annotation)
 
                 self.raster_manager.update_annotation_info(image_path, annotations)

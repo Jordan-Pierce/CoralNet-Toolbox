@@ -221,12 +221,6 @@ class MaskAnnotation(Annotation):
         """Return the total number of non-background pixels."""
         return np.count_nonzero(self.mask_data)
 
-    def has_labeled_pixels(self) -> bool:
-        """Return True when the mask contains at least one labeled pixel."""
-        if self._stats_cache is not None:
-            return bool(self._stats_cache)
-        return self.get_area() > 0
-
     def get_bounding_box_top_left(self):
         """Get the top-left corner of the annotation's bounding box (always 0,0)."""
         return QPointF(0, 0)
