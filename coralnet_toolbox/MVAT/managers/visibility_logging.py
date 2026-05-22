@@ -34,12 +34,12 @@ def get_visibility_logger() -> logging.Logger:
     return logger
 
 
-def cam_label(index: int) -> str:
-    return f"cam {index}"
+def cam_label(index: int, prefix: str = "cam") -> str:
+    return f"{prefix} {index}"
 
 
-def build_camera_labels(camera_paths: Iterable[Any]) -> dict[Any, str]:
-    return {path: cam_label(index) for index, path in enumerate(camera_paths, start=1)}
+def build_camera_labels(camera_paths: Iterable[Any], start_index: int = 1) -> dict[Any, str]:
+    return {path: cam_label(index) for index, path in enumerate(camera_paths, start=start_index)}
 
 
 def label_for_path(path: Any, camera_labels: Mapping[Any, str] | None, fallback: str = "cam") -> str:

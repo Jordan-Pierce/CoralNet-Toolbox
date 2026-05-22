@@ -912,7 +912,8 @@ class VisibilityManager:
                                           compute_depth_map: bool = True,
                                           pixel_budget: Optional[int] = None,
                                           progress_callback=None,
-                                          vtk_context: dict = None) -> list:
+                                          vtk_context: dict = None,
+                                          camera_index_offset: int = 0) -> list:
         """
         Batched VTK-based mesh rasterization.
         Performs RGB encoding and Plotter setup ONCE, then iterates through cameras.
@@ -1001,7 +1002,7 @@ class VisibilityManager:
 
             # Progress callback (thread-safe status bar update)
             if progress_callback is not None:
-                progress_callback(i + 1, len(camera_params_list))
+                progress_callback(camera_index_offset + i + 1, camera_index_offset + len(camera_params_list))
 
             # Calculate budget-derived render dimensions for this camera.
             dynamic_scale = _scale_for_dimensions(width, height)
@@ -1104,7 +1105,7 @@ class VisibilityManager:
             accounted_time = t_prep + t_render + t_screenshot + t_decode + t_depth + t_finalize
             residual_time = max(0.0, cam_time - accounted_time)
             log_cam_breakdown(
-                cam_label(i + 1),
+                cam_label(camera_index_offset + i + 1),
                 cam_time,
                 t_prep,
                 t_render,

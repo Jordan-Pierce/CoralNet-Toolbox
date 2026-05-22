@@ -239,6 +239,7 @@ class VisibilityWorker(QObject):
                                 pixel_budget=self.pixel_budget,
                                 progress_callback=update_status,
                                 vtk_context=vtk_context,
+                                camera_index_offset=i,
                             )
                             
                             for p, r in zip(chunk_paths, batch_results):
