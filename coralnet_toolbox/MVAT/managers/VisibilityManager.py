@@ -860,18 +860,64 @@ class VisibilityManager:
         }, compute_depth_map)
     
     @classmethod
+    def setup_batch_vtk_context(cls, mesh_product, pixel_budget, sample_width, sample_height):
+        """Pre-load the VTK plotter and upload mesh geometry once for all chunks."""
+        import pyvista as pv
+        import time
+
+        start_time = time.perf_counter()
+        logger.info("   -> Setting up Persistent VTK Plotter Context...")
+
+        mesh = mesh_product.get_mesh()
+        n_cells = mesh.n_cells
+
+        native_pixels = sample_width * sample_height
+        if pixel_budget is None or pixel_budget <= 0 or native_pixels <= pixel_budget:
+            scale = 1.0
+        else:
+            scale = float(np.sqrt(pixel_budget / native_pixels))
+
+        render_w = max(1, int(round(sample_width * scale)))
+        render_h = max(1, int(round(sample_height * scale)))
+
+        plotter = pv.Plotter(off_screen=True, window_size=(render_w, render_h))
+        plotter.set_background('black')
+        plotter.disable_anti_aliasing()
+
+        actor_low, actor_high, is_dual_pass = cls._create_face_id_mesh_actors(plotter, mesh, n_cells)
+
+        face_centers_pt = None
+        if HAS_TORCH and torch.cuda.is_available():
+            face_centers_np = mesh.cell_centers().points.astype(np.float32)
+            face_centers_pt = torch.from_numpy(face_centers_np).cuda()
+
+        # Force the geometry upload/VBO build once up front so later cameras reuse VRAM data.
+        plotter.render()
+
+        logger.info(f"   ✅ Persistent Plotter setup in {time.perf_counter() - start_time:.4f}s")
+
+        return {
+            'plotter': plotter,
+            'actor_low': actor_low,
+            'actor_high': actor_high,
+            'is_dual_pass': is_dual_pass,
+            'face_centers_pt': face_centers_pt,
+            'mesh_bounds': mesh.bounds,
+        }
+
+    @classmethod
     def compute_batch_mesh_visibility_vtk(cls,
                                           mesh_product: 'AbstractSceneProduct',
                                           camera_params_list: list,
                                           compute_depth_map: bool = True,
                                           pixel_budget: Optional[int] = None,
-                                          progress_callback=None) -> list:
+                                          progress_callback=None,
+                                          vtk_context: dict = None) -> list:
         """
         Batched VTK-based mesh rasterization.
         Performs RGB encoding and Plotter setup ONCE, then iterates through cameras.
         Yields to the Qt event loop between cameras to keep the UI responsive.
         """
-        import pyvista as pv
         import time
 
         perf_counter = time.perf_counter
@@ -901,35 +947,45 @@ class VisibilityManager:
             
         logger.info(f"   Mesh: {n_cells:,} cells")
         
-        # --- 1. SETUP PHASE (Done Once) ---
-        setup_start = perf_counter()
-        logger.info("   -> Encoding face IDs as RGB colors...")
-        logger.info("   -> Creating off-screen plotter...")
-        
-        # Use the first camera's budget-derived scale only to size the initial plotter.
-        first_w = camera_params_list[0][3]
-        first_h = camera_params_list[0][4]
-        first_scale = _scale_for_dimensions(first_w, first_h)
-        first_w = max(1, int(round(first_w * first_scale)))
-        first_h = max(1, int(round(first_h * first_scale)))
-        plotter = pv.Plotter(off_screen=True, window_size=(first_w, first_h))
-        plotter.set_background('black') 
-        plotter.disable_anti_aliasing()
-        
-        actor_low, actor_high, is_dual_pass = cls._create_face_id_mesh_actors(plotter, mesh, n_cells)
-        encode_time = perf_counter() - setup_start
-        plotter_setup_time = 0.0
-        logger.info(f"   ✅ Setup completed in {encode_time + plotter_setup_time:.4f}s")
-        
-        # --- Prepare face centers for GPU depth mapping ---
-        logger.info("   -> Preparing face centers for GPU depth mapping...")
-        face_center_prep_time = 0.0
-        if HAS_TORCH and torch.cuda.is_available():
-            face_center_prep_start = perf_counter()
-            face_centers_np = mesh.cell_centers().points.astype(np.float32)
-            face_centers_pt = torch.from_numpy(face_centers_np).cuda()
-            face_center_prep_time = perf_counter() - face_center_prep_start
-        logger.info(f"      Face center prep completed in {face_center_prep_time:.4f}s")
+        # --- 1. SETUP PHASE (Done Once unless a persistent context is supplied) ---
+        if vtk_context is None:
+            setup_start = perf_counter()
+            logger.info("   -> Encoding face IDs as RGB colors...")
+            logger.info("   -> Creating off-screen plotter...")
+
+            first_w = camera_params_list[0][3]
+            first_h = camera_params_list[0][4]
+            first_scale = _scale_for_dimensions(first_w, first_h)
+            first_w = max(1, int(round(first_w * first_scale)))
+            first_h = max(1, int(round(first_h * first_scale)))
+            plotter = pv.Plotter(off_screen=True, window_size=(first_w, first_h))
+            plotter.set_background('black')
+            plotter.disable_anti_aliasing()
+
+            actor_low, actor_high, is_dual_pass = cls._create_face_id_mesh_actors(plotter, mesh, n_cells)
+            encode_time = perf_counter() - setup_start
+            plotter_setup_time = 0.0
+            logger.info(f"   ✅ Setup completed in {encode_time + plotter_setup_time:.4f}s")
+
+            logger.info("   -> Preparing face centers for GPU depth mapping...")
+            face_center_prep_time = 0.0
+            if HAS_TORCH and torch.cuda.is_available():
+                face_center_prep_start = perf_counter()
+                face_centers_np = mesh.cell_centers().points.astype(np.float32)
+                face_centers_pt = torch.from_numpy(face_centers_np).cuda()
+                face_center_prep_time = perf_counter() - face_center_prep_start
+            logger.info(f"      Face center prep completed in {face_center_prep_time:.4f}s")
+        else:
+            plotter = vtk_context['plotter']
+            actor_low = vtk_context['actor_low']
+            actor_high = vtk_context['actor_high']
+            is_dual_pass = vtk_context['is_dual_pass']
+            face_centers_pt = vtk_context['face_centers_pt']
+            mesh = mesh_product.get_mesh()
+            encode_time = 0.0
+            plotter_setup_time = 0.0
+            face_center_prep_time = 0.0
+            logger.info("   -> Reusing persistent VTK plotter context...")
         # -----------------------------------------------------------
 
         # --- 2. RENDER LOOP ---
@@ -1060,9 +1116,11 @@ class VisibilityManager:
                 logger,
             )
 
-        close_start = perf_counter()
-        plotter.close()
-        plotter_close_time = perf_counter() - close_start
+        plotter_close_time = 0.0
+        if vtk_context is None:
+            close_start = perf_counter()
+            plotter.close()
+            plotter_close_time = perf_counter() - close_start
         
         total_render_time = perf_counter() - render_start_time
         total_time = perf_counter() - start_time

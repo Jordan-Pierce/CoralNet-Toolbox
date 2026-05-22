@@ -73,7 +73,7 @@ class VisibilityWorker(QObject):
     def _cam_label(path: str, camera_labels=None, fallback: str = "cam") -> str:
         return label_for_path(path, camera_labels, fallback)
 
-    def _calculate_dynamic_chunk_size(self, params_list, safety_factor=0.80):
+    def _calculate_dynamic_chunk_size(self, params_list, safety_factor=0.90):
         """Calculates a safe chunk size from available RAM and camera dimensions."""
         try:
             import psutil
@@ -212,8 +212,18 @@ class VisibilityWorker(QObject):
 
                     CHUNK_SIZE = self._calculate_dynamic_chunk_size(params_list)
                     total_cameras = len(paths)
+                    vtk_context = None
+                    sample_w = params_list[0][3]
+                    sample_h = params_list[0][4]
 
                     try:
+                        vtk_context = VisibilityManager.setup_batch_vtk_context(
+                            self.primary_target,
+                            self.pixel_budget,
+                            sample_w,
+                            sample_h,
+                        )
+
                         for i in range(0, total_cameras, CHUNK_SIZE):
                             chunk_paths = paths[i : i + CHUNK_SIZE]
                             chunk_params = params_list[i : i + CHUNK_SIZE]
@@ -227,7 +237,8 @@ class VisibilityWorker(QObject):
                             batch_results = VisibilityManager.compute_batch_mesh_visibility_vtk(
                                 self.primary_target, chunk_params, False,
                                 pixel_budget=self.pixel_budget,
-                                progress_callback=update_status
+                                progress_callback=update_status,
+                                vtk_context=vtk_context,
                             )
                             
                             for p, r in zip(chunk_paths, batch_results):
@@ -350,6 +361,12 @@ class VisibilityWorker(QObject):
                     except Exception as err:
                         logger.warning(f"Mesh processing failed: {err}")
                         raise err
+                    finally:
+                        if vtk_context is not None:
+                            try:
+                                vtk_context['plotter'].close()
+                            except Exception:
+                                pass
 
             # ==========================================
             # STRATEGY B: POINT CLOUD (NOT YET CHUNKED)
