@@ -1201,13 +1201,6 @@ class MVATManager(QObject):
     def _process_visibility_results(self, results: dict, target_file_path: str):
         """
         Process visibility computation results and store in cameras.
-        
-        Shared by both sync (VTK mesh) and async (worker) code paths.
-        If the async worker already saved the cache to disk, it skips IO on the main thread.
-        
-        Args:
-            results: Dict mapping image_path -> visibility result dict
-            target_file_path: Path to primary target for cache key
         """
         primary_target = None
         try:
@@ -1220,28 +1213,38 @@ class MVATManager(QObject):
             if not camera:
                 continue
 
-            # Store index map with element type metadata
             element_type = result.get('element_type', 'point')
-            
-            # 1. Check if the background worker already handled the disk I/O
             cache_path = result.get('cache_path')
             
+            # --- Reload arrays from disk if stripped by the worker ---
+            if result.get('index_map') is None and cache_path and self.cache_manager:
+                cache_key = camera._raster.extrinsics
+                extra = (camera._raster.dist_coeffs.tobytes()
+                         if camera.is_distorted
+                         and camera._raster.dist_coeffs is not None else None)
+                
+                # Loads using memory-mapping (mmap_mode='r') where possible
+                loaded_data = self.cache_manager.load_visibility(
+                    cache_key, target_file_path, element_type, extra,
+                    pixel_budget=self.pixel_budget,
+                )
+                
+                if loaded_data:
+                    result['index_map'] = loaded_data.get('index_map')
+                    result['depth_map'] = loaded_data.get('depth_map')
+
             # 2. Fallback for sync paths (like VTK) that run on the main thread
             if cache_path is None and self.cache_manager is not None and target_file_path:
                 try:
-                    # Use extrinsics for perspective
                     cache_key = camera._raster.extrinsics
                     extra = (camera._raster.dist_coeffs.tobytes()
                              if camera.is_distorted
                              and camera._raster.dist_coeffs is not None else None)
                     cache_path = self.cache_manager.save_visibility(
-                        cache_key,
-                        target_file_path,
-                        result.get('index_map'),
+                        cache_key, target_file_path, result.get('index_map'),
                         result.get('visible_indices'),
                         result.get('depth_map') if self.compute_depth_maps_enabled else None,
-                        element_type=element_type,
-                        extra_hash_data=extra,
+                        element_type=element_type, extra_hash_data=extra,
                         pixel_budget=self.pixel_budget,
                     )
                 except Exception:
@@ -1263,9 +1266,7 @@ class MVATManager(QObject):
                 depth_map = result.get('depth_map')
                 if depth_map is None:
                     depth_map = self._reconstruct_depth_map_for_camera(
-                        primary_target,
-                        camera,
-                        result.get('index_map'),
+                        primary_target, camera, result.get('index_map'),
                     )
                 if depth_map is not None:
                     try:

@@ -409,21 +409,26 @@ class VisibilityWorker(QObject):
                 self._status("Visibility maps cached successfully.")
 
             # =================================================================
-            # 4. Fire and forget the disk writing on a separate daemon thread
+            # 4. Block and save to disk on this worker thread
             # =================================================================
             if self.cache_manager is not None and self.target_file_path and self.cache_keys_dict:
-                io_thread = threading.Thread(
-                    target=save_to_disk_task,
-                    args=(results, self.cache_manager, self.target_file_path, self.cache_keys_dict, self.dist_coeffs_bytes_dict, self.pixel_budget),
-                    daemon=True
-                )
                 self._status("Saving visibility maps to cache...")
-                io_thread.start()
+                # Run synchronously so we know the files exist before emitting
+                save_to_disk_task(results, self.cache_manager, self.target_file_path, self.cache_keys_dict, self.dist_coeffs_bytes_dict, self.pixel_budget)
 
             # =================================================================
-            # 5. Emit final results back to the main thread IMMEDIATELY
+            # 5. Strip the payload and emit back to the main thread
             # =================================================================
-            self.signals.finished.emit(results)
+            lightweight_results = {}
+            for path, res in results.items():
+                lightweight_results[path] = {
+                    'cache_path': res.get('cache_path'),
+                    'element_type': res.get('element_type', 'point'),
+                    # Keep visible_indices, it's a tiny 1D array (a few MB) and useful to have instantly
+                    'visible_indices': res.get('visible_indices') 
+                }
+
+            self.signals.finished.emit(lightweight_results)
 
         except Exception as e:
             self.signals.error.emit(f"{e}\n{traceback.format_exc()}")
