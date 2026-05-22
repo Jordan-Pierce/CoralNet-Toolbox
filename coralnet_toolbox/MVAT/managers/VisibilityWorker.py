@@ -8,7 +8,16 @@ import numpy as np
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
+from coralnet_toolbox.MVAT.managers.visibility_logging import (
+    build_camera_labels,
+    get_visibility_logger,
+    label_for_path,
+    log_cam_stage,
+)
 from coralnet_toolbox.MVAT.core.Model import MeshProduct, PointCloudProduct
+
+
+logger = get_visibility_logger()
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -61,8 +70,8 @@ class VisibilityWorker(QObject):
             pass
 
     @staticmethod
-    def _cam_label(path: str, fallback: str = "cam") -> str:
-        return fallback if path is None else str(path)
+    def _cam_label(path: str, camera_labels=None, fallback: str = "cam") -> str:
+        return label_for_path(path, camera_labels, fallback)
 
     def run(self):
         try:
@@ -78,6 +87,9 @@ class VisibilityWorker(QObject):
 
                 if isinstance(first, np.ndarray) and first.shape == (3, 3):
                     perspective_params[path] = params
+
+            camera_paths = list(perspective_params.keys())
+            camera_labels = build_camera_labels(camera_paths)
 
             results = {}
             element_type = self.primary_target.get_element_type()
@@ -109,7 +121,7 @@ class VisibilityWorker(QObject):
                             results[p] = r
 
                     except Exception as vtk_err:
-                        print(f"Batch VTK rasterization failed: {vtk_err}. Trying Open3D fallback...")
+                        logger.warning(f"Batch VTK rasterization failed. Trying Open3D fallback: {vtk_err}")
                         try:
                             # Fallback: Batched Open3D raycasting
                             batch_results = VisibilityManager.compute_batch_mesh_visibility_open3d(
@@ -120,7 +132,7 @@ class VisibilityWorker(QObject):
                                 results[p] = r
 
                         except Exception as o3d_err:
-                            print(f"Open3D fallback failed: {o3d_err}. Falling back to sequential processing...")
+                            logger.warning(f"Open3D fallback failed. Falling back to sequential processing: {o3d_err}")
                             # Last Resort: Sequential processing per-camera
                             for path, params in perspective_params.items():
                                 K, R, t, width, height = params
@@ -236,14 +248,14 @@ class VisibilityWorker(QObject):
                                     for p, w in zip(chunk, warped):
                                         results[p]['index_map'] = w
 
-                                        cam_name = self.warp_callables_dict[p].__self__.basename
+                                        cam_name = self._cam_label(p, camera_labels)
                                         cam_elapsed = __import__('time').perf_counter() - chunk_start
-                                        print(f"   Cam {cam_name}: {cam_elapsed:.4f}s | Distortion: {cam_elapsed:.3f}s")
+                                        log_cam_stage(cam_name, "Distortion", cam_elapsed, logger)
 
                         cuda_ok = True
 
                 except Exception as e:
-                    print(f"CUDA batch warp failed ({e}), falling back to parallel CPU remap")
+                    logger.warning(f"CUDA batch warp failed, falling back to parallel CPU remap: {e}")
 
                 if not cuda_ok:
                     # Parallel CPU path — cv2.remap releases the GIL so threads help
@@ -260,7 +272,7 @@ class VisibilityWorker(QObject):
                             try:
                                 fut.result()
                             except Exception as exc:
-                                print(f"CPU warp failed: {exc}")
+                                logger.warning(f"CPU warp failed: {exc}")
 
                 # --- Phase B: visible_indices + normalize (parallel) ------
                 # Opt 2: inverted index is NOT rebuilt here; add_index_map's
@@ -280,7 +292,7 @@ class VisibilityWorker(QObject):
                         pass
 
                     elapsed = time.perf_counter() - stage_start
-                    print(f"   Cam {self._cam_label(path)}: {elapsed:.4f}s | Normalize: {elapsed:.3f}s")
+                    log_cam_stage(self._cam_label(path, camera_labels), "Normalize", elapsed, logger)
 
                 n_workers = min(8, len(distorted_paths))
                 with ThreadPoolExecutor(max_workers=n_workers) as pool:
@@ -312,9 +324,9 @@ class VisibilityWorker(QObject):
                             t,
                         )
                         elapsed = __import__('time').perf_counter() - depth_start
-                        print(f"   Cam {self._cam_label(path)}: {elapsed:.4f}s | Depth: {elapsed:.3f}s")
+                        log_cam_stage(self._cam_label(path, camera_labels), "Depth", elapsed, logger)
                     except Exception as exc:
-                        print(f"⚠️ Depth reconstruction failed for {path}: {exc}")
+                        logger.warning(f"⚠️ Depth reconstruction failed for {self._cam_label(path, camera_labels)}: {exc}")
 
             # =================================================================
             # 2. Pre-fill cache paths so the main thread knows not to save them
@@ -336,7 +348,7 @@ class VisibilityWorker(QObject):
             # =================================================================
             def save_to_disk_task(save_results, cache_mgr, target_path, keys_dict, extra_bytes_dict, pixel_budget):
                 import time
-                start_cache_time = time.time()
+                start_cache_time = time.perf_counter()
                 total_to_save = len(save_results)
                 saved_count = 0
 
@@ -360,11 +372,11 @@ class VisibilityWorker(QObject):
                         pixel_budget=pixel_budget,
                     )
                     elapsed = time.perf_counter() - save_start
-                    print(f"   Cam {self._cam_label(path)}: {elapsed:.4f}s | Cache: {elapsed:.3f}s")
+                    log_cam_stage(self._cam_label(path, camera_labels), "Cache", elapsed, logger)
                     return True
 
                 n_workers = min(4, max(1, len(save_results)))
-                print(f"💽 Starting background cache save for {total_to_save} cameras...")
+                logger.info(f"💽 Starting background cache save for {total_to_save} cameras...")
                 
                 with ThreadPoolExecutor(max_workers=n_workers) as pool:
                     futs = {
@@ -380,11 +392,11 @@ class VisibilityWorker(QObject):
                                 # Safe cross-thread UI update
                                 self._status(f"Caching visibility maps to disk... ({saved_count}/{total_to_save})")
                         except Exception as exc:
-                            print(f"⚠️ Cache save failed for {path}: {exc}")
+                            logger.warning(f"⚠️ Cache save failed for {self._cam_label(path, camera_labels)}: {exc}")
                 
                 # Final cleanup messages
-                elapsed = time.time() - start_cache_time
-                print(f"✅ Cached {saved_count}/{total_to_save} visibility maps to disk in {elapsed:.2f}s")
+                elapsed = time.perf_counter() - start_cache_time
+                logger.info(f"✅ Cached {saved_count}/{total_to_save} visibility maps to disk in {elapsed:.2f}s")
                 self._status("Visibility maps cached successfully.")
 
             # =================================================================
@@ -418,7 +430,7 @@ class VisibilityWorker(QObject):
                 mesh = target.get_render_mesh()
 
                 if mesh is None:
-                    print(f"Warning: Geometry not loaded for {target.product_id}")
+                    logger.warning(f"Warning: Geometry not loaded for {target.product_id}")
                     return None, None
 
                 # Extract the true face centers for the solid mesh raycaster
@@ -428,7 +440,7 @@ class VisibilityWorker(QObject):
                 return face_centers, face_ids
 
             except Exception as e:
-                print(f"Failed to extract faces in worker for {target.product_id}: {e}")
+                logger.warning(f"Failed to extract faces in worker for {target.product_id}: {e}")
                 return None, None
 
         # Fallback

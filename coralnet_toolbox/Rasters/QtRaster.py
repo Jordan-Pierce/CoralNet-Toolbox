@@ -1075,6 +1075,14 @@ class Raster(QObject):
     def has_z_channel(self) -> bool:
         """Check if the raster currently has a z-channel loaded."""
         return self.z_channel is not None
+
+    def has_z_channel_metadata(self) -> bool:
+        """Check if the raster has any z-channel metadata attached or cached."""
+        return self.z_channel is not None or self.z_channel_path is not None
+
+    def has_transform_metadata(self) -> bool:
+        """Check if the raster has transform metadata attached."""
+        return self.intrinsics is not None and self.extrinsics is not None
         
     def remove_z_channel(self):
         """Remove the depth/elevation channel data and path."""
@@ -1378,7 +1386,10 @@ class Raster(QObject):
                        top_k=1,
                        require_annotations=False,
                        require_no_annotations=False,
-                       require_predictions=False) -> bool:
+                       require_predictions=False,
+                       allowed_raster_types: Optional[Set[str]] = None,
+                       require_z_channel: bool = False,
+                       require_transform: bool = False) -> bool:
         """
         Check if this raster matches the given filter criteria
         
@@ -1389,6 +1400,9 @@ class Raster(QObject):
             require_annotations (bool): If True, must have annotations
             require_no_annotations (bool): If True, must have no annotations
             require_predictions (bool): If True, must have predictions
+            allowed_raster_types (Set[str], optional): Allowed canonical raster types.
+            require_z_channel (bool): If True, require z-channel metadata.
+            require_transform (bool): If True, require transform metadata.
             
         Returns:
             bool: True if this raster matches all filter criteria
@@ -1396,6 +1410,12 @@ class Raster(QObject):
         # Check filename search
         if search_text and search_text not in self.basename:
             return False
+
+        # Check raster type filter
+        if allowed_raster_types is not None:
+            raster_type = getattr(self, 'raster_type', 'ImageRaster')
+            if raster_type not in allowed_raster_types:
+                return False
             
         # Check label search
         if search_label:
@@ -1435,6 +1455,12 @@ class Raster(QObject):
             
         # Check prediction filter
         if require_predictions and not self.has_predictions:
+            return False
+
+        if require_z_channel and not self.has_z_channel_metadata():
+            return False
+
+        if require_transform and not self.has_transform_metadata():
             return False
             
         return True
