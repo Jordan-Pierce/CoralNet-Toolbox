@@ -350,6 +350,58 @@ class VisibilityManager:
         return lookup[index_map_safe].astype(np.float32, copy=False)
 
     @classmethod
+    def reconstruct_depth_map_fast(cls,
+                                   camera,
+                                   scene_product: 'AbstractSceneProduct') -> np.ndarray:
+        """Fast depth reconstruction using cached visible indices and CPU NumPy."""
+        if camera is None or scene_product is None:
+            return None
+
+        index_map = getattr(camera._raster, 'index_map_lazy', None)
+        visible_ids = getattr(camera, 'visible_indices', None)
+        if index_map is None or visible_ids is None:
+            return None
+
+        visible_ids = np.asarray(visible_ids, dtype=np.int64)
+        if visible_ids.size == 0:
+            return None
+
+        coords = getattr(scene_product, '_element_centers_np', None)
+        if coords is None:
+            if hasattr(scene_product, 'get_face_centers'):
+                coords = scene_product.get_face_centers()
+            elif hasattr(scene_product, 'get_points_array'):
+                coords = scene_product.get_points_array()
+
+        if coords is None:
+            return None
+
+        coords = np.asarray(coords, dtype=np.float32)
+        if coords.size == 0:
+            return None
+
+        max_visible_id = int(visible_ids.max()) if visible_ids.size else -1
+        if max_visible_id >= coords.shape[0]:
+            visible_ids = visible_ids[visible_ids < coords.shape[0]]
+            if visible_ids.size == 0:
+                return None
+
+        visible_coords = coords[visible_ids]
+        R = np.asarray(camera.R, dtype=np.float32)
+        t = np.asarray(camera.t, dtype=np.float32)
+
+        # Z-axis only: depth = dot(X, R[2, :]) + t[2]
+        z_values = visible_coords @ R[2, :].astype(np.float32, copy=False) + t[2]
+
+        element_count = int(coords.shape[0])
+        lookup = np.full(element_count + 1, np.nan, dtype=np.float32)
+        lookup[visible_ids] = z_values.astype(np.float32, copy=False)
+
+        index_map_safe = np.asarray(index_map, dtype=np.int64).copy()
+        index_map_safe[index_map_safe < 0] = element_count
+        return lookup[index_map_safe].astype(np.float16, copy=False)
+
+    @classmethod
     def compute_visibility_from_scene(cls,
                                       scene_context: 'SceneContext',
                                       K: np.ndarray,

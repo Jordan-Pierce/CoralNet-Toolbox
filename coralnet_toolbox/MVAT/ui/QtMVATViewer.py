@@ -767,8 +767,6 @@ class MVATViewer(QFrame):
 
         view_menu.addSeparator()
 
-        view_menu.addSeparator()
-
         # Background computation toggles
         action_index_maps = QAction("Compute Index Maps", self)
         action_index_maps.setCheckable(True)
@@ -780,7 +778,7 @@ class MVATViewer(QFrame):
         # Settings
         action_depth = QAction("Compute Depth Maps", self)
         action_depth.setCheckable(True)
-        action_depth.setChecked(False)
+        action_depth.setChecked(True)
         action_depth.setToolTip("Toggle computing depth maps during visibility computation")
         action_depth.toggled.connect(self.computeDepthMapsToggled.emit)
         view_menu.addAction(action_depth)
