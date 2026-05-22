@@ -193,29 +193,48 @@ class VisibilityWorker(QObject):
                             # 1. Check free VRAM on the GPU
                             free_vram, total_vram = torch.cuda.mem_get_info()
                             safe_vram = free_vram * 0.8  # Leave 20% headroom for safety
-                            
-                            # 2. Calculate footprint of a single image (~16 bytes per pixel)
+
+                            # 2. Calculate footprint of a single image using the shared warp estimate
                             test_path = group_paths[0]
-                            test_shape = results[test_path].get('index_map').shape
-                            pixels_per_img = test_shape[0] * test_shape[1]
-                            bytes_per_img = pixels_per_img * 16  
-                            
-                            # 3. Determine optimal chunk size
-                            batch_size = max(1, int(safe_vram / bytes_per_img))
+                            test_map = results[test_path].get('index_map')
+                            bytes_per_img = Raster._estimate_batch_warp_bytes([test_map], grid_gpu)
+
+                            # 3. Determine an initial chunk size from the shared estimate
+                            batch_size = max(1, int(safe_vram / max(1, bytes_per_img)))
                             
                             # Collect index maps
                             idx_paths = [p for p in group_paths if results[p].get('index_map') is not None]
                             if idx_paths:
+                                self._status(
+                                    f"Applying distortion corrections to visibility maps... ({len(idx_paths)} cameras in current group)"
+                                )
                                 # Chunk the list based on our dynamic batch size
                                 for i in range(0, len(idx_paths), batch_size):
                                     chunk = idx_paths[i:i + batch_size]
-                                    warped = Raster.warp_batch_cuda(
-                                        [results[p]['index_map'] for p in chunk],
-                                        [-1] * len(chunk),
-                                        grid_gpu, oob_mask
-                                    )
+                                    maps = [results[p]['index_map'] for p in chunk]
+                                    should_split = False
+                                    try:
+                                        estimated_bytes = Raster._estimate_batch_warp_bytes(maps, grid_gpu)
+                                        if estimated_bytes > safe_vram:
+                                            should_split = True
+                                    except Exception:
+                                        should_split = False
+
+                                    if should_split:
+                                        if len(chunk) == 1:
+                                            raise ValueError("Single-map batch still exceeds safe CUDA budget")
+                                        batch_size = max(1, len(chunk) // 2)
+                                        chunk = idx_paths[i:i + batch_size]
+                                        maps = [results[p]['index_map'] for p in chunk]
+
+                                    chunk_start = __import__('time').perf_counter()
+                                    warped = Raster.warp_batch_cuda(maps, [-1] * len(chunk), grid_gpu, oob_mask)
                                     for p, w in zip(chunk, warped):
                                         results[p]['index_map'] = w
+
+                                        cam_name = self.warp_callables_dict[p].__self__.basename
+                                        cam_elapsed = __import__('time').perf_counter() - chunk_start
+                                        print(f"   Cam {cam_name}: {cam_elapsed:.4f}s | Distortion: {cam_elapsed:.3f}s")
 
                         cuda_ok = True
 

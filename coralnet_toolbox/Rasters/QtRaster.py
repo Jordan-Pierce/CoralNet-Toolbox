@@ -559,6 +559,34 @@ class Raster(QObject):
             return warped_np.astype(np.int32)
         return warped_np
 
+    @staticmethod
+    def _estimate_batch_warp_bytes(maps, grid_gpu=None):
+        """Estimate temporary memory required to warp a batch of 2D maps."""
+        if not maps:
+            return 0
+
+        first_shape = np.asarray(maps[0]).shape
+        if len(first_shape) != 2:
+            raise ValueError("warp_batch_cuda expects 2D maps")
+
+        height, width = first_shape
+        batch_size = len(maps)
+
+        # CPU staging: np.stack(...)->float32 with singleton channel axis.
+        cpu_bytes = batch_size * height * width * 4
+
+        # GPU tensor staging plus expanded sampling grid.
+        gpu_bytes = batch_size * height * width * 4
+        gpu_bytes += batch_size * height * width * 2 * 4
+
+        if grid_gpu is not None:
+            try:
+                gpu_bytes += int(grid_gpu.element_size() * grid_gpu.nelement())
+            except Exception:
+                pass
+
+        return cpu_bytes + gpu_bytes
+
     @classmethod
     def warp_batch_cuda(cls, maps, border_values, grid_gpu, oob_mask):
         """
@@ -580,6 +608,25 @@ class Raster(QObject):
 
         if not maps:
             return []
+
+        shapes = {np.asarray(m).shape for m in maps}
+        if len(shapes) != 1:
+            raise ValueError("All maps passed to warp_batch_cuda must have the same shape")
+
+        estimated_bytes = cls._estimate_batch_warp_bytes(maps, grid_gpu)
+        try:
+            free_vram, _ = torch.cuda.mem_get_info(
+                grid_gpu.device.index if grid_gpu is not None and getattr(grid_gpu, 'is_cuda', False) else None
+            )
+            safe_limit = int(free_vram * 0.8)
+            if estimated_bytes > safe_limit:
+                raise ValueError(
+                    f"Batch warp estimate ({estimated_bytes / 1_073_741_824:.2f} GiB) exceeds safe CUDA budget ({safe_limit / 1_073_741_824:.2f} GiB)"
+                )
+        except Exception:
+            # If mem_get_info is unavailable or fails, keep the structural checks above
+            # and let the actual CUDA call decide.
+            pass
 
         is_int = [m.dtype in (np.int32, np.int64) for m in maps]
         n = len(maps)
