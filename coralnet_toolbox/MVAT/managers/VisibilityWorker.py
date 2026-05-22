@@ -355,10 +355,17 @@ class VisibilityWorker(QObject):
 
                 def _save_one(path, result_dict):
                     import time
+                    import threading
 
                     cache_key = keys_dict.get(path)
                     if cache_key is None:
                         return False
+                        
+                    t_name = threading.current_thread().name
+                    idx_map = result_dict.get('index_map')
+                    idx_mb = idx_map.nbytes / (1024 * 1024) if idx_map is not None else 0
+                    print(f"🚨 [DISK DEBUG] {t_name} STARTING disk write for {path} ({idx_mb:.1f} MB payload)")
+                    
                     extra = extra_bytes_dict.get(path)
                     save_start = time.perf_counter()
                     cache_mgr.save_visibility(
@@ -373,6 +380,7 @@ class VisibilityWorker(QObject):
                         pixel_budget=pixel_budget,
                     )
                     elapsed = time.perf_counter() - save_start
+                    print(f"🚨 [DISK DEBUG] {t_name} FINISHED disk write for {path}")
                     log_cam_stage(self._cam_label(path, camera_labels), "Cache", elapsed, logger)
                     return True
 

@@ -938,7 +938,7 @@ class LabelWindow(QWidget):
         self.main_window.image_window.update_search_bars()
         self.update_tooltips()
 
-    def add_label(self, short_label_code, long_label_code, color, label_id=None):
+    def add_label(self, short_label_code, long_label_code, color, label_id=None, refresh_ui=True):
         """Add a new label to the window."""
         # Create the label
         label = Label(short_label_code, long_label_code, color, label_id)
@@ -951,15 +951,16 @@ class LabelWindow(QWidget):
         label.visibilityChanged.connect(self._on_label_visibility_changed)
         self.labels.append(label)
         self._short_code_map[label.short_label_code.strip().lower()] = label
-        self.set_active_label(label)
-        # Update in LabelWindow
-        self.update_labels_per_row()
-        self.reorganize_labels()
-        self.update_label_count()
-        self.main_window.image_window.update_search_bars()
-        self.sync_all_masks_with_labels()
-        QApplication.processEvents()
-        self.update_tooltips()
+        if refresh_ui:
+            self.set_active_label(label)
+            # Update in LabelWindow
+            self.update_labels_per_row()
+            self.reorganize_labels()
+            self.update_label_count()
+            self.main_window.image_window.update_search_bars()
+            self.sync_all_masks_with_labels()
+            QApplication.processEvents()
+            self.update_tooltips()
 
         return label
     
@@ -1266,7 +1267,7 @@ class LabelWindow(QWidget):
                 return True
         return False
 
-    def add_label_if_not_exists(self, short_label_code, long_label_code=None, color=None, label_id=None):
+    def add_label_if_not_exists(self, short_label_code, long_label_code=None, color=None, label_id=None, refresh_ui=True):
         """Add a label if it doesn't exist and return it, or return existing matching label.
 
         Args:
@@ -1274,6 +1275,7 @@ class LabelWindow(QWidget):
             long_label_code: Long description for the label (defaults to short_label_code if None)
             color: QColor object for the label (will be randomly generated if None)
             label_id: Unique ID for the label (will be generated if None)
+            refresh_ui: If False, defer layout and tooltip refreshes for batch imports.
 
         Returns:
             Label: Either an existing matching label or a newly created one
@@ -1289,20 +1291,22 @@ class LabelWindow(QWidget):
         if label_id is not None:
             for label in self.labels:
                 if label.id == label_id:
-                    try:
-                        self.update_label_count()
-                    except Exception:
-                        pass
+                    if refresh_ui:
+                        try:
+                            self.update_label_count()
+                        except Exception:
+                            pass
                     return label
 
         # Check if a label with matching short and long codes exists (case-insensitive)
         for label in self.labels:
             if (s_code == label.short_label_code.strip().lower() and
                 l_code == label.long_label_code.strip().lower()):
-                try:
-                    self.update_label_count()
-                except Exception:
-                    pass
+                if refresh_ui:
+                    try:
+                        self.update_label_count()
+                    except Exception:
+                        pass
                 return label
 
         # Create default values if not provided
@@ -1313,7 +1317,7 @@ class LabelWindow(QWidget):
             label_id = str(uuid.uuid4())
 
         # Create a new label and return it
-        new_label = self.add_label(short_label_code, long_label_code, color, label_id)
+        new_label = self.add_label(short_label_code, long_label_code, color, label_id, refresh_ui=refresh_ui)
         return new_label
 
     def set_selected_label(self, label_id):

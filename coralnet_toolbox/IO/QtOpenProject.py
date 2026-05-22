@@ -315,7 +315,8 @@ class OpenProject(QDialog):
                 label = self.label_window.add_label_if_not_exists(label.short_label_code,
                                                                   label.long_label_code,
                                                                   label.color,
-                                                                  label.id)
+                                                                  label.id,
+                                                                  refresh_ui=False)
                 # Update the progress bar
                 progress_bar.update_progress()
                 
@@ -328,6 +329,16 @@ class OpenProject(QDialog):
             # Close progress bar
             progress_bar.stop_progress()
             progress_bar.close()
+
+            try:
+                self.label_window.update_labels_per_row()
+                self.label_window.reorganize_labels()
+                self.label_window.update_label_count()
+                self.main_window.image_window.update_search_bars()
+                self.label_window.update_tooltips()
+            except Exception:
+                pass
+
             try:
                 self.main_window.status_bar.showMessage("Import complete.", 3000)
             except Exception:

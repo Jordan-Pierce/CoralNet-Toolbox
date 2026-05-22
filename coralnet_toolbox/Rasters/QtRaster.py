@@ -634,8 +634,15 @@ class Raster(QObject):
         is_int = [m.dtype in (np.int32, np.int64) for m in maps]
         n = len(maps)
 
+        total_input_mb = sum(m.nbytes for m in maps) / (1024 * 1024)
+        print(f"\n🚨 [RAM DEBUG - WARP] Preparing to stack {n} maps. Input size: {total_input_mb:.1f} MB")
+        
         # Stack → (N, 1, H, W) float32
         stacked = np.stack(maps, axis=0).astype(np.float32)[:, np.newaxis, :, :]
+        
+        stacked_mb = stacked.nbytes / (1024 * 1024)
+        print(f"🚨 [RAM DEBUG - WARP] Post-stack! Created contiguous float32 array: {stacked_mb:.1f} MB")
+
         tensor  = torch.from_numpy(stacked).to(grid_gpu.device)   # zero-copy when possible
 
         # Expand grid: (1, H, W, 2) → (N, H, W, 2)
