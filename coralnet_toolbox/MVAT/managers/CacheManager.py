@@ -76,7 +76,7 @@ def _save_npy_fast(arr: np.ndarray, path: str) -> None:
         # blosc2 with lz4 is typically 3-5× faster than gzip at similar ratios.
         buf = io.BytesIO()
         np.save(buf, arr)
-        compressed = _blosc2.compress(buf.getvalue(), codec=_blosc2.Codec.LZ4, clevel=1)
+        compressed = _blosc2.compress(buf.getvalue(), typesize=1, codec=_blosc2.Codec.LZ4, clevel=1)
         with open(path, 'wb') as f:
             f.write(compressed)
     else:

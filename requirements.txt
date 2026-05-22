@@ -2,6 +2,7 @@ PyQt5>=5.15.11
 PyQtADS
 pyqtgraph
 ujson
+blosc2
 rasterio
 pycocotools
 ultralytics>=8.42.5
