@@ -604,13 +604,15 @@ class Raster(QObject):
             oob_mask      : bool torch.Tensor shape (H, W) — out-of-bounds pixels
 
         Returns:
-            list of np.ndarray, same dtypes as inputs
+            tuple[list[np.ndarray], list[np.ndarray]]:
+                - warped maps converted back to CPU
+                - visible element IDs per map (np.int32 arrays)
         """
         import torch
         import torch.nn.functional as F
 
         if not maps:
-            return []
+            return [], []
 
         shapes = {np.asarray(m).shape for m in maps}
         if len(shapes) != 1:
@@ -648,8 +650,7 @@ class Raster(QObject):
         # Expand grid: (1, H, W, 2) → (N, H, W, 2)
         grid_n = grid_gpu.expand(n, -1, -1, -1)
 
-        warped = F.grid_sample(tensor, grid_n, mode='nearest',
-                               padding_mode='zeros', align_corners=True)
+        warped = F.grid_sample(tensor, grid_n, mode='nearest', padding_mode='zeros', align_corners=True)
         # warped: (N, 1, H, W)
 
         # Apply per-map border values to OOB pixels
@@ -657,12 +658,22 @@ class Raster(QObject):
             if bv != 0 and not (isinstance(bv, float) and bv == 0.0):
                 warped[i, 0, oob_mask] = float(bv)
 
+        # Extract visible IDs on the GPU before bringing the maps back to CPU.
+        visible_indices_list = []
+        for i in range(n):
+            valid_mask = warped[i, 0] >= 0
+            visible_indices_list.append(
+                torch.unique(warped[i, 0][valid_mask]).cpu().numpy().astype(np.int32)
+            )
+
         # Move back to CPU and convert dtypes
         warped_cpu = warped.squeeze(1).cpu().numpy()   # (N, H, W)
-        return [
+        warped_maps = [
             row.astype(np.int32) if flag else row
             for row, flag in zip(warped_cpu, is_int)
         ]
+
+        return warped_maps, visible_indices_list
 
     def add_index_map(self, index_map: np.ndarray, index_map_path: Optional[str] = None,
                       visible_indices: Optional[np.ndarray] = None,

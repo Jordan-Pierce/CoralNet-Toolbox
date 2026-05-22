@@ -173,8 +173,8 @@ class VisibilityWorker(QObject):
             #             single F.grid_sample call on CUDA.
             #   • Opt 1 – fall back to a parallel ThreadPoolExecutor of cv2.remap
             #             calls (each releases the GIL) when CUDA is unavailable.
-            #   • Opt 3 – visible_indices is derived from the warped index map
-            #             using a parallel np.unique pass instead of a serial loop.
+            #   • Opt 3 – visible_indices is derived inside warp_batch_cuda via
+            #             GPU torch.unique, avoiding a separate CPU normalize pass.
             # =================================================================
             distorted_paths = [p for p in results if p in self.warp_callables_dict]
 
@@ -244,14 +244,18 @@ class VisibilityWorker(QObject):
                                         maps = [results[p]['index_map'] for p in chunk]
 
                                     chunk_start = __import__('time').perf_counter()
-                                    warped = Raster.warp_batch_cuda(maps, [-1] * len(chunk), grid_gpu, oob_mask)
+                                    warped_maps, visible_indices = Raster.warp_batch_cuda(
+                                        maps, [-1] * len(chunk), grid_gpu, oob_mask
+                                    )
                                     chunk_elapsed = __import__('time').perf_counter() - chunk_start
                                     per_cam_elapsed = chunk_elapsed / max(1, len(chunk))
-                                    for p, w in zip(chunk, warped):
-                                        results[p]['index_map'] = w
+                                    for idx, p in enumerate(chunk):
+                                        results[p]['index_map'] = warped_maps[idx]
+                                        results[p]['visible_indices'] = visible_indices[idx]
+                                        VisibilityManager._normalize_result_dict(results[p], self.compute_depth_maps)
 
                                         cam_name = self._cam_label(p, camera_labels)
-                                        log_cam_stage(cam_name, "Distortion", per_cam_elapsed, logger)
+                                        log_cam_stage(cam_name, "Distortion & Normalize", per_cam_elapsed, logger)
 
                         cuda_ok = True
 
@@ -261,10 +265,23 @@ class VisibilityWorker(QObject):
                 if not cuda_ok:
                     # Parallel CPU path — cv2.remap releases the GIL so threads help
                     def _cpu_warp(path):
+                        import time
+
                         warp_fn = self.warp_callables_dict[path]
                         r = results[path]
                         if r.get('index_map') is not None:
+                            stage_start = time.perf_counter()
                             r['index_map'] = warp_fn(r['index_map'], border_value=-1)
+                            idx_map = r['index_map']
+                            if idx_map is not None:
+                                valid_mask = idx_map >= 0
+                                r['visible_indices'] = np.unique(idx_map[valid_mask]).astype(np.int32)
+                            try:
+                                VisibilityManager._normalize_result_dict(r, self.compute_depth_maps)
+                            except Exception:
+                                pass
+                            elapsed = time.perf_counter() - stage_start
+                            log_cam_stage(self._cam_label(path, camera_labels), "Distortion & Normalize", elapsed, logger)
 
                     n_workers = min(8, len(distorted_paths))
                     with ThreadPoolExecutor(max_workers=n_workers) as pool:
@@ -274,35 +291,6 @@ class VisibilityWorker(QObject):
                                 fut.result()
                             except Exception as exc:
                                 logger.warning(f"CPU warp failed: {exc}")
-
-                # --- Phase B: visible_indices + normalize (parallel) ------
-                # Opt 2: inverted index is NOT rebuilt here; add_index_map's
-                # daemon thread handles it so we don't block the emit.
-                def _post_warp(path):
-                    import time
-
-                    stage_start = time.perf_counter()
-                    r = results[path]
-                    idx_map = r.get('index_map')
-                    if idx_map is not None:
-                        valid_mask = idx_map >= 0
-                        r['visible_indices'] = np.unique(idx_map[valid_mask]).astype(np.int32)
-                    try:
-                        VisibilityManager._normalize_result_dict(r, self.compute_depth_maps)
-                    except Exception:
-                        pass
-
-                    elapsed = time.perf_counter() - stage_start
-                    log_cam_stage(self._cam_label(path, camera_labels), "Normalize", elapsed, logger)
-
-                n_workers = min(8, len(distorted_paths))
-                with ThreadPoolExecutor(max_workers=n_workers) as pool:
-                    futs = [pool.submit(_post_warp, p) for p in distorted_paths]
-                    for fut in as_completed(futs):
-                        try:
-                            fut.result()
-                        except Exception:
-                            pass
 
             # =================================================================
             # 1. Reconstruct depth maps from the final index maps when enabled

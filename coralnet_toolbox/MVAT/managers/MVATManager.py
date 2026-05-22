@@ -448,7 +448,7 @@ class MVATManager(QObject):
         self._projected_cursor_context = None
         
         # Data Settings
-        self.compute_depth_maps_enabled = True
+        self.compute_depth_maps_enabled = False
         # New toggle: whether to compute index maps in background
         self.compute_index_maps_enabled = True
         # Maximum pixel budget for background index map computation
