@@ -97,7 +97,7 @@ def _load_npy_fast(path: str, mmap_mode: Optional[str] = None) -> np.ndarray:
     return np.load(path, mmap_mode=mmap_mode)
 
 
-# TODO - Tradeoff: w/ compression, slow (0.3), w/o compression, fast (0.05)
+# TODO - Tradeoff: w/ compression, slow (0.3), w/o compression, fast (0.05) at first, then thermal damage to disk :) and slower..
 # def _save_npy_fast(arr: np.ndarray, path: str) -> None:
 #     """
 #     Saves directly to disk. 
