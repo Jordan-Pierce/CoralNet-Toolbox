@@ -216,10 +216,11 @@ class VisibilityWorker(QObject):
                             bytes_per_img = Raster._estimate_batch_warp_bytes([test_map], grid_gpu)
 
                             # 3. Determine an initial chunk size from the shared estimate
-                            batch_size = max(1, int(safe_vram / max(1, bytes_per_img)))
+                            batch_size = max(1, int(safe_vram / max(1, bytes_per_img)))                            
                             
                             # Collect index maps
                             idx_paths = [p for p in group_paths if results[p].get('index_map') is not None]
+
                             if idx_paths:
                                 self._status(
                                     f"Applying distortion corrections to visibility maps... ({len(idx_paths)} cameras in current group)"
