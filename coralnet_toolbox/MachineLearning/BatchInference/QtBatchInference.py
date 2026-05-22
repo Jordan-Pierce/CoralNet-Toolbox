@@ -15,6 +15,13 @@ from coralnet_toolbox.Common import ThresholdsWidget
 from coralnet_toolbox.QtProgressBar import ProgressBar
 import numpy as np
 
+try:
+    import torch
+    import torch.nn.functional as F
+except ImportError:
+    torch = None
+    F = None
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -123,6 +130,123 @@ class BatchInferenceWorker(QThread):
         except Exception:
             return np.zeros((640, 640, 3), dtype=np.uint8)
 
+    def _decode_video_source(self, item):
+        """Decode a video frame into a model-ready tensor and preview QImage."""
+        try:
+            decoder = getattr(item.raster, "get_frame_for_inference", None)
+            if decoder is not None:
+                model_input, q_image = decoder(item.source, device=self.device)
+                if model_input is not None:
+                    return model_input, q_image
+        except Exception:
+            pass
+
+        try:
+            raw = item.raster.get_bgr_frame(item.source)
+            if raw is None:
+                return np.zeros((640, 640, 3), dtype=np.uint8), None
+
+            from coralnet_toolbox.Rasters.VideoRaster import VideoRaster
+
+            return raw, VideoRaster._bgr_to_qimage(raw)
+        except Exception:
+            return np.zeros((640, 640, 3), dtype=np.uint8), None
+
+    def _resolve_target_device(self):
+        """Convert the configured device into a torch.device when possible."""
+        if torch is None:
+            return None
+        if self.device is None:
+            return None
+        if isinstance(self.device, torch.device):
+            return self.device
+        try:
+            return torch.device(self.device)
+        except Exception:
+            return None
+
+    def _resolve_model_stride(self):
+        """Best-effort resolution of the model stride for tensor inputs."""
+        if torch is None:
+            return 32
+        stride = None
+        try:
+            stride = getattr(self.model, 'stride', None)
+        except Exception:
+            stride = None
+
+        if stride is None:
+            try:
+                overrides = getattr(self.model, 'overrides', None)
+                if isinstance(overrides, dict):
+                    stride = overrides.get('stride', None)
+            except Exception:
+                stride = None
+
+        if torch.is_tensor(stride):
+            try:
+                if stride.numel() > 0:
+                    stride = int(stride.max().item())
+            except Exception:
+                stride = None
+        elif isinstance(stride, (tuple, list)):
+            try:
+                stride = max(int(value) for value in stride if value is not None)
+            except Exception:
+                stride = None
+
+        try:
+            stride = int(stride)
+        except Exception:
+            stride = 32
+
+        return max(1, stride)
+
+    def _prepare_video_input(self, video_input):
+        """Convert a video frame into a stride-safe BCHW tensor for YOLO."""
+        if torch is None:
+            return video_input
+
+        if video_input is None:
+            return torch.zeros((1, 3, 640, 640), dtype=torch.float32)
+
+        if not torch.is_tensor(video_input):
+            if isinstance(video_input, np.ndarray):
+                video_input = torch.from_numpy(np.ascontiguousarray(video_input))
+            else:
+                video_input = torch.as_tensor(video_input)
+
+        if video_input.ndim == 3:
+            if video_input.shape[0] == 3:
+                video_input = video_input.unsqueeze(0)
+            elif video_input.shape[-1] == 3:
+                video_input = video_input.permute(2, 0, 1).unsqueeze(0)
+        elif video_input.ndim == 4 and video_input.shape[1] != 3 and video_input.shape[-1] == 3:
+            video_input = video_input.permute(0, 3, 1, 2)
+
+        if video_input.ndim != 4:
+            return torch.zeros((1, 3, 640, 640), dtype=torch.float32, device=self._resolve_target_device() or 'cpu')
+
+        target_device = self._resolve_target_device()
+        if target_device is not None and video_input.device != target_device:
+            video_input = video_input.to(target_device)
+
+        if not torch.is_floating_point(video_input):
+            video_input = video_input.float().div(255.0)
+        else:
+            video_input = video_input.float()
+
+        stride = self._resolve_model_stride()
+        height = int(video_input.shape[2])
+        width = int(video_input.shape[3])
+        pad_height = (-height) % stride
+        pad_width = (-width) % stride
+
+        if pad_height or pad_width:
+            video_input = F.pad(video_input, (0, pad_width, 0, pad_height), value=0.0)
+
+        return video_input
+
     def run(self):
         """Inference loop executed on the worker thread."""
         try:
@@ -135,6 +259,7 @@ class BatchInferenceWorker(QThread):
                 if self._waiting_for_ui:
                     while self._waiting_for_ui and self._is_running:
                         time.sleep(0.002)
+                        
 
                 # Check stop flag and snapshot thresholds
                 locker = QMutexLocker(self._mutex)
@@ -165,16 +290,25 @@ class BatchInferenceWorker(QThread):
 
                 # Decode each source in the batch (file path, frame, or tile)
                 inputs = []
+                video_q_images = []
                 for item in batch:
                     try:
-                        inputs.append(self._decode_source(item))
+                        if item.is_video:
+                            model_input, q_image = self._decode_video_source(item)
+                            inputs.append(model_input)
+                            video_q_images.append(q_image)
+                        else:
+                            inputs.append(self._decode_source(item))
+                            video_q_images.append(None)
                     except Exception:
                         inputs.append(np.zeros((640, 640, 3), dtype=np.uint8))
+                        video_q_images.append(None)
 
                 # Run YOLO on the mini-batch
+                model_source = self._prepare_video_input(inputs[0]) if len(batch) == 1 and batch[0].is_video else inputs
                 try:
                     results = list(self.model(
-                        inputs,
+                        model_source,
                         conf=conf,
                         iou=iou,
                         max_det=max_det,
@@ -221,13 +355,15 @@ class BatchInferenceWorker(QThread):
                         # Build a QImage from the raw BGR frame (video items only)
                         q_img = None
                         if item.is_video:
-                            raw = inputs[j]
-                            if isinstance(raw, np.ndarray):
-                                try:
-                                    from coralnet_toolbox.Rasters.VideoRaster import VideoRaster
-                                    q_img = VideoRaster._bgr_to_qimage(raw)
-                                except Exception:
-                                    pass
+                            q_img = video_q_images[j]
+                            if q_img is None:
+                                raw = inputs[j]
+                                if isinstance(raw, np.ndarray):
+                                    try:
+                                        from coralnet_toolbox.Rasters.VideoRaster import VideoRaster
+                                        q_img = VideoRaster._bgr_to_qimage(raw)
+                                    except Exception:
+                                        pass
 
                         self.itemProcessed.emit(InferenceResult(
                             batch_key=item.batch_key,

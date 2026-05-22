@@ -8,6 +8,7 @@ the MainWindow, RasterManager, MVATViewer (3D), and ContextMatrix (2D).
 
 import os
 import time
+import threading
 import numpy as np
 import traceback
 from typing import Optional
@@ -24,6 +25,10 @@ from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
 from coralnet_toolbox.MVAT.managers.VisibilityWorker import VisibilityWorker
 from coralnet_toolbox.MVAT.managers.CacheManager import CacheManager
 from coralnet_toolbox.MVAT.managers.LabelPainterThread import LabelPainterThread
+from coralnet_toolbox.MVAT.managers.visibility_logging import (
+    get_visibility_logger,
+    log_cam_stage,
+)
 
 from coralnet_toolbox.MVAT.core.constants import (
     MARKER_COLOR_SELECTED,
@@ -36,6 +41,9 @@ from coralnet_toolbox.MVAT.core.constants import (
 from coralnet_toolbox.MVAT.core.Model import MeshProduct
 
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
+
+
+logger = get_visibility_logger()
 
 
 def resolve_class_conflicts_vectorized(element_ids: np.ndarray, class_ids: np.ndarray):
@@ -459,6 +467,8 @@ class MVATManager(QObject):
         self._active_workers = []
         self._context_stats_request_id = 0
         self._latest_context_stats_request_id = 0
+        self._depth_build_lock = threading.Lock()
+        self._pending_depth_build_paths = set()
 
         # Multi-camera annotation state
         self.multi_annotate_enabled = False
@@ -1188,26 +1198,92 @@ class MVATManager(QObject):
             self.main_window.status_bar.showMessage("Ortho index map ready.", 3000)
 
     def _reconstruct_depth_map_for_camera(self, primary_target, camera, index_map):
+        """Reconstruct the depth map for the given camera."""
+        
         if not self.compute_depth_maps_enabled or primary_target is None or index_map is None:
             return None
 
         try:
+            start_time = time.perf_counter()
             from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
-            return VisibilityManager.reconstruct_depth_map(index_map, primary_target, camera.R, camera.t)
+            depth_map = VisibilityManager.reconstruct_depth_map(index_map, primary_target, camera.R, camera.t)
+            if depth_map is not None:
+                log_cam_stage(camera.label, "Depth Map", time.perf_counter() - start_time, logger)
+            return depth_map
         except Exception as exc:
             print(f"⚠️ Failed to reconstruct depth map for {camera.label}: {exc}")
             return None
 
+    def _reconstruct_depth_map_for_camera_fast(self, primary_target, camera):
+        """Fast reconstruction of the depth map for the given camera."""
+        if not self.compute_depth_maps_enabled or primary_target is None or camera is None:
+            return None
+
+        try:
+            start_time = time.perf_counter()
+            from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
+            depth_map = VisibilityManager.reconstruct_depth_map_fast(camera, primary_target)
+            if depth_map is not None:
+                log_cam_stage(camera.label, "Depth Map (Fast)", time.perf_counter() - start_time, logger)
+            return depth_map
+        except Exception as exc:
+            print(f"⚠️ Failed to fast-reconstruct depth map for {camera.label}: {exc}")
+            return None
+
+    def _queue_active_camera_depth_build(self, primary_target=None):
+        """Queue the active camera for depth map reconstruction."""
+        if not self.compute_depth_maps_enabled:
+            return
+
+        camera = self.selected_camera
+        if camera is None:
+            return
+
+        if getattr(camera._raster, 'z_channel', None) is not None:
+            return
+
+        if camera.visible_indices is None or len(camera.visible_indices) == 0:
+            return
+
+        if getattr(camera._raster, 'index_map', None) is None:
+            return
+
+        if primary_target is None:
+            try:
+                primary_target = self.viewer.scene_context.get_primary_target()
+            except Exception:
+                primary_target = None
+
+        if primary_target is None:
+            return
+
+        camera_path = camera.image_path
+        with self._depth_build_lock:
+            if camera_path in self._pending_depth_build_paths:
+                return
+            self._pending_depth_build_paths.add(camera_path)
+
+        def _lazy_build_depth():
+            try:
+                depth_map = self._reconstruct_depth_map_for_camera_fast(primary_target, camera)
+                if depth_map is None:
+                    depth_map = self._reconstruct_depth_map_for_camera(
+                        primary_target, camera, camera.index_map,
+                    )
+                if depth_map is not None:
+                    try:
+                        camera._raster.merge_or_set_depth_map(depth_map)
+                    except Exception:
+                        pass
+            finally:
+                with self._depth_build_lock:
+                    self._pending_depth_build_paths.discard(camera_path)
+
+        threading.Thread(target=_lazy_build_depth, daemon=True).start()
+
     def _process_visibility_results(self, results: dict, target_file_path: str):
         """
         Process visibility computation results and store in cameras.
-        
-        Shared by both sync (VTK mesh) and async (worker) code paths.
-        If the async worker already saved the cache to disk, it skips IO on the main thread.
-        
-        Args:
-            results: Dict mapping image_path -> visibility result dict
-            target_file_path: Path to primary target for cache key
         """
         primary_target = None
         try:
@@ -1220,28 +1296,38 @@ class MVATManager(QObject):
             if not camera:
                 continue
 
-            # Store index map with element type metadata
             element_type = result.get('element_type', 'point')
-            
-            # 1. Check if the background worker already handled the disk I/O
             cache_path = result.get('cache_path')
             
+            # --- Reload arrays from disk if stripped by the worker ---
+            if result.get('index_map') is None and cache_path and self.cache_manager:
+                cache_key = camera._raster.extrinsics
+                extra = (camera._raster.dist_coeffs.tobytes()
+                         if camera.is_distorted
+                         and camera._raster.dist_coeffs is not None else None)
+                
+                # Loads using memory-mapping (mmap_mode='r') where possible
+                loaded_data = self.cache_manager.load_visibility(
+                    cache_key, target_file_path, element_type, extra,
+                    pixel_budget=self.pixel_budget,
+                )
+                
+                if loaded_data:
+                    result['index_map'] = loaded_data.get('index_map')
+                    result['depth_map'] = loaded_data.get('depth_map')
+
             # 2. Fallback for sync paths (like VTK) that run on the main thread
             if cache_path is None and self.cache_manager is not None and target_file_path:
                 try:
-                    # Use extrinsics for perspective
                     cache_key = camera._raster.extrinsics
                     extra = (camera._raster.dist_coeffs.tobytes()
                              if camera.is_distorted
                              and camera._raster.dist_coeffs is not None else None)
                     cache_path = self.cache_manager.save_visibility(
-                        cache_key,
-                        target_file_path,
-                        result.get('index_map'),
+                        cache_key, target_file_path, result.get('index_map'),
                         result.get('visible_indices'),
                         result.get('depth_map') if self.compute_depth_maps_enabled else None,
-                        element_type=element_type,
-                        extra_hash_data=extra,
+                        element_type=element_type, extra_hash_data=extra,
                         pixel_budget=self.pixel_budget,
                     )
                 except Exception:
@@ -1261,17 +1347,14 @@ class MVATManager(QObject):
 
             if self.compute_depth_maps_enabled:
                 depth_map = result.get('depth_map')
-                if depth_map is None:
-                    depth_map = self._reconstruct_depth_map_for_camera(
-                        primary_target,
-                        camera,
-                        result.get('index_map'),
-                    )
                 if depth_map is not None:
                     try:
                         camera._raster.merge_or_set_depth_map(depth_map)
                     except Exception:
                         pass
+
+        self._queue_active_camera_depth_build(primary_target)
+
             
     def _on_visibility_error(self, error_str: str):
         print(f"Visibility worker error:\n{error_str}")
@@ -1310,6 +1393,8 @@ class MVATManager(QObject):
             except Exception:
                 pass
 
+            self._queue_active_camera_depth_build()
+
             # Update the N / M stat when the active camera changes.
             self._update_context_stats()
 
@@ -1338,6 +1423,7 @@ class MVATManager(QObject):
         self._focus_context_camera(path, animate=True)
 
     def _get_context_camera_order(self) -> list:
+        """Get the current order of cameras in the context matrix."""
         ordered_paths = []
         if self.context_matrix is not None and hasattr(self.context_matrix, 'get_camera_order'):
             try:
@@ -1351,6 +1437,7 @@ class MVATManager(QObject):
         return [path for path in ordered_paths if path in self.cameras]
 
     def _focus_context_camera(self, path: str, animate: bool = True):
+        """Focus the context matrix on the specified camera."""
         camera = self.cameras.get(path)
         if camera is None:
             return
@@ -1600,18 +1687,13 @@ class MVATManager(QObject):
                     inverted_index=cached_data.get('inverted_index')
                 )
 
-                # Restore depth map if enabled. New cache entries are index-map-only,
-                # so reconstruct from the final stored index map when needed.
                 if self.compute_depth_maps_enabled:
                     depth_map = cached_data.get('depth_map')
-                    if depth_map is None:
-                        depth_map = self._reconstruct_depth_map_for_camera(
-                            primary_target,
-                            camera,
-                            camera._raster.index_map,
-                        )
                     if depth_map is not None:
-                        camera._raster.merge_or_set_depth_map(depth_map)
+                        try:
+                            camera._raster.merge_or_set_depth_map(depth_map)
+                        except Exception:
+                            pass
 
                 print(f"💽 Loaded visibility from disk cache: {camera.label}")
             else:
@@ -1666,16 +1748,6 @@ class MVATManager(QObject):
                         warp_fn = camera._raster.warp_linear_map_to_distorted
                         if result.get('index_map') is not None:
                             result['index_map'] = warp_fn(result['index_map'], nodata=-1)
-                    if self.compute_depth_maps_enabled and result.get('index_map') is not None:
-                        try:
-                            result['depth_map'] = VisibilityManager.reconstruct_depth_map(
-                                result['index_map'],
-                                mesh_product,
-                                camera.R,
-                                camera.t,
-                            )
-                        except Exception as exc:
-                            print(f"⚠️ Failed to reconstruct depth map for {camera.label}: {exc}")
                     results[camera.image_path] = result
                 except Exception as e:
                     print(f"⚠️ Failed to compute mesh visibility for {camera.label}: {e}")
@@ -1724,7 +1796,7 @@ class MVATManager(QObject):
             worker = VisibilityWorker(
                 primary_target=primary_target, 
                 camera_params_dict=camera_params_dict, 
-                compute_depth_maps=self.compute_depth_maps_enabled,
+                compute_depth_maps=False,
                 cache_manager=self.cache_manager,
                 cache_keys_dict=cache_keys_dict,
                 target_file_path=primary_target.file_path if primary_target else "",
@@ -1745,6 +1817,13 @@ class MVATManager(QObject):
             worker.signals.finished.connect(thread.quit)
             worker.signals.finished.connect(worker.deleteLater)
             thread.finished.connect(thread.deleteLater)
+
+            # Drop finished workers so the retention list only tracks live work.
+            self._active_workers = [
+                (active_thread, active_worker)
+                for active_thread, active_worker in self._active_workers
+                if active_thread.isRunning()
+            ]
 
             # Keep references to avoid GC
             self._active_workers.append((thread, worker))
@@ -2068,28 +2147,6 @@ class MVATManager(QObject):
             pass
 
         sphere_manager = getattr(self.viewer, '_sphere_manager', None)
-        try:
-            shape = getattr(sphere_manager, 'shape', None)
-            if shape is not None:
-                shape = str(shape).strip().lower()
-                if shape in ('circle', 'square'):
-                    return shape
-        except Exception:
-            pass
-
-        return 'circle'
-
-    def _get_active_3d_tool(self):
-        getter = getattr(self.viewer, 'get_selected_3d_tool', None)
-        if callable(getter):
-            try:
-                return getter()
-            except Exception:
-                return getattr(self.viewer, '_active_3d_tool', None)
-        return getattr(self.viewer, '_active_3d_tool', None)
-
-    def _get_active_3d_tool_kind(self):
-        active_tool = self._get_active_3d_tool()
         if active_tool is None:
             return None, None
 

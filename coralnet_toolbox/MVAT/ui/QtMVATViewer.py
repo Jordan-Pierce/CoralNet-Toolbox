@@ -413,7 +413,6 @@ class MVATViewer(QFrame):
         self.scene_context = SceneContext()
         # Product actors keyed by product_id
         self._product_actors = {}
-        # Legacy filtered actor removed — picking now operates on visible scene actors
         self.point_size = point_size
         self._show_rays_enabled = show_rays
         self._ray_visible = True
@@ -469,7 +468,7 @@ class MVATViewer(QFrame):
 
         # Placeholder shown when no scene products present
         self._placeholder_label = QLabel(
-            "No 3D data loaded\nDrag a file here to load:\n• Point clouds (.ply, .pcd)\n• Meshes (.obj, .stl)"
+            "No 3D data loaded\nDrag a file here to load:\n• Point clouds (.pcd)\n• Meshes (.ply, .obj, .stl)"
         )
         self._placeholder_label.setStyleSheet(
             app_theme.scale_qss(
@@ -765,8 +764,6 @@ class MVATViewer(QFrame):
         self._primary_target_action_group = QActionGroup(self)
         self._primary_target_action_group.setExclusive(True)
         self._update_primary_target_menu()  # Populate initially
-
-        view_menu.addSeparator()
 
         view_menu.addSeparator()
 
@@ -1966,8 +1963,8 @@ class MVATViewer(QFrame):
     # --------------------------------------------------------------------------
     
     # Supported file extensions for each product type
-    _POINT_CLOUD_EXTENSIONS = ['.ply', '.pcd']
-    _MESH_EXTENSIONS = ['.obj', '.stl', '.vtk']
+    _POINT_CLOUD_EXTENSIONS = ['.pcd']
+    _MESH_EXTENSIONS = ['.ply', '.obj', '.stl', '.vtk']
     
     @property
     def point_cloud(self) -> 'PointCloudProduct':
@@ -2077,8 +2074,6 @@ class MVATViewer(QFrame):
         Returns:
             Scene product instance, or None if type cannot be determined.
         """
-        from PyQt5.QtWidgets import QMessageBox
-        
         file_ext = os.path.splitext(file_path)[1].lower()
         
         # STL and OBJ are always meshes by format definition
@@ -2091,27 +2086,10 @@ class MVATViewer(QFrame):
             print(f"☁️ PCD is a point-cloud-only format, creating PointCloudProduct")
             return PointCloudProduct.from_file(file_path, point_size=self.point_size)
         
-        # PLY can be either - ask user
+        # PLY defaults to mesh loading.
         if file_ext == '.ply':
-            msg = QMessageBox(self)
-            msg.setWindowTitle("PLY File Type")
-            msg.setText(f"How should '{os.path.basename(file_path)}' be loaded?")
-            msg.setInformativeText("PLY files can contain either mesh faces or point cloud vertices.")
-            btn_mesh = msg.addButton("Mesh (faces)", QMessageBox.YesRole)
-            btn_pc = msg.addButton("Point Cloud", QMessageBox.NoRole)
-            msg.setDefaultButton(btn_mesh)
-            msg.exec_()
-            
-            if msg.clickedButton() == btn_mesh:
-                print(f"📐 User selected: PLY as MeshProduct")
-                try:
-                    return MeshProduct.from_file(file_path)
-                except ValueError as e:
-                    print(f"⚠️ MeshProduct creation failed: {e}, falling back to PointCloudProduct")
-                    return PointCloudProduct.from_file(file_path, point_size=self.point_size)
-            else:
-                print(f"☁️ User selected: PLY as PointCloudProduct")
-                return PointCloudProduct.from_file(file_path, point_size=self.point_size)
+            print(f"📐 PLY defaults to MeshProduct")
+            return MeshProduct.from_file(file_path)
         
         # VTK - check structure
         if file_ext == '.vtk':
@@ -2163,6 +2141,8 @@ class MVATViewer(QFrame):
         except Exception:
             pass
 
+        self._sync_context_matrix_scene_controls()
+
     def remove_product(self, product_id: str) -> None:
         """
         Remove a scene product from the viewer.
@@ -2193,6 +2173,20 @@ class MVATViewer(QFrame):
         # Update array selector based on remaining products
         try:
             self._update_array_selector()
+        except Exception:
+            pass
+
+        self._sync_context_matrix_scene_controls()
+
+    def _sync_context_matrix_scene_controls(self) -> None:
+        """Mirror scene-product availability into the ContextMatrix toolbar state."""
+        manager = getattr(self, 'mvat_manager', None)
+        context_matrix = getattr(manager, 'context_matrix', None) if manager is not None else None
+        if context_matrix is None:
+            return
+
+        try:
+            context_matrix.set_scene_controls_enabled(self.scene_context.has_any_product())
         except Exception:
             pass
 

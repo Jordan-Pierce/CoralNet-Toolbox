@@ -267,6 +267,11 @@ class ImageWindow(QWidget):
         # --- Setup Filter ComboBox ---
         self.filter_combo = CheckableComboBox(self)
         self.filter_combo.addItem("Highlighted")
+        self.filter_combo.addItem("Image")
+        self.filter_combo.addItem("Ortho")
+        self.filter_combo.addItem("Video")
+        self.filter_combo.addItem("Has Z-Channel")
+        self.filter_combo.addItem("has Transform")
         self.filter_combo.addItem("Has Predictions")
         self.filter_combo.addItem("Has Annotations")
         self.filter_combo.addItem("No Annotations")
@@ -1008,6 +1013,19 @@ class ImageWindow(QWidget):
         checked_filters = self.filter_combo.get_checked_items()
         
         highlighted_only = "Highlighted" in checked_filters
+        raster_type_map = {
+            "Image": "ImageRaster",
+            "Ortho": "OrthoRaster",
+            "Video": "VideoRaster",
+        }
+        allowed_raster_types = {
+            raster_type_map[item] for item in checked_filters if item in raster_type_map
+        }
+        if not allowed_raster_types:
+            allowed_raster_types = None
+
+        require_z_channel = "Has Z-Channel" in checked_filters
+        require_transform = "has Transform" in checked_filters
         has_predictions = "Has Predictions" in checked_filters
         has_annotations = "Has Annotations" in checked_filters
         no_annotations = "No Annotations" in checked_filters
@@ -1024,6 +1042,9 @@ class ImageWindow(QWidget):
             require_annotations=has_annotations,
             require_no_annotations=no_annotations,
             require_predictions=has_predictions,
+            allowed_raster_types=allowed_raster_types,
+            require_z_channel=require_z_channel,
+            require_transform=require_transform,
             selected_paths=highlighted_paths,
             use_threading=use_threading
         )

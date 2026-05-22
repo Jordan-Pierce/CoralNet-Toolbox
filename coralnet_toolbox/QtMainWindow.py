@@ -2773,6 +2773,8 @@ class MainWindow(QMainWindow):
         self.scale_actions = {}
 
         scale_options = [
+            ("25%", app_theme.SCALE_MODE_MANUAL, 0.25),
+            ("50%", app_theme.SCALE_MODE_MANUAL, 0.50),
             ("75%", app_theme.SCALE_MODE_MANUAL, 0.75),
             ("100%", app_theme.SCALE_MODE_MANUAL, 1.0),
             ("125%", app_theme.SCALE_MODE_MANUAL, 1.25),

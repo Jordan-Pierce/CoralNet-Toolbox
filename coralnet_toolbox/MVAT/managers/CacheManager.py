@@ -76,7 +76,7 @@ def _save_npy_fast(arr: np.ndarray, path: str) -> None:
         # blosc2 with lz4 is typically 3-5× faster than gzip at similar ratios.
         buf = io.BytesIO()
         np.save(buf, arr)
-        compressed = _blosc2.compress(buf.getvalue(), codec=_blosc2.Codec.LZ4, clevel=1)
+        compressed = _blosc2.compress(buf.getvalue(), typesize=1, codec=_blosc2.Codec.LZ4, clevel=1)
         with open(path, 'wb') as f:
             f.write(compressed)
     else:
@@ -130,23 +130,34 @@ def _tmp_path(p: str) -> str:
 def _save_npy_format(base: str, index_map: np.ndarray,
                      visible_indices: np.ndarray,
                      depth_map: Optional[np.ndarray],
-                     element_type: str) -> bool:
+                     element_type: str,
+                     **extra_meta) -> bool:
     """
-    Atomically write index_map, visible_indices, and metadata as separate
-    files rooted at *base*.  Returns True on success.
+    Atomically write index_map, visible_indices, optional depth_map, and metadata 
+    as separate files rooted at *base*. Returns True on success.
     """
     paths = _npy_paths(base)
     tmp = {k: _tmp_path(v) for k, v in paths.items()}
     try:
         _save_npy_fast(index_map, tmp['idx'])
         _save_npy_fast(visible_indices, tmp['vis'])
+        
         meta = {'element_type': element_type, 'has_depth_map': False}
+        if depth_map is not None:
+            _save_npy_fast(depth_map, tmp['dep'])
+            meta['has_depth_map'] = True
+            
+        # Merge in any extra metadata (e.g., ortho scale_factor)
+        meta.update(extra_meta)
+        
         with open(tmp['meta'], 'w') as f:
             json.dump(meta, f)
-        # Atomic rename — temp names already carry the right extension so
-        # os.replace() finds them on both Windows and POSIX.
+            
+        # Atomic rename
         os.replace(tmp['idx'],  paths['idx'])
         os.replace(tmp['vis'],  paths['vis'])
+        if depth_map is not None:
+            os.replace(tmp['dep'], paths['dep'])
         os.replace(tmp['meta'], paths['meta'])
         return True
     except Exception as e:
@@ -171,20 +182,29 @@ def _load_npy_format(base: str) -> Optional[Dict]:
     try:
         with open(paths['meta']) as f:
             meta = json.load(f)
-        # Use mmap for the large arrays (deferred disk read — faster for parallel loads)
+            
         mmap = None if _HAS_BLOSC2 else 'r'
-        index_map      = _load_npy_fast(paths['idx'], mmap_mode=mmap).astype(np.int32, copy=False)
+        index_map = _load_npy_fast(paths['idx'], mmap_mode=mmap).astype(np.int32, copy=False)
         visible_indices = _load_npy_fast(paths['vis'], mmap_mode=mmap).astype(np.int32, copy=False)
+        
         depth_map = None
         if meta.get('has_depth_map') and os.path.exists(paths['dep']):
             depth_map = _load_npy_fast(paths['dep'], mmap_mode=mmap).astype(np.float16, copy=False)
-        return {
+            
+        result = {
             'index_map':      index_map,
             'visible_indices': visible_indices,
             'depth_map':      depth_map,
             'element_type':   meta.get('element_type', 'point'),
             'inverted_index': None,
         }
+        
+        # Inject any additional metadata stored (like scale_factor)
+        for k, v in meta.items():
+            if k not in result and k != 'has_depth_map':
+                result[k] = v
+                
+        return result
     except Exception as e:
         print(f"Warning: fast-format load failed for {base}: {e}")
         return None
@@ -366,6 +386,15 @@ class CacheManager:
             element_type,
         )
 
+        npy_base = os.path.splitext(cache_path)[0]
+
+        # 1. Try the fast .npy format first
+        result = _load_npy_format(npy_base)
+        if result is not None:
+            result['cache_path'] = cache_path
+            return result
+
+        # 2. Fall back to legacy .npz
         if not os.path.exists(cache_path):
             return None
 
@@ -396,7 +425,7 @@ class CacheManager:
                              index_map: np.ndarray,
                              visible_indices: np.ndarray,
                              element_type: str = 'face',
-                             compressed: bool = True) -> Optional[str]:
+                             compressed: bool = False) -> Optional[str]:
         """Save an orthomosaic index map to cache."""
         cache_path = self.get_ortho_index_map_cache_path(
             ortho_image_path,
@@ -420,6 +449,22 @@ class CacheManager:
         except Exception:
             pass
 
+        npy_base = os.path.splitext(cache_path)[0]
+
+        # 1. Primary: fast .npy format (blosc2/lz4 if available, else plain npy)
+        if not compressed:
+            ok = _save_npy_format(
+                npy_base, 
+                index_map, 
+                visible_indices, 
+                depth_map=None, 
+                element_type=element_type,
+                scale_factor=float(scale_factor)
+            )
+            if ok:
+                return cache_path
+
+        # 2. Legacy / compressed .npz fallback
         save_dict = {
             'index_map': index_map,
             'visible_indices': visible_indices,

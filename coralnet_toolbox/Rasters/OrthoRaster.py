@@ -117,6 +117,29 @@ class OrthoRaster(Raster):
                 raise ValueError("visible_indices must be a 1-D numpy array")
             self.visible_indices = visible_indices.copy()
 
+    @staticmethod
+    def _matrix_is_non_identity(matrix: Optional[np.ndarray]) -> bool:
+        if matrix is None:
+            return False
+        try:
+            matrix_array = np.asarray(matrix, dtype=np.float64)
+        except Exception:
+            return True
+        if matrix_array.shape != (4, 4):
+            return True
+        return not np.allclose(matrix_array, np.eye(4, dtype=np.float64))
+
+    def has_ortho_transform_metadata(self) -> bool:
+        """Check whether the orthomosaic has any non-identity transform metadata."""
+        return (
+            self._matrix_is_non_identity(self.ortho_projection_matrix)
+            or self._matrix_is_non_identity(self.chunk_transform_matrix)
+        )
+
+    def has_transform_metadata(self) -> bool:
+        """Treat orthomosaic transforms as the filterable transform metadata."""
+        return self.has_ortho_transform_metadata()
+
     # ------------------------------------------------------------------
     # Serialization
     # ------------------------------------------------------------------

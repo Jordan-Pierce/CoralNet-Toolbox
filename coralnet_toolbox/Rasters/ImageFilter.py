@@ -1,6 +1,6 @@
 import warnings
 
-from typing import Dict, List, Optional, Callable
+from typing import Dict, List, Optional, Callable, Set
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from PyQt5.QtCore import QObject, pyqtSignal
@@ -41,6 +41,9 @@ class ImageFilter(QObject):
                       require_annotations: bool = False,
                       require_no_annotations: bool = False,
                       require_predictions: bool = False,
+                      allowed_raster_types: Optional[Set[str]] = None,
+                      require_z_channel: bool = False,
+                      require_transform: bool = False,
                       selected_paths: List[str] = None,
                       use_threading: bool = False,
                       callback: Callable = None) -> List[str]:
@@ -61,12 +64,17 @@ class ImageFilter(QObject):
             List[str]: List of filtered image paths
         """
         # If no filters are active, return all paths
-        if not any([search_text, 
-                    search_label, 
-                    require_annotations, 
-                   require_no_annotations, 
-                   require_predictions, 
-                   selected_paths]):
+        if not any([
+            search_text,
+            search_label,
+            require_annotations,
+            require_no_annotations,
+            require_predictions,
+            require_z_channel,
+            require_transform,
+            allowed_raster_types is not None,
+            selected_paths,
+        ]):
             result = self.raster_manager.image_paths.copy()
             self.filteringStarted.emit()
             self.filteringFinished.emit(result)
@@ -78,12 +86,16 @@ class ImageFilter(QObject):
         if use_threading:
             return self._filter_with_threading(
                 search_text, search_label, require_annotations,
-                require_no_annotations, require_predictions, selected_paths, callback
+                require_no_annotations, require_predictions,
+                allowed_raster_types, require_z_channel,
+                require_transform, selected_paths, callback
             )
         else:
             return self._filter_images_sync(
                 search_text, search_label, require_annotations, 
-                require_no_annotations, require_predictions, selected_paths, callback
+                require_no_annotations, require_predictions,
+                allowed_raster_types, require_z_channel,
+                require_transform, selected_paths, callback
             )
     
     def _filter_images_sync(self, 
@@ -92,6 +104,9 @@ class ImageFilter(QObject):
                             require_annotations: bool,
                             require_no_annotations: bool,
                             require_predictions: bool,
+                            allowed_raster_types: Optional[Set[str]],
+                            require_z_channel: bool,
+                            require_transform: bool,
                             selected_paths: List[str],
                             callback: Callable = None) -> List[str]:
         """
@@ -112,6 +127,9 @@ class ImageFilter(QObject):
             require_annotations=require_annotations,
             require_no_annotations=require_no_annotations,
             require_predictions=require_predictions,
+            allowed_raster_types=allowed_raster_types,
+            require_z_channel=require_z_channel,
+            require_transform=require_transform,
             selected_paths=selected_paths
         )
         
@@ -132,6 +150,9 @@ class ImageFilter(QObject):
                                require_annotations: bool,
                                require_no_annotations: bool,
                                require_predictions: bool,
+                               allowed_raster_types: Optional[Set[str]],
+                               require_z_channel: bool,
+                               require_transform: bool,
                                selected_paths: List[str],
                                callback: Callable = None) -> List[str]:
         """
@@ -172,7 +193,10 @@ class ImageFilter(QObject):
                     search_label=search_label,
                     require_annotations=require_annotations,
                     require_no_annotations=require_no_annotations,
-                    require_predictions=require_predictions
+                    require_predictions=require_predictions,
+                    allowed_raster_types=allowed_raster_types,
+                    require_z_channel=require_z_channel,
+                    require_transform=require_transform,
                 )
                 futures[future] = path
             

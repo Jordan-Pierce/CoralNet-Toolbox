@@ -536,6 +536,9 @@ class Raster(QObject):
                     entry['oob_mask'] = self._torch_oob_mask
                     _WARP_GRID_CACHE[cache_key] = entry
 
+                    tensor_mb = (self._torch_grid_gpu.element_size() * self._torch_grid_gpu.nelement()) / (1024 * 1024)
+                    print(f"🚨 [VRAM DEBUG] Cached new grid! Unique models in cache: {len(_WARP_GRID_CACHE)}. This grid: {tensor_mb:.1f} MB")
+
         # F.grid_sample requires float32 tensors, shape (N, C, H, W)
         is_int = linear_map.dtype in [np.int32, np.int64]
         map_tensor = torch.tensor(linear_map, device='cuda', dtype=torch.float32).unsqueeze(0).unsqueeze(0)
@@ -559,6 +562,34 @@ class Raster(QObject):
             return warped_np.astype(np.int32)
         return warped_np
 
+    @staticmethod
+    def _estimate_batch_warp_bytes(maps, grid_gpu=None):
+        """Estimate temporary memory required to warp a batch of 2D maps."""
+        if not maps:
+            return 0
+
+        first_shape = np.asarray(maps[0]).shape
+        if len(first_shape) != 2:
+            raise ValueError("warp_batch_cuda expects 2D maps")
+
+        height, width = first_shape
+        batch_size = len(maps)
+
+        # CPU staging: np.stack(...)->float32 with singleton channel axis.
+        cpu_bytes = batch_size * height * width * 4
+
+        # GPU tensor staging plus expanded sampling grid.
+        gpu_bytes = batch_size * height * width * 4
+        gpu_bytes += batch_size * height * width * 2 * 4
+
+        if grid_gpu is not None:
+            try:
+                gpu_bytes += int(grid_gpu.element_size() * grid_gpu.nelement())
+            except Exception:
+                pass
+
+        return cpu_bytes + gpu_bytes
+ 
     @classmethod
     def warp_batch_cuda(cls, maps, border_values, grid_gpu, oob_mask):
         """
@@ -573,26 +604,60 @@ class Raster(QObject):
             oob_mask      : bool torch.Tensor shape (H, W) — out-of-bounds pixels
 
         Returns:
-            list of np.ndarray, same dtypes as inputs
+            tuple: (warped_maps, visible_indices_list)
+                warped_maps: list of np.ndarray, same dtypes as inputs
+                visible_indices_list: list of 1D np.ndarray (int32) containing unique visible IDs
         """
         import torch
         import torch.nn.functional as F
 
         if not maps:
-            return []
+            return [], []
+
+        shapes = {np.asarray(m).shape for m in maps}
+        if len(shapes) != 1:
+            raise ValueError("All maps passed to warp_batch_cuda must have the same shape")
+
+        estimated_bytes = cls._estimate_batch_warp_bytes(maps, grid_gpu)
+        try:
+            free_vram, _ = torch.cuda.mem_get_info(
+                grid_gpu.device.index if grid_gpu is not None and getattr(grid_gpu, 'is_cuda', False) else None
+            )
+            safe_limit = int(free_vram * 0.8)
+            if estimated_bytes > safe_limit:
+                raise ValueError(
+                    f"Batch warp estimate ({estimated_bytes / 1_073_741_824:.2f} GiB) exceeds safe CUDA budget ({safe_limit / 1_073_741_824:.2f} GiB)"
+                )
+        except Exception:
+            # If mem_get_info is unavailable or fails, keep the structural checks above
+            # and let the actual CUDA call decide.
+            pass
 
         is_int = [m.dtype in (np.int32, np.int64) for m in maps]
         n = len(maps)
 
-        # Stack → (N, 1, H, W) float32
-        stacked = np.stack(maps, axis=0).astype(np.float32)[:, np.newaxis, :, :]
-        tensor  = torch.from_numpy(stacked).to(grid_gpu.device)   # zero-copy when possible
+        total_input_mb = sum(m.nbytes for m in maps) / (1024 * 1024)
+        print(f"\n🚨 [RAM DEBUG - WARP] Preparing to stream {n} maps to VRAM. Input CPU size: {total_input_mb:.1f} MB")
+        import time
+        stream_start = time.perf_counter()
+
+        # 1. Pre-allocate the final, empty tensor directly on the GPU
+        h, w = maps[0].shape
+        tensor = torch.empty((n, 1, h, w), dtype=torch.float32, device=grid_gpu.device)
+
+        # 2. Stream the numpy arrays directly into VRAM (zero CPU float copies)
+        for i, m in enumerate(maps):
+            # torch.from_numpy shares memory with the numpy array (no CPU copy).
+            # Assigning it to the GPU tensor handles the transfer and float32 cast on the fly.
+            tensor[i, 0] = torch.from_numpy(m)
+
+        stream_time = time.perf_counter() - stream_start
+        print(f"🚨 [RAM DEBUG - WARP] Direct-to-VRAM stream complete in {stream_time:.4f}s. CPU intermediate RAM cost: 0.0 MB")
 
         # Expand grid: (1, H, W, 2) → (N, H, W, 2)
         grid_n = grid_gpu.expand(n, -1, -1, -1)
 
-        warped = F.grid_sample(tensor, grid_n, mode='nearest',
-                               padding_mode='zeros', align_corners=True)
+        warped = F.grid_sample(tensor, grid_n, mode='nearest', padding_mode='zeros', align_corners=True)
         # warped: (N, 1, H, W)
 
         # Apply per-map border values to OOB pixels
@@ -600,12 +665,22 @@ class Raster(QObject):
             if bv != 0 and not (isinstance(bv, float) and bv == 0.0):
                 warped[i, 0, oob_mask] = float(bv)
 
-        # Move back to CPU and convert dtypes
+        # ---> Extract unique indices on the GPU instantly <---
+        visible_indices_list = []
+        for i in range(n):
+            valid_mask = warped[i, 0] >= 0
+            # GPU unique sort -> pull tiny 1D array to CPU
+            unq = torch.unique(warped[i, 0][valid_mask]).cpu().numpy().astype(np.int32)
+            visible_indices_list.append(unq)
+
+        # Move maps back to CPU and convert dtypes
         warped_cpu = warped.squeeze(1).cpu().numpy()   # (N, H, W)
-        return [
+        warped_maps = [
             row.astype(np.int32) if flag else row
             for row, flag in zip(warped_cpu, is_int)
         ]
+        
+        return warped_maps, visible_indices_list
 
     def add_index_map(self, index_map: np.ndarray, index_map_path: Optional[str] = None,
                       visible_indices: Optional[np.ndarray] = None,
@@ -700,27 +775,23 @@ class Raster(QObject):
             'inv_pixels':  sorted_pixels,
         }
 
-    def _schedule_inverted_index_build(self, index_map_snapshot: np.ndarray) -> None:
+    def _schedule_inverted_index_build(self, index_map_reference: np.ndarray) -> None:
         """
-        Kick off a daemon thread to build the CSR inverted index from
-        *index_map_snapshot* and store the result on this raster once done.
+        Kick off a daemon thread to build the CSR inverted index.
 
-        Only one build runs at a time (guarded by a lock); any in-flight build
-        for a stale map is simply superseded when the new one finishes.
+        The index map is treated as read-only geometric reference data, so the
+        thread can work on the original array without duplicating it in RAM.
         """
-        # Take an explicit copy so the thread works on stable data even if the
-        # raster's index_map is replaced before the build completes.
-        snapshot = index_map_snapshot.copy()
         raster_ref = self  # capture for closure
         cls = type(self)   # capture class explicitly — 'QtRaster' is not in thread scope
 
         def _build_and_store():
-            inv = cls._build_inverted_index(snapshot)
+            inv = cls._build_inverted_index(index_map_reference)
             if inv is None:
                 return
             # Guard: only store if the raster still holds the same index_map
-            # (identity check is O(1) for numpy arrays).
-            if raster_ref.index_map is not None and raster_ref.index_map is not snapshot:
+            # object.
+            if raster_ref.index_map is not None and raster_ref.index_map is not index_map_reference:
                 # The raster has been updated in the meantime; discard stale result.
                 return
             raster_ref.inv_ids     = inv['inv_ids']
@@ -1028,6 +1099,14 @@ class Raster(QObject):
     def has_z_channel(self) -> bool:
         """Check if the raster currently has a z-channel loaded."""
         return self.z_channel is not None
+
+    def has_z_channel_metadata(self) -> bool:
+        """Check if the raster has any z-channel metadata attached or cached."""
+        return self.z_channel is not None or self.z_channel_path is not None
+
+    def has_transform_metadata(self) -> bool:
+        """Check if the raster has transform metadata attached."""
+        return self.intrinsics is not None and self.extrinsics is not None
         
     def remove_z_channel(self):
         """Remove the depth/elevation channel data and path."""
@@ -1268,11 +1347,14 @@ class Raster(QObject):
         Args:
             annotations (list): List of annotation objects
         """
-        self.annotations = annotations
-        self.annotation_count = len(annotations)
-        self.has_annotations = bool(annotations)
+        vector_annotations = [annotation for annotation in annotations if not getattr(annotation, 'is_mask_annotation', False)]
+        has_mask_annotation = self.has_mask_content
+
+        self.annotations = vector_annotations
+        self.annotation_count = len(vector_annotations) + (1 if has_mask_annotation else 0)
+        self.has_annotations = bool(vector_annotations) or has_mask_annotation
         
-        predictions = [a.machine_confidence for a in annotations if a.machine_confidence]
+        predictions = [a.machine_confidence for a in vector_annotations if a.machine_confidence]
         self.has_predictions = len(predictions) > 0
         
         # Clear previous data
@@ -1283,7 +1365,7 @@ class Raster(QObject):
         # Use a defaultdict to simplify the aggregation logic
         temp_map = defaultdict(set)
 
-        for annotation in annotations:
+        for annotation in vector_annotations:
             # Process label information
             if annotation.label:
                 if hasattr(annotation.label, 'short_label_code'):
@@ -1331,7 +1413,10 @@ class Raster(QObject):
                        top_k=1,
                        require_annotations=False,
                        require_no_annotations=False,
-                       require_predictions=False) -> bool:
+                       require_predictions=False,
+                       allowed_raster_types: Optional[Set[str]] = None,
+                       require_z_channel: bool = False,
+                       require_transform: bool = False) -> bool:
         """
         Check if this raster matches the given filter criteria
         
@@ -1342,6 +1427,9 @@ class Raster(QObject):
             require_annotations (bool): If True, must have annotations
             require_no_annotations (bool): If True, must have no annotations
             require_predictions (bool): If True, must have predictions
+            allowed_raster_types (Set[str], optional): Allowed canonical raster types.
+            require_z_channel (bool): If True, require z-channel metadata.
+            require_transform (bool): If True, require transform metadata.
             
         Returns:
             bool: True if this raster matches all filter criteria
@@ -1349,6 +1437,12 @@ class Raster(QObject):
         # Check filename search
         if search_text and search_text not in self.basename:
             return False
+
+        # Check raster type filter
+        if allowed_raster_types is not None:
+            raster_type = getattr(self, 'raster_type', 'ImageRaster')
+            if raster_type not in allowed_raster_types:
+                return False
             
         # Check label search
         if search_label:
@@ -1388,6 +1482,12 @@ class Raster(QObject):
             
         # Check prediction filter
         if require_predictions and not self.has_predictions:
+            return False
+
+        if require_z_channel and not self.has_z_channel_metadata():
+            return False
+
+        if require_transform and not self.has_transform_metadata():
             return False
             
         return True
@@ -1441,17 +1541,37 @@ class Raster(QObject):
     @property
     def mask_statistics(self) -> dict | None:
         """
-        Returns the cached mask statistics if they exist, without
-        triggering a recalculation.
+        Returns mask class statistics, using the cached value when available.
+        Falls back to a one-time recalculation so callers can reliably display
+        the mask breakdown even before the cache has been populated.
         """
         if self.mask_annotation:
-            return self.mask_annotation.cached_statistics
+            cached_statistics = self.mask_annotation.cached_statistics
+            if cached_statistics is not None:
+                return cached_statistics
+            try:
+                return self.mask_annotation.get_class_statistics()
+            except Exception:
+                return None
         return None
-            
+
+    @property
+    def has_mask_content(self) -> bool:
+        """Return True when the attached mask annotation contains any labeled pixels."""
+        if self.mask_annotation is None:
+            return False
+
+        try:
+            return self.mask_annotation.get_area() > 0
+        except Exception:
+            try:
+                return bool(np.any(self.mask_annotation.mask_data % self.mask_annotation.LOCK_BIT))
+            except Exception:
+                return True
+
     def add_work_area(self, work_area):
-        """
-        Add a work area to the raster.
-        
+        """Add a work area to the raster.
+
         Args:
             work_area: Work area object to add
         """
@@ -1464,7 +1584,6 @@ class Raster(QObject):
         Get all work areas for this raster.
         
         Returns:
-            list: List of work area objects
         """
         return self.work_areas
         

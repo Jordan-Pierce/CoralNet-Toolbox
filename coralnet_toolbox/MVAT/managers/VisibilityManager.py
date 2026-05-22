@@ -23,6 +23,15 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from coralnet_toolbox.MVAT.managers.visibility_logging import (
+    cam_label,
+    get_visibility_logger,
+    log_cam_breakdown,
+    log_cam_complete,
+    log_section,
+    log_summary,
+)
+
 if TYPE_CHECKING:
     from coralnet_toolbox.MVAT.core.SceneContext import SceneContext
     from coralnet_toolbox.MVAT.core.SceneProduct import AbstractSceneProduct
@@ -37,6 +46,9 @@ except ImportError:
 
 FACE_ID_RGB_BASE = 1 << 24
 FACE_ID_RGB_LIMIT = FACE_ID_RGB_BASE - 1
+
+
+logger = get_visibility_logger()
     
     
 # ----------------------------------------------------------------------------------------------------------------------
@@ -170,7 +182,7 @@ class VisibilityManager:
 
         is_dual_pass = n_cells > FACE_ID_RGB_LIMIT
         if is_dual_pass:
-            print(f"   ⚠️ Massive mesh detected ({n_cells:,} faces). Activating Dual-Pass 32-bit rasterization.")
+            logger.info(f"   ⚠️ Massive mesh detected ({n_cells:,} faces). Activating Dual-Pass 32-bit rasterization.")
 
         mesh_low = mesh.copy()
         low_scalar_name = 'FaceID_Low' if is_dual_pass else 'FaceID_RGB'
@@ -338,6 +350,58 @@ class VisibilityManager:
         return lookup[index_map_safe].astype(np.float32, copy=False)
 
     @classmethod
+    def reconstruct_depth_map_fast(cls,
+                                   camera,
+                                   scene_product: 'AbstractSceneProduct') -> np.ndarray:
+        """Fast depth reconstruction using cached visible indices and CPU NumPy."""
+        if camera is None or scene_product is None:
+            return None
+
+        index_map = getattr(camera._raster, 'index_map_lazy', None)
+        visible_ids = getattr(camera, 'visible_indices', None)
+        if index_map is None or visible_ids is None:
+            return None
+
+        visible_ids = np.asarray(visible_ids, dtype=np.int64)
+        if visible_ids.size == 0:
+            return None
+
+        coords = getattr(scene_product, '_element_centers_np', None)
+        if coords is None:
+            if hasattr(scene_product, 'get_face_centers'):
+                coords = scene_product.get_face_centers()
+            elif hasattr(scene_product, 'get_points_array'):
+                coords = scene_product.get_points_array()
+
+        if coords is None:
+            return None
+
+        coords = np.asarray(coords, dtype=np.float32)
+        if coords.size == 0:
+            return None
+
+        max_visible_id = int(visible_ids.max()) if visible_ids.size else -1
+        if max_visible_id >= coords.shape[0]:
+            visible_ids = visible_ids[visible_ids < coords.shape[0]]
+            if visible_ids.size == 0:
+                return None
+
+        visible_coords = coords[visible_ids]
+        R = np.asarray(camera.R, dtype=np.float32)
+        t = np.asarray(camera.t, dtype=np.float32)
+
+        # Z-axis only: depth = dot(X, R[2, :]) + t[2]
+        z_values = visible_coords @ R[2, :].astype(np.float32, copy=False) + t[2]
+
+        element_count = int(coords.shape[0])
+        lookup = np.full(element_count + 1, np.nan, dtype=np.float32)
+        lookup[visible_ids] = z_values.astype(np.float32, copy=False)
+
+        index_map_safe = np.asarray(index_map, dtype=np.int64).copy()
+        index_map_safe[index_map_safe < 0] = element_count
+        return lookup[index_map_safe].astype(np.float16, copy=False)
+
+    @classmethod
     def compute_visibility_from_scene(cls,
                                       scene_context: 'SceneContext',
                                       K: np.ndarray,
@@ -432,7 +496,7 @@ class VisibilityManager:
                 mesh_product, K, R, t, width, height, compute_depth_map, pixel_budget=pixel_budget
             )
         except Exception as e:
-            print(f"⚠️ VTK mesh rasterization failed: {e}. Trying Open3D raycasting...")
+            logger.warning(f"⚠️ VTK mesh rasterization failed: {e}. Trying Open3D raycasting...")
             try:
                 # Second Choice: Open3D (Thread-safe, fast, no OpenGL context required)
                 import open3d
@@ -440,7 +504,7 @@ class VisibilityManager:
                     mesh_product, K, R, t, width, height, compute_depth_map
                 )
             except Exception as o3d_err:
-                print(f"⚠️ Open3D raycasting failed: {o3d_err}. Falling back to face-center sampling")
+                logger.warning(f"⚠️ Open3D raycasting failed: {o3d_err}. Falling back to face-center sampling")
                 # Last Resort: Point Sampling
                 return cls._compute_mesh_visibility_fallback(
                     mesh_product, K, R, t, width, height, compute_depth_map
@@ -453,7 +517,7 @@ class VisibilityManager:
         import numpy as np
         import torch
         
-        start_time = time.time()
+        start_time = time.perf_counter()
         mesh_product.prepare_geometry() 
         
         # Grab tensors and the designated device from the model
@@ -506,7 +570,7 @@ class VisibilityManager:
             subset_cell_ids = global_indices[global_mask].cpu().numpy().astype(np.int32)
             
         cull_time = time.time() - start_time
-        print(f"✂️ {device.upper()} Frustum Cull: Kept {len(subset_triangles):,} faces in {cull_time:.3f}s")
+        logger.info(f"✂️ {device.upper()} Frustum Cull: Kept {len(subset_triangles):,} faces in {cull_time:.3f}s")
         
         # Build Open3D Scene
         scene = o3d.t.geometry.RaycastingScene()
@@ -519,7 +583,7 @@ class VisibilityManager:
             
             dummy_ray = o3d.core.Tensor([[0.0, 0.0, 0.0, 0.0, 0.0, 1.0]], dtype=o3d.core.Dtype.Float32)
             scene.cast_rays(dummy_ray)
-            print(f"🎯 Built Sub-BVH in {time.time() - build_start:.3f}s")
+            logger.info(f"🎯 Built Sub-BVH in {time.time() - build_start:.3f}s")
             
         return scene, subset_cell_ids, len(subset_triangles)
     
@@ -573,20 +637,18 @@ class VisibilityManager:
         import cv2
         
         start_time = time.time()
-        print(f"\n{'='*50}")
-        print(f"🚀 STARTING BATCH VISIBILITY FOR {len(camera_params_list)} CAMERAS")
-        print(f"{'='*50}")
+        log_section(f"🚀 STARTING BATCH VISIBILITY FOR {len(camera_params_list)} CAMERAS", logger)
         
         if use_global_bvh:
             # ---------------------------------------------------------
             # STRATEGY 1: Global BVH (Build once, cast deeper tree)
             # ---------------------------------------------------------
-            print("🌐 STRATEGY: Global BVH")
+            logger.info("🌐 STRATEGY: Global BVH")
             mesh_product.prepare_geometry()
             
             # If the persistent BVH hasn't been built yet, build it now
             if not getattr(mesh_product, '_o3d_raycasting_scene', None):
-                print("   -> Building Global BVH from scratch...")
+                logger.info("   -> Building Global BVH from scratch...")
                 build_start = time.time()
                 scene = o3d.t.geometry.RaycastingScene()
                 v_tensor = o3d.core.Tensor(mesh_product._cached_vertices, dtype=o3d.core.Dtype.Float32)
@@ -598,9 +660,9 @@ class VisibilityManager:
                 scene.add_triangles(v_tensor, t_tensor)
                 mesh_product._o3d_raycasting_scene = scene
                 bvh_build_time = time.time() - build_start
-                print(f"   ✅ Global BVH built in {bvh_build_time:.4f}s (Faces: {len(triangles):,})")
+                logger.info(f"   ✅ Global BVH built in {bvh_build_time:.4f}s (Faces: {len(triangles):,})")
             else:
-                print("   ✅ Using cached Global BVH")
+                logger.info("   ✅ Using cached Global BVH")
                 bvh_build_time = 0.0
             
             scene = mesh_product._o3d_raycasting_scene
@@ -611,17 +673,17 @@ class VisibilityManager:
             # ---------------------------------------------------------
             # STRATEGY 2: Dynamic Sub-BVH (Cull on GPU, build shallow tree)
             # ---------------------------------------------------------
-            print("✂️ STRATEGY: Culled Sub-BVH")
+            logger.info("✂️ STRATEGY: Culled Sub-BVH")
             bvh_build_start = time.time()
             scene, original_cell_ids, num_faces = cls._build_subset_bvh(mesh_product, camera_params_list)
             bvh_build_time = time.time() - bvh_build_start
-            print(f"   ✅ Sub-BVH prep & build completed in {bvh_build_time:.4f}s")
+            logger.info(f"   ✅ Sub-BVH prep & build completed in {bvh_build_time:.4f}s")
 
         results = []
         
         # If the culler removed everything (or empty mesh), return empty maps
         if num_faces == 0:
-            print("   ⚠️ No faces visible. Returning empty maps.")
+            logger.info("   ⚠️ No faces visible. Returning empty maps.")
             return [{
                 'index_map': np.full((h, w), -1, dtype=np.int32),
                 'visible_indices': np.array([], dtype=np.int32),
@@ -631,7 +693,7 @@ class VisibilityManager:
 
         # 2. Fast Downsampled Raycasting
         SCALE_FACTOR = 0.25  # 1/4 resolution raycasting
-        print(f"\n   -> Starting Raycasting (Scale: {SCALE_FACTOR}x)...")
+        logger.info(f"\n   -> Starting Raycasting (Scale: {SCALE_FACTOR}x)...")
         
         raycast_start_time = time.time()
         
@@ -695,12 +757,16 @@ class VisibilityManager:
         raycast_time = time.time() - raycast_start_time
         total_time = time.time() - start_time
         
-        print(f"   ✅ Raycasting finished in {raycast_time:.4f}s (Avg: {raycast_time/len(camera_params_list):.4f}s per camera)")
-        print(f"\n📊 SUMMARY: {'Global BVH' if use_global_bvh else 'Sub-BVH'}")
-        print(f"   - BVH Build/Prep : {bvh_build_time:.4f}s")
-        print(f"   - Raycast Loop   : {raycast_time:.4f}s")
-        print(f"   - Total Time     : {total_time:.4f}s")
-        print(f"{'='*50}\n")
+        logger.info(f"   ✅ Raycasting finished in {raycast_time:.4f}s (Avg: {raycast_time/len(camera_params_list):.4f}s per camera)")
+        log_summary(
+            f"{'Global BVH' if use_global_bvh else 'Sub-BVH'}",
+            [
+                f"   - BVH Build/Prep : {bvh_build_time:.4f}s",
+                f"   - Raycast Loop   : {raycast_time:.4f}s",
+                f"   - Total Time     : {total_time:.4f}s",
+            ],
+            logger,
+        )
         
         return results
 
@@ -722,9 +788,7 @@ class VisibilityManager:
         import time
 
         start_time = time.time()
-        print(f"\n{'='*50}")
-        print(f"🎨 VTK MESH VISIBILITY RASTERIZATION")
-        print(f"{'='*50}")
+        log_section("🎨 VTK MESH VISIBILITY RASTERIZATION", logger)
 
         mesh = mesh_product.get_mesh()
         n_cells = mesh.n_cells
@@ -744,7 +808,7 @@ class VisibilityManager:
         K_scaled[1, :3] *= dynamic_scale
 
         if n_cells == 0:
-            print("   ⚠️ No cells in mesh. Returning empty maps.")
+            logger.info("   ⚠️ No cells in mesh. Returning empty maps.")
             return cls._normalize_result_dict({
                 'index_map': np.full((render_h, render_w), -1, dtype=np.int32),
                 'visible_indices': np.array([], dtype=np.int32),
@@ -753,15 +817,15 @@ class VisibilityManager:
                 'scale_factor': dynamic_scale
             }, compute_depth_map)
 
-        print(f"   Mesh: {n_cells:,} cells | Render: {render_w}x{render_h} pixels (Scale: {dynamic_scale:.4f})")
+        logger.info(f"   Mesh: {n_cells:,} cells | Render: {render_w}x{render_h} pixels (Scale: {dynamic_scale:.4f})")
 
         # --- 1. Setup face-ID rendering actors ---
-        setup_start = time.time()
+        setup_start = time.perf_counter()
         plotter = pv.Plotter(off_screen=True, window_size=(render_w, render_h))
         plotter.set_background('black')
         plotter.disable_anti_aliasing()
         actor_low, actor_high, is_dual_pass = cls._create_face_id_mesh_actors(plotter, mesh, n_cells)
-        encode_time = time.time() - setup_start
+        encode_time = time.perf_counter() - setup_start
         plotter_time = 0.0
 
         # Prepare face centers for GPU depth mapping
@@ -770,12 +834,12 @@ class VisibilityManager:
             face_centers_pt = torch.from_numpy(face_centers_np).cuda()
 
         # --- 3. Configure VTK camera ---
-        camera_start = time.time()
+        camera_start = time.perf_counter()
         cls._configure_vtk_camera(plotter, K_scaled, R, t, render_w, render_h, mesh.bounds)
-        camera_time = time.time() - camera_start
+        camera_time = time.perf_counter() - camera_start
 
         # --- 4. Render and extract face IDs ---
-        render_start = time.time()
+        render_start = time.perf_counter()
         if is_dual_pass and actor_high is not None:
             actor_low.SetVisibility(True)
             actor_high.SetVisibility(False)
@@ -798,10 +862,10 @@ class VisibilityManager:
             screenshot_high,
         )
 
-        render_time = time.time() - render_start
+        render_time = time.perf_counter() - render_start
 
         # --- 5. Extract depth buffer ---
-        depth_start = time.time()
+        depth_start = time.perf_counter()
         depth_map = None
         if compute_depth_map:
             if HAS_TORCH and torch.cuda.is_available():
@@ -822,20 +886,21 @@ class VisibilityManager:
                     # Keep small, NO resizing!
                     depth_map = -vtk_depth.astype(np.float32)
                 except Exception as e:
-                    print(f"   ⚠️ Failed to extract depth: {e}")
+                    logger.warning(f"   ⚠️ Failed to extract depth: {e}")
                     depth_map = np.full((render_h, render_w), np.nan, dtype=np.float32)
 
-        depth_time = time.time() - depth_start
+        depth_time = time.perf_counter() - depth_start
         plotter.close()
 
-        total_time = time.time() - start_time
-        print(f"\n📊 SUMMARY: Single VTK Rasterization")
-        print(f"   - Setup          : {encode_time + plotter_time:.4f}s")
-        print(f"   - Render & Decode: {render_time:.4f}s")
+        total_time = time.perf_counter() - start_time
+        single_summary = [
+            f"   - Setup          : {encode_time + plotter_time:.4f}s",
+            f"   - Render & Decode: {render_time:.4f}s",
+        ]
         if compute_depth_map:
-            print(f"   - Depth Tricks   : {depth_time:.4f}s")
-        print(f"   - Total Time     : {total_time:.4f}s")
-        print(f"{'='*50}\n")
+            single_summary.append(f"   - Depth Tricks   : {depth_time:.4f}s")
+        single_summary.append(f"   - Total Time     : {total_time:.4f}s")
+        log_summary("Single VTK Rasterization", single_summary, logger)
 
         # Crucial: Include the dynamic_scale so caching knows the resolution mapping
         return cls._normalize_result_dict({
@@ -847,19 +912,68 @@ class VisibilityManager:
         }, compute_depth_map)
     
     @classmethod
+    def setup_batch_vtk_context(cls, mesh_product, pixel_budget, sample_width, sample_height):
+        """Pre-load the VTK plotter and upload mesh geometry once for all chunks."""
+        import pyvista as pv
+        import time
+
+        start_time = time.perf_counter()
+        logger.info("   -> Setting up Persistent VTK Plotter Context...")
+
+        mesh = mesh_product.get_mesh()
+        n_cells = mesh.n_cells
+
+        native_pixels = sample_width * sample_height
+        if pixel_budget is None or pixel_budget <= 0 or native_pixels <= pixel_budget:
+            scale = 1.0
+        else:
+            scale = float(np.sqrt(pixel_budget / native_pixels))
+
+        render_w = max(1, int(round(sample_width * scale)))
+        render_h = max(1, int(round(sample_height * scale)))
+
+        plotter = pv.Plotter(off_screen=True, window_size=(render_w, render_h))
+        plotter.set_background('black')
+        plotter.disable_anti_aliasing()
+
+        actor_low, actor_high, is_dual_pass = cls._create_face_id_mesh_actors(plotter, mesh, n_cells)
+
+        face_centers_pt = None
+        if HAS_TORCH and torch.cuda.is_available():
+            face_centers_np = mesh.cell_centers().points.astype(np.float32)
+            face_centers_pt = torch.from_numpy(face_centers_np).cuda()
+
+        # Force the geometry upload/VBO build once up front so later cameras reuse VRAM data.
+        plotter.render()
+
+        logger.info(f"   ✅ Persistent Plotter setup in {time.perf_counter() - start_time:.4f}s")
+
+        return {
+            'plotter': plotter,
+            'actor_low': actor_low,
+            'actor_high': actor_high,
+            'is_dual_pass': is_dual_pass,
+            'face_centers_pt': face_centers_pt,
+            'mesh_bounds': mesh.bounds,
+        }
+
+    @classmethod
     def compute_batch_mesh_visibility_vtk(cls,
                                           mesh_product: 'AbstractSceneProduct',
                                           camera_params_list: list,
                                           compute_depth_map: bool = True,
                                           pixel_budget: Optional[int] = None,
-                                          progress_callback=None) -> list:
+                                          progress_callback=None,
+                                          vtk_context: dict = None,
+                                          camera_index_offset: int = 0) -> list:
         """
         Batched VTK-based mesh rasterization.
         Performs RGB encoding and Plotter setup ONCE, then iterates through cameras.
         Yields to the Qt event loop between cameras to keep the UI responsive.
         """
-        import pyvista as pv
         import time
+
+        perf_counter = time.perf_counter
 
         def _scale_for_dimensions(width: int, height: int) -> float:
             native_pixels = width * height
@@ -867,17 +981,15 @@ class VisibilityManager:
                 return 1.0
             return float(np.sqrt(pixel_budget / native_pixels))
         
-        start_time = time.time()
+        start_time = perf_counter()
         budget_str = "Native" if pixel_budget is None or pixel_budget <= 0 else f"{pixel_budget / 1_000_000:.1f}MP"
-        print(f"\n{'='*50}")
-        print(f"🎨 STARTING BATCH VTK RASTERIZATION FOR {len(camera_params_list)} CAMERAS (Budget: {budget_str})")
-        print(f"{'='*50}")
+        log_section(f"🎨 STARTING BATCH VTK RASTERIZATION FOR {len(camera_params_list)} CAMERAS (Budget: {budget_str})", logger)
         
         mesh = mesh_product.get_mesh()
         n_cells = mesh.n_cells
         
         if n_cells == 0:
-            print("   ⚠️ No cells in mesh. Returning empty maps.")
+            logger.info("   ⚠️ No cells in mesh. Returning empty maps.")
             return [{
                 'index_map': np.full((h, w), -1, dtype=np.int32),
                 'visible_indices': np.array([], dtype=np.int32),
@@ -886,46 +998,63 @@ class VisibilityManager:
                 'scale_factor': _scale_for_dimensions(w, h),
             } for _, _, _, w, h in camera_params_list]
             
-        print(f"   Mesh: {n_cells:,} cells")
+        logger.info(f"   Mesh: {n_cells:,} cells")
         
-        # --- 1. SETUP PHASE (Done Once) ---
-        setup_start = time.time()
-        print("   -> Encoding face IDs as RGB colors...")
-        print("   -> Creating off-screen plotter...")
-        
-        # Use the first camera's budget-derived scale only to size the initial plotter.
-        first_w = camera_params_list[0][3]
-        first_h = camera_params_list[0][4]
-        first_scale = _scale_for_dimensions(first_w, first_h)
-        first_w = max(1, int(round(first_w * first_scale)))
-        first_h = max(1, int(round(first_h * first_scale)))
-        plotter = pv.Plotter(off_screen=True, window_size=(first_w, first_h))
-        plotter.set_background('black') 
-        plotter.disable_anti_aliasing()
-        
-        actor_low, actor_high, is_dual_pass = cls._create_face_id_mesh_actors(plotter, mesh, n_cells)
-        encode_time = time.time() - setup_start
-        plotter_setup_time = 0.0
-        print(f"   ✅ Setup completed in {encode_time + plotter_setup_time:.4f}s")
-        
-        # --- Prepare face centers for GPU depth mapping ---
-        print("   -> Preparing face centers for GPU depth mapping...")
-        if HAS_TORCH and torch.cuda.is_available():
-            face_centers_np = mesh.cell_centers().points.astype(np.float32)
-            face_centers_pt = torch.from_numpy(face_centers_np).cuda()
+        # --- 1. SETUP PHASE (Done Once unless a persistent context is supplied) ---
+        if vtk_context is None:
+            setup_start = perf_counter()
+            logger.info("   -> Encoding face IDs as RGB colors...")
+            logger.info("   -> Creating off-screen plotter...")
+
+            first_w = camera_params_list[0][3]
+            first_h = camera_params_list[0][4]
+            first_scale = _scale_for_dimensions(first_w, first_h)
+            first_w = max(1, int(round(first_w * first_scale)))
+            first_h = max(1, int(round(first_h * first_scale)))
+            plotter = pv.Plotter(off_screen=True, window_size=(first_w, first_h))
+            plotter.set_background('black')
+            plotter.disable_anti_aliasing()
+
+            actor_low, actor_high, is_dual_pass = cls._create_face_id_mesh_actors(plotter, mesh, n_cells)
+            encode_time = perf_counter() - setup_start
+            plotter_setup_time = 0.0
+            logger.info(f"   ✅ Setup completed in {encode_time + plotter_setup_time:.4f}s")
+
+            logger.info("   -> Preparing face centers for GPU depth mapping...")
+            face_center_prep_time = 0.0
+            if HAS_TORCH and torch.cuda.is_available():
+                face_center_prep_start = perf_counter()
+                face_centers_np = mesh.cell_centers().points.astype(np.float32)
+                face_centers_pt = torch.from_numpy(face_centers_np).cuda()
+                face_center_prep_time = perf_counter() - face_center_prep_start
+            logger.info(f"      Face center prep completed in {face_center_prep_time:.4f}s")
+        else:
+            plotter = vtk_context['plotter']
+            actor_low = vtk_context['actor_low']
+            actor_high = vtk_context['actor_high']
+            is_dual_pass = vtk_context['is_dual_pass']
+            face_centers_pt = vtk_context['face_centers_pt']
+            mesh = mesh_product.get_mesh()
+            encode_time = 0.0
+            plotter_setup_time = 0.0
+            face_center_prep_time = 0.0
+            logger.info("   -> Reusing persistent VTK plotter context...")
         # -----------------------------------------------------------
 
         # --- 2. RENDER LOOP ---
-        print(f"\n   -> Rendering {len(camera_params_list)} cameras (Budget: {budget_str})...")
-        render_start_time = time.time()
+        logger.info(f"\n   -> Rendering {len(camera_params_list)} cameras (Budget: {budget_str})...")
+        render_start_time = perf_counter()
         results = []
+        camera_total_sum = 0.0
         
         for i, (K, R, t, width, height) in enumerate(camera_params_list):
-            cam_start = time.time()
+            cam_start = perf_counter()
+
+            prep_start = perf_counter()
 
             # Progress callback (thread-safe status bar update)
             if progress_callback is not None:
-                progress_callback(i + 1, len(camera_params_list))
+                progress_callback(camera_index_offset + i + 1, camera_index_offset + len(camera_params_list))
 
             # Calculate budget-derived render dimensions for this camera.
             dynamic_scale = _scale_for_dimensions(width, height)
@@ -943,16 +1072,17 @@ class VisibilityManager:
             K_scaled[1, :3] *= dynamic_scale
 
             # 2. Config & Render using scaled parameters
-            t0 = time.time()
+            t0 = perf_counter()
             cls._configure_vtk_camera(plotter, K_scaled, R, t, render_w, render_h, mesh.bounds)
             if is_dual_pass and actor_high is not None:
                 actor_low.SetVisibility(True)
                 actor_high.SetVisibility(False)
             plotter.render()
-            t_render = time.time() - t0
+            t_render = perf_counter() - t0
+            t_prep = t0 - prep_start
 
             # 3. Screenshot transfer (GPU -> CPU)
-            t0 = time.time()
+            t0 = perf_counter()
             screenshot_low = plotter.screenshot(return_img=True)
             if screenshot_low.shape[2] == 4:
                 screenshot_low = screenshot_low[:, :, :3]
@@ -965,17 +1095,18 @@ class VisibilityManager:
                 screenshot_high = plotter.screenshot(return_img=True)
                 if screenshot_high.shape[2] == 4:
                     screenshot_high = screenshot_high[:, :, :3]
-            t_screenshot = time.time() - t0
+            t_screenshot = perf_counter() - t0
 
             # 4. Decoding & Unique Extraction (GPU Math)
-            t0 = time.time()
+            t0 = perf_counter()
             index_map, visible_indices, index_map_tensor = cls._decode_face_id_screenshot(
                 screenshot_low,
                 screenshot_high,
             )
+            t_decode = perf_counter() - t0
             
             # 5. Depth Extraction
-            t0 = time.time()
+            t0 = perf_counter()
             depth_map = None
             if compute_depth_map:
                 if HAS_TORCH and torch.cuda.is_available():
@@ -995,10 +1126,13 @@ class VisibilityManager:
                         # NO RESIZING!
                         depth_map = -vtk_depth.astype(np.float32)
                     except Exception as e:
-                        print(f"   ⚠️ Failed to extract depth for camera {i}: {e}")
+                        logger.warning(f"   ⚠️ Failed to extract depth for {cam_label(i + 1)}: {e}")
                         # Create an empty map matching the SMALL dimensions
                         depth_map = np.full((render_h, render_w), np.nan, dtype=np.float32)
-            t_depth = time.time() - t0
+            t_depth = perf_counter() - t0
+
+            # 6. Finalize results and pump the Qt event loop.
+            t0 = perf_counter()
             
             results.append({
                 'index_map': index_map,
@@ -1009,7 +1143,6 @@ class VisibilityManager:
             })
             results[-1] = cls._normalize_result_dict(results[-1], compute_depth_map)
             # 7. UI Yielding
-            t0 = time.time()
             try:
                 from PyQt5.QtWidgets import QApplication
                 app = QApplication.instance()
@@ -1017,21 +1150,48 @@ class VisibilityManager:
                     app.processEvents()
             except ImportError:
                 pass
-            t_events = time.time() - t0
+            t_finalize = perf_counter() - t0
             
-            cam_time = time.time() - cam_start
-            print(f"      Cam {i+1}: {cam_time:.4f}s | Render: {t_render:.3f} | Snap: {t_screenshot:.3f} | Depth: {t_depth:.3f} | UI Events: {t_events:.3f}")
+            cam_time = perf_counter() - cam_start
+            camera_total_sum += cam_time
+            accounted_time = t_prep + t_render + t_screenshot + t_decode + t_depth + t_finalize
+            residual_time = max(0.0, cam_time - accounted_time)
+            log_cam_breakdown(
+                cam_label(camera_index_offset + i + 1),
+                cam_time,
+                t_prep,
+                t_render,
+                t_screenshot,
+                t_decode,
+                t_depth,
+                t_finalize,
+                residual_time,
+                logger,
+            )
 
-        plotter.close()
+        plotter_close_time = 0.0
+        if vtk_context is None:
+            close_start = perf_counter()
+            plotter.close()
+            plotter_close_time = perf_counter() - close_start
         
-        total_render_time = time.time() - render_start_time
-        total_time = time.time() - start_time
+        total_render_time = perf_counter() - render_start_time
+        total_time = perf_counter() - start_time
+        loop_residual = max(0.0, total_render_time - camera_total_sum - plotter_close_time)
         
-        print(f"\n📊 SUMMARY: Batch VTK Rasterization")
-        print(f"   - Setup Time     : {encode_time + plotter_setup_time:.4f}s")
-        print(f"   - Render Loop    : {total_render_time:.4f}s")
-        print(f"   - Total Time     : {total_time:.4f}s (Avg: {total_time/len(camera_params_list):.4f}s per camera)")
-        print(f"{'='*50}\n")
+        log_summary(
+            "Batch VTK Rasterization",
+            [
+                f"   - Setup Time     : {encode_time + plotter_setup_time:.4f}s",
+                f"   - Face Center Prep: {face_center_prep_time:.4f}s",
+                f"   - Camera Time Sum: {camera_total_sum:.4f}s",
+                f"   - Plotter Close   : {plotter_close_time:.4f}s",
+                f"   - Loop Residual   : {loop_residual:.4f}s",
+                f"   - Render Loop    : {total_render_time:.4f}s",
+                f"   - Total Time     : {total_time:.4f}s (Avg: {total_time/len(camera_params_list):.4f}s per camera)",
+            ],
+            logger,
+        )
         
         return results
 
@@ -1128,18 +1288,17 @@ class VisibilityManager:
         import pyvista as pv
         import time
 
-        start = time.time()
-        print(f"\n{'='*50}")
-        print(f"🗺️  VTK ORTHO INDEX MAP RASTERIZATION")
-        print(f"{'='*50}")
+        perf_counter = time.perf_counter
+        start = perf_counter()
+        log_section("🗺️  VTK ORTHO INDEX MAP RASTERIZATION", logger)
 
         if not ortho_camera.is_valid:
-            print("   ⚠️ OrthoCamera has no valid geo metadata — aborting.")
+            logger.info("   ⚠️ OrthoCamera has no valid geo metadata — aborting.")
             return {'index_map': None, 'visible_indices': np.array([], dtype=np.int32), 'scale_factor': 1.0}
 
         mesh = mesh_product.get_mesh()
         if mesh is None or mesh.n_cells == 0:
-            print("   ⚠️ Mesh has no cells — aborting.")
+            logger.info("   ⚠️ Mesh has no cells — aborting.")
             return {'index_map': None, 'visible_indices': np.array([], dtype=np.int32), 'scale_factor': 1.0}
 
         n_cells = mesh.n_cells
@@ -1152,8 +1311,8 @@ class VisibilityManager:
             scale = float(np.sqrt(pixel_budget / native_pixels))
         render_w = max(1, int(round(ortho_w * scale)))
         render_h = max(1, int(round(ortho_h * scale)))
-        print(f"   Ortho: {ortho_w}×{ortho_h}  →  render: {render_w}×{render_h}  (scale={scale:.4f})")
-        print(f"   Mesh: {n_cells:,} cells")
+        logger.info(f"   Ortho: {ortho_w}×{ortho_h}  →  render: {render_w}×{render_h}  (scale={scale:.4f})")
+        logger.info(f"   Mesh: {n_cells:,} cells")
 
         # --- 1. Setup face-ID rendering actors ---
         plotter = pv.Plotter(off_screen=True, window_size=(render_w, render_h))
@@ -1190,11 +1349,11 @@ class VisibilityManager:
 
         plotter.close()
         
-        total = time.time() - start
+        total = perf_counter() - start
         n_vis = len(visible_indices)
         cov   = np.sum(index_map >= 0) / (render_w * render_h) * 100
-        print(f"   ✅ Done in {total:.2f}s — {n_vis:,} visible faces, {cov:.1f}% coverage")
-        print(f"{'='*50}\n")
+        logger.info(f"   ✅ Done in {total:.2f}s — {n_vis:,} visible faces, {cov:.1f}% coverage")
+        logger.info(f"{'='*50}\n")
 
         return cls._normalize_result_dict({
             'index_map':       index_map,
@@ -1262,7 +1421,7 @@ class VisibilityManager:
         
         Used when VTK rasterization fails. Less accurate (sparse) but reliable.
         """
-        print("⚠️ Mesh visibility: Using face-center sampling (fallback)")
+        logger.info("⚠️ Mesh visibility: Using face-center sampling (fallback)")
         
         try:
             face_centers = mesh_product.get_face_centers()
@@ -1276,7 +1435,7 @@ class VisibilityManager:
             return result
             
         except Exception as e:
-            print(f"⚠️ Mesh visibility fallback failed: {e}")
+            logger.warning(f"⚠️ Mesh visibility fallback failed: {e}")
             return {
                 'index_map': np.full((height, width), -1, dtype=np.int32),
                 'visible_indices': np.array([], dtype=np.int32),
@@ -1313,22 +1472,21 @@ class VisibilityManager:
                 'visible_indices': (M,) int32 array. Unique IDs of visible points.
             }
         """
-        start_time = time.time()
-        print(f"\n{'='*50}")
-        print(f"👁️  POINT CLOUD VISIBILITY COMPUTATION")
-        print(f"{'='*50}")
+        perf_counter = time.perf_counter
+        start_time = perf_counter()
+        log_section("👁️  POINT CLOUD VISIBILITY COMPUTATION", logger)
         
         # Default point IDs if not provided
         if point_ids is None:
             point_ids = np.arange(len(points_world), dtype=np.int32)
         
-        print(f"   Points: {len(points_world):,} | Render: {width}x{height} pixels")
+        logger.info(f"   Points: {len(points_world):,} | Render: {width}x{height} pixels")
 
         # 1. Prefer PyTorch (CUDA or CPU)
         if HAS_TORCH:
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
-            print(f"   Using {device.upper()} backend")
-            compute_start = time.time()
+            logger.info(f"   Using {device.upper()} backend")
+            compute_start = perf_counter()
             result = cls._compute_torch(points_world, 
                                         point_ids, 
                                         K, R, t, 
@@ -1336,31 +1494,35 @@ class VisibilityManager:
                                         height, 
                                         device, 
                                         compute_depth_map=compute_depth_map)
-            compute_time = time.time() - compute_start
+            compute_time = perf_counter() - compute_start
         else:
             # 2. Fallback to NumPy if Torch is missing
             device = 'numpy'
-            print(f"   Using NUMPY backend (PyTorch not available)")
-            compute_start = time.time()
+            logger.info(f"   Using NUMPY backend (PyTorch not available)")
+            compute_start = perf_counter()
             result = cls._compute_numpy(points_world, 
                                         point_ids, 
                                         K, R, t, 
                                         width, 
                                         height, 
                                         compute_depth_map=compute_depth_map)
-            compute_time = time.time() - compute_start
+            compute_time = perf_counter() - compute_start
         # Normalize result dtypes for consistency (index_map int32, depth_map float16)
         result = cls._normalize_result_dict(result, compute_depth_map)
 
-        total_time = time.time() - start_time
+        total_time = perf_counter() - start_time
         visible_count = len(result['visible_indices'])
         coverage = np.sum(result['index_map'] >= 0) / (width * height) * 100
         
-        print(f"\n📊 SUMMARY: Point Cloud Visibility")
-        print(f"   - Computation (Z-buffer): {compute_time:.4f}s")
-        print(f"   - Total Time            : {total_time:.4f}s")
-        print(f"   - Result: {visible_count:,} visible points, {coverage:.1f}% pixel coverage")
-        print(f"{'='*50}\n")
+        log_summary(
+            "Point Cloud Visibility",
+            [
+                f"   - Computation (Z-buffer): {compute_time:.4f}s",
+                f"   - Total Time            : {total_time:.4f}s",
+                f"   - Result: {visible_count:,} visible points, {coverage:.1f}% pixel coverage",
+            ],
+            logger,
+        )
         
         return result
 
@@ -1370,23 +1532,22 @@ class VisibilityManager:
                                  camera_params_list: list,
                                  point_ids: np.ndarray = None,
                                  compute_depth_map: bool = True) -> list:
-        start_time = time.time()
-        print(f"\n{'='*50}")
-        print(f"👁️  BATCH POINT CLOUD VISIBILITY COMPUTATION (STREAMING MODE)")
-        print(f"{'='*50}")
+        perf_counter = time.perf_counter
+        start_time = perf_counter()
+        log_section("👁️  BATCH POINT CLOUD VISIBILITY COMPUTATION (STREAMING MODE)", logger)
         
         N_total = len(points_world)
         if point_ids is None:
             point_ids = np.arange(N_total, dtype=np.int32)
         
-        print(f"   Points: {N_total:,} | Cameras: {len(camera_params_list)}")
+        logger.info(f"   Points: {N_total:,} | Cameras: {len(camera_params_list)}")
 
         if not HAS_TORCH:
             # Fallback to numpy (omitted for brevity, keep your existing numpy fallback)
             pass 
 
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        print(f"   Using {device.upper()} backend")
+        logger.info(f"   Using {device.upper()} backend")
         
         M = len(camera_params_list)
         results = []
@@ -1396,7 +1557,7 @@ class VisibilityManager:
         CHUNK_SIZE = 100_000_000 
 
         for i in range(M):
-            cam_start = time.time()
+            cam_start = perf_counter()
             K_np, R_np, t_np, width, height = camera_params_list[i]
             
             # Load camera matrices to GPU
@@ -1414,7 +1575,7 @@ class VisibilityManager:
             local_z_buffer = torch.empty((height * width,), device=device, dtype=torch.float32)
             local_index_map = torch.empty((height * width,), device=device, dtype=torch.int32)
 
-            print(f"   -> Processing Camera {i+1}/{M} in chunks...")
+            logger.info(f"   -> Processing {cam_label(i + 1)}/{M} in chunks...")
 
             for start_idx in range(0, N_total, CHUNK_SIZE):
                 end_idx = min(start_idx + CHUNK_SIZE, N_total)
@@ -1487,7 +1648,7 @@ class VisibilityManager:
                 'inverted_index': VisibilityManager._build_inverted_index(index_map_np),
             })
             
-            print(f"   ✅ Camera {i+1} completed in {time.time() - cam_start:.2f}s")
+            log_cam_complete(cam_label(i + 1), perf_counter() - cam_start, logger)
 
             # Free all per-camera buffers (scratch + master)
             del K, R, t, global_z_buffer, global_index_map, visible_indices
@@ -1496,7 +1657,7 @@ class VisibilityManager:
         if device == 'cuda':
             torch.cuda.empty_cache()
             
-        print(f"\n   - Total Time: {time.time() - start_time:.4f}s")
+        logger.info(f"\n   - Total Time: {perf_counter() - start_time:.4f}s")
         return results
 
     @staticmethod

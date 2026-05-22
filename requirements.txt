@@ -2,6 +2,7 @@ PyQt5>=5.15.11
 PyQtADS
 pyqtgraph
 ujson
+blosc2
 rasterio
 pycocotools
 ultralytics>=8.42.5
@@ -16,9 +17,10 @@ faiss-cpu
 transformers>=5.0.0
 pyarrow
 hf_xet
-yolo-tiling>=0.0.27
+yolo-tiling>=0.0.28
 pyvista
 pyvistaqt
+pynvvideocodec
 requests
 selenium>=4.15.2
 beautifulsoup4>=4.12.2
