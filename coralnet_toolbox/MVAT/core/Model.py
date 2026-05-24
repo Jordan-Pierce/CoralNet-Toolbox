@@ -4,6 +4,7 @@
 Provides concrete implementations of AbstractSceneProduct for:
 - PointCloudProduct: Point cloud data (.ply, .pcd, etc.)
 - MeshProduct: Surface meshes with faces (.obj, .stl, .ply with faces)
+- GaussianSplattingProduct: 3D Gaussian Splatting scenes (.ply with 3DGS fields)
 
 Backward Compatibility:
 - PointCloud class is preserved as an alias for PointCloudProduct
@@ -581,4 +582,129 @@ class MeshProduct(AbstractSceneProduct):
                 labels_array.Modified()
         except Exception as e:
             print(f"⚠️ flush_labels_to_gpu (Mesh) failed: {e}")
+
+
+class GaussianSplattingProduct(AbstractSceneProduct):
+    """
+    Scene product for 3D Gaussian Splatting (3DGS) data.
+
+    Loads a 3DGS-format PLY file (which carries per-splat SH coefficients,
+    quaternion rotations, anisotropic scales and opacities) via pyvista_gs
+    and wraps the resulting GaussianActor.
+
+    Rendering is handled entirely by the GaussianActor's own OpenGL pipeline,
+    which is injected into the PyVista plotter via bind_to_plotter().  The
+    pv.PolyData of splat centres is kept as a lightweight scene anchor that
+    provides correct bounding-box information to the viewer without involving
+    the splat renderer.
+
+    Index mapping and annotation are not supported for this product type.
+    """
+
+    def __init__(self, file_path: str, product_id: Optional[str] = None):
+        """
+        Load a 3DGS PLY file and initialise the GaussianActor.
+
+        Args:
+            file_path:  Path to the 3DGS .ply file.
+            product_id: Optional unique ID (defaults to filename).
+        """
+        if product_id is None:
+            product_id = os.path.basename(file_path)
+
+        super().__init__(product_id=product_id, file_path=file_path)
+
+        start_time = time.time()
+
+        from pyvista_gs.data import load_ply
+        from pyvista_gs.actor import GaussianActor
+
+        gaussian_data = load_ply(file_path)
+        self.gaussian_actor = GaussianActor(gaussian_data)
+
+        load_time = time.time() - start_time
+        print(
+            f"⏱️ Loaded GaussianSplattingProduct: {self.label} "
+            f"with {self.gaussian_actor.point_count:,} splats in {load_time:.3f}s"
+        )
+
+    @classmethod
+    def from_file(cls, file_path: str) -> 'GaussianSplattingProduct':
+        """Load a 3DGS scene from a PLY file."""
+        return cls(file_path=file_path)
+
+    # --------------------------------------------------------------------------
+    # AbstractSceneProduct Implementation
+    # --------------------------------------------------------------------------
+
+    def get_render_mesh(self) -> pv.PolyData:
+        """
+        Return the PolyData of Gaussian splat centres.
+
+        This mesh is used only as a scene anchor for bounding-box queries.
+        Actual rendering is performed by the GaussianActor via its OpenGL
+        pipeline; the actor's pv.Actor has opacity=0 so nothing is visible
+        through the standard PyVista path.
+        """
+        return self.gaussian_actor._mesh
+
+    def get_render_style(self) -> RenderStyle:
+        """
+        Return a minimal invisible style.
+
+        The GaussianActor renders via its own OpenGL observer registered in
+        bind_to_plotter().  The pv.Actor added by that call has opacity=0
+        and only serves as a handle for the plotter's actor registry.
+        """
+        return {
+            'style': 'points',
+            'point_size': 1,
+            'opacity': 0.0,
+            'lighting': False,
+        }
+
+    def get_bounds(self) -> BoundsType:
+        """Get 3D bounding box from the splat centre positions."""
+        mesh = self.gaussian_actor._mesh
+        if mesh is None or mesh.n_points == 0:
+            return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        return mesh.bounds
+
+    def is_solid(self) -> bool:
+        """3DGS scenes are not solid surfaces."""
+        return False
+
+    def supports_index_mapping(self) -> bool:
+        """Index-map annotation is not supported for Gaussian splats."""
+        return False
+
+    def get_element_type(self) -> ElementType:
+        """Splat centres are treated as points."""
+        return 'point'
+
+    def get_element_count(self) -> int:
+        """Number of Gaussian splats."""
+        return self.gaussian_actor.point_count
+
+    def get_element_coordinate(self, element_id: int) -> Optional[np.ndarray]:
+        """Return the world-space centre of a single splat."""
+        pts = self.gaussian_actor._mesh.points
+        if element_id < 0 or element_id >= len(pts):
+            return None
+        return pts[element_id].astype(np.float64)
+
+    def apply_labels(self, element_ids: np.ndarray, class_id: int, color_rgb: tuple) -> None:
+        """No-op — splat annotation is not yet implemented."""
+        pass
+
+    # --------------------------------------------------------------------------
+    # Lifecycle
+    # --------------------------------------------------------------------------
+
+    def cleanup(self) -> None:
+        """Release the OpenGL resources held by the GaussianActor."""
+        try:
+            self.gaussian_actor.cleanup()
+        except Exception as e:
+            print(f"⚠️ GaussianSplattingProduct.cleanup failed: {e}")
 
