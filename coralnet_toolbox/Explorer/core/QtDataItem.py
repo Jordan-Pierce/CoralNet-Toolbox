@@ -1,7 +1,7 @@
 """
 Data Item classes for the Explorer.
 
-Contains AnnotationDataItem (the annotation ViewModel) and EmbeddingPointItem
+Contains AnnotationDataItem (the annotation ViewModel) and ScatterPlotItem
 (the graphics object that renders it), plus confidence display and gallery
 sorting helpers (formerly confidence_sorting.py).
 """
@@ -11,9 +11,11 @@ from __future__ import annotations
 import os
 import warnings
 
+import numpy as np
+
 from PyQt5.QtCore import Qt, QRectF
-from PyQt5.QtGui import QPen, QColor, QPainter
-from PyQt5.QtWidgets import QGraphicsObject, QStyle, QGraphicsItem
+from PyQt5.QtGui import QPen, QColor, QPainter, QBrush, QPixmap
+from PyQt5.QtWidgets import QGraphicsItem
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -90,234 +92,230 @@ def confidence_bucket_sort_key(annotation):
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class EmbeddingPointItem(QGraphicsObject):
-    """
-    A custom QGraphicsObject that can display as a dot or an image sprite,
-    getting its state from an associated AnnotationDataItem.
-    """
+class ScatterPlotItem(QGraphicsItem):
+    """Single QGraphicsItem renderer for the embedding scatter plot."""
 
-    def __init__(self, data_item, viewer):
-        """
-        Initializes the point item.
-        Args:
-            data_item (AnnotationDataItem): The data item that holds the state.
-            viewer (EmbeddingViewer): A reference to the parent viewer.
-        """
-        super(EmbeddingPointItem, self).__init__()
-
-        self.data_item = data_item
+    def __init__(self, viewer, coords_2d=None, colors=None, selected_mask=None, depth_values=None):
+        super().__init__()
         self.viewer = viewer
-        self.thumbnail_pixmap = None
 
-        self.setFlag(QGraphicsItem.ItemIsSelectable, True)
-        self.setFlag(QGraphicsItem.ItemIgnoresTransformations, True)
+        self.coords_2d = np.empty((0, 2), dtype=np.float32)
+        self.colors = np.empty((0, 4), dtype=np.uint8)
+        self.selected_mask = np.empty((0,), dtype=bool)
+        self.depth_values = np.empty((0,), dtype=np.float32)
+        self.pixmaps = []
 
-        # Use the annotation's label color (darkened) for outlines instead of pure black
+        self.set_arrays(coords_2d, colors, selected_mask, depth_values, pixmaps=None)
+
+    def set_arrays(self, coords_2d=None, colors=None, selected_mask=None, depth_values=None, pixmaps=None):
+        """Replace the backing arrays used for painting."""
+        self.prepareGeometryChange()
+
+        if coords_2d is None:
+            coords_2d = np.empty((0, 2), dtype=np.float32)
+        if colors is None:
+            colors = np.empty((0, 4), dtype=np.uint8)
+        if selected_mask is None:
+            selected_mask = np.zeros((len(coords_2d),), dtype=bool)
+        if depth_values is None:
+            depth_values = np.zeros((len(coords_2d),), dtype=np.float32)
+
+        self.coords_2d = np.asarray(coords_2d, dtype=np.float32)
+        if self.coords_2d.ndim == 1:
+            self.coords_2d = self.coords_2d.reshape(-1, 2)
+
+        self.colors = np.asarray(colors, dtype=np.uint8)
+        if self.colors.ndim == 1:
+            self.colors = self.colors.reshape(-1, 4)
+
+        self.selected_mask = np.asarray(selected_mask, dtype=bool).reshape(-1)
+        self.depth_values = np.asarray(depth_values, dtype=np.float32).reshape(-1)
+        self.pixmaps = list(pixmaps) if pixmaps is not None else []
+
+        self.update()
+
+    def _current_point_diameter(self):
+        if self.viewer is None:
+            return float(POINT_SIZE)
+        return float(getattr(self.viewer, 'point_size', POINT_SIZE))
+
+    def _current_sprite_extent(self):
+        if self.viewer is None:
+            return float(SPRITE_SIZE)
+        return float(getattr(self.viewer, 'sprite_size', SPRITE_SIZE))
+
+    def _current_sprite_render_extent(self):
+        base_extent = self._current_sprite_extent()
+        if self.viewer is None:
+            return base_extent
+
         try:
-            dark_outline = QColor(self.data_item.effective_color).darker(160)
+            transform = self.viewer.graphics_view.transform()
+            scale_factor = max(1.0, float(abs(transform.m11())))
         except Exception:
-            dark_outline = QColor("black")
-        self.default_pen = QPen(dark_outline, POINT_WIDTH)
-        self.default_pen.setCosmetic(True)
-        self.setPos(self.data_item.embedding_x, self.data_item.embedding_y)
-        self.setToolTip(self.data_item.get_tooltip_text())
+            scale_factor = 1.0
 
-        # --- Animation Properties ---
-        self.animation_manager = None
-        self.is_animating = False
+        return max(base_extent, base_extent * scale_factor)
 
-        # --- Marching Ants offset ---
-        self.animation_offset = 0
+    def _depth_alpha(self, index):
+        if self.viewer is None or not getattr(self.viewer, 'is_3d_data', False):
+            return 255
+        if self.depth_values.size <= index or getattr(self.viewer, 'z_range', 0.0) <= 0:
+            return 255
 
-    def set_animation_manager(self, manager):
-        """
-        Binds this object to the central AnimationManager.
-
-        Args:
-            manager (AnimationManager): The central animation manager instance.
-        """
-        # Keep a reference but do NOT register with the global manager.
-        # These items draw a static selection outline; animation ticks
-        # are intentionally disabled to avoid per-frame timers.
-        self.animation_manager = manager
-
-    def is_graphics_item_valid(self):
-        """
-        Checks if the graphics item is still valid and added to a scene.
-
-        Returns:
-            bool: True if the item exists and has a scene, False otherwise.
-        """
         try:
-            return self.scene() is not None
-        except RuntimeError:
-            # This can happen if the C++ part of the item is deleted
-            return False
+            z_normalized = (float(self.depth_values[index]) - float(self.viewer.min_z)) / float(self.viewer.z_range)
+        except Exception:
+            return 255
+
+        z_normalized = max(0.0, min(1.0, z_normalized))
+        return int(128 + 127 * z_normalized)
+
+    def _color_at(self, index, alpha_override=None):
+        if self.colors.size == 0 or index >= len(self.colors):
+            return QColor(0, 0, 0, 255)
+
+        rgba = self.colors[index]
+        alpha = int(rgba[3]) if len(rgba) > 3 else 255
+        if alpha_override is not None:
+            alpha = int(alpha * alpha_override / 255)
+        return QColor(int(rgba[0]), int(rgba[1]), int(rgba[2]), max(0, min(255, alpha)))
 
     def boundingRect(self):
-        """Returns the bounding rectangle, which depends on the display mode and depth."""
+        if self.coords_2d.size == 0:
+            return QRectF(-1.0, -1.0, 2.0, 2.0)
 
-        scale_factor = 1.0
-        if self.viewer and self.viewer.is_3d_data and self.viewer.z_range > 0:
-            # Normalize z from its global range to a [0, 1] range
-            z_normalized = (self.data_item.embedding_z - self.viewer.min_z) / self.viewer.z_range
-            # Map normalized z to a scale factor (e.g., from 0.5x to 1.5x)
-            scale_factor = 0.5 + z_normalized
+        coords = self.coords_2d
+        min_x = float(np.min(coords[:, 0]))
+        max_x = float(np.max(coords[:, 0]))
+        min_y = float(np.min(coords[:, 1]))
+        max_y = float(np.max(coords[:, 1]))
 
-        # Allow viewer to override base sizes (dynamic resizing via Ctrl+Wheel)
-        base_sprite = getattr(self.viewer, 'sprite_size', SPRITE_SIZE) if self.viewer else SPRITE_SIZE
-        base_point = getattr(self.viewer, 'point_size', POINT_SIZE) if self.viewer else POINT_SIZE
-
-        if self.viewer and self.viewer.display_mode == 'sprites':
-            ar = self.data_item.aspect_ratio
-            if ar >= 1.0:
-                width = base_sprite * scale_factor
-                height = (base_sprite / ar) * scale_factor
-            else:
-                height = base_sprite * scale_factor
-                width = (base_sprite * ar) * scale_factor
-            # Center the rect at the origin
-            return QRectF(-width / 2, -height / 2, width, height)
+        if self.viewer and getattr(self.viewer, 'display_mode', 'dots') == 'sprites':
+            point_diameter = self._current_sprite_render_extent()
         else:
-            size = base_point * scale_factor
-            # Center the rect at the origin
-            return QRectF(-size / 2, -size / 2, size, size)
+            point_diameter = self._current_point_diameter()
+            if self.viewer and getattr(self.viewer, 'is_3d_data', False):
+                point_diameter *= 1.5
 
-    def update_tooltip(self):
-        """Updates the tooltip by fetching the latest text from the data item."""
-        self.setToolTip(self.data_item.get_tooltip_text())
+        margin = (point_diameter / 2.0) + 12.0
+        return QRectF(min_x - margin, min_y - margin, (max_x - min_x) + 2 * margin, (max_y - min_y) + 2 * margin)
 
     def paint(self, painter, option, widget):
-        """Clean, high-performance data-science aesthetic."""
-        option.state &= ~QStyle.State_Selected
-        painter.setRenderHint(QPainter.Antialiasing)
+        if self.coords_2d.size == 0:
+            return
 
-        scale_factor = 1.0
-        opacity = 255
-        if self.viewer and self.viewer.is_3d_data and self.viewer.z_range > 0:
-            z_normalized = (self.data_item.embedding_z - self.viewer.min_z) / self.viewer.z_range
-            scale_factor = 0.5 + z_normalized
-            opacity = int(128 + 127 * z_normalized)
+        painter.setRenderHint(QPainter.Antialiasing, True)
 
-        # Directly grab the existing effective color reference (Avoids wrapping memory unnecessarily)
-        display_color = self.data_item.effective_color
-        dash_color = self.data_item.effective_color
+        coords = self.coords_2d
+        selected_mask = self.selected_mask if self.selected_mask.size == len(coords) else np.zeros(len(coords), dtype=bool)
+        visible_mask = np.isfinite(coords).all(axis=1)
 
-        display_mode = self.viewer.display_mode if self.viewer else 'dots'
+        if self.viewer is not None and getattr(self.viewer, 'isolated_mode', False):
+            visible_mask &= selected_mask
 
-        if display_mode == 'sprites':
-            current_size = self.boundingRect().size().toSize()
-            if self.thumbnail_pixmap is None or self.thumbnail_pixmap.size() != current_size:
-                source_pixmap = self.data_item.annotation.get_cropped_image_graphic()
-                if source_pixmap and not source_pixmap.isNull():
-                    self.thumbnail_pixmap = source_pixmap.scaled(
-                        current_size, Qt.KeepAspectRatio, Qt.SmoothTransformation
+        if not np.any(visible_mask):
+            return
+
+        display_mode = getattr(self.viewer, 'display_mode', 'dots') if self.viewer else 'dots'
+        point_diameter = self._current_sprite_render_extent() if display_mode == 'sprites' else self._current_point_diameter()
+        radius = point_diameter / 2.0
+        is_sprites = display_mode == 'sprites'
+        dot_halo_margin = max(4.0, point_diameter * 0.20)
+        sprite_outline_margin = max(2.0, self._current_sprite_extent() * 0.08) if is_sprites else 0.0
+
+        exposed = option.exposedRect.adjusted(-point_diameter, -point_diameter, point_diameter, point_diameter)
+        visible_mask &= (
+            (coords[:, 0] >= exposed.left()) & (coords[:, 0] <= exposed.right()) &
+            (coords[:, 1] >= exposed.top()) & (coords[:, 1] <= exposed.bottom())
+        )
+
+        if not np.any(visible_mask):
+            return
+
+        normal_indices = np.flatnonzero(visible_mask & ~selected_mask)
+        selected_indices = np.flatnonzero(visible_mask & selected_mask)
+
+        if is_sprites:
+            painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
+        for index in normal_indices:
+            alpha = self._depth_alpha(index)
+            x, y = float(coords[index, 0]), float(coords[index, 1])
+            if is_sprites:
+                pixmap = self.pixmaps[index] if index < len(self.pixmaps) else None
+                target_rect = QRectF(x - radius, y - radius, point_diameter, point_diameter)
+                if pixmap is not None and not pixmap.isNull():
+                    scaled_pixmap = pixmap.scaled(
+                        max(1, int(round(target_rect.width()))),
+                        max(1, int(round(target_rect.height()))),
+                        Qt.KeepAspectRatio,
+                        Qt.SmoothTransformation,
                     )
+                    pix_x = target_rect.left() + (target_rect.width() - scaled_pixmap.width()) / 2.0
+                    pix_y = target_rect.top() + (target_rect.height() - scaled_pixmap.height()) / 2.0
+                    painter.drawPixmap(int(pix_x), int(pix_y), scaled_pixmap)
 
-            if self.thumbnail_pixmap:
-                painter.drawPixmap(self.boundingRect().topLeft(), self.thumbnail_pixmap)
-
-            if self.isSelected():
-                pen_width = ANNOTATION_WIDTH
-                buffer = 4.0
-                halo_rect = self.boundingRect().adjusted(-buffer, -buffer, buffer, buffer)
-
-                # Draw dashed halo with buffer
-                halo_pen = QPen(dash_color, pen_width)
-                halo_pen.setStyle(Qt.DashLine)
-                halo_pen.setCosmetic(True)
-                painter.setPen(halo_pen)
-                painter.setBrush(Qt.NoBrush)
-                painter.drawRect(halo_rect)
-            else:
-                faint = QColor(display_color.darker(160))
-                faint.setAlpha(80)
-                faint_pen = QPen(faint, 1)
+                faint = QColor(self._color_at(index, alpha_override=alpha).darker(150))
+                faint.setAlpha(90)
+                faint_pen = QPen(faint, 0.85)
                 faint_pen.setCosmetic(True)
                 painter.setPen(faint_pen)
                 painter.setBrush(Qt.NoBrush)
-                painter.drawRect(self.boundingRect())
+                painter.drawRect(target_rect.adjusted(0.5, 0.5, -0.5, -0.5))
+            else:
+                color = self._color_at(index, alpha_override=alpha)
+                outline = QColor(color).darker(140)
+                point_pen = QPen(outline, max(1.0, point_diameter * 0.08))
+                point_pen.setCosmetic(True)
+                painter.setPen(point_pen)
+                painter.setBrush(QBrush(color))
+                painter.drawEllipse(QRectF(x - radius, y - radius, point_diameter, point_diameter))
 
-        else:
-            # --- MODERN DATA-SCIENCE DOTS ---
-            if self.isSelected():
-                painter.setPen(Qt.NoPen)
-                painter.setBrush(display_color)
-                painter.drawEllipse(self.boundingRect())
-
-                # Draw concentric dashed halo with buffer
-                pen_width = max(1.5, 2.0 * scale_factor)
-                buffer = 4.0
-                point_radius = self.boundingRect().width() / 2.0
-                halo_radius = point_radius + buffer
-                center = self.boundingRect().center()
-                halo_rect = QRectF(center.x() - halo_radius, center.y() - halo_radius,
-                                   halo_radius * 2, halo_radius * 2)
-
-                halo_pen = QPen(display_color, pen_width)
-                halo_pen.setStyle(Qt.DashLine)
+        for index in selected_indices:
+            alpha = self._depth_alpha(index)
+            x, y = float(coords[index, 0]), float(coords[index, 1])
+            color = self._color_at(index, alpha_override=alpha)
+            if is_sprites:
+                halo_diameter = point_diameter + (sprite_outline_margin * 2.0)
+                halo_pen = QPen(QColor(color))
+                halo_pen.setWidthF(1.0)
                 halo_pen.setCosmetic(True)
+                halo_pen.setStyle(Qt.DashLine)
                 painter.setPen(halo_pen)
                 painter.setBrush(Qt.NoBrush)
-                painter.drawEllipse(halo_rect)
+                painter.drawRect(QRectF(x - (halo_diameter / 2.0), y - (halo_diameter / 2.0), halo_diameter, halo_diameter).adjusted(0.5, 0.5, -0.5, -0.5))
 
+                pixmap = self.pixmaps[index] if index < len(self.pixmaps) else None
+                target_rect = QRectF(x - radius, y - radius, point_diameter, point_diameter)
+                if pixmap is not None and not pixmap.isNull():
+                    scaled_pixmap = pixmap.scaled(
+                        max(1, int(round(target_rect.width()))),
+                        max(1, int(round(target_rect.height()))),
+                        Qt.KeepAspectRatio,
+                        Qt.SmoothTransformation,
+                    )
+                    pix_x = target_rect.left() + (target_rect.width() - scaled_pixmap.width()) / 2.0
+                    pix_y = target_rect.top() + (target_rect.height() - scaled_pixmap.height()) / 2.0
+                    painter.drawPixmap(int(pix_x), int(pix_y), scaled_pixmap)
+                else:
+                    painter.setPen(Qt.NoPen)
+                    painter.setBrush(QBrush(color))
+                    painter.drawEllipse(target_rect)
             else:
-                effective_brush_color = QColor(display_color)
-                effective_brush_color.setAlpha(opacity)
+                halo_pen = QPen(QColor(color))
+                halo_pen.setWidthF(max(1.5, point_diameter * 0.15))
+                halo_pen.setCosmetic(True)
+                halo_pen.setStyle(Qt.DashLine)
+                painter.setPen(halo_pen)
+                painter.setBrush(Qt.NoBrush)
+
+                halo_diameter = point_diameter + (dot_halo_margin * 2.0)
+                painter.drawEllipse(QRectF(x - (halo_diameter / 2.0), y - (halo_diameter / 2.0), halo_diameter, halo_diameter))
+
                 painter.setPen(Qt.NoPen)
-                painter.setBrush(effective_brush_color)
-                painter.drawEllipse(self.boundingRect())
-
-    def itemChange(self, change, value):
-        """Safely handle selection state changes without spamming the paint loop."""
-        if change == QGraphicsItem.ItemSelectedChange:
-            if value:  # It is being selected
-                # Bring this item to the front so it is not occluded by other points.
-                # O(1) assignment instead of an O(N) scene iteration
-                self.setZValue(1000)
-                self.animate()
-            else:      # It is being deselected
-                # Reset z-value so normal stacking resumes
-                self.setZValue(0)
-                self.deanimate()
-
-        elif change == QGraphicsItem.ItemSceneChange and value is None:
-            # Clean up if it gets deleted from the scene
-            self.deanimate()
-
-        return super().itemChange(change, value)
-
-    def tick_animation(self):
-        """Perform one 'tick' of the marching ants animation."""
-        # Animations disabled for gallery/embedding points to keep
-        # rendering static and avoid global timer registration.
-        return
-
-    def animate(self):
-        """Enable animated state visually without registering global timers.
-
-        We keep the flag and trigger a repaint so selection visuals update,
-        but do not register with the global AnimationManager.
-        """
-        self.is_animating = True
-        try:
-            self.update()
-        except RuntimeError:
-            pass
-
-    def deanimate(self):
-        """Disable animated state and reset visuals (no global unregister)."""
-        self.is_animating = False
-        self.animation_offset = 0
-        try:
-            self.update()
-        except RuntimeError:
-            pass
-
-    def __del__(self):
-        """Clean up the timer when the item is deleted."""
-        if hasattr(self, 'is_animating') and self.is_animating:
-            self.deanimate()
+                painter.setBrush(QBrush(color))
+                painter.drawEllipse(QRectF(x - radius, y - radius, point_diameter, point_diameter))
 
 
 class AnnotationDataItem:

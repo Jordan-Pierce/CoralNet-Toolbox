@@ -235,7 +235,7 @@ class SelectionManager(QObject):
             self._selected_ids = set(all_selected_ids)
             
             # Sync selection to the embedding viewer
-            if self._embedding_viewer and self._embedding_viewer.points_by_id:
+            if self._embedding_viewer and len(getattr(self._embedding_viewer, '_point_ids', [])) > 0:
                 self._embedding_viewer.render_selection_from_ids(self._selected_ids)
             
             # Sync selection to the annotation window
