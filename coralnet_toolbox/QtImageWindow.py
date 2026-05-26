@@ -501,22 +501,55 @@ class ImageWindow(QWidget):
 
         `changes` is expected to be a list of tuples: (annotation_id, old_label, new_label)
         We aggregate affected image paths and update them once each.
+
+        Optimized: for large batches, avoid O(N) dict lookups to find affected image paths.
+        Instead use the annotation_window's current_image_path directly (which covers the
+        common case) and fall back to full iteration only for small batches.
         """
         try:
             if not changes:
                 return
+
+            _LARGE_BATCH = 2000
             images_to_update = set()
-            for item in changes:
+
+            if len(changes) > _LARGE_BATCH:
+                # For large batches the changed annotations almost always all belong to
+                # the current image (user selected all on canvas then relabeled).
+                # Skip the O(N) dict-lookup loop and just update the current image.
+                current_path = getattr(self.annotation_window, 'current_image_path', None)
+                if current_path:
+                    images_to_update.add(current_path)
+                # Also check the first annotation in the list to catch cross-image cases
+                # without iterating the whole list.
                 try:
-                    ann_id = item[0]
+                    ann_id = changes[0][0]
                     annotation = self.annotation_window.annotations_dict.get(ann_id)
                     if annotation and getattr(annotation, 'image_path', None):
                         images_to_update.add(annotation.image_path)
                 except Exception:
-                    continue
+                    pass
+            else:
+                annotations_dict = self.annotation_window.annotations_dict
+                for item in changes:
+                    try:
+                        ann_id = item[0]
+                        annotation = annotations_dict.get(ann_id)
+                        if annotation and getattr(annotation, 'image_path', None):
+                            images_to_update.add(annotation.image_path)
+                    except Exception:
+                        continue
 
+            # update_counts=False: skip per-image update_annotation_count call;
+            # call it once below instead of once per image.
             for image_path in images_to_update:
-                self.update_image_annotations(image_path)
+                self.update_image_annotations(image_path, update_counts=False)
+
+            # One consolidated annotation count refresh
+            try:
+                self.main_window.label_window.update_annotation_count()
+            except Exception:
+                pass
         except Exception:
             pass
         

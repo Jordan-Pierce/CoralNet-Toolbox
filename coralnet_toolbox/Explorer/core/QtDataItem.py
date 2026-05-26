@@ -213,7 +213,16 @@ class ScatterPlotItem(QGraphicsItem):
         visible_mask = np.isfinite(coords).all(axis=1)
 
         if self.viewer is not None and getattr(self.viewer, 'isolated_mode', False):
-            visible_mask &= selected_mask
+            # Use the frozen isolation mask captured when the user pressed "Isolate".
+            # The live selected_mask changes as the user clicks around; if we used it
+            # here, clearing the selection while isolated would blank the entire plot.
+            # _isolated_mask is only cleared when the user double-clicks to exit isolation.
+            isolated_mask = getattr(self.viewer, '_isolated_mask', None)
+            if isolated_mask is not None and isolated_mask.size == len(coords):
+                visible_mask &= isolated_mask
+            else:
+                # Fallback for legacy callers that haven't set _isolated_mask yet
+                visible_mask &= selected_mask
 
         if not np.any(visible_mask):
             return

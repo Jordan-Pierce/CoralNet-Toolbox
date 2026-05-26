@@ -10,7 +10,6 @@ the gallery display functionality with built-in filtering capabilities.
 import warnings
 
 import os
-import time
 
 from PyQt5 import QtCore, QtGui
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot, QEvent, QSignalBlocker
@@ -105,9 +104,17 @@ class AnnotationViewerWindow(QWidget):
         # Filter applied flag: when True the gallery is allowed to populate widgets
         # (the user must explicitly press "Apply Filter" to set this).
         self._filter_applied = False
-        
+
+        # Label-change coalescing: collect changed IDs during the current event-loop
+        # tick, then flush once via _flush_label_change_update().
+        self._pending_label_changes: set = set()
+        self._label_change_timer = QTimer(self)
+        self._label_change_timer.setSingleShot(True)
+        self._label_change_timer.setInterval(0)  # fire on next event-loop iteration
+        self._label_change_timer.timeout.connect(self._flush_label_change_update)
+
         # Virtualization disabled: using model/view
-        
+
         # Build the UI
         self._setup_ui()
         
@@ -476,7 +483,7 @@ class AnnotationViewerWindow(QWidget):
     def get_selected_annotation_ids(self):
         """
         Get the list of currently selected annotation IDs.
-        
+
         Returns:
             list: List of selected annotation IDs.
         """
@@ -489,6 +496,26 @@ class AnnotationViewerWindow(QWidget):
                     ids.append(data['item'].annotation.id)
             return ids
         return []
+
+    def get_selected_annotation_count(self):
+        """
+        Get the count of currently selected annotations — fast path that avoids
+        building the full ID list (used by update_annotation_count in LabelWindow).
+
+        Returns:
+            int: Number of selected annotation items (excludes header rows).
+        """
+        if hasattr(self, 'list_view') and self.list_view is not None:
+            try:
+                sel = self.list_view.selectionModel().selectedIndexes()
+                # Count only rows that are annotation items (not group headers)
+                return sum(
+                    1 for idx in sel
+                    if (idx.data(self.list_model.DataItemRole) or {}).get('type') == 'annotation'
+                )
+            except Exception:
+                pass
+        return 0
     
     def highlight_annotations(self, ids):
         """
@@ -952,28 +979,17 @@ class AnnotationViewerWindow(QWidget):
     def on_annotation_label_changed(self, annotation_id, new_label):
         """
         Handle an annotation's label being changed.
-        
-        Args:
-            annotation_id: ID of the annotation.
-            new_label: New label ID.
+
+        We don't recreate AnnotationDataItem here because it references the
+        mutated annotation in-place. Recreating it would orphan the model's reference.
+
+        Changes are coalesced: if multiple annotations change in the same event-loop
+        tick (e.g. bulk-relabel), _flush_label_change_update() runs only once after
+        all signals have fired.
         """
-        # We don't recreate AnnotationDataItem here because it references the 
-        # mutated annotation in-place. Recreating it would orphan the model's reference!
-
-        # Refresh label filter options to pick up new label types
-        self._populate_label_filter()
-
-        # Check if structural changes are needed
-        active_label_filters = self._get_selected_labels()
-        is_sorting_by_label = (self.sort_combo.currentText() == "Label")
-        is_sorting_by_confidence = (self.sort_combo.currentText() == "Confidence")
-
-        if active_label_filters or is_sorting_by_label or is_sorting_by_confidence:
-            QTimer.singleShot(0, self.refresh_annotations)
-        else:
-            # For pure color/text updates, just force a repaint for instant feedback
-            if hasattr(self, 'list_view') and self.list_view is not None:
-                self.list_view.viewport().update()
+        self._pending_label_changes.add(annotation_id)
+        if not self._label_change_timer.isActive():
+            self._label_change_timer.start()
     
     @pyqtSlot(str)
     def on_annotation_modified(self, annotation_id):
@@ -1011,11 +1027,47 @@ class AnnotationViewerWindow(QWidget):
     def on_annotations_labels_changed(self, changes):
         """
         Handle batch label changes.
-        
+
         Args:
             changes: List of tuples (annotation_id, old_label, new_label)
+
+        All changed IDs are queued and flushed together in one deferred update,
+        so N simultaneous label changes produce exactly one repaint/refresh.
         """
-        # Refresh label filter options to pick up new label types
+        try:
+            if changes:
+                # Fast path: avoid O(N) tuple unpacking for large batches.
+                # _pending_label_changes only needs IDs, not old/new labels.
+                _LARGE_BATCH = 2000
+                if len(changes) > _LARGE_BATCH:
+                    # For very large batches signal a full refresh by using a sentinel
+                    # rather than iterating all N items just to build a set of IDs.
+                    self._pending_label_changes.add('__all__')
+                else:
+                    for ann_id, _old, _new in changes:
+                        self._pending_label_changes.add(ann_id)
+        except Exception:
+            pass
+        if not self._label_change_timer.isActive():
+            self._label_change_timer.start()
+
+    def _flush_label_change_update(self):
+        """
+        Process all coalesced label changes in one go.
+
+        Called once per event-loop iteration after one or more label-change signals
+        fired.  Drains _pending_label_changes, updates the label filter combo once,
+        then either triggers a full refresh (when sorting/filtering requires it) or
+        does a lightweight viewport repaint.
+        """
+        if not self._pending_label_changes:
+            return
+
+        # Drain the pending set atomically so re-entrant signals don't double-fire
+        _changed = self._pending_label_changes
+        self._pending_label_changes = set()
+
+        # Refresh the label filter combo once for the whole batch
         self._populate_label_filter()
 
         # Check if structural changes are needed
@@ -1024,12 +1076,13 @@ class AnnotationViewerWindow(QWidget):
         is_sorting_by_confidence = (self.sort_combo.currentText() == "Confidence")
 
         if active_label_filters or is_sorting_by_label or is_sorting_by_confidence:
-            QTimer.singleShot(0, self.refresh_annotations)
+            # Full refresh required — annotations may need reordering/regrouping
+            self.refresh_annotations()
         else:
-            # For pure color/text updates, just force a repaint for instant feedback
+            # Pure color/text update — just repaint the visible cells
             if hasattr(self, 'list_view') and self.list_view is not None:
                 self.list_view.viewport().update()
-    
+
     @pyqtSlot(str, object)
     def on_annotation_moved(self, annotation_id, move_data):
         """
@@ -1519,13 +1572,19 @@ class AnnotationViewerWindow(QWidget):
             blocker = QSignalBlocker(self.list_view.selectionModel())
             try:
                 self.list_view.clearSelection()
-                
+
                 # --- Ensure underlying data items are unmarked ---
                 for item in self.all_data_items:
                     item.set_selected(False)
                 # ------------------------------------------------------
             finally:
                 del blocker
+            # Force an immediate repaint so the custom delegate removes the
+            # dashed selection border from all previously-selected cells.
+            # clearSelection() inside a QSignalBlocker can leave the viewport
+            # without a scheduled repaint, causing stale dashed borders to persist
+            # until the next unrelated redraw event.
+            self.list_view.viewport().update()
         else:
             # Nothing to clear when no list view is present
             pass
@@ -1570,7 +1629,11 @@ class AnnotationViewerWindow(QWidget):
                     pass
         finally:
             del blocker
-            
+
+        # Force a repaint so the delegate redraws dashed borders for the new
+        # selection state — same reason as in clear_selection().
+        self.list_view.viewport().update()
+
         self._update_toolbar_state()
 
     def _on_list_selection_changed(self, selected, deselected):
@@ -1832,10 +1895,24 @@ class AnnotationViewerWindow(QWidget):
     # -------------------------------------------------------------------------
     
     def isolate_and_select_from_ids(self, ids_to_isolate):
-        """Isolate and select specific annotations by ID."""
-        start = time.perf_counter()
-        # Build grouped list containing only the requested IDs
+        """Isolate and select specific annotations by ID.
+
+        When the gallery is already isolated to exactly this set of IDs, skips
+        the full beginResetModel() rebuild and only updates the selection highlight.
+        This is the common case when the user is rotating the embedding or clicking
+        through annotations — same selection, no structural change needed.
+        """
         ids_set = set(ids_to_isolate)
+
+        # Fast path: already isolated to the same set — just refresh selection highlight
+        if self.isolated_mode and self.isolated_ids == ids_set:
+            self._syncing_selection = True
+            self.render_selection_from_ids(ids_to_isolate)
+            self._syncing_selection = False
+            self._update_toolbar_state()
+            return
+
+        # Build grouped list containing only the requested IDs
         groups = self._group_data_items_by_sort_key(self.all_data_items)
         new_groups = []
         for group_key, group_color, items in groups:
@@ -1848,15 +1925,14 @@ class AnnotationViewerWindow(QWidget):
 
         self.isolated_mode = True
         self.isolated_ids = ids_set
-        
+
         # --- Synchronous update wrapped in lock to prevent rogue signals ---
         self._syncing_selection = True
         self.list_model.set_grouped_items(new_groups)
-        
         self.render_selection_from_ids(ids_to_isolate)
         self._syncing_selection = False
         # ------------------------------------------------------------------------
-        
+
         self._update_toolbar_state()
     
     def display_and_isolate_ordered_results(self, ordered_ids):

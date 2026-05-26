@@ -14,7 +14,7 @@ import PyQtAds
 from PyQtAds import ads
 
 from PyQt5.QtGui import QMouseEvent, QIcon
-from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize
+from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize, QTimer
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QActionGroup, QSizePolicy,
                              QMessageBox, QWidget, QVBoxLayout, QLabel, QHBoxLayout,
                              QSpinBox, QComboBox, QSlider, QDialog, QPushButton, QListWidget)
@@ -1304,9 +1304,14 @@ class MainWindow(QMainWindow):
         # ---------------------------------------------------------------------
         self.annotation_window.annotationCreated.connect(self.label_window.update_tooltips)
         self.annotation_window.annotationDeleted.connect(self.label_window.update_tooltips)
-        # Also refresh label tooltips when an annotation's label changes
+        # Also refresh label tooltips when an annotation's label changes.
+        # Use singleShot(0) for batch changes so tooltip rebuilding is deferred out of
+        # the hot relabel path (it iterates all rasters and can take tens of ms for
+        # large projects).
         self.annotation_window.annotationLabelChanged.connect(lambda *args: self.label_window.update_tooltips())
-        self.annotation_window.annotationsLabelsChanged.connect(lambda *args: self.label_window.update_tooltips())
+        self.annotation_window.annotationsLabelsChanged.connect(
+            lambda *args: QTimer.singleShot(0, self.label_window.update_tooltips)
+        )
 
         self.annotation_window.annotationCreated.connect(self.annotation_viewer_window.on_annotation_created)
         self.annotation_window.annotationsCreated.connect(self.annotation_viewer_window.on_annotations_created)

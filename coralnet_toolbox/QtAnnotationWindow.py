@@ -1618,22 +1618,115 @@ class AnnotationWindow(BaseCanvas):
 
         # Handle both valid labels and None (no label selected)
         if label is not None:
+            _t0_label_loop = time.perf_counter()
+            _t_uconf = 0.0
+            _t_crop = 0.0
+            _t_conf = 0.0
 
+            # Track the last annotation that actually changed so we can update the
+            # confidence window exactly once at the end instead of N times.
+            _last_changed_annotation = None
+
+            # Raster-source cache: avoid repeated raster lookups for annotations on the
+            # same image (common when all selected annotations share one image path).
+            _raster_cache: dict = {}
+
+            def _get_raster_cached(annotation):
+                ip = annotation.image_path
+                if ip in _raster_cache:
+                    return _raster_cache[ip]
+                src = _get_raster_source_for_annotation(annotation)
+                _raster_cache[ip] = src
+                return src
+
+            _n_on_canvas = 0
+            _is_bulk = len(target_annotations) > 1
             for annotation in target_annotations:
                 if annotation.label.id != label.id:
                     old_label = annotation.label
-                    annotation.update_user_confidence(self.selected_label)
-                    raster_source = _get_raster_source_for_annotation(annotation)
-                    if raster_source is not None:
+                    _tc0 = time.perf_counter()
+                    _is_on_canvas = (annotation.image_path == self.current_image_path)
+                    if _is_on_canvas:
+                        _n_on_canvas += 1
+
+                    if _is_bulk:
+                        # FAST PATH for bulk relabel: apply only the data changes inline,
+                        # skipping update_graphics_item() entirely. For on-canvas selected
+                        # annotations we're about to deselect them and rebuild the phantom
+                        # layer anyway — the full QGraphicsItemGroup teardown+rebuild done by
+                        # update_user_confidence() is wasted work in this case.
+                        # Off-canvas annotations have no graphics items to update.
+                        annotation.blockSignals(True)
                         try:
-                            annotation.create_cropped_image(raster_source)
+                            # Pure data update — skip update_graphics_item() entirely.
+                            #
+                            # On-canvas selected annotations: their QGraphicsItemGroup will be
+                            # torn down by _clear_annotation_graphics_single() moments later
+                            # during deselect, so any color/label rebuild here is thrown away.
+                            # The phantom layer rebuilt after deselect uses annotation.label
+                            # directly (the new value), so visual correctness is preserved.
+                            #
+                            # Off-canvas annotations: graphics_item_group is None — the call
+                            # would already be a no-op, but we skip even the None-check cost.
+                            annotation.verified = True
+                            annotation.user_confidence = {label: 1.0}
+                            if annotation.machine_confidence:
+                                annotation.machine_confidence.pop(old_label, None)
+                            annotation.label = label
+                        finally:
+                            annotation.blockSignals(False)
+                    else:
+                        # Single annotation: use normal path (signal + full update)
+                        annotation.blockSignals(True)
+                        annotation.update_user_confidence(self.selected_label)
+                        annotation.blockSignals(False)
+
+                    _t_uconf += time.perf_counter() - _tc0
+                    _last_changed_annotation = annotation
+                    changes.append((annotation.id, old_label, self.selected_label))
+
+            # For on-canvas selected annotations that went through the bulk fast-path,
+            # update_graphics_item() was skipped to avoid wasted teardown/rebuild.
+            # But if the user doesn't immediately deselect, their selection color and
+            # label tag still show the OLD label. Fix: call update_graphics_item() for
+            # every on-canvas annotation that has a live QGraphicsItemGroup right now.
+            # This is much cheaper than the full update_user_confidence() call because
+            # the data is already correct; we only need to repaint the item group.
+            if _is_bulk and _n_on_canvas > 0:
+                for annotation in target_annotations:
+                    if (annotation.image_path == self.current_image_path and
+                            annotation.is_graphics_item_valid()):
+                        try:
+                            annotation.update_graphics_item()
                         except Exception:
                             pass
+
+            # Crop and display ONLY for the last changed annotation (confidence window only
+            # shows one at a time anyway, and create_cropped_image is expensive per annotation).
+            if _last_changed_annotation is not None:
+                _tc0 = time.perf_counter()
+                raster_source = _get_raster_cached(_last_changed_annotation)
+                if raster_source is not None:
                     try:
-                        self.main_window.confidence_window.display_cropped_image(annotation)
+                        _last_changed_annotation.create_cropped_image(raster_source)
                     except Exception:
                         pass
-                    changes.append((annotation.id, old_label, self.selected_label))
+                _t_crop += time.perf_counter() - _tc0
+                _tc0 = time.perf_counter()
+                try:
+                    self.main_window.confidence_window.display_cropped_image(_last_changed_annotation)
+                except Exception:
+                    pass
+                _t_conf += time.perf_counter() - _tc0
+
+            _t_total_loop = time.perf_counter() - _t0_label_loop
+            if len(target_annotations) > 1 or _t_total_loop > 0.05:
+                print(f"[PERF] set_selected_label: N={len(target_annotations)} changed={len(changes)}"
+                      f" on_canvas={_n_on_canvas}"
+                      f" | update_user_confidence={_t_uconf*1000:.1f}ms"
+                      f" | create_cropped_image={_t_crop*1000:.1f}ms"
+                      f" | display_cropped_image={_t_conf*1000:.1f}ms"
+                      f" | total={_t_total_loop*1000:.1f}ms")
 
             if self.cursor_annotation:
                 if self.cursor_annotation.label.id != label.id:
@@ -1644,12 +1737,16 @@ class AnnotationWindow(BaseCanvas):
                 self.toggle_cursor_annotation()
 
         # Record action(s)
+        _t_push = 0.0
+        _t_emit = 0.0
         try:
             if changes:
                 if len(changes) == 1:
                     ann_id, old_label, new_label = changes[0]
+                    _tp = time.perf_counter()
                     action = ChangeLabelAction(self, ann_id, old_label, new_label)
                     self.action_stack.push(action)
+                    _t_push = time.perf_counter() - _tp
                     try:
                         self.annotationLabelChanged.emit(
                             ann_id,
@@ -1658,15 +1755,22 @@ class AnnotationWindow(BaseCanvas):
                     except Exception:
                         pass
                 else:
+                    _tp = time.perf_counter()
                     action = ChangeLabelsAction(self, changes)
                     self.action_stack.push(action)
+                    _t_push = time.perf_counter() - _tp
+                    _te = time.perf_counter()
                     try:
                         self.annotationsLabelsChanged.emit(changes)
                     except Exception:
                         pass
+                    _t_emit = time.perf_counter() - _te
         except Exception:
             pass
-                
+        if _t_push + _t_emit > 0.02:
+            print(f"[PERF] set_selected_label: action_push={_t_push*1000:.1f}ms"
+                  f" | signal_emit={_t_emit*1000:.1f}ms")
+
         # Make cursor normal again
         QApplication.restoreOverrideCursor()
         
@@ -3132,9 +3236,11 @@ class AnnotationWindow(BaseCanvas):
             self.main_window.label_window.deselect_active_label()
             self.main_window.confidence_window.clear_display()
 
-        # Optionally center/scroll to the first selected item
+        # Only center/scroll when exactly ONE annotation was selected.
+        # Multi-annotation selections span arbitrary locations; animating toward
+        # the first item in an arbitrary list is confusing and uninformative.
         try:
-            if first_selected and scroll_to_first:
+            if first_selected and scroll_to_first and len(annotation_ids) == 1:
                 self.center_on_annotation(first_selected)
         except Exception:
             pass
@@ -3176,19 +3282,22 @@ class AnnotationWindow(BaseCanvas):
 
     def unselect_annotations(self):
         """Unselect all currently selected annotations."""
+        _t0_unsel = time.perf_counter()
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        
+
         # --- Disable BSP indexing ---
         if self.scene:
             self.scene.setItemIndexMethod(QGraphicsScene.NoIndex)
-        
+
         # Create a copy to safely iterate through
         annotations_to_unselect = self.selected_annotations.copy()
-        
+
         # Clear the list first to avoid modification during iteration
         self.selected_annotations = []
-        
+
+        _t_clear = 0.0
+        _t_desel = 0.0
         for annotation in annotations_to_unselect:
             # Disconnect from confidence window if needed
             if hasattr(annotation, 'annotationUpdated') and self.main_window.confidence_window.isVisible():
@@ -3200,32 +3309,53 @@ class AnnotationWindow(BaseCanvas):
                     annotation.annotationUpdated.disconnect(self.on_annotation_updated)
                 except TypeError:
                     pass
-            
+
             # PHANTOM ARCHITECTURE: Destroy Qt objects BEFORE deselect() so the group's
             # children (center, bbox, tag) are still attached and removed cleanly together,
             # preventing orphaned items being left in the scene.
+            _tc = time.perf_counter()
             self._clear_annotation_graphics_single(annotation)
+            _t_clear += time.perf_counter() - _tc
             # Update annotation's internal state
+            _tc = time.perf_counter()
             annotation.deselect()
+            _t_desel += time.perf_counter() - _tc
             
         # --- NEW: Restore BSP indexing ---
+        _t_bsp0 = time.perf_counter()
         if self.scene:
             self.scene.setItemIndexMethod(QGraphicsScene.BspTreeIndex)
-        
+        _t_bsp = time.perf_counter() - _t_bsp0
+
         # Clear the confidence window
         self.main_window.confidence_window.clear_display()
-        
+
         # PHANTOM ARCHITECTURE: Re-render phantom layer with all now-deselected annotations
         # Skip if caller will do its own rebuild (e.g. select_annotation coalescing)
+        _t_phantom = 0.0
         if not self._skip_phantom_refresh:
+            _tp0 = time.perf_counter()
             self.refresh_phantom_annotations()
-        
+            _t_phantom = time.perf_counter() - _tp0
+
         # Update the viewport once for all changes
+        _tv0 = time.perf_counter()
         self.viewport().update()
-        
+        _t_vp = time.perf_counter() - _tv0
+
+        _t_total_unsel = time.perf_counter() - _t0_unsel
+        if len(annotations_to_unselect) > 1 or _t_total_unsel > 0.05:
+            print(f"[PERF] unselect_annotations: N={len(annotations_to_unselect)}"
+                  f" | clear_graphics={_t_clear*1000:.1f}ms"
+                  f" | deselect={_t_desel*1000:.1f}ms"
+                  f" | bsp_restore={_t_bsp*1000:.1f}ms"
+                  f" | phantom_refresh={_t_phantom*1000:.1f}ms"
+                  f" | viewport_update={_t_vp*1000:.1f}ms"
+                  f" | total={_t_total_unsel*1000:.1f}ms")
+
         # Make cursor normal again
         QApplication.restoreOverrideCursor()
-        
+
         # Emit selection changed signal
         self._emit_selection_changed()
     

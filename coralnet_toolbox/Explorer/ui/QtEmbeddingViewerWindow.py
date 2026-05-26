@@ -170,6 +170,10 @@ class EmbeddingViewerWindow(QWidget):
         # Isolation state
         self.isolated_mode = False
         self.isolated_points = set()
+        # Frozen boolean mask (same length as _point_ids) captured at isolation time.
+        # Used by ScatterPlotItem.paint() for visibility so that clearing the
+        # selection while isolated doesn't blank the plot.
+        self._isolated_mask = np.empty((0,), dtype=bool)
         
         # Selection blocking
         self.selection_blocked = False
@@ -720,7 +724,7 @@ class EmbeddingViewerWindow(QWidget):
     def on_annotation_label_changed(self, annotation_id, new_label):
         """Handle an annotation's label being changed."""
         if self._point_ids.size:
-            self._refresh_point_colors()
+            self._refresh_point_colors(changed_ids={annotation_id})
             self._update_toolbar_state()
     
     @pyqtSlot(str)
@@ -770,12 +774,25 @@ class EmbeddingViewerWindow(QWidget):
     def on_annotations_labels_changed(self, changes):
         """
         Handle batch label changes - just update visuals, don't invalidate features.
-        
+
         Args:
             changes: List of tuples (annotation_id, old_label, new_label)
         """
         if self._point_ids.size:
-            self._refresh_point_colors()
+            try:
+                if changes:
+                    # Avoid O(N) Python loop for very large change lists by falling back
+                    # to a full color rebuild (which is already vectorised) when N > threshold.
+                    _LARGE_BATCH = 2000
+                    if len(changes) > _LARGE_BATCH:
+                        changed_ids = None  # full rebuild is faster than iterating 10K+ tuples
+                    else:
+                        changed_ids = {c[0] for c in changes}
+                else:
+                    changed_ids = None
+            except Exception:
+                changed_ids = None
+            self._refresh_point_colors(changed_ids=changed_ids)
             self._update_toolbar_state()
     
     @pyqtSlot(str, object)
@@ -1628,6 +1645,7 @@ class EmbeddingViewerWindow(QWidget):
         """Clear all points from scene state."""
         self.isolated_mode = False
         self.isolated_points.clear()
+        self._isolated_mask = np.empty((0,), dtype=bool)
         self.locate_target_id = None
         self.selection_at_press_mask = None
         if self.rubber_band is not None:
@@ -1748,19 +1766,32 @@ class EmbeddingViewerWindow(QWidget):
         except Exception:
             self._kdtree = None
 
-    def _sync_scatter_item(self):
+    def _sync_scatter_item(self, coords_changed=True):
+        """Push current arrays to the ScatterPlotItem and update the scene.
+
+        coords_changed=True (default): full set_arrays() + boundingRect + KDTree rebuild.
+        coords_changed=False: only push colors/selection and trigger a repaint — used
+        when only colors or the selection mask changed so we avoid the ~1.5ms KDTree
+        rebuild on every label change or selection toggle.
+        """
         if self.mega_item is None:
             return
 
-        self.mega_item.set_arrays(
-            self._point_coords_2d,
-            self._point_colors,
-            self._point_selected,
-            self._point_depth,
-            pixmaps=self._point_pixmaps,
-        )
-        self.graphics_scene.setSceneRect(self.mega_item.boundingRect())
-        self._update_kdtree()
+        if coords_changed:
+            self.mega_item.set_arrays(
+                self._point_coords_2d,
+                self._point_colors,
+                self._point_selected,
+                self._point_depth,
+                pixmaps=self._point_pixmaps,
+            )
+            self.graphics_scene.setSceneRect(self.mega_item.boundingRect())
+            self._update_kdtree()
+        else:
+            # Light update: push colors + selection without touching coords or KDTree
+            self.mega_item.colors = self._point_colors
+            self.mega_item.selected_mask = self._point_selected
+            self.mega_item.update()
 
     def _current_view_scale(self):
         try:
@@ -1789,23 +1820,46 @@ class EmbeddingViewerWindow(QWidget):
 
         self._point_pixmaps = sprite_pixmaps
 
-    def _refresh_point_colors(self):
+    def _refresh_point_colors(self, changed_ids=None):
+        """Rebuild point colors, optionally limited to a set of changed annotation IDs.
+
+        When changed_ids is provided (a set/list of annotation IDs whose labels
+        changed), only those rows in _point_colors are updated in-place and the
+        scatter item is redrawn without a full set_arrays() call.  This avoids
+        iterating 10K items and rebuilding the KDTree every time a label changes.
+
+        When changed_ids is None the full array is rebuilt (used on initial load).
+        """
         if not self.current_data_items:
             self._point_colors = np.empty((0, 4), dtype=np.uint8)
             self._sync_scatter_item()
             return
 
-        colors = []
-        for item in self.current_data_items:
-            color = item.effective_color
-            try:
-                qcolor = QColor(color)
-            except Exception:
-                qcolor = QColor("black")
-            colors.append([qcolor.red(), qcolor.green(), qcolor.blue(), qcolor.alpha()])
-
-        self._point_colors = np.asarray(colors, dtype=np.uint8)
-        self._sync_scatter_item()
+        if changed_ids is not None and self._point_colors.shape[0] == len(self.current_data_items):
+            # Surgical update: only touch the rows that changed
+            changed_set = set(changed_ids)
+            for i, item in enumerate(self.current_data_items):
+                if item.annotation.id in changed_set:
+                    try:
+                        qc = QColor(item.effective_color)
+                    except Exception:
+                        qc = QColor("black")
+                    self._point_colors[i] = [qc.red(), qc.green(), qc.blue(), qc.alpha()]
+            # Push updated colors to the scatter item without touching coords/KDTree
+            if self.mega_item is not None:
+                self.mega_item.colors = self._point_colors
+                self.mega_item.update()
+        else:
+            # Full rebuild (initial load or size mismatch)
+            colors = []
+            for item in self.current_data_items:
+                try:
+                    qc = QColor(item.effective_color)
+                except Exception:
+                    qc = QColor("black")
+                colors.append([qc.red(), qc.green(), qc.blue(), qc.alpha()])
+            self._point_colors = np.asarray(colors, dtype=np.uint8)
+            self._sync_scatter_item()
 
     def _set_selected_mask(self, selected_mask, emit_signal=True, update_previous=True, force_emit=False):
         selected_mask = np.asarray(selected_mask, dtype=bool).reshape(-1)
@@ -1865,6 +1919,9 @@ class EmbeddingViewerWindow(QWidget):
         self._point_depth = self._point_depth[keep_mask]
         if self._point_pixmaps:
             self._point_pixmaps = [pixmap for pixmap, keep in zip(self._point_pixmaps, keep_mask) if keep]
+        # Keep isolated mask in sync with the (now-shorter) point arrays.
+        if self._isolated_mask.size == keep_mask.size:
+            self._isolated_mask = self._isolated_mask[keep_mask]
 
         for item, is_selected in zip(self.current_data_items, self._point_selected):
             item.set_selected(bool(is_selected))
@@ -1958,24 +2015,30 @@ class EmbeddingViewerWindow(QWidget):
         selected_ids = self.get_selected_annotation_ids()
         if not selected_ids:
             return
-        
+
         self.isolated_points = set(selected_ids)
+        # Freeze a boolean mask of which points are visible in isolation.
+        # ScatterPlotItem.paint() reads this mask directly so that subsequent
+        # selection changes (including clearing the selection entirely) don't
+        # affect which points are visible while we are in isolation mode.
+        self._isolated_mask = self._point_selected.copy()
         self.isolated_mode = True
         if self.mega_item is not None:
             self.mega_item.update()
-        
+
         self._update_toolbar_state()
     
     def _show_all_points(self):
         """Show all points, exit isolation mode."""
         if not self.isolated_mode:
             return
-        
+
         self.isolated_mode = False
         self.isolated_points.clear()
+        self._isolated_mask = np.empty((0,), dtype=bool)
         if self.mega_item is not None:
             self.mega_item.update()
-        
+
         self._update_toolbar_state()
     
     # -------------------------------------------------------------------------
