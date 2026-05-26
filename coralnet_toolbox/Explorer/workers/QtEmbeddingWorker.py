@@ -1,4 +1,3 @@
-# coralnet_toolbox/Explorer/workers/QtEmbeddingWorker.py
 """
 Background worker for running the embedding pipeline without blocking the UI.
 

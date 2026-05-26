@@ -1,9 +1,9 @@
-from .QtTool3D import Tool3D
-from .QtBrushTool3D import Brush3DTool
-from .QtEraseTool3D import Erase3DTool
+from .Tool3D import Tool3D
+from .BrushTool3D import BrushTool3D
+from .EraseTool3D import EraseTool3D
 
 __all__ = [
     'Tool3D',
-    'Brush3DTool',
-    'Erase3DTool',
+    'BrushTool3D',
+    'EraseTool3D',
 ]

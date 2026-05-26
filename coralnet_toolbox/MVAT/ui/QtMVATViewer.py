@@ -24,14 +24,16 @@ from PyQt5.QtWidgets import (
     QVBoxLayout, QLabel, QHBoxLayout
 )
 
-from coralnet_toolbox.MVAT.core.Ray import CameraRay, BatchedRayManager, SphereActorManager
-from coralnet_toolbox.MVAT.core.Frustum import BatchedFrustumManager
-from coralnet_toolbox.MVAT.core.Model import PointCloudProduct, MeshProduct, GaussianSplattingProduct
+from coralnet_toolbox.MVAT.core.Ray import CameraRay
+from coralnet_toolbox.MVAT.managers.RayManager import BatchedRayManager
+from coralnet_toolbox.MVAT.managers.SphereActorManager import SphereActorManager
+from coralnet_toolbox.MVAT.managers.FrustumManager import BatchedFrustumManager
+from coralnet_toolbox.MVAT.core.Products import PointCloudProduct, MeshProduct, GaussianSplattingProduct
 from coralnet_toolbox.MVAT.core.SceneContext import SceneContext
 from coralnet_toolbox.MVAT.core.SceneProduct import AbstractSceneProduct
 from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED
-from coralnet_toolbox.MVAT.tools import Brush3DTool, Erase3DTool
-from coralnet_toolbox.MVAT.ui.CameraAnimator import CameraAnimator
+from coralnet_toolbox.MVAT.tools import BrushTool3D, EraseTool3D
+from coralnet_toolbox.MVAT.ui.QtCameraAnimator import CameraAnimator
 from coralnet_toolbox import theme as app_theme
 
 
@@ -809,15 +811,15 @@ class MVATViewer(QFrame):
         if self._brush_3d_tool is not None or self._erase_3d_tool is not None:
             return
 
-        self._brush_3d_tool = Brush3DTool(self, mvat_manager)
-        self._erase_3d_tool = Erase3DTool(self, mvat_manager)
+        self._brush_3d_tool = BrushTool3D(self, mvat_manager)
+        self._erase_3d_tool = EraseTool3D(self, mvat_manager)
         self._active_3d_tool = None
 
     def get_selected_3d_tool(self):
         return self._active_3d_tool
 
     def set_selected_3d_tool(self, tool_name):
-        """Activate the Brush3DTool or Erase3DTool preview, or clear it."""
+        """Activate the BrushTool3D or EraseTool3D preview, or clear it."""
         tool_map = {
             'brush': self._brush_3d_tool,
             'erase': self._erase_3d_tool,
@@ -2356,6 +2358,10 @@ class MVATViewer(QFrame):
                 if isinstance(product, GaussianSplattingProduct):
                     if product_id not in self._product_actors:
                         product.gaussian_actor.bind_to_plotter(self.plotter)
+                        try:
+                            product.gaussian_actor.scale_modifier = float(self.point_size)
+                        except Exception:
+                            pass
                         self._product_actors[product_id] = product.gaussian_actor.actor
                     actor = self._product_actors[product_id]
                     try:
@@ -2572,7 +2578,7 @@ class MVATViewer(QFrame):
             pass
 
     def set_point_size(self, size):
-        """Update the point size for point clouds."""
+        """Update the point size for point clouds and Gaussian splats."""
         self.point_size = size
         # Update all point-cloud actors' point size
         try:
@@ -2583,6 +2589,15 @@ class MVATViewer(QFrame):
                         actor.GetProperty().SetPointSize(size)
                     except Exception:
                         pass
+
+            for p in self.scene_context.get_products_by_class(GaussianSplattingProduct):
+                gaussian_actor = getattr(p, 'gaussian_actor', None)
+                if gaussian_actor is not None:
+                    try:
+                        gaussian_actor.scale_modifier = float(size)
+                    except Exception:
+                        pass
+
             try:
                 self.plotter.render()
             except Exception:

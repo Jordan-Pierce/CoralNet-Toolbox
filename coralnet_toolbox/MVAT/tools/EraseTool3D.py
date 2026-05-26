@@ -1,8 +1,8 @@
 """
-Erase3DTool — erase-specific 3D tool logic built on top of Brush3DTool.
+EraseTool3D — erase-specific 3D tool logic built on top of Brush3DTool.
 
 The shared preview sphere, hover batching, and label-colored highlight are
-owned by Tool3D.  Erase3DTool only changes the preview fallback color and the
+owned by Tool3D.  EraseTool3D only changes the preview fallback color and the
 label resolution so the brush plumbing would erase rather than paint.
 """
 
@@ -10,7 +10,7 @@ import warnings
 
 import numpy as np
 
-from coralnet_toolbox.MVAT.tools.QtBrushTool3D import Brush3DTool
+from coralnet_toolbox.MVAT.tools.BrushTool3D import BrushTool3D
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -20,7 +20,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class Erase3DTool(Brush3DTool):
+class EraseTool3D(BrushTool3D):
     """
     Previews the erase tool within the brush radius.
 
@@ -35,6 +35,7 @@ class Erase3DTool(Brush3DTool):
     # Red wireframe to match the 2D EraseTool's dashed-red cursor convention.
     _PREVIEW_COLOR   = 'red'
     _PREVIEW_OPACITY = 0.45
+    tool_kind = 'erase'
 
     def _use_active_label_preview_color(self):
         return False

@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from coralnet_toolbox.MVAT.managers.visibility_logging import (
+from coralnet_toolbox.MVAT.utils.MVATLogger import (
     cam_label,
     get_visibility_logger,
     log_cam_breakdown,

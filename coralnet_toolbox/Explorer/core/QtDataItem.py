@@ -1,16 +1,19 @@
-import warnings
+"""
+Data Item classes for the Explorer.
+
+Contains AnnotationDataItem (the annotation ViewModel) and EmbeddingPointItem
+(the graphics object that renders it), plus confidence display and gallery
+sorting helpers (formerly confidence_sorting.py).
+"""
+
+from __future__ import annotations
 
 import os
+import warnings
 
 from PyQt5.QtCore import Qt, QRectF
 from PyQt5.QtGui import QPen, QColor, QPainter
 from PyQt5.QtWidgets import QGraphicsObject, QStyle, QGraphicsItem
-
-from coralnet_toolbox.Explorer.core.confidence_sorting import (
-    confidence_bucket_label,
-    confidence_bucket_sort_key,
-    confidence_value,
-)
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -25,6 +28,61 @@ POINT_WIDTH = 2
 SPRITE_SIZE = 48
 
 ANNOTATION_WIDTH = 4
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Confidence helpers (formerly confidence_sorting.py)
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def confidence_value(annotation) -> float:
+    """Return the confidence used for display/sorting.
+
+    Verified annotations use user confidence. Unverified annotations use the
+    first machine confidence value.
+    """
+    confidence_source = annotation.user_confidence if annotation.verified else annotation.machine_confidence
+
+    if confidence_source:
+        try:
+            return float(next(iter(confidence_source.values())))
+        except (TypeError, ValueError, StopIteration):
+            return 0.0
+
+    return 0.0
+
+
+def confidence_bucket_start(confidence) -> int:
+    """Map confidence to a 10% bucket start (0, 10, ..., 90)."""
+    try:
+        confidence = float(confidence)
+    except Exception:
+        confidence = 0.0
+
+    confidence = max(0.0, min(confidence, 1.0))
+    bucket_start = int(confidence * 10) * 10
+    return min(bucket_start, 90)
+
+
+def confidence_bucket_label(annotation) -> str:
+    """Return the display label for a confidence bucket."""
+    if annotation.verified:
+        return "Verified"
+
+    bucket_start = confidence_bucket_start(confidence_value(annotation))
+    if bucket_start >= 90:
+        return "90-100%"
+    return f"{bucket_start}-{bucket_start + 9}%"
+
+
+def confidence_bucket_sort_key(annotation):
+    """Return a sort key that places numeric buckets before Verified."""
+    if annotation.verified:
+        return (1, 0, 0.0)
+
+    confidence = max(0.0, min(1.0, confidence_value(annotation)))
+    bucket_start = confidence_bucket_start(confidence)
+    return (0, bucket_start, confidence)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -63,18 +121,18 @@ class EmbeddingPointItem(QGraphicsObject):
         self.default_pen.setCosmetic(True)
         self.setPos(self.data_item.embedding_x, self.data_item.embedding_y)
         self.setToolTip(self.data_item.get_tooltip_text())
-        
+
         # --- Animation Properties ---
         self.animation_manager = None
         self.is_animating = False
-        
+
         # --- Marching Ants offset ---
         self.animation_offset = 0
-        
+
     def set_animation_manager(self, manager):
         """
         Binds this object to the central AnimationManager.
-        
+
         Args:
             manager (AnimationManager): The central animation manager instance.
         """
@@ -82,11 +140,11 @@ class EmbeddingPointItem(QGraphicsObject):
         # These items draw a static selection outline; animation ticks
         # are intentionally disabled to avoid per-frame timers.
         self.animation_manager = manager
-        
+
     def is_graphics_item_valid(self):
         """
         Checks if the graphics item is still valid and added to a scene.
-        
+
         Returns:
             bool: True if the item exists and has a scene, False otherwise.
         """
@@ -98,14 +156,14 @@ class EmbeddingPointItem(QGraphicsObject):
 
     def boundingRect(self):
         """Returns the bounding rectangle, which depends on the display mode and depth."""
-        
+
         scale_factor = 1.0
         if self.viewer and self.viewer.is_3d_data and self.viewer.z_range > 0:
             # Normalize z from its global range to a [0, 1] range
             z_normalized = (self.data_item.embedding_z - self.viewer.min_z) / self.viewer.z_range
             # Map normalized z to a scale factor (e.g., from 0.5x to 1.5x)
             scale_factor = 0.5 + z_normalized
-    
+
         # Allow viewer to override base sizes (dynamic resizing via Ctrl+Wheel)
         base_sprite = getattr(self.viewer, 'sprite_size', SPRITE_SIZE) if self.viewer else SPRITE_SIZE
         base_point = getattr(self.viewer, 'point_size', POINT_SIZE) if self.viewer else POINT_SIZE
@@ -133,7 +191,7 @@ class EmbeddingPointItem(QGraphicsObject):
         """Clean, high-performance data-science aesthetic."""
         option.state &= ~QStyle.State_Selected
         painter.setRenderHint(QPainter.Antialiasing)
-        
+
         scale_factor = 1.0
         opacity = 255
         if self.viewer and self.viewer.is_3d_data and self.viewer.z_range > 0:
@@ -144,7 +202,7 @@ class EmbeddingPointItem(QGraphicsObject):
         # Directly grab the existing effective color reference (Avoids wrapping memory unnecessarily)
         display_color = self.data_item.effective_color
         dash_color = self.data_item.effective_color
-        
+
         display_mode = self.viewer.display_mode if self.viewer else 'dots'
 
         if display_mode == 'sprites':
@@ -155,7 +213,7 @@ class EmbeddingPointItem(QGraphicsObject):
                     self.thumbnail_pixmap = source_pixmap.scaled(
                         current_size, Qt.KeepAspectRatio, Qt.SmoothTransformation
                     )
-            
+
             if self.thumbnail_pixmap:
                 painter.drawPixmap(self.boundingRect().topLeft(), self.thumbnail_pixmap)
 
@@ -163,7 +221,7 @@ class EmbeddingPointItem(QGraphicsObject):
                 pen_width = ANNOTATION_WIDTH
                 buffer = 4.0
                 halo_rect = self.boundingRect().adjusted(-buffer, -buffer, buffer, buffer)
-                
+
                 # Draw dashed halo with buffer
                 halo_pen = QPen(dash_color, pen_width)
                 halo_pen.setStyle(Qt.DashLine)
@@ -186,30 +244,30 @@ class EmbeddingPointItem(QGraphicsObject):
                 painter.setPen(Qt.NoPen)
                 painter.setBrush(display_color)
                 painter.drawEllipse(self.boundingRect())
-                
+
                 # Draw concentric dashed halo with buffer
                 pen_width = max(1.5, 2.0 * scale_factor)
                 buffer = 4.0
                 point_radius = self.boundingRect().width() / 2.0
                 halo_radius = point_radius + buffer
                 center = self.boundingRect().center()
-                halo_rect = QRectF(center.x() - halo_radius, center.y() - halo_radius, 
+                halo_rect = QRectF(center.x() - halo_radius, center.y() - halo_radius,
                                    halo_radius * 2, halo_radius * 2)
-                
+
                 halo_pen = QPen(display_color, pen_width)
                 halo_pen.setStyle(Qt.DashLine)
                 halo_pen.setCosmetic(True)
                 painter.setPen(halo_pen)
                 painter.setBrush(Qt.NoBrush)
                 painter.drawEllipse(halo_rect)
-                
+
             else:
                 effective_brush_color = QColor(display_color)
                 effective_brush_color.setAlpha(opacity)
                 painter.setPen(Qt.NoPen)
                 painter.setBrush(effective_brush_color)
                 painter.drawEllipse(self.boundingRect())
-    
+
     def itemChange(self, change, value):
         """Safely handle selection state changes without spamming the paint loop."""
         if change == QGraphicsItem.ItemSelectedChange:
@@ -222,19 +280,19 @@ class EmbeddingPointItem(QGraphicsObject):
                 # Reset z-value so normal stacking resumes
                 self.setZValue(0)
                 self.deanimate()
-                
+
         elif change == QGraphicsItem.ItemSceneChange and value is None:
             # Clean up if it gets deleted from the scene
             self.deanimate()
-            
+
         return super().itemChange(change, value)
-    
+
     def tick_animation(self):
         """Perform one 'tick' of the marching ants animation."""
         # Animations disabled for gallery/embedding points to keep
         # rendering static and avoid global timer registration.
         return
-        
+
     def animate(self):
         """Enable animated state visually without registering global timers.
 
@@ -246,7 +304,7 @@ class EmbeddingPointItem(QGraphicsObject):
             self.update()
         except RuntimeError:
             pass
-            
+
     def deanimate(self):
         """Disable animated state and reset visuals (no global unregister)."""
         self.is_animating = False
@@ -255,7 +313,7 @@ class EmbeddingPointItem(QGraphicsObject):
             self.update()
         except RuntimeError:
             pass
-    
+
     def __del__(self):
         """Clean up the timer when the item is deleted."""
         if hasattr(self, 'is_animating') and self.is_animating:
@@ -271,33 +329,30 @@ class AnnotationDataItem:
 
     def __init__(self, annotation, embedding_x=None, embedding_y=None, embedding_id=None):
         self.annotation = annotation
-        
+
         self.embedding_x = embedding_x if embedding_x is not None else 0.0
         self.embedding_y = embedding_y if embedding_y is not None else 0.0
-        
+
         self.embedding_z = 0.0  # This will store the rotated Z-value (depth)
-        
+
         # Store the original, un-rotated 3D coordinates from the embedding
         self.embedding_x_3d = 0.0
         self.embedding_y_3d = 0.0
         self.embedding_z_3d = 0.0
-        
+
         self.embedding_id = embedding_id
-        
+
         self._is_selected = False
         self._preview_label = None
         self._original_label = annotation.label
 
         # Calculate and store aspect ratio on initialization
         self.aspect_ratio = self._calculate_aspect_ratio()
-        
-        # sklearn predictions from Auto-Annotation Wizard (session-only, temporary)
-        # self.sklearn_prediction = None  # Stores sklearn model predictions during Explorer session
 
     def _calculate_aspect_ratio(self):
         """Calculate and return the annotation's aspect ratio."""
         annotation = self.annotation
-        
+
         if hasattr(annotation, 'cropped_bbox'):
             min_x, min_y, max_x, max_y = annotation.cropped_bbox
             width = max_x - min_x
@@ -322,9 +377,9 @@ class AnnotationDataItem:
                 return pixmap.width() / pixmap.height()
         except (AttributeError, TypeError):
             pass
-        
+
         return 1.0  # Default to square
-        
+
     @property
     def effective_label(self):
         """Get the current effective label (preview if it exists, otherwise original)."""
@@ -377,28 +432,17 @@ class AnnotationDataItem:
             'embedding_id': self.embedding_id,
             'color': self.effective_color
         }
-    
+
     def get_tooltip_text(self):
-        """
-        Generates a rich HTML-formatted tooltip with all relevant information.
-        """
+        """Generates a rich HTML-formatted tooltip with all relevant information."""
         info = self.get_display_info()
-        
+
         tooltip_parts = [
             f"<b>ID:</b> {info['id']}",
             f"<b>Image:</b> {info['image']}",
             f"<b>Label:</b> {info['label']}",
             f"<b>Type:</b> {info['type']}"
         ]
-
-        # Add sklearn prediction details if they exist (from Auto-Annotation Wizard)
-        # if hasattr(self, 'sklearn_prediction') and self.sklearn_prediction:
-        #     pred = self.sklearn_prediction
-        #     if 'top_predictions' in pred:
-        #         pred_parts = ["<b>Model Predictions:</b>"]
-        #         for p in pred['top_predictions'][:3]:  # Top 3
-        #             pred_parts.append(f"{p['label']}: {p['confidence']:.1%}")
-        #         tooltip_parts.append(f"<hr>{'<br>'.join(pred_parts)}")
 
         return "<br>".join(tooltip_parts)
 
@@ -419,10 +463,5 @@ class AnnotationDataItem:
         return confidence_bucket_sort_key(self.annotation)
 
     def get_effective_confidence(self):
-        """
-        Return the annotation confidence value used by the gallery.
-
-        Verified annotations use user confidence. Unverified annotations use
-        machine confidence.
-        """
+        """Return the annotation confidence value used by the gallery."""
         return self.get_confidence_value()

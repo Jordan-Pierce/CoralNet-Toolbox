@@ -14,13 +14,13 @@ from coralnet_toolbox.MVAT.core.SceneProduct import (
 from coralnet_toolbox.MVAT.core.SceneContext import SceneContext
 
 # Concrete Scene Products
-from coralnet_toolbox.MVAT.core.Model import (
+from coralnet_toolbox.MVAT.core.Products import (
     PointCloudProduct,
     MeshProduct,
 )
 
 # Camera and Visualization
-from coralnet_toolbox.MVAT.core.Camera import Camera
+from coralnet_toolbox.MVAT.core.Cameras import Camera
 from coralnet_toolbox.MVAT.core.Frustum import Frustum
 from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
 from coralnet_toolbox.MVAT.core.constants import (

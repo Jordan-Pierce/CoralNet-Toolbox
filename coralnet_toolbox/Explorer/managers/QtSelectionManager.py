@@ -1,4 +1,3 @@
-# coralnet_toolbox/Explorer/QtSelectionManager.py
 """
 Centralized selection management for Explorer windows.
 

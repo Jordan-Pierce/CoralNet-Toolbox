@@ -1,5 +1,5 @@
 """
-Background Label Painter
+Background Label Worker
 
 Pre-allocated-buffer implementation that keeps appends O(M_new) and
 in-place updates for re-paints. Emits `pyvista.PolyData` overlays at a
@@ -30,7 +30,7 @@ from queue import Queue, Empty
 from PyQt5.QtCore import QThread, pyqtSignal
 
 
-class LabelPainterThread(QThread):
+class LabelWorker(QThread):
     """
     Consumes (face_ids, color_rgb, class_id) work items from a queue.
     
@@ -195,7 +195,7 @@ class LabelPainterThread(QThread):
             return overlay
 
         except Exception as e:
-            print(f"⚠️ LabelPainterThread.build_overlay failed: {e}")
+            print(f"⚠️ LabelWorker.build_overlay failed: {e}")
             return None
 
     def stop(self):
@@ -225,7 +225,7 @@ class LabelPainterThread(QThread):
                 self._labels_view[face_ids] = color_rgb
                 self._apply_item_to_overlay_buffer(face_ids, color_rgb, class_id)
             except Exception as e:
-                print(f"⚠️ LabelPainterThread processing error: {e}")
+                print(f"⚠️ LabelWorker processing error: {e}")
                 # Thread stays alive — don't re-raise
 
             # Always emit when queue drains — guarantees final stroke is never dropped

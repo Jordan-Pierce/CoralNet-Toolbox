@@ -40,11 +40,11 @@ from coralnet_toolbox.Common.QtCollapsibleSection import CollapsibleSection
 
 from coralnet_toolbox.Explorer.core.QtDataItem import EmbeddingPointItem, POINT_SIZE, SPRITE_SIZE
 from coralnet_toolbox.Explorer.core.QtDataItem import AnnotationDataItem
-from coralnet_toolbox.Explorer.managers.QtCacheManager import CacheManager
-from coralnet_toolbox.Explorer.models.yolo_models import YOLO_MODELS
-from coralnet_toolbox.Explorer.models.yolo_models import is_live_yolo_model
-from coralnet_toolbox.Explorer.models.yolo_models import is_yolo_model
-from coralnet_toolbox.Explorer.models.transformer_models import TRANSFORMER_MODELS, is_transformer_model
+from coralnet_toolbox.Explorer.managers.CacheManager import CacheManager
+from coralnet_toolbox.Explorer.models.ModelRegistry import YOLO_MODELS
+from coralnet_toolbox.Explorer.models.ModelRegistry import is_live_yolo_model
+from coralnet_toolbox.Explorer.models.ModelRegistry import is_yolo_model
+from coralnet_toolbox.Explorer.models.ModelRegistry import TRANSFORMER_MODELS, is_transformer_model
 from coralnet_toolbox.Explorer.workers import EmbeddingPipelineWorker
 
 from coralnet_toolbox.Icons import get_icon

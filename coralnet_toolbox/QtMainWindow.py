@@ -39,7 +39,7 @@ from coralnet_toolbox.QtLabelWindow import LabelWindow
 from coralnet_toolbox.Explorer import AnnotationViewerWindow
 from coralnet_toolbox.Explorer import EmbeddingViewerWindow
 from coralnet_toolbox.Explorer import SelectionManager
-from coralnet_toolbox.Explorer.models.yolo_models import LIVE_YOLO_MODEL_PREFIX
+from coralnet_toolbox.Explorer.models.ModelRegistry import LIVE_YOLO_MODEL_PREFIX
 
 # MVAT Windows
 from coralnet_toolbox.MVAT import MVATViewer

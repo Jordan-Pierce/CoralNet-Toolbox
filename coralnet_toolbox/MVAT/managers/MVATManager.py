@@ -17,15 +17,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from PyQt5.QtCore import QObject, QTimer, pyqtSignal, Qt, QThread, QPointF
 from PyQt5.QtWidgets import QApplication, QMessageBox
 
-from coralnet_toolbox.MVAT.core.Camera import Camera
+from coralnet_toolbox.MVAT.core.Cameras import Camera
 from coralnet_toolbox.MVAT.core.Ray import CameraRay
 
 from coralnet_toolbox.MVAT.managers.SelectionManager import SelectionManager
 from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
-from coralnet_toolbox.MVAT.managers.VisibilityWorker import VisibilityWorker
+from coralnet_toolbox.MVAT.workers.VisibilityWorker import VisibilityWorker
 from coralnet_toolbox.MVAT.managers.CacheManager import CacheManager
-from coralnet_toolbox.MVAT.managers.LabelPainterThread import LabelPainterThread
-from coralnet_toolbox.MVAT.managers.visibility_logging import (
+from coralnet_toolbox.MVAT.workers.LabelWorker import LabelWorker
+from coralnet_toolbox.MVAT.utils.MVATLogger import (
     get_visibility_logger,
     log_cam_stage,
 )
@@ -38,7 +38,7 @@ from coralnet_toolbox.MVAT.core.constants import (
     RAY_COLOR_INVALID,
 )
 
-from coralnet_toolbox.MVAT.core.Model import MeshProduct
+from coralnet_toolbox.MVAT.core.Products import MeshProduct
 
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 
@@ -516,6 +516,11 @@ class MVATManager(QObject):
         self._hover_overlay_last_state = None
         self._hover_overlay_enabled = False  # True
 
+        # Current-view face-ID cache used to accelerate repeated 3D brush queries
+        # while the camera pose remains stable.
+        self._viewer_face_cache_signature = None
+        self._viewer_face_cache_index_map = None
+
         self.contextStatsComputed.connect(self._on_context_stats_computed)
 
         self._setup_connections()
@@ -662,7 +667,7 @@ class MVATManager(QObject):
         # OrthoRaster: build OrthoCamera only when one hasn't been created yet.
         # =====================================================================
         if need_ortho:
-            from coralnet_toolbox.MVAT.core.OrthoCamera import OrthoCamera
+            from coralnet_toolbox.MVAT.core.Cameras import OrthoCamera
 
             chunk_transform = getattr(ortho_rasters[0], 'chunk_transform_matrix', None)
             if chunk_transform is None:
@@ -1022,6 +1027,7 @@ class MVATManager(QObject):
     def _on_primary_target_changed(self, product_id: str):
         """A new 3D model was loaded — clear stale ortho index map and rebuild."""
         self._computing_ortho_index_map = False  # reset any in-flight build
+        self._invalidate_viewer_face_cache()
         self.clear_sphere_hover_overlay(reset_context=True)
         if self.ortho_camera is not None:
             self.ortho_camera._raster.index_map = None
@@ -1905,7 +1911,7 @@ class MVATManager(QObject):
             if labels_cache is None or class_ids is None:
                 return
 
-            self._label_painter_thread = LabelPainterThread(
+            self._label_painter_thread = LabelWorker(
                 mesh_points=mesh_points,
                 mesh_faces_flat=mesh_faces_flat,
                 labels_view=labels_cache,
@@ -2147,14 +2153,36 @@ class MVATManager(QObject):
             pass
 
         sphere_manager = getattr(self.viewer, '_sphere_manager', None)
+        try:
+            shape = getattr(sphere_manager, 'shape', None)
+            if shape is not None:
+                shape = str(shape).strip().lower()
+                if shape in ('circle', 'square'):
+                    return shape
+        except Exception:
+            pass
+
+        return 'circle'
+
+    def _get_active_3d_tool_kind(self):
+        active_tool = getattr(self.viewer, '_active_3d_tool', None)
         if active_tool is None:
             return None, None
 
-        tool_name = type(active_tool).__name__
-        if tool_name == 'Brush3DTool':
-            return 'brush', active_tool
-        if tool_name == 'Erase3DTool':
+        try:
+            tool_kind = getattr(active_tool, 'tool_kind', None)
+            if isinstance(tool_kind, str):
+                tool_kind = tool_kind.strip().lower()
+                if tool_kind in ('brush', 'erase'):
+                    return tool_kind, active_tool
+        except Exception:
+            pass
+
+        tool_name = type(active_tool).__name__.strip().lower()
+        if 'erase' in tool_name:
             return 'erase', active_tool
+        if 'brush' in tool_name:
+            return 'brush', active_tool
         return None, active_tool
 
     def _get_2d_tool(self, tool_kind: str):
@@ -2786,7 +2814,380 @@ class MVATManager(QObject):
         except Exception as e:
             print(f"⚠️ Hover overlay update failed: {e}")
 
+    def _invalidate_viewer_face_cache(self):
+        self._viewer_face_cache_signature = None
+        self._viewer_face_cache_index_map = None
+
+    def _build_viewer_face_cache_signature(self, primary_target):
+        try:
+            mesh = primary_target.get_render_mesh()
+            if mesh is None:
+                return None
+
+            cam = self.viewer.plotter.camera
+            window_size = getattr(self.viewer.plotter, 'window_size', None)
+            if window_size is None or len(window_size) < 2:
+                return None
+
+            render_w = int(window_size[0])
+            render_h = int(window_size[1])
+            if render_w <= 1 or render_h <= 1:
+                return None
+
+            position = tuple(np.round(np.asarray(cam.position, dtype=np.float64), 6).tolist())
+            focal_point = tuple(np.round(np.asarray(cam.focal_point, dtype=np.float64), 6).tolist())
+            view_up = tuple(np.round(np.asarray(cam.up, dtype=np.float64), 6).tolist())
+            is_parallel = bool(getattr(cam, 'GetParallelProjection', lambda: False)())
+            zoom_value = float(getattr(cam, 'parallel_scale' if is_parallel else 'view_angle', 1.0))
+
+            return {
+                'product_id': getattr(primary_target, 'product_id', None),
+                'n_cells': int(getattr(mesh, 'n_cells', 0)),
+                'width': render_w,
+                'height': render_h,
+                'position': position,
+                'focal_point': focal_point,
+                'view_up': view_up,
+                'is_parallel': is_parallel,
+                'zoom_value': round(zoom_value, 6),
+            }
+        except Exception:
+            return None
+
+    def _ensure_viewer_face_index_map(self, primary_target):
+        signature = self._build_viewer_face_cache_signature(primary_target)
+        if signature is None:
+            return None
+
+        cached_signature = self._viewer_face_cache_signature
+        cached_index_map = self._viewer_face_cache_index_map
+        if cached_signature == signature and cached_index_map is not None:
+            return cached_index_map
+
+        mesh = primary_target.get_render_mesh()
+        if mesh is None or int(getattr(mesh, 'n_cells', 0)) <= 0:
+            self._invalidate_viewer_face_cache()
+            return None
+
+        try:
+            import pyvista as pv
+        except Exception:
+            return None
+
+        plotter = None
+        start_time = time.perf_counter()
+        try:
+            render_w = int(signature['width'])
+            render_h = int(signature['height'])
+            n_cells = int(signature['n_cells'])
+
+            plotter = pv.Plotter(off_screen=True, window_size=(render_w, render_h))
+            plotter.set_background('black')
+            plotter.disable_anti_aliasing()
+
+            actor_low, actor_high, is_dual_pass = VisibilityManager._create_face_id_mesh_actors(plotter, mesh, n_cells)
+
+            src_cam = self.viewer.plotter.camera
+            dst_cam = plotter.camera
+            dst_cam.position = tuple(np.asarray(src_cam.position, dtype=np.float64))
+            dst_cam.focal_point = tuple(np.asarray(src_cam.focal_point, dtype=np.float64))
+            dst_cam.up = tuple(np.asarray(src_cam.up, dtype=np.float64))
+
+            is_parallel = bool(getattr(src_cam, 'GetParallelProjection', lambda: False)())
+            dst_cam.parallel_projection = is_parallel
+            if is_parallel:
+                try:
+                    dst_cam.parallel_scale = float(getattr(src_cam, 'parallel_scale', 1.0))
+                except Exception:
+                    pass
+            else:
+                try:
+                    dst_cam.view_angle = float(getattr(src_cam, 'view_angle', 30.0))
+                except Exception:
+                    pass
+
+            try:
+                clipping = getattr(src_cam, 'clipping_range', None)
+                if clipping is not None and len(clipping) >= 2:
+                    near_clip = float(clipping[0])
+                    far_clip = float(clipping[1])
+                    if np.isfinite(near_clip) and np.isfinite(far_clip) and far_clip > near_clip > 0:
+                        dst_cam.clipping_range = (near_clip, far_clip)
+            except Exception:
+                pass
+
+            plotter.render()
+            screenshot_low = plotter.screenshot(return_img=True)
+            if screenshot_low is None:
+                return None
+            screenshot_low = np.asarray(screenshot_low)
+            if screenshot_low.ndim != 3:
+                return None
+            if screenshot_low.shape[2] == 4:
+                screenshot_low = screenshot_low[:, :, :3]
+
+            screenshot_high = None
+            if is_dual_pass and actor_high is not None:
+                actor_low.SetVisibility(False)
+                actor_high.SetVisibility(True)
+                plotter.render()
+                screenshot_high = plotter.screenshot(return_img=True)
+                if screenshot_high is None:
+                    return None
+                screenshot_high = np.asarray(screenshot_high)
+                if screenshot_high.ndim != 3:
+                    return None
+                if screenshot_high.shape[2] == 4:
+                    screenshot_high = screenshot_high[:, :, :3]
+
+            index_map, _, _ = VisibilityManager._decode_face_id_screenshot(
+                screenshot_low,
+                screenshot_high,
+            )
+            if index_map is None:
+                return None
+
+            index_map = np.asarray(index_map, dtype=np.int32)
+            target_name = getattr(primary_target, 'label', None) or getattr(primary_target, 'product_id', 'Face-ID index map')
+            logger.info(f"   {target_name}: Face-ID index map generated in {time.perf_counter() - start_time:.4f}s")
+            self._viewer_face_cache_signature = signature
+            self._viewer_face_cache_index_map = index_map
+            return index_map
+        except Exception:
+            self._invalidate_viewer_face_cache()
+            return None
+        finally:
+            if plotter is not None:
+                try:
+                    plotter.close()
+                except Exception:
+                    pass
+
+    def _project_world_to_view_pixel(self, world_point, image_height: int):
+        try:
+            point = np.asarray(world_point, dtype=np.float64).reshape(-1)
+            if point.size < 3:
+                return None
+
+            renderer = self.viewer.plotter.renderer
+            renderer.SetWorldPoint(float(point[0]), float(point[1]), float(point[2]), 1.0)
+            renderer.WorldToDisplay()
+            display = renderer.GetDisplayPoint()
+
+            u = float(display[0])
+            y_vtk = float(display[1])
+            if not np.isfinite(u) or not np.isfinite(y_vtk):
+                return None
+
+            # VTK display coordinates use a bottom-left origin; image arrays use top-left.
+            v = float(image_height - 1 - y_vtk)
+            return np.array([u, v], dtype=np.float64)
+        except Exception:
+            return None
+
+    def _estimate_view_pixels_per_world_unit(self, world_point, image_height: int):
+        center_px = self._project_world_to_view_pixel(world_point, image_height)
+        if center_px is None:
+            return None
+
+        try:
+            cam = self.viewer.plotter.camera
+            camera_pos = np.asarray(cam.position, dtype=np.float64).reshape(-1)
+            focal_point = np.asarray(cam.focal_point, dtype=np.float64).reshape(-1)
+            world_point = np.asarray(world_point, dtype=np.float64).reshape(-1)
+            if camera_pos.size < 3 or focal_point.size < 3 or world_point.size < 3:
+                return None
+
+            view_normal = focal_point[:3] - camera_pos[:3]
+            view_norm = float(np.linalg.norm(view_normal))
+            if view_norm < 1e-8:
+                return None
+            view_normal = view_normal / view_norm
+
+            tangent = None
+            for reference in (
+                np.array([0.0, 0.0, 1.0], dtype=np.float64),
+                np.array([0.0, 1.0, 0.0], dtype=np.float64),
+                np.array([1.0, 0.0, 0.0], dtype=np.float64),
+            ):
+                candidate = np.cross(view_normal, reference)
+                length = float(np.linalg.norm(candidate))
+                if length >= 1e-8:
+                    tangent = candidate / length
+                    break
+            if tangent is None:
+                return None
+
+            tangent_2 = np.cross(view_normal, tangent)
+            tangent_2_norm = float(np.linalg.norm(tangent_2))
+            if tangent_2_norm < 1e-8:
+                return None
+            tangent_2 = tangent_2 / tangent_2_norm
+
+            distance_to_camera = float(np.linalg.norm(world_point[:3] - camera_pos[:3]))
+            probe_distance = max(1e-4, min(0.25, distance_to_camera * 0.001))
+
+            samples = []
+            for direction in (tangent, tangent_2):
+                projected = self._project_world_to_view_pixel(world_point[:3] + direction * probe_distance, image_height)
+                if projected is None:
+                    continue
+                delta = float(np.linalg.norm(projected - center_px))
+                if np.isfinite(delta) and delta > 0.0:
+                    samples.append(delta / probe_distance)
+
+            if not samples:
+                return None
+
+            scale = float(np.mean(samples))
+            if not np.isfinite(scale) or scale <= 0.0:
+                return None
+            return scale
+        except Exception:
+            return None
+
+    def _query_faces_from_viewer_cache(self, primary_target, center, radius, shape: str = 'circle'):
+        index_map = self._ensure_viewer_face_index_map(primary_target)
+        if index_map is None:
+            return None
+
+        try:
+            map_h, map_w = index_map.shape
+        except Exception:
+            return None
+
+        center_px = self._project_world_to_view_pixel(center, map_h)
+        if center_px is None:
+            return None
+
+        pixels_per_world = self._estimate_view_pixels_per_world_unit(center, map_h)
+        if pixels_per_world is None or pixels_per_world <= 0.0:
+            return None
+
+        radius_px = max(1.0, float(radius) * float(pixels_per_world))
+        u_c = float(center_px[0])
+        v_c = float(center_px[1])
+
+        u_min = max(0, int(np.floor(u_c - radius_px)))
+        u_max = min(map_w, int(np.ceil(u_c + radius_px + 1.0)))
+        v_min = max(0, int(np.floor(v_c - radius_px)))
+        v_max = min(map_h, int(np.ceil(v_c + radius_px + 1.0)))
+        if u_min >= u_max or v_min >= v_max:
+            return np.empty(0, dtype=np.int32)
+
+        sub_map = index_map[v_min:v_max, u_min:u_max]
+        if sub_map.size == 0:
+            return np.empty(0, dtype=np.int32)
+
+        valid = sub_map >= 0
+        if not np.any(valid):
+            return np.empty(0, dtype=np.int32)
+
+        if shape == 'circle':
+            yy, xx = np.ogrid[v_min:v_max, u_min:u_max]
+            circle_mask = ((xx - u_c) ** 2 + (yy - v_c) ** 2) <= (radius_px ** 2)
+            valid &= circle_mask
+
+        if not np.any(valid):
+            return np.empty(0, dtype=np.int32)
+
+        return np.unique(sub_map[valid]).astype(np.int32)
+
+    def _filter_face_ids_by_world_brush_volume(self, primary_target, candidate_face_ids, center, radius, shape: str = 'circle'):
+        centers = getattr(primary_target, '_element_centers_np', None)
+        if centers is None:
+            return np.empty(0, dtype=np.int32)
+
+        try:
+            centers = np.asarray(centers, dtype=np.float32)
+        except Exception:
+            return np.empty(0, dtype=np.int32)
+
+        if centers.ndim != 2 or centers.shape[0] == 0:
+            return np.empty(0, dtype=np.int32)
+
+        try:
+            center = np.asarray(center, dtype=np.float32).reshape(-1)
+        except Exception:
+            return np.empty(0, dtype=np.int32)
+
+        if center.size < centers.shape[1]:
+            return np.empty(0, dtype=np.int32)
+        if center.size != centers.shape[1]:
+            center = center[:centers.shape[1]]
+
+        try:
+            radius = float(radius)
+        except Exception:
+            return np.empty(0, dtype=np.int32)
+
+        if radius <= 0.0:
+            return np.empty(0, dtype=np.int32)
+
+        shape = str(shape).strip().lower()
+        if shape not in ('circle', 'square'):
+            shape = 'circle'
+
+        if candidate_face_ids is None:
+            return np.empty(0, dtype=np.int32)
+
+        try:
+            candidate_face_ids = np.asarray(candidate_face_ids, dtype=np.int64).reshape(-1)
+        except Exception:
+            return np.empty(0, dtype=np.int32)
+
+        if candidate_face_ids.size == 0:
+            return np.empty(0, dtype=np.int32)
+
+        valid = (candidate_face_ids >= 0) & (candidate_face_ids < int(centers.shape[0]))
+        if not np.any(valid):
+            return np.empty(0, dtype=np.int32)
+
+        candidate_face_ids = np.unique(candidate_face_ids[valid]).astype(np.int32, copy=False)
+        candidate_centers = centers[candidate_face_ids]
+        deltas = candidate_centers - center.astype(np.float32)
+
+        if shape == 'square':
+            within = np.max(np.abs(deltas), axis=1) <= radius
+        else:
+            radius_sq = radius * radius
+            distances_sq = np.einsum('ij,ij->i', deltas, deltas)
+            within = distances_sq <= radius_sq
+
+        return candidate_face_ids[within].astype(np.int32, copy=False)
+
     def _get_faces_within_sphere(self, primary_target, center, radius, shape: str = 'circle'):
+        try:
+            center = np.asarray(center, dtype=np.float64)
+        except Exception:
+            return np.empty(0, dtype=np.int32)
+
+        try:
+            radius = float(radius)
+        except Exception:
+            return np.empty(0, dtype=np.int32)
+
+        if radius <= 0.0:
+            return np.empty(0, dtype=np.int32)
+
+        shape = str(shape).strip().lower()
+        if shape not in ('circle', 'square'):
+            shape = 'circle'
+
+        # Fast path: use the current-view face-ID map and query only a tiny patch
+        # around the projected brush center.
+        view_face_ids = self._query_faces_from_viewer_cache(primary_target, center, radius, shape=shape)
+        if view_face_ids is not None and len(view_face_ids) > 0:
+            filtered_view_face_ids = self._filter_face_ids_by_world_brush_volume(
+                primary_target,
+                view_face_ids,
+                center,
+                radius,
+                shape=shape,
+            )
+            if len(filtered_view_face_ids) > 0:
+                return filtered_view_face_ids
+
         try:
             primary_target.prepare_geometry()
         except Exception:
@@ -2795,11 +3196,6 @@ class MVATManager(QObject):
         centers = getattr(primary_target, '_element_centers_np', None)
         if centers is None or len(centers) == 0:
             return np.empty(0, dtype=np.int32)
-
-        center = np.asarray(center, dtype=np.float64)
-        shape = str(shape).strip().lower()
-        if shape not in ('circle', 'square'):
-            shape = 'circle'
 
         try:
             from scipy.spatial import cKDTree
@@ -2926,7 +3322,7 @@ class MVATManager(QObject):
 
             mesh_points = np.asarray(mesh.points, dtype=np.float32)
             mesh_faces_flat = np.asarray(mesh.faces.reshape(-1, 4), dtype=np.int32)
-            overlay = LabelPainterThread.build_overlay(mesh_points, mesh_faces_flat, face_ids, color_rgb, attach_colors=False)
+            overlay = LabelWorker.build_overlay(mesh_points, mesh_faces_flat, face_ids, color_rgb, attach_colors=False)
             self._hover_overlay_face_ids = np.asarray(face_ids, dtype=np.int32)
             self._hover_overlay_color_rgb = self._normalize_color_rgb(color_rgb)
             self._set_hover_overlay_geometry(overlay, color_rgb, render=render)
@@ -3074,7 +3470,7 @@ class MVATManager(QObject):
 
         mesh_points = np.asarray(mesh.points, dtype=np.float32)
         mesh_faces_flat = np.asarray(mesh.faces.reshape(-1, 4), dtype=np.int32)
-        overlay = LabelPainterThread.build_overlay(mesh_points, mesh_faces_flat, face_ids, color_rgb, attach_colors=False)
+        overlay = LabelWorker.build_overlay(mesh_points, mesh_faces_flat, face_ids, color_rgb, attach_colors=False)
         self._set_hover_overlay_geometry(overlay, color_rgb, render=render)
         self._sync_projected_cursor_previews(center, render=False)
         self._hover_overlay_last_state = current_state
