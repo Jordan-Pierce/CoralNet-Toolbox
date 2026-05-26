@@ -13,7 +13,7 @@ import warnings
 
 import numpy as np
 
-from PyQt5.QtCore import Qt, QRectF, QPointF
+from PyQt5.QtCore import Qt, QRectF
 from PyQt5.QtGui import QPen, QColor, QPainter, QBrush, QPixmap, QImage
 from PyQt5.QtWidgets import QGraphicsItem
 
@@ -203,9 +203,6 @@ class ScatterPlotItem(QGraphicsItem):
         return QRectF(min_x - margin, min_y - margin, (max_x - min_x) + 2 * margin, (max_y - min_y) + 2 * margin)
 
     def paint(self, painter, option, widget):
-        import time as _time
-        _t_paint = _time.perf_counter()
-
         if self.coords_2d.size == 0:
             return
 
@@ -486,13 +483,6 @@ class ScatterPlotItem(QGraphicsItem):
                 painter.setBrush(QBrush(color))
                 painter.drawEllipse(QRectF(x - radius, y - radius, point_diameter, point_diameter))
 
-        _paint_ms = (_time.perf_counter() - _t_paint) * 1000
-        _n_drawn = len(normal_indices) + len(selected_indices)
-        _cache_size = len(self._scaled_pixmap_cache)
-        _requested_mode = getattr(self.viewer, 'display_mode', 'dots') if self.viewer else 'dots'
-        _lod_note = "  [LOD→dots]" if (_requested_mode == 'sprites' and display_mode == 'dots') else ""
-        _fast_note = "  [fast-raster]" if _used_fast_dot_path else ""
-        print(f"[PERF] paint(): {_paint_ms:.1f}ms  drawn={_n_drawn}  mode={display_mode}{_lod_note}{_fast_note}  sprite_cache_entries={_cache_size}  scene_visible={scene_visible.width():.0f}x{scene_visible.height():.0f}")
 
 
 class AnnotationDataItem:

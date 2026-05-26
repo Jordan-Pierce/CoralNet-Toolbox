@@ -11,8 +11,6 @@ import hashlib
 from functools import partial
 import os
 import warnings
-import time
-
 import numpy as np
 import torch
 
@@ -1059,8 +1057,6 @@ class EmbeddingViewerWindow(QWidget):
     def _on_pipeline_finished(self, results):
         """Handle successful completion of the embedding pipeline."""
         try:
-            _t_finish_start = time.perf_counter()
-
             # Extract results
             final_data_items = results['data_items']
             features = results['features']
@@ -1080,26 +1076,11 @@ class EmbeddingViewerWindow(QWidget):
 
             n_dims = 1 if embedded_features.ndim == 1 else embedded_features.shape[1]
 
-            print(f"[PERF] _on_pipeline_finished: setup took {(time.perf_counter() - _t_finish_start) * 1000:.1f}ms  |  N={len(final_data_items)}  dims={n_dims}")
-
             # Update visualization
-            _t = time.perf_counter()
             self._update_data_items_with_embedding(final_data_items, embedded_features)
-            print(f"[PERF] _update_data_items_with_embedding: {(time.perf_counter() - _t) * 1000:.1f}ms")
-
-            _t = time.perf_counter()
             self._update_embeddings(final_data_items, n_dims)
-            print(f"[PERF] _update_embeddings: {(time.perf_counter() - _t) * 1000:.1f}ms")
-
-            _t = time.perf_counter()
             self._show_embedding()
-            print(f"[PERF] _show_embedding: {(time.perf_counter() - _t) * 1000:.1f}ms")
-
-            _t = time.perf_counter()
             self._reset_view()
-            print(f"[PERF] _reset_view: {(time.perf_counter() - _t) * 1000:.1f}ms")
-
-            print(f"[PERF] _on_pipeline_finished TOTAL: {(time.perf_counter() - _t_finish_start) * 1000:.1f}ms")
 
             self.embedding_complete.emit()
             
@@ -1598,7 +1579,6 @@ class EmbeddingViewerWindow(QWidget):
         point_selected = np.zeros((point_count,), dtype=bool)
         point_depth = np.zeros((point_count,), dtype=np.float32)
 
-        _t = time.perf_counter()
         for i, item in enumerate(data_items):
             norm_coords = (embedded_features[i] - min_vals) / range_vals
             scaled_coords = (norm_coords * scale_factor) - (scale_factor / 2)
@@ -1620,7 +1600,6 @@ class EmbeddingViewerWindow(QWidget):
                 qcolor = QColor("black")
             point_colors[i] = [qcolor.red(), qcolor.green(), qcolor.blue(), qcolor.alpha()]
             item.embedding_id = i
-        print(f"[PERF]   coordinate/color loop: {(time.perf_counter() - _t) * 1000:.1f}ms")
 
         self._point_coords_3d = point_coords_3d
         self._point_coords_2d = point_coords_2d
@@ -1629,13 +1608,8 @@ class EmbeddingViewerWindow(QWidget):
         self._point_selected = point_selected
         self._point_depth = point_depth
 
-        _t = time.perf_counter()
         self._refresh_sprite_pixmaps(data_items)
-        print(f"[PERF]   _refresh_sprite_pixmaps: {(time.perf_counter() - _t) * 1000:.1f}ms")
-
-        _t = time.perf_counter()
         self._sync_scatter_item()
-        print(f"[PERF]   _sync_scatter_item: {(time.perf_counter() - _t) * 1000:.1f}ms")
 
         self.previous_selection_ids = set(self.get_selected_annotation_ids())
     
@@ -1770,9 +1744,7 @@ class EmbeddingViewerWindow(QWidget):
             return
 
         try:
-            _t = time.perf_counter()
             self._kdtree = KDTree(self._point_coords_2d)
-            print(f"[PERF]     KDTree build: {(time.perf_counter() - _t) * 1000:.1f}ms  |  N={len(self._point_coords_2d)}")
         except Exception:
             self._kdtree = None
 
@@ -1780,7 +1752,6 @@ class EmbeddingViewerWindow(QWidget):
         if self.mega_item is None:
             return
 
-        _t = time.perf_counter()
         self.mega_item.set_arrays(
             self._point_coords_2d,
             self._point_colors,
@@ -1788,12 +1759,7 @@ class EmbeddingViewerWindow(QWidget):
             self._point_depth,
             pixmaps=self._point_pixmaps,
         )
-        print(f"[PERF]     mega_item.set_arrays: {(time.perf_counter() - _t) * 1000:.1f}ms")
-
-        _t = time.perf_counter()
         self.graphics_scene.setSceneRect(self.mega_item.boundingRect())
-        print(f"[PERF]     setSceneRect/boundingRect: {(time.perf_counter() - _t) * 1000:.1f}ms")
-
         self._update_kdtree()
 
     def _current_view_scale(self):
@@ -1810,27 +1776,18 @@ class EmbeddingViewerWindow(QWidget):
         each scaled result keyed by (index, target_px).  This keeps the embedding
         finish path near-instant regardless of annotation count.
         """
-        _t = time.perf_counter()
         sprite_pixmaps = []
-        _missing = 0
-        _t_get = 0.0
-
         for item in data_items:
             pixmap = None
             try:
-                _t0 = time.perf_counter()
                 source_pixmap = item.annotation.get_cropped_image_graphic()
-                _t_get += time.perf_counter() - _t0
                 if source_pixmap is not None and not source_pixmap.isNull():
                     pixmap = source_pixmap
-                else:
-                    _missing += 1
             except Exception:
-                _missing += 1
+                pass
             sprite_pixmaps.append(pixmap)
 
         self._point_pixmaps = sprite_pixmaps
-        print(f"[PERF]   _refresh_sprite_pixmaps: {(time.perf_counter() - _t) * 1000:.1f}ms  |  N={len(data_items)}  get_cropped_image_graphic={_t_get * 1000:.1f}ms  missing={_missing}")
 
     def _refresh_point_colors(self):
         if not self.current_data_items:
@@ -2150,8 +2107,6 @@ class EmbeddingViewerWindow(QWidget):
     
     def _apply_rotation_and_projection(self):
         """Apply rotation to 3D points."""
-        _t_rot_start = time.perf_counter()
-
         if self._point_coords_3d.size == 0:
             self._point_coords_2d = np.empty((0, 2), dtype=np.float32)
             self._point_depth = np.empty((0,), dtype=np.float32)
@@ -2180,9 +2135,7 @@ class EmbeddingViewerWindow(QWidget):
         self._point_coords_2d = rotated_points[:, :2].astype(np.float32, copy=False)
         self._point_depth = rotated_points[:, 2].astype(np.float32, copy=False)
 
-        _t = time.perf_counter()
         self._sync_scatter_item()
-        print(f"[PERF] _apply_rotation_and_projection: numpy math={(_t - _t_rot_start) * 1000:.1f}ms  sync={( time.perf_counter() - _t) * 1000:.1f}ms  |  N={len(original_points_3d)}")
 
         if self.mega_item is not None:
             self.mega_item.update()
