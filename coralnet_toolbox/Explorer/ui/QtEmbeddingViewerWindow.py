@@ -1059,12 +1059,14 @@ class EmbeddingViewerWindow(QWidget):
     def _on_pipeline_finished(self, results):
         """Handle successful completion of the embedding pipeline."""
         try:
+            _t_finish_start = time.perf_counter()
+
             # Extract results
             final_data_items = results['data_items']
             features = results['features']
             embedded_features = results['embedded_features']
             model_key = results['model_key']
-            
+
             # Update state
             self.current_data_items = final_data_items
             self.current_features = features
@@ -1078,12 +1080,27 @@ class EmbeddingViewerWindow(QWidget):
 
             n_dims = 1 if embedded_features.ndim == 1 else embedded_features.shape[1]
 
+            print(f"[PERF] _on_pipeline_finished: setup took {(time.perf_counter() - _t_finish_start) * 1000:.1f}ms  |  N={len(final_data_items)}  dims={n_dims}")
+
             # Update visualization
+            _t = time.perf_counter()
             self._update_data_items_with_embedding(final_data_items, embedded_features)
+            print(f"[PERF] _update_data_items_with_embedding: {(time.perf_counter() - _t) * 1000:.1f}ms")
+
+            _t = time.perf_counter()
             self._update_embeddings(final_data_items, n_dims)
+            print(f"[PERF] _update_embeddings: {(time.perf_counter() - _t) * 1000:.1f}ms")
+
+            _t = time.perf_counter()
             self._show_embedding()
+            print(f"[PERF] _show_embedding: {(time.perf_counter() - _t) * 1000:.1f}ms")
+
+            _t = time.perf_counter()
             self._reset_view()
-            
+            print(f"[PERF] _reset_view: {(time.perf_counter() - _t) * 1000:.1f}ms")
+
+            print(f"[PERF] _on_pipeline_finished TOTAL: {(time.perf_counter() - _t_finish_start) * 1000:.1f}ms")
+
             self.embedding_complete.emit()
             
             # Update status bar
@@ -1580,11 +1597,12 @@ class EmbeddingViewerWindow(QWidget):
         point_ids = np.empty((point_count,), dtype=object)
         point_selected = np.zeros((point_count,), dtype=bool)
         point_depth = np.zeros((point_count,), dtype=np.float32)
-        
+
+        _t = time.perf_counter()
         for i, item in enumerate(data_items):
             norm_coords = (embedded_features[i] - min_vals) / range_vals
             scaled_coords = (norm_coords * scale_factor) - (scale_factor / 2)
-            
+
             if n_dims >= 3:
                 point_coords_3d[i] = [scaled_coords[0], scaled_coords[1], scaled_coords[2]]
             elif n_dims == 2:
@@ -1602,6 +1620,7 @@ class EmbeddingViewerWindow(QWidget):
                 qcolor = QColor("black")
             point_colors[i] = [qcolor.red(), qcolor.green(), qcolor.blue(), qcolor.alpha()]
             item.embedding_id = i
+        print(f"[PERF]   coordinate/color loop: {(time.perf_counter() - _t) * 1000:.1f}ms")
 
         self._point_coords_3d = point_coords_3d
         self._point_coords_2d = point_coords_2d
@@ -1609,9 +1628,15 @@ class EmbeddingViewerWindow(QWidget):
         self._point_ids = point_ids
         self._point_selected = point_selected
         self._point_depth = point_depth
-        self._refresh_sprite_pixmaps(data_items)
 
+        _t = time.perf_counter()
+        self._refresh_sprite_pixmaps(data_items)
+        print(f"[PERF]   _refresh_sprite_pixmaps: {(time.perf_counter() - _t) * 1000:.1f}ms")
+
+        _t = time.perf_counter()
         self._sync_scatter_item()
+        print(f"[PERF]   _sync_scatter_item: {(time.perf_counter() - _t) * 1000:.1f}ms")
+
         self.previous_selection_ids = set(self.get_selected_annotation_ids())
     
     # -------------------------------------------------------------------------
@@ -1745,7 +1770,9 @@ class EmbeddingViewerWindow(QWidget):
             return
 
         try:
+            _t = time.perf_counter()
             self._kdtree = KDTree(self._point_coords_2d)
+            print(f"[PERF]     KDTree build: {(time.perf_counter() - _t) * 1000:.1f}ms  |  N={len(self._point_coords_2d)}")
         except Exception:
             self._kdtree = None
 
@@ -1753,6 +1780,7 @@ class EmbeddingViewerWindow(QWidget):
         if self.mega_item is None:
             return
 
+        _t = time.perf_counter()
         self.mega_item.set_arrays(
             self._point_coords_2d,
             self._point_colors,
@@ -1760,7 +1788,12 @@ class EmbeddingViewerWindow(QWidget):
             self._point_depth,
             pixmaps=self._point_pixmaps,
         )
+        print(f"[PERF]     mega_item.set_arrays: {(time.perf_counter() - _t) * 1000:.1f}ms")
+
+        _t = time.perf_counter()
         self.graphics_scene.setSceneRect(self.mega_item.boundingRect())
+        print(f"[PERF]     setSceneRect/boundingRect: {(time.perf_counter() - _t) * 1000:.1f}ms")
+
         self._update_kdtree()
 
     def _current_view_scale(self):
@@ -1771,26 +1804,33 @@ class EmbeddingViewerWindow(QWidget):
             return 1.0
 
     def _refresh_sprite_pixmaps(self, data_items):
+        """Collect raw (unscaled) source pixmaps for each annotation.
+
+        Scaling is intentionally deferred to ScatterPlotItem.paint(), which caches
+        each scaled result keyed by (index, target_px).  This keeps the embedding
+        finish path near-instant regardless of annotation count.
+        """
+        _t = time.perf_counter()
         sprite_pixmaps = []
-        target_size = max(1, int(round(self.sprite_size * self._current_view_scale())))
+        _missing = 0
+        _t_get = 0.0
 
         for item in data_items:
             pixmap = None
             try:
+                _t0 = time.perf_counter()
                 source_pixmap = item.annotation.get_cropped_image_graphic()
+                _t_get += time.perf_counter() - _t0
                 if source_pixmap is not None and not source_pixmap.isNull():
-                    pixmap = source_pixmap.scaled(
-                        target_size,
-                        target_size,
-                        Qt.KeepAspectRatio,
-                        Qt.SmoothTransformation,
-                    )
+                    pixmap = source_pixmap
+                else:
+                    _missing += 1
             except Exception:
-                pixmap = None
-
+                _missing += 1
             sprite_pixmaps.append(pixmap)
 
         self._point_pixmaps = sprite_pixmaps
+        print(f"[PERF]   _refresh_sprite_pixmaps: {(time.perf_counter() - _t) * 1000:.1f}ms  |  N={len(data_items)}  get_cropped_image_graphic={_t_get * 1000:.1f}ms  missing={_missing}")
 
     def _refresh_point_colors(self):
         if not self.current_data_items:
@@ -2089,7 +2129,11 @@ class EmbeddingViewerWindow(QWidget):
             self.display_mode = 'sprites'
             self.sprite_toggle_button.setIcon(get_icon("dot.svg"))
             self.sprite_toggle_button.setToolTip("Switch to Dots View")
+            # Collect raw source pixmaps (no scaling — paint() handles that lazily).
             self._refresh_sprite_pixmaps(self.current_data_items)
+            # Bust any stale scaled cache so paint() re-scales at the current size.
+            if self.mega_item is not None:
+                self.mega_item._scaled_pixmap_cache = {}
         else:
             self.display_mode = 'dots'
             self.sprite_toggle_button.setIcon(get_icon("sprites.svg"))
@@ -2106,6 +2150,8 @@ class EmbeddingViewerWindow(QWidget):
     
     def _apply_rotation_and_projection(self):
         """Apply rotation to 3D points."""
+        _t_rot_start = time.perf_counter()
+
         if self._point_coords_3d.size == 0:
             self._point_coords_2d = np.empty((0, 2), dtype=np.float32)
             self._point_depth = np.empty((0,), dtype=np.float32)
@@ -2113,19 +2159,19 @@ class EmbeddingViewerWindow(QWidget):
             return
 
         original_points_3d = np.asarray(self._point_coords_3d, dtype=np.float32)
-        
+
         theta_x = np.radians(self.rotation_angle_x)
         theta_y = np.radians(self.rotation_angle_y)
-        
+
         cos_x, sin_x = np.cos(theta_x), np.sin(theta_x)
         cos_y, sin_y = np.cos(theta_y), np.sin(theta_y)
-        
+
         rot_x = np.array([[1, 0, 0], [0, cos_x, -sin_x], [0, sin_x, cos_x]])
         rot_y = np.array([[cos_y, 0, sin_y], [0, 1, 0], [-sin_y, 0, cos_y]])
-        
+
         rotation_matrix = rot_x @ rot_y
         rotated_points = original_points_3d @ rotation_matrix.T
-        
+
         if len(rotated_points) > 0:
             self.min_z = np.min(rotated_points[:, 2])
             self.max_z = np.max(rotated_points[:, 2])
@@ -2133,7 +2179,11 @@ class EmbeddingViewerWindow(QWidget):
 
         self._point_coords_2d = rotated_points[:, :2].astype(np.float32, copy=False)
         self._point_depth = rotated_points[:, 2].astype(np.float32, copy=False)
+
+        _t = time.perf_counter()
         self._sync_scatter_item()
+        print(f"[PERF] _apply_rotation_and_projection: numpy math={(_t - _t_rot_start) * 1000:.1f}ms  sync={( time.perf_counter() - _t) * 1000:.1f}ms  |  N={len(original_points_3d)}")
+
         if self.mega_item is not None:
             self.mega_item.update()
         self._update_kdtree()
@@ -2380,8 +2430,9 @@ class EmbeddingViewerWindow(QWidget):
                     new_size = max(self._sprite_min, min(self._sprite_max, new_size))
                     if new_size != self.sprite_size:
                         self.sprite_size = new_size
-                        self._refresh_sprite_pixmaps(self.current_data_items)
+                        # Bust the scaled-pixmap cache so paint() re-scales at the new size.
                         if self.mega_item is not None:
+                            self.mega_item._scaled_pixmap_cache = {}
                             self.mega_item.prepareGeometryChange()
                             self.mega_item.update()
                             self.graphics_scene.setSceneRect(self.mega_item.boundingRect())
@@ -2411,10 +2462,12 @@ class EmbeddingViewerWindow(QWidget):
         zoom_factor = zoom_in_factor if event.angleDelta().y() > 0 else zoom_out_factor
         self.graphics_view.scale(zoom_factor, zoom_factor)
 
-        if self.display_mode == 'sprites' and self.current_data_items:
-            self._refresh_sprite_pixmaps(self.current_data_items)
-            if self.mega_item is not None:
-                self.mega_item.update()
+        if self.display_mode == 'sprites' and self.mega_item is not None:
+            # Sprites are scene-space sized — no re-fetch needed on zoom.
+            # Just bust the scaled-pixmap cache so paint() re-scales at the
+            # new screen resolution on the next frame.
+            self.mega_item._scaled_pixmap_cache = {}
+            self.mega_item.update()
         event.accept()
 
     def _key_press_event(self, event):

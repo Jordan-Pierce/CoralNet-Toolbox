@@ -13,8 +13,8 @@ import warnings
 
 import numpy as np
 
-from PyQt5.QtCore import Qt, QRectF
-from PyQt5.QtGui import QPen, QColor, QPainter, QBrush, QPixmap
+from PyQt5.QtCore import Qt, QRectF, QPointF
+from PyQt5.QtGui import QPen, QColor, QPainter, QBrush, QPixmap, QImage
 from PyQt5.QtWidgets import QGraphicsItem
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -105,6 +105,10 @@ class ScatterPlotItem(QGraphicsItem):
         self.depth_values = np.empty((0,), dtype=np.float32)
         self.pixmaps = []
 
+        # Cache of already-scaled pixmaps: {(index, target_px): QPixmap}
+        # Avoids re-scaling on every paint call; cleared whenever set_arrays() is called.
+        self._scaled_pixmap_cache = {}
+
         self.set_arrays(coords_2d, colors, selected_mask, depth_values, pixmaps=None)
 
     def set_arrays(self, coords_2d=None, colors=None, selected_mask=None, depth_values=None, pixmaps=None):
@@ -132,6 +136,9 @@ class ScatterPlotItem(QGraphicsItem):
         self.depth_values = np.asarray(depth_values, dtype=np.float32).reshape(-1)
         self.pixmaps = list(pixmaps) if pixmaps is not None else []
 
+        # New embedding data — any cached scaled pixmaps are now stale.
+        self._scaled_pixmap_cache = {}
+
         self.update()
 
     def _current_point_diameter(self):
@@ -145,17 +152,11 @@ class ScatterPlotItem(QGraphicsItem):
         return float(getattr(self.viewer, 'sprite_size', SPRITE_SIZE))
 
     def _current_sprite_render_extent(self):
-        base_extent = self._current_sprite_extent()
-        if self.viewer is None:
-            return base_extent
-
-        try:
-            transform = self.viewer.graphics_view.transform()
-            scale_factor = max(1.0, float(abs(transform.m11())))
-        except Exception:
-            scale_factor = 1.0
-
-        return max(base_extent, base_extent * scale_factor)
+        # Sprites are drawn in scene coordinates; Qt's view transform handles
+        # the screen-space scaling automatically.  Multiplying by the view scale
+        # here inflated the exposed-rect culling check to cover the entire scene,
+        # causing every point to be drawn on every paint call.
+        return self._current_sprite_extent()
 
     def _depth_alpha(self, index):
         if self.viewer is None or not getattr(self.viewer, 'is_3d_data', False):
@@ -202,6 +203,9 @@ class ScatterPlotItem(QGraphicsItem):
         return QRectF(min_x - margin, min_y - margin, (max_x - min_x) + 2 * margin, (max_y - min_y) + 2 * margin)
 
     def paint(self, painter, option, widget):
+        import time as _time
+        _t_paint = _time.perf_counter()
+
         if self.coords_2d.size == 0:
             return
 
@@ -218,13 +222,47 @@ class ScatterPlotItem(QGraphicsItem):
             return
 
         display_mode = getattr(self.viewer, 'display_mode', 'dots') if self.viewer else 'dots'
+
+        # LOD: only draw sprites when they'll be large enough on screen to be useful.
+        # When zoomed out, fall back to dots so we don't pay the per-pixmap overhead
+        # for thousands of postage-stamp thumbnails nobody can see.
+        # We compute the screen-space size of one sprite: scene_size * view_scale_factor.
+        # If it's below the threshold, treat this paint call as dots mode.
+        _LOD_SPRITE_MIN_SCREEN_PX = 20  # sprites smaller than this on screen → draw as dots
+        if display_mode == 'sprites' and self.viewer is not None:
+            try:
+                gv = self.viewer.graphics_view
+                view_scale = abs(gv.transform().m11())
+                screen_sprite_px = self._current_sprite_extent() * view_scale
+                if screen_sprite_px < _LOD_SPRITE_MIN_SCREEN_PX:
+                    display_mode = 'dots'  # LOD downgrade for this paint call only
+            except Exception:
+                pass
+
         point_diameter = self._current_sprite_render_extent() if display_mode == 'sprites' else self._current_point_diameter()
         radius = point_diameter / 2.0
         is_sprites = display_mode == 'sprites'
         dot_halo_margin = max(4.0, point_diameter * 0.20)
         sprite_outline_margin = max(2.0, self._current_sprite_extent() * 0.08) if is_sprites else 0.0
 
-        exposed = option.exposedRect.adjusted(-point_diameter, -point_diameter, point_diameter, point_diameter)
+        # Compute the true visible scene rect by asking the QGraphicsView directly.
+        # option.exposedRect equals the full bounding rect whenever update() is
+        # called on the item (which happens after every rotation), so it cannot
+        # be used for culling.  painter.worldTransform() inside QGraphicsItem::paint()
+        # is in item-local coordinates, not scene coordinates, so it also cannot be
+        # used reliably.  The correct approach is to map the viewport's device rect
+        # through the view's current scene transform via mapToScene().
+        try:
+            if self.viewer is not None:
+                gv = self.viewer.graphics_view
+                vp_poly = gv.mapToScene(gv.viewport().rect())
+                scene_visible = vp_poly.boundingRect()
+            else:
+                scene_visible = option.exposedRect
+        except Exception:
+            scene_visible = option.exposedRect
+
+        exposed = scene_visible.adjusted(-point_diameter, -point_diameter, point_diameter, point_diameter)
         visible_mask &= (
             (coords[:, 0] >= exposed.left()) & (coords[:, 0] <= exposed.right()) &
             (coords[:, 1] >= exposed.top()) & (coords[:, 1] <= exposed.bottom())
@@ -239,83 +277,222 @@ class ScatterPlotItem(QGraphicsItem):
         if is_sprites:
             painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
 
-        for index in normal_indices:
-            alpha = self._depth_alpha(index)
-            x, y = float(coords[index, 0]), float(coords[index, 1])
-            if is_sprites:
-                pixmap = self.pixmaps[index] if index < len(self.pixmaps) else None
-                target_rect = QRectF(x - radius, y - radius, point_diameter, point_diameter)
-                if pixmap is not None and not pixmap.isNull():
-                    scaled_pixmap = pixmap.scaled(
-                        max(1, int(round(target_rect.width()))),
-                        max(1, int(round(target_rect.height()))),
-                        Qt.KeepAspectRatio,
-                        Qt.SmoothTransformation,
-                    )
-                    pix_x = target_rect.left() + (target_rect.width() - scaled_pixmap.width()) / 2.0
-                    pix_y = target_rect.top() + (target_rect.height() - scaled_pixmap.height()) / 2.0
-                    painter.drawPixmap(int(pix_x), int(pix_y), scaled_pixmap)
+        # --- Pre-extract arrays once to avoid per-index attribute lookups in the loop ---
+        colors_arr = self.colors          # (N, 4) uint8
+        depth_arr = self.depth_values     # (N,)  float32
+        is_3d = self.viewer is not None and getattr(self.viewer, 'is_3d_data', False)
+        min_z = float(getattr(self.viewer, 'min_z', 0.0)) if self.viewer else 0.0
+        z_range = float(getattr(self.viewer, 'z_range', 0.0)) if self.viewer else 0.0
+        pixmaps = self.pixmaps
+        n_pixmaps = len(pixmaps)
+        cache = self._scaled_pixmap_cache
+        target_px = max(1, int(round(point_diameter)))  # sprites are square in scene space
 
-                faint = QColor(self._color_at(index, alpha_override=alpha).darker(150))
-                faint.setAlpha(90)
-                faint_pen = QPen(faint, 0.85)
-                faint_pen.setCosmetic(True)
-                painter.setPen(faint_pen)
-                painter.setBrush(Qt.NoBrush)
-                painter.drawRect(target_rect.adjusted(0.5, 0.5, -0.5, -0.5))
-            else:
-                color = self._color_at(index, alpha_override=alpha)
-                outline = QColor(color).darker(140)
-                point_pen = QPen(outline, max(1.0, point_diameter * 0.08))
-                point_pen.setCosmetic(True)
-                painter.setPen(point_pen)
-                painter.setBrush(QBrush(color))
-                painter.drawEllipse(QRectF(x - radius, y - radius, point_diameter, point_diameter))
+        def _alpha(idx):
+            if not is_3d or z_range <= 0 or depth_arr.size <= idx:
+                return 255
+            z_n = max(0.0, min(1.0, (float(depth_arr[idx]) - min_z) / z_range))
+            return int(128 + 127 * z_n)
+
+        def _qcolor(idx, alpha_override=None):
+            rgba = colors_arr[idx]
+            a = int(rgba[3]) if len(rgba) > 3 else 255
+            if alpha_override is not None:
+                a = int(a * alpha_override / 255)
+            return QColor(int(rgba[0]), int(rgba[1]), int(rgba[2]), max(0, min(255, a)))
+
+        # -------------------------------------------------------------------------
+        # Fast dot path: rasterize all normal (unselected) dots into a QImage via
+        # NumPy, then blit it in one drawImage() call.  This avoids N individual
+        # drawEllipse() QPainter calls (each ~0.01ms) and is ~10-20× faster for
+        # large N when zoomed out.
+        #
+        # We only use this path when:
+        #   • mode is dots (not sprites)
+        #   • there are no selected points that need halo rings (those still need
+        #     the QPainter loop so we can draw halos on top)
+        #   • the viewport rect is available to size the raster image
+        # -------------------------------------------------------------------------
+        _used_fast_dot_path = False
+        if not is_sprites and len(normal_indices) > 0:
+            try:
+                gv = self.viewer.graphics_view if self.viewer is not None else None
+                if gv is not None:
+                    vp = gv.viewport()
+                    W, H = vp.width(), vp.height()
+                    if W > 0 and H > 0:
+                        # scene→viewport (device pixel) transform.
+                        # gv.transform() only has scale/rotation — it omits the scroll
+                        # translation.  gv.viewportTransform() is the full mapping that
+                        # includes the current pan offset, so dots land in the right place.
+                        scene_to_dev = gv.viewportTransform()  # QTransform
+
+                        # Collect RGBA colors for visible normal points; apply depth alpha
+                        vis_coords = coords[normal_indices]  # (M, 2)
+                        vis_colors = colors_arr[normal_indices].copy()  # (M, 4) uint8
+
+                        if is_3d and z_range > 0 and depth_arr.size > 0:
+                            vis_depth = depth_arr[normal_indices]
+                            z_n = np.clip((vis_depth - min_z) / z_range, 0.0, 1.0).astype(np.float32)
+                            alphas = (128 + 127 * z_n).astype(np.uint8)
+                            # Scale existing alpha by depth alpha
+                            vis_colors[:, 3] = ((vis_colors[:, 3].astype(np.float32) * alphas) / 255).astype(np.uint8)
+
+                        # Map scene coords → device (pixel) coords using the full viewport transform
+                        # QTransform: x' = m11*x + m21*y + dx,  y' = m12*x + m22*y + dy
+                        m11 = scene_to_dev.m11(); m12 = scene_to_dev.m12()
+                        m21 = scene_to_dev.m21(); m22 = scene_to_dev.m22()
+                        dx  = scene_to_dev.dx();  dy  = scene_to_dev.dy()
+                        px = (m11 * vis_coords[:, 0] + m21 * vis_coords[:, 1] + dx).astype(np.int32)
+                        py = (m12 * vis_coords[:, 0] + m22 * vis_coords[:, 1] + dy).astype(np.int32)
+
+                        # Screen-space dot radius: scene radius × view scale (from viewport transform)
+                        view_scale = abs(m11) if abs(m11) > 1e-6 else 1.0
+                        dot_r = max(1, int(round(radius * view_scale)))
+
+                        # Build RGBA image buffer
+                        buf = np.zeros((H, W, 4), dtype=np.uint8)
+
+                        # Fully-vectorized circle rasterization.
+                        # Build a (2r+1)² disc mask once, then scatter all point colors
+                        # into the buffer using clipped index arrays — no Python loop over points.
+                        r = dot_r
+                        D = 2 * r + 1
+                        # Offset grid for the disc (D, D)
+                        og = np.arange(-r, r + 1, dtype=np.int32)
+                        oy, ox = np.meshgrid(og, og, indexing='ij')   # (D, D)
+                        disc = (ox ** 2 + oy ** 2) <= r * r            # (D, D) bool
+                        disc_oy = oy[disc]   # (K,) offsets for pixels inside the disc
+                        disc_ox = ox[disc]   # (K,)
+
+                        # For each point i and each disc pixel k:
+                        #   row = py[i] + disc_oy[k],  col = px[i] + disc_ox[k]
+                        # Shape after broadcasting: (M, K)
+                        rows = py[:, np.newaxis] + disc_oy[np.newaxis, :]   # (M, K)
+                        cols = px[:, np.newaxis] + disc_ox[np.newaxis, :]   # (M, K)
+
+                        # Clip to viewport and build a validity mask
+                        valid = (rows >= 0) & (rows < H) & (cols >= 0) & (cols < W)
+
+                        # Flatten for indexing; repeat colors to match (M*K) shape.
+                        # np.repeat expands each point index once per disc pixel (K times),
+                        # giving a flat (M*K,) array we can mask with valid.ravel().
+                        r_flat = rows.ravel()
+                        c_flat = cols.ravel()
+                        K = disc_oy.shape[0]
+                        point_idx_flat = np.repeat(np.arange(len(px), dtype=np.int32), K)
+                        valid_flat = valid.ravel()
+                        buf[r_flat[valid_flat], c_flat[valid_flat]] = vis_colors[point_idx_flat[valid_flat]]
+
+                        # QImage from RGBA buffer — Format_RGBA8888
+                        img = QImage(buf.data, W, H, W * 4, QImage.Format_RGBA8888)
+                        img = img.copy()  # detach from NumPy buffer lifetime
+
+                        # Draw the image in device (pixel) coordinates by temporarily
+                        # resetting the painter transform
+                        painter.save()
+                        painter.resetTransform()
+                        painter.drawImage(0, 0, img)
+                        painter.restore()
+                        _used_fast_dot_path = True
+            except Exception as _e:
+                pass  # fall through to per-point loop on any failure
+
+        # Shared pen/color objects re-used across iterations to reduce object churn
+        _faint_pen = QPen()
+        _faint_pen.setCosmetic(True)
+        _point_pen = QPen()
+        _point_pen.setCosmetic(True)
+        _point_pen.setWidthF(max(1.0, point_diameter * 0.08))
+        _halo_pen = QPen()
+        _halo_pen.setCosmetic(True)
+        _halo_pen.setStyle(Qt.DashLine)
+
+        if not _used_fast_dot_path:
+            for index in normal_indices:
+                alpha = _alpha(index)
+                x, y = float(coords[index, 0]), float(coords[index, 1])
+                if is_sprites:
+                    target_rect = QRectF(x - radius, y - radius, point_diameter, point_diameter)
+                    pixmap = pixmaps[index] if index < n_pixmaps else None
+                    if pixmap is not None and not pixmap.isNull():
+                        ck = (index, target_px)
+                        sp = cache.get(ck)
+                        if sp is None:
+                            sp = pixmap.scaled(target_px, target_px, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                            cache[ck] = sp
+                        painter.drawPixmap(
+                            int(target_rect.left() + (target_rect.width() - sp.width()) / 2.0),
+                            int(target_rect.top() + (target_rect.height() - sp.height()) / 2.0),
+                            sp,
+                        )
+                    faint_color = _qcolor(index, alpha_override=alpha).darker(150)
+                    faint_color.setAlpha(90)
+                    _faint_pen.setColor(faint_color)
+                    _faint_pen.setWidthF(0.85)
+                    painter.setPen(_faint_pen)
+                    painter.setBrush(Qt.NoBrush)
+                    painter.drawRect(target_rect.adjusted(0.5, 0.5, -0.5, -0.5))
+                else:
+                    color = _qcolor(index, alpha_override=alpha)
+                    _point_pen.setColor(QColor(color).darker(140))
+                    painter.setPen(_point_pen)
+                    painter.setBrush(QBrush(color))
+                    painter.drawEllipse(QRectF(x - radius, y - radius, point_diameter, point_diameter))
 
         for index in selected_indices:
-            alpha = self._depth_alpha(index)
+            alpha = _alpha(index)
             x, y = float(coords[index, 0]), float(coords[index, 1])
-            color = self._color_at(index, alpha_override=alpha)
+            color = _qcolor(index, alpha_override=alpha)
             if is_sprites:
                 halo_diameter = point_diameter + (sprite_outline_margin * 2.0)
-                halo_pen = QPen(QColor(color))
-                halo_pen.setWidthF(1.0)
-                halo_pen.setCosmetic(True)
-                halo_pen.setStyle(Qt.DashLine)
-                painter.setPen(halo_pen)
+                _halo_pen.setColor(QColor(color))
+                _halo_pen.setWidthF(1.0)
+                painter.setPen(_halo_pen)
                 painter.setBrush(Qt.NoBrush)
-                painter.drawRect(QRectF(x - (halo_diameter / 2.0), y - (halo_diameter / 2.0), halo_diameter, halo_diameter).adjusted(0.5, 0.5, -0.5, -0.5))
+                painter.drawRect(QRectF(
+                    x - halo_diameter / 2.0, y - halo_diameter / 2.0,
+                    halo_diameter, halo_diameter,
+                ).adjusted(0.5, 0.5, -0.5, -0.5))
 
-                pixmap = self.pixmaps[index] if index < len(self.pixmaps) else None
                 target_rect = QRectF(x - radius, y - radius, point_diameter, point_diameter)
+                pixmap = pixmaps[index] if index < n_pixmaps else None
                 if pixmap is not None and not pixmap.isNull():
-                    scaled_pixmap = pixmap.scaled(
-                        max(1, int(round(target_rect.width()))),
-                        max(1, int(round(target_rect.height()))),
-                        Qt.KeepAspectRatio,
-                        Qt.SmoothTransformation,
+                    ck = (index, target_px)
+                    sp = cache.get(ck)
+                    if sp is None:
+                        sp = pixmap.scaled(target_px, target_px, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                        cache[ck] = sp
+                    painter.drawPixmap(
+                        int(target_rect.left() + (target_rect.width() - sp.width()) / 2.0),
+                        int(target_rect.top() + (target_rect.height() - sp.height()) / 2.0),
+                        sp,
                     )
-                    pix_x = target_rect.left() + (target_rect.width() - scaled_pixmap.width()) / 2.0
-                    pix_y = target_rect.top() + (target_rect.height() - scaled_pixmap.height()) / 2.0
-                    painter.drawPixmap(int(pix_x), int(pix_y), scaled_pixmap)
                 else:
                     painter.setPen(Qt.NoPen)
                     painter.setBrush(QBrush(color))
                     painter.drawEllipse(target_rect)
             else:
-                halo_pen = QPen(QColor(color))
-                halo_pen.setWidthF(max(1.5, point_diameter * 0.15))
-                halo_pen.setCosmetic(True)
-                halo_pen.setStyle(Qt.DashLine)
-                painter.setPen(halo_pen)
+                _halo_pen.setColor(QColor(color))
+                _halo_pen.setWidthF(max(1.5, point_diameter * 0.15))
+                painter.setPen(_halo_pen)
                 painter.setBrush(Qt.NoBrush)
-
                 halo_diameter = point_diameter + (dot_halo_margin * 2.0)
-                painter.drawEllipse(QRectF(x - (halo_diameter / 2.0), y - (halo_diameter / 2.0), halo_diameter, halo_diameter))
-
+                painter.drawEllipse(QRectF(
+                    x - halo_diameter / 2.0, y - halo_diameter / 2.0,
+                    halo_diameter, halo_diameter,
+                ))
                 painter.setPen(Qt.NoPen)
                 painter.setBrush(QBrush(color))
                 painter.drawEllipse(QRectF(x - radius, y - radius, point_diameter, point_diameter))
+
+        _paint_ms = (_time.perf_counter() - _t_paint) * 1000
+        _n_drawn = len(normal_indices) + len(selected_indices)
+        _cache_size = len(self._scaled_pixmap_cache)
+        _requested_mode = getattr(self.viewer, 'display_mode', 'dots') if self.viewer else 'dots'
+        _lod_note = "  [LOD→dots]" if (_requested_mode == 'sprites' and display_mode == 'dots') else ""
+        _fast_note = "  [fast-raster]" if _used_fast_dot_path else ""
+        print(f"[PERF] paint(): {_paint_ms:.1f}ms  drawn={_n_drawn}  mode={display_mode}{_lod_note}{_fast_note}  sprite_cache_entries={_cache_size}  scene_visible={scene_visible.width():.0f}x{scene_visible.height():.0f}")
 
 
 class AnnotationDataItem:
