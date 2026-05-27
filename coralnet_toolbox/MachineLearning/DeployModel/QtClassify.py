@@ -17,6 +17,8 @@ from coralnet_toolbox.Results import ResultsProcessor
 
 from coralnet_toolbox.Common import ThresholdsWidget
 
+from rasterio.windows import Window as _RasterioWindow
+
 from coralnet_toolbox.utilities import pixmap_to_numpy
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -170,28 +172,90 @@ class Classify(Base):
         images_np = []
         valid_inputs = []
 
-        # Crop annotations on-demand if needed and convert to numpy arrays
-        for annotation in inputs:
-            # Crop on-demand if not already cropped
-            if not annotation.cropped_image:
-                try:
-                    # Get the rasterio source for this annotation's image
-                    raster = self.main_window.image_window.raster_manager.get_raster(annotation.image_path)
-                    if raster and raster.rasterio_src:
-                        annotation.create_cropped_image(raster.rasterio_src)
-                except Exception as e:
-                    print(f"Error cropping annotation {annotation.id}: {str(e)}")
+        # ------------------------------------------------------------------
+        # Fast path: read rasterio → numpy directly, bypassing the
+        # QPixmap round-trip (rasterio→QImage→QPixmap→QImage→bytes→numpy).
+        # We group annotations by image_path so each rasterio source is
+        # opened only once, then build one numpy array per patch.
+        # ------------------------------------------------------------------
+        from collections import defaultdict
+        groups = defaultdict(list)
+        for ann in inputs:
+            groups[ann.image_path].append(ann)
+
+        for image_path, anns in groups.items():
+            try:
+                raster = self.main_window.image_window.raster_manager.get_raster(image_path)
+                if not (raster and raster.rasterio_src):
+                    # Fallback: use cached QPixmap if rasterio not available
+                    for ann in anns:
+                        if ann.cropped_image:
+                            try:
+                                images_np.append(pixmap_to_numpy(ann.cropped_image))
+                                valid_inputs.append(ann)
+                            except Exception as e:
+                                print(f"Error converting pixmap to numpy for {ann.id}: {e}")
                     continue
-            
-            # Convert cropped image to numpy array
-            if annotation.cropped_image:
-                try:
-                    img = pixmap_to_numpy(annotation.cropped_image)
-                    images_np.append(img)
-                    valid_inputs.append(annotation)
-                except Exception as e:
-                    print(f"Error converting pixmap to numpy: {str(e)}")
-                    continue
+
+                src = raster.rasterio_src
+                n_bands = src.count
+
+                for ann in anns:
+                    try:
+                        half = ann.annotation_size / 2
+                        px = int(ann.center_xy.x())
+                        py = int(ann.center_xy.y())
+                        col_off = max(0, px - half)
+                        row_off = max(0, py - half)
+                        width  = min(src.width  - col_off, ann.annotation_size)
+                        height = min(src.height - row_off, ann.annotation_size)
+                        window = _RasterioWindow(col_off=col_off, row_off=row_off,
+                                                 width=width, height=height)
+
+                        if n_bands >= 3:
+                            arr = src.read([1, 2, 3], window=window)   # (3, H, W)
+                            arr = np.transpose(arr, (1, 2, 0))          # (H, W, 3)
+                        else:
+                            band = src.read(1, window=window)           # (H, W)
+                            arr = np.stack([band, band, band], axis=-1) # (H, W, 3)
+
+                        # Normalise to uint8
+                        if arr.dtype != np.uint8:
+                            max_val = arr.max()
+                            if max_val > 0:
+                                arr = (arr.astype(np.float32) * (255.0 / max_val)).astype(np.uint8)
+                            else:
+                                arr = arr.astype(np.uint8)
+
+                        arr = np.ascontiguousarray(arr)
+                        images_np.append(arr)
+                        valid_inputs.append(ann)
+
+                        # Keep the QPixmap cache warm for the visible image so
+                        # the confidence window / thumbnail still works.
+                        if not ann.cropped_image:
+                            ann.create_cropped_image(src)
+
+                    except Exception as e:
+                        print(f"Error reading patch for annotation {ann.id}: {e}")
+                        # Fallback to QPixmap path for this one annotation
+                        if ann.cropped_image:
+                            try:
+                                images_np.append(pixmap_to_numpy(ann.cropped_image))
+                                valid_inputs.append(ann)
+                            except Exception as e2:
+                                print(f"Error in pixmap fallback for {ann.id}: {e2}")
+
+            except Exception as e:
+                print(f"Error processing image group {image_path}: {e}")
+                # Fallback: QPixmap path for whole group
+                for ann in anns:
+                    if ann.cropped_image:
+                        try:
+                            images_np.append(pixmap_to_numpy(ann.cropped_image))
+                            valid_inputs.append(ann)
+                        except Exception as e2:
+                            print(f"Error in pixmap fallback for {ann.id}: {e2}")
 
         # Only proceed if we have valid images to process
         if images_np:

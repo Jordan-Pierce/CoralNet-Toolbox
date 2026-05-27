@@ -409,7 +409,7 @@ class ResultsProcessor:
     def process_classification_results(self, results_list, annotations, progress_bar=None):
         """
         Process the classification results from the results generator.
-        
+
         Args:
             results_list: List of classification results
             annotations: List of annotations to update
@@ -417,90 +417,146 @@ class ResultsProcessor:
         """
         # Track if we created the progress bar ourselves
         progress_bar_created_here = progress_bar is None
-        
+
         if progress_bar is None:
             progress_bar = ProgressBar(self.annotation_window, title="Making Classification Predictions")
             progress_bar.show()
-        
+
         progress_bar.start_progress(len(annotations))
+
+        # Collect work so we can defer all UI side-effects until after the loop.
+        # Key: set of image_paths that had at least one label change (for the
+        # image-table count update), and a flag for whether the current image
+        # needs its cropped-image cache refreshed.
+        dirty_image_paths = set()
+        label_changed_pairs = []      # [(annotation_id, label_id), ...]
+        refresh_current_image = False  # need create_cropped_image on visible patches
+        selected_annotation = None     # last selected annotation to show in confidence window
 
         try:
             for result, annotation in zip(results_list, annotations):
                 if result:
                     try:
-                        # Handle both Results objects (from stream) and pre-extracted tuples (from .engine)
                         image_path, cls_name, conf, predictions = self.extract_classification_result(result)
                         if image_path is None:
                             continue
-                        self._update_and_display_classification(annotation, cls_name, conf, predictions)
+
+                        old_label_id = annotation.label.id
+                        self._update_classification_data(annotation, cls_name, conf, predictions)
+
+                        # Track what changed — actual UI calls happen after the loop
+                        dirty_image_paths.add(annotation.image_path)
+
+                        if old_label_id != annotation.label.id:
+                            label_changed_pairs.append((annotation.id, annotation.label.id))
+
+                        if annotation.image_path == self.annotation_window.current_image_path:
+                            refresh_current_image = True
+                            if annotation in self.annotation_window.selected_annotations:
+                                selected_annotation = annotation
+
                     except Exception as e:
                         print(f"Warning: Failed to process classification result for annotation {annotation.id}\n{e}")
-                
-                # Only update progress if we have a progress bar (external or internal)
+
                 if progress_bar:
                     progress_bar.update_progress()
 
         finally:
-            # Only close progress bar if we created it ourselves
+            # ── Deferred UI flush ──────────────────────────────────────────
+            from PyQt5.QtWidgets import QApplication
+
+            # 1. Emit label-change signals in one batch
+            for ann_id, label_id in label_changed_pairs:
+                try:
+                    self.annotation_window.annotationLabelChanged.emit(ann_id, label_id)
+                except Exception as e:
+                    print(f"Warning: Failed to emit label change for {ann_id}: {e}")
+
+            # 2. Refresh cropped-image cache for visible patches (one pass)
+            if refresh_current_image:
+                rasterio_src = getattr(self.annotation_window, 'rasterio_image', None)
+                if rasterio_src:
+                    current_path = self.annotation_window.current_image_path
+                    for annotation in annotations:
+                        if annotation.image_path == current_path:
+                            try:
+                                annotation.create_cropped_image(rasterio_src)
+                            except Exception:
+                                pass
+
+            # 3. Update confidence window for the selected annotation (if any)
+            if selected_annotation is not None:
+                try:
+                    self.main_window.confidence_window.display_cropped_image(selected_annotation)
+                except Exception:
+                    pass
+
+            # 4. Update image-table annotation counts — one call per unique path
+            for image_path in dirty_image_paths:
+                try:
+                    self.image_window.update_image_annotations(image_path)
+                except Exception:
+                    pass
+
+            # 5. Close the progress bar if we own it
             if progress_bar_created_here and progress_bar:
                 progress_bar.stop_progress()
                 progress_bar.close()
 
-            # Rebuild the phantom (dehydrated annotation) layer so unselected
-            # patch colours update immediately on the current image, regardless
-            # of whether this was called from a single-image or batch path.
+            # 6. Rebuild the phantom layer once
             try:
-                from PyQt5.QtWidgets import QApplication
                 self.annotation_window.refresh_phantom_annotations()
                 self.annotation_window.viewport().update()
                 QApplication.processEvents()
             except Exception:
                 pass
         
-    def _update_and_display_classification(self, annotation, cls_name, conf, predictions):
+    def _update_classification_data(self, annotation, cls_name, conf, predictions):
         """
-        Updates an existing annotation with classification results and refreshes the UI if visible.
+        Updates an annotation's data model with classification results.
+        Pure data update — no UI side-effects.  UI refresh is done in a
+        single deferred pass by the caller.
 
         :param annotation: Annotation object to update.
         :param cls_name: The top predicted class name.
         :param conf: The top confidence score.
         :param predictions: Dictionary of all class predictions.
         """
-        # Store the old label ID to verify if a change actually occurred
-        old_label_id = annotation.label.id
-
         # Update the machine confidence values with all predictions (top5)
-        # Note: update_machine_confidence already sets annotation.label to the top prediction
         annotation.update_machine_confidence(predictions)
 
-        # Get the current uncertainty threshold from the UI (not the cached value)
         current_uncertainty_thresh = self.main_window.get_uncertainty_thresh()
-        
-        # Determine the final label based on the top1 prediction confidence
+
         if conf < current_uncertainty_thresh:
-            # If top1 confidence is below threshold, set to 'Review' label
-            # We do this AFTER update_machine_confidence to preserve all predictions
             final_label = self.label_window.get_label_by_id('-1')  # Review label
             annotation.label = final_label
             annotation.verified = False
             annotation.update_graphics_item()
 
-        # FIX: Emit the label change signal so the Gallery and Embedding viewers
-        # instantly update their sorting categories and colors for this annotation.
+    def _update_and_display_classification(self, annotation, cls_name, conf, predictions):
+        """
+        Updates an existing annotation with classification results and refreshes the UI if visible.
+        Retained for external callers; internally prefer _update_classification_data + deferred flush.
+
+        :param annotation: Annotation object to update.
+        :param cls_name: The top predicted class name.
+        :param conf: The top confidence score.
+        :param predictions: Dictionary of all class predictions.
+        """
+        old_label_id = annotation.label.id
+        self._update_classification_data(annotation, cls_name, conf, predictions)
+
         if old_label_id != annotation.label.id:
             try:
                 self.annotation_window.annotationLabelChanged.emit(annotation.id, annotation.label.id)
             except Exception as e:
                 print(f"Warning: Failed to emit label change for {annotation.id}: {e}")
 
-        # If the annotation's image is currently displayed, refresh its visual state
         if annotation.image_path == self.annotation_window.current_image_path:
             annotation.create_cropped_image(self.annotation_window.rasterio_image)
-            # Update the confidence window if this annotation is selected
             if annotation in self.annotation_window.selected_annotations:
                 self.main_window.confidence_window.display_cropped_image(annotation)
-    
-        # Update the annotation count in the image table
+
         self.image_window.update_image_annotations(annotation.image_path)
 
     def extract_detection_result(self, result):
