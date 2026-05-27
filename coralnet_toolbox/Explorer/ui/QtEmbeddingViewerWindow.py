@@ -514,7 +514,7 @@ class EmbeddingViewerWindow(QWidget):
             "Typical values range from 5 to 50."
         )
         self.tsne_perplexity_row, self.tsne_perplexity_slider, _ = self._create_slider_row(
-            5, 50, 30,
+            5, 50, 20,
             lambda current_value: str(current_value),
             tsne_perplexity_tooltip,
             value_width=36
@@ -526,7 +526,7 @@ class EmbeddingViewerWindow(QWidget):
             "Larger values make clusters more distinct."
         )
         self.tsne_exaggeration_row, self.tsne_exaggeration_slider, _ = self._create_slider_row(
-            50, 600, 120,
+            50, 600, 50,
             lambda current_value: f"{current_value / 10.0:.1f}",
             tsne_exaggeration_tooltip,
             value_width=42
@@ -1231,8 +1231,8 @@ class EmbeddingViewerWindow(QWidget):
             params['n_neighbors'] = self.umap_n_neighbors_slider.value() if self.umap_n_neighbors_slider is not None else 15
             params['min_dist'] = self.umap_min_dist_slider.value() / 100.0 if self.umap_min_dist_slider is not None else 0.1
         elif technique == 'TSNE':
-            params['perplexity'] = self.tsne_perplexity_slider.value() if self.tsne_perplexity_slider is not None else 30
-            params['early_exaggeration'] = self.tsne_exaggeration_slider.value() / 10.0 if self.tsne_exaggeration_slider is not None else 12.0
+            params['perplexity'] = self.tsne_perplexity_slider.value() if self.tsne_perplexity_slider is not None else 20
+            params['early_exaggeration'] = self.tsne_exaggeration_slider.value() / 10.0 if self.tsne_exaggeration_slider is not None else 5.0
 
         return params
     
