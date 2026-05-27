@@ -177,10 +177,13 @@ class AnnotationViewerWindow(QWidget):
         toolbar.addWidget(sort_label)
         
         self.sort_combo = QComboBox()
-        self.sort_combo.addItems(["None", "Label", "Image", "Confidence"])
+        self.sort_combo.addItems(["None", "Label", "Image", "Confidence", "Cluster"])
         self.sort_combo.currentTextChanged.connect(self._on_sort_changed)
         self.sort_combo.setMinimumWidth(100)
         toolbar.addWidget(self.sort_combo)
+
+        # "Cluster" is disabled until cluster data arrives from the EmbeddingViewer
+        self._set_cluster_sort_item_enabled(False)
 
         toolbar.addSeparator()
 
@@ -1081,8 +1084,9 @@ class AnnotationViewerWindow(QWidget):
 
         # Check if structural changes are needed
         active_label_filters = self._get_selected_labels()
-        is_sorting_by_label = (self.sort_combo.currentText() == "Label")
-        is_sorting_by_confidence = (self.sort_combo.currentText() == "Confidence")
+        current_sort = self.sort_combo.currentText()
+        is_sorting_by_label = (current_sort == "Label")
+        is_sorting_by_confidence = (current_sort == "Confidence")
 
         if active_label_filters or is_sorting_by_label or is_sorting_by_confidence:
             # Full refresh required — annotations may need reordering/regrouping
@@ -1269,14 +1273,27 @@ class AnnotationViewerWindow(QWidget):
         
         sort_type = self.sort_combo.currentText()
         items = list(self.all_data_items)
-        
+
         if sort_type == "Label":
             items.sort(key=lambda i: (i.effective_label.short_label_code, i.get_effective_confidence()))
         elif sort_type == "Image":
             items.sort(key=lambda i: (os.path.basename(i.annotation.image_path), i.get_effective_confidence()))
         elif sort_type == "Confidence":
             items.sort(key=self._confidence_sort_key)
-        
+        elif sort_type == "Cluster":
+            # Build {ann_id -> cluster_id} from the EmbeddingViewer
+            cluster_map = {}
+            try:
+                ev = getattr(self.main_window, 'embedding_viewer_window', None)
+                if ev is not None and ev._cluster_labels.size > 0:
+                    for ann_id, cluster_id in zip(ev._point_ids.tolist(), ev._cluster_labels.tolist()):
+                        cluster_map[ann_id] = int(cluster_id)
+            except Exception:
+                pass
+            # Annotations not in the embedding go last (cluster_id = max_int)
+            _NO_CLUSTER = 2 ** 31
+            items.sort(key=lambda i: cluster_map.get(i.annotation.id, _NO_CLUSTER))
+
         return items
     
     def _group_data_items_by_sort_key(self, data_items):
@@ -1285,6 +1302,17 @@ class AnnotationViewerWindow(QWidget):
         
         if (not self.active_ordered_ids and sort_type == "None") or self.active_ordered_ids:
             return [("", None, data_items)]
+
+        # Build cluster map once (needed for "Cluster" sort)
+        _cluster_map = {}
+        if sort_type == "Cluster":
+            try:
+                ev = getattr(self.main_window, 'embedding_viewer_window', None)
+                if ev is not None and ev._cluster_labels.size > 0:
+                    for ann_id, cluster_id in zip(ev._point_ids.tolist(), ev._cluster_labels.tolist()):
+                        _cluster_map[ann_id] = int(cluster_id)
+            except Exception:
+                pass
 
         # Group by Label or Image — collect into OrderedDict so identical keys
         # are merged even if items appear out-of-order in the incoming list.
@@ -1300,6 +1328,10 @@ class AnnotationViewerWindow(QWidget):
                 color = None
             elif sort_type == "Confidence":
                 key = self._confidence_group_key(item)
+                color = None
+            elif sort_type == "Cluster":
+                cid = _cluster_map.get(item.annotation.id)
+                key = f"Cluster {cid}" if cid is not None else "No Cluster"
                 color = None
             else:
                 key = ""
@@ -1480,6 +1512,32 @@ class AnnotationViewerWindow(QWidget):
     # Toolbar Event Handlers
     # -------------------------------------------------------------------------
     
+    def _set_cluster_sort_item_enabled(self, enabled: bool):
+        """Enable or disable the 'Cluster' entry in the sort combo."""
+        try:
+            model = self.sort_combo.model()
+            # "Cluster" is always the last item (index 4)
+            idx = self.sort_combo.findText("Cluster")
+            if idx < 0:
+                return
+            item = model.item(idx)
+            if item is None:
+                return
+            from PyQt5.QtCore import Qt as _Qt
+            if enabled:
+                item.setFlags(item.flags() | _Qt.ItemIsEnabled | _Qt.ItemIsSelectable)
+            else:
+                item.setFlags(item.flags() & ~(_Qt.ItemIsEnabled | _Qt.ItemIsSelectable))
+                # If "Cluster" is currently selected, fall back to "None"
+                if self.sort_combo.currentText() == "Cluster":
+                    self.sort_combo.setCurrentText("None")
+        except Exception:
+            pass
+
+    def update_cluster_sort_state(self, has_clusters: bool):
+        """Called by EmbeddingViewerWindow when cluster data is created or cleared."""
+        self._set_cluster_sort_item_enabled(has_clusters)
+
     def _on_sort_changed(self, sort_type):
         """Handle sort type change."""
         self.active_ordered_ids = []

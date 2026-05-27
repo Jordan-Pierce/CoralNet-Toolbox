@@ -14,8 +14,9 @@ import warnings
 import numpy as np
 import torch
 
-from scipy.spatial import KDTree
+from scipy.spatial import KDTree, Voronoi
 
+from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
@@ -32,7 +33,7 @@ from PyQt5.QtGui import QColor, QPen, QPainter, QBrush, QMouseEvent
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QToolBar, QComboBox,
     QLabel, QPushButton, QSpinBox, QSlider, QStackedWidget, QGraphicsView, QGraphicsScene,
-    QGraphicsRectItem, QSizePolicy, QMessageBox, QApplication
+    QGraphicsRectItem, QGraphicsPathItem, QSizePolicy, QMessageBox, QApplication
 )
 
 from coralnet_toolbox import theme as app_theme
@@ -196,6 +197,12 @@ class EmbeddingViewerWindow(QWidget):
         self.locate_timer = QTimer(self)
         self.locate_timer.setSingleShot(True)
         self.locate_timer.timeout.connect(self._clear_location_indicator)
+
+        # K-Means cluster overlay
+        self._cluster_labels: np.ndarray = np.empty((0,), dtype=int)
+        self._cluster_overlay_items: list = []   # QGraphicsPathItem boundaries
+        self._cluster_centroid_items: list = []  # QGraphicsPathItem centroid markers
+        self._cluster_colors_rgba: np.ndarray = np.empty((0, 4), dtype=np.uint8)
         
         # Virtualization timer
         self.view_update_timer = QTimer(self)
@@ -229,84 +236,31 @@ class EmbeddingViewerWindow(QWidget):
     # -------------------------------------------------------------------------
     
     def create_top_toolbar(self) -> QToolBar:
-        """Create the top toolbar with analysis tools."""
+        """Create the top toolbar with model settings and view controls."""
         toolbar = QToolBar()
         toolbar.setMovable(False)
         toolbar.setFloatable(False)
-        
-        # Isolate Selection button
-        self.isolate_button = QPushButton("Isolate Selection")
-        self.isolate_button.setToolTip("Show only selected points (double-click to exit)")
-        self.isolate_button.clicked.connect(self._isolate_selection)
-        self.isolate_button.setEnabled(False)
-        toolbar.addWidget(self.isolate_button)
-        
-        toolbar.addSeparator()
-        
-        # Spacer
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        toolbar.addWidget(spacer)
-        
-        toolbar.addSeparator()
-        
-        # Locate button
-        self.locate_button = QPushButton()
-        self.locate_button.setIcon(get_icon("location.svg"))
-        self.locate_button.setToolTip("Show location indicator for selected annotation")
-        self.locate_button.clicked.connect(self._on_locate_clicked)
-        toolbar.addWidget(self.locate_button)
-        
-        # Center on selection button
-        self.center_button = QPushButton()
-        self.center_button.setIcon(get_icon("target.svg"))
-        self.center_button.setToolTip("Center view on selected point(s)")
-        self.center_button.clicked.connect(self._center_on_selection)
-        toolbar.addWidget(self.center_button)
-        
-        # Home button
-        self.home_button = QPushButton()
-        self.home_button.setIcon(get_icon("home.svg"))
-        self.home_button.setToolTip("Reset view to fit all points")
-        self.home_button.clicked.connect(self._reset_view)
-        toolbar.addWidget(self.home_button)
-        
-        # Sprite toggle button
-        self.sprite_toggle_button = QPushButton()
-        self.sprite_toggle_button.setIcon(get_icon("sprites.svg"))
-        self.sprite_toggle_button.setToolTip("Switch to Sprites View")
-        self.sprite_toggle_button.setEnabled(True)
-        self.sprite_toggle_button.clicked.connect(self._on_display_mode_changed)
-        toolbar.addWidget(self.sprite_toggle_button)
-        
-        return toolbar
-    
-    def create_bottom_toolbar(self) -> QToolBar:
-        """Create the bottom toolbar with ML pipeline controls."""
-        toolbar = QToolBar()
-        toolbar.setMovable(False)
-        toolbar.setFloatable(False)
-        
+
+        # ---- Model settings (left side) ----
+
         # Model Category
         category_label = QLabel(" Model: ")
         toolbar.addWidget(category_label)
-        
+
         self.category_combo = QComboBox()
         self.category_combo.addItems(["Color Features", "YOLO", "Transformer", "Live Models"])
         self.category_combo.currentTextChanged.connect(self._on_category_changed)
         toolbar.addWidget(self.category_combo)
-        
+
         # Model Selection (dynamically populated)
         self.model_combo = QComboBox()
         self.model_combo.setMinimumWidth(100)
         toolbar.addWidget(self.model_combo)
-        
-        toolbar.addSeparator()
-        
+
         # Embedding Technique
         technique_label = QLabel(" Technique: ")
         toolbar.addWidget(technique_label)
-        
+
         available_techniques = []
         if PCA:
             available_techniques.append("PCA")
@@ -316,50 +270,150 @@ class EmbeddingViewerWindow(QWidget):
             available_techniques.append("TSNE")
         if UMAP:
             available_techniques.append("UMAP")
-            
+
         self.technique_combo = QComboBox()
         self.technique_combo.addItems(available_techniques)
         self.technique_combo.currentTextChanged.connect(self._on_technique_changed)
         toolbar.addWidget(self.technique_combo)
-        
+
         # Dimensions
         dims_label = QLabel(" Dims: ")
         toolbar.addWidget(dims_label)
-        
+
         self.dimensions_combo = QComboBox()
         self.dimensions_combo.addItems(["2D", "3D"])
         toolbar.addWidget(self.dimensions_combo)
 
-        # Advanced settings stay hidden behind a popup so the toolbar remains compact.
+        # Advanced settings popup (opens downward from the top toolbar)
         self.embedding_settings_section = CollapsibleSection(
             "Advanced",
             "parameters.svg",
-            position='topright'
+            position='bottomright'
         )
         self._setup_embedding_settings_section()
         toolbar.addWidget(self.embedding_settings_section)
-        
-        # Spacer
+
+        # Spacer — pushes Cluster section to the far right
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         toolbar.addWidget(spacer)
-        
-        # Clear button (next to Run Embedding) - clears only the embedding view
+
+        # K-Means cluster controls — far right of the top toolbar
+        self.cluster_settings_section = CollapsibleSection(
+            "Cluster",
+            "cluster.svg",
+            position='bottomleft'
+        )
+        self._setup_cluster_settings_section()
+        toolbar.addWidget(self.cluster_settings_section)
+
+        # Initialize model combo and technique-dependent controls
+        self._on_category_changed(self.category_combo.currentText())
+        self._on_technique_changed(self.technique_combo.currentText())
+
+        return toolbar
+
+    def _setup_cluster_settings_section(self):
+        """Build the cluster controls popup."""
+        cluster_widget = QWidget()
+        cluster_layout = QFormLayout(cluster_widget)
+        cluster_layout.setContentsMargins(0, 0, 0, 0)
+        cluster_layout.setSpacing(6)
+
+        # K spinbox
+        self.cluster_k_spin = QSpinBox()
+        self.cluster_k_spin.setRange(2, 20)
+        self.cluster_k_spin.setValue(3)
+        self.cluster_k_spin.setMinimumWidth(64)
+        self.cluster_k_spin.setToolTip("Number of clusters for K-Means")
+        self.cluster_k_spin.setEnabled(False)
+        cluster_layout.addRow("K:", self.cluster_k_spin)
+
+        # Buttons row
+        btn_widget = QWidget()
+        btn_layout = QHBoxLayout(btn_widget)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setSpacing(4)
+
+        self.cluster_run_button = QPushButton("Cluster")
+        self.cluster_run_button.setToolTip(
+            "Run K-Means on the current embedding and draw Voronoi cluster boundaries"
+        )
+        self.cluster_run_button.clicked.connect(self._run_clustering)
+        self.cluster_run_button.setEnabled(False)
+        btn_layout.addWidget(self.cluster_run_button)
+
+        self.cluster_clear_button = QPushButton("Clear")
+        self.cluster_clear_button.setToolTip("Remove cluster boundaries")
+        self.cluster_clear_button.clicked.connect(self._clear_clustering)
+        self.cluster_clear_button.setEnabled(False)
+        btn_layout.addWidget(self.cluster_clear_button)
+
+        cluster_layout.addRow(btn_widget)
+
+        self.cluster_settings_section.add_widget(cluster_widget, "Cluster Options")
+    
+    def create_bottom_toolbar(self) -> QToolBar:
+        """Create the bottom toolbar with pipeline actions and view controls."""
+        toolbar = QToolBar()
+        toolbar.setMovable(False)
+        toolbar.setFloatable(False)
+
+        # Clear button
         self.clear_button = QPushButton("Clear")
         self.clear_button.setToolTip("Clear embedding view and reset placeholder")
         self.clear_button.clicked.connect(self.clear_view)
         toolbar.addWidget(self.clear_button)
-        
-        # Run button
-        self.run_button = QPushButton("Run Embedding")
+
+        # Apply Embeddings button (primary action)
+        self.run_button = QPushButton("Apply Embeddings")
         self.run_button.setToolTip("Extract features and generate embedding visualization")
         self.run_button.clicked.connect(self.run_embedding_pipeline)
         toolbar.addWidget(self.run_button)
 
-        # Initialize model combo based on default category
-        self._on_category_changed(self.category_combo.currentText())
-        self._on_technique_changed(self.technique_combo.currentText())
-        
+        # Isolate Selection button
+        self.isolate_button = QPushButton("Isolate Selection")
+        self.isolate_button.setToolTip("Show only selected points (double-click to exit)")
+        self.isolate_button.clicked.connect(self._isolate_selection)
+        self.isolate_button.setEnabled(False)
+        toolbar.addWidget(self.isolate_button)
+
+        # Spacer — pushes view controls to the right
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        toolbar.addWidget(spacer)
+
+        # ---- View controls (right side) ----
+
+        # Locate button
+        self.locate_button = QPushButton()
+        self.locate_button.setIcon(get_icon("location.svg"))
+        self.locate_button.setToolTip("Show location indicator for selected annotation")
+        self.locate_button.clicked.connect(self._on_locate_clicked)
+        toolbar.addWidget(self.locate_button)
+
+        # Center on selection button
+        self.center_button = QPushButton()
+        self.center_button.setIcon(get_icon("target.svg"))
+        self.center_button.setToolTip("Center view on selected point(s)")
+        self.center_button.clicked.connect(self._center_on_selection)
+        toolbar.addWidget(self.center_button)
+
+        # Home button
+        self.home_button = QPushButton()
+        self.home_button.setIcon(get_icon("home.svg"))
+        self.home_button.setToolTip("Reset view to fit all points")
+        self.home_button.clicked.connect(self._reset_view)
+        toolbar.addWidget(self.home_button)
+
+        # Sprite toggle button
+        self.sprite_toggle_button = QPushButton()
+        self.sprite_toggle_button.setIcon(get_icon("sprites.svg"))
+        self.sprite_toggle_button.setToolTip("Switch to Sprites View")
+        self.sprite_toggle_button.setEnabled(True)
+        self.sprite_toggle_button.clicked.connect(self._on_display_mode_changed)
+        toolbar.addWidget(self.sprite_toggle_button)
+
         return toolbar
 
     def showEvent(self, event):
@@ -1689,6 +1743,7 @@ class EmbeddingViewerWindow(QWidget):
                 pass
             self.rubber_band = None
         self._clear_location_indicator()
+        self._clear_clustering()
         self._point_coords_3d = np.empty((0, 3), dtype=np.float32)
         self._point_coords_2d = np.empty((0, 2), dtype=np.float32)
         self._point_colors = np.empty((0, 4), dtype=np.uint8)
@@ -1731,6 +1786,12 @@ class EmbeddingViewerWindow(QWidget):
             self.center_button.setEnabled(False)
         if hasattr(self, 'isolate_button'):
             self.isolate_button.setEnabled(False)
+        if hasattr(self, 'cluster_k_spin'):
+            self.cluster_k_spin.setEnabled(False)
+        if hasattr(self, 'cluster_run_button'):
+            self.cluster_run_button.setEnabled(False)
+        if hasattr(self, 'cluster_clear_button'):
+            self.cluster_clear_button.setEnabled(False)
     
     def _update_toolbar_state(self):
         """Update toolbar button states based on current state."""
@@ -1740,16 +1801,25 @@ class EmbeddingViewerWindow(QWidget):
 
         selection_exists = bool(self._point_selected.size and np.any(self._point_selected))
         points_exist = bool(self._point_ids.size)
-        
+        clusters_exist = self._cluster_labels.size > 0
+
         # Update analysis buttons if they exist
         if hasattr(self, 'locate_button'):
             self.locate_button.setEnabled(points_exist and selection_exists)
         if hasattr(self, 'center_button'):
             self.center_button.setEnabled(points_exist and selection_exists)
-        
+
         # Isolate button: enabled only when NOT in isolation mode AND has selection
         # When isolated, button is disabled (user exits via double-click)
         self.isolate_button.setEnabled(not self.isolated_mode and selection_exists)
+
+        # Cluster controls
+        if hasattr(self, 'cluster_k_spin'):
+            self.cluster_k_spin.setEnabled(points_exist)
+        if hasattr(self, 'cluster_run_button'):
+            self.cluster_run_button.setEnabled(points_exist)
+        if hasattr(self, 'cluster_clear_button'):
+            self.cluster_clear_button.setEnabled(clusters_exist)
     
     def _schedule_view_update(self):
         """Schedule delayed view update for virtualization."""
@@ -2169,6 +2239,250 @@ class EmbeddingViewerWindow(QWidget):
             self.graphics_scene.addItem(line_item)
             self.locate_lines.append(line_item)
     
+    # -------------------------------------------------------------------------
+    # K-Means Cluster Overlay
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _cluster_palette(k: int) -> np.ndarray:
+        """Return (k, 4) uint8 RGBA array of visually distinct colours.
+
+        Colours are evenly spaced on the HSV wheel at fixed saturation and
+        value so they remain distinguishable against the dark background.
+        """
+        colours = np.empty((k, 4), dtype=np.uint8)
+        for i in range(k):
+            hue = int(360 * i / k)
+            qc = QColor.fromHsv(hue, 200, 230, 255)
+            colours[i] = [qc.red(), qc.green(), qc.blue(), qc.alpha()]
+        return colours
+
+    def _run_clustering(self):
+        """Run K-Means on the current 2-D projection and draw Voronoi boundaries."""
+        if self._point_coords_2d.size == 0:
+            return
+
+        k = self.cluster_k_spin.value()
+        n_points = len(self._point_coords_2d)
+        if n_points < k:
+            QMessageBox.warning(
+                self, "Too few points",
+                f"Need at least {k} points to create {k} clusters (have {n_points})."
+            )
+            return
+
+        try:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+
+            # --- 1. Fit K-Means ---
+            km = KMeans(n_clusters=k, random_state=42, n_init='auto')
+            km.fit(self._point_coords_2d)
+            self._cluster_labels = km.labels_.astype(int)
+            centroids = km.cluster_centers_          # (k, 2)
+
+            # --- 2. Build per-cluster colour palette (for centroid markers only) ---
+            self._cluster_colors_rgba = self._cluster_palette(k)
+
+            # --- 3. Draw Voronoi boundaries + centroid markers ---
+            self._draw_cluster_overlay(centroids)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Clustering error", str(e))
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        self._update_toolbar_state()
+        # Notify AnnotationViewer so it can enable the "Cluster" sort option.
+        self._notify_annotation_viewer_cluster_state()
+
+    def _draw_cluster_overlay(self, centroids: np.ndarray):
+        """Compute Voronoi ridges for *centroids* and add them to the scene.
+
+        Works in 2-D scene coordinates.  Infinite ridges are clipped to a
+        padded bounding rect of the point cloud so nothing extends off-screen.
+        Centroid cross-hair markers are also drawn.
+        """
+        self._remove_cluster_overlay_items()
+
+        k = len(centroids)
+        if k < 2:
+            return
+
+        coords = self._point_coords_2d
+
+        # Bounding rect of the point cloud with 10% padding
+        xmin, ymin = coords.min(axis=0) - 1e-6
+        xmax, ymax = coords.max(axis=0) + 1e-6
+        pad_x = (xmax - xmin) * 0.12
+        pad_y = (ymax - ymin) * 0.12
+        clip_rect = QRectF(xmin - pad_x, ymin - pad_y,
+                           (xmax - xmin) + 2 * pad_x,
+                           (ymax - ymin) + 2 * pad_y)
+
+        # --- Voronoi ---
+        # Add 4 far-away dummy points so every real ridge is finite after clipping
+        far = max(clip_rect.width(), clip_rect.height()) * 10
+        cx, cy = (xmin + xmax) / 2, (ymin + ymax) / 2
+        dummy = np.array([
+            [cx - far, cy - far],
+            [cx + far, cy - far],
+            [cx + far, cy + far],
+            [cx - far, cy + far],
+        ])
+        vor_points = np.vstack([centroids, dummy])
+        vor = Voronoi(vor_points)
+
+        # Build QPainterPath for all ridge segments (clipped)
+        from PyQt5.QtGui import QPainterPath as _Path
+        from PyQt5.QtCore import QLineF
+
+        def _clip_segment(p1, p2):
+            """Cohen-Sutherland clip of segment p1-p2 to clip_rect."""
+            x1, y1 = p1
+            x2, y2 = p2
+            lx, rx = clip_rect.left(), clip_rect.right()
+            ty, by = clip_rect.top(), clip_rect.bottom()
+
+            def _code(x, y):
+                c = 0
+                if x < lx: c |= 1
+                elif x > rx: c |= 2
+                if y < ty: c |= 4
+                elif y > by: c |= 8
+                return c
+
+            c1, c2 = _code(x1, y1), _code(x2, y2)
+            while True:
+                if not (c1 | c2):      # both inside
+                    return (x1, y1), (x2, y2)
+                if c1 & c2:            # both outside same region
+                    return None
+                c = c1 or c2
+                if c & 8:
+                    x = x1 + (x2 - x1) * (by - y1) / (y2 - y1 + 1e-12)
+                    y = by
+                elif c & 4:
+                    x = x1 + (x2 - x1) * (ty - y1) / (y2 - y1 + 1e-12)
+                    y = ty
+                elif c & 2:
+                    y = y1 + (y2 - y1) * (rx - x1) / (x2 - x1 + 1e-12)
+                    x = rx
+                else:
+                    y = y1 + (y2 - y1) * (lx - x1) / (x2 - x1 + 1e-12)
+                    x = lx
+                if c == c1:
+                    x1, y1, c1 = x, y, _code(x, y)
+                else:
+                    x2, y2, c2 = x, y, _code(x, y)
+
+        # Collect ridge paths per pair of adjacent clusters
+        # vor.ridge_points[i] = (p_idx, q_idx) — indices into vor_points
+        ridge_path = _Path()
+        n_real = k  # real centroid indices are 0..k-1
+
+        for (p_idx, q_idx), (v1_idx, v2_idx) in zip(vor.ridge_points, vor.ridge_vertices):
+            # Only draw ridges between two real centroids (not dummy points)
+            if p_idx >= n_real or q_idx >= n_real:
+                continue
+            if v1_idx < 0 or v2_idx < 0:
+                # Infinite ridge — should be rare with dummy points; skip
+                continue
+            pt1 = vor.vertices[v1_idx]
+            pt2 = vor.vertices[v2_idx]
+            clipped = _clip_segment(pt1, pt2)
+            if clipped is None:
+                continue
+            (ax, ay), (bx, by) = clipped
+            ridge_path.moveTo(ax, ay)
+            ridge_path.lineTo(bx, by)
+
+        # Single path item for all ridges — more efficient than one item per edge
+        ridge_item = QGraphicsPathItem(ridge_path)
+        pen = QPen(QColor(255, 255, 255, 160), 0)   # cosmetic (1px regardless of zoom)
+        pen.setCosmetic(True)
+        pen.setStyle(Qt.DashLine)
+        pen.setDashPattern([6, 3])
+        ridge_item.setPen(pen)
+        ridge_item.setZValue(50)
+        self.graphics_scene.addItem(ridge_item)
+        self._cluster_overlay_items.append(ridge_item)
+
+        # --- Centroid markers (small filled circles) ---
+        marker_r = max(clip_rect.width(), clip_rect.height()) * 0.012
+        for i, (cx_i, cy_i) in enumerate(centroids):
+            qc = self._cluster_colors_rgba[i]
+            colour = QColor(int(qc[0]), int(qc[1]), int(qc[2]), 230)
+
+            marker_path = _Path()
+            marker_path.addEllipse(
+                QPointF(float(cx_i), float(cy_i)),
+                marker_r, marker_r
+            )
+            marker_item = QGraphicsPathItem(marker_path)
+            marker_pen = QPen(QColor(255, 255, 255, 200), 0)
+            marker_pen.setCosmetic(True)
+            marker_item.setPen(marker_pen)
+            marker_item.setBrush(QBrush(colour))
+            marker_item.setZValue(51)
+            self.graphics_scene.addItem(marker_item)
+            self._cluster_centroid_items.append(marker_item)
+
+    def _notify_annotation_viewer_cluster_state(self):
+        """Tell the AnnotationViewer whether cluster data currently exists.
+
+        This lets the viewer enable or disable its "Cluster" sort option in
+        real time without polling.
+        """
+        try:
+            viewer = getattr(self.main_window, 'annotation_viewer_window', None)
+            if viewer is not None and hasattr(viewer, 'update_cluster_sort_state'):
+                has_clusters = bool(self._cluster_labels.size > 0)
+                viewer.update_cluster_sort_state(has_clusters)
+        except Exception:
+            pass
+
+    def _remove_cluster_overlay_items(self):
+        """Remove all cluster boundary and centroid items from the scene."""
+        for item in self._cluster_overlay_items:
+            try:
+                self.graphics_scene.removeItem(item)
+            except Exception:
+                pass
+        self._cluster_overlay_items.clear()
+
+        for item in self._cluster_centroid_items:
+            try:
+                self.graphics_scene.removeItem(item)
+            except Exception:
+                pass
+        self._cluster_centroid_items.clear()
+
+    def _clear_clustering(self):
+        """Remove cluster overlay items from the scene."""
+        self._remove_cluster_overlay_items()
+        self._cluster_labels = np.empty((0,), dtype=int)
+        self._cluster_colors_rgba = np.empty((0, 4), dtype=np.uint8)
+        self._update_toolbar_state()
+        # Notify AnnotationViewer that cluster data changed.
+        self._notify_annotation_viewer_cluster_state()
+
+    def _refresh_cluster_overlay(self):
+        """Recompute Voronoi on the current 2-D projection after rotation.
+
+        Called by _apply_rotation_and_projection when cluster labels exist.
+        The KMeans labels are fixed; only the centroid 2-D positions change.
+        """
+        if self._cluster_labels.size == 0 or self._point_coords_2d.size == 0:
+            return
+
+        k = int(self._cluster_labels.max()) + 1
+        # Recompute centroids from current 2-D positions
+        centroids = np.array([
+            self._point_coords_2d[self._cluster_labels == c].mean(axis=0)
+            for c in range(k)
+        ])
+        self._draw_cluster_overlay(centroids)
+
     def _clear_location_indicator(self):
         """Clear location indicator lines."""
         for line in self.locate_lines:
@@ -2238,8 +2552,12 @@ class EmbeddingViewerWindow(QWidget):
             self.mega_item.update()
         self._update_kdtree()
 
+        # Refresh cluster overlay so Voronoi lines track the new 2-D projection
+        if self._cluster_labels.size > 0:
+            self._refresh_cluster_overlay()
+
         self._update_toolbar_state()
-    
+
     # -------------------------------------------------------------------------
     # Mouse Event Handlers
     # -------------------------------------------------------------------------
