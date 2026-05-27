@@ -205,7 +205,18 @@ class EmbeddingViewerWindow(QWidget):
         # Background worker for embedding pipeline
         self._pipeline_worker = None
         self._pipeline_running = False
-        
+
+        # Label-change coalescing for on_annotation_label_changed.
+        # During batch classification N annotationLabelChanged signals fire
+        # in rapid succession.  Without coalescing, each triggers an O(K)
+        # scan of current_data_items + a scene repaint — N times.  We
+        # accumulate IDs here and flush a single _refresh_point_colors call.
+        self._pending_label_change_ids: set = set()
+        self._label_change_flush_timer = QTimer(self)
+        self._label_change_flush_timer.setSingleShot(True)
+        self._label_change_flush_timer.setInterval(0)
+        self._label_change_flush_timer.timeout.connect(self._flush_label_change_colors)
+
         # Build UI
         self._setup_ui()
         
@@ -722,11 +733,26 @@ class EmbeddingViewerWindow(QWidget):
     
     @pyqtSlot(str, str)
     def on_annotation_label_changed(self, annotation_id, new_label):
-        """Handle an annotation's label being changed."""
+        """Coalesce label-change signals before refreshing scatter-plot colors.
+
+        During batch classification N annotationLabelChanged signals fire in
+        the deferred ResultsProcessor flush loop.  Each previously triggered
+        an O(K) scan + scene repaint.  Instead, accumulate IDs and let the
+        timer fire a single _refresh_point_colors call on the next tick.
+        """
         if self._point_ids.size:
-            self._refresh_point_colors(changed_ids={annotation_id})
+            self._pending_label_change_ids.add(annotation_id)
+            if not self._label_change_flush_timer.isActive():
+                self._label_change_flush_timer.start()
+
+    def _flush_label_change_colors(self):
+        """Flush all coalesced label changes in one _refresh_point_colors call."""
+        ids = self._pending_label_change_ids
+        self._pending_label_change_ids = set()
+        if ids and self._point_ids.size:
+            self._refresh_point_colors(changed_ids=ids)
             self._update_toolbar_state()
-    
+
     @pyqtSlot(str)
     def on_annotation_modified(self, annotation_id):
         """Handle annotation modification - bust the data-item display cache.

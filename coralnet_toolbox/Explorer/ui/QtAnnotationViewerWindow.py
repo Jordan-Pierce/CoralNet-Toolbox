@@ -113,6 +113,18 @@ class AnnotationViewerWindow(QWidget):
         self._label_change_timer.setInterval(0)  # fire on next event-loop iteration
         self._label_change_timer.timeout.connect(self._flush_label_change_update)
 
+        # annotationUpdated coalescing: same pattern as label changes.
+        # During batch operations (e.g. classification of 500 annotations)
+        # annotationUpdated fires once per annotation.  Without coalescing,
+        # _on_annotation_updated → on_annotation_modified queues 500 individual
+        # refresh_annotations() calls, each iterating the full annotation dict
+        # (O(N²) work).  We collect dirty IDs and flush a single refresh.
+        self._pending_annotation_updates: set = set()
+        self._annotation_update_timer = QTimer(self)
+        self._annotation_update_timer.setSingleShot(True)
+        self._annotation_update_timer.setInterval(0)
+        self._annotation_update_timer.timeout.connect(self._flush_annotation_updates)
+
         # Virtualization disabled: using model/view
 
         # Build the UI
@@ -995,17 +1007,14 @@ class AnnotationViewerWindow(QWidget):
     def on_annotation_modified(self, annotation_id):
         """
         Handle an annotation being modified (moved/resized).
-        
-        Args:
-            annotation_id: ID of the modified annotation.
+
+        Coalesced via _pending_annotation_updates so that N simultaneous
+        annotationModified emissions (e.g. during classification inference)
+        produce exactly one refresh_annotations() call rather than N.
         """
-        # Update cache and refresh list view
-        if hasattr(self.annotation_window, 'annotations_dict'):
-            ann = self.annotation_window.annotations_dict.get(annotation_id)
-            if ann:
-                self._ensure_cropped_images([ann])
-                self.data_item_cache[annotation_id] = AnnotationDataItem(ann)
-                QTimer.singleShot(0, self.refresh_annotations)
+        self._pending_annotation_updates.add(annotation_id)
+        if not self._annotation_update_timer.isActive():
+            self._annotation_update_timer.start()
     
     @pyqtSlot(object)
     def on_annotation_selection_changed(self, selected_ids):
@@ -1369,12 +1378,42 @@ class AnnotationViewerWindow(QWidget):
 
     @pyqtSlot(object)
     def _on_annotation_updated(self, updated_annotation):
-        """Refresh a single annotation's cached state when it changes."""
+        """Coalesce annotationUpdated signals before refreshing the gallery.
+
+        During batch operations (e.g. classification inference on 500
+        annotations) this slot fires once per annotation.  Calling
+        on_annotation_modified directly would queue 500 separate
+        refresh_annotations() invocations — O(N²) work.  Instead we
+        accumulate IDs and let the timer fire a single flush on the next
+        event-loop iteration.
+        """
         try:
             if updated_annotation is not None:
-                self.on_annotation_modified(updated_annotation.id)
+                self._pending_annotation_updates.add(updated_annotation.id)
+                if not self._annotation_update_timer.isActive():
+                    self._annotation_update_timer.start()
         except Exception:
             pass
+
+    def _flush_annotation_updates(self):
+        """Process all coalesced annotationUpdated notifications in one pass."""
+        ids = self._pending_annotation_updates
+        self._pending_annotation_updates = set()
+        if not ids:
+            return
+        if not hasattr(self.annotation_window, 'annotations_dict'):
+            return
+        changed = False
+        for annotation_id in ids:
+            ann = self.annotation_window.annotations_dict.get(annotation_id)
+            if ann:
+                # Crops already exist after embedding; this is a no-op for
+                # classification but still correct for interactive edits.
+                self._ensure_cropped_images([ann])
+                self.data_item_cache[annotation_id] = AnnotationDataItem(ann)
+                changed = True
+        if changed:
+            QTimer.singleShot(0, self.refresh_annotations)
 
     def _connect_annotation_updates(self, annotation):
         """Connect annotation update signals so confidence changes refresh the gallery."""

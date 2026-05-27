@@ -1305,10 +1305,14 @@ class MainWindow(QMainWindow):
         self.annotation_window.annotationCreated.connect(self.label_window.update_tooltips)
         self.annotation_window.annotationDeleted.connect(self.label_window.update_tooltips)
         # Also refresh label tooltips when an annotation's label changes.
-        # Use singleShot(0) for batch changes so tooltip rebuilding is deferred out of
-        # the hot relabel path (it iterates all rasters and can take tens of ms for
-        # large projects).
-        self.annotation_window.annotationLabelChanged.connect(lambda *args: self.label_window.update_tooltips())
+        # Both signals use singleShot(0) so the tooltip rebuild (which iterates
+        # all rasters × all labels) is deferred to the next event-loop iteration.
+        # This means N rapid annotationLabelChanged emissions (e.g. from
+        # classification inference) coalesce into at most one update_tooltips()
+        # call per event-loop tick rather than running synchronously N times.
+        self.annotation_window.annotationLabelChanged.connect(
+            lambda *args: QTimer.singleShot(0, self.label_window.update_tooltips)
+        )
         self.annotation_window.annotationsLabelsChanged.connect(
             lambda *args: QTimer.singleShot(0, self.label_window.update_tooltips)
         )
