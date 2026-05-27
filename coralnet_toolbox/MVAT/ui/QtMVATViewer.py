@@ -994,6 +994,35 @@ class MVATViewer(QFrame):
             self._sphere_manager.set_visibility(False)  # Hidden by default
             self._sync_sphere_hover_binding()
 
+    def _fast_hardware_pick(self):
+        import vtk
+        
+        # 1. Get raw event position
+        pos = self.plotter.interactor.GetEventPosition()
+        vtk_x, vtk_y = int(pos[0]), int(pos[1])
+        
+        # 2. Get window sizes to check for DPI scaling mismatches
+        logical_size = self.plotter.window_size
+        physical_size = self.plotter.render_window.GetSize() if self.plotter.render_window else "Unknown"
+        
+        # 3. Query the Z-buffer
+        z_val = self.plotter.renderer.GetZ(vtk_x, vtk_y)
+        
+        print(f"DEBUG [Picker]: Pos: ({vtk_x}, {vtk_y}) | Logical: {logical_size} | Physical: {physical_size} | Z: {z_val}")
+        
+        # Check if we hit the skybox
+        if z_val is None or np.isclose(z_val, 1.0):
+            print("DEBUG [Picker]: Rejected -> Hit background (Z=1.0 or None)")
+            return None
+            
+        # Use VTK's dedicated Z-buffer unprojector
+        picker = vtk.vtkWorldPointPicker()
+        picker.Pick(vtk_x, vtk_y, 0, self.plotter.renderer)
+        
+        picked_pos = np.array(picker.GetPickPosition())
+        print(f"DEBUG [Picker]: Success -> {picked_pos}")
+        return picked_pos
+
     def _bind_sphere_hover_observer(self):
         """Bind the sphere hover observer if sphere tracking is enabled."""
         if self._sphere_hover_observer_bound:
@@ -1187,39 +1216,14 @@ class MVATViewer(QFrame):
     def _on_left_press(self, obj, event):
         """Handle Left Click to detect Double Clicks."""
         active_tool = getattr(self, '_active_3d_tool', None)
+        print(f"DEBUG [Viewer]: Left press detected. Active Tool: {type(active_tool).__name__ if active_tool else 'None'}")
         if active_tool is not None and not bool(getattr(active_tool, 'preview_only', True)):
             try:
-                self.plotter.store_mouse_position()
-            except Exception:
-                pass
-
-            picked = self.plotter.pick_mouse_position()
-            expected_actor = self._get_primary_target_actor()
-            if self._is_valid_scene_pick(picked, expected_actor=expected_actor):
-                try:
-                    world_pos = np.asarray(picked, dtype=np.float64)
-                except Exception:
-                    world_pos = None
-
-                face_id = 0
-                try:
-                    picker = getattr(getattr(self.plotter, 'iren', None), 'picker', None)
-                    if picker is not None and hasattr(picker, 'GetCellId'):
-                        candidate_face_id = int(picker.GetCellId())
-                        if candidate_face_id >= 0:
-                            face_id = candidate_face_id
-                except Exception:
-                    pass
-
-                try:
-                    active_tool.mousePressEvent(event, face_id, world_pos)
-                except Exception:
-                    pass
-            else:
-                try:
-                    active_tool.mousePressEvent(event, -1, None)
-                except Exception:
-                    pass
+                world_pos = self._fast_hardware_pick()
+                print(f"DEBUG [Viewer]: Passing world_pos to tool: {world_pos}")
+                active_tool.mousePressEvent(event, 1, world_pos)
+            except Exception as e:
+                print(f"Error during paint: {e}")
             return
 
         if self.is_sphere_tracking_enabled():
@@ -1296,13 +1300,11 @@ class MVATViewer(QFrame):
             # transition isn't immediately clobbered by the decay timer.
             self._cancel_camera_motion()
 
-            picked = self.plotter.pick_mouse_position()
-            if not self._is_valid_scene_pick(picked):
+            picked = self._fast_hardware_pick()
+            if picked is None:
                 return
 
-            picked = np.asarray(picked, dtype=float)
-
-            self.set_focal_point(picked)
+            self.set_focal_point(np.asarray(picked, dtype=float))
         except Exception:
             pass
 
@@ -1364,13 +1366,14 @@ class MVATViewer(QFrame):
 
             if pending_events <= 0:
                 return
-            
-            active_tool = getattr(self, '_active_3d_tool', None)
-            if active_tool is not None:
-                if self._sphere_manager is None:
-                    return
 
-                if not self._sphere_visible:
+            active_tool = getattr(self, '_active_3d_tool', None)
+
+            # --- INSTANT HARDWARE PICK ---
+            world_pos = self._fast_hardware_pick()
+
+            if active_tool is not None:
+                if self._sphere_manager is None or not self._sphere_visible:
                     try:
                         active_tool.mouseMoveEvent(None, -1, None)
                     except Exception:
@@ -1378,28 +1381,7 @@ class MVATViewer(QFrame):
                     return
 
                 try:
-                    self.plotter.store_mouse_position()
-                except Exception:
-                    pass
-
-                picked = self.plotter.pick_mouse_position()
-
-                # For the active-tool path, skip the full _is_valid_scene_pick check.
-                # pick_mouse_position() called from a Qt timer (not a VTK button event)
-                # does not always populate picker.GetDataSet(), so the dataset check
-                # inside _is_valid_scene_pick always fails for hover. We just need a
-                # finite world coordinate — do a lightweight sanity check instead.
-                world_pos = None
-                if picked is not None:
-                    try:
-                        p = np.asarray(picked, dtype=np.float64)
-                        if np.all(np.isfinite(p)):
-                            world_pos = p
-                    except Exception:
-                        pass
-
-                try:
-                    active_tool.mouseMoveEvent(None, -1, world_pos)
+                    active_tool.mouseMoveEvent(None, 1, world_pos)
                 except Exception:
                     pass
 
@@ -1416,52 +1398,17 @@ class MVATViewer(QFrame):
             if self._sphere_manager is None:
                 return
 
-            if not self._sphere_visible:
-                return
-
-            # Get the current mouse position and perform a pick once per batch.
-            try:
-                self.plotter.store_mouse_position()
-            except Exception:
-                pass
-
-            picked = self.plotter.pick_mouse_position()
-            expected_actor = self._get_primary_target_actor()
-
-            if not self._is_valid_scene_pick(picked, expected_actor=expected_actor):
-                if self._sphere_manager.sphere_actor is not None:
-                    try:
-                        if self._sphere_manager.sphere_actor.GetVisibility():
-                            self._sphere_manager.set_visibility(False)
-                    except Exception:
-                        pass
-
-                manager = getattr(self, 'mvat_manager', None)
-                if manager is not None:
-                    try:
-                        manager.clear_sphere_hover_overlay(reset_context=True, render=True)
-                    except Exception:
-                        pass
-
-                return
-            
-            if picked is not None:
-                picked = np.asarray(picked, dtype=np.float64)
-
-                # Update sphere position to where mouse intersects mesh
-                self._sphere_manager.set_position(picked)
-
-                # Ensure sphere is visible
+            if world_pos is not None:
+                self._sphere_manager.set_position(world_pos)
                 self._sphere_manager.set_visibility(True)
 
                 manager = getattr(self, 'mvat_manager', None)
                 if manager is not None:
                     try:
-                        manager.update_sphere_hover_overlay(picked, render=False)
+                        manager.update_sphere_hover_overlay(world_pos, render=False)
                     except Exception:
                         pass
             else:
-                # No pick - hide the sphere when cursor is over background
                 self._sphere_manager.set_visibility(False)
 
                 manager = getattr(self, 'mvat_manager', None)
@@ -1470,6 +1417,7 @@ class MVATViewer(QFrame):
                         manager.clear_sphere_hover_overlay(reset_context=True, render=False)
                     except Exception:
                         pass
+
             try:
                 self.plotter.render()
             except Exception:

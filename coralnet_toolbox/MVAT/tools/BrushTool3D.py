@@ -10,6 +10,7 @@ mesh geometry regardless of whether any annotation cameras are loaded.
 """
 
 import warnings
+import time
 
 import numpy as np
 
@@ -69,6 +70,8 @@ class BrushTool3D(Tool3D):
     # ------------------------------------------------------------------
 
     def mousePressEvent(self, event, face_id: int, world_pos):
+        press_start = time.perf_counter()
+        print(f"DEBUG [BrushTool]: Received Press -> face_id: {face_id}, world_pos: {world_pos}")
         button = Qt.LeftButton
         try:
             event_button = getattr(event, 'button', None)
@@ -81,6 +84,7 @@ class BrushTool3D(Tool3D):
             return
 
         if self.preview_only:
+            print(f"DEBUG [BrushTool]: Rejected - preview_only is True ({(time.perf_counter() - press_start) * 1000.0:.2f} ms)")
             return
 
         if self.painting:
@@ -88,6 +92,7 @@ class BrushTool3D(Tool3D):
             return
 
         if not self._has_selected_label():
+            print(f"DEBUG [BrushTool]: Rejected - No label selected ({(time.perf_counter() - press_start) * 1000.0:.2f} ms)")
             QMessageBox.warning(
                 self.mvat_viewer,
                 "No Label Selected",
@@ -96,7 +101,10 @@ class BrushTool3D(Tool3D):
             return
 
         if face_id < 0 or world_pos is None:
+            print(f"DEBUG [BrushTool]: Rejected - Invalid face_id or world_pos ({(time.perf_counter() - press_start) * 1000.0:.2f} ms)")
             return
+
+        print(f"DEBUG [BrushTool]: Guardrails passed! Initiating paint stroke. ({(time.perf_counter() - press_start) * 1000.0:.2f} ms)")
 
         self.painting = True
         self._stroke_label = self._get_selected_label()
