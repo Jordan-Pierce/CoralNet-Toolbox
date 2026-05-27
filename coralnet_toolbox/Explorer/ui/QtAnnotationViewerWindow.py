@@ -1210,19 +1210,26 @@ class AnnotationViewerWindow(QWidget):
             current_selection = self.get_selected_annotation_ids()
         # -----------------------------------------------------------------------------
 
+        # If the effective set to display is empty (e.g. isolation mode with all
+        # items deleted, or a filter that matches nothing after isolation pruning),
+        # switch to the placeholder rather than showing an empty scroll area.
+        if not sorted_data_items:
+            self._show_placeholder()
+            return
+
         # Group and set into model (supports headers and collapsed groups)
         groups = self._group_data_items_by_sort_key(sorted_data_items)
-        
+
         # Synchronous update wrapped in lock to prevent rogue signals
         self._syncing_selection = True
         self.list_model.set_grouped_items(groups)
-        
+
         # Restore the persistent selection
         if current_selection:
             self.render_selection_from_ids(set(current_selection))
-            
+
         self._syncing_selection = False
-        
+
         # Inform delegate of size change
         if self.list_delegate:
             self.list_delegate.item_size = self.current_widget_size

@@ -729,10 +729,18 @@ class EmbeddingViewerWindow(QWidget):
     
     @pyqtSlot(str)
     def on_annotation_modified(self, annotation_id):
-        """Handle annotation modification - invalidates cached features."""
-        if self.cache_manager and self._should_modify_cache():
-            self.cache_manager.remove_features_for_annotation(annotation_id)
-        
+        """Handle annotation modification - bust the data-item display cache.
+
+        NOTE: We intentionally do NOT invalidate the feature cache here.
+        ``annotationModified`` is emitted both for geometry changes AND for
+        label/confidence-only changes (via ``on_annotation_updated``).
+        Label changes do not alter the crop pixels, so the feature vector
+        remains valid.  Geometry-specific invalidation is handled by the
+        dedicated ``on_annotation_moved`` and ``on_annotation_geometry_edited``
+        slots, which fire only when the crop window actually changes.
+        Invalidating here caused one SQLite DELETE per annotation during
+        classification inference (N × round-trip overhead instead of 0).
+        """
         if annotation_id in self.data_item_cache:
             del self.data_item_cache[annotation_id]
     
