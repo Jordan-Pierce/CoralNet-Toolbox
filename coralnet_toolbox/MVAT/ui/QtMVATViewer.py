@@ -1001,18 +1001,11 @@ class MVATViewer(QFrame):
         pos = self.plotter.interactor.GetEventPosition()
         vtk_x, vtk_y = int(pos[0]), int(pos[1])
         
-        # 2. Get window sizes to check for DPI scaling mismatches
-        logical_size = self.plotter.window_size
-        physical_size = self.plotter.render_window.GetSize() if self.plotter.render_window else "Unknown"
-        
-        # 3. Query the Z-buffer
+        # Query the Z-buffer
         z_val = self.plotter.renderer.GetZ(vtk_x, vtk_y)
-        
-        print(f"DEBUG [Picker]: Pos: ({vtk_x}, {vtk_y}) | Logical: {logical_size} | Physical: {physical_size} | Z: {z_val}")
         
         # Check if we hit the skybox
         if z_val is None or np.isclose(z_val, 1.0):
-            print("DEBUG [Picker]: Rejected -> Hit background (Z=1.0 or None)")
             return None
             
         # Use VTK's dedicated Z-buffer unprojector
@@ -1020,7 +1013,6 @@ class MVATViewer(QFrame):
         picker.Pick(vtk_x, vtk_y, 0, self.plotter.renderer)
         
         picked_pos = np.array(picker.GetPickPosition())
-        print(f"DEBUG [Picker]: Success -> {picked_pos}")
         return picked_pos
 
     def _bind_sphere_hover_observer(self):
@@ -1036,9 +1028,8 @@ class MVATViewer(QFrame):
         try:
             self._mouse_sphere_observer_id = style.AddObserver("MouseMoveEvent", self._on_mouse_move)
             self._sphere_hover_observer_bound = self._mouse_sphere_observer_id is not None
-            print(f"✅ Mouse move observer bound to style: {self._mouse_sphere_observer_id}")
         except Exception as e:
-            print(f"⚠️ Failed to bind mouse move observer: {e}")
+            pass
 
     def _unbind_sphere_hover_observer(self):
         """Unbind the sphere hover observer so only camera interactions remain."""
@@ -1216,14 +1207,12 @@ class MVATViewer(QFrame):
     def _on_left_press(self, obj, event):
         """Handle Left Click to detect Double Clicks."""
         active_tool = getattr(self, '_active_3d_tool', None)
-        print(f"DEBUG [Viewer]: Left press detected. Active Tool: {type(active_tool).__name__ if active_tool else 'None'}")
         if active_tool is not None and not bool(getattr(active_tool, 'preview_only', True)):
             try:
                 world_pos = self._fast_hardware_pick()
-                print(f"DEBUG [Viewer]: Passing world_pos to tool: {world_pos}")
                 active_tool.mousePressEvent(event, 1, world_pos)
             except Exception as e:
-                print(f"Error during paint: {e}")
+                pass
             return
 
         if self.is_sphere_tracking_enabled():

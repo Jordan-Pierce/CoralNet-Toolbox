@@ -10,7 +10,6 @@ mesh geometry regardless of whether any annotation cameras are loaded.
 """
 
 import warnings
-import time
 
 import numpy as np
 
@@ -70,8 +69,6 @@ class BrushTool3D(Tool3D):
     # ------------------------------------------------------------------
 
     def mousePressEvent(self, event, face_id: int, world_pos):
-        press_start = time.perf_counter()
-        print(f"DEBUG [BrushTool]: Received Press -> face_id: {face_id}, world_pos: {world_pos}")
         button = Qt.LeftButton
         try:
             event_button = getattr(event, 'button', None)
@@ -84,7 +81,6 @@ class BrushTool3D(Tool3D):
             return
 
         if self.preview_only:
-            print(f"DEBUG [BrushTool]: Rejected - preview_only is True ({(time.perf_counter() - press_start) * 1000.0:.2f} ms)")
             return
 
         if self.painting:
@@ -92,7 +88,6 @@ class BrushTool3D(Tool3D):
             return
 
         if not self._has_selected_label():
-            print(f"DEBUG [BrushTool]: Rejected - No label selected ({(time.perf_counter() - press_start) * 1000.0:.2f} ms)")
             QMessageBox.warning(
                 self.mvat_viewer,
                 "No Label Selected",
@@ -101,16 +96,28 @@ class BrushTool3D(Tool3D):
             return
 
         if face_id < 0 or world_pos is None:
-            print(f"DEBUG [BrushTool]: Rejected - Invalid face_id or world_pos ({(time.perf_counter() - press_start) * 1000.0:.2f} ms)")
             return
 
-        print(f"DEBUG [BrushTool]: Guardrails passed! Initiating paint stroke. ({(time.perf_counter() - press_start) * 1000.0:.2f} ms)")
+        primary = self._get_primary_mesh()
+
+        if primary is not None and getattr(primary, '_hover_face_kdtree', None) is None:
+            try:
+                prewarm = getattr(self.mvat_manager, '_prewarm_spatial_caches', None)
+                if callable(prewarm):
+                    prewarm(primary)
+            except Exception:
+                pass
+
+            try:
+                self.mvat_manager.main_window.status_bar.showMessage("KD-Tree is still building. Please wait a moment...", 3000)
+            except Exception:
+                pass
+            return
 
         self.painting = True
         self._stroke_label = self._get_selected_label()
         self._stroke_face_ids.clear()
         self._last_brush_volume_state = None
-        primary = self._get_primary_mesh()
         if primary is not None:
             self.mvat_manager._ensure_label_painter(primary)
         self._apply_brush(world_pos)
@@ -262,7 +269,7 @@ class BrushTool3D(Tool3D):
                     try:
                         handler(self._stroke_face_ids, selected_label)
                     except Exception as e:
-                        print(f"⚠️  BrushTool3D: could not propagate stroke: {e}")
+                        pass
         finally:
             self._stroke_face_ids.clear()
             self._stroke_label = None
