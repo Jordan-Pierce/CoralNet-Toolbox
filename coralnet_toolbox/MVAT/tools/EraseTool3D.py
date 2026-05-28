@@ -47,3 +47,4 @@ class EraseTool3D(BrushTool3D):
         The `label` argument is intentionally ignored.
         """
         return 0, (255, 255, 255)
+

@@ -54,8 +54,8 @@ class BrushTool3D(Tool3D):
         self.painting:   bool  = False
         self._stroke_label = None
 
-        # Accumulates face IDs painted in the current stroke.
-        self._stroke_face_ids: set = set()
+        # Face IDs painted in the current stroke.
+        self._stroke_face_ids = np.empty(0, dtype=np.int32)
         self._last_brush_volume_state = None
 
     # ------------------------------------------------------------------
@@ -105,7 +105,7 @@ class BrushTool3D(Tool3D):
             primary = self._get_primary_mesh()
             self.painting = True
             self._stroke_label = self._get_selected_label()
-            self._stroke_face_ids.clear()
+            self._stroke_face_ids = np.empty(0, dtype=np.int32)
             self._last_brush_volume_state = None
             if primary is not None:
                 self.mvat_manager._ensure_label_painter(primary)
@@ -133,6 +133,7 @@ class BrushTool3D(Tool3D):
         primary = self._get_primary_mesh()
         radius = 0.0
         face_count = 0
+        t1 = t2 = t3 = start_time
         try:
             if primary is None:
                 return
@@ -184,9 +185,10 @@ class BrushTool3D(Tool3D):
                 return
 
             face_ids_arr = np.asarray(face_ids, dtype=np.int32)
+            t1 = perf_counter()
             face_count = int(face_ids_arr.size)
-            new_face_ids = [int(face_id) for face_id in face_ids_arr.tolist() if int(face_id) not in self._stroke_face_ids]
-            if not new_face_ids:
+            new_face_ids = np.setdiff1d(face_ids_arr, self._stroke_face_ids, assume_unique=False)
+            if new_face_ids.size == 0:
                 self._last_brush_volume_state = (
                     product_id,
                     label_id,
@@ -196,16 +198,18 @@ class BrushTool3D(Tool3D):
                 )
                 return
 
-            self._stroke_face_ids.update(new_face_ids)
+            self._stroke_face_ids = np.union1d(self._stroke_face_ids, new_face_ids).astype(np.int32, copy=False)
+            t2 = perf_counter()
 
             submit_3d_face_paint = getattr(self.mvat_manager, 'submit_3d_face_paint', None)
             if callable(submit_3d_face_paint):
                 submit_3d_face_paint(
-                    np.asarray(new_face_ids, dtype=np.int32),
+                    new_face_ids,
                     color_rgb,
                     class_id,
                     primary_target=primary,
                 )
+            t3 = perf_counter()
 
             self._last_brush_volume_state = (
                 product_id,
@@ -215,8 +219,9 @@ class BrushTool3D(Tool3D):
                 current_center.copy(),
             )
         finally:
-            get_visibility_logger().info(
-                f"_apply_brush: {perf_counter() - start_time:.4g}s | radius={radius:.4g} | faces={face_count}"
+            print(
+                f"DEBUG [Brush]: KDTree: {(t1 - start_time) * 1000:.2f}ms | "
+                f"NP Math: {(t2 - t1) * 1000:.2f}ms | Submit: {(t3 - t2) * 1000:.2f}ms"
             )
 
     def _get_face_ids_in_brush_volume(self, world_pos: np.ndarray):
@@ -256,11 +261,12 @@ class BrushTool3D(Tool3D):
         MVATManager._on_3d_brush_stroke_applied which propagates the painted
         face IDs to all visible camera masks via their index maps.
         """
+        start_time = perf_counter()
         self.painting = False
         self._last_brush_volume_state = None
 
         try:
-            if self._stroke_face_ids and self.mvat_manager.multi_annotate_enabled:
+            if self._stroke_face_ids.size > 0 and self.mvat_manager.multi_annotate_enabled:
                 selected_label = self._stroke_label or self._get_selected_label()
                 current_kind = str(getattr(self, 'tool_kind', 'brush')).strip().lower()
                 handler_name = '_on_3d_erase_stroke_applied' if current_kind == 'erase' else '_on_3d_brush_stroke_applied'
@@ -271,9 +277,10 @@ class BrushTool3D(Tool3D):
                     except Exception as e:
                         pass
         finally:
-            self._stroke_face_ids.clear()
+            self._stroke_face_ids = np.empty(0, dtype=np.int32)
             self._stroke_label = None
             self._refresh_hover_overlay_after_stroke()
+            print(f"DEBUG [FinishStroke]: Dispatch & Cleanup took {(perf_counter() - start_time) * 1000:.2f}ms")
 
     def _refresh_hover_overlay_after_stroke(self):
         manager = getattr(self, 'mvat_manager', None)

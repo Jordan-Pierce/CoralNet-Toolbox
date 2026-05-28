@@ -1056,9 +1056,9 @@ class MVATManager(QObject):
 
             centers = getattr(primary_target, '_element_centers_np', None)
             if centers is not None and len(centers) > 0:
-                from pykdtree.kdtree import KDTree
+                from scipy.spatial import cKDTree
 
-                tree = KDTree(np.asarray(centers, dtype=np.float32))
+                tree = cKDTree(np.asarray(centers, dtype=np.float32))
                 primary_target._hover_face_kdtree = tree
                 primary_target._hover_face_kdtree_product_id = getattr(primary_target, 'product_id', None)
 
@@ -1076,42 +1076,24 @@ class MVATManager(QObject):
 
     def _query_kdtree_candidate_ids(self, tree, center, search_radius, total_count: int, initial_k: int = 256):
         try:
-            center = np.asarray(center, dtype=np.float32).reshape(1, -1)
+            center = np.asarray(center, dtype=np.float32).reshape(-1)
             search_radius = float(search_radius)
-            total_count = int(total_count)
         except Exception:
             return np.empty(0, dtype=np.int32)
 
-        if total_count <= 0 or search_radius <= 0.0:
+        if search_radius <= 0.0:
             return np.empty(0, dtype=np.int32)
 
-        k = min(max(1, int(initial_k)), total_count)
         while True:
-            # pykdtree only exposes k-nearest queries, so keep expanding k until
-            # the furthest returned neighbor falls outside the target radius.
             try:
-                distances, indices = tree.query(center, k=k)
+                candidate_ids = tree.query_ball_point(center, search_radius)
             except Exception:
                 return np.empty(0, dtype=np.int32)
 
-            distances = np.asarray(distances).reshape(-1)
-            indices = np.asarray(indices).reshape(-1)
-            if distances.size == 0 or indices.size == 0:
+            if not candidate_ids:
                 return np.empty(0, dtype=np.int32)
 
-            finite = np.isfinite(distances)
-            if not np.any(finite):
-                return np.empty(0, dtype=np.int32)
-
-            valid = finite & (indices >= 0) & (indices < total_count) & (distances <= search_radius)
-            candidate_ids = np.unique(indices[valid]).astype(np.int32, copy=False)
-
-            if k >= total_count:
-                return candidate_ids
-
-            farthest = float(np.max(distances[finite]))
-            if farthest > search_radius:
-                return candidate_ids
+            return np.asarray(candidate_ids, dtype=np.int32)
 
             next_k = min(total_count, max(k * 2, k + 1))
             if next_k == k:
@@ -2087,6 +2069,8 @@ class MVATManager(QObject):
                             pass
                 return
 
+            t1 = perf_counter()
+
             def _add_overlay_actor(mesh_to_add):
                 return self.viewer.plotter.add_mesh(
                     mesh_to_add,
@@ -2155,11 +2139,14 @@ class MVATManager(QObject):
                 self._label_overlay_actor.SetVisibility(True)
             except Exception:
                 pass
+            t2 = perf_counter()
             if render:
                 try:
                     self.viewer.plotter.render()
                 except Exception:
                     pass
+            t3 = perf_counter()
+            print(f"DEBUG [OverlayReady (Main Thread)]: VTK Swap: {(t1 - start_time) * 1000:.2f}ms | Render: {(t3 - t2) * 1000:.2f}ms")
         except Exception as e:
             print(f"⚠️ Overlay swap failed: {e}")
         finally:
@@ -3051,6 +3038,7 @@ class MVATManager(QObject):
             face_ids_result = np.asarray(face_ids_result, dtype=np.int32).reshape(-1)
             return face_ids_result
 
+        # 1. Input sanitization
         try:
             center = np.asarray(center, dtype=np.float64)
         except Exception:
@@ -3068,51 +3056,28 @@ class MVATManager(QObject):
         if shape not in ('circle', 'square'):
             shape = 'circle'
 
-        try:
-            primary_target.prepare_geometry()
-        except Exception:
-            pass
-
-        centers = getattr(primary_target, '_element_centers_np', None)
-        if centers is None or len(centers) == 0:
-            return np.empty(0, dtype=np.int32)
-
-        try:
-            from pykdtree.kdtree import KDTree
-        except Exception:
-            KDTree = None
-
+        # 2. Hard guardrail: If background thread hasn't finished KD-Tree, abort immediately
         tree = getattr(primary_target, '_hover_face_kdtree', None)
-        tree_product_id = getattr(primary_target, '_hover_face_kdtree_product_id', None)
-        if tree is None or tree_product_id != getattr(primary_target, 'product_id', None):
-            tree = None
-            if KDTree is not None:
-                try:
-                    tree = KDTree(np.asarray(centers, dtype=np.float32))
-                    primary_target._hover_face_kdtree = tree
-                    primary_target._hover_face_kdtree_product_id = getattr(primary_target, 'product_id', None)
-                except Exception:
-                    tree = None
+        if tree is None:
+            return _finish(np.empty(0, dtype=np.int32))
 
-        if tree is not None:
-            try:
-                search_radius = float(radius) * np.sqrt(3.0) if shape == 'square' else float(radius)
-                candidate_ids = self._query_kdtree_candidate_ids(tree, center, search_radius, int(centers.shape[0]))
-                if candidate_ids.size == 0:
-                    return _finish(np.empty(0, dtype=np.int32))
-                face_ids = self._filter_face_ids_by_world_brush_volume(primary_target, candidate_ids, center, radius, shape=shape)
-                return _finish(face_ids)
-            except Exception:
-                pass
+        # 3. Fast Spatial Query
+        try:
+            centers = getattr(primary_target, '_element_centers_np', None)
+            if centers is None or len(centers) == 0:
+                return _finish(np.empty(0, dtype=np.int32))
 
-        deltas = np.asarray(centers, dtype=np.float32) - center.astype(np.float32)
-        if shape == 'square':
-            within = np.max(np.abs(deltas), axis=1) <= float(radius)
-        else:
-            radius_sq = float(radius) * float(radius)
-            distances_sq = np.einsum('ij,ij->i', deltas, deltas)
-            within = distances_sq <= radius_sq
-        return _finish(np.flatnonzero(within).astype(np.int32))
+            search_radius = float(radius) * np.sqrt(3.0) if shape == 'square' else float(radius)
+            candidate_ids = self._query_kdtree_candidate_ids(tree, center, search_radius, int(centers.shape[0]))
+            
+            if candidate_ids.size == 0:
+                return _finish(np.empty(0, dtype=np.int32))
+                
+            face_ids = self._filter_face_ids_by_world_brush_volume(primary_target, candidate_ids, center, radius, shape=shape)
+            return _finish(face_ids)
+            
+        except Exception:
+            return _finish(np.empty(0, dtype=np.int32))
 
     def clear_sphere_hover_overlay(self, reset_context: bool = False, render: bool = True):
         """Hide the sphere hover overlay and clear projected cursor previews."""

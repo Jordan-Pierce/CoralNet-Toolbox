@@ -172,16 +172,16 @@ class LabelWorker(QThread):
                 return None
 
             selected = mesh_faces_flat[face_ids, 1:]
-            unique_vids, inverse = np.unique(selected, return_inverse=True)
-            overlay_points = mesh_points[unique_vids]
+            
+            # BYPASS np.unique: Just copy the vertices directly
+            overlay_points = mesh_points[selected.ravel()]
 
-            remapped = inverse.reshape(selected.shape)
-            vtk_faces = np.hstack([
-                np.full((len(face_ids), 1), 3, dtype=np.int64),
-                remapped.astype(np.int64),
-            ]).ravel()
+            # Build a naive face array where every 3 vertices make a new triangle
+            vtk_faces = np.empty((len(face_ids), 4), dtype=np.int32)
+            vtk_faces[:, 0] = 3
+            vtk_faces[:, 1:] = np.arange(len(face_ids) * 3).reshape(-1, 3)
 
-            overlay = pv.PolyData(overlay_points.astype(np.float32), vtk_faces)
+            overlay = pv.PolyData(overlay_points.astype(np.float32), vtk_faces.ravel())
 
             if not attach_colors:
                 return overlay
@@ -220,6 +220,7 @@ class LabelWorker(QThread):
                 continue
 
             try:
+                t0 = perf_counter()
                 face_ids, color_rgb, class_id = item
                 # -----------------------------------------------------------------
                 # 1. Update RAM buffers (O(M), pure numpy, safe off main thread
@@ -228,13 +229,20 @@ class LabelWorker(QThread):
                 self._class_ids[face_ids] = class_id
                 self._labels_view[face_ids] = color_rgb
                 self._apply_item_to_overlay_buffer(face_ids, color_rgb, class_id)
+                t1 = perf_counter()
             except Exception as e:
                 print(f"⚠️ LabelWorker processing error: {e}")
                 # Thread stays alive — don't re-raise
 
             # Always emit when queue drains — guarantees final stroke is never dropped
             if self._queue.empty():
+                t2 = perf_counter()
                 overlay = self._snapshot_overlay()
+                t3 = perf_counter()
+                print(
+                    f"DEBUG [LabelWorker]: Buffer Update: {(t1 - t0) * 1000:.2f}ms | "
+                    f"Build Overlay: {(t3 - t2) * 1000:.2f}ms | Faces: {self._n_faces}"
+                )
                 if overlay is not None:
                     self.overlay_ready.emit(overlay)
                 self._last_emit_time = time.monotonic()
