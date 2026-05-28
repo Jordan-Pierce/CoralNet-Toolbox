@@ -20,6 +20,7 @@ hf_xet
 yolo-tiling>=0.0.28
 pyvista
 pyvistaqt
+pykdtree
 pynvvideocodec
 requests
 selenium>=4.15.2

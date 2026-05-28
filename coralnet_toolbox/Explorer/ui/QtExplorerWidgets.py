@@ -1,3 +1,8 @@
+"""
+Explorer UI widgets.
+
+Reusable Qt widgets shared across Explorer viewer windows.
+"""
 from PyQt5 import QtCore, QtGui, QtWidgets
 
 

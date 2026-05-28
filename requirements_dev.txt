@@ -9,6 +9,7 @@ twine
 click
 pytest
 pytest-runner
+pykdtree
 
 ipykernel
 livereload

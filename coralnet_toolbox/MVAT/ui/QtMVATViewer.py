@@ -24,14 +24,16 @@ from PyQt5.QtWidgets import (
     QVBoxLayout, QLabel, QHBoxLayout
 )
 
-from coralnet_toolbox.MVAT.core.Ray import CameraRay, BatchedRayManager, SphereActorManager
-from coralnet_toolbox.MVAT.core.Frustum import BatchedFrustumManager
-from coralnet_toolbox.MVAT.core.Model import PointCloudProduct, MeshProduct
+from coralnet_toolbox.MVAT.core.Ray import CameraRay
+from coralnet_toolbox.MVAT.managers.RayManager import BatchedRayManager
+from coralnet_toolbox.MVAT.managers.SphereActorManager import SphereActorManager
+from coralnet_toolbox.MVAT.managers.FrustumManager import BatchedFrustumManager
+from coralnet_toolbox.MVAT.core.Products import PointCloudProduct, MeshProduct, GaussianSplattingProduct
 from coralnet_toolbox.MVAT.core.SceneContext import SceneContext
 from coralnet_toolbox.MVAT.core.SceneProduct import AbstractSceneProduct
 from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED
-from coralnet_toolbox.MVAT.tools import Brush3DTool, Erase3DTool
-from coralnet_toolbox.MVAT.ui.CameraAnimator import CameraAnimator
+from coralnet_toolbox.MVAT.tools import BrushTool3D, EraseTool3D
+from coralnet_toolbox.MVAT.ui.QtCameraAnimator import CameraAnimator
 from coralnet_toolbox import theme as app_theme
 
 
@@ -445,6 +447,7 @@ class MVATViewer(QFrame):
         # Scene product visibility by type
         self._show_point_clouds = True
         self._show_meshes = True
+        self._show_gaussian_splats = True
         
         # Array selector widgets (created in create_top_toolbar)
         self.array_selector_combo = None
@@ -739,21 +742,29 @@ class MVATViewer(QFrame):
         action_meshes.setToolTip("Toggle visibility of mesh products")
         action_meshes.toggled.connect(self.set_meshes_visible)
         products_menu.addAction(action_meshes)
-        
+
+        action_gaussian_splats = QAction("Show Gaussian Splats", self)
+        action_gaussian_splats.setCheckable(True)
+        action_gaussian_splats.setChecked(self._show_gaussian_splats)
+        action_gaussian_splats.setToolTip("Toggle visibility of 3D Gaussian Splatting products")
+        action_gaussian_splats.toggled.connect(self.set_gaussian_splats_visible)
+        products_menu.addAction(action_gaussian_splats)
+
         products_menu.addSeparator()
-        
+
         action_show_all = QAction("Show All Products", self)
         action_show_all.triggered.connect(self.show_all_products)
         products_menu.addAction(action_show_all)
-        
+
         action_hide_all = QAction("Hide All Products", self)
         action_hide_all.triggered.connect(self.hide_all_products)
         products_menu.addAction(action_hide_all)
-        
+
         # Store actions for programmatic updates
         self._product_visibility_actions = {
             'point_clouds': action_point_clouds,
             'meshes': action_meshes,
+            'gaussian_splats': action_gaussian_splats,
         }
         
         # Primary Target submenu - for selecting annotation target
@@ -800,15 +811,15 @@ class MVATViewer(QFrame):
         if self._brush_3d_tool is not None or self._erase_3d_tool is not None:
             return
 
-        self._brush_3d_tool = Brush3DTool(self, mvat_manager)
-        self._erase_3d_tool = Erase3DTool(self, mvat_manager)
+        self._brush_3d_tool = BrushTool3D(self, mvat_manager)
+        self._erase_3d_tool = EraseTool3D(self, mvat_manager)
         self._active_3d_tool = None
 
     def get_selected_3d_tool(self):
         return self._active_3d_tool
 
     def set_selected_3d_tool(self, tool_name):
-        """Activate the Brush3DTool or Erase3DTool preview, or clear it."""
+        """Activate the BrushTool3D or EraseTool3D preview, or clear it."""
         tool_map = {
             'brush': self._brush_3d_tool,
             'erase': self._erase_3d_tool,
@@ -983,6 +994,27 @@ class MVATViewer(QFrame):
             self._sphere_manager.set_visibility(False)  # Hidden by default
             self._sync_sphere_hover_binding()
 
+    def _fast_hardware_pick(self):
+        import vtk
+        
+        # 1. Get raw event position
+        pos = self.plotter.interactor.GetEventPosition()
+        vtk_x, vtk_y = int(pos[0]), int(pos[1])
+        
+        # Query the Z-buffer
+        z_val = self.plotter.renderer.GetZ(vtk_x, vtk_y)
+        
+        # Check if we hit the skybox
+        if z_val is None or np.isclose(z_val, 1.0):
+            return None
+            
+        # Use VTK's dedicated Z-buffer unprojector
+        picker = vtk.vtkWorldPointPicker()
+        picker.Pick(vtk_x, vtk_y, 0, self.plotter.renderer)
+        
+        picked_pos = np.array(picker.GetPickPosition())
+        return picked_pos
+
     def _bind_sphere_hover_observer(self):
         """Bind the sphere hover observer if sphere tracking is enabled."""
         if self._sphere_hover_observer_bound:
@@ -996,9 +1028,8 @@ class MVATViewer(QFrame):
         try:
             self._mouse_sphere_observer_id = style.AddObserver("MouseMoveEvent", self._on_mouse_move)
             self._sphere_hover_observer_bound = self._mouse_sphere_observer_id is not None
-            print(f"✅ Mouse move observer bound to style: {self._mouse_sphere_observer_id}")
         except Exception as e:
-            print(f"⚠️ Failed to bind mouse move observer: {e}")
+            pass
 
     def _unbind_sphere_hover_observer(self):
         """Unbind the sphere hover observer so only camera interactions remain."""
@@ -1178,37 +1209,10 @@ class MVATViewer(QFrame):
         active_tool = getattr(self, '_active_3d_tool', None)
         if active_tool is not None and not bool(getattr(active_tool, 'preview_only', True)):
             try:
-                self.plotter.store_mouse_position()
-            except Exception:
+                world_pos = self._fast_hardware_pick()
+                active_tool.mousePressEvent(event, 1, world_pos)
+            except Exception as e:
                 pass
-
-            picked = self.plotter.pick_mouse_position()
-            expected_actor = self._get_primary_target_actor()
-            if self._is_valid_scene_pick(picked, expected_actor=expected_actor):
-                try:
-                    world_pos = np.asarray(picked, dtype=np.float64)
-                except Exception:
-                    world_pos = None
-
-                face_id = 0
-                try:
-                    picker = getattr(getattr(self.plotter, 'iren', None), 'picker', None)
-                    if picker is not None and hasattr(picker, 'GetCellId'):
-                        candidate_face_id = int(picker.GetCellId())
-                        if candidate_face_id >= 0:
-                            face_id = candidate_face_id
-                except Exception:
-                    pass
-
-                try:
-                    active_tool.mousePressEvent(event, face_id, world_pos)
-                except Exception:
-                    pass
-            else:
-                try:
-                    active_tool.mousePressEvent(event, -1, None)
-                except Exception:
-                    pass
             return
 
         if self.is_sphere_tracking_enabled():
@@ -1285,13 +1289,11 @@ class MVATViewer(QFrame):
             # transition isn't immediately clobbered by the decay timer.
             self._cancel_camera_motion()
 
-            picked = self.plotter.pick_mouse_position()
-            if not self._is_valid_scene_pick(picked):
+            picked = self._fast_hardware_pick()
+            if picked is None:
                 return
 
-            picked = np.asarray(picked, dtype=float)
-
-            self.set_focal_point(picked)
+            self.set_focal_point(np.asarray(picked, dtype=float))
         except Exception:
             pass
 
@@ -1353,13 +1355,14 @@ class MVATViewer(QFrame):
 
             if pending_events <= 0:
                 return
-            
-            active_tool = getattr(self, '_active_3d_tool', None)
-            if active_tool is not None:
-                if self._sphere_manager is None:
-                    return
 
-                if not self._sphere_visible:
+            active_tool = getattr(self, '_active_3d_tool', None)
+
+            # --- INSTANT HARDWARE PICK ---
+            world_pos = self._fast_hardware_pick()
+
+            if active_tool is not None:
+                if self._sphere_manager is None or not self._sphere_visible:
                     try:
                         active_tool.mouseMoveEvent(None, -1, None)
                     except Exception:
@@ -1367,28 +1370,7 @@ class MVATViewer(QFrame):
                     return
 
                 try:
-                    self.plotter.store_mouse_position()
-                except Exception:
-                    pass
-
-                picked = self.plotter.pick_mouse_position()
-
-                # For the active-tool path, skip the full _is_valid_scene_pick check.
-                # pick_mouse_position() called from a Qt timer (not a VTK button event)
-                # does not always populate picker.GetDataSet(), so the dataset check
-                # inside _is_valid_scene_pick always fails for hover. We just need a
-                # finite world coordinate — do a lightweight sanity check instead.
-                world_pos = None
-                if picked is not None:
-                    try:
-                        p = np.asarray(picked, dtype=np.float64)
-                        if np.all(np.isfinite(p)):
-                            world_pos = p
-                    except Exception:
-                        pass
-
-                try:
-                    active_tool.mouseMoveEvent(None, -1, world_pos)
+                    active_tool.mouseMoveEvent(None, 1, world_pos)
                 except Exception:
                     pass
 
@@ -1405,52 +1387,17 @@ class MVATViewer(QFrame):
             if self._sphere_manager is None:
                 return
 
-            if not self._sphere_visible:
-                return
-
-            # Get the current mouse position and perform a pick once per batch.
-            try:
-                self.plotter.store_mouse_position()
-            except Exception:
-                pass
-
-            picked = self.plotter.pick_mouse_position()
-            expected_actor = self._get_primary_target_actor()
-
-            if not self._is_valid_scene_pick(picked, expected_actor=expected_actor):
-                if self._sphere_manager.sphere_actor is not None:
-                    try:
-                        if self._sphere_manager.sphere_actor.GetVisibility():
-                            self._sphere_manager.set_visibility(False)
-                    except Exception:
-                        pass
-
-                manager = getattr(self, 'mvat_manager', None)
-                if manager is not None:
-                    try:
-                        manager.clear_sphere_hover_overlay(reset_context=True, render=True)
-                    except Exception:
-                        pass
-
-                return
-            
-            if picked is not None:
-                picked = np.asarray(picked, dtype=np.float64)
-
-                # Update sphere position to where mouse intersects mesh
-                self._sphere_manager.set_position(picked)
-
-                # Ensure sphere is visible
+            if world_pos is not None:
+                self._sphere_manager.set_position(world_pos)
                 self._sphere_manager.set_visibility(True)
 
                 manager = getattr(self, 'mvat_manager', None)
                 if manager is not None:
                     try:
-                        manager.update_sphere_hover_overlay(picked, render=False)
+                        manager.update_sphere_hover_overlay(world_pos, render=False)
                     except Exception:
                         pass
             else:
-                # No pick - hide the sphere when cursor is over background
                 self._sphere_manager.set_visibility(False)
 
                 manager = getattr(self, 'mvat_manager', None)
@@ -1459,6 +1406,7 @@ class MVATViewer(QFrame):
                         manager.clear_sphere_hover_overlay(reset_context=True, render=False)
                     except Exception:
                         pass
+
             try:
                 self.plotter.render()
             except Exception:
@@ -1994,6 +1942,86 @@ class MVATViewer(QFrame):
                 self.remove_product(p.product_id)
             self.add_product(value)
 
+    # --------------------------------------------------------------------------
+    # PLY Type Detection and Disambiguation
+    # --------------------------------------------------------------------------
+
+    @staticmethod
+    def _detect_ply_type(file_path: str) -> str:
+        """
+        Peek at the PLY header to choose a sensible default without loading
+        the full file.
+
+        Detection rules (in priority order):
+          1. Header contains ``element face`` → mesh
+          2. Header contains ``f_dc_0`` (3DGS DC spherical harmonic field) → gaussian
+          3. Otherwise → pointcloud
+
+        Returns one of ``'mesh'``, ``'gaussian'``, or ``'pointcloud'``.
+        """
+        try:
+            header_lines = []
+            with open(file_path, 'rb') as fh:
+                for raw_line in fh:
+                    line = raw_line.decode('ascii', errors='ignore').strip()
+                    header_lines.append(line)
+                    if line == 'end_header':
+                        break
+            header = '\n'.join(header_lines)
+            if 'element face' in header:
+                return 'mesh'
+            if 'f_dc_0' in header:
+                return 'gaussian'
+            return 'pointcloud'
+        except Exception:
+            return 'mesh'  # safe default
+
+    def _prompt_ply_type_dialog(self, file_path: str):
+        """
+        Show a modal dialog asking the user what type of data a .ply file
+        contains.
+
+        Returns ``(ply_type, calculate_kd_tree)`` or ``None`` if cancelled.
+        """
+        from PyQt5.QtWidgets import QDialog, QDialogButtonBox, QComboBox, QLabel, QVBoxLayout, QFormLayout
+
+        detected = self._detect_ply_type(file_path)
+
+        options = ['Mesh', 'Point Cloud', '3D Gaussian Splatting']
+        default_index = {'mesh': 0, 'pointcloud': 1, 'gaussian': 2}.get(detected, 0)
+
+        dialog = QDialog(self.window())
+        dialog.setWindowTitle('PLY File Type')
+        dialog.setModal(True)
+        dialog.resize(420, 200)
+
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel(f'<b>{os.path.basename(file_path)}</b>'))
+        layout.addWidget(QLabel('Select the data type contained in this PLY file:'))
+
+        form_layout = QFormLayout()
+
+        combo = QComboBox(dialog)
+        combo.addItems(options)
+        combo.setCurrentIndex(default_index)
+        form_layout.addRow('Product type:', combo)
+
+        kd_combo = QComboBox(dialog)
+        kd_combo.addItems(['True', 'False'])
+        kd_combo.setCurrentIndex(0)
+        form_layout.addRow('Calculate KD-Tree:', kd_combo)
+
+        layout.addLayout(form_layout)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, dialog)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec_() != QDialog.Accepted:
+            return None
+        return combo.currentText(), kd_combo.currentText() == 'True'
+
     def dragEnterEvent(self, event):
         """Accept drag if a single supported 3D file is being dragged."""
         if event.mimeData().hasUrls():
@@ -2015,31 +2043,52 @@ class MVATViewer(QFrame):
 
     def dropEvent(self, event):
         """Load the dropped 3D file into the viewer."""
+        file_path = event.mimeData().urls()[0].toLocalFile()
+        file_ext = os.path.splitext(file_path)[1].lower()
+
+        # For PLY files, ask the user which data type the file contains BEFORE
+        # setting the wait cursor so the dialog is fully interactive.
+        ply_type = None
+        calculate_kd_tree = True
+        if file_ext == '.ply':
+            dialog_result = self._prompt_ply_type_dialog(file_path)
+            if dialog_result is None:
+                # User cancelled the dialog — abort the drop silently.
+                event.ignore()
+                return
+            ply_type, calculate_kd_tree = dialog_result
+
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            file_path = event.mimeData().urls()[0].toLocalFile()
-            file_ext = file_path.lower()
-            
             try:
                 top = self.window()
                 if hasattr(top, 'status_bar'):
                     top.status_bar.showMessage("Loading 3D data...", 0)
             except Exception:
                 pass
-            
-            # Auto-detect product type and load
-            product = self._create_product_from_file(file_path)
-            
+
+            product = self._create_product_from_file(file_path, ply_type=ply_type)
+
             if product is not None:
-                # Force the GPU extraction now while the cursor is still a spinning wheel!
+                # Force GPU geometry extraction while the wait cursor is active.
                 if hasattr(product, 'prepare_geometry'):
                     product.prepare_geometry()
-                    
+
+                if calculate_kd_tree:
+                    # Build the KD-tree immediately so the first brush interaction
+                    # does not need to warm it up later.
+                    manager = getattr(self, 'mvat_manager', None)
+                    if manager is not None and hasattr(manager, '_prewarm_spatial_caches'):
+                        try:
+                            manager._prewarm_spatial_caches(product)
+                        except Exception:
+                            pass
+
                 self.add_product(product)
                 self.render_scene()
                 event.acceptProposedAction()
-                
-                # Trigger visibility filtering based on the model's current selections
+
+                # Trigger visibility filtering based on the model's current selections.
                 if self.parent() and hasattr(self.parent(), 'selection_model'):
                     mvat_window = self.parent()
                     model = mvat_window.selection_model
@@ -2049,7 +2098,7 @@ class MVATViewer(QFrame):
             else:
                 print(f"Failed to create product from file: {file_path}")
                 event.ignore()
-                
+
         except Exception as e:
             print(f"Failed to load 3D file: {e}")
             import traceback
@@ -2064,45 +2113,62 @@ class MVATViewer(QFrame):
                 pass
             QApplication.restoreOverrideCursor()
 
-    def _create_product_from_file(self, file_path: str) -> 'AbstractSceneProduct':
+    def _create_product_from_file(self, file_path: str, ply_type: str = None) -> 'AbstractSceneProduct':
         """
-        Auto-detect file type and create appropriate scene product.
-        
+        Create the appropriate scene product for a 3D data file.
+
+        For .ply files the caller should pass ``ply_type`` (one of ``'Mesh'``,
+        ``'Point Cloud'``, or ``'3D Gaussian Splatting'``) so that the dialog
+        is not re-shown here.  All other extensions are auto-detected.
+
         Args:
-            file_path: Path to 3D data file.
-            
+            file_path: Path to the 3D data file.
+            ply_type:  Pre-resolved PLY type string from the disambiguation
+                       dialog, or None for non-PLY files.
+
         Returns:
-            Scene product instance, or None if type cannot be determined.
+            A concrete AbstractSceneProduct instance, or None if the type
+            cannot be determined.
         """
         file_ext = os.path.splitext(file_path)[1].lower()
-        
-        # STL and OBJ are always meshes by format definition
+
+        # STL and OBJ are always meshes by format definition.
         if file_ext in ['.stl', '.obj']:
             print(f"📐 {file_ext.upper()} is a mesh-only format, creating MeshProduct")
             return MeshProduct.from_file(file_path)
-        
-        # PCD is always point cloud
+
+        # PCD is always a point cloud.
         if file_ext == '.pcd':
             print(f"☁️ PCD is a point-cloud-only format, creating PointCloudProduct")
             return PointCloudProduct.from_file(file_path, point_size=self.point_size)
-        
-        # PLY defaults to mesh loading.
+
+        # PLY: route based on the user-selected type from the dialog.
         if file_ext == '.ply':
-            print(f"📐 PLY defaults to MeshProduct")
-            return MeshProduct.from_file(file_path)
-        
-        # VTK - check structure
+            if ply_type == 'Mesh':
+                print(f"📐 PLY → MeshProduct (user selection)")
+                return MeshProduct.from_file(file_path)
+            elif ply_type == 'Point Cloud':
+                print(f"☁️ PLY → PointCloudProduct (user selection)")
+                return PointCloudProduct.from_file(file_path, point_size=self.point_size)
+            elif ply_type == '3D Gaussian Splatting':
+                print(f"✨ PLY → GaussianSplattingProduct (user selection)")
+                return GaussianSplattingProduct.from_file(file_path)
+            else:
+                # Fallback if called without a prior dialog (should not normally happen).
+                print(f"📐 PLY type unknown — defaulting to MeshProduct")
+                return MeshProduct.from_file(file_path)
+
+        # VTK: infer from structure.
         if file_ext == '.vtk':
             import pyvista as pv
             temp_mesh = pv.read(file_path)
-            # Check if it has non-vertex cells (faces/volumes)
             if temp_mesh.n_cells > 0 and temp_mesh.n_cells < temp_mesh.n_points:
                 print(f"📐 VTK detected as mesh (cells < points)")
                 return MeshProduct.from_file(file_path)
             else:
                 print(f"☁️ VTK detected as point cloud")
                 return PointCloudProduct.from_file(file_path, point_size=self.point_size)
-        
+
         return None
 
     def add_product(self, product: 'AbstractSceneProduct') -> None:
@@ -2146,18 +2212,30 @@ class MVATViewer(QFrame):
     def remove_product(self, product_id: str) -> None:
         """
         Remove a scene product from the viewer.
-        
+
+        For GaussianSplattingProduct the OpenGL renderer is cleaned up before
+        the actor is removed from the plotter so that GPU resources are freed
+        in the correct order.
+
         Args:
             product_id: ID of the product to remove.
         """
-        # Remove actor if exists
+        # Fetch the product before it is removed from the context so we can
+        # call type-specific teardown logic below.
+        product = self.scene_context.get_product(product_id)
+
+        # Release GaussianActor OpenGL resources first while the actor is still
+        # alive in the plotter, then remove the (now inert) actor handle.
+        if isinstance(product, GaussianSplattingProduct):
+            product.cleanup()
+
         actor = self._product_actors.pop(product_id, None)
         if actor is not None:
             try:
                 self.plotter.remove_actor(actor)
             except Exception:
                 pass
-        
+
         self.scene_context.remove_product(product_id)
         
         # Show placeholder if scene is now empty
@@ -2210,17 +2288,40 @@ class MVATViewer(QFrame):
                 product_id = product.product_id
                 mesh = product.get_render_mesh()
                 style = product.get_render_style()
-                
+
                 if mesh is None:
                     continue
-                
+
                 should_be_visible = self._get_visibility_for_product(product)
+
+                # ------------------------------------------------------------------
+                # GaussianSplattingProduct: the GaussianActor manages its own
+                # OpenGL rendering pipeline via a VTK end-event observer registered
+                # in bind_to_plotter().  We must NOT remove and re-add it on every
+                # render_scene() call because that would duplicate the observer.
+                # Instead, bind once on first encounter and only toggle visibility.
+                # ------------------------------------------------------------------
+                if isinstance(product, GaussianSplattingProduct):
+                    if product_id not in self._product_actors:
+                        product.gaussian_actor.bind_to_plotter(self.plotter)
+                        try:
+                            product.gaussian_actor.scale_modifier = float(self.point_size)
+                        except Exception:
+                            pass
+                        self._product_actors[product_id] = product.gaussian_actor.actor
+                    actor = self._product_actors[product_id]
+                    try:
+                        actor.SetVisibility(should_be_visible)
+                    except Exception:
+                        pass
+                    continue
+
                 actor = self._product_actors.get(product_id)
-                
+
                 # FIX: If the actor exists, remove it so we can re-apply the fresh style
                 if actor is not None:
                     self.plotter.remove_actor(actor)
-                
+
                 # Add mesh with the new style dictionary
                 actor = self.plotter.add_mesh(
                     mesh,
@@ -2228,15 +2329,15 @@ class MVATViewer(QFrame):
                     reset_camera=False,
                     **style
                 )
-                
+
                 # Ensure actor opacity matches style
                 try:
                     actor.GetProperty().SetOpacity(style.get('opacity', 1.0))
                 except Exception:
                     pass
-                    
+
                 self._product_actors[product_id] = actor
-                
+
                 # Apply visibility setting
                 try:
                     actor.SetVisibility(should_be_visible)
@@ -2270,6 +2371,8 @@ class MVATViewer(QFrame):
             return self._show_point_clouds
         elif isinstance(product, MeshProduct):
             return self._show_meshes
+        elif isinstance(product, GaussianSplattingProduct):
+            return self._show_gaussian_splats
         return True  # Default to visible for unknown types
 
     # --------------------------------------------------------------------------
@@ -2421,7 +2524,7 @@ class MVATViewer(QFrame):
             pass
 
     def set_point_size(self, size):
-        """Update the point size for point clouds."""
+        """Update the point size for point clouds and Gaussian splats."""
         self.point_size = size
         # Update all point-cloud actors' point size
         try:
@@ -2432,6 +2535,15 @@ class MVATViewer(QFrame):
                         actor.GetProperty().SetPointSize(size)
                     except Exception:
                         pass
+
+            for p in self.scene_context.get_products_by_class(GaussianSplattingProduct):
+                gaussian_actor = getattr(p, 'gaussian_actor', None)
+                if gaussian_actor is not None:
+                    try:
+                        gaussian_actor.scale_modifier = float(size)
+                    except Exception:
+                        pass
+
             try:
                 self.plotter.render()
             except Exception:
@@ -3040,15 +3152,18 @@ class MVATViewer(QFrame):
         """Toggle visibility of all mesh products."""
         self._show_meshes = bool(visible)
         self._update_product_visibility_by_type(MeshProduct, visible)
-    
 
-    
+    def set_gaussian_splats_visible(self, visible: bool):
+        """Toggle visibility of all 3D Gaussian Splatting products."""
+        self._show_gaussian_splats = bool(visible)
+        self._update_product_visibility_by_type(GaussianSplattingProduct, visible)
+
     def show_all_products(self):
         """Show all scene products."""
         self._show_point_clouds = True
         self._show_meshes = True
-        
-        
+        self._show_gaussian_splats = True
+
         # Update menu checkboxes if they exist
         if hasattr(self, '_product_visibility_actions'):
             for action in self._product_visibility_actions.values():
@@ -3072,8 +3187,8 @@ class MVATViewer(QFrame):
         """Hide all scene products."""
         self._show_point_clouds = False
         self._show_meshes = False
-        
-        
+        self._show_gaussian_splats = False
+
         # Update menu checkboxes if they exist
         if hasattr(self, '_product_visibility_actions'):
             for action in self._product_visibility_actions.values():

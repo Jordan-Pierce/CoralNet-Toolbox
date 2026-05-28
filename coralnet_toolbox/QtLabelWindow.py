@@ -766,9 +766,13 @@ class LabelWindow(QWidget):
         if annotation_viewer:
 
             # Priority 1: Always check for a selection in Gallery first.
+            # Use fast count method to avoid building the full ID list for large selections.
             try:
-                sel_ids = annotation_viewer.get_selected_annotation_ids()
-                gallery_selected_count = len(sel_ids) if sel_ids is not None else 0
+                if hasattr(annotation_viewer, 'get_selected_annotation_count'):
+                    gallery_selected_count = annotation_viewer.get_selected_annotation_count()
+                else:
+                    sel_ids = annotation_viewer.get_selected_annotation_ids()
+                    gallery_selected_count = len(sel_ids) if sel_ids is not None else 0
             except Exception:
                 gallery_selected_count = 0
 

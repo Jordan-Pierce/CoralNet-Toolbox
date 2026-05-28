@@ -14,7 +14,7 @@ import PyQtAds
 from PyQtAds import ads
 
 from PyQt5.QtGui import QMouseEvent, QIcon
-from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize
+from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize, QTimer
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QActionGroup, QSizePolicy,
                              QMessageBox, QWidget, QVBoxLayout, QLabel, QHBoxLayout,
                              QSpinBox, QComboBox, QSlider, QDialog, QPushButton, QListWidget)
@@ -39,7 +39,7 @@ from coralnet_toolbox.QtLabelWindow import LabelWindow
 from coralnet_toolbox.Explorer import AnnotationViewerWindow
 from coralnet_toolbox.Explorer import EmbeddingViewerWindow
 from coralnet_toolbox.Explorer import SelectionManager
-from coralnet_toolbox.Explorer.models.yolo_models import LIVE_YOLO_MODEL_PREFIX
+from coralnet_toolbox.Explorer.models.ModelRegistry import LIVE_YOLO_MODEL_PREFIX
 
 # MVAT Windows
 from coralnet_toolbox.MVAT import MVATViewer
@@ -1304,9 +1304,18 @@ class MainWindow(QMainWindow):
         # ---------------------------------------------------------------------
         self.annotation_window.annotationCreated.connect(self.label_window.update_tooltips)
         self.annotation_window.annotationDeleted.connect(self.label_window.update_tooltips)
-        # Also refresh label tooltips when an annotation's label changes
-        self.annotation_window.annotationLabelChanged.connect(lambda *args: self.label_window.update_tooltips())
-        self.annotation_window.annotationsLabelsChanged.connect(lambda *args: self.label_window.update_tooltips())
+        # Also refresh label tooltips when an annotation's label changes.
+        # Both signals use singleShot(0) so the tooltip rebuild (which iterates
+        # all rasters × all labels) is deferred to the next event-loop iteration.
+        # This means N rapid annotationLabelChanged emissions (e.g. from
+        # classification inference) coalesce into at most one update_tooltips()
+        # call per event-loop tick rather than running synchronously N times.
+        self.annotation_window.annotationLabelChanged.connect(
+            lambda *args: QTimer.singleShot(0, self.label_window.update_tooltips)
+        )
+        self.annotation_window.annotationsLabelsChanged.connect(
+            lambda *args: QTimer.singleShot(0, self.label_window.update_tooltips)
+        )
 
         self.annotation_window.annotationCreated.connect(self.annotation_viewer_window.on_annotation_created)
         self.annotation_window.annotationsCreated.connect(self.annotation_viewer_window.on_annotations_created)

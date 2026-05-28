@@ -1,4 +1,3 @@
-# coralnet_toolbox/Explorer/QtSelectionManager.py
 """
 Centralized selection management for Explorer windows.
 
@@ -236,7 +235,7 @@ class SelectionManager(QObject):
             self._selected_ids = set(all_selected_ids)
             
             # Sync selection to the embedding viewer
-            if self._embedding_viewer and self._embedding_viewer.points_by_id:
+            if self._embedding_viewer and len(getattr(self._embedding_viewer, '_point_ids', [])) > 0:
                 self._embedding_viewer.render_selection_from_ids(self._selected_ids)
             
             # Sync selection to the annotation window
@@ -408,7 +407,11 @@ class SelectionManager(QObject):
         # Use the batched selection API on AnnotationWindow when available
         try:
             if hasattr(self._annotation_window, 'select_annotations_by_ids'):
-                self._annotation_window.select_annotations_by_ids(annotation_ids, scroll_to_first=True, quiet_mode=True)
+                # Only animate/scroll to the annotation when exactly one is selected.
+                # For multi-selections the annotations could be scattered anywhere, so
+                # jumping to the first ID in an arbitrary list is misleading.
+                _scroll = len(annotation_ids) == 1
+                self._annotation_window.select_annotations_by_ids(annotation_ids, scroll_to_first=_scroll, quiet_mode=True)
             else:
                 # Fallback to older per-item selection
                 self._annotation_window.unselect_annotations()
@@ -498,24 +501,58 @@ class SelectionManager(QObject):
     def _update_confidence_window(self):
         """
         Update the Confidence window based on current selection.
-        
+
         Only updates for single selection to avoid showing misleading info.
+        For multi-selection the window is cleared so it doesn't show stale data.
         """
         if not self._confidence_window:
             return
-        
-        # Only update for single selection
+
         if len(self._selected_ids) != 1:
+            # Multi-selection or no selection: clear the confidence window
+            if len(self._selected_ids) != 0:
+                try:
+                    self._confidence_window.clear_display()
+                except Exception:
+                    pass
             return
-        
-        # Get the single selected annotation
+
+        # Single annotation selected — show it in the confidence window.
         ann_id = list(self._selected_ids)[0]
-        
-        # Get the annotation from annotation window
-        if self._annotation_window and hasattr(self._annotation_window, 'annotations_dict'):
-            ann = self._annotation_window.annotations_dict.get(ann_id)
-            if ann and hasattr(self._confidence_window, 'update_for_annotation'):
-                self._confidence_window.update_for_annotation(ann)
+
+        if not (self._annotation_window and hasattr(self._annotation_window, 'annotations_dict')):
+            return
+
+        ann = self._annotation_window.annotations_dict.get(ann_id)
+        if ann is None:
+            return
+
+        # Ensure the annotation has a cropped image cached before displaying.
+        # If it's absent (e.g. selected from gallery/embedding without ever being
+        # loaded onto the annotation canvas), generate it now using the raster source.
+        if not getattr(ann, 'cropped_image', None):
+            try:
+                image_window = getattr(self._annotation_window.main_window, 'image_window', None)
+                raster_manager = getattr(image_window, 'raster_manager', None) if image_window else None
+                raster_src = None
+                if raster_manager and hasattr(raster_manager, 'get_raster'):
+                    raster = raster_manager.get_raster(ann.image_path)
+                    if raster:
+                        if getattr(raster, '_rasterio_src', None) is None and hasattr(raster, 'load_rasterio'):
+                            raster.load_rasterio()
+                        raster_src = getattr(raster, '_rasterio_src', None)
+                if raster_src is None:
+                    raster_src = getattr(self._annotation_window, 'rasterio_image', None)
+                if raster_src is not None:
+                    ann.create_cropped_image(raster_src)
+            except Exception:
+                pass
+
+        # Display the annotation in the confidence window.
+        try:
+            self._confidence_window.display_cropped_image(ann)
+        except Exception:
+            pass
     
     def _get_selected_data_items(self):
         """

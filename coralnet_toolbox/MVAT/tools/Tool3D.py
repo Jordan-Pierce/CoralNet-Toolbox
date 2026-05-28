@@ -46,6 +46,7 @@ class Tool3D:
     _DEFAULT_RADIUS_FRACTION = 0.015
     _PREVIEW_COLOR = 'white'
     _PREVIEW_OPACITY = 0.35
+    tool_kind = None
 
     def __init__(self, mvat_viewer, mvat_manager):
         """
@@ -143,7 +144,23 @@ class Tool3D:
         viewer = getattr(self, 'mvat_viewer', None)
         if viewer is None:
             return
-        sibling_attr = '_erase_3d_tool' if type(self).__name__ == 'Brush3DTool' else '_brush_3d_tool'
+
+        sibling_attr = None
+        current_kind = str(getattr(self, 'tool_kind', '')).strip().lower()
+        if current_kind == 'brush':
+            sibling_attr = '_erase_3d_tool'
+        elif current_kind == 'erase':
+            sibling_attr = '_brush_3d_tool'
+        else:
+            tool_name = type(self).__name__.strip().lower()
+            if 'erase' in tool_name:
+                sibling_attr = '_brush_3d_tool'
+            elif 'brush' in tool_name:
+                sibling_attr = '_erase_3d_tool'
+
+        if sibling_attr is None:
+            return
+
         sibling = getattr(viewer, sibling_attr, None)
         if sibling is not None and sibling is not self:
             try:
@@ -222,11 +239,13 @@ class Tool3D:
         if not self.active:
             return
 
+        is_painting = bool(getattr(self, 'painting', False))
+
         if world_pos is not None:
             self._last_hover_world_pos = np.asarray(world_pos, dtype=np.float64)
             self._update_preview_sphere(world_pos)
             manager = getattr(self, 'mvat_manager', None)
-            if manager is not None:
+            if manager is not None and not is_painting:
                 try:
                     manager.update_sphere_hover_overlay(world_pos, render=False)
                 except Exception:
@@ -235,7 +254,7 @@ class Tool3D:
             self._last_hover_world_pos = None
             self._hide_preview_sphere()
             manager = getattr(self, 'mvat_manager', None)
-            if manager is not None:
+            if manager is not None and not is_painting:
                 try:
                     manager.clear_sphere_hover_overlay(reset_context=True, render=False)
                 except Exception:

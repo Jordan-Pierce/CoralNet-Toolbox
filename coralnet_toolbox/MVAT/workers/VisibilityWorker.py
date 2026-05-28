@@ -8,13 +8,13 @@ import numpy as np
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
-from coralnet_toolbox.MVAT.managers.visibility_logging import (
+from coralnet_toolbox.MVAT.utils.MVATLogger import (
     build_camera_labels,
     get_visibility_logger,
     label_for_path,
     log_cam_stage,
 )
-from coralnet_toolbox.MVAT.core.Model import MeshProduct, PointCloudProduct
+from coralnet_toolbox.MVAT.core.Products import MeshProduct, PointCloudProduct
 
 
 logger = get_visibility_logger()
@@ -25,7 +25,7 @@ logger = get_visibility_logger()
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class WorkerSignals(QObject):
+class VisibilityWorkerSignals(QObject):
     finished = pyqtSignal(dict)
     error = pyqtSignal(str)
 
@@ -51,7 +51,7 @@ class VisibilityWorker(QObject):
         self.cache_manager = cache_manager
         self.cache_keys_dict = cache_keys_dict
         self.target_file_path = target_file_path
-        self.signals = WorkerSignals()
+        self.signals = VisibilityWorkerSignals()
 
     # ------------------------------------------------------------------
     def _status(self, msg: str):

@@ -771,7 +771,20 @@ class ConfidenceWindow(QWidget):
         annotation_to_update.update_user_confidence(label)
         # Update the label to whichever bar was selected
         annotation_to_update.update_label(label)
-        
+
+        # Notify all subscribers (including the EmbeddingViewer) that this
+        # annotation's label has changed.  The annotationLabelChanged signal is
+        # the canonical way viewers such as the EmbeddingViewer learn about
+        # label updates; without it, _refresh_point_colors is never called and
+        # the scatter-plot dot colour stays stale until the next full refresh.
+        try:
+            self.main_window.annotation_window.annotationLabelChanged.emit(
+                annotation_to_update.id,
+                label.id if hasattr(label, 'id') else str(label)
+            )
+        except Exception:
+            pass
+
         # Update the search bars
         self.main_window.image_window.update_search_bars()
         

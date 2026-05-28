@@ -1,8 +1,8 @@
 """
-Brush3DTool — brush-specific 3D tool logic built on top of Tool3D.
+BrushTool3D — brush-specific 3D tool logic built on top of Tool3D.
 
 The shared preview sphere, hover batching, and label-colored highlight are
-owned by Tool3D.  Brush3DTool keeps only the brush-specific stroke plumbing,
+owned by Tool3D.  BrushTool3D keeps only the brush-specific stroke plumbing,
 including the brush-volume lookup and the optional paint projection path.
 
 The tool is camera-independent: the VTK cell picker works against the rendered
@@ -17,7 +17,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import QMessageBox
 
-from coralnet_toolbox.MVAT.tools.QtTool3D import Tool3D
+from coralnet_toolbox.MVAT.tools.Tool3D import Tool3D
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -27,7 +27,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class Brush3DTool(Tool3D):
+class BrushTool3D(Tool3D):
     """
     Brush-specific 3D tool logic.
 
@@ -44,6 +44,7 @@ class Brush3DTool(Tool3D):
     # Preview appearance (overridden by Erase3DTool).
     _PREVIEW_COLOR   = 'white'
     _PREVIEW_OPACITY = 0.35
+    tool_kind = 'brush'
 
     def __init__(self, mvat_viewer, mvat_manager):
         super().__init__(mvat_viewer, mvat_manager)
@@ -97,11 +98,11 @@ class Brush3DTool(Tool3D):
         if face_id < 0 or world_pos is None:
             return
 
+        primary = self._get_primary_mesh()
         self.painting = True
         self._stroke_label = self._get_selected_label()
         self._stroke_face_ids.clear()
         self._last_brush_volume_state = None
-        primary = self._get_primary_mesh()
         if primary is not None:
             self.mvat_manager._ensure_label_painter(primary)
         self._apply_brush(world_pos)
@@ -243,26 +244,35 @@ class Brush3DTool(Tool3D):
         self.painting = False
         self._last_brush_volume_state = None
 
-        if not self._stroke_face_ids:
+        try:
+            if self._stroke_face_ids and self.mvat_manager.multi_annotate_enabled:
+                selected_label = self._stroke_label or self._get_selected_label()
+                current_kind = str(getattr(self, 'tool_kind', 'brush')).strip().lower()
+                handler_name = '_on_3d_erase_stroke_applied' if current_kind == 'erase' else '_on_3d_brush_stroke_applied'
+                handler = getattr(self.mvat_manager, handler_name, None)
+                if callable(handler):
+                    try:
+                        handler(self._stroke_face_ids, selected_label)
+                    except Exception as e:
+                        pass
+        finally:
+            self._stroke_face_ids.clear()
             self._stroke_label = None
+            self._refresh_hover_overlay_after_stroke()
+
+    def _refresh_hover_overlay_after_stroke(self):
+        manager = getattr(self, 'mvat_manager', None)
+        center = getattr(self, '_last_hover_world_pos', None)
+        if manager is None or center is None:
             return
 
-        if self.mvat_manager.multi_annotate_enabled:
-            selected_label = self._stroke_label or self._get_selected_label()
-            handler_name = (
-                '_on_3d_erase_stroke_applied'
-                if type(self).__name__ == 'Erase3DTool'
-                else '_on_3d_brush_stroke_applied'
-            )
-            handler = getattr(self.mvat_manager, handler_name, None)
-            if callable(handler):
-                try:
-                    handler(self._stroke_face_ids, selected_label)
-                except Exception as e:
-                    print(f"⚠️  Brush3DTool: could not propagate stroke: {e}")
-
-        self._stroke_face_ids.clear()
-        self._stroke_label = None
+        try:
+            center = np.asarray(center, dtype=np.float64).reshape(-1)
+            if center.size < 3 or not np.all(np.isfinite(center[:3])):
+                return
+            manager.update_sphere_hover_overlay(center[:3], render=True)
+        except Exception:
+            pass
 
     def _should_skip_brush_volume_update(self, product_id, label_id, brush_shape, radius, center):
         previous_state = self._last_brush_volume_state
@@ -295,7 +305,7 @@ class Brush3DTool(Tool3D):
 
     def _get_primary_mesh(self):
         try:
-            from coralnet_toolbox.MVAT.core.Model import MeshProduct
+            from coralnet_toolbox.MVAT.core.Products import MeshProduct
             product = self.mvat_viewer.scene_context.get_primary_target()
             if isinstance(product, MeshProduct):
                 return product

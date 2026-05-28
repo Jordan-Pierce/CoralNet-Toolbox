@@ -10,127 +10,24 @@ the gallery display functionality with built-in filtering capabilities.
 import warnings
 
 import os
-import time
 
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot, QEvent, QThread, QSignalBlocker
 from PyQt5 import QtCore, QtGui
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot, QEvent, QSignalBlocker
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QToolBar, QComboBox,
-    QLabel, QPushButton, QApplication, QListView
+    QLabel, QPushButton, QApplication, QListView,
+    QHBoxLayout
 )
-from PyQt5.QtWidgets import QHBoxLayout
+
 from coralnet_toolbox import theme as app_theme
 
 from coralnet_toolbox.Explorer.core.QtDataItem import AnnotationDataItem
-from coralnet_toolbox.Explorer.models.annotation_list_model import AnnotationListModel, AnnotationItemDelegate
-from coralnet_toolbox.Explorer.ui.widgets import MultiSelectCombo
+from coralnet_toolbox.Explorer.ui.QtExplorerWidgets import MultiSelectCombo
+from coralnet_toolbox.Explorer.models.AnnotationListModel import AnnotationListModel 
+from coralnet_toolbox.Explorer.models.AnnotationListModel import AnnotationItemDelegate
+from coralnet_toolbox.Explorer.workers.QtCroppingWorker import CroppingWorker
+
 from coralnet_toolbox.QtProgressBar import ProgressBar
-
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Background Worker for Cropping
-# ----------------------------------------------------------------------------------------------------------------------
-
-
-class CroppingWorker(QThread):
-    """Background worker to create cropped images for a set of annotations.
-
-    Emits integer progress percentages (0-100), and `finished` when done.
-    """
-    progress = pyqtSignal(int)
-    finished = pyqtSignal()
-    error = pyqtSignal(str)
-
-    def __init__(self, annotations, raster_manager, parent=None):
-        super().__init__(parent)
-        self.annotations = list(annotations)
-        self.raster_manager = raster_manager
-        self._cancelled = False
-
-    def cancel(self):
-        self._cancelled = True
-
-    def run(self):
-        try:
-            # Group annotations by image_path
-            anns_by_image = {}
-            for ann in self.annotations:
-                if not hasattr(ann, 'cropped_image') or ann.cropped_image is None:
-                    anns_by_image.setdefault(ann.image_path, []).append(ann)
-
-            total = sum(len(v) for v in anns_by_image.values())
-            if total == 0:
-                self.finished.emit()
-                return
-
-            processed = 0
-            last_percent = -1
-            for image_path, anns in anns_by_image.items():
-                if self._cancelled:
-                    break
-
-                raster = None
-                try:
-                    raster = self.raster_manager.get_raster(image_path)
-                except Exception:
-                    raster = None
-
-                if not raster:
-                    # skip this image
-                    processed += len(anns)
-                    percent = int((processed / total) * 100)
-                    if percent != last_percent:
-                        last_percent = percent
-                        self.progress.emit(percent)
-                    continue
-
-                # Ensure rasterio source is available in this thread
-                try:
-                    if not hasattr(raster, '_rasterio_src') or raster._rasterio_src is None:
-                        raster.load_rasterio()
-                except Exception:
-                    # Can't open raster; skip
-                    processed += len(anns)
-                    percent = int((processed / total) * 100)
-                    if percent != last_percent:
-                        last_percent = percent
-                        self.progress.emit(percent)
-                    continue
-
-                rasterio_src = getattr(raster, '_rasterio_src', None)
-                if rasterio_src is None:
-                    processed += len(anns)
-                    percent = int((processed / total) * 100)
-                    if percent != last_percent:
-                        last_percent = percent
-                        self.progress.emit(percent)
-                    continue
-
-                for ann in anns:
-                    if self._cancelled:
-                        break
-                    try:
-                        ann.create_cropped_image(rasterio_src)
-                    except Exception:
-                        # Non-fatal: continue with next
-                        pass
-
-                    processed += 1
-                    # Emit a single-step progress event (worker will emit one
-                    # signal per processed annotation). The caller will increment
-                    # the ProgressBar via `update_progress()` which increments
-                    # by one per call.
-                    self.progress.emit(1)
-
-            self.finished.emit()
-        except Exception as e:
-            try:
-                self.error.emit(str(e))
-            except Exception:
-                pass
-
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -207,9 +104,29 @@ class AnnotationViewerWindow(QWidget):
         # Filter applied flag: when True the gallery is allowed to populate widgets
         # (the user must explicitly press "Apply Filter" to set this).
         self._filter_applied = False
-        
+
+        # Label-change coalescing: collect changed IDs during the current event-loop
+        # tick, then flush once via _flush_label_change_update().
+        self._pending_label_changes: set = set()
+        self._label_change_timer = QTimer(self)
+        self._label_change_timer.setSingleShot(True)
+        self._label_change_timer.setInterval(0)  # fire on next event-loop iteration
+        self._label_change_timer.timeout.connect(self._flush_label_change_update)
+
+        # annotationUpdated coalescing: same pattern as label changes.
+        # During batch operations (e.g. classification of 500 annotations)
+        # annotationUpdated fires once per annotation.  Without coalescing,
+        # _on_annotation_updated → on_annotation_modified queues 500 individual
+        # refresh_annotations() calls, each iterating the full annotation dict
+        # (O(N²) work).  We collect dirty IDs and flush a single refresh.
+        self._pending_annotation_updates: set = set()
+        self._annotation_update_timer = QTimer(self)
+        self._annotation_update_timer.setSingleShot(True)
+        self._annotation_update_timer.setInterval(0)
+        self._annotation_update_timer.timeout.connect(self._flush_annotation_updates)
+
         # Virtualization disabled: using model/view
-        
+
         # Build the UI
         self._setup_ui()
         
@@ -260,10 +177,13 @@ class AnnotationViewerWindow(QWidget):
         toolbar.addWidget(sort_label)
         
         self.sort_combo = QComboBox()
-        self.sort_combo.addItems(["None", "Label", "Image", "Confidence"])
+        self.sort_combo.addItems(["None", "Label", "Image", "Confidence", "Cluster"])
         self.sort_combo.currentTextChanged.connect(self._on_sort_changed)
         self.sort_combo.setMinimumWidth(100)
         toolbar.addWidget(self.sort_combo)
+
+        # "Cluster" is disabled until cluster data arrives from the EmbeddingViewer
+        self._set_cluster_sort_item_enabled(False)
 
         toolbar.addSeparator()
 
@@ -578,7 +498,7 @@ class AnnotationViewerWindow(QWidget):
     def get_selected_annotation_ids(self):
         """
         Get the list of currently selected annotation IDs.
-        
+
         Returns:
             list: List of selected annotation IDs.
         """
@@ -591,6 +511,26 @@ class AnnotationViewerWindow(QWidget):
                     ids.append(data['item'].annotation.id)
             return ids
         return []
+
+    def get_selected_annotation_count(self):
+        """
+        Get the count of currently selected annotations — fast path that avoids
+        building the full ID list (used by update_annotation_count in LabelWindow).
+
+        Returns:
+            int: Number of selected annotation items (excludes header rows).
+        """
+        if hasattr(self, 'list_view') and self.list_view is not None:
+            try:
+                sel = self.list_view.selectionModel().selectedIndexes()
+                # Count only rows that are annotation items (not group headers)
+                return sum(
+                    1 for idx in sel
+                    if (idx.data(self.list_model.DataItemRole) or {}).get('type') == 'annotation'
+                )
+            except Exception:
+                pass
+        return 0
     
     def highlight_annotations(self, ids):
         """
@@ -1054,44 +994,30 @@ class AnnotationViewerWindow(QWidget):
     def on_annotation_label_changed(self, annotation_id, new_label):
         """
         Handle an annotation's label being changed.
-        
-        Args:
-            annotation_id: ID of the annotation.
-            new_label: New label ID.
+
+        We don't recreate AnnotationDataItem here because it references the
+        mutated annotation in-place. Recreating it would orphan the model's reference.
+
+        Changes are coalesced: if multiple annotations change in the same event-loop
+        tick (e.g. bulk-relabel), _flush_label_change_update() runs only once after
+        all signals have fired.
         """
-        # We don't recreate AnnotationDataItem here because it references the 
-        # mutated annotation in-place. Recreating it would orphan the model's reference!
-
-        # Refresh label filter options to pick up new label types
-        self._populate_label_filter()
-
-        # Check if structural changes are needed
-        active_label_filters = self._get_selected_labels()
-        is_sorting_by_label = (self.sort_combo.currentText() == "Label")
-        is_sorting_by_confidence = (self.sort_combo.currentText() == "Confidence")
-
-        if active_label_filters or is_sorting_by_label or is_sorting_by_confidence:
-            QTimer.singleShot(0, self.refresh_annotations)
-        else:
-            # For pure color/text updates, just force a repaint for instant feedback
-            if hasattr(self, 'list_view') and self.list_view is not None:
-                self.list_view.viewport().update()
+        self._pending_label_changes.add(annotation_id)
+        if not self._label_change_timer.isActive():
+            self._label_change_timer.start()
     
     @pyqtSlot(str)
     def on_annotation_modified(self, annotation_id):
         """
         Handle an annotation being modified (moved/resized).
-        
-        Args:
-            annotation_id: ID of the modified annotation.
+
+        Coalesced via _pending_annotation_updates so that N simultaneous
+        annotationModified emissions (e.g. during classification inference)
+        produce exactly one refresh_annotations() call rather than N.
         """
-        # Update cache and refresh list view
-        if hasattr(self.annotation_window, 'annotations_dict'):
-            ann = self.annotation_window.annotations_dict.get(annotation_id)
-            if ann:
-                self._ensure_cropped_images([ann])
-                self.data_item_cache[annotation_id] = AnnotationDataItem(ann)
-                QTimer.singleShot(0, self.refresh_annotations)
+        self._pending_annotation_updates.add(annotation_id)
+        if not self._annotation_update_timer.isActive():
+            self._annotation_update_timer.start()
     
     @pyqtSlot(object)
     def on_annotation_selection_changed(self, selected_ids):
@@ -1113,25 +1039,63 @@ class AnnotationViewerWindow(QWidget):
     def on_annotations_labels_changed(self, changes):
         """
         Handle batch label changes.
-        
+
         Args:
             changes: List of tuples (annotation_id, old_label, new_label)
+
+        All changed IDs are queued and flushed together in one deferred update,
+        so N simultaneous label changes produce exactly one repaint/refresh.
         """
-        # Refresh label filter options to pick up new label types
+        try:
+            if changes:
+                # Fast path: avoid O(N) tuple unpacking for large batches.
+                # _pending_label_changes only needs IDs, not old/new labels.
+                _LARGE_BATCH = 2000
+                if len(changes) > _LARGE_BATCH:
+                    # For very large batches signal a full refresh by using a sentinel
+                    # rather than iterating all N items just to build a set of IDs.
+                    self._pending_label_changes.add('__all__')
+                else:
+                    for ann_id, _old, _new in changes:
+                        self._pending_label_changes.add(ann_id)
+        except Exception:
+            pass
+        if not self._label_change_timer.isActive():
+            self._label_change_timer.start()
+
+    def _flush_label_change_update(self):
+        """
+        Process all coalesced label changes in one go.
+
+        Called once per event-loop iteration after one or more label-change signals
+        fired.  Drains _pending_label_changes, updates the label filter combo once,
+        then either triggers a full refresh (when sorting/filtering requires it) or
+        does a lightweight viewport repaint.
+        """
+        if not self._pending_label_changes:
+            return
+
+        # Drain the pending set atomically so re-entrant signals don't double-fire
+        _changed = self._pending_label_changes
+        self._pending_label_changes = set()
+
+        # Refresh the label filter combo once for the whole batch
         self._populate_label_filter()
 
         # Check if structural changes are needed
         active_label_filters = self._get_selected_labels()
-        is_sorting_by_label = (self.sort_combo.currentText() == "Label")
-        is_sorting_by_confidence = (self.sort_combo.currentText() == "Confidence")
+        current_sort = self.sort_combo.currentText()
+        is_sorting_by_label = (current_sort == "Label")
+        is_sorting_by_confidence = (current_sort == "Confidence")
 
         if active_label_filters or is_sorting_by_label or is_sorting_by_confidence:
-            QTimer.singleShot(0, self.refresh_annotations)
+            # Full refresh required — annotations may need reordering/regrouping
+            self.refresh_annotations()
         else:
-            # For pure color/text updates, just force a repaint for instant feedback
+            # Pure color/text update — just repaint the visible cells
             if hasattr(self, 'list_view') and self.list_view is not None:
                 self.list_view.viewport().update()
-    
+
     @pyqtSlot(str, object)
     def on_annotation_moved(self, annotation_id, move_data):
         """
@@ -1259,19 +1223,26 @@ class AnnotationViewerWindow(QWidget):
             current_selection = self.get_selected_annotation_ids()
         # -----------------------------------------------------------------------------
 
+        # If the effective set to display is empty (e.g. isolation mode with all
+        # items deleted, or a filter that matches nothing after isolation pruning),
+        # switch to the placeholder rather than showing an empty scroll area.
+        if not sorted_data_items:
+            self._show_placeholder()
+            return
+
         # Group and set into model (supports headers and collapsed groups)
         groups = self._group_data_items_by_sort_key(sorted_data_items)
-        
+
         # Synchronous update wrapped in lock to prevent rogue signals
         self._syncing_selection = True
         self.list_model.set_grouped_items(groups)
-        
+
         # Restore the persistent selection
         if current_selection:
             self.render_selection_from_ids(set(current_selection))
-            
+
         self._syncing_selection = False
-        
+
         # Inform delegate of size change
         if self.list_delegate:
             self.list_delegate.item_size = self.current_widget_size
@@ -1302,14 +1273,27 @@ class AnnotationViewerWindow(QWidget):
         
         sort_type = self.sort_combo.currentText()
         items = list(self.all_data_items)
-        
+
         if sort_type == "Label":
             items.sort(key=lambda i: (i.effective_label.short_label_code, i.get_effective_confidence()))
         elif sort_type == "Image":
             items.sort(key=lambda i: (os.path.basename(i.annotation.image_path), i.get_effective_confidence()))
         elif sort_type == "Confidence":
             items.sort(key=self._confidence_sort_key)
-        
+        elif sort_type == "Cluster":
+            # Build {ann_id -> cluster_id} from the EmbeddingViewer
+            cluster_map = {}
+            try:
+                ev = getattr(self.main_window, 'embedding_viewer_window', None)
+                if ev is not None and ev._cluster_labels.size > 0:
+                    for ann_id, cluster_id in zip(ev._point_ids.tolist(), ev._cluster_labels.tolist()):
+                        cluster_map[ann_id] = int(cluster_id)
+            except Exception:
+                pass
+            # Annotations not in the embedding go last (cluster_id = max_int)
+            _NO_CLUSTER = 2 ** 31
+            items.sort(key=lambda i: cluster_map.get(i.annotation.id, _NO_CLUSTER))
+
         return items
     
     def _group_data_items_by_sort_key(self, data_items):
@@ -1318,6 +1302,17 @@ class AnnotationViewerWindow(QWidget):
         
         if (not self.active_ordered_ids and sort_type == "None") or self.active_ordered_ids:
             return [("", None, data_items)]
+
+        # Build cluster map once (needed for "Cluster" sort)
+        _cluster_map = {}
+        if sort_type == "Cluster":
+            try:
+                ev = getattr(self.main_window, 'embedding_viewer_window', None)
+                if ev is not None and ev._cluster_labels.size > 0:
+                    for ann_id, cluster_id in zip(ev._point_ids.tolist(), ev._cluster_labels.tolist()):
+                        _cluster_map[ann_id] = int(cluster_id)
+            except Exception:
+                pass
 
         # Group by Label or Image — collect into OrderedDict so identical keys
         # are merged even if items appear out-of-order in the incoming list.
@@ -1333,6 +1328,10 @@ class AnnotationViewerWindow(QWidget):
                 color = None
             elif sort_type == "Confidence":
                 key = self._confidence_group_key(item)
+                color = None
+            elif sort_type == "Cluster":
+                cid = _cluster_map.get(item.annotation.id)
+                key = f"Cluster {cid}" if cid is not None else "No Cluster"
                 color = None
             else:
                 key = ""
@@ -1411,12 +1410,42 @@ class AnnotationViewerWindow(QWidget):
 
     @pyqtSlot(object)
     def _on_annotation_updated(self, updated_annotation):
-        """Refresh a single annotation's cached state when it changes."""
+        """Coalesce annotationUpdated signals before refreshing the gallery.
+
+        During batch operations (e.g. classification inference on 500
+        annotations) this slot fires once per annotation.  Calling
+        on_annotation_modified directly would queue 500 separate
+        refresh_annotations() invocations — O(N²) work.  Instead we
+        accumulate IDs and let the timer fire a single flush on the next
+        event-loop iteration.
+        """
         try:
             if updated_annotation is not None:
-                self.on_annotation_modified(updated_annotation.id)
+                self._pending_annotation_updates.add(updated_annotation.id)
+                if not self._annotation_update_timer.isActive():
+                    self._annotation_update_timer.start()
         except Exception:
             pass
+
+    def _flush_annotation_updates(self):
+        """Process all coalesced annotationUpdated notifications in one pass."""
+        ids = self._pending_annotation_updates
+        self._pending_annotation_updates = set()
+        if not ids:
+            return
+        if not hasattr(self.annotation_window, 'annotations_dict'):
+            return
+        changed = False
+        for annotation_id in ids:
+            ann = self.annotation_window.annotations_dict.get(annotation_id)
+            if ann:
+                # Crops already exist after embedding; this is a no-op for
+                # classification but still correct for interactive edits.
+                self._ensure_cropped_images([ann])
+                self.data_item_cache[annotation_id] = AnnotationDataItem(ann)
+                changed = True
+        if changed:
+            QTimer.singleShot(0, self.refresh_annotations)
 
     def _connect_annotation_updates(self, annotation):
         """Connect annotation update signals so confidence changes refresh the gallery."""
@@ -1483,6 +1512,32 @@ class AnnotationViewerWindow(QWidget):
     # Toolbar Event Handlers
     # -------------------------------------------------------------------------
     
+    def _set_cluster_sort_item_enabled(self, enabled: bool):
+        """Enable or disable the 'Cluster' entry in the sort combo."""
+        try:
+            model = self.sort_combo.model()
+            # "Cluster" is always the last item (index 4)
+            idx = self.sort_combo.findText("Cluster")
+            if idx < 0:
+                return
+            item = model.item(idx)
+            if item is None:
+                return
+            from PyQt5.QtCore import Qt as _Qt
+            if enabled:
+                item.setFlags(item.flags() | _Qt.ItemIsEnabled | _Qt.ItemIsSelectable)
+            else:
+                item.setFlags(item.flags() & ~(_Qt.ItemIsEnabled | _Qt.ItemIsSelectable))
+                # If "Cluster" is currently selected, fall back to "None"
+                if self.sort_combo.currentText() == "Cluster":
+                    self.sort_combo.setCurrentText("None")
+        except Exception:
+            pass
+
+    def update_cluster_sort_state(self, has_clusters: bool):
+        """Called by EmbeddingViewerWindow when cluster data is created or cleared."""
+        self._set_cluster_sort_item_enabled(has_clusters)
+
     def _on_sort_changed(self, sort_type):
         """Handle sort type change."""
         self.active_ordered_ids = []
@@ -1621,13 +1676,19 @@ class AnnotationViewerWindow(QWidget):
             blocker = QSignalBlocker(self.list_view.selectionModel())
             try:
                 self.list_view.clearSelection()
-                
+
                 # --- Ensure underlying data items are unmarked ---
                 for item in self.all_data_items:
                     item.set_selected(False)
                 # ------------------------------------------------------
             finally:
                 del blocker
+            # Force an immediate repaint so the custom delegate removes the
+            # dashed selection border from all previously-selected cells.
+            # clearSelection() inside a QSignalBlocker can leave the viewport
+            # without a scheduled repaint, causing stale dashed borders to persist
+            # until the next unrelated redraw event.
+            self.list_view.viewport().update()
         else:
             # Nothing to clear when no list view is present
             pass
@@ -1672,7 +1733,11 @@ class AnnotationViewerWindow(QWidget):
                     pass
         finally:
             del blocker
-            
+
+        # Force a repaint so the delegate redraws dashed borders for the new
+        # selection state — same reason as in clear_selection().
+        self.list_view.viewport().update()
+
         self._update_toolbar_state()
 
     def _on_list_selection_changed(self, selected, deselected):
@@ -1934,10 +1999,24 @@ class AnnotationViewerWindow(QWidget):
     # -------------------------------------------------------------------------
     
     def isolate_and_select_from_ids(self, ids_to_isolate):
-        """Isolate and select specific annotations by ID."""
-        start = time.perf_counter()
-        # Build grouped list containing only the requested IDs
+        """Isolate and select specific annotations by ID.
+
+        When the gallery is already isolated to exactly this set of IDs, skips
+        the full beginResetModel() rebuild and only updates the selection highlight.
+        This is the common case when the user is rotating the embedding or clicking
+        through annotations — same selection, no structural change needed.
+        """
         ids_set = set(ids_to_isolate)
+
+        # Fast path: already isolated to the same set — just refresh selection highlight
+        if self.isolated_mode and self.isolated_ids == ids_set:
+            self._syncing_selection = True
+            self.render_selection_from_ids(ids_to_isolate)
+            self._syncing_selection = False
+            self._update_toolbar_state()
+            return
+
+        # Build grouped list containing only the requested IDs
         groups = self._group_data_items_by_sort_key(self.all_data_items)
         new_groups = []
         for group_key, group_color, items in groups:
@@ -1950,15 +2029,14 @@ class AnnotationViewerWindow(QWidget):
 
         self.isolated_mode = True
         self.isolated_ids = ids_set
-        
+
         # --- Synchronous update wrapped in lock to prevent rogue signals ---
         self._syncing_selection = True
         self.list_model.set_grouped_items(new_groups)
-        
         self.render_selection_from_ids(ids_to_isolate)
         self._syncing_selection = False
         # ------------------------------------------------------------------------
-        
+
         self._update_toolbar_state()
     
     def display_and_isolate_ordered_results(self, ordered_ids):

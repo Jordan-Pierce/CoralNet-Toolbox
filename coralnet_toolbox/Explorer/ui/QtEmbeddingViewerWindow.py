@@ -11,11 +11,12 @@ import hashlib
 from functools import partial
 import os
 import warnings
-import time
-
 import numpy as np
 import torch
 
+from scipy.spatial import KDTree, Voronoi
+
+from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
@@ -27,24 +28,24 @@ try:
 except ImportError:
     UMAP = None
 
-from PyQt5.QtCore import Qt, QTimer, QRectF, QPointF, pyqtSignal, pyqtSlot, QSignalBlocker
-from PyQt5.QtGui import QColor, QPen, QPainter, QBrush, QPainterPath, QMouseEvent
+from PyQt5.QtCore import Qt, QTimer, QRectF, QPointF, pyqtSignal, pyqtSlot
+from PyQt5.QtGui import QColor, QPen, QPainter, QBrush, QMouseEvent
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QToolBar, QComboBox,
     QLabel, QPushButton, QSpinBox, QSlider, QStackedWidget, QGraphicsView, QGraphicsScene,
-    QGraphicsRectItem, QSizePolicy, QMessageBox, QApplication
+    QGraphicsRectItem, QGraphicsPathItem, QSizePolicy, QMessageBox, QApplication
 )
 
 from coralnet_toolbox import theme as app_theme
 from coralnet_toolbox.Common.QtCollapsibleSection import CollapsibleSection
 
-from coralnet_toolbox.Explorer.core.QtDataItem import EmbeddingPointItem, POINT_SIZE, SPRITE_SIZE
+from coralnet_toolbox.Explorer.core.QtDataItem import ScatterPlotItem, POINT_SIZE, SPRITE_SIZE
 from coralnet_toolbox.Explorer.core.QtDataItem import AnnotationDataItem
-from coralnet_toolbox.Explorer.managers.QtCacheManager import CacheManager
-from coralnet_toolbox.Explorer.models.yolo_models import YOLO_MODELS
-from coralnet_toolbox.Explorer.models.yolo_models import is_live_yolo_model
-from coralnet_toolbox.Explorer.models.yolo_models import is_yolo_model
-from coralnet_toolbox.Explorer.models.transformer_models import TRANSFORMER_MODELS, is_transformer_model
+from coralnet_toolbox.Explorer.managers.CacheManager import CacheManager
+from coralnet_toolbox.Explorer.models.ModelRegistry import YOLO_MODELS
+from coralnet_toolbox.Explorer.models.ModelRegistry import is_live_yolo_model
+from coralnet_toolbox.Explorer.models.ModelRegistry import is_yolo_model
+from coralnet_toolbox.Explorer.models.ModelRegistry import TRANSFORMER_MODELS, is_transformer_model
 from coralnet_toolbox.Explorer.workers import EmbeddingPipelineWorker
 
 from coralnet_toolbox.Icons import get_icon
@@ -140,8 +141,16 @@ class EmbeddingViewerWindow(QWidget):
         self.tsne_exaggeration_row = None
         self.tsne_exaggeration_slider = None
         
-        # Points tracking
-        self.points_by_id = {}
+        # Vectorized point state
+        self._point_coords_3d = np.empty((0, 3), dtype=np.float32)
+        self._point_coords_2d = np.empty((0, 2), dtype=np.float32)
+        self._point_colors = np.empty((0, 4), dtype=np.uint8)
+        self._point_ids = np.empty((0,), dtype=object)
+        self._point_selected = np.empty((0,), dtype=bool)
+        self._point_depth = np.empty((0,), dtype=np.float32)
+        self._point_pixmaps = []
+        self._kdtree = None
+        self.mega_item = None
         self.previous_selection_ids = set()
         
         # State for pseudo-3D rotation
@@ -157,11 +166,15 @@ class EmbeddingViewerWindow(QWidget):
         # Rubber band selection
         self.rubber_band = None
         self.rubber_band_origin = QPointF()
-        self.selection_at_press = None
+        self.selection_at_press_mask = None
         
         # Isolation state
         self.isolated_mode = False
         self.isolated_points = set()
+        # Frozen boolean mask (same length as _point_ids) captured at isolation time.
+        # Used by ScatterPlotItem.paint() for visibility so that clearing the
+        # selection while isolated doesn't blank the plot.
+        self._isolated_mask = np.empty((0,), dtype=bool)
         
         # Selection blocking
         self.selection_blocked = False
@@ -180,10 +193,16 @@ class EmbeddingViewerWindow(QWidget):
         
         # Location indicator
         self.locate_lines = []
-        self.locate_graphics_item = None
+        self.locate_target_id = None
         self.locate_timer = QTimer(self)
         self.locate_timer.setSingleShot(True)
         self.locate_timer.timeout.connect(self._clear_location_indicator)
+
+        # K-Means cluster overlay
+        self._cluster_labels: np.ndarray = np.empty((0,), dtype=int)
+        self._cluster_overlay_items: list = []   # QGraphicsPathItem boundaries
+        self._cluster_centroid_items: list = []  # QGraphicsPathItem centroid markers
+        self._cluster_colors_rgba: np.ndarray = np.empty((0, 4), dtype=np.uint8)
         
         # Virtualization timer
         self.view_update_timer = QTimer(self)
@@ -193,7 +212,18 @@ class EmbeddingViewerWindow(QWidget):
         # Background worker for embedding pipeline
         self._pipeline_worker = None
         self._pipeline_running = False
-        
+
+        # Label-change coalescing for on_annotation_label_changed.
+        # During batch classification N annotationLabelChanged signals fire
+        # in rapid succession.  Without coalescing, each triggers an O(K)
+        # scan of current_data_items + a scene repaint — N times.  We
+        # accumulate IDs here and flush a single _refresh_point_colors call.
+        self._pending_label_change_ids: set = set()
+        self._label_change_flush_timer = QTimer(self)
+        self._label_change_flush_timer.setSingleShot(True)
+        self._label_change_flush_timer.setInterval(0)
+        self._label_change_flush_timer.timeout.connect(self._flush_label_change_colors)
+
         # Build UI
         self._setup_ui()
         
@@ -206,83 +236,31 @@ class EmbeddingViewerWindow(QWidget):
     # -------------------------------------------------------------------------
     
     def create_top_toolbar(self) -> QToolBar:
-        """Create the top toolbar with analysis tools."""
+        """Create the top toolbar with model settings and view controls."""
         toolbar = QToolBar()
         toolbar.setMovable(False)
         toolbar.setFloatable(False)
-        
-        # Isolate Selection button
-        self.isolate_button = QPushButton("Isolate Selection")
-        self.isolate_button.setToolTip("Show only selected points (double-click to exit)")
-        self.isolate_button.clicked.connect(self._isolate_selection)
-        self.isolate_button.setEnabled(False)
-        toolbar.addWidget(self.isolate_button)
-        
-        toolbar.addSeparator()
-        
-        # Spacer
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        toolbar.addWidget(spacer)
-        
-        toolbar.addSeparator()
-        
-        # Locate button
-        self.locate_button = QPushButton()
-        self.locate_button.setIcon(get_icon("location.svg"))
-        self.locate_button.setToolTip("Show location indicator for selected annotation")
-        self.locate_button.clicked.connect(self._on_locate_clicked)
-        toolbar.addWidget(self.locate_button)
-        
-        # Center on selection button
-        self.center_button = QPushButton()
-        self.center_button.setIcon(get_icon("target.svg"))
-        self.center_button.setToolTip("Center view on selected point(s)")
-        self.center_button.clicked.connect(self._center_on_selection)
-        toolbar.addWidget(self.center_button)
-        
-        # Home button
-        self.home_button = QPushButton()
-        self.home_button.setIcon(get_icon("home.svg"))
-        self.home_button.setToolTip("Reset view to fit all points")
-        self.home_button.clicked.connect(self._reset_view)
-        toolbar.addWidget(self.home_button)
-        
-        # Sprite toggle button
-        self.sprite_toggle_button = QPushButton()
-        self.sprite_toggle_button.setIcon(get_icon("sprites.svg"))
-        self.sprite_toggle_button.setToolTip("Switch to Sprites View")
-        self.sprite_toggle_button.clicked.connect(self._on_display_mode_changed)
-        toolbar.addWidget(self.sprite_toggle_button)
-        
-        return toolbar
-    
-    def create_bottom_toolbar(self) -> QToolBar:
-        """Create the bottom toolbar with ML pipeline controls."""
-        toolbar = QToolBar()
-        toolbar.setMovable(False)
-        toolbar.setFloatable(False)
-        
+
+        # ---- Model settings (left side) ----
+
         # Model Category
         category_label = QLabel(" Model: ")
         toolbar.addWidget(category_label)
-        
+
         self.category_combo = QComboBox()
         self.category_combo.addItems(["Color Features", "YOLO", "Transformer", "Live Models"])
         self.category_combo.currentTextChanged.connect(self._on_category_changed)
         toolbar.addWidget(self.category_combo)
-        
+
         # Model Selection (dynamically populated)
         self.model_combo = QComboBox()
         self.model_combo.setMinimumWidth(100)
         toolbar.addWidget(self.model_combo)
-        
-        toolbar.addSeparator()
-        
+
         # Embedding Technique
         technique_label = QLabel(" Technique: ")
         toolbar.addWidget(technique_label)
-        
+
         available_techniques = []
         if PCA:
             available_techniques.append("PCA")
@@ -292,50 +270,150 @@ class EmbeddingViewerWindow(QWidget):
             available_techniques.append("TSNE")
         if UMAP:
             available_techniques.append("UMAP")
-            
+
         self.technique_combo = QComboBox()
         self.technique_combo.addItems(available_techniques)
         self.technique_combo.currentTextChanged.connect(self._on_technique_changed)
         toolbar.addWidget(self.technique_combo)
-        
+
         # Dimensions
         dims_label = QLabel(" Dims: ")
         toolbar.addWidget(dims_label)
-        
+
         self.dimensions_combo = QComboBox()
         self.dimensions_combo.addItems(["2D", "3D"])
         toolbar.addWidget(self.dimensions_combo)
 
-        # Advanced settings stay hidden behind a popup so the toolbar remains compact.
+        # Advanced settings popup (opens downward from the top toolbar)
         self.embedding_settings_section = CollapsibleSection(
             "Advanced",
             "parameters.svg",
-            position='topright'
+            position='bottomright'
         )
         self._setup_embedding_settings_section()
         toolbar.addWidget(self.embedding_settings_section)
-        
-        # Spacer
+
+        # Spacer — pushes Cluster section to the far right
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         toolbar.addWidget(spacer)
-        
-        # Clear button (next to Run Embedding) - clears only the embedding view
+
+        # K-Means cluster controls — far right of the top toolbar
+        self.cluster_settings_section = CollapsibleSection(
+            "Cluster",
+            "cluster.svg",
+            position='bottomleft'
+        )
+        self._setup_cluster_settings_section()
+        toolbar.addWidget(self.cluster_settings_section)
+
+        # Initialize model combo and technique-dependent controls
+        self._on_category_changed(self.category_combo.currentText())
+        self._on_technique_changed(self.technique_combo.currentText())
+
+        return toolbar
+
+    def _setup_cluster_settings_section(self):
+        """Build the cluster controls popup."""
+        cluster_widget = QWidget()
+        cluster_layout = QFormLayout(cluster_widget)
+        cluster_layout.setContentsMargins(0, 0, 0, 0)
+        cluster_layout.setSpacing(6)
+
+        # K spinbox
+        self.cluster_k_spin = QSpinBox()
+        self.cluster_k_spin.setRange(2, 20)
+        self.cluster_k_spin.setValue(3)
+        self.cluster_k_spin.setMinimumWidth(64)
+        self.cluster_k_spin.setToolTip("Number of clusters for K-Means")
+        self.cluster_k_spin.setEnabled(False)
+        cluster_layout.addRow("K:", self.cluster_k_spin)
+
+        # Buttons row
+        btn_widget = QWidget()
+        btn_layout = QHBoxLayout(btn_widget)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setSpacing(4)
+
+        self.cluster_run_button = QPushButton("Cluster")
+        self.cluster_run_button.setToolTip(
+            "Run K-Means on the current embedding and draw Voronoi cluster boundaries"
+        )
+        self.cluster_run_button.clicked.connect(self._run_clustering)
+        self.cluster_run_button.setEnabled(False)
+        btn_layout.addWidget(self.cluster_run_button)
+
+        self.cluster_clear_button = QPushButton("Clear")
+        self.cluster_clear_button.setToolTip("Remove cluster boundaries")
+        self.cluster_clear_button.clicked.connect(self._clear_clustering)
+        self.cluster_clear_button.setEnabled(False)
+        btn_layout.addWidget(self.cluster_clear_button)
+
+        cluster_layout.addRow(btn_widget)
+
+        self.cluster_settings_section.add_widget(cluster_widget, "Cluster Options")
+    
+    def create_bottom_toolbar(self) -> QToolBar:
+        """Create the bottom toolbar with pipeline actions and view controls."""
+        toolbar = QToolBar()
+        toolbar.setMovable(False)
+        toolbar.setFloatable(False)
+
+        # Clear button
         self.clear_button = QPushButton("Clear")
         self.clear_button.setToolTip("Clear embedding view and reset placeholder")
         self.clear_button.clicked.connect(self.clear_view)
         toolbar.addWidget(self.clear_button)
-        
-        # Run button
-        self.run_button = QPushButton("Run Embedding")
+
+        # Apply Embeddings button (primary action)
+        self.run_button = QPushButton("Apply Embeddings")
         self.run_button.setToolTip("Extract features and generate embedding visualization")
         self.run_button.clicked.connect(self.run_embedding_pipeline)
         toolbar.addWidget(self.run_button)
 
-        # Initialize model combo based on default category
-        self._on_category_changed(self.category_combo.currentText())
-        self._on_technique_changed(self.technique_combo.currentText())
-        
+        # Isolate Selection button
+        self.isolate_button = QPushButton("Isolate Selection")
+        self.isolate_button.setToolTip("Show only selected points (double-click to exit)")
+        self.isolate_button.clicked.connect(self._isolate_selection)
+        self.isolate_button.setEnabled(False)
+        toolbar.addWidget(self.isolate_button)
+
+        # Spacer — pushes view controls to the right
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        toolbar.addWidget(spacer)
+
+        # ---- View controls (right side) ----
+
+        # Locate button
+        self.locate_button = QPushButton()
+        self.locate_button.setIcon(get_icon("location.svg"))
+        self.locate_button.setToolTip("Show location indicator for selected annotation")
+        self.locate_button.clicked.connect(self._on_locate_clicked)
+        toolbar.addWidget(self.locate_button)
+
+        # Center on selection button
+        self.center_button = QPushButton()
+        self.center_button.setIcon(get_icon("target.svg"))
+        self.center_button.setToolTip("Center view on selected point(s)")
+        self.center_button.clicked.connect(self._center_on_selection)
+        toolbar.addWidget(self.center_button)
+
+        # Home button
+        self.home_button = QPushButton()
+        self.home_button.setIcon(get_icon("home.svg"))
+        self.home_button.setToolTip("Reset view to fit all points")
+        self.home_button.clicked.connect(self._reset_view)
+        toolbar.addWidget(self.home_button)
+
+        # Sprite toggle button
+        self.sprite_toggle_button = QPushButton()
+        self.sprite_toggle_button.setIcon(get_icon("sprites.svg"))
+        self.sprite_toggle_button.setToolTip("Switch to Sprites View")
+        self.sprite_toggle_button.setEnabled(True)
+        self.sprite_toggle_button.clicked.connect(self._on_display_mode_changed)
+        toolbar.addWidget(self.sprite_toggle_button)
+
         return toolbar
 
     def showEvent(self, event):
@@ -501,7 +579,7 @@ class EmbeddingViewerWindow(QWidget):
             "Typical values range from 5 to 50."
         )
         self.tsne_perplexity_row, self.tsne_perplexity_slider, _ = self._create_slider_row(
-            5, 50, 30,
+            5, 50, 20,
             lambda current_value: str(current_value),
             tsne_perplexity_tooltip,
             value_width=36
@@ -513,7 +591,7 @@ class EmbeddingViewerWindow(QWidget):
             "Larger values make clusters more distinct."
         )
         self.tsne_exaggeration_row, self.tsne_exaggeration_slider, _ = self._create_slider_row(
-            50, 600, 120,
+            50, 600, 50,
             lambda current_value: f"{current_value / 10.0:.1f}",
             tsne_exaggeration_tooltip,
             value_width=42
@@ -559,7 +637,9 @@ class EmbeddingViewerWindow(QWidget):
         # Graphics scene and view
         self.graphics_scene = QGraphicsScene()
         self.graphics_scene.setSceneRect(-5000, -5000, 10000, 10000)
-        self.graphics_scene.selectionChanged.connect(self._on_selection_changed)
+        self.mega_item = ScatterPlotItem(self)
+        self.graphics_scene.addItem(self.mega_item)
+        self.graphics_scene.setSceneRect(self.mega_item.boundingRect())
         
         self.graphics_view = QGraphicsView(self.graphics_scene)
         self.graphics_view.setRenderHint(QPainter.Antialiasing)
@@ -626,9 +706,9 @@ class EmbeddingViewerWindow(QWidget):
         self.working_set_ids = list(annotation_ids)
         
         # If we have points currently displayed, check if they match the new working set
-        if self.points_by_id:
+        if self._point_ids.size:
             working_set = set(annotation_ids)
-            displayed_ids = set(self.points_by_id.keys())
+            displayed_ids = set(self._point_ids.tolist())
             
             # If the working set doesn't exactly match what's displayed,
             # or if any annotation in working set is missing from display,
@@ -639,8 +719,9 @@ class EmbeddingViewerWindow(QWidget):
     
     def get_selected_annotation_ids(self):
         """Get list of currently selected annotation IDs."""
-        return [p.data_item.annotation.id for p in self.graphics_scene.selectedItems()
-                if isinstance(p, EmbeddingPointItem)]
+        if self._point_ids.size == 0 or self._point_selected.size == 0:
+            return []
+        return [annotation_id for annotation_id, is_selected in zip(self._point_ids.tolist(), self._point_selected.tolist()) if is_selected]
     
     def highlight_points(self, ids):
         """Highlight specific points in the scatter plot."""
@@ -660,18 +741,8 @@ class EmbeddingViewerWindow(QWidget):
         # Remove from working set
         if annotation_id in self.working_set_ids:
             self.working_set_ids.remove(annotation_id)
-        
-        # Remove from current data items
-        self.current_data_items = [
-            item for item in self.current_data_items
-            if item.annotation.id != annotation_id
-        ]
-        
-        # Remove point from scene
-        if annotation_id in self.points_by_id:
-            point = self.points_by_id[annotation_id]
-            self.graphics_scene.removeItem(point)
-            del self.points_by_id[annotation_id]
+
+        self._remove_points_by_ids([annotation_id])
         
         # Invalidate cached features (only when viewer is visible to avoid
         # churn when embedding/annotation views are inactive)
@@ -688,38 +759,26 @@ class EmbeddingViewerWindow(QWidget):
         if not annotation_ids:
             return
 
-        # 1. Use a set for O(1) lookups during the list rebuild
-        ids_to_delete = set(annotation_ids)
-
-        # 2. Block signals and updates to prevent individual redraws per item
+        # Block signals and updates to prevent individual redraws per item
         self.graphics_view.setUpdatesEnabled(False)
         self.graphics_scene.blockSignals(True)
 
         try:
-            # 3. Fast Rebuild of the data item list
-            self.current_data_items = [
-                item for item in self.current_data_items
-                if item.annotation.id not in ids_to_delete
-            ]
-
-            # 4. Remove Points and clean caches
+            # 3. Remove Points and clean caches
             for ann_id in annotation_ids:
-                # Clear visual points instantly
-                if ann_id in self.points_by_id:
-                    point = self.points_by_id.pop(ann_id)
-                    self.graphics_scene.removeItem(point)
-                
                 # Cleanup internal caches
                 self.data_item_cache.pop(ann_id, None)
                 if ann_id in self.working_set_ids:
                     self.working_set_ids.remove(ann_id)
+
+            self._remove_points_by_ids(annotation_ids)
 
             # Invalidate cached ML features for deleted items in one transaction.
             if self.cache_manager and self._should_modify_cache():
                 self.cache_manager.remove_features_for_annotations(annotation_ids)
 
         finally:
-            # 5. Re-enable updates and perform ONE consolidated refresh
+            # Re-enable updates and perform one consolidated refresh
             self.graphics_scene.blockSignals(False)
             self.graphics_view.setUpdatesEnabled(True)
             self.graphics_scene.update()
@@ -728,17 +787,40 @@ class EmbeddingViewerWindow(QWidget):
     
     @pyqtSlot(str, str)
     def on_annotation_label_changed(self, annotation_id, new_label):
-        """Handle an annotation's label being changed."""
-        if annotation_id in self.points_by_id:
-            point = self.points_by_id[annotation_id]
-            point.update()
-    
+        """Coalesce label-change signals before refreshing scatter-plot colors.
+
+        During batch classification N annotationLabelChanged signals fire in
+        the deferred ResultsProcessor flush loop.  Each previously triggered
+        an O(K) scan + scene repaint.  Instead, accumulate IDs and let the
+        timer fire a single _refresh_point_colors call on the next tick.
+        """
+        if self._point_ids.size:
+            self._pending_label_change_ids.add(annotation_id)
+            if not self._label_change_flush_timer.isActive():
+                self._label_change_flush_timer.start()
+
+    def _flush_label_change_colors(self):
+        """Flush all coalesced label changes in one _refresh_point_colors call."""
+        ids = self._pending_label_change_ids
+        self._pending_label_change_ids = set()
+        if ids and self._point_ids.size:
+            self._refresh_point_colors(changed_ids=ids)
+            self._update_toolbar_state()
+
     @pyqtSlot(str)
     def on_annotation_modified(self, annotation_id):
-        """Handle annotation modification - invalidates cached features."""
-        if self.cache_manager and self._should_modify_cache():
-            self.cache_manager.remove_features_for_annotation(annotation_id)
-        
+        """Handle annotation modification - bust the data-item display cache.
+
+        NOTE: We intentionally do NOT invalidate the feature cache here.
+        ``annotationModified`` is emitted both for geometry changes AND for
+        label/confidence-only changes (via ``on_annotation_updated``).
+        Label changes do not alter the crop pixels, so the feature vector
+        remains valid.  Geometry-specific invalidation is handled by the
+        dedicated ``on_annotation_moved`` and ``on_annotation_geometry_edited``
+        slots, which fire only when the crop window actually changes.
+        Invalidating here caused one SQLite DELETE per annotation during
+        classification inference (N × round-trip overhead instead of 0).
+        """
         if annotation_id in self.data_item_cache:
             del self.data_item_cache[annotation_id]
     
@@ -780,15 +862,26 @@ class EmbeddingViewerWindow(QWidget):
     def on_annotations_labels_changed(self, changes):
         """
         Handle batch label changes - just update visuals, don't invalidate features.
-        
+
         Args:
             changes: List of tuples (annotation_id, old_label, new_label)
         """
-        # Just update point visuals
-        for annotation_id, old_label, new_label in changes:
-            if annotation_id in self.points_by_id:
-                point = self.points_by_id[annotation_id]
-                point.update()
+        if self._point_ids.size:
+            try:
+                if changes:
+                    # Avoid O(N) Python loop for very large change lists by falling back
+                    # to a full color rebuild (which is already vectorised) when N > threshold.
+                    _LARGE_BATCH = 2000
+                    if len(changes) > _LARGE_BATCH:
+                        changed_ids = None  # full rebuild is faster than iterating 10K+ tuples
+                    else:
+                        changed_ids = {c[0] for c in changes}
+                else:
+                    changed_ids = None
+            except Exception:
+                changed_ids = None
+            self._refresh_point_colors(changed_ids=changed_ids)
+            self._update_toolbar_state()
     
     @pyqtSlot(str, object)
     def on_annotation_moved(self, annotation_id, move_data):
@@ -839,12 +932,8 @@ class EmbeddingViewerWindow(QWidget):
         # Remove from working set
         if original_annotation_id in self.working_set_ids:
             self.working_set_ids.remove(original_annotation_id)
-        
-        # Remove point from scene
-        if original_annotation_id in self.points_by_id:
-            point = self.points_by_id[original_annotation_id]
-            self.graphics_scene.removeItem(point)
-            del self.points_by_id[original_annotation_id]
+
+        self._remove_points_by_ids([original_annotation_id])
         
         self._embeddings_stale = True
     
@@ -869,12 +958,8 @@ class EmbeddingViewerWindow(QWidget):
             # Remove from working set
             if ann_id in self.working_set_ids:
                 self.working_set_ids.remove(ann_id)
-            
-            # Remove point from scene
-            if ann_id in self.points_by_id:
-                point = self.points_by_id[ann_id]
-                self.graphics_scene.removeItem(point)
-                del self.points_by_id[ann_id]
+
+        self._remove_points_by_ids(original_ids)
         
         self._embeddings_stale = True
     
@@ -1082,7 +1167,7 @@ class EmbeddingViewerWindow(QWidget):
             features = results['features']
             embedded_features = results['embedded_features']
             model_key = results['model_key']
-            
+
             # Update state
             self.current_data_items = final_data_items
             self.current_features = features
@@ -1101,7 +1186,7 @@ class EmbeddingViewerWindow(QWidget):
             self._update_embeddings(final_data_items, n_dims)
             self._show_embedding()
             self._reset_view()
-            
+
             self.embedding_complete.emit()
             
             # Update status bar
@@ -1226,8 +1311,8 @@ class EmbeddingViewerWindow(QWidget):
             params['n_neighbors'] = self.umap_n_neighbors_slider.value() if self.umap_n_neighbors_slider is not None else 15
             params['min_dist'] = self.umap_min_dist_slider.value() / 100.0 if self.umap_min_dist_slider is not None else 0.1
         elif technique == 'TSNE':
-            params['perplexity'] = self.tsne_perplexity_slider.value() if self.tsne_perplexity_slider is not None else 30
-            params['early_exaggeration'] = self.tsne_exaggeration_slider.value() / 10.0 if self.tsne_exaggeration_slider is not None else 12.0
+            params['perplexity'] = self.tsne_perplexity_slider.value() if self.tsne_perplexity_slider is not None else 20
+            params['early_exaggeration'] = self.tsne_exaggeration_slider.value() / 10.0 if self.tsne_exaggeration_slider is not None else 5.0
 
         return params
     
@@ -1573,10 +1658,16 @@ class EmbeddingViewerWindow(QWidget):
         if embedded_features is None:
             return
 
+        self.current_data_items = list(data_items)
+
         # Ensure numpy array of shape (N, D). Convert 1D -> (N,1) to simplify downstream logic.
         embedded_features = np.asarray(embedded_features)
         if embedded_features.ndim == 1:
             embedded_features = embedded_features.reshape(-1, 1)
+
+        if len(data_items) == 0 or embedded_features.size == 0:
+            self._clear_points()
+            return
 
         n_dims = embedded_features.shape[1]
         scale_factor = 4000
@@ -1584,28 +1675,48 @@ class EmbeddingViewerWindow(QWidget):
         max_vals = np.max(embedded_features, axis=0)
         range_vals = max_vals - min_vals
         range_vals[range_vals == 0] = 1
-        
+
+        point_count = len(data_items)
+        point_coords_3d = np.zeros((point_count, 3), dtype=np.float32)
+        point_coords_2d = np.zeros((point_count, 2), dtype=np.float32)
+        point_colors = np.zeros((point_count, 4), dtype=np.uint8)
+        point_ids = np.empty((point_count,), dtype=object)
+        point_selected = np.zeros((point_count,), dtype=bool)
+        point_depth = np.zeros((point_count,), dtype=np.float32)
+
         for i, item in enumerate(data_items):
             norm_coords = (embedded_features[i] - min_vals) / range_vals
             scaled_coords = (norm_coords * scale_factor) - (scale_factor / 2)
-            
+
             if n_dims >= 3:
-                item.embedding_x_3d = scaled_coords[0]
-                item.embedding_y_3d = scaled_coords[1]
-                item.embedding_z_3d = scaled_coords[2]
+                point_coords_3d[i] = [scaled_coords[0], scaled_coords[1], scaled_coords[2]]
             elif n_dims == 2:
-                item.embedding_x_3d = scaled_coords[0]
-                item.embedding_y_3d = scaled_coords[1]
-                item.embedding_z_3d = 0.0
+                point_coords_3d[i] = [scaled_coords[0], scaled_coords[1], 0.0]
             else:  # n_dims == 1
-                item.embedding_x_3d = scaled_coords[0]
-                item.embedding_y_3d = 0.0
-                item.embedding_z_3d = 0.0
-            
-            item.embedding_x = item.embedding_x_3d
-            item.embedding_y = item.embedding_y_3d
-            item.embedding_z = item.embedding_z_3d
+                point_coords_3d[i] = [scaled_coords[0], 0.0, 0.0]
+
+            point_coords_2d[i] = point_coords_3d[i, :2]
+            point_depth[i] = point_coords_3d[i, 2]
+            point_ids[i] = item.annotation.id
+            point_selected[i] = bool(item.is_selected)
+            try:
+                qcolor = QColor(item.effective_color)
+            except Exception:
+                qcolor = QColor("black")
+            point_colors[i] = [qcolor.red(), qcolor.green(), qcolor.blue(), qcolor.alpha()]
             item.embedding_id = i
+
+        self._point_coords_3d = point_coords_3d
+        self._point_coords_2d = point_coords_2d
+        self._point_colors = point_colors
+        self._point_ids = point_ids
+        self._point_selected = point_selected
+        self._point_depth = point_depth
+
+        self._refresh_sprite_pixmaps(data_items)
+        self._sync_scatter_item()
+
+        self.previous_selection_ids = set(self.get_selected_annotation_ids())
     
     # -------------------------------------------------------------------------
     # Visualization
@@ -1613,26 +1724,46 @@ class EmbeddingViewerWindow(QWidget):
     
     def _update_embeddings(self, data_items, n_dims):
         """Update the embedding visualization."""
-        self._clear_points()
         self.is_3d_data = (n_dims == 3)
-        
-        for item in data_items:
-            point = EmbeddingPointItem(item, self)
-            self.graphics_scene.addItem(point)
-            self.points_by_id[item.annotation.id] = point
-        
         self._apply_rotation_and_projection()
         self._update_toolbar_state()
         self._update_visible_points()
     
     def _clear_points(self):
-        """Clear all points from scene."""
-        if self.isolated_mode:
-            self._show_all_points()
-        
-        for point in self.points_by_id.values():
-            self.graphics_scene.removeItem(point)
-        self.points_by_id.clear()
+        """Clear all points from scene state."""
+        self.isolated_mode = False
+        self.isolated_points.clear()
+        self._isolated_mask = np.empty((0,), dtype=bool)
+        self.locate_target_id = None
+        self.selection_at_press_mask = None
+        if self.rubber_band is not None:
+            try:
+                self.graphics_scene.removeItem(self.rubber_band)
+            except Exception:
+                pass
+            self.rubber_band = None
+        self._clear_location_indicator()
+        self._clear_clustering()
+        self._point_coords_3d = np.empty((0, 3), dtype=np.float32)
+        self._point_coords_2d = np.empty((0, 2), dtype=np.float32)
+        self._point_colors = np.empty((0, 4), dtype=np.uint8)
+        self._point_ids = np.empty((0,), dtype=object)
+        self._point_selected = np.empty((0,), dtype=bool)
+        self._point_depth = np.empty((0,), dtype=np.float32)
+        self._point_pixmaps = []
+        self._kdtree = None
+        self.previous_selection_ids = set()
+
+        if self.mega_item is not None:
+            self.mega_item.set_arrays(
+                self._point_coords_2d,
+                self._point_colors,
+                self._point_selected,
+                self._point_depth,
+                pixmaps=self._point_pixmaps,
+            )
+            self.mega_item.update()
+
         self._update_toolbar_state()
     
     def _show_placeholder(self):
@@ -1655,25 +1786,40 @@ class EmbeddingViewerWindow(QWidget):
             self.center_button.setEnabled(False)
         if hasattr(self, 'isolate_button'):
             self.isolate_button.setEnabled(False)
+        if hasattr(self, 'cluster_k_spin'):
+            self.cluster_k_spin.setEnabled(False)
+        if hasattr(self, 'cluster_run_button'):
+            self.cluster_run_button.setEnabled(False)
+        if hasattr(self, 'cluster_clear_button'):
+            self.cluster_clear_button.setEnabled(False)
     
     def _update_toolbar_state(self):
         """Update toolbar button states based on current state."""
         # Check for isolate button
         if not hasattr(self, 'isolate_button'):
             return
-        
-        selection_exists = bool(self.graphics_scene.selectedItems())
-        points_exist = bool(self.points_by_id)
-        
+
+        selection_exists = bool(self._point_selected.size and np.any(self._point_selected))
+        points_exist = bool(self._point_ids.size)
+        clusters_exist = self._cluster_labels.size > 0
+
         # Update analysis buttons if they exist
         if hasattr(self, 'locate_button'):
             self.locate_button.setEnabled(points_exist and selection_exists)
         if hasattr(self, 'center_button'):
             self.center_button.setEnabled(points_exist and selection_exists)
-        
+
         # Isolate button: enabled only when NOT in isolation mode AND has selection
         # When isolated, button is disabled (user exits via double-click)
         self.isolate_button.setEnabled(not self.isolated_mode and selection_exists)
+
+        # Cluster controls
+        if hasattr(self, 'cluster_k_spin'):
+            self.cluster_k_spin.setEnabled(points_exist)
+        if hasattr(self, 'cluster_run_button'):
+            self.cluster_run_button.setEnabled(points_exist)
+        if hasattr(self, 'cluster_clear_button'):
+            self.cluster_clear_button.setEnabled(clusters_exist)
     
     def _schedule_view_update(self):
         """Schedule delayed view update for virtualization."""
@@ -1697,6 +1843,239 @@ class EmbeddingViewerWindow(QWidget):
             return bool(self.cache_manager and self.isVisible())
         except Exception:
             return False
+
+    def _annotation_id_to_index(self, annotation_id):
+        if self._point_ids.size == 0:
+            return None
+
+        matches = np.flatnonzero(self._point_ids == annotation_id)
+        if matches.size == 0:
+            return None
+        return int(matches[0])
+
+    def _indices_for_annotation_ids(self, annotation_ids):
+        if not annotation_ids or self._point_ids.size == 0:
+            return np.array([], dtype=int)
+
+        ids = np.asarray(list(annotation_ids), dtype=object)
+        return np.flatnonzero(np.isin(self._point_ids, ids))
+
+    def _update_kdtree(self):
+        if self._point_coords_2d.size == 0:
+            self._kdtree = None
+            return
+
+        try:
+            self._kdtree = KDTree(self._point_coords_2d)
+        except Exception:
+            self._kdtree = None
+
+    def _sync_scatter_item(self, coords_changed=True):
+        """Push current arrays to the ScatterPlotItem and update the scene.
+
+        coords_changed=True (default): full set_arrays() + boundingRect + KDTree rebuild.
+        coords_changed=False: only push colors/selection and trigger a repaint — used
+        when only colors or the selection mask changed so we avoid the ~1.5ms KDTree
+        rebuild on every label change or selection toggle.
+        """
+        if self.mega_item is None:
+            return
+
+        if coords_changed:
+            self.mega_item.set_arrays(
+                self._point_coords_2d,
+                self._point_colors,
+                self._point_selected,
+                self._point_depth,
+                pixmaps=self._point_pixmaps,
+            )
+            self.graphics_scene.setSceneRect(self.mega_item.boundingRect())
+            self._update_kdtree()
+        else:
+            # Light update: push colors + selection without touching coords or KDTree
+            self.mega_item.colors = self._point_colors
+            self.mega_item.selected_mask = self._point_selected
+            self.mega_item.update()
+
+    def _current_view_scale(self):
+        try:
+            transform = self.graphics_view.transform()
+            return max(1.0, float(abs(transform.m11())))
+        except Exception:
+            return 1.0
+
+    def _refresh_sprite_pixmaps(self, data_items):
+        """Collect raw (unscaled) source pixmaps for each annotation.
+
+        Scaling is intentionally deferred to ScatterPlotItem.paint(), which caches
+        each scaled result keyed by (index, target_px).  This keeps the embedding
+        finish path near-instant regardless of annotation count.
+        """
+        sprite_pixmaps = []
+        for item in data_items:
+            pixmap = None
+            try:
+                source_pixmap = item.annotation.get_cropped_image_graphic()
+                if source_pixmap is not None and not source_pixmap.isNull():
+                    pixmap = source_pixmap
+            except Exception:
+                pass
+            sprite_pixmaps.append(pixmap)
+
+        self._point_pixmaps = sprite_pixmaps
+
+    def _refresh_point_colors(self, changed_ids=None):
+        """Rebuild point colors, optionally limited to a set of changed annotation IDs.
+
+        When changed_ids is provided (a set/list of annotation IDs whose labels
+        changed), only those rows in _point_colors are updated in-place and the
+        scatter item is redrawn without a full set_arrays() call.  This avoids
+        iterating 10K items and rebuilding the KDTree every time a label changes.
+
+        When changed_ids is None the full array is rebuilt (used on initial load).
+        """
+        if not self.current_data_items:
+            self._point_colors = np.empty((0, 4), dtype=np.uint8)
+            self._sync_scatter_item()
+            return
+
+        if changed_ids is not None and self._point_colors.shape[0] == len(self.current_data_items):
+            # Surgical update: only touch the rows that changed
+            changed_set = set(changed_ids)
+            for i, item in enumerate(self.current_data_items):
+                if item.annotation.id in changed_set:
+                    try:
+                        qc = QColor(item.effective_color)
+                    except Exception:
+                        qc = QColor("black")
+                    self._point_colors[i] = [qc.red(), qc.green(), qc.blue(), qc.alpha()]
+            # Push updated colors to the scatter item without touching coords/KDTree
+            if self.mega_item is not None:
+                self.mega_item.colors = self._point_colors
+                self.mega_item.update()
+        else:
+            # Full rebuild (initial load or size mismatch)
+            colors = []
+            for item in self.current_data_items:
+                try:
+                    qc = QColor(item.effective_color)
+                except Exception:
+                    qc = QColor("black")
+                colors.append([qc.red(), qc.green(), qc.blue(), qc.alpha()])
+            self._point_colors = np.asarray(colors, dtype=np.uint8)
+            self._sync_scatter_item()
+
+    def _set_selected_mask(self, selected_mask, emit_signal=True, update_previous=True, force_emit=False):
+        selected_mask = np.asarray(selected_mask, dtype=bool).reshape(-1)
+        if selected_mask.size != self._point_ids.size:
+            padded = np.zeros(self._point_ids.size, dtype=bool)
+            copy_count = min(padded.size, selected_mask.size)
+            if copy_count:
+                padded[:copy_count] = selected_mask[:copy_count]
+            selected_mask = padded
+
+        if self._point_selected.size and np.array_equal(self._point_selected, selected_mask) and not force_emit:
+            return False
+
+        self._point_selected = selected_mask
+        for item, is_selected in zip(self.current_data_items, self._point_selected):
+            item.set_selected(bool(is_selected))
+
+        if self.mega_item is not None:
+            self.mega_item.selected_mask = self._point_selected
+            self.mega_item.update()
+
+        selected_ids = self.get_selected_annotation_ids()
+        if update_previous:
+            self.previous_selection_ids = set(selected_ids)
+
+        if emit_signal:
+            try:
+                self.selection_changed.emit(list(selected_ids))
+            except Exception:
+                pass
+
+        self._update_toolbar_state()
+        self._schedule_view_update()
+        return True
+
+    def _emit_selection_changed_signal(self):
+        try:
+            self.selection_changed.emit(list(self.get_selected_annotation_ids()))
+        except Exception:
+            pass
+
+    def _remove_points_by_ids(self, annotation_ids):
+        indices = self._indices_for_annotation_ids(annotation_ids)
+        if indices.size == 0:
+            return
+
+        remove_mask = np.zeros(self._point_ids.size, dtype=bool)
+        remove_mask[indices] = True
+        keep_mask = ~remove_mask
+
+        self.current_data_items = [item for item, keep in zip(self.current_data_items, keep_mask) if keep]
+        self._point_coords_3d = self._point_coords_3d[keep_mask]
+        self._point_coords_2d = self._point_coords_2d[keep_mask]
+        self._point_colors = self._point_colors[keep_mask]
+        self._point_ids = self._point_ids[keep_mask]
+        self._point_selected = self._point_selected[keep_mask]
+        self._point_depth = self._point_depth[keep_mask]
+        if self._point_pixmaps:
+            self._point_pixmaps = [pixmap for pixmap, keep in zip(self._point_pixmaps, keep_mask) if keep]
+        # Keep isolated mask in sync with the (now-shorter) point arrays.
+        if self._isolated_mask.size == keep_mask.size:
+            self._isolated_mask = self._isolated_mask[keep_mask]
+
+        for item, is_selected in zip(self.current_data_items, self._point_selected):
+            item.set_selected(bool(is_selected))
+
+        self.previous_selection_ids = set(self.get_selected_annotation_ids())
+        self._sync_scatter_item()
+
+        if self._point_ids.size == 0:
+            self._clear_points()
+            self._show_placeholder()
+        else:
+            self._update_toolbar_state()
+
+    def _hit_test_point_index(self, scene_pos):
+        if self._kdtree is None or self._point_coords_2d.size == 0:
+            return None
+
+        try:
+            distance, index = self._kdtree.query([scene_pos.x(), scene_pos.y()])
+        except Exception:
+            return None
+
+        if not np.isfinite(distance):
+            return None
+
+        hit_radius = (self.point_size / 2.0) + 4.0
+        if float(distance) > hit_radius:
+            return None
+
+        if self.isolated_mode and not bool(self._point_selected[int(index)]):
+            return None
+
+        return int(index)
+
+    def _select_point_index(self, index, toggle=False, exclusive=False):
+        if index is None or self._point_ids.size == 0:
+            return False
+
+        new_mask = self._point_selected.copy() if self._point_selected.size == self._point_ids.size else np.zeros(self._point_ids.size, dtype=bool)
+
+        if exclusive:
+            new_mask[:] = False
+            new_mask[index] = True
+        elif toggle:
+            new_mask[index] = not bool(new_mask[index])
+        else:
+            new_mask[:] = False
+            new_mask[index] = True
+
+        return self._set_selected_mask(new_mask, emit_signal=False)
     
     # -------------------------------------------------------------------------
     # Selection Management
@@ -1704,74 +2083,26 @@ class EmbeddingViewerWindow(QWidget):
     
     def render_selection_from_ids(self, selected_ids):
         """Update visual selection using set-diffing to minimize updates."""
-        blocker = QSignalBlocker(self.graphics_scene)
-        try:
-            selected_ids_set = set(selected_ids) if selected_ids else set()
-            current_selected_ids = {aid for aid, pt in self.points_by_id.items() if pt.data_item.is_selected}
+        if self._point_ids.size == 0:
+            self._set_selected_mask(np.zeros((0,), dtype=bool), emit_signal=True)
+            return
 
-            to_select = selected_ids_set - current_selected_ids
-            to_deselect = current_selected_ids - selected_ids_set
-
-            for ann_id in to_select:
-                if ann_id in self.points_by_id:
-                    pt = self.points_by_id[ann_id]
-                    pt.data_item.set_selected(True)
-                    pt.setSelected(True)
-
-            for ann_id in to_deselect:
-                if ann_id in self.points_by_id:
-                    pt = self.points_by_id[ann_id]
-                    pt.data_item.set_selected(False)
-                    pt.setSelected(False)
-        finally:
-            blocker.unblock()
-
-        # Update internal selection state without re-iterating all points.
-        # We already applied the minimal set-diff changes above, so just update
-        # the cached `previous_selection_ids` and emit a consolidated signal.
-        self.previous_selection_ids = set(selected_ids) if selected_ids else set()
-        # Notify SelectionManager / other listeners about the new selection
-        try:
-            self.selection_changed.emit(list(self.previous_selection_ids))
-        except Exception:
-            pass
-
-        # Lightweight UI updates
-        self._update_toolbar_state()
-        self._schedule_view_update()
+        selected_ids_set = set(selected_ids) if selected_ids else set()
+        selected_mask = np.isin(self._point_ids, np.asarray(list(selected_ids_set), dtype=object))
+        self._set_selected_mask(selected_mask, emit_signal=True)
     
     def _on_selection_changed(self):
-        """Handle selection changes in scene."""
-        if not self.graphics_scene:
+        """Handle selection changes driven by the vectorized selection mask."""
+        if self._point_ids.size == 0:
             return
 
-        try:
-            selected_items = self.graphics_scene.selectedItems()
-        except RuntimeError:
-            return
-
-        current_ids = {item.data_item.annotation.id for item in selected_items
-                       if isinstance(item, EmbeddingPointItem)}
-
+        current_ids = set(self.get_selected_annotation_ids())
         if current_ids != self.previous_selection_ids:
-            # Only update the points that changed to avoid O(N) work on every event
-            to_select = current_ids - self.previous_selection_ids
-            to_deselect = self.previous_selection_ids - current_ids
-
-            for ann_id in to_select:
-                if ann_id in self.points_by_id:
-                    pt = self.points_by_id[ann_id]
-                    pt.data_item.set_selected(True)
-                    pt.setSelected(True)
-
-            for ann_id in to_deselect:
-                if ann_id in self.points_by_id:
-                    pt = self.points_by_id[ann_id]
-                    pt.data_item.set_selected(False)
-                    pt.setSelected(False)
-
-            self.previous_selection_ids = set(current_ids)
-            self.selection_changed.emit(list(current_ids))
+            self.previous_selection_ids = current_ids
+            try:
+                self.selection_changed.emit(list(current_ids))
+            except Exception:
+                pass
 
         self._update_toolbar_state()
         self._schedule_view_update()
@@ -1782,37 +2113,36 @@ class EmbeddingViewerWindow(QWidget):
     
     def _isolate_selection(self):
         """Hide non-selected points."""
-        selected_items = self.graphics_scene.selectedItems()
-        if not selected_items or self.isolated_mode:
+        if self.isolated_mode:
             return
-        
-        self.isolated_points = set(selected_items)
-        self.graphics_view.setUpdatesEnabled(False)
-        try:
-            for point in self.points_by_id.values():
-                point.setVisible(point in self.isolated_points)
-            self.isolated_mode = True
-        finally:
-            self.graphics_view.setUpdatesEnabled(True)
-        
+
+        selected_ids = self.get_selected_annotation_ids()
+        if not selected_ids:
+            return
+
+        self.isolated_points = set(selected_ids)
+        # Freeze a boolean mask of which points are visible in isolation.
+        # ScatterPlotItem.paint() reads this mask directly so that subsequent
+        # selection changes (including clearing the selection entirely) don't
+        # affect which points are visible while we are in isolation mode.
+        self._isolated_mask = self._point_selected.copy()
+        self.isolated_mode = True
+        if self.mega_item is not None:
+            self.mega_item.update()
+
         self._update_toolbar_state()
     
     def _show_all_points(self):
         """Show all points, exit isolation mode."""
         if not self.isolated_mode:
             return
-        
+
         self.isolated_mode = False
         self.isolated_points.clear()
-        self.graphics_view.setUpdatesEnabled(False)
-        try:
-            # --- Explicitly make all points visible again ---
-            for point in self.points_by_id.values():
-                point.setVisible(True)
-            # ------------------------------------------------
-        finally:
-            self.graphics_view.setUpdatesEnabled(True)
-        
+        self._isolated_mask = np.empty((0,), dtype=bool)
+        if self.mega_item is not None:
+            self.mega_item.update()
+
         self._update_toolbar_state()
     
     # -------------------------------------------------------------------------
@@ -1828,50 +2158,45 @@ class EmbeddingViewerWindow(QWidget):
     
     def _fit_view_to_points(self):
         """Fit view to all points."""
-        if self.points_by_id:
-            self.graphics_view.fitInView(
-                self.graphics_scene.itemsBoundingRect(), Qt.KeepAspectRatio
-            )
+        if self._point_ids.size:
+            if self.mega_item is not None:
+                self.graphics_view.fitInView(self.mega_item.boundingRect(), Qt.KeepAspectRatio)
+            else:
+                self.graphics_view.fitInView(
+                    self.graphics_scene.itemsBoundingRect(), Qt.KeepAspectRatio
+                )
         else:
             self.graphics_view.fitInView(-2500, -2500, 5000, 5000, Qt.KeepAspectRatio)
     
     def _center_on_selection(self):
         """Center view on selected points."""
-        selected_items = self.graphics_scene.selectedItems()
-        if not selected_items:
+        if self._point_ids.size == 0 or not np.any(self._point_selected):
             return
-        
-        selection_rect = None
-        for item in selected_items:
-            if isinstance(item, EmbeddingPointItem):
-                item_rect = item.sceneBoundingRect()
-                item_rect = item_rect.adjusted(-50, -50, 50, 50)
-                if selection_rect is None:
-                    selection_rect = item_rect
-                else:
-                    selection_rect = selection_rect.united(item_rect)
-        
-        if selection_rect:
-            selection_rect = selection_rect.adjusted(-20, -20, 20, 20)
-            self.graphics_view.fitInView(selection_rect, Qt.KeepAspectRatio)
-            
-            if self.locate_graphics_item:
-                self._update_location_lines()
+
+        selected_coords = self._point_coords_2d[self._point_selected]
+        min_x = float(np.min(selected_coords[:, 0]))
+        max_x = float(np.max(selected_coords[:, 0]))
+        min_y = float(np.min(selected_coords[:, 1]))
+        max_y = float(np.max(selected_coords[:, 1]))
+        selection_rect = QRectF(min_x - 50.0, min_y - 50.0, (max_x - min_x) + 100.0, (max_y - min_y) + 100.0)
+        selection_rect = selection_rect.adjusted(-20, -20, 20, 20)
+        self.graphics_view.fitInView(selection_rect, Qt.KeepAspectRatio)
+
+        if self.locate_target_id is not None:
+            self._update_location_lines()
     
     def _on_locate_clicked(self):
         """Handle locate button click."""
-        selected_items = self.graphics_scene.selectedItems()
-        if not selected_items:
+        selected_ids = self.get_selected_annotation_ids()
+        if not selected_ids:
             return
-        
-        first_item = selected_items[0]
-        if isinstance(first_item, EmbeddingPointItem):
-            self._show_annotation_location(first_item)
+
+        self._show_annotation_location(selected_ids[0])
     
-    def _show_annotation_location(self, graphics_item):
+    def _show_annotation_location(self, annotation_id):
         """Show convergent lines to annotation location."""
         self._clear_location_indicator()
-        self.locate_graphics_item = graphics_item
+        self.locate_target_id = annotation_id
         QTimer.singleShot(50, self._update_location_lines)
         self.locate_timer.start(1500)
     
@@ -1880,15 +2205,19 @@ class EmbeddingViewerWindow(QWidget):
         from PyQt5.QtWidgets import QGraphicsLineItem
         from PyQt5.QtCore import QLineF
         
-        if not self.locate_graphics_item:
+        if self.locate_target_id is None:
+            return
+
+        target_index = self._annotation_id_to_index(self.locate_target_id)
+        if target_index is None:
             return
         
         for line in self.locate_lines:
             self.graphics_scene.removeItem(line)
         self.locate_lines.clear()
         
-        target_pos = self.locate_graphics_item.pos()
-        target_x, target_y = target_pos.x(), target_pos.y()
+        target_x = float(self._point_coords_2d[target_index, 0])
+        target_y = float(self._point_coords_2d[target_index, 1])
         
         visible_rect = self.graphics_view.mapToScene(
             self.graphics_view.viewport().rect()
@@ -1910,12 +2239,256 @@ class EmbeddingViewerWindow(QWidget):
             self.graphics_scene.addItem(line_item)
             self.locate_lines.append(line_item)
     
+    # -------------------------------------------------------------------------
+    # K-Means Cluster Overlay
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _cluster_palette(k: int) -> np.ndarray:
+        """Return (k, 4) uint8 RGBA array of visually distinct colours.
+
+        Colours are evenly spaced on the HSV wheel at fixed saturation and
+        value so they remain distinguishable against the dark background.
+        """
+        colours = np.empty((k, 4), dtype=np.uint8)
+        for i in range(k):
+            hue = int(360 * i / k)
+            qc = QColor.fromHsv(hue, 200, 230, 255)
+            colours[i] = [qc.red(), qc.green(), qc.blue(), qc.alpha()]
+        return colours
+
+    def _run_clustering(self):
+        """Run K-Means on the current 2-D projection and draw Voronoi boundaries."""
+        if self._point_coords_2d.size == 0:
+            return
+
+        k = self.cluster_k_spin.value()
+        n_points = len(self._point_coords_2d)
+        if n_points < k:
+            QMessageBox.warning(
+                self, "Too few points",
+                f"Need at least {k} points to create {k} clusters (have {n_points})."
+            )
+            return
+
+        try:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+
+            # --- 1. Fit K-Means ---
+            km = KMeans(n_clusters=k, random_state=42, n_init='auto')
+            km.fit(self._point_coords_2d)
+            self._cluster_labels = km.labels_.astype(int)
+            centroids = km.cluster_centers_          # (k, 2)
+
+            # --- 2. Build per-cluster colour palette (for centroid markers only) ---
+            self._cluster_colors_rgba = self._cluster_palette(k)
+
+            # --- 3. Draw Voronoi boundaries + centroid markers ---
+            self._draw_cluster_overlay(centroids)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Clustering error", str(e))
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        self._update_toolbar_state()
+        # Notify AnnotationViewer so it can enable the "Cluster" sort option.
+        self._notify_annotation_viewer_cluster_state()
+
+    def _draw_cluster_overlay(self, centroids: np.ndarray):
+        """Compute Voronoi ridges for *centroids* and add them to the scene.
+
+        Works in 2-D scene coordinates.  Infinite ridges are clipped to a
+        padded bounding rect of the point cloud so nothing extends off-screen.
+        Centroid cross-hair markers are also drawn.
+        """
+        self._remove_cluster_overlay_items()
+
+        k = len(centroids)
+        if k < 2:
+            return
+
+        coords = self._point_coords_2d
+
+        # Bounding rect of the point cloud with 10% padding
+        xmin, ymin = coords.min(axis=0) - 1e-6
+        xmax, ymax = coords.max(axis=0) + 1e-6
+        pad_x = (xmax - xmin) * 0.12
+        pad_y = (ymax - ymin) * 0.12
+        clip_rect = QRectF(xmin - pad_x, ymin - pad_y,
+                           (xmax - xmin) + 2 * pad_x,
+                           (ymax - ymin) + 2 * pad_y)
+
+        # --- Voronoi ---
+        # Add 4 far-away dummy points so every real ridge is finite after clipping
+        far = max(clip_rect.width(), clip_rect.height()) * 10
+        cx, cy = (xmin + xmax) / 2, (ymin + ymax) / 2
+        dummy = np.array([
+            [cx - far, cy - far],
+            [cx + far, cy - far],
+            [cx + far, cy + far],
+            [cx - far, cy + far],
+        ])
+        vor_points = np.vstack([centroids, dummy])
+        vor = Voronoi(vor_points)
+
+        # Build QPainterPath for all ridge segments (clipped)
+        from PyQt5.QtGui import QPainterPath as _Path
+        from PyQt5.QtCore import QLineF
+
+        def _clip_segment(p1, p2):
+            """Cohen-Sutherland clip of segment p1-p2 to clip_rect."""
+            x1, y1 = p1
+            x2, y2 = p2
+            lx, rx = clip_rect.left(), clip_rect.right()
+            ty, by = clip_rect.top(), clip_rect.bottom()
+
+            def _code(x, y):
+                c = 0
+                if x < lx: c |= 1
+                elif x > rx: c |= 2
+                if y < ty: c |= 4
+                elif y > by: c |= 8
+                return c
+
+            c1, c2 = _code(x1, y1), _code(x2, y2)
+            while True:
+                if not (c1 | c2):      # both inside
+                    return (x1, y1), (x2, y2)
+                if c1 & c2:            # both outside same region
+                    return None
+                c = c1 or c2
+                if c & 8:
+                    x = x1 + (x2 - x1) * (by - y1) / (y2 - y1 + 1e-12)
+                    y = by
+                elif c & 4:
+                    x = x1 + (x2 - x1) * (ty - y1) / (y2 - y1 + 1e-12)
+                    y = ty
+                elif c & 2:
+                    y = y1 + (y2 - y1) * (rx - x1) / (x2 - x1 + 1e-12)
+                    x = rx
+                else:
+                    y = y1 + (y2 - y1) * (lx - x1) / (x2 - x1 + 1e-12)
+                    x = lx
+                if c == c1:
+                    x1, y1, c1 = x, y, _code(x, y)
+                else:
+                    x2, y2, c2 = x, y, _code(x, y)
+
+        # Collect ridge paths per pair of adjacent clusters
+        # vor.ridge_points[i] = (p_idx, q_idx) — indices into vor_points
+        ridge_path = _Path()
+        n_real = k  # real centroid indices are 0..k-1
+
+        for (p_idx, q_idx), (v1_idx, v2_idx) in zip(vor.ridge_points, vor.ridge_vertices):
+            # Only draw ridges between two real centroids (not dummy points)
+            if p_idx >= n_real or q_idx >= n_real:
+                continue
+            if v1_idx < 0 or v2_idx < 0:
+                # Infinite ridge — should be rare with dummy points; skip
+                continue
+            pt1 = vor.vertices[v1_idx]
+            pt2 = vor.vertices[v2_idx]
+            clipped = _clip_segment(pt1, pt2)
+            if clipped is None:
+                continue
+            (ax, ay), (bx, by) = clipped
+            ridge_path.moveTo(ax, ay)
+            ridge_path.lineTo(bx, by)
+
+        # Single path item for all ridges — more efficient than one item per edge
+        ridge_item = QGraphicsPathItem(ridge_path)
+        pen = QPen(QColor(255, 255, 255, 160), 0)   # cosmetic (1px regardless of zoom)
+        pen.setCosmetic(True)
+        pen.setStyle(Qt.DashLine)
+        pen.setDashPattern([6, 3])
+        ridge_item.setPen(pen)
+        ridge_item.setZValue(50)
+        self.graphics_scene.addItem(ridge_item)
+        self._cluster_overlay_items.append(ridge_item)
+
+        # --- Centroid markers (small filled circles) ---
+        marker_r = max(clip_rect.width(), clip_rect.height()) * 0.012
+        for i, (cx_i, cy_i) in enumerate(centroids):
+            qc = self._cluster_colors_rgba[i]
+            colour = QColor(int(qc[0]), int(qc[1]), int(qc[2]), 230)
+
+            marker_path = _Path()
+            marker_path.addEllipse(
+                QPointF(float(cx_i), float(cy_i)),
+                marker_r, marker_r
+            )
+            marker_item = QGraphicsPathItem(marker_path)
+            marker_pen = QPen(QColor(255, 255, 255, 200), 0)
+            marker_pen.setCosmetic(True)
+            marker_item.setPen(marker_pen)
+            marker_item.setBrush(QBrush(colour))
+            marker_item.setZValue(51)
+            self.graphics_scene.addItem(marker_item)
+            self._cluster_centroid_items.append(marker_item)
+
+    def _notify_annotation_viewer_cluster_state(self):
+        """Tell the AnnotationViewer whether cluster data currently exists.
+
+        This lets the viewer enable or disable its "Cluster" sort option in
+        real time without polling.
+        """
+        try:
+            viewer = getattr(self.main_window, 'annotation_viewer_window', None)
+            if viewer is not None and hasattr(viewer, 'update_cluster_sort_state'):
+                has_clusters = bool(self._cluster_labels.size > 0)
+                viewer.update_cluster_sort_state(has_clusters)
+        except Exception:
+            pass
+
+    def _remove_cluster_overlay_items(self):
+        """Remove all cluster boundary and centroid items from the scene."""
+        for item in self._cluster_overlay_items:
+            try:
+                self.graphics_scene.removeItem(item)
+            except Exception:
+                pass
+        self._cluster_overlay_items.clear()
+
+        for item in self._cluster_centroid_items:
+            try:
+                self.graphics_scene.removeItem(item)
+            except Exception:
+                pass
+        self._cluster_centroid_items.clear()
+
+    def _clear_clustering(self):
+        """Remove cluster overlay items from the scene."""
+        self._remove_cluster_overlay_items()
+        self._cluster_labels = np.empty((0,), dtype=int)
+        self._cluster_colors_rgba = np.empty((0, 4), dtype=np.uint8)
+        self._update_toolbar_state()
+        # Notify AnnotationViewer that cluster data changed.
+        self._notify_annotation_viewer_cluster_state()
+
+    def _refresh_cluster_overlay(self):
+        """Recompute Voronoi on the current 2-D projection after rotation.
+
+        Called by _apply_rotation_and_projection when cluster labels exist.
+        The KMeans labels are fixed; only the centroid 2-D positions change.
+        """
+        if self._cluster_labels.size == 0 or self._point_coords_2d.size == 0:
+            return
+
+        k = int(self._cluster_labels.max()) + 1
+        # Recompute centroids from current 2-D positions
+        centroids = np.array([
+            self._point_coords_2d[self._cluster_labels == c].mean(axis=0)
+            for c in range(k)
+        ])
+        self._draw_cluster_overlay(centroids)
+
     def _clear_location_indicator(self):
         """Clear location indicator lines."""
         for line in self.locate_lines:
             self.graphics_scene.removeItem(line)
         self.locate_lines.clear()
-        self.locate_graphics_item = None
+        self.locate_target_id = None
         self.locate_timer.stop()
     
     def _on_display_mode_changed(self):
@@ -1924,14 +2497,20 @@ class EmbeddingViewerWindow(QWidget):
             self.display_mode = 'sprites'
             self.sprite_toggle_button.setIcon(get_icon("dot.svg"))
             self.sprite_toggle_button.setToolTip("Switch to Dots View")
+            # Collect raw source pixmaps (no scaling — paint() handles that lazily).
+            self._refresh_sprite_pixmaps(self.current_data_items)
+            # Bust any stale scaled cache so paint() re-scales at the current size.
+            if self.mega_item is not None:
+                self.mega_item._scaled_pixmap_cache = {}
         else:
             self.display_mode = 'dots'
             self.sprite_toggle_button.setIcon(get_icon("sprites.svg"))
             self.sprite_toggle_button.setToolTip("Switch to Sprites View")
-        
-        for point in self.points_by_id.values():
-            point.prepareGeometryChange()
-        self.graphics_scene.update()
+
+        if self.mega_item is not None:
+            self.mega_item.prepareGeometryChange()
+            self.mega_item.update()
+            self.graphics_scene.setSceneRect(self.mega_item.boundingRect())
     
     # -------------------------------------------------------------------------
     # 3D Rotation
@@ -1939,46 +2518,46 @@ class EmbeddingViewerWindow(QWidget):
     
     def _apply_rotation_and_projection(self):
         """Apply rotation to 3D points."""
-        if not self.points_by_id:
+        if self._point_coords_3d.size == 0:
+            self._point_coords_2d = np.empty((0, 2), dtype=np.float32)
+            self._point_depth = np.empty((0,), dtype=np.float32)
+            self._sync_scatter_item()
             return
-        
-        point_items = list(self.points_by_id.values())
-        original_points_3d = np.array([
-            [p.data_item.embedding_x_3d, p.data_item.embedding_y_3d, p.data_item.embedding_z_3d]
-            for p in point_items
-        ])
-        
+
+        original_points_3d = np.asarray(self._point_coords_3d, dtype=np.float32)
+
         theta_x = np.radians(self.rotation_angle_x)
         theta_y = np.radians(self.rotation_angle_y)
-        
+
         cos_x, sin_x = np.cos(theta_x), np.sin(theta_x)
         cos_y, sin_y = np.cos(theta_y), np.sin(theta_y)
-        
+
         rot_x = np.array([[1, 0, 0], [0, cos_x, -sin_x], [0, sin_x, cos_x]])
         rot_y = np.array([[cos_y, 0, sin_y], [0, 1, 0], [-sin_y, 0, cos_y]])
-        
+
         rotation_matrix = rot_x @ rot_y
         rotated_points = original_points_3d @ rotation_matrix.T
-        
+
         if len(rotated_points) > 0:
             self.min_z = np.min(rotated_points[:, 2])
             self.max_z = np.max(rotated_points[:, 2])
             self.z_range = self.max_z - self.min_z
-        
-        self.graphics_view.setUpdatesEnabled(False)
-        try:
-            for i, point in enumerate(point_items):
-                rotated = rotated_points[i]
-                point.data_item.embedding_x = rotated[0]
-                point.data_item.embedding_y = rotated[1]
-                point.data_item.embedding_z = rotated[2]
-                point.prepareGeometryChange()
-                point.setPos(rotated[0], rotated[1])
-        finally:
-            self.graphics_view.setUpdatesEnabled(True)
-        
-        self.graphics_scene.update()
-    
+
+        self._point_coords_2d = rotated_points[:, :2].astype(np.float32, copy=False)
+        self._point_depth = rotated_points[:, 2].astype(np.float32, copy=False)
+
+        self._sync_scatter_item()
+
+        if self.mega_item is not None:
+            self.mega_item.update()
+        self._update_kdtree()
+
+        # Refresh cluster overlay so Voronoi lines track the new 2-D projection
+        if self._cluster_labels.size > 0:
+            self._refresh_cluster_overlay()
+
+        self._update_toolbar_state()
+
     # -------------------------------------------------------------------------
     # Mouse Event Handlers
     # -------------------------------------------------------------------------
@@ -1995,26 +2574,26 @@ class EmbeddingViewerWindow(QWidget):
                 return
             event.ignore()
             return
+
+        scene_pos = self.graphics_view.mapToScene(event.pos())
         
         # Ctrl+Right-Click for rotation (on empty space) or context menu (on point)
         if event.button() == Qt.RightButton and event.modifiers() == Qt.ControlModifier:
-            item_at_pos = self.graphics_view.itemAt(event.pos())
-            
+            hit_index = self._hit_test_point_index(scene_pos)
+
             # Ctrl+Right-Click on a point: navigate to annotation in AnnotationWindow
-            if isinstance(item_at_pos, EmbeddingPointItem):
-                self.graphics_scene.clearSelection()
-                item_at_pos.setSelected(True)
-                self._on_selection_changed()
-                
-                # Use SelectionManager if available for context menu navigation
-                ann_id = item_at_pos.data_item.annotation.id
+            if hit_index is not None:
+                self._select_point_index(hit_index, exclusive=True)
+                self._emit_selection_changed_signal()
+
+                ann_id = self._point_ids[hit_index]
                 if hasattr(self.main_window, 'selection_manager'):
                     self.main_window.selection_manager.handle_context_menu_selection(
                         ann_id, navigate_to=True
                     )
                 else:
                     # Fallback: manually navigate to the annotation
-                    annotation = item_at_pos.data_item.annotation
+                    annotation = self.current_data_items[hit_index].annotation
                     if hasattr(self, 'annotation_window') and self.annotation_window:
                         if self.annotation_window.current_image_path != annotation.image_path:
                             if hasattr(self.annotation_window, 'set_image'):
@@ -2037,18 +2616,17 @@ class EmbeddingViewerWindow(QWidget):
         
         # Ctrl+Left-Click for rubber band selection
         if event.button() == Qt.LeftButton and event.modifiers() == Qt.ControlModifier:
-            item_at_pos = self.graphics_view.itemAt(event.pos())
-            if isinstance(item_at_pos, EmbeddingPointItem):
+            hit_index = self._hit_test_point_index(scene_pos)
+            if hit_index is not None:
                 self.graphics_view.setDragMode(QGraphicsView.NoDrag)
-                is_selected = item_at_pos.data_item.is_selected
-                item_at_pos.data_item.set_selected(not is_selected)
-                item_at_pos.setSelected(not is_selected)
-                self._on_selection_changed()
+                self._select_point_index(hit_index, toggle=True)
+                self._emit_selection_changed_signal()
+                event.accept()
                 return
             
-            self.selection_at_press = set(self.graphics_scene.selectedItems())
+            self.selection_at_press_mask = self._point_selected.copy() if self._point_selected.size else None
             self.graphics_view.setDragMode(QGraphicsView.NoDrag)
-            self.rubber_band_origin = self.graphics_view.mapToScene(event.pos())
+            self.rubber_band_origin = scene_pos
             self.rubber_band = QGraphicsRectItem(
                 QRectF(self.rubber_band_origin, self.rubber_band_origin)
             )
@@ -2069,17 +2647,20 @@ class EmbeddingViewerWindow(QWidget):
         # Left-click (no modifiers) - clear selection when clicking empty space,
         # but DO NOT reset viewers (stay in isolated subset)
         elif event.button() == Qt.LeftButton and not event.modifiers():
-            item_at_pos = self.graphics_view.itemAt(event.pos())
-            
-            # If clicked on a point, let default handling toggle selection
-            if isinstance(item_at_pos, EmbeddingPointItem):
+            hit_index = self._hit_test_point_index(scene_pos)
+
+            # If clicked on a point, toggle that point directly
+            if hit_index is not None:
                 self.graphics_view.setDragMode(QGraphicsView.NoDrag)
-                QGraphicsView.mousePressEvent(self.graphics_view, event)
+                self._select_point_index(hit_index, toggle=True)
+                self._emit_selection_changed_signal()
+                event.accept()
+                return
             else:
                 # Clicked on empty space - just clear selection without resetting viewers
-                if self.graphics_scene.selectedItems():
-                    self.graphics_scene.clearSelection()
-                    self._on_selection_changed()
+                if self._point_selected.size and np.any(self._point_selected):
+                    self._set_selected_mask(np.zeros(self._point_ids.size, dtype=bool), emit_signal=False)
+                    self._emit_selection_changed_signal()
                 event.accept()
         else:
             self.graphics_view.setDragMode(QGraphicsView.NoDrag)
@@ -2092,12 +2673,14 @@ class EmbeddingViewerWindow(QWidget):
             return
         
         if event.button() == Qt.LeftButton:
-            item_at_pos = self.graphics_view.itemAt(event.pos())
+            scene_pos = self.graphics_view.mapToScene(event.pos())
+            hit_index = self._hit_test_point_index(scene_pos)
             
             # Only reset viewers if double-clicking on empty space
-            if not isinstance(item_at_pos, EmbeddingPointItem):
-                if self.graphics_scene.selectedItems():
-                    self.graphics_scene.clearSelection()
+            if hit_index is None:
+                if self._point_selected.size and np.any(self._point_selected):
+                    self._set_selected_mask(np.zeros(self._point_ids.size, dtype=bool), emit_signal=False)
+                    self._emit_selection_changed_signal()
                 # Emit reset signal to exit isolation mode and show all in both viewers
                 self.reset_view_requested.emit()
                 event.accept()
@@ -2124,22 +2707,28 @@ class EmbeddingViewerWindow(QWidget):
             self.rubber_band.setRect(
                 QRectF(self.rubber_band_origin, current_pos).normalized()
             )
-            path = QPainterPath()
-            path.addRect(self.rubber_band.rect())
-            self.graphics_scene.blockSignals(True)
-            self.graphics_scene.setSelectionArea(path)
-            if self.selection_at_press:
-                for item in self.selection_at_press:
-                    item.setSelected(True)
-            self.graphics_scene.blockSignals(False)
-            # Do not call _on_selection_changed() on every mouse-move while dragging;
+            band_rect = self.rubber_band.rect().normalized()
+            if self._point_coords_2d.size:
+                in_box = (
+                    (self._point_coords_2d[:, 0] >= band_rect.left()) &
+                    (self._point_coords_2d[:, 0] <= band_rect.right()) &
+                    (self._point_coords_2d[:, 1] >= band_rect.top()) &
+                    (self._point_coords_2d[:, 1] <= band_rect.bottom())
+                )
+                if self.selection_at_press_mask is not None:
+                    new_mask = self.selection_at_press_mask.copy()
+                else:
+                    new_mask = np.zeros(self._point_ids.size, dtype=bool)
+                new_mask[in_box] = True
+                self._set_selected_mask(new_mask, emit_signal=False, update_previous=False)
+            # Do not call selection_changed on every mouse-move while dragging;
             # emit final selection once on mouse release instead for performance.
         elif event.buttons() == Qt.RightButton:
             left_event = QMouseEvent(
                 event.type(), event.localPos(), Qt.LeftButton, Qt.LeftButton, event.modifiers()
             )
             QGraphicsView.mouseMoveEvent(self.graphics_view, left_event)
-            if self.locate_graphics_item:
+            if self.locate_target_id is not None:
                 self._update_location_lines()
             self._schedule_view_update()
         else:
@@ -2157,18 +2746,32 @@ class EmbeddingViewerWindow(QWidget):
             if self.rubber_band:
                 self.graphics_scene.removeItem(self.rubber_band)
                 self.rubber_band = None
-                self.selection_at_press = None
+                self.selection_at_press_mask = None
             return
         
         if self.rubber_band:
             # Process the final selection exactly once
             try:
-                self._on_selection_changed()
+                band_rect = self.rubber_band.rect().normalized()
+                if self._point_coords_2d.size:
+                    in_box = (
+                        (self._point_coords_2d[:, 0] >= band_rect.left()) &
+                        (self._point_coords_2d[:, 0] <= band_rect.right()) &
+                        (self._point_coords_2d[:, 1] >= band_rect.top()) &
+                        (self._point_coords_2d[:, 1] <= band_rect.bottom())
+                    )
+                    if self.selection_at_press_mask is not None:
+                        final_mask = self.selection_at_press_mask.copy()
+                    else:
+                        final_mask = np.zeros(self._point_ids.size, dtype=bool)
+                    final_mask[in_box] = True
+                    self._set_selected_mask(final_mask, emit_signal=False, update_previous=True, force_emit=True)
+                    self._emit_selection_changed_signal()
             except Exception:
                 pass
             self.graphics_scene.removeItem(self.rubber_band)
             self.rubber_band = None
-            self.selection_at_press = None
+            self.selection_at_press_mask = None
         elif event.button() == Qt.RightButton:
             left_event = QMouseEvent(
                 event.type(), event.localPos(), Qt.LeftButton, Qt.LeftButton, event.modifiers()
@@ -2188,52 +2791,61 @@ class EmbeddingViewerWindow(QWidget):
                 delta = event.angleDelta().y()
                 if delta == 0:
                     return
-                # Decide whether to resize sprites (when in sprites mode) or points
+
                 if self.display_mode == 'sprites':
                     step = self._resize_step_sprite if delta > 0 else -self._resize_step_sprite
                     new_size = self.sprite_size + step
                     new_size = max(self._sprite_min, min(self._sprite_max, new_size))
                     if new_size != self.sprite_size:
                         self.sprite_size = new_size
-                        # Update all point items to use new sprite size
-                        for pt in self.points_by_id.values():
-                            pt.update()
-                        self.graphics_scene.update()
+                        # Bust the scaled-pixmap cache so paint() re-scales at the new size.
+                        if self.mega_item is not None:
+                            self.mega_item._scaled_pixmap_cache = {}
+                            self.mega_item.prepareGeometryChange()
+                            self.mega_item.update()
+                            self.graphics_scene.setSceneRect(self.mega_item.boundingRect())
+                        event.accept()
+                        return
                 else:
                     step = self._resize_step_point if delta > 0 else -self._resize_step_point
                     new_size = self.point_size + step
                     new_size = max(self._point_min, min(self._point_max, new_size))
                     if new_size != self.point_size:
                         self.point_size = new_size
-                        for pt in self.points_by_id.values():
-                            pt.update()
-                        self.graphics_scene.update()
-                return
+                        if self.mega_item is not None:
+                            self.mega_item.prepareGeometryChange()
+                            self.mega_item.update()
+                            self.graphics_scene.setSceneRect(self.mega_item.boundingRect())
+                        event.accept()
+                        return
         except Exception:
-            return
+            pass
 
         # Default behavior: zoom
         zoom_in_factor = 1.25
         zoom_out_factor = 1 / zoom_in_factor
-        self.graphics_view.setTransformationAnchor(QGraphicsView.NoAnchor)
-        self.graphics_view.setResizeAnchor(QGraphicsView.NoAnchor)
+        self.graphics_view.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.graphics_view.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
 
-        old_pos = self.graphics_view.mapToScene(event.pos())
         zoom_factor = zoom_in_factor if event.angleDelta().y() > 0 else zoom_out_factor
         self.graphics_view.scale(zoom_factor, zoom_factor)
+
+        if self.display_mode == 'sprites' and self.mega_item is not None:
+            # Sprites are scene-space sized — no re-fetch needed on zoom.
+            # Just bust the scaled-pixmap cache so paint() re-scales at the
+            # new screen resolution on the next frame.
+            self.mega_item._scaled_pixmap_cache = {}
+            self.mega_item.update()
+        event.accept()
 
     def _key_press_event(self, event):
         """Handle key press events for the graphics view."""
         try:
             if event.key() == Qt.Key_A and (event.modifiers() & Qt.ControlModifier):
-                if not self.points_by_id:
+                if self._point_ids.size == 0:
                     return
 
-                # Grab IDs for all points that are currently visible
-                ids_to_select = [
-                    ann_id for ann_id, pt in self.points_by_id.items()
-                    if pt.isVisible()
-                ]
+                ids_to_select = self._point_ids.tolist()
 
                 if ids_to_select:
                     # Respect existing selection rendering path
@@ -2248,7 +2860,7 @@ class EmbeddingViewerWindow(QWidget):
         # Default behavior: call the native handler and refresh view
         QGraphicsView.keyPressEvent(self.graphics_view, event)
 
-        if self.locate_graphics_item:
+        if self.locate_target_id is not None:
             # refresh location indicator positions
             QTimer.singleShot(0, self._update_location_lines)
 

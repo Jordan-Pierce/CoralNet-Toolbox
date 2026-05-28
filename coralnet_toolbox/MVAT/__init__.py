@@ -7,7 +7,7 @@ attributes on the package (PEP 562 module __getattr__).
 """
 
 # Core, safe-to-import pieces
-from .core.Camera import Camera
+from .core.Cameras import Camera
 from .core.Frustum import Frustum
 from .core.Ray import CameraRay
 

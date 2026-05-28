@@ -17,15 +17,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from PyQt5.QtCore import QObject, QTimer, pyqtSignal, Qt, QThread, QPointF
 from PyQt5.QtWidgets import QApplication, QMessageBox
 
-from coralnet_toolbox.MVAT.core.Camera import Camera
+from coralnet_toolbox.MVAT.core.Cameras import Camera
 from coralnet_toolbox.MVAT.core.Ray import CameraRay
 
 from coralnet_toolbox.MVAT.managers.SelectionManager import SelectionManager
 from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
-from coralnet_toolbox.MVAT.managers.VisibilityWorker import VisibilityWorker
+from coralnet_toolbox.MVAT.workers.VisibilityWorker import VisibilityWorker
 from coralnet_toolbox.MVAT.managers.CacheManager import CacheManager
-from coralnet_toolbox.MVAT.managers.LabelPainterThread import LabelPainterThread
-from coralnet_toolbox.MVAT.managers.visibility_logging import (
+from coralnet_toolbox.MVAT.workers.LabelWorker import LabelWorker
+from coralnet_toolbox.MVAT.utils.MVATLogger import (
     get_visibility_logger,
     log_cam_stage,
 )
@@ -38,7 +38,7 @@ from coralnet_toolbox.MVAT.core.constants import (
     RAY_COLOR_INVALID,
 )
 
-from coralnet_toolbox.MVAT.core.Model import MeshProduct
+from coralnet_toolbox.MVAT.core.Products import MeshProduct
 
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 
@@ -662,7 +662,7 @@ class MVATManager(QObject):
         # OrthoRaster: build OrthoCamera only when one hasn't been created yet.
         # =====================================================================
         if need_ortho:
-            from coralnet_toolbox.MVAT.core.OrthoCamera import OrthoCamera
+            from coralnet_toolbox.MVAT.core.Cameras import OrthoCamera
 
             chunk_transform = getattr(ortho_rasters[0], 'chunk_transform_matrix', None)
             if chunk_transform is None:
@@ -1023,11 +1023,99 @@ class MVATManager(QObject):
         """A new 3D model was loaded — clear stale ortho index map and rebuild."""
         self._computing_ortho_index_map = False  # reset any in-flight build
         self.clear_sphere_hover_overlay(reset_context=True)
+        primary_target = self.viewer.scene_context.get_primary_target()
+        self._prewarm_spatial_caches(primary_target)
         if self.ortho_camera is not None:
             self.ortho_camera._raster.index_map = None
             self.ortho_camera._raster.index_map_scale_factor = None
             self.ortho_camera._raster.index_map_path = None
         self._maybe_compute_ortho_index_map()
+
+    def _prewarm_spatial_caches(self, primary_target):
+        """Build the KD-Tree on the main UI thread for fast spatial queries."""
+        if primary_target is None or not hasattr(primary_target, 'get_render_mesh'):
+            return
+
+        tree = getattr(primary_target, '_hover_face_kdtree', None)
+        tree_product_id = getattr(primary_target, '_hover_face_kdtree_product_id', None)
+        if tree is not None and tree_product_id == getattr(primary_target, 'product_id', None):
+            return
+
+        print("🌳 Building KD-Tree...")
+        try:
+            self.main_window.status_bar.showMessage("🌳 Building KD-Tree...", 0)
+        except Exception:
+            pass
+
+        build_start = time.perf_counter()
+
+        try:
+            if getattr(primary_target, '_element_centers_np', None) is None:
+                primary_target.prepare_geometry()
+
+            centers = getattr(primary_target, '_element_centers_np', None)
+            if centers is not None and len(centers) > 0:
+                from pykdtree.kdtree import KDTree
+
+                tree = KDTree(np.asarray(centers, dtype=np.float32))
+                primary_target._hover_face_kdtree = tree
+                primary_target._hover_face_kdtree_product_id = getattr(primary_target, 'product_id', None)
+
+            try:
+                self.main_window.status_bar.showMessage("KD-Tree built.", 3000)
+            except Exception:
+                pass
+
+            build_elapsed_s = time.perf_counter() - build_start
+            print(f"🌳 KD-Tree built in {build_elapsed_s:.2f} s")
+
+        except Exception as e:
+            build_elapsed_s = time.perf_counter() - build_start
+            print(f"🌳 KD-Tree build failed after {build_elapsed_s:.2f} s: {e}")
+
+    def _query_kdtree_candidate_ids(self, tree, center, search_radius, total_count: int, initial_k: int = 256):
+        try:
+            center = np.asarray(center, dtype=np.float32).reshape(1, -1)
+            search_radius = float(search_radius)
+            total_count = int(total_count)
+        except Exception:
+            return np.empty(0, dtype=np.int32)
+
+        if total_count <= 0 or search_radius <= 0.0:
+            return np.empty(0, dtype=np.int32)
+
+        k = min(max(1, int(initial_k)), total_count)
+        while True:
+            # pykdtree only exposes k-nearest queries, so keep expanding k until
+            # the furthest returned neighbor falls outside the target radius.
+            try:
+                distances, indices = tree.query(center, k=k)
+            except Exception:
+                return np.empty(0, dtype=np.int32)
+
+            distances = np.asarray(distances).reshape(-1)
+            indices = np.asarray(indices).reshape(-1)
+            if distances.size == 0 or indices.size == 0:
+                return np.empty(0, dtype=np.int32)
+
+            finite = np.isfinite(distances)
+            if not np.any(finite):
+                return np.empty(0, dtype=np.int32)
+
+            valid = finite & (indices >= 0) & (indices < total_count) & (distances <= search_radius)
+            candidate_ids = np.unique(indices[valid]).astype(np.int32, copy=False)
+
+            if k >= total_count:
+                return candidate_ids
+
+            farthest = float(np.max(distances[finite]))
+            if farthest > search_radius:
+                return candidate_ids
+
+            next_k = min(total_count, max(k * 2, k + 1))
+            if next_k == k:
+                return candidate_ids
+            k = next_k
 
     def _maybe_compute_ortho_index_map(self):
         """Build the ortho face-ID index map if ortho camera + mesh are both ready."""
@@ -1905,7 +1993,7 @@ class MVATManager(QObject):
             if labels_cache is None or class_ids is None:
                 return
 
-            self._label_painter_thread = LabelPainterThread(
+            self._label_painter_thread = LabelWorker(
                 mesh_points=mesh_points,
                 mesh_faces_flat=mesh_faces_flat,
                 labels_view=labels_cache,
@@ -2147,14 +2235,36 @@ class MVATManager(QObject):
             pass
 
         sphere_manager = getattr(self.viewer, '_sphere_manager', None)
+        try:
+            shape = getattr(sphere_manager, 'shape', None)
+            if shape is not None:
+                shape = str(shape).strip().lower()
+                if shape in ('circle', 'square'):
+                    return shape
+        except Exception:
+            pass
+
+        return 'circle'
+
+    def _get_active_3d_tool_kind(self):
+        active_tool = getattr(self.viewer, '_active_3d_tool', None)
         if active_tool is None:
             return None, None
 
-        tool_name = type(active_tool).__name__
-        if tool_name == 'Brush3DTool':
-            return 'brush', active_tool
-        if tool_name == 'Erase3DTool':
+        try:
+            tool_kind = getattr(active_tool, 'tool_kind', None)
+            if isinstance(tool_kind, str):
+                tool_kind = tool_kind.strip().lower()
+                if tool_kind in ('brush', 'erase'):
+                    return tool_kind, active_tool
+        except Exception:
+            pass
+
+        tool_name = type(active_tool).__name__.strip().lower()
+        if 'erase' in tool_name:
             return 'erase', active_tool
+        if 'brush' in tool_name:
+            return 'brush', active_tool
         return None, active_tool
 
     def _get_2d_tool(self, tool_kind: str):
@@ -2786,7 +2896,174 @@ class MVATManager(QObject):
         except Exception as e:
             print(f"⚠️ Hover overlay update failed: {e}")
 
+    def _project_world_to_view_pixel(self, world_point, image_height: int):
+        try:
+            point = np.asarray(world_point, dtype=np.float64).reshape(-1)
+            if point.size < 3:
+                return None
+
+            renderer = self.viewer.plotter.renderer
+            renderer.SetWorldPoint(float(point[0]), float(point[1]), float(point[2]), 1.0)
+            renderer.WorldToDisplay()
+            display = renderer.GetDisplayPoint()
+
+            u = float(display[0])
+            y_vtk = float(display[1])
+            if not np.isfinite(u) or not np.isfinite(y_vtk):
+                return None
+
+            # VTK display coordinates use a bottom-left origin; image arrays use top-left.
+            v = float(image_height - 1 - y_vtk)
+            return np.array([u, v], dtype=np.float64)
+        except Exception:
+            return None
+
+    def _estimate_view_pixels_per_world_unit(self, world_point, image_height: int):
+        center_px = self._project_world_to_view_pixel(world_point, image_height)
+        if center_px is None:
+            return None
+
+        try:
+            cam = self.viewer.plotter.camera
+            camera_pos = np.asarray(cam.position, dtype=np.float64).reshape(-1)
+            focal_point = np.asarray(cam.focal_point, dtype=np.float64).reshape(-1)
+            world_point = np.asarray(world_point, dtype=np.float64).reshape(-1)
+            if camera_pos.size < 3 or focal_point.size < 3 or world_point.size < 3:
+                return None
+
+            view_normal = focal_point[:3] - camera_pos[:3]
+            view_norm = float(np.linalg.norm(view_normal))
+            if view_norm < 1e-8:
+                return None
+            view_normal = view_normal / view_norm
+
+            tangent = None
+            for reference in (
+                np.array([0.0, 0.0, 1.0], dtype=np.float64),
+                np.array([0.0, 1.0, 0.0], dtype=np.float64),
+                np.array([1.0, 0.0, 0.0], dtype=np.float64),
+            ):
+                candidate = np.cross(view_normal, reference)
+                length = float(np.linalg.norm(candidate))
+                if length >= 1e-8:
+                    tangent = candidate / length
+                    break
+            if tangent is None:
+                return None
+
+            tangent_2 = np.cross(view_normal, tangent)
+            tangent_2_norm = float(np.linalg.norm(tangent_2))
+            if tangent_2_norm < 1e-8:
+                return None
+            tangent_2 = tangent_2 / tangent_2_norm
+
+            distance_to_camera = float(np.linalg.norm(world_point[:3] - camera_pos[:3]))
+            probe_distance = max(1e-4, min(0.25, distance_to_camera * 0.001))
+
+            samples = []
+            for direction in (tangent, tangent_2):
+                projected = self._project_world_to_view_pixel(world_point[:3] + direction * probe_distance, image_height)
+                if projected is None:
+                    continue
+                delta = float(np.linalg.norm(projected - center_px))
+                if np.isfinite(delta) and delta > 0.0:
+                    samples.append(delta / probe_distance)
+
+            if not samples:
+                return None
+
+            scale = float(np.mean(samples))
+            if not np.isfinite(scale) or scale <= 0.0:
+                return None
+            return scale
+        except Exception:
+            return None
+
+    def _filter_face_ids_by_world_brush_volume(self, primary_target, candidate_face_ids, center, radius, shape: str = 'circle'):
+        centers = getattr(primary_target, '_element_centers_np', None)
+        if centers is None:
+            return np.empty(0, dtype=np.int32)
+
+        try:
+            centers = np.asarray(centers, dtype=np.float32)
+        except Exception:
+            return np.empty(0, dtype=np.int32)
+
+        if centers.ndim != 2 or centers.shape[0] == 0:
+            return np.empty(0, dtype=np.int32)
+
+        try:
+            center = np.asarray(center, dtype=np.float32).reshape(-1)
+        except Exception:
+            return np.empty(0, dtype=np.int32)
+
+        if center.size < centers.shape[1]:
+            return np.empty(0, dtype=np.int32)
+        if center.size != centers.shape[1]:
+            center = center[:centers.shape[1]]
+
+        try:
+            radius = float(radius)
+        except Exception:
+            return np.empty(0, dtype=np.int32)
+
+        if radius <= 0.0:
+            return np.empty(0, dtype=np.int32)
+
+        shape = str(shape).strip().lower()
+        if shape not in ('circle', 'square'):
+            shape = 'circle'
+
+        if candidate_face_ids is None:
+            return np.empty(0, dtype=np.int32)
+
+        try:
+            candidate_face_ids = np.asarray(candidate_face_ids, dtype=np.int64).reshape(-1)
+        except Exception:
+            return np.empty(0, dtype=np.int32)
+
+        if candidate_face_ids.size == 0:
+            return np.empty(0, dtype=np.int32)
+
+        valid = (candidate_face_ids >= 0) & (candidate_face_ids < int(centers.shape[0]))
+        if not np.any(valid):
+            return np.empty(0, dtype=np.int32)
+
+        candidate_face_ids = np.unique(candidate_face_ids[valid]).astype(np.int32, copy=False)
+        candidate_centers = centers[candidate_face_ids]
+        deltas = candidate_centers - center.astype(np.float32)
+
+        if shape == 'square':
+            within = np.max(np.abs(deltas), axis=1) <= radius
+        else:
+            radius_sq = radius * radius
+            distances_sq = np.einsum('ij,ij->i', deltas, deltas)
+            within = distances_sq <= radius_sq
+
+        return candidate_face_ids[within].astype(np.int32, copy=False)
+
     def _get_faces_within_sphere(self, primary_target, center, radius, shape: str = 'circle'):
+        def _finish(face_ids_result):
+            face_ids_result = np.asarray(face_ids_result, dtype=np.int32).reshape(-1)
+            return face_ids_result
+
+        try:
+            center = np.asarray(center, dtype=np.float64)
+        except Exception:
+            return np.empty(0, dtype=np.int32)
+
+        try:
+            radius = float(radius)
+        except Exception:
+            return np.empty(0, dtype=np.int32)
+
+        if radius <= 0.0:
+            return np.empty(0, dtype=np.int32)
+
+        shape = str(shape).strip().lower()
+        if shape not in ('circle', 'square'):
+            shape = 'circle'
+
         try:
             primary_target.prepare_geometry()
         except Exception:
@@ -2796,23 +3073,18 @@ class MVATManager(QObject):
         if centers is None or len(centers) == 0:
             return np.empty(0, dtype=np.int32)
 
-        center = np.asarray(center, dtype=np.float64)
-        shape = str(shape).strip().lower()
-        if shape not in ('circle', 'square'):
-            shape = 'circle'
-
         try:
-            from scipy.spatial import cKDTree
+            from pykdtree.kdtree import KDTree
         except Exception:
-            cKDTree = None
+            KDTree = None
 
         tree = getattr(primary_target, '_hover_face_kdtree', None)
         tree_product_id = getattr(primary_target, '_hover_face_kdtree_product_id', None)
         if tree is None or tree_product_id != getattr(primary_target, 'product_id', None):
             tree = None
-            if cKDTree is not None:
+            if KDTree is not None:
                 try:
-                    tree = cKDTree(np.asarray(centers, dtype=np.float32))
+                    tree = KDTree(np.asarray(centers, dtype=np.float32))
                     primary_target._hover_face_kdtree = tree
                     primary_target._hover_face_kdtree_product_id = getattr(primary_target, 'product_id', None)
                 except Exception:
@@ -2820,18 +3092,12 @@ class MVATManager(QObject):
 
         if tree is not None:
             try:
-                if shape == 'square':
-                    candidate_ids = tree.query_ball_point(center, float(radius) * np.sqrt(3.0))
-                    if not candidate_ids:
-                        return np.empty(0, dtype=np.int32)
-                    candidate_ids = np.asarray(candidate_ids, dtype=np.int32)
-                    candidate_centers = np.asarray(centers, dtype=np.float32)[candidate_ids]
-                    deltas = np.abs(candidate_centers - center.astype(np.float32))
-                    within = np.max(deltas, axis=1) <= float(radius)
-                    return candidate_ids[within]
-
-                face_ids = tree.query_ball_point(center, float(radius))
-                return np.asarray(face_ids, dtype=np.int32)
+                search_radius = float(radius) * np.sqrt(3.0) if shape == 'square' else float(radius)
+                candidate_ids = self._query_kdtree_candidate_ids(tree, center, search_radius, int(centers.shape[0]))
+                if candidate_ids.size == 0:
+                    return _finish(np.empty(0, dtype=np.int32))
+                face_ids = self._filter_face_ids_by_world_brush_volume(primary_target, candidate_ids, center, radius, shape=shape)
+                return _finish(face_ids)
             except Exception:
                 pass
 
@@ -2842,158 +3108,9 @@ class MVATManager(QObject):
             radius_sq = float(radius) * float(radius)
             distances_sq = np.einsum('ij,ij->i', deltas, deltas)
             within = distances_sq <= radius_sq
-        return np.flatnonzero(within).astype(np.int32)
+        return _finish(np.flatnonzero(within).astype(np.int32))
 
     def clear_sphere_hover_overlay(self, reset_context: bool = False, render: bool = True):
-        if reset_context:
-            self._hover_overlay_context = None
-            self._hover_overlay_face_ids = None
-            self._hover_overlay_last_state = None
-        if self._hover_overlay_actor is not None:
-            try:
-                self._hover_overlay_actor.SetVisibility(False)
-            except Exception:
-                pass
-        self._clear_projected_cursor_previews(render=False)
-        if render:
-            try:
-                self.viewer.plotter.render()
-            except Exception:
-                pass
-
-    def refresh_sphere_hover_overlay(self, render: bool = True):
-        context = self._hover_overlay_context
-        if not context:
-            self.clear_sphere_hover_overlay(reset_context=False, render=render)
-            return
-
-        if not self._hover_overlay_enabled:
-            if self._hover_overlay_actor is not None:
-                try:
-                    self._hover_overlay_actor.SetVisibility(False)
-                except Exception:
-                    pass
-            center = context.get('center')
-            if center is not None:
-                self._sync_projected_cursor_previews(center, render=False)
-            if render:
-                try:
-                    self.viewer.plotter.render()
-                except Exception:
-                    pass
-            return
-
-        brush_shape = self._get_sphere_hover_shape()
-
-        try:
-            if not bool(getattr(self.viewer, '_sphere_visible', True)):
-                self.clear_sphere_hover_overlay(reset_context=False, render=render)
-                return
-            passthrough_active = getattr(self.viewer, '_is_sphere_passthrough_active', None)
-            if callable(passthrough_active) and passthrough_active():
-                self.clear_sphere_hover_overlay(reset_context=False, render=render)
-                return
-        except Exception:
-            pass
-
-        primary_target = self._get_primary_mesh_target()
-        if primary_target is None or getattr(primary_target, 'product_id', None) != context.get('product_id'):
-            self.clear_sphere_hover_overlay(reset_context=True, render=render)
-            return
-
-        color_rgb = self._get_active_label_color_rgb()
-        if color_rgb is None:
-            self.clear_sphere_hover_overlay(reset_context=False, render=render)
-            return
-
-        face_ids = self._hover_overlay_face_ids
-        if face_ids is None or len(face_ids) == 0:
-            center = context.get('center')
-            if center is None:
-                self.clear_sphere_hover_overlay(reset_context=True, render=render)
-                return
-
-            radius = self._get_sphere_hover_radius()
-            face_ids = self._get_faces_within_sphere(primary_target, center, radius, shape=brush_shape)
-            if face_ids is None or len(face_ids) == 0:
-                self.clear_sphere_hover_overlay(reset_context=True, render=render)
-                return
-
-            mesh = primary_target.get_render_mesh()
-            if mesh is None:
-                self.clear_sphere_hover_overlay(reset_context=True, render=render)
-                return
-
-            mesh_points = np.asarray(mesh.points, dtype=np.float32)
-            mesh_faces_flat = np.asarray(mesh.faces.reshape(-1, 4), dtype=np.int32)
-            overlay = LabelPainterThread.build_overlay(mesh_points, mesh_faces_flat, face_ids, color_rgb, attach_colors=False)
-            self._hover_overlay_face_ids = np.asarray(face_ids, dtype=np.int32)
-            self._hover_overlay_color_rgb = self._normalize_color_rgb(color_rgb)
-            self._set_hover_overlay_geometry(overlay, color_rgb, render=render)
-            self._sync_projected_cursor_previews(center, render=False)
-            return
-
-        # Geometry already exists; only update the color when the active label changes.
-        if self._hover_overlay_actor is None:
-            self._hover_overlay_face_ids = None
-            self.refresh_sphere_hover_overlay(render=render)
-            return
-
-        self._apply_hover_overlay_color(color_rgb, render=render)
-        center = context.get('center')
-        if center is not None:
-            self._sync_projected_cursor_previews(center, render=False)
-
-    def update_sphere_hover_overlay(self, center, render: bool = True):
-        primary_target = self._get_primary_mesh_target()
-        if primary_target is None:
-            self.clear_sphere_hover_overlay(reset_context=True, render=render)
-            return
-
-        brush_shape = self._get_sphere_hover_shape()
-        radius = self._get_sphere_hover_radius()
-
-        try:
-            if not bool(getattr(self.viewer, '_sphere_visible', True)):
-                self.clear_sphere_hover_overlay(reset_context=True, render=render)
-                return
-            passthrough_active = getattr(self.viewer, '_is_sphere_passthrough_active', None)
-            if callable(passthrough_active) and passthrough_active():
-                self.clear_sphere_hover_overlay(reset_context=False, render=render)
-                return
-        except Exception:
-            pass
-
-        try:
-            center = np.asarray(center, dtype=np.float64)
-        except Exception:
-            self.clear_sphere_hover_overlay(reset_context=True, render=render)
-            return
-
-        color_rgb = self._get_active_label_color_rgb()
-        if color_rgb is None:
-            self._hover_overlay_context = {
-                'product_id': getattr(primary_target, 'product_id', None),
-                'center': center,
-                'brush_shape': brush_shape,
-                'radius': radius,
-            }
-            self.clear_sphere_hover_overlay(reset_context=False, render=render)
-            return
-
-        color_rgb = self._normalize_color_rgb(color_rgb)
-        if color_rgb is None:
-            self.clear_sphere_hover_overlay(reset_context=True, render=render)
-            return
-
-        product_id = getattr(primary_target, 'product_id', None)
-        current_state = {
-            'product_id': product_id,
-            'center': center,
-            'brush_shape': brush_shape,
-            'radius': radius,
-            'color_rgb': color_rgb,
-        }
 
         if not self._hover_overlay_enabled:
             self._hover_overlay_context = current_state
@@ -3074,7 +3191,7 @@ class MVATManager(QObject):
 
         mesh_points = np.asarray(mesh.points, dtype=np.float32)
         mesh_faces_flat = np.asarray(mesh.faces.reshape(-1, 4), dtype=np.int32)
-        overlay = LabelPainterThread.build_overlay(mesh_points, mesh_faces_flat, face_ids, color_rgb, attach_colors=False)
+        overlay = LabelWorker.build_overlay(mesh_points, mesh_faces_flat, face_ids, color_rgb, attach_colors=False)
         self._set_hover_overlay_geometry(overlay, color_rgb, render=render)
         self._sync_projected_cursor_previews(center, render=False)
         self._hover_overlay_last_state = current_state
