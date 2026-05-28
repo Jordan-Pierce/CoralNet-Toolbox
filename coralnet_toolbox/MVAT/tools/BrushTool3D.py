@@ -10,6 +10,7 @@ mesh geometry regardless of whether any annotation cameras are loaded.
 """
 
 import warnings
+from time import perf_counter
 
 import numpy as np
 
@@ -18,6 +19,7 @@ from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import QMessageBox
 
 from coralnet_toolbox.MVAT.tools.Tool3D import Tool3D
+from coralnet_toolbox.MVAT.utils.MVATLogger import get_visibility_logger
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -69,43 +71,47 @@ class BrushTool3D(Tool3D):
     # ------------------------------------------------------------------
 
     def mousePressEvent(self, event, face_id: int, world_pos):
+        start_time = perf_counter()
         button = Qt.LeftButton
         try:
-            event_button = getattr(event, 'button', None)
-            if callable(event_button):
-                button = event_button()
-        except Exception:
-            button = Qt.LeftButton
+            try:
+                event_button = getattr(event, 'button', None)
+                if callable(event_button):
+                    button = event_button()
+            except Exception:
+                button = Qt.LeftButton
 
-        if button != Qt.LeftButton:
-            return
+            if button != Qt.LeftButton:
+                return
 
-        if self.preview_only:
-            return
+            if self.preview_only:
+                return
 
-        if self.painting:
-            self._finish_stroke()
-            return
+            if self.painting:
+                self._finish_stroke()
+                return
 
-        if not self._has_selected_label():
-            QMessageBox.warning(
-                self.mvat_viewer,
-                "No Label Selected",
-                "A label must be selected before using the brush tool.",
-            )
-            return
+            if not self._has_selected_label():
+                QMessageBox.warning(
+                    self.mvat_viewer,
+                    "No Label Selected",
+                    "A label must be selected before using the brush tool.",
+                )
+                return
 
-        if face_id < 0 or world_pos is None:
-            return
+            if face_id < 0 or world_pos is None:
+                return
 
-        primary = self._get_primary_mesh()
-        self.painting = True
-        self._stroke_label = self._get_selected_label()
-        self._stroke_face_ids.clear()
-        self._last_brush_volume_state = None
-        if primary is not None:
-            self.mvat_manager._ensure_label_painter(primary)
-        self._apply_brush(world_pos)
+            primary = self._get_primary_mesh()
+            self.painting = True
+            self._stroke_label = self._get_selected_label()
+            self._stroke_face_ids.clear()
+            self._last_brush_volume_state = None
+            if primary is not None:
+                self.mvat_manager._ensure_label_painter(primary)
+            self._apply_brush(world_pos)
+        finally:
+            get_visibility_logger().info(f"mousePressEvent: {perf_counter() - start_time:.4f}s")
 
     def mouseMoveEvent(self, event, face_id: int, world_pos):
         super().mouseMoveEvent(event, face_id, world_pos)
@@ -123,59 +129,84 @@ class BrushTool3D(Tool3D):
     # ------------------------------------------------------------------
 
     def _apply_brush(self, world_pos: np.ndarray):
+        start_time = perf_counter()
         primary = self._get_primary_mesh()
-        if primary is None:
-            return
-
-        selected_label = self._stroke_label or self._get_selected_label()
-        if selected_label is None:
-            return
-
-        class_id, color_rgb = self._resolve_label(selected_label)
-        if class_id is None:
-            return
-
+        radius = 0.0
+        face_count = 0
         try:
-            brush_shape = str(getattr(self, 'brush_shape', 'circle')).strip().lower()
-        except Exception:
-            brush_shape = 'circle'
+            if primary is None:
+                return
 
-        try:
-            radius = float(getattr(self, 'brush_size', 0.0))
-        except Exception:
-            radius = 0.0
+            selected_label = self._stroke_label or self._get_selected_label()
+            if selected_label is None:
+                return
 
-        if radius <= 0.0:
-            return
+            class_id, color_rgb = self._resolve_label(selected_label)
+            if class_id is None:
+                return
 
-        try:
-            world_pos = np.asarray(world_pos, dtype=np.float64).reshape(-1)
-        except Exception:
-            return
+            try:
+                brush_shape = str(getattr(self, 'brush_shape', 'circle')).strip().lower()
+            except Exception:
+                brush_shape = 'circle'
 
-        if world_pos.size < 3:
-            return
+            try:
+                radius = float(getattr(self, 'brush_size', 0.0))
+            except Exception:
+                radius = 0.0
 
-        product_id = getattr(primary, 'product_id', None)
-        label_id = getattr(selected_label, 'id', None)
-        current_center = world_pos[:3].copy()
+            if radius <= 0.0:
+                return
 
-        if self._should_skip_brush_volume_update(
-            product_id=product_id,
-            label_id=label_id,
-            brush_shape=brush_shape,
-            radius=radius,
-            center=current_center,
-        ):
-            return
+            try:
+                world_pos = np.asarray(world_pos, dtype=np.float64).reshape(-1)
+            except Exception:
+                return
 
-        face_ids = self._get_face_ids_in_brush_volume(world_pos)
-        if face_ids is None or len(face_ids) == 0:
-            return
+            if world_pos.size < 3:
+                return
 
-        face_ids_arr = np.asarray(face_ids, dtype=np.int32)
-        new_face_ids = [int(face_id) for face_id in face_ids_arr.tolist() if int(face_id) not in self._stroke_face_ids]
-        if not new_face_ids:
+            product_id = getattr(primary, 'product_id', None)
+            label_id = getattr(selected_label, 'id', None)
+            current_center = world_pos[:3].copy()
+
+            if self._should_skip_brush_volume_update(
+                product_id=product_id,
+                label_id=label_id,
+                brush_shape=brush_shape,
+                radius=radius,
+                center=current_center,
+            ):
+                return
+
+            face_ids = self._get_face_ids_in_brush_volume(world_pos)
+            if face_ids is None or len(face_ids) == 0:
+                return
+
+            face_ids_arr = np.asarray(face_ids, dtype=np.int32)
+            face_count = int(face_ids_arr.size)
+            new_face_ids = [int(face_id) for face_id in face_ids_arr.tolist() if int(face_id) not in self._stroke_face_ids]
+            if not new_face_ids:
+                self._last_brush_volume_state = (
+                    product_id,
+                    label_id,
+                    brush_shape,
+                    radius,
+                    current_center.copy(),
+                )
+                return
+
+            self._stroke_face_ids.update(new_face_ids)
+
+            submit_3d_face_paint = getattr(self.mvat_manager, 'submit_3d_face_paint', None)
+            if callable(submit_3d_face_paint):
+                submit_3d_face_paint(
+                    np.asarray(new_face_ids, dtype=np.int32),
+                    color_rgb,
+                    class_id,
+                    primary_target=primary,
+                )
+
             self._last_brush_volume_state = (
                 product_id,
                 label_id,
@@ -183,26 +214,10 @@ class BrushTool3D(Tool3D):
                 radius,
                 current_center.copy(),
             )
-            return
-
-        self._stroke_face_ids.update(new_face_ids)
-
-        submit_3d_face_paint = getattr(self.mvat_manager, 'submit_3d_face_paint', None)
-        if callable(submit_3d_face_paint):
-            submit_3d_face_paint(
-                np.asarray(new_face_ids, dtype=np.int32),
-                color_rgb,
-                class_id,
-                primary_target=primary,
+        finally:
+            get_visibility_logger().info(
+                f"_apply_brush: {perf_counter() - start_time:.4g}s | radius={radius:.4g} | faces={face_count}"
             )
-
-        self._last_brush_volume_state = (
-            product_id,
-            label_id,
-            brush_shape,
-            radius,
-            current_center.copy(),
-        )
 
     def _get_face_ids_in_brush_volume(self, world_pos: np.ndarray):
         primary = self._get_primary_mesh()

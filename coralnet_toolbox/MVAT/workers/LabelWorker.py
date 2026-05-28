@@ -6,6 +6,7 @@ in-place updates for re-paints. Emits `pyvista.PolyData` overlays at a
 rate-limited cadence so the main thread can swap a tiny actor.
 """
 import time
+from time import perf_counter
 from queue import Queue, Empty
 
 import numpy as np
@@ -28,6 +29,8 @@ import numpy as np
 import pyvista as pv
 from queue import Queue, Empty
 from PyQt5.QtCore import QThread, pyqtSignal
+
+from coralnet_toolbox.MVAT.utils.MVATLogger import get_visibility_logger
 
 
 class LabelWorker(QThread):
@@ -203,6 +206,7 @@ class LabelWorker(QThread):
         self._queue.put(None)  # unblock the get()
 
     def run(self):
+        start_time = perf_counter()
         while self._running:
             try:
                 item = self._queue.get(timeout=1.0)
@@ -243,6 +247,7 @@ class LabelWorker(QThread):
                 overlay = self._snapshot_overlay()
                 if overlay is not None:
                     self.overlay_ready.emit(overlay)
+        get_visibility_logger().info(f"LabelWorker.run: {perf_counter() - start_time:.4f}s")
 
     def _snapshot_overlay(self):
         if self._overlay_state_dirty:

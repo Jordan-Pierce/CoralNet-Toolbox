@@ -12,6 +12,7 @@ Customized interaction style:
 import os
 import time
 import traceback
+from time import perf_counter
 
 import numpy as np
 
@@ -35,6 +36,7 @@ from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED
 from coralnet_toolbox.MVAT.tools import BrushTool3D, EraseTool3D
 from coralnet_toolbox.MVAT.ui.QtCameraAnimator import CameraAnimator
 from coralnet_toolbox import theme as app_theme
+from coralnet_toolbox.MVAT.utils.MVATLogger import get_visibility_logger
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -1206,30 +1208,29 @@ class MVATViewer(QFrame):
 
     def _on_left_press(self, obj, event):
         """Handle Left Click to detect Double Clicks."""
+        start_time = perf_counter()
         active_tool = getattr(self, '_active_3d_tool', None)
-        if active_tool is not None and not bool(getattr(active_tool, 'preview_only', True)):
-            try:
-                world_pos = self._fast_hardware_pick()
-                active_tool.mousePressEvent(event, 1, world_pos)
-            except Exception as e:
-                pass
-            return
+        try:
+            if active_tool is not None and not bool(getattr(active_tool, 'preview_only', True)):
+                try:
+                    world_pos = self._fast_hardware_pick()
+                    active_tool.mousePressEvent(event, 1, world_pos)
+                except Exception:
+                    pass
+                return
 
-        if self.is_sphere_tracking_enabled():
-            self._last_click_time = time.time() * 1000
-            return
+            if self.is_sphere_tracking_enabled():
+                self._last_click_time = time.time() * 1000
+                return
 
-        # Get current time in milliseconds
-        current_time = time.time() * 1000
-        
-        # Get system double click interval
-        dc_interval = QApplication.doubleClickInterval()
-        
-        # Check if this click happened close enough to the last one
-        if (current_time - self._last_click_time) < dc_interval:
-            self._handle_double_click()
-            
-        self._last_click_time = current_time
+            current_time = time.time() * 1000
+            dc_interval = QApplication.doubleClickInterval()
+            if (current_time - self._last_click_time) < dc_interval:
+                self._handle_double_click()
+
+            self._last_click_time = current_time
+        finally:
+            get_visibility_logger().info(f"_on_left_press: {perf_counter() - start_time:.4f}s")
         # Pass event through so standard rotation (Left Drag) still works
 
     def _apply_right_pan_delta(self, x: int, y: int):
@@ -1349,6 +1350,7 @@ class MVATViewer(QFrame):
 
     def _process_sphere_hover_update(self):
         """Process the most recent queued mouse-move batch for the sphere actor."""
+        start_time = perf_counter()
         try:
             pending_events = self._sphere_hover_pending_events
             self._sphere_hover_pending_events = 0
@@ -1419,6 +1421,8 @@ class MVATViewer(QFrame):
         except Exception:
             # Silent failure
             pass
+        finally:
+            get_visibility_logger().info(f"_process_sphere_hover_update: {perf_counter() - start_time:.4f}s")
 
     def _on_mouse_move(self, obj, event):
         """

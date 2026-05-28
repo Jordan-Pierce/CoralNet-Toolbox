@@ -11,6 +11,7 @@ import time
 import threading
 import numpy as np
 import traceback
+from time import perf_counter
 from typing import Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -2070,6 +2071,7 @@ class MVATManager(QObject):
 
     def _on_overlay_ready(self, overlay, force_recreate: bool = False, render: bool = True):
         """Main thread: update the overlay actor in place when possible."""
+        start_time = perf_counter()
         try:
             if overlay is None:
                 if self._label_overlay_actor is not None:
@@ -2160,6 +2162,8 @@ class MVATManager(QObject):
                     pass
         except Exception as e:
             print(f"⚠️ Overlay swap failed: {e}")
+        finally:
+            get_visibility_logger().info(f"_on_overlay_ready: {perf_counter() - start_time:.4f}s")
 
     def _on_label_window_selected(self, *_args):
         """Refresh the hover overlay when the active label changes."""
@@ -5324,9 +5328,6 @@ class MVATManager(QObject):
 
     def _on_3d_brush_stroke_applied(self, face_ids, label):
         self._propagate_3d_face_ids_to_context_cameras(face_ids, label, erase=False)
-
-    def _on_3d_erase_stroke_applied(self, face_ids, label):
-        self._propagate_3d_face_ids_to_context_cameras(face_ids, label, erase=True)
 
     def _on_sam_prediction_applied(self, scene_pos, label_id: str, binary_mask: np.ndarray):
         """Propagate a final SAM mask prediction into all visible context cameras.
