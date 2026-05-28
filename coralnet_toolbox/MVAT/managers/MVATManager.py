@@ -5320,10 +5320,14 @@ class MVATManager(QObject):
             project_labels=project_labels,
             class_label_ids={int(source_class_id): label_id} if int(source_class_id) != 0 else {},
             fallback_payload=None,
+            skip_3d_paint=True,
         )
 
     def _on_3d_brush_stroke_applied(self, face_ids, label):
         self._propagate_3d_face_ids_to_context_cameras(face_ids, label, erase=False)
+
+    def _on_3d_erase_stroke_applied(self, face_ids, label=None):
+        self._propagate_3d_face_ids_to_context_cameras(face_ids, label, erase=True)
 
     def _on_sam_prediction_applied(self, scene_pos, label_id: str, binary_mask: np.ndarray):
         """Propagate a final SAM mask prediction into all visible context cameras.
@@ -5397,7 +5401,8 @@ class MVATManager(QObject):
                                   target_paths: set,
                                   project_labels: list,
                                   class_label_ids: dict,
-                                  fallback_payload=None):
+                                  fallback_payload=None,
+                                  skip_3d_paint: bool = False):
         """Queue a propagation job onto the single unified background worker."""
         t0 = perf_counter()
         if source_camera is None or not target_paths:
@@ -5445,6 +5450,7 @@ class MVATManager(QObject):
                 dict(class_label_ids or {}),
                 primary_target,
                 payload,
+                skip_3d_paint,
             )
         except Exception:
             self._pending_unified_propagation_jobs = max(
@@ -5464,7 +5470,8 @@ class MVATManager(QObject):
                                   project_labels,
                                   class_label_ids,
                                   primary_target,
-                                  fallback_payload=None):
+                                  fallback_payload=None,
+                                  skip_3d_paint: bool = False):
         """Background worker for brush, SAM, and semantic mask propagation."""
         from time import perf_counter
         t0 = perf_counter()
@@ -5493,7 +5500,7 @@ class MVATManager(QObject):
                         winning_classes == source_class_id
                     ]
 
-            if primary_target and hasattr(primary_target, 'apply_labels'):
+            if primary_target and hasattr(primary_target, 'apply_labels') and not skip_3d_paint:
                 for source_class_id, subset_elements in class_to_elements.items():
                     if subset_elements.size == 0:
                         continue
@@ -5809,6 +5816,7 @@ class MVATManager(QObject):
     def _on_universal_repaint(self, repaint_tasks: list):
         """Apply localized UI updates produced by the unified propagation worker."""
         t0 = perf_counter()
+        needs_3d_flush = False
         try:
             for task in repaint_tasks:
                 task_type = task.get('type')
@@ -5819,6 +5827,7 @@ class MVATManager(QObject):
                         task['source_class_id'],
                         primary_target=task.get('primary_target'),
                     )
+                    needs_3d_flush = True
                     continue
 
                 if task_type != 'repaint':
@@ -5858,6 +5867,10 @@ class MVATManager(QObject):
                 self._pending_unified_propagation_jobs - 1,
             )
             self._propagating_annotation = self._pending_unified_propagation_jobs > 0
+            if needs_3d_flush:
+                finish_stroke = getattr(self, 'finish_3d_stroke', None)
+                if callable(finish_stroke):
+                    finish_stroke()
             print(f"DEBUG [Sync Repaint (Main Thread)]: Pushed {len(repaint_tasks)} image updates to UI in {(perf_counter() - t0) * 1000:.2f}ms")
 
     def _on_semantic_prediction_applied(self, image_path: str, source_mask_annotation, prediction_regions=None):
