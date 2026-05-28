@@ -3277,10 +3277,24 @@ class MVATManager(QObject):
         """Rebuild the hover overlay from the current hover context."""
         if not self._hover_overlay_enabled:
             try:
-                self._clear_hover_dynamic_markers(render=False)
                 self._set_hover_overlay_geometry(None, None, render=render)
             except Exception:
                 pass
+
+            context = self._hover_overlay_context or {}
+            center = context.get('center')
+            if center is not None:
+                try:
+                    center = np.asarray(center, dtype=np.float64).reshape(-1)
+                except Exception:
+                    center = None
+
+            if center is not None and center.size >= 3 and np.all(np.isfinite(center[:3])):
+                self._sync_projected_cursor_previews(center[:3], render=False)
+                self._sync_hover_dynamic_markers(center[:3], render=False)
+            else:
+                self._clear_projected_cursor_previews(render=False)
+                self._clear_hover_dynamic_markers(render=False)
             return
 
         context = self._hover_overlay_context

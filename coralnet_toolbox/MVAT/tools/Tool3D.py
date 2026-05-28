@@ -239,13 +239,11 @@ class Tool3D:
         if not self.active:
             return
 
-        is_painting = bool(getattr(self, 'painting', False))
-
         if world_pos is not None:
             self._last_hover_world_pos = np.asarray(world_pos, dtype=np.float64)
             self._update_preview_sphere(world_pos)
             manager = getattr(self, 'mvat_manager', None)
-            if manager is not None and not is_painting:
+            if manager is not None:
                 try:
                     manager.update_sphere_hover_overlay(world_pos, render=False)
                 except Exception:
@@ -254,7 +252,7 @@ class Tool3D:
             self._last_hover_world_pos = None
             self._hide_preview_sphere()
             manager = getattr(self, 'mvat_manager', None)
-            if manager is not None and not is_painting:
+            if manager is not None:
                 try:
                     manager.clear_sphere_hover_overlay(reset_context=True, render=False)
                 except Exception:
