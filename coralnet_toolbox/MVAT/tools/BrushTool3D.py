@@ -273,11 +273,11 @@ class BrushTool3D(Tool3D):
 
         try:
             if self._stroke_face_ids.size > 0:
-                # 1. Tell manager we are done so it clears overlay and flushes to GPU.
-                finish_stroke = getattr(self.mvat_manager, 'finish_3d_stroke', None)
-                if callable(finish_stroke):
+                # 1. Reset the debounce timer instead of flushing instantly.
+                request_flush = getattr(self.mvat_manager, 'request_lazy_flush', None)
+                if callable(request_flush):
                     try:
-                        finish_stroke()
+                        request_flush()
                     except Exception:
                         pass
 

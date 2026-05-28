@@ -501,6 +501,12 @@ class MVATManager(QObject):
         )
         self._universal_repaint_signal.connect(self._on_universal_repaint, Qt.QueuedConnection)
 
+        # Lazy flush debounce timer: 3D GPU uploads happen only after the user pauses.
+        self._lazy_flush_timer = QTimer(self)
+        self._lazy_flush_timer.setSingleShot(True)
+        self._lazy_flush_timer.setInterval(1000)
+        self._lazy_flush_timer.timeout.connect(self._execute_lazy_flush)
+
         # --- Label Painter Thread ---
         self._label_painter_thread = None
 
@@ -1983,36 +1989,46 @@ class MVATManager(QObject):
                 class_ids=class_ids,
             )
             self._label_painter_thread.overlay_ready.connect(self._on_overlay_ready, Qt.QueuedConnection)
-            self._label_painter_thread.flush_requested.connect(self._on_flush_requested, Qt.QueuedConnection)
             self._label_painter_thread.start()
         except Exception as e:
             print(f"⚠️ _ensure_label_painter failed: {e}")
 
-    def finish_3d_stroke(self, primary_target=None):
-        """Signal the background worker that a brush stroke is complete, prompting a flush."""
-        if primary_target is None:
-            primary_target = self._get_primary_mesh_target()
+    def request_lazy_flush(self):
+        """Called on mouse-release or tool completion to start/reset the debounce timer."""
+        self._lazy_flush_timer.start()
+        status_bar = getattr(self.main_window, 'status_bar', None)
+        if status_bar is not None:
+            status_bar.showMessage("Waiting for pause to commit 3D paint...", 1500)
 
-        painter = self._label_painter_thread
-        if painter is not None and painter.isRunning():
-            painter.finish_stroke()
-        else:
+    def _execute_lazy_flush(self):
+        """The actual heavy VTK upload. Runs only when the user pauses."""
+        status_bar = getattr(self.main_window, 'status_bar', None)
+        if status_bar is not None:
+            status_bar.showMessage("Saving paint to 3D model...", 0)
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            # 1. Tell LabelWorker to clear its temporary overlay.
+            painter = self._label_painter_thread
+            if painter is not None and painter.isRunning():
+                painter.finish_stroke()
+            else:
+                self._on_overlay_ready(None)
+
+            # 2. Do the heavy VBO rebuild.
+            primary_target = self._get_primary_mesh_target()
             if primary_target and hasattr(primary_target, 'flush_labels_to_gpu'):
                 primary_target.flush_labels_to_gpu()
-                try:
-                    self.viewer.plotter.render()
-                except Exception:
-                    pass
 
-    def _on_flush_requested(self):
-        """Commit the numpy RAM buffer to VTK and trigger a heavy frame render."""
-        primary_target = self._get_primary_mesh_target()
-        if primary_target and hasattr(primary_target, 'flush_labels_to_gpu'):
-            primary_target.flush_labels_to_gpu()
+            # 3. Force the screen to update.
             try:
                 self.viewer.plotter.render()
             except Exception:
                 pass
+        finally:
+            QApplication.restoreOverrideCursor()
+            if status_bar is not None:
+                status_bar.showMessage("3D model updated.", 3000)
 
     def _build_primary_mesh_overlay(self):
         """Snapshot the current painted mesh faces into a tiny overlay payload."""
@@ -5868,9 +5884,9 @@ class MVATManager(QObject):
             )
             self._propagating_annotation = self._pending_unified_propagation_jobs > 0
             if needs_3d_flush:
-                finish_stroke = getattr(self, 'finish_3d_stroke', None)
-                if callable(finish_stroke):
-                    finish_stroke()
+                request_flush = getattr(self, 'request_lazy_flush', None)
+                if callable(request_flush):
+                    request_flush()
             print(f"DEBUG [Sync Repaint (Main Thread)]: Pushed {len(repaint_tasks)} image updates to UI in {(perf_counter() - t0) * 1000:.2f}ms")
 
     def _on_semantic_prediction_applied(self, image_path: str, source_mask_annotation, prediction_regions=None):

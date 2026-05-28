@@ -28,8 +28,6 @@ class LabelWorker(QThread):
     
     # Emits the tiny PolyData to swap into the plotter
     overlay_ready = pyqtSignal(object)
-    # Signals the main thread to push the final RAM buffers to VTK
-    flush_requested = pyqtSignal()
 
     def __init__(self, mesh_points: np.ndarray, mesh_faces_flat: np.ndarray,
                  labels_view: np.ndarray, class_ids: np.ndarray, parent=None):
@@ -107,7 +105,6 @@ class LabelWorker(QThread):
                 self._current_stroke_faces = np.empty(0, dtype=np.int32)
                 self._overlay_state_dirty = True
                 self.overlay_ready.emit(None)
-                self.flush_requested.emit()
                 continue
 
             # Always emit when queue drains — guarantees final stroke state is rendered
