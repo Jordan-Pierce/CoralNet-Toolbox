@@ -1949,8 +1949,8 @@ class MVATViewer(QFrame):
     @staticmethod
     def _detect_ply_type(file_path: str) -> str:
         """
-        Peek at the PLY header to infer whether the file is a mesh, point
-        cloud, or 3D Gaussian Splatting scene — without loading the full file.
+        Peek at the PLY header to choose a sensible default without loading
+        the full file.
 
         Detection rules (in priority order):
           1. Header contains ``element face`` → mesh
@@ -1979,42 +1979,39 @@ class MVATViewer(QFrame):
     def _prompt_ply_type_dialog(self, file_path: str):
         """
         Show a modal dialog asking the user what type of data a .ply file
-        contains.  The combobox is pre-selected to the auto-detected type so
-        the user only needs to confirm (or override) rather than always choose.
+        contains.
 
-        Returns one of ``'Mesh'``, ``'Point Cloud'``,
-        ``'3D Gaussian Splatting'``, or ``None`` if the user cancelled.
+        Returns ``(ply_type, calculate_kd_tree)`` or ``None`` if cancelled.
         """
-        from PyQt5.QtWidgets import QDialog, QDialogButtonBox, QComboBox, QLabel, QVBoxLayout
+        from PyQt5.QtWidgets import QDialog, QDialogButtonBox, QComboBox, QLabel, QVBoxLayout, QFormLayout
 
         detected = self._detect_ply_type(file_path)
 
         options = ['Mesh', 'Point Cloud', '3D Gaussian Splatting']
         default_index = {'mesh': 0, 'pointcloud': 1, 'gaussian': 2}.get(detected, 0)
-        hint_text = {
-            'mesh':       'Faces detected in the PLY header.',
-            'pointcloud': 'No faces or 3DGS fields detected in the PLY header.',
-            'gaussian':   '3DGS spherical-harmonic fields detected in the PLY header.',
-        }.get(detected, '')
 
         dialog = QDialog(self.window())
         dialog.setWindowTitle('PLY File Type')
         dialog.setModal(True)
-        dialog.resize(400, 160)
+        dialog.resize(420, 200)
 
         layout = QVBoxLayout(dialog)
         layout.addWidget(QLabel(f'<b>{os.path.basename(file_path)}</b>'))
         layout.addWidget(QLabel('Select the data type contained in this PLY file:'))
 
+        form_layout = QFormLayout()
+
         combo = QComboBox(dialog)
         combo.addItems(options)
         combo.setCurrentIndex(default_index)
-        layout.addWidget(combo)
+        form_layout.addRow('Product type:', combo)
 
-        if hint_text:
-            hint = QLabel(hint_text)
-            hint.setStyleSheet('color: gray; font-style: italic;')
-            layout.addWidget(hint)
+        kd_combo = QComboBox(dialog)
+        kd_combo.addItems(['True', 'False'])
+        kd_combo.setCurrentIndex(0)
+        form_layout.addRow('Calculate KD-Tree:', kd_combo)
+
+        layout.addLayout(form_layout)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, dialog)
         buttons.accepted.connect(dialog.accept)
@@ -2023,7 +2020,7 @@ class MVATViewer(QFrame):
 
         if dialog.exec_() != QDialog.Accepted:
             return None
-        return combo.currentText()
+        return combo.currentText(), kd_combo.currentText() == 'True'
 
     def dragEnterEvent(self, event):
         """Accept drag if a single supported 3D file is being dragged."""
@@ -2052,12 +2049,14 @@ class MVATViewer(QFrame):
         # For PLY files, ask the user which data type the file contains BEFORE
         # setting the wait cursor so the dialog is fully interactive.
         ply_type = None
+        calculate_kd_tree = True
         if file_ext == '.ply':
-            ply_type = self._prompt_ply_type_dialog(file_path)
-            if ply_type is None:
+            dialog_result = self._prompt_ply_type_dialog(file_path)
+            if dialog_result is None:
                 # User cancelled the dialog — abort the drop silently.
                 event.ignore()
                 return
+            ply_type, calculate_kd_tree = dialog_result
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
@@ -2075,14 +2074,15 @@ class MVATViewer(QFrame):
                 if hasattr(product, 'prepare_geometry'):
                     product.prepare_geometry()
 
-                # Build the KD-tree immediately so the first brush interaction
-                # does not need to warm it up later.
-                manager = getattr(self, 'mvat_manager', None)
-                if manager is not None and hasattr(manager, '_prewarm_spatial_caches'):
-                    try:
-                        manager._prewarm_spatial_caches(product)
-                    except Exception:
-                        pass
+                if calculate_kd_tree:
+                    # Build the KD-tree immediately so the first brush interaction
+                    # does not need to warm it up later.
+                    manager = getattr(self, 'mvat_manager', None)
+                    if manager is not None and hasattr(manager, '_prewarm_spatial_caches'):
+                        try:
+                            manager._prewarm_spatial_caches(product)
+                        except Exception:
+                            pass
 
                 self.add_product(product)
                 self.render_scene()

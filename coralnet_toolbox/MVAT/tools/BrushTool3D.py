@@ -99,14 +99,6 @@ class BrushTool3D(Tool3D):
             return
 
         primary = self._get_primary_mesh()
-
-        if primary is not None and getattr(primary, '_hover_face_kdtree', None) is None:
-            try:
-                self.mvat_manager.main_window.status_bar.showMessage("KD-Tree is still building. Please wait a moment...", 3000)
-            except Exception:
-                pass
-            return
-
         self.painting = True
         self._stroke_label = self._get_selected_label()
         self._stroke_face_ids.clear()

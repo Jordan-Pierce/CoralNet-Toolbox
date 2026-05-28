@@ -1055,9 +1055,9 @@ class MVATManager(QObject):
 
             centers = getattr(primary_target, '_element_centers_np', None)
             if centers is not None and len(centers) > 0:
-                from scipy.spatial import cKDTree
+                from pykdtree.kdtree import KDTree
 
-                tree = cKDTree(np.asarray(centers, dtype=np.float32))
+                tree = KDTree(np.asarray(centers, dtype=np.float32))
                 primary_target._hover_face_kdtree = tree
                 primary_target._hover_face_kdtree_product_id = getattr(primary_target, 'product_id', None)
 
@@ -1072,6 +1072,50 @@ class MVATManager(QObject):
         except Exception as e:
             build_elapsed_s = time.perf_counter() - build_start
             print(f"🌳 KD-Tree build failed after {build_elapsed_s:.2f} s: {e}")
+
+    def _query_kdtree_candidate_ids(self, tree, center, search_radius, total_count: int, initial_k: int = 256):
+        try:
+            center = np.asarray(center, dtype=np.float32).reshape(1, -1)
+            search_radius = float(search_radius)
+            total_count = int(total_count)
+        except Exception:
+            return np.empty(0, dtype=np.int32)
+
+        if total_count <= 0 or search_radius <= 0.0:
+            return np.empty(0, dtype=np.int32)
+
+        k = min(max(1, int(initial_k)), total_count)
+        while True:
+            # pykdtree only exposes k-nearest queries, so keep expanding k until
+            # the furthest returned neighbor falls outside the target radius.
+            try:
+                distances, indices = tree.query(center, k=k)
+            except Exception:
+                return np.empty(0, dtype=np.int32)
+
+            distances = np.asarray(distances).reshape(-1)
+            indices = np.asarray(indices).reshape(-1)
+            if distances.size == 0 or indices.size == 0:
+                return np.empty(0, dtype=np.int32)
+
+            finite = np.isfinite(distances)
+            if not np.any(finite):
+                return np.empty(0, dtype=np.int32)
+
+            valid = finite & (indices >= 0) & (indices < total_count) & (distances <= search_radius)
+            candidate_ids = np.unique(indices[valid]).astype(np.int32, copy=False)
+
+            if k >= total_count:
+                return candidate_ids
+
+            farthest = float(np.max(distances[finite]))
+            if farthest > search_radius:
+                return candidate_ids
+
+            next_k = min(total_count, max(k * 2, k + 1))
+            if next_k == k:
+                return candidate_ids
+            k = next_k
 
     def _maybe_compute_ortho_index_map(self):
         """Build the ortho face-ID index map if ortho camera + mesh are both ready."""
@@ -3030,17 +3074,17 @@ class MVATManager(QObject):
             return np.empty(0, dtype=np.int32)
 
         try:
-            from scipy.spatial import cKDTree
+            from pykdtree.kdtree import KDTree
         except Exception:
-            cKDTree = None
+            KDTree = None
 
         tree = getattr(primary_target, '_hover_face_kdtree', None)
         tree_product_id = getattr(primary_target, '_hover_face_kdtree_product_id', None)
         if tree is None or tree_product_id != getattr(primary_target, 'product_id', None):
             tree = None
-            if cKDTree is not None:
+            if KDTree is not None:
                 try:
-                    tree = cKDTree(np.asarray(centers, dtype=np.float32))
+                    tree = KDTree(np.asarray(centers, dtype=np.float32))
                     primary_target._hover_face_kdtree = tree
                     primary_target._hover_face_kdtree_product_id = getattr(primary_target, 'product_id', None)
                 except Exception:
@@ -3048,17 +3092,11 @@ class MVATManager(QObject):
 
         if tree is not None:
             try:
-                if shape == 'square':
-                    candidate_ids = tree.query_ball_point(center, float(radius) * np.sqrt(3.0))
-                    if not candidate_ids:
-                        return _finish(np.empty(0, dtype=np.int32))
-                    candidate_ids = np.asarray(candidate_ids, dtype=np.int32)
-                    candidate_centers = np.asarray(centers, dtype=np.float32)[candidate_ids]
-                    deltas = np.abs(candidate_centers - center.astype(np.float32))
-                    within = np.max(deltas, axis=1) <= float(radius)
-                    return _finish(candidate_ids[within].astype(np.int32, copy=False))
-
-                face_ids = tree.query_ball_point(center, float(radius))
+                search_radius = float(radius) * np.sqrt(3.0) if shape == 'square' else float(radius)
+                candidate_ids = self._query_kdtree_candidate_ids(tree, center, search_radius, int(centers.shape[0]))
+                if candidate_ids.size == 0:
+                    return _finish(np.empty(0, dtype=np.int32))
+                face_ids = self._filter_face_ids_by_world_brush_volume(primary_target, candidate_ids, center, radius, shape=shape)
                 return _finish(face_ids)
             except Exception:
                 pass
