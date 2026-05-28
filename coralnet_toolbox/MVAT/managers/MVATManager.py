@@ -2142,7 +2142,10 @@ class MVATManager(QObject):
             t2 = perf_counter()
             if render:
                 try:
-                    self.viewer.plotter.render()
+                    last_render_time = getattr(self, '_last_vtk_render_time', None)
+                    if last_render_time is None or (perf_counter() - last_render_time) > 0.033:
+                        self.viewer.plotter.render()
+                        self._last_vtk_render_time = perf_counter()
                 except Exception:
                     pass
             t3 = perf_counter()

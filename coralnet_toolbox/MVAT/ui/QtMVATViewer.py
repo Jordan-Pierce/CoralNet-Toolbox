@@ -1421,8 +1421,6 @@ class MVATViewer(QFrame):
         except Exception:
             # Silent failure
             pass
-        finally:
-            get_visibility_logger().info(f"_process_sphere_hover_update: {perf_counter() - start_time:.4f}s")
 
     def _on_mouse_move(self, obj, event):
         """

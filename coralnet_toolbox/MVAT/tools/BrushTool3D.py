@@ -129,6 +129,12 @@ class BrushTool3D(Tool3D):
     # ------------------------------------------------------------------
 
     def _apply_brush(self, world_pos: np.ndarray):
+        now = perf_counter()
+        last_apply_time = getattr(self, '_last_apply_time', None)
+        if last_apply_time is not None and (now - last_apply_time) < 0.016:
+            return
+        self._last_apply_time = now
+
         start_time = perf_counter()
         primary = self._get_primary_mesh()
         radius = 0.0

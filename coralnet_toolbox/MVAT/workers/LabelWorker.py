@@ -71,13 +71,13 @@ class LabelWorker(QThread):
         self._buf_face_ids = np.full(len(class_ids), -1, dtype=np.int32)
         self._buf_colors = np.zeros((len(class_ids), 3), dtype=np.uint8)
         self._n_faces = 0
+        self._cached_painted_faces = np.empty(0, dtype=np.int32)
         self._last_emit_time = 0
         self._min_emit_interval = 0.016
         self._overlay_state_dirty = False
 
         self._queue: Queue = Queue()
         self._running = True
-        self._rebuild_overlay_buffer_from_state()
 
     def submit(self, face_ids: np.ndarray, color_rgb: tuple, class_id: int):
         """
@@ -92,75 +92,80 @@ class LabelWorker(QThread):
                 break
         self._queue.put((face_ids.copy(), color_rgb, class_id))
 
-    def _clear_overlay_buffer(self):
-        self._n_faces = 0
-        self._face_to_buf.fill(-1)
-        self._buf_face_ids.fill(-1)
-        self._buf_colors.fill(0)
-        self._overlay_state_dirty = False
-
-    def _rebuild_overlay_buffer_from_state(self):
-        painted_faces = np.flatnonzero(self._class_ids != 0)
-        self._clear_overlay_buffer()
-        if painted_faces.size == 0:
-            return
-
-        n_faces = int(painted_faces.size)
-        self._buf_face_ids[:n_faces] = painted_faces.astype(np.int32, copy=False)
-        self._buf_colors[:n_faces] = self._labels_view[painted_faces]
-        self._face_to_buf[painted_faces] = np.arange(n_faces, dtype=np.int32)
-        self._n_faces = n_faces
-
     def mark_state_dirty(self):
         """Flag that shared label buffers changed outside the painter thread."""
         self._overlay_state_dirty = True
 
-    def _remove_face_from_buffer(self, face_id: int):
-        buf_index = int(self._face_to_buf[face_id])
-        if buf_index < 0:
-            return
+    def stop(self):
+        self._running = False
+        self._queue.put(None)  # unblock the get()
 
-        last_index = self._n_faces - 1
-        if buf_index != last_index:
-            last_face_id = int(self._buf_face_ids[last_index])
-            self._buf_face_ids[buf_index] = last_face_id
-            self._buf_colors[buf_index] = self._buf_colors[last_index]
-            self._face_to_buf[last_face_id] = buf_index
+    def run(self):
+        start_time = perf_counter()
+        while self._running:
+            try:
+                item = self._queue.get(timeout=1.0)
+            except Empty:
+                continue
 
-        self._buf_face_ids[last_index] = -1
-        self._buf_colors[last_index] = 0
-        self._face_to_buf[face_id] = -1
-        self._n_faces -= 1
+            if item is None:
+                break
 
-    def _upsert_face_in_buffer(self, face_id: int, color_rgb):
-        buf_index = int(self._face_to_buf[face_id])
-        if buf_index < 0:
-            buf_index = self._n_faces
-            self._buf_face_ids[buf_index] = face_id
-            self._face_to_buf[face_id] = buf_index
-            self._n_faces += 1
+            try:
+                # -----------------------------------------------------------------
+                # 1. Update RAM buffers in pure C (Instant)
+                # -----------------------------------------------------------------
+                face_ids, color_rgb, class_id = item
+                self._class_ids[face_ids] = class_id
+                self._labels_view[face_ids] = color_rgb
 
-        color_arr = np.asarray(color_rgb, dtype=np.uint8).reshape(-1)
-        if color_arr.size >= 3:
-            self._buf_colors[buf_index, :3] = color_arr[:3]
+                # 2. Flag that we need to rebuild the snapshot
+                self._overlay_state_dirty = True
+            except Exception as e:
+                print(f"⚠️ LabelWorker processing error: {e}")
+                # Thread stays alive — don't re-raise
 
-    def _apply_item_to_overlay_buffer(self, face_ids, color_rgb, class_id: int):
-        face_ids_arr = np.asarray(face_ids, dtype=np.int32).ravel()
-        if face_ids_arr.size == 0:
-            return
+            # Always emit when queue drains — guarantees final stroke is never dropped
+            if self._queue.empty():
+                overlay = self._snapshot_overlay()
+                if overlay is not None:
+                    self.overlay_ready.emit(overlay)
+                self._last_emit_time = time.monotonic()
+                continue
 
-        limit = self._face_to_buf.size
-        if class_id == 0:
-            for face_id in face_ids_arr:
-                face_id = int(face_id)
-                if 0 <= face_id < limit:
-                    self._remove_face_from_buffer(face_id)
-            return
+            # Rate-limited emit for intermediate strokes only
+            now = time.monotonic()
+            if now - self._last_emit_time >= self._min_emit_interval:
+                self._last_emit_time = now
+                overlay = self._snapshot_overlay()
+                if overlay is not None:
+                    self.overlay_ready.emit(overlay)
+        get_visibility_logger().info(f"LabelWorker.run: {perf_counter() - start_time:.4f}s")
 
-        for face_id in face_ids_arr:
-            face_id = int(face_id)
-            if 0 <= face_id < limit:
-                self._upsert_face_in_buffer(face_id, color_rgb)
+    def _snapshot_overlay(self):
+        if self._overlay_state_dirty:
+            painted_faces = np.flatnonzero(self._class_ids != 0).astype(np.int32, copy=False)
+            self._cached_painted_faces = painted_faces
+            self._overlay_state_dirty = False
+
+        if self._cached_painted_faces.size == 0:
+            return None
+
+        colors = self._labels_view[self._cached_painted_faces]
+
+        return self._build_overlay(
+            self._cached_painted_faces,
+            colors,
+        )
+
+    def _build_overlay(self, face_ids: np.ndarray,
+                       color_rgb) -> pv.PolyData | None:
+        """
+        Build a tiny PolyData containing only the painted faces.
+        
+        Complexity: O(M) where M = len(face_ids). Does NOT traverse the full mesh.
+        """
+        return self.build_overlay(self._points, self._faces4, face_ids, color_rgb)
 
     @staticmethod
     def build_overlay(mesh_points: np.ndarray, mesh_faces_flat: np.ndarray,
@@ -172,8 +177,8 @@ class LabelWorker(QThread):
                 return None
 
             selected = mesh_faces_flat[face_ids, 1:]
-            
-            # BYPASS np.unique: Just copy the vertices directly
+
+            # FAST PATH: Directly copy vertices without sorting/welding
             overlay_points = mesh_points[selected.ravel()]
 
             # Build a naive face array where every 3 vertices make a new triangle
@@ -200,80 +205,3 @@ class LabelWorker(QThread):
         except Exception as e:
             print(f"⚠️ LabelWorker.build_overlay failed: {e}")
             return None
-
-    def stop(self):
-        self._running = False
-        self._queue.put(None)  # unblock the get()
-
-    def run(self):
-        start_time = perf_counter()
-        while self._running:
-            try:
-                item = self._queue.get(timeout=1.0)
-            except Empty:
-                continue
-
-            if item is None:
-                break
-            if item == 'clear':
-                self._clear_overlay_buffer()
-                continue
-
-            try:
-                t0 = perf_counter()
-                face_ids, color_rgb, class_id = item
-                # -----------------------------------------------------------------
-                # 1. Update RAM buffers (O(M), pure numpy, safe off main thread
-                #    because the main thread never reads these during painting)
-                # -----------------------------------------------------------------
-                self._class_ids[face_ids] = class_id
-                self._labels_view[face_ids] = color_rgb
-                self._apply_item_to_overlay_buffer(face_ids, color_rgb, class_id)
-                t1 = perf_counter()
-            except Exception as e:
-                print(f"⚠️ LabelWorker processing error: {e}")
-                # Thread stays alive — don't re-raise
-
-            # Always emit when queue drains — guarantees final stroke is never dropped
-            if self._queue.empty():
-                t2 = perf_counter()
-                overlay = self._snapshot_overlay()
-                t3 = perf_counter()
-                print(
-                    f"DEBUG [LabelWorker]: Buffer Update: {(t1 - t0) * 1000:.2f}ms | "
-                    f"Build Overlay: {(t3 - t2) * 1000:.2f}ms | Faces: {self._n_faces}"
-                )
-                if overlay is not None:
-                    self.overlay_ready.emit(overlay)
-                self._last_emit_time = time.monotonic()
-                continue
-
-            # Rate-limited emit for intermediate strokes only
-            now = time.monotonic()
-            if now - self._last_emit_time >= self._min_emit_interval:
-                self._last_emit_time = now
-                overlay = self._snapshot_overlay()
-                if overlay is not None:
-                    self.overlay_ready.emit(overlay)
-        get_visibility_logger().info(f"LabelWorker.run: {perf_counter() - start_time:.4f}s")
-
-    def _snapshot_overlay(self):
-        if self._overlay_state_dirty:
-            self._rebuild_overlay_buffer_from_state()
-
-        if self._n_faces == 0:
-            return None
-
-        return self._build_overlay(
-            self._buf_face_ids[:self._n_faces],
-            self._buf_colors[:self._n_faces],
-        )
-
-    def _build_overlay(self, face_ids: np.ndarray,
-                       color_rgb) -> pv.PolyData | None:
-        """
-        Build a tiny PolyData containing only the painted faces.
-        
-        Complexity: O(M) where M = len(face_ids). Does NOT traverse the full mesh.
-        """
-        return self.build_overlay(self._points, self._faces4, face_ids, color_rgb)
