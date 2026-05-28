@@ -77,7 +77,9 @@ class EraseTool(BrushTool):
             self.cursor_annotation = QGraphicsRectItem(rect)
         
         self.cursor_annotation.setBrush(QColor(0, 0, 0, 0))
-        pen = QPen(QColor(0, 0, 0), 4)
+        pen = QPen(QColor(255, 0, 0, 200), 2)
+        pen.setStyle(Qt.DashLine)
+        pen.setCosmetic(True)
         self.cursor_annotation.setPen(pen)
         
         self.annotation_window.scene.addItem(self.cursor_annotation)

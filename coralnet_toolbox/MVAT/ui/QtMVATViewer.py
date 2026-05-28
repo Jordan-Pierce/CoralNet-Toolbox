@@ -12,6 +12,7 @@ Customized interaction style:
 import os
 import time
 import traceback
+from time import perf_counter
 
 import numpy as np
 
@@ -35,6 +36,7 @@ from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED
 from coralnet_toolbox.MVAT.tools import BrushTool3D, EraseTool3D
 from coralnet_toolbox.MVAT.ui.QtCameraAnimator import CameraAnimator
 from coralnet_toolbox import theme as app_theme
+from coralnet_toolbox.MVAT.utils.MVATLogger import get_visibility_logger
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -406,10 +408,11 @@ class MVATViewer(QFrame):
         self.plotter.disable_shadows()
         self.plotter.disable_depth_peeling()
         
-        # Add observer for Left Click (for Double-Click detection)
+        # Add observer for Left Click (for tool interaction / double-click detection)
         # This is added to the Interactor directly, so it persists
         self.plotter.interactor.AddObserver("LeftButtonPressEvent", self._on_left_press)
         self._last_click_time = 0
+        self._last_right_click_time = 0
 
         # Scene context replaces single point_cloud with heterogeneous product collection
         self.scene_context = SceneContext()
@@ -982,6 +985,13 @@ class MVATViewer(QFrame):
             except Exception:
                 pass
 
+        # Rebind the right-button observer after stripping the style-level
+        # handlers so double-right-click focal-point picks still work.
+        try:
+            self.plotter.interactor.AddObserver("RightButtonPressEvent", self._on_right_press)
+        except Exception:
+            pass
+
         # 2a. Qt-driven right-button pan (see eventFilter). Track state here.
         self._right_pan_active = False
         self._right_pan_last_xy = None
@@ -1205,32 +1215,45 @@ class MVATViewer(QFrame):
         return super().eventFilter(obj, event)
 
     def _on_left_press(self, obj, event):
-        """Handle Left Click to detect Double Clicks."""
+        """Handle Left Click to detect tool presses and legacy double-clicks."""
+        start_time = perf_counter()
         active_tool = getattr(self, '_active_3d_tool', None)
-        if active_tool is not None and not bool(getattr(active_tool, 'preview_only', True)):
-            try:
-                world_pos = self._fast_hardware_pick()
-                active_tool.mousePressEvent(event, 1, world_pos)
-            except Exception as e:
-                pass
-            return
+        try:
+            if active_tool is not None and not bool(getattr(active_tool, 'preview_only', True)):
+                try:
+                    world_pos = self._fast_hardware_pick()
+                    active_tool.mousePressEvent(event, 1, world_pos)
+                except Exception:
+                    pass
+                return
 
-        if self.is_sphere_tracking_enabled():
-            self._last_click_time = time.time() * 1000
-            return
+            if self.is_sphere_tracking_enabled():
+                self._last_click_time = time.time() * 1000
+                return
 
-        # Get current time in milliseconds
-        current_time = time.time() * 1000
-        
-        # Get system double click interval
-        dc_interval = QApplication.doubleClickInterval()
-        
-        # Check if this click happened close enough to the last one
-        if (current_time - self._last_click_time) < dc_interval:
-            self._handle_double_click()
-            
-        self._last_click_time = current_time
+            current_time = time.time() * 1000
+            dc_interval = QApplication.doubleClickInterval()
+            if (current_time - self._last_click_time) < dc_interval:
+                self._handle_double_click()
+
+            self._last_click_time = current_time
+        finally:
+            get_visibility_logger().info(f"_on_left_press: {perf_counter() - start_time:.4f}s")
         # Pass event through so standard rotation (Left Drag) still works
+
+    def _on_right_press(self, obj, event):
+        """Handle Right Click to detect double-right-click focal-point picks."""
+        start_time = perf_counter()
+        try:
+            current_time = time.time() * 1000
+            dc_interval = QApplication.doubleClickInterval()
+            if (current_time - self._last_right_click_time) < dc_interval:
+                self._handle_double_click()
+
+            self._last_right_click_time = current_time
+        finally:
+            get_visibility_logger().info(f"_on_right_press: {perf_counter() - start_time:.4f}s")
+        # Right-drag pan is handled separately in eventFilter.
 
     def _apply_right_pan_delta(self, x: int, y: int):
         """Pan the camera based on the latest Qt mouse-move position.
@@ -1285,6 +1308,8 @@ class MVATViewer(QFrame):
         Silently does nothing if no geometry is under the cursor (background click).
         """
         try:
+            self._right_pan_active = False
+            self._right_pan_last_xy = None
             # Stop any running inertia/animation so the animated focal-point
             # transition isn't immediately clobbered by the decay timer.
             self._cancel_camera_motion()
@@ -1349,6 +1374,7 @@ class MVATViewer(QFrame):
 
     def _process_sphere_hover_update(self):
         """Process the most recent queued mouse-move batch for the sphere actor."""
+        start_time = perf_counter()
         try:
             pending_events = self._sphere_hover_pending_events
             self._sphere_hover_pending_events = 0

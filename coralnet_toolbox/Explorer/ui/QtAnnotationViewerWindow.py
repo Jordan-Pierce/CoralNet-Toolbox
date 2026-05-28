@@ -177,12 +177,14 @@ class AnnotationViewerWindow(QWidget):
         toolbar.addWidget(sort_label)
         
         self.sort_combo = QComboBox()
-        self.sort_combo.addItems(["None", "Label", "Image", "Confidence", "Cluster"])
+        self.sort_combo.addItems(["None", "Label", "Image", "Confidence", "Area", "Cluster"])
+        self.sort_combo.insertSeparator(self.sort_combo.findText("Cluster"))
         self.sort_combo.currentTextChanged.connect(self._on_sort_changed)
         self.sort_combo.setMinimumWidth(100)
         toolbar.addWidget(self.sort_combo)
 
-        # "Cluster" is disabled until cluster data arrives from the EmbeddingViewer
+        # "Cluster" is disabled until cluster data arrives from the EmbeddingViewer.
+        # The separator keeps it visually grouped away from the standard sorts.
         self._set_cluster_sort_item_enabled(False)
 
         toolbar.addSeparator()
@@ -1280,6 +1282,8 @@ class AnnotationViewerWindow(QWidget):
             items.sort(key=lambda i: (os.path.basename(i.annotation.image_path), i.get_effective_confidence()))
         elif sort_type == "Confidence":
             items.sort(key=self._confidence_sort_key)
+        elif sort_type == "Area":
+            items.sort(key=self._area_sort_key)
         elif sort_type == "Cluster":
             # Build {ann_id -> cluster_id} from the EmbeddingViewer
             cluster_map = {}
@@ -1408,6 +1412,20 @@ class AnnotationViewerWindow(QWidget):
                 os.path.basename(item.annotation.image_path), 
                 item.annotation.id)
 
+    def _area_sort_key(self, item):
+        """Sort annotations from smallest area to largest area."""
+        try:
+            area = float(item.annotation.get_area())
+        except Exception:
+            area = float('inf')
+
+        return (
+            area,
+            item.effective_label.short_label_code,
+            os.path.basename(item.annotation.image_path),
+            item.annotation.id,
+        )
+
     @pyqtSlot(object)
     def _on_annotation_updated(self, updated_annotation):
         """Coalesce annotationUpdated signals before refreshing the gallery.
@@ -1516,7 +1534,7 @@ class AnnotationViewerWindow(QWidget):
         """Enable or disable the 'Cluster' entry in the sort combo."""
         try:
             model = self.sort_combo.model()
-            # "Cluster" is always the last item (index 4)
+            # Locate by text so the helper still works if the sort menu order changes.
             idx = self.sort_combo.findText("Cluster")
             if idx < 0:
                 return

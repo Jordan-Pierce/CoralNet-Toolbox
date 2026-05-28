@@ -12,6 +12,10 @@ LOGGER_NAME = "coralnet_toolbox.MVAT.visibility"
 SECTION_WIDTH = 50
 
 
+def _fmt_seconds(value: float) -> str:
+    return f"{value:.4g}s"
+
+
 def configure_visibility_logging(level: int = logging.INFO, stream=None) -> logging.Logger:
     """Configure the dedicated MVAT visibility logger once."""
     logger = logging.getLogger(LOGGER_NAME)
@@ -58,7 +62,7 @@ def log_section(title: str, logger: logging.Logger | None = None) -> None:
 
 def log_cam_stage(cam: str, stage: str, elapsed: float, logger: logging.Logger | None = None) -> None:
     logger = logger or get_visibility_logger()
-    logger.info(f"   {cam}: {elapsed:.4f}s | {stage}: {elapsed:.3f}s")
+    logger.info(f"   {cam}: {_fmt_seconds(elapsed)} | {stage}: {_fmt_seconds(elapsed)}")
 
 
 def log_cam_breakdown(
@@ -75,15 +79,15 @@ def log_cam_breakdown(
 ) -> None:
     logger = logger or get_visibility_logger()
     logger.info(
-        f"      {cam}: {cam_time:.4f}s | Prep: {prep:.3f} | Render: {render:.3f} | "
-        f"Snap: {screenshot:.3f} | Decode: {decode:.3f} | Depth: {depth:.3f} | "
-        f"Finalize: {finalize:.3f} | Residual: {residual:.3f}"
+        f"      {cam}: {_fmt_seconds(cam_time)} | Prep: {_fmt_seconds(prep)} | Render: {_fmt_seconds(render)} | "
+        f"Snap: {_fmt_seconds(screenshot)} | Decode: {_fmt_seconds(decode)} | Depth: {_fmt_seconds(depth)} | "
+        f"Finalize: {_fmt_seconds(finalize)} | Residual: {_fmt_seconds(residual)}"
     )
 
 
 def log_cam_complete(cam: str, elapsed: float, logger: logging.Logger | None = None) -> None:
     logger = logger or get_visibility_logger()
-    logger.info(f"   ✅ {cam} completed in {elapsed:.2f}s")
+    logger.info(f"   ✅ {cam} completed in {_fmt_seconds(elapsed)}")
 
 
 def log_summary(title: str, lines: Sequence[str], logger: logging.Logger | None = None) -> None:

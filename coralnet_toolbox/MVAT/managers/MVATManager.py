@@ -11,6 +11,7 @@ import time
 import threading
 import numpy as np
 import traceback
+from time import perf_counter
 from typing import Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -32,6 +33,7 @@ from coralnet_toolbox.MVAT.utils.MVATLogger import (
 
 from coralnet_toolbox.MVAT.core.constants import (
     MARKER_COLOR_SELECTED,
+    MARKER_COLOR_HIGHLIGHTED,
     MARKER_COLOR_INVALID,
     RAY_COLOR_SELECTED,
     RAY_COLOR_HIGHLIGHTED,
@@ -499,6 +501,12 @@ class MVATManager(QObject):
             thread_name_prefix='mvat_unified_bg'
         )
         self._universal_repaint_signal.connect(self._on_universal_repaint, Qt.QueuedConnection)
+
+        # Lazy flush debounce timer: 3D GPU uploads happen only after the user pauses.
+        self._lazy_flush_timer = QTimer(self)
+        self._lazy_flush_timer.setSingleShot(True)
+        self._lazy_flush_timer.setInterval(1000)
+        self._lazy_flush_timer.timeout.connect(self._execute_lazy_flush)
 
         # --- Label Painter Thread ---
         self._label_painter_thread = None
@@ -1055,9 +1063,9 @@ class MVATManager(QObject):
 
             centers = getattr(primary_target, '_element_centers_np', None)
             if centers is not None and len(centers) > 0:
-                from pykdtree.kdtree import KDTree
+                from scipy.spatial import cKDTree
 
-                tree = KDTree(np.asarray(centers, dtype=np.float32))
+                tree = cKDTree(np.asarray(centers, dtype=np.float32))
                 primary_target._hover_face_kdtree = tree
                 primary_target._hover_face_kdtree_product_id = getattr(primary_target, 'product_id', None)
 
@@ -1075,42 +1083,24 @@ class MVATManager(QObject):
 
     def _query_kdtree_candidate_ids(self, tree, center, search_radius, total_count: int, initial_k: int = 256):
         try:
-            center = np.asarray(center, dtype=np.float32).reshape(1, -1)
+            center = np.asarray(center, dtype=np.float32).reshape(-1)
             search_radius = float(search_radius)
-            total_count = int(total_count)
         except Exception:
             return np.empty(0, dtype=np.int32)
 
-        if total_count <= 0 or search_radius <= 0.0:
+        if search_radius <= 0.0:
             return np.empty(0, dtype=np.int32)
 
-        k = min(max(1, int(initial_k)), total_count)
         while True:
-            # pykdtree only exposes k-nearest queries, so keep expanding k until
-            # the furthest returned neighbor falls outside the target radius.
             try:
-                distances, indices = tree.query(center, k=k)
+                candidate_ids = tree.query_ball_point(center, search_radius)
             except Exception:
                 return np.empty(0, dtype=np.int32)
 
-            distances = np.asarray(distances).reshape(-1)
-            indices = np.asarray(indices).reshape(-1)
-            if distances.size == 0 or indices.size == 0:
+            if not candidate_ids:
                 return np.empty(0, dtype=np.int32)
 
-            finite = np.isfinite(distances)
-            if not np.any(finite):
-                return np.empty(0, dtype=np.int32)
-
-            valid = finite & (indices >= 0) & (indices < total_count) & (distances <= search_radius)
-            candidate_ids = np.unique(indices[valid]).astype(np.int32, copy=False)
-
-            if k >= total_count:
-                return candidate_ids
-
-            farthest = float(np.max(distances[finite]))
-            if farthest > search_radius:
-                return candidate_ids
+            return np.asarray(candidate_ids, dtype=np.int32)
 
             next_k = min(total_count, max(k * 2, k + 1))
             if next_k == k:
@@ -2004,6 +1994,43 @@ class MVATManager(QObject):
         except Exception as e:
             print(f"⚠️ _ensure_label_painter failed: {e}")
 
+    def request_lazy_flush(self):
+        """Called on mouse-release or tool completion to start/reset the debounce timer."""
+        self._lazy_flush_timer.start()
+        status_bar = getattr(self.main_window, 'status_bar', None)
+        if status_bar is not None:
+            status_bar.showMessage("Waiting for pause to commit 3D paint...", 1500)
+
+    def _execute_lazy_flush(self):
+        """The actual heavy VTK upload. Runs only when the user pauses."""
+        status_bar = getattr(self.main_window, 'status_bar', None)
+        if status_bar is not None:
+            status_bar.showMessage("Saving paint to 3D model...", 0)
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            # 1. Tell LabelWorker to clear its temporary overlay.
+            painter = self._label_painter_thread
+            if painter is not None and painter.isRunning():
+                painter.finish_stroke()
+            else:
+                self._on_overlay_ready(None)
+
+            # 2. Do the heavy VBO rebuild.
+            primary_target = self._get_primary_mesh_target()
+            if primary_target and hasattr(primary_target, 'flush_labels_to_gpu'):
+                primary_target.flush_labels_to_gpu()
+
+            # 3. Force the screen to update.
+            try:
+                self.viewer.plotter.render()
+            except Exception:
+                pass
+        finally:
+            QApplication.restoreOverrideCursor()
+            if status_bar is not None:
+                status_bar.showMessage("3D model updated.", 3000)
+
     def _build_primary_mesh_overlay(self):
         """Snapshot the current painted mesh faces into a tiny overlay payload."""
         try:
@@ -2070,6 +2097,7 @@ class MVATManager(QObject):
 
     def _on_overlay_ready(self, overlay, force_recreate: bool = False, render: bool = True):
         """Main thread: update the overlay actor in place when possible."""
+        start_time = perf_counter()
         try:
             if overlay is None:
                 if self._label_overlay_actor is not None:
@@ -2084,6 +2112,8 @@ class MVATManager(QObject):
                         except Exception:
                             pass
                 return
+
+            t1 = perf_counter()
 
             def _add_overlay_actor(mesh_to_add):
                 return self.viewer.plotter.add_mesh(
@@ -2153,13 +2183,21 @@ class MVATManager(QObject):
                 self._label_overlay_actor.SetVisibility(True)
             except Exception:
                 pass
+            t2 = perf_counter()
             if render:
                 try:
-                    self.viewer.plotter.render()
+                    last_render_time = getattr(self, '_last_vtk_render_time', None)
+                    if last_render_time is None or (perf_counter() - last_render_time) > 0.033:
+                        self.viewer.plotter.render()
+                        self._last_vtk_render_time = perf_counter()
                 except Exception:
                     pass
+            t3 = perf_counter()
+            print(f"DEBUG [OverlayReady (Main Thread)]: VTK Swap: {(t1 - start_time) * 1000:.2f}ms | Render: {(t3 - t2) * 1000:.2f}ms")
         except Exception as e:
             print(f"⚠️ Overlay swap failed: {e}")
+        finally:
+            get_visibility_logger().info(f"_on_overlay_ready: {perf_counter() - start_time:.4f}s")
 
     def _on_label_window_selected(self, *_args):
         """Refresh the hover overlay when the active label changes."""
@@ -2765,6 +2803,7 @@ class MVATManager(QObject):
         if not enabled:
             self._hover_overlay_face_ids = None
             self._hover_overlay_last_state = None
+            self._clear_hover_dynamic_markers(render=False)
             if self._hover_overlay_actor is not None:
                 try:
                     self._hover_overlay_actor.SetVisibility(False)
@@ -3047,6 +3086,7 @@ class MVATManager(QObject):
             face_ids_result = np.asarray(face_ids_result, dtype=np.int32).reshape(-1)
             return face_ids_result
 
+        # 1. Input sanitization
         try:
             center = np.asarray(center, dtype=np.float64)
         except Exception:
@@ -3064,71 +3104,261 @@ class MVATManager(QObject):
         if shape not in ('circle', 'square'):
             shape = 'circle'
 
+        # 2. Hard guardrail: If background thread hasn't finished KD-Tree, abort immediately
+        tree = getattr(primary_target, '_hover_face_kdtree', None)
+        if tree is None:
+            return _finish(np.empty(0, dtype=np.int32))
+
+        # 3. Fast Spatial Query
         try:
-            primary_target.prepare_geometry()
+            centers = getattr(primary_target, '_element_centers_np', None)
+            if centers is None or len(centers) == 0:
+                return _finish(np.empty(0, dtype=np.int32))
+
+            search_radius = float(radius) * np.sqrt(3.0) if shape == 'square' else float(radius)
+            candidate_ids = self._query_kdtree_candidate_ids(tree, center, search_radius, int(centers.shape[0]))
+            
+            if candidate_ids.size == 0:
+                return _finish(np.empty(0, dtype=np.int32))
+                
+            face_ids = self._filter_face_ids_by_world_brush_volume(primary_target, candidate_ids, center, radius, shape=shape)
+            return _finish(face_ids)
+            
+        except Exception:
+            return _finish(np.empty(0, dtype=np.int32))
+
+    def clear_sphere_hover_overlay(self, reset_context: bool = False, render: bool = True):
+        """Hide the sphere hover overlay and clear projected cursor previews."""
+        if reset_context:
+            self._hover_overlay_context = None
+
+        self._hover_overlay_face_ids = None
+        self._hover_overlay_last_state = None
+        self._hover_overlay_color_rgb = None
+
+        try:
+            self._set_hover_overlay_geometry(None, None, render=False)
         except Exception:
             pass
 
-        centers = getattr(primary_target, '_element_centers_np', None)
-        if centers is None or len(centers) == 0:
-            return np.empty(0, dtype=np.int32)
-
         try:
-            from pykdtree.kdtree import KDTree
+            self._clear_projected_cursor_previews(render=False)
         except Exception:
-            KDTree = None
+            pass
 
-        tree = getattr(primary_target, '_hover_face_kdtree', None)
-        tree_product_id = getattr(primary_target, '_hover_face_kdtree_product_id', None)
-        if tree is None or tree_product_id != getattr(primary_target, 'product_id', None):
-            tree = None
-            if KDTree is not None:
-                try:
-                    tree = KDTree(np.asarray(centers, dtype=np.float32))
-                    primary_target._hover_face_kdtree = tree
-                    primary_target._hover_face_kdtree_product_id = getattr(primary_target, 'product_id', None)
-                except Exception:
-                    tree = None
+        self._clear_hover_dynamic_markers(render=False)
 
-        if tree is not None:
+        if render:
             try:
-                search_radius = float(radius) * np.sqrt(3.0) if shape == 'square' else float(radius)
-                candidate_ids = self._query_kdtree_candidate_ids(tree, center, search_radius, int(centers.shape[0]))
-                if candidate_ids.size == 0:
-                    return _finish(np.empty(0, dtype=np.int32))
-                face_ids = self._filter_face_ids_by_world_brush_volume(primary_target, candidate_ids, center, radius, shape=shape)
-                return _finish(face_ids)
+                self.viewer.plotter.render()
             except Exception:
                 pass
 
-        deltas = np.asarray(centers, dtype=np.float32) - center.astype(np.float32)
-        if shape == 'square':
-            within = np.max(np.abs(deltas), axis=1) <= float(radius)
-        else:
-            radius_sq = float(radius) * float(radius)
-            distances_sq = np.einsum('ij,ij->i', deltas, deltas)
-            within = distances_sq <= radius_sq
-        return _finish(np.flatnonzero(within).astype(np.int32))
+    def _clear_hover_dynamic_markers(self, render: bool = False):
+        """Hide dynamic marker overlays that mirror the 3D hover point."""
+        try:
+            if self.annotation_window is not None:
+                self.annotation_window.clear_dynamic_marker()
+        except Exception:
+            pass
 
-    def clear_sphere_hover_overlay(self, reset_context: bool = False, render: bool = True):
+        try:
+            if self.context_matrix is not None:
+                self.context_matrix.clear_all_dynamic_markers()
+        except Exception:
+            pass
 
-        if not self._hover_overlay_enabled:
-            self._hover_overlay_context = current_state
-            self._hover_overlay_face_ids = None
-            self._hover_overlay_last_state = None
-            if self._hover_overlay_actor is not None:
-                try:
-                    self._hover_overlay_actor.SetVisibility(False)
-                except Exception:
-                    pass
+        if render:
+            try:
+                self.viewer.plotter.render()
+            except Exception:
+                pass
 
-            self._sync_projected_cursor_previews(center, render=False)
-            if render:
-                try:
-                    self.viewer.plotter.render()
-                except Exception:
-                    pass
+    def _project_hover_dynamic_marker(self, camera, world_point):
+        """Project a 3D hover point into a camera for dynamic-marker display."""
+        if camera is None or world_point is None:
+            return None
+
+        try:
+            world_point = np.asarray(world_point, dtype=np.float64).reshape(-1)
+        except Exception:
+            return None
+
+        if world_point.size < 3 or not np.all(np.isfinite(world_point[:3])):
+            return None
+
+        try:
+            projected = camera.project(world_point[:3])
+            if projected is None:
+                return None
+            projected = np.asarray(projected, dtype=np.float64).reshape(-1)
+        except Exception:
+            return None
+
+        if projected.size < 2 or not np.all(np.isfinite(projected[:2])):
+            return None
+
+        u, v = float(projected[0]), float(projected[1])
+
+        width = getattr(camera, 'width', None)
+        height = getattr(camera, 'height', None)
+        try:
+            if width is not None and height is not None and width > 0 and height > 0:
+                if not (0 <= u < float(width) and 0 <= v < float(height)):
+                    return None
+        except Exception:
+            pass
+
+        is_visible = True
+        try:
+            is_visible = not bool(camera.is_point_occluded_depth_based(world_point[:3], depth_threshold=0.15))
+        except Exception:
+            pass
+
+        return u, v, is_visible
+
+    def _sync_hover_dynamic_markers(self, world_point, render: bool = False):
+        """Update dynamic markers so 2D views mirror the current 3D hover point."""
+        if world_point is None:
+            self._clear_hover_dynamic_markers(render=render)
             return
+
+        selected_camera = getattr(self, 'selected_camera', None)
+        if selected_camera is not None:
+            projection = self._project_hover_dynamic_marker(selected_camera, world_point)
+            if projection is None:
+                try:
+                    self.annotation_window.clear_dynamic_marker()
+                except Exception:
+                    pass
+            else:
+                u, v, is_visible = projection
+                color = MARKER_COLOR_HIGHLIGHTED if is_visible else MARKER_COLOR_INVALID
+                try:
+                    self.annotation_window.update_dynamic_marker(u, v, color=color, is_valid=is_visible)
+                except Exception:
+                    pass
+        else:
+            try:
+                self.annotation_window.clear_dynamic_marker()
+            except Exception:
+                pass
+
+        context_matrix = getattr(self, 'context_matrix', None)
+        if context_matrix is None:
+            return
+
+        projections = {}
+        accuracies = {}
+        visibility_status = {}
+        for camera in self._get_visible_context_cameras():
+            projection = self._project_hover_dynamic_marker(camera, world_point)
+            if projection is None:
+                continue
+
+            image_path = getattr(camera, 'image_path', None)
+            if not image_path:
+                continue
+
+            u, v, is_visible = projection
+            projections[image_path] = (u, v, is_visible)
+            accuracies[image_path] = True
+            visibility_status[image_path] = not is_visible
+
+        try:
+            context_matrix.update_dynamic_markers(projections, accuracies, visibility_status)
+        except Exception:
+            try:
+                context_matrix.clear_all_dynamic_markers()
+            except Exception:
+                pass
+
+    def refresh_sphere_hover_overlay(self, render: bool = True):
+        """Rebuild the hover overlay from the current hover context."""
+        if not self._hover_overlay_enabled:
+            try:
+                self._set_hover_overlay_geometry(None, None, render=render)
+            except Exception:
+                pass
+
+            context = self._hover_overlay_context or {}
+            center = context.get('center')
+            if center is not None:
+                try:
+                    center = np.asarray(center, dtype=np.float64).reshape(-1)
+                except Exception:
+                    center = None
+
+            if center is not None and center.size >= 3 and np.all(np.isfinite(center[:3])):
+                self._sync_projected_cursor_previews(center[:3], render=False)
+                self._sync_hover_dynamic_markers(center[:3], render=False)
+            else:
+                self._clear_projected_cursor_previews(render=False)
+                self._clear_hover_dynamic_markers(render=False)
+            return
+
+        context = self._hover_overlay_context
+        if not context:
+            self.clear_sphere_hover_overlay(reset_context=True, render=render)
+            return
+
+        try:
+            if not bool(getattr(self.viewer, '_sphere_visible', True)):
+                self._set_hover_overlay_geometry(None, None, render=render)
+                return
+
+            passthrough_active = getattr(self.viewer, '_is_sphere_passthrough_active', None)
+            if callable(passthrough_active) and passthrough_active():
+                self._set_hover_overlay_geometry(None, None, render=render)
+                return
+        except Exception:
+            pass
+
+        primary_target = self._get_primary_mesh_target()
+        if primary_target is None or getattr(primary_target, 'product_id', None) != context.get('product_id'):
+            self.clear_sphere_hover_overlay(reset_context=True, render=render)
+            return
+
+        color_rgb = self._normalize_color_rgb(self._get_active_label_color_rgb())
+        if color_rgb is None:
+            self._clear_hover_dynamic_markers(render=False)
+            self._set_hover_overlay_geometry(None, None, render=render)
+            return
+
+        center = context.get('center')
+        if center is None:
+            self.clear_sphere_hover_overlay(reset_context=True, render=render)
+            return
+
+        try:
+            center = np.asarray(center, dtype=np.float64).reshape(-1)
+        except Exception:
+            self.clear_sphere_hover_overlay(reset_context=True, render=render)
+            return
+
+        if center.size < 3 or not np.all(np.isfinite(center[:3])):
+            self.clear_sphere_hover_overlay(reset_context=True, render=render)
+            return
+
+        radius = self._get_sphere_hover_radius()
+        try:
+            radius = float(radius)
+        except Exception:
+            radius = 0.0
+
+        if radius <= 0.0:
+            self._set_hover_overlay_geometry(None, color_rgb, render=render)
+            self._sync_hover_dynamic_markers(center[:3], render=False)
+            return
+
+        brush_shape = self._get_sphere_hover_shape()
+        current_state = {
+            'product_id': getattr(primary_target, 'product_id', None),
+            'center': center[:3].copy(),
+            'radius': radius,
+            'brush_shape': brush_shape,
+            'color_rgb': color_rgb,
+        }
 
         previous_state = self._hover_overlay_last_state
         if previous_state is not None and self._hover_overlay_actor is not None:
@@ -3145,7 +3375,7 @@ class MVATManager(QObject):
                 prev_center = previous_state.get('center')
 
                 if (
-                    prev_product_id == product_id and
+                    prev_product_id == current_state['product_id'] and
                     prev_shape == brush_shape and
                     prev_color == color_rgb and
                     prev_center is not None and
@@ -3153,7 +3383,7 @@ class MVATManager(QObject):
                     np.isclose(float(prev_radius), radius)
                 ):
                     try:
-                        center_delta = float(np.linalg.norm(center - np.asarray(prev_center, dtype=np.float64)))
+                        center_delta = float(np.linalg.norm(center[:3] - np.asarray(prev_center, dtype=np.float64).reshape(-1)[:3]))
                     except Exception:
                         center_delta = None
 
@@ -3162,13 +3392,17 @@ class MVATManager(QObject):
                     if center_delta is not None and center_delta <= max(1e-6, radius * 0.02):
                         self._hover_overlay_context = current_state
                         self._hover_overlay_last_state = current_state.copy()
+                        self._sync_projected_cursor_previews(center[:3], render=False)
+                        self._sync_hover_dynamic_markers(center[:3], render=False)
                         return
 
         previous_face_ids = self._hover_overlay_face_ids
         self._hover_overlay_context = current_state
-        face_ids = self._get_faces_within_sphere(primary_target, center, radius, shape=brush_shape)
+        face_ids = self._get_faces_within_sphere(primary_target, center[:3], radius, shape=brush_shape)
         if face_ids is None or len(face_ids) == 0:
-            self.clear_sphere_hover_overlay(reset_context=True, render=render)
+            self._hover_overlay_face_ids = None
+            self._hover_overlay_last_state = current_state
+            self._set_hover_overlay_geometry(None, color_rgb, render=render)
             return
 
         face_ids = np.asarray(face_ids, dtype=np.int32)
@@ -3180,7 +3414,8 @@ class MVATManager(QObject):
 
         if same_faces and same_color and self._hover_overlay_actor is not None:
             self._apply_hover_overlay_color(color_rgb, render=render)
-            self._sync_projected_cursor_previews(center, render=False)
+            self._sync_projected_cursor_previews(center[:3], render=False)
+            self._sync_hover_dynamic_markers(center[:3], render=False)
             self._hover_overlay_last_state = current_state
             return
 
@@ -3193,8 +3428,44 @@ class MVATManager(QObject):
         mesh_faces_flat = np.asarray(mesh.faces.reshape(-1, 4), dtype=np.int32)
         overlay = LabelWorker.build_overlay(mesh_points, mesh_faces_flat, face_ids, color_rgb, attach_colors=False)
         self._set_hover_overlay_geometry(overlay, color_rgb, render=render)
-        self._sync_projected_cursor_previews(center, render=False)
+        self._sync_projected_cursor_previews(center[:3], render=False)
+        self._sync_hover_dynamic_markers(center[:3], render=False)
         self._hover_overlay_last_state = current_state
+
+    def update_sphere_hover_overlay(self, center, render: bool = True):
+        """Store the current hover center and refresh the sphere overlay."""
+        primary_target = self._get_primary_mesh_target()
+        if primary_target is None:
+            self.clear_sphere_hover_overlay(reset_context=True, render=render)
+            return
+
+        try:
+            if not bool(getattr(self.viewer, '_sphere_visible', True)):
+                self.clear_sphere_hover_overlay(reset_context=True, render=render)
+                return
+
+            passthrough_active = getattr(self.viewer, '_is_sphere_passthrough_active', None)
+            if callable(passthrough_active) and passthrough_active():
+                self.clear_sphere_hover_overlay(reset_context=False, render=render)
+                return
+        except Exception:
+            pass
+
+        try:
+            center = np.asarray(center, dtype=np.float64).reshape(-1)
+        except Exception:
+            self.clear_sphere_hover_overlay(reset_context=True, render=render)
+            return
+
+        if center.size < 3 or not np.all(np.isfinite(center[:3])):
+            self.clear_sphere_hover_overlay(reset_context=True, render=render)
+            return
+
+        self._hover_overlay_context = {
+            'product_id': getattr(primary_target, 'product_id', None),
+            'center': center[:3].copy(),
+        }
+        self.refresh_sphere_hover_overlay(render=render)
 
     # Note: full-GPU flush is intentionally removed. The overlay actor
     # is treated as the authoritative visualization for painted faces
@@ -3217,7 +3488,7 @@ class MVATManager(QObject):
                 - element_ids: (N,) array of element IDs or None for default indexing
                 - element_type: str ('point', 'face', or 'cell')
         """
-        from coralnet_toolbox.MVAT.core.Model import PointCloudProduct, MeshProduct
+        from coralnet_toolbox.MVAT.core.Products import PointCloudProduct, MeshProduct
         
         element_type = primary_target.get_element_type()
         
@@ -5070,6 +5341,7 @@ class MVATManager(QObject):
                 'source_class_id': int(source_class_id),
                 'mask': np.asarray(brush_mask, dtype=bool),
                 'center': (px, py),
+                'projections': self._build_projection(px, py),
                 'search_radius': float(max(brush_mask.shape) * 2.5),
             },
         )
@@ -5124,6 +5396,7 @@ class MVATManager(QObject):
                 'source_class_id': int(source_class_id) if source_class_id is not None else None,
                 'mask': np.asarray(fill_mask, dtype=bool) if fill_mask is not None else None,
                 'center': (px, py),
+                'projections': self._build_projection(px, py),
                 'search_radius': float(max(fill_mask.shape) * 2.5) if fill_mask is not None else 0.0,
             },
         )
@@ -5153,6 +5426,7 @@ class MVATManager(QObject):
                 'source_class_id': 0,
                 'mask': np.asarray(brush_mask, dtype=bool),
                 'center': (px, py),
+                'projections': self._build_projection(px, py),
                 'search_radius': float(max(brush_mask.shape) * 2.5),
             },
         )
@@ -5171,7 +5445,8 @@ class MVATManager(QObject):
             return
 
         try:
-            face_ids_arr = np.asarray(sorted({int(face_id) for face_id in face_ids if int(face_id) >= 0}), dtype=np.int64)
+            face_ids_arr = np.asarray(face_ids, dtype=np.int64)
+            face_ids_arr = np.unique(face_ids_arr[face_ids_arr >= 0])
         except Exception:
             return
 
@@ -5207,12 +5482,13 @@ class MVATManager(QObject):
             project_labels=project_labels,
             class_label_ids={int(source_class_id): label_id} if int(source_class_id) != 0 else {},
             fallback_payload=None,
+            skip_3d_paint=True,
         )
 
     def _on_3d_brush_stroke_applied(self, face_ids, label):
         self._propagate_3d_face_ids_to_context_cameras(face_ids, label, erase=False)
 
-    def _on_3d_erase_stroke_applied(self, face_ids, label):
+    def _on_3d_erase_stroke_applied(self, face_ids, label=None):
         self._propagate_3d_face_ids_to_context_cameras(face_ids, label, erase=True)
 
     def _on_sam_prediction_applied(self, scene_pos, label_id: str, binary_mask: np.ndarray):
@@ -5276,6 +5552,7 @@ class MVATManager(QObject):
                 'source_class_id': int(source_class_id),
                 'mask': np.asarray(binary_mask, dtype=np.uint8),
                 'center': (px, py),
+                'projections': self._build_projection(px, py),
                 'search_radius': float(max(binary_mask.shape) * 2.5),
             },
         )
@@ -5287,8 +5564,10 @@ class MVATManager(QObject):
                                   target_paths: set,
                                   project_labels: list,
                                   class_label_ids: dict,
-                                  fallback_payload=None):
+                                  fallback_payload=None,
+                                  skip_3d_paint: bool = False):
         """Queue a propagation job onto the single unified background worker."""
+        t0 = perf_counter()
         if source_camera is None or not target_paths:
             return
 
@@ -5334,6 +5613,7 @@ class MVATManager(QObject):
                 dict(class_label_ids or {}),
                 primary_target,
                 payload,
+                skip_3d_paint,
             )
         except Exception:
             self._pending_unified_propagation_jobs = max(
@@ -5342,6 +5622,8 @@ class MVATManager(QObject):
             )
             self._propagating_annotation = self._pending_unified_propagation_jobs > 0
             traceback.print_exc()
+        finally:
+            print(f"DEBUG [Sync Dispatch]: Packaged and queued job in {(perf_counter() - t0) * 1000:.2f}ms")
 
     def _do_universal_propagation(self,
                                   source_camera,
@@ -5351,9 +5633,13 @@ class MVATManager(QObject):
                                   project_labels,
                                   class_label_ids,
                                   primary_target,
-                                  fallback_payload=None):
+                                  fallback_payload=None,
+                                  skip_3d_paint: bool = False):
         """Background worker for brush, SAM, and semantic mask propagation."""
+        from time import perf_counter
+        t0 = perf_counter()
         repaint_tasks = []
+        mask_time = 0.0
 
         try:
             labels_by_id = {
@@ -5377,7 +5663,7 @@ class MVATManager(QObject):
                         winning_classes == source_class_id
                     ]
 
-            if primary_target and hasattr(primary_target, 'apply_labels'):
+            if primary_target and hasattr(primary_target, 'apply_labels') and not skip_3d_paint:
                 for source_class_id, subset_elements in class_to_elements.items():
                     if subset_elements.size == 0:
                         continue
@@ -5409,13 +5695,15 @@ class MVATManager(QObject):
                         'primary_target': primary_target,
                     })
 
+            centers = getattr(primary_target, '_element_centers_np', None)
+
             fallback_mode = None
             fallback_mask = None
             fallback_center = None
             fallback_search_radius = 0.0
             fallback_skip_ortho_index_lookup = False
             fallback_label_id = None
-            fallback_source_class_id = None
+            fallback_projections = {}
 
             if isinstance(fallback_payload, dict):
                 fallback_mode = str(fallback_payload.get('mode', '')).strip().lower()
@@ -5423,13 +5711,59 @@ class MVATManager(QObject):
                     fallback_mask = np.asarray(fallback_payload.get('mask'))
                 fallback_center = fallback_payload.get('center')
                 fallback_search_radius = float(fallback_payload.get('search_radius', 0.0) or 0.0)
-                fallback_skip_ortho_index_lookup = bool(
-                    fallback_payload.get('skip_ortho_index_lookup', False)
-                )
+                fallback_skip_ortho_index_lookup = bool(fallback_payload.get('skip_ortho_index_lookup', False))
                 fallback_label_id = fallback_payload.get('label_id')
-                fallback_source_class_id = fallback_payload.get('source_class_id')
+                fallback_projections = fallback_payload.get('projections', {}) or {}
 
-            projections = None
+            def _project_bbox_for_subset(target_camera, subset_elements):
+                if centers is None or target_camera is None or target_camera is self.ortho_camera:
+                    return None
+                try:
+                    subset_centers = np.asarray(centers[np.asarray(subset_elements, dtype=np.int64)], dtype=np.float64)
+                    if subset_centers.size == 0:
+                        return None
+
+                    min_pt = np.min(subset_centers, axis=0)
+                    max_pt = np.max(subset_centers, axis=0)
+                    corners_3d = np.array([
+                        [min_pt[0], min_pt[1], min_pt[2]],
+                        [min_pt[0], min_pt[1], max_pt[2]],
+                        [min_pt[0], max_pt[1], min_pt[2]],
+                        [min_pt[0], max_pt[1], max_pt[2]],
+                        [max_pt[0], min_pt[1], min_pt[2]],
+                        [max_pt[0], min_pt[1], max_pt[2]],
+                        [max_pt[0], max_pt[1], min_pt[2]],
+                        [max_pt[0], max_pt[1], max_pt[2]],
+                    ], dtype=np.float64)
+
+                    projected = []
+                    for corner in corners_3d:
+                        uv = target_camera.project(corner)
+                        if uv is None or np.isnan(uv).any():
+                            continue
+                        projected.append(uv)
+
+                    if not projected:
+                        return None
+
+                    projected = np.asarray(projected, dtype=np.float64)
+                    u_min = max(0, int(np.floor(np.min(projected[:, 0]))))
+                    u_max = min(int(target_camera.width), int(np.ceil(np.max(projected[:, 0]))) + 1)
+                    v_min = max(0, int(np.floor(np.min(projected[:, 1]))))
+                    v_max = min(int(target_camera.height), int(np.ceil(np.max(projected[:, 1]))) + 1)
+                    if u_min >= u_max or v_min >= v_max:
+                        return None
+
+                    margin_u = max(1, int(round((u_max - u_min) * 0.2)))
+                    margin_v = max(1, int(round((v_max - v_min) * 0.2)))
+                    return (
+                        max(0, u_min - margin_u),
+                        min(int(target_camera.width), u_max + margin_u),
+                        max(0, v_min - margin_v),
+                        min(int(target_camera.height), v_max + margin_v),
+                    )
+                except Exception:
+                    return None
 
             for target_path in target_paths:
                 target_camera = self._get_camera_for_path(target_path)
@@ -5458,26 +5792,13 @@ class MVATManager(QObject):
 
                 target_rect = None
                 target_label_ids = set()
-                bbox = None
-
-                if use_index_lookup and fallback_center is not None and fallback_search_radius > 0.0:
-                    if projections is None:
-                        projections = self._build_projection(
-                            int(fallback_center[0]),
-                            int(fallback_center[1]),
-                            source_camera=source_camera,
-                        )
-                    proj = projections.get(target_path)
-                    if proj is not None and proj[2]:
-                        target_u, target_v = proj[0], proj[1]
-                        bbox = (
-                            target_u - fallback_search_radius,
-                            target_u + fallback_search_radius,
-                            target_v - fallback_search_radius,
-                            target_v + fallback_search_radius,
-                        )
 
                 if use_index_lookup:
+                    t_mask_start = perf_counter()
+                    target_index_map = target_camera._raster.index_map
+                    target_mask_data = target_mask.mask_data
+                    max_idx = int(np.max(target_index_map))
+
                     for source_class_id, subset_elements in class_to_elements.items():
                         if subset_elements.size == 0:
                             continue
@@ -5498,36 +5819,60 @@ class MVATManager(QObject):
                             if target_class_id is None:
                                 continue
 
-                        flat_indices = target_camera.get_pixels_for_elements(subset_elements, bbox=bbox)
-                        if flat_indices is None or len(flat_indices) == 0:
+                        cam_bbox = _project_bbox_for_subset(target_camera, subset_elements)
+                        if cam_bbox is not None:
+                            u_min, u_max, v_min, v_max = cam_bbox
+                            u_min = max(0, int(u_min))
+                            u_max = min(target_camera.width, int(u_max))
+                            v_min = max(0, int(v_min))
+                            v_max = min(target_camera.height, int(v_max))
+                        else:
+                            u_min, u_max = 0, target_camera.width
+                            v_min, v_max = 0, target_camera.height
+
+                        if u_min >= u_max or v_min >= v_max:
                             continue
 
-                        flat_indices = np.asarray(flat_indices, dtype=np.int64).ravel()
-                        current_vals = target_mask.mask_data.ravel()[flat_indices]
-                        changed_indices = flat_indices[
-                            (current_vals < target_mask.LOCK_BIT) &
-                            (current_vals != target_class_id)
-                        ]
-                        if changed_indices.size == 0:
+                        valid_elements = subset_elements[(subset_elements >= 0) & (subset_elements <= max_idx)]
+                        if valid_elements.size == 0:
                             continue
+
+                        lut = np.zeros(max_idx + 2, dtype=bool)
+                        lut[valid_elements] = True
+
+                        sub_index = target_index_map[v_min:v_max, u_min:u_max]
+                        sub_mask = target_mask_data[v_min:v_max, u_min:u_max]
+                        paintable = lut[sub_index] & (sub_mask < target_mask.LOCK_BIT) & (sub_mask != target_class_id)
+
+                        if not np.any(paintable):
+                            continue
+
+                        y_local, x_local = np.where(paintable)
+                        y_global = y_local + v_min
+                        x_global = x_local + u_min
+                        flat_global = (y_global * target_camera.width + x_global).astype(np.int64, copy=False)
 
                         target_mask.update_mask_at_indices(
-                            changed_indices,
+                            flat_global,
                             int(target_class_id),
                             silent=True,
                         )
-                        target_rect = _merge_update_rects(
-                            target_rect,
-                            self._compute_dirty_rect_from_flat_indices(
-                                changed_indices,
-                                target_mask.mask_data.shape[1],
-                                target_mask.mask_data.shape[0],
-                            ),
+
+                        new_rect = (
+                            int(np.min(x_global)),
+                            int(np.min(y_global)),
+                            int(np.max(x_global)) + 1,
+                            int(np.max(y_global)) + 1,
                         )
+                        target_rect = _merge_update_rects(target_rect, new_rect)
+
                         if label_id is not None:
                             target_label_ids.add(label_id)
 
+                    mask_time += perf_counter() - t_mask_start
+
                 if fallback_mask is not None and fallback_center is not None and (not use_index_lookup or target_rect is None):
+                    t_mask_start = perf_counter()
                     if fallback_mode == 'erase':
                         target_class_id = 0
                         label = None
@@ -5542,84 +5887,85 @@ class MVATManager(QObject):
                             target_class_id = None
 
                     if target_class_id is not None:
-                        if projections is None:
-                            projections = self._build_projection(
-                                int(fallback_center[0]),
-                                int(fallback_center[1]),
-                                source_camera=source_camera,
+                        target_center = fallback_center
+                        if fallback_projections:
+                            proj = fallback_projections.get(target_path)
+                            if proj is not None and len(proj) >= 3 and proj[2]:
+                                target_center = (proj[0], proj[1])
+                            else:
+                                continue
+
+                        if target_center is None:
+                            target_center = (0, 0)
+                        if fallback_mode in ('brush', 'erase'):
+                            brush_mask = self._acquire_propagation_buffer(fallback_mask.shape, dtype=bool)
+                            try:
+                                np.copyto(brush_mask, np.asarray(fallback_mask, dtype=bool))
+                                brush_h, brush_w = brush_mask.shape
+                                brush_location = QPointF(
+                                    target_center[0] - brush_w / 2.0,
+                                    target_center[1] - brush_h / 2.0,
+                                )
+                                target_mask.update_mask(
+                                    brush_location,
+                                    brush_mask,
+                                    int(target_class_id),
+                                    silent=True,
+                                )
+                                target_rect = _merge_update_rects(
+                                    target_rect,
+                                    (
+                                        max(0, int(target_center[0] - brush_w / 2.0)),
+                                        max(0, int(target_center[1] - brush_h / 2.0)),
+                                        min(target_camera.width, int(target_center[0] - brush_w / 2.0) + brush_w),
+                                        min(target_camera.height, int(target_center[1] - brush_h / 2.0) + brush_h),
+                                    ),
+                                )
+                                if fallback_label_id is not None:
+                                    target_label_ids.add(fallback_label_id)
+                            finally:
+                                self._release_propagation_buffer(brush_mask)
+                        elif fallback_mode == 'fill':
+                            fill_pos = QPointF(target_center[0], target_center[1])
+                            fill_result = target_mask.fill_region(
+                                fill_pos,
+                                int(target_class_id),
+                                silent=True,
+                                return_update_rect=True,
                             )
-                        proj = projections.get(target_path)
-                        if proj is not None:
-                            u, v, is_valid = proj
-                            if is_valid and 0 <= u < target_camera.width and 0 <= v < target_camera.height:
-                                if fallback_mode in ('brush', 'erase'):
-                                    brush_mask = self._acquire_propagation_buffer(fallback_mask.shape, dtype=bool)
-                                    try:
-                                        np.copyto(brush_mask, np.asarray(fallback_mask, dtype=bool))
-                                        brush_h, brush_w = brush_mask.shape
-                                        brush_location = QPointF(
-                                            u - brush_w / 2.0,
-                                            v - brush_h / 2.0,
-                                        )
-                                        target_mask.update_mask(
-                                            brush_location,
-                                            brush_mask,
-                                            int(target_class_id),
-                                            silent=True,
-                                        )
-                                        target_rect = _merge_update_rects(
-                                            target_rect,
-                                            (
-                                                max(0, int(u - brush_w / 2.0)),
-                                                max(0, int(v - brush_h / 2.0)),
-                                                min(target_camera.width, int(u - brush_w / 2.0) + brush_w),
-                                                min(target_camera.height, int(v - brush_h / 2.0) + brush_h),
-                                            ),
-                                        )
-                                        if fallback_label_id is not None:
-                                            target_label_ids.add(fallback_label_id)
-                                    finally:
-                                        self._release_propagation_buffer(brush_mask)
-                                elif fallback_mode == 'fill':
-                                    fill_pos = QPointF(u, v)
-                                    fill_result = target_mask.fill_region(
-                                        fill_pos,
-                                        int(target_class_id),
-                                        silent=True,
-                                        return_update_rect=True,
-                                    )
-                                    if fill_result is not None:
-                                        fill_mask_result, fill_rect = fill_result
-                                        if fill_mask_result is not None:
-                                            target_rect = _merge_update_rects(target_rect, fill_rect)
-                                            if fallback_label_id is not None:
-                                                target_label_ids.add(fallback_label_id)
-                                elif fallback_mode == 'sam':
-                                    subset_mask = self._acquire_propagation_buffer(fallback_mask.shape, dtype=np.uint8)
-                                    try:
-                                        subset_mask.fill(0)
-                                        subset_mask[np.asarray(fallback_mask, dtype=bool)] = int(target_class_id)
-                                        mask_h, mask_w = subset_mask.shape
-                                        top_left_x = int(u - mask_w / 2.0)
-                                        top_left_y = int(v - mask_h / 2.0)
-                                        target_mask.update_mask_with_mask(
-                                            subset_mask,
-                                            (top_left_x, top_left_y),
-                                            silent=True,
-                                        )
-                                        target_rect = _merge_update_rects(
-                                            target_rect,
-                                            (
-                                                max(0, top_left_x),
-                                                max(0, top_left_y),
-                                                min(target_mask.mask_data.shape[1], top_left_x + mask_w),
-                                                min(target_mask.mask_data.shape[0], top_left_y + mask_h),
-                                            ),
-                                        )
-                                        if fallback_label_id is not None:
-                                            target_label_ids.add(fallback_label_id)
-                                    finally:
-                                        self._release_propagation_buffer(subset_mask)
+                            if fill_result is not None:
+                                fill_mask_result, fill_rect = fill_result
+                                if fill_mask_result is not None:
+                                    target_rect = _merge_update_rects(target_rect, fill_rect)
+                                    if fallback_label_id is not None:
+                                        target_label_ids.add(fallback_label_id)
+                        elif fallback_mode == 'sam':
+                            subset_mask = self._acquire_propagation_buffer(fallback_mask.shape, dtype=np.uint8)
+                            try:
+                                subset_mask.fill(0)
+                                subset_mask[np.asarray(fallback_mask, dtype=bool)] = int(target_class_id)
+                                mask_h, mask_w = subset_mask.shape
+                                top_left_x = int(target_center[0] - mask_w / 2.0)
+                                top_left_y = int(target_center[1] - mask_h / 2.0)
+                                target_mask.update_mask_with_mask(
+                                    subset_mask,
+                                    (top_left_x, top_left_y),
+                                    silent=True,
+                                )
+                                target_rect = _merge_update_rects(
+                                    target_rect,
+                                    (
+                                        max(0, top_left_x),
+                                        max(0, top_left_y),
+                                        min(target_mask.mask_data.shape[1], top_left_x + mask_w),
+                                        min(target_mask.mask_data.shape[0], top_left_y + mask_h),
+                                    ),
+                                )
+                                if fallback_label_id is not None:
+                                    target_label_ids.add(fallback_label_id)
+                            finally:
+                                self._release_propagation_buffer(subset_mask)
+                    mask_time += perf_counter() - t_mask_start
 
                 if target_rect is not None:
                     repaint_tasks.append({
@@ -5634,9 +5980,16 @@ class MVATManager(QObject):
             traceback.print_exc()
         finally:
             self._universal_repaint_signal.emit(repaint_tasks)
+            print(
+                f"DEBUG [Sync Worker]: {len(target_paths)} Cams | Total: {(perf_counter() - t0) * 1000:.2f}ms | "
+                f"Mask Gen: {mask_time * 1000:.2f}ms"
+            )
+            return repaint_tasks
 
     def _on_universal_repaint(self, repaint_tasks: list):
         """Apply localized UI updates produced by the unified propagation worker."""
+        t0 = perf_counter()
+        needs_3d_flush = False
         try:
             for task in repaint_tasks:
                 task_type = task.get('type')
@@ -5647,6 +6000,7 @@ class MVATManager(QObject):
                         task['source_class_id'],
                         primary_target=task.get('primary_target'),
                     )
+                    needs_3d_flush = True
                     continue
 
                 if task_type != 'repaint':
@@ -5686,6 +6040,11 @@ class MVATManager(QObject):
                 self._pending_unified_propagation_jobs - 1,
             )
             self._propagating_annotation = self._pending_unified_propagation_jobs > 0
+            if needs_3d_flush:
+                request_flush = getattr(self, 'request_lazy_flush', None)
+                if callable(request_flush):
+                    request_flush()
+            print(f"DEBUG [Sync Repaint (Main Thread)]: Pushed {len(repaint_tasks)} image updates to UI in {(perf_counter() - t0) * 1000:.2f}ms")
 
     def _on_semantic_prediction_applied(self, image_path: str, source_mask_annotation, prediction_regions=None):
         """Propagate a semantic segmentation prediction to all target cameras.

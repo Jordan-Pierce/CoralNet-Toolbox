@@ -429,9 +429,16 @@ class ContextMatrixWidget(QWidget):
         return handler
 
     def _make_canvas_double_click_handler(self, canvas: BaseCanvas):
-        """Double-click updates the 3D viewer only."""
+        """Right double-click updates the 3D viewer only."""
         def handler(event):
-            if event.button() == Qt.LeftButton:
+            if event.button() == Qt.RightButton:
+                try:
+                    canvas._pan_active = False
+                    canvas._pan_start = None
+                    canvas._rotate_active = False
+                    canvas.setCursor(Qt.ArrowCursor)
+                except Exception:
+                    pass
                 path = canvas.current_image_path
                 if path:
                     self.camera_highlighted_single.emit(path)
