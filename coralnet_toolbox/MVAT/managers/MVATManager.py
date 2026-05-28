@@ -33,6 +33,7 @@ from coralnet_toolbox.MVAT.utils.MVATLogger import (
 
 from coralnet_toolbox.MVAT.core.constants import (
     MARKER_COLOR_SELECTED,
+    MARKER_COLOR_HIGHLIGHTED,
     MARKER_COLOR_INVALID,
     RAY_COLOR_SELECTED,
     RAY_COLOR_HIGHLIGHTED,
@@ -2802,6 +2803,7 @@ class MVATManager(QObject):
         if not enabled:
             self._hover_overlay_face_ids = None
             self._hover_overlay_last_state = None
+            self._clear_hover_dynamic_markers(render=False)
             if self._hover_overlay_actor is not None:
                 try:
                     self._hover_overlay_actor.SetVisibility(False)
@@ -3144,9 +3146,130 @@ class MVATManager(QObject):
         except Exception:
             pass
 
+        self._clear_hover_dynamic_markers(render=False)
+
         if render:
             try:
                 self.viewer.plotter.render()
+            except Exception:
+                pass
+
+    def _clear_hover_dynamic_markers(self, render: bool = False):
+        """Hide dynamic marker overlays that mirror the 3D hover point."""
+        try:
+            if self.annotation_window is not None:
+                self.annotation_window.clear_dynamic_marker()
+        except Exception:
+            pass
+
+        try:
+            if self.context_matrix is not None:
+                self.context_matrix.clear_all_dynamic_markers()
+        except Exception:
+            pass
+
+        if render:
+            try:
+                self.viewer.plotter.render()
+            except Exception:
+                pass
+
+    def _project_hover_dynamic_marker(self, camera, world_point):
+        """Project a 3D hover point into a camera for dynamic-marker display."""
+        if camera is None or world_point is None:
+            return None
+
+        try:
+            world_point = np.asarray(world_point, dtype=np.float64).reshape(-1)
+        except Exception:
+            return None
+
+        if world_point.size < 3 or not np.all(np.isfinite(world_point[:3])):
+            return None
+
+        try:
+            projected = camera.project(world_point[:3])
+            if projected is None:
+                return None
+            projected = np.asarray(projected, dtype=np.float64).reshape(-1)
+        except Exception:
+            return None
+
+        if projected.size < 2 or not np.all(np.isfinite(projected[:2])):
+            return None
+
+        u, v = float(projected[0]), float(projected[1])
+
+        width = getattr(camera, 'width', None)
+        height = getattr(camera, 'height', None)
+        try:
+            if width is not None and height is not None and width > 0 and height > 0:
+                if not (0 <= u < float(width) and 0 <= v < float(height)):
+                    return None
+        except Exception:
+            pass
+
+        is_visible = True
+        try:
+            is_visible = not bool(camera.is_point_occluded_depth_based(world_point[:3], depth_threshold=0.15))
+        except Exception:
+            pass
+
+        return u, v, is_visible
+
+    def _sync_hover_dynamic_markers(self, world_point, render: bool = False):
+        """Update dynamic markers so 2D views mirror the current 3D hover point."""
+        if world_point is None:
+            self._clear_hover_dynamic_markers(render=render)
+            return
+
+        selected_camera = getattr(self, 'selected_camera', None)
+        if selected_camera is not None:
+            projection = self._project_hover_dynamic_marker(selected_camera, world_point)
+            if projection is None:
+                try:
+                    self.annotation_window.clear_dynamic_marker()
+                except Exception:
+                    pass
+            else:
+                u, v, is_visible = projection
+                color = MARKER_COLOR_HIGHLIGHTED if is_visible else MARKER_COLOR_INVALID
+                try:
+                    self.annotation_window.update_dynamic_marker(u, v, color=color, is_valid=is_visible)
+                except Exception:
+                    pass
+        else:
+            try:
+                self.annotation_window.clear_dynamic_marker()
+            except Exception:
+                pass
+
+        context_matrix = getattr(self, 'context_matrix', None)
+        if context_matrix is None:
+            return
+
+        projections = {}
+        accuracies = {}
+        visibility_status = {}
+        for camera in self._get_visible_context_cameras():
+            projection = self._project_hover_dynamic_marker(camera, world_point)
+            if projection is None:
+                continue
+
+            image_path = getattr(camera, 'image_path', None)
+            if not image_path:
+                continue
+
+            u, v, is_visible = projection
+            projections[image_path] = (u, v, is_visible)
+            accuracies[image_path] = True
+            visibility_status[image_path] = not is_visible
+
+        try:
+            context_matrix.update_dynamic_markers(projections, accuracies, visibility_status)
+        except Exception:
+            try:
+                context_matrix.clear_all_dynamic_markers()
             except Exception:
                 pass
 
@@ -3154,6 +3277,7 @@ class MVATManager(QObject):
         """Rebuild the hover overlay from the current hover context."""
         if not self._hover_overlay_enabled:
             try:
+                self._clear_hover_dynamic_markers(render=False)
                 self._set_hover_overlay_geometry(None, None, render=render)
             except Exception:
                 pass
@@ -3183,6 +3307,7 @@ class MVATManager(QObject):
 
         color_rgb = self._normalize_color_rgb(self._get_active_label_color_rgb())
         if color_rgb is None:
+            self._clear_hover_dynamic_markers(render=False)
             self._set_hover_overlay_geometry(None, None, render=render)
             return
 
@@ -3209,6 +3334,7 @@ class MVATManager(QObject):
 
         if radius <= 0.0:
             self._set_hover_overlay_geometry(None, color_rgb, render=render)
+            self._sync_hover_dynamic_markers(center[:3], render=False)
             return
 
         brush_shape = self._get_sphere_hover_shape()
@@ -3253,6 +3379,7 @@ class MVATManager(QObject):
                         self._hover_overlay_context = current_state
                         self._hover_overlay_last_state = current_state.copy()
                         self._sync_projected_cursor_previews(center[:3], render=False)
+                        self._sync_hover_dynamic_markers(center[:3], render=False)
                         return
 
         previous_face_ids = self._hover_overlay_face_ids
@@ -3274,6 +3401,7 @@ class MVATManager(QObject):
         if same_faces and same_color and self._hover_overlay_actor is not None:
             self._apply_hover_overlay_color(color_rgb, render=render)
             self._sync_projected_cursor_previews(center[:3], render=False)
+            self._sync_hover_dynamic_markers(center[:3], render=False)
             self._hover_overlay_last_state = current_state
             return
 
@@ -3287,6 +3415,7 @@ class MVATManager(QObject):
         overlay = LabelWorker.build_overlay(mesh_points, mesh_faces_flat, face_ids, color_rgb, attach_colors=False)
         self._set_hover_overlay_geometry(overlay, color_rgb, render=render)
         self._sync_projected_cursor_previews(center[:3], render=False)
+        self._sync_hover_dynamic_markers(center[:3], render=False)
         self._hover_overlay_last_state = current_state
 
     def update_sphere_hover_overlay(self, center, render: bool = True):

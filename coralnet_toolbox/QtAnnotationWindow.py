@@ -913,10 +913,18 @@ class AnnotationWindow(BaseCanvas):
 
     def mouseDoubleClickEvent(self, event: QMouseEvent):
         """Handle mouse double-click events to set focal point in MVATViewer."""
-        # Only process left double-clicks
-        if event.button() != Qt.LeftButton:
+        # Only process right double-clicks
+        if event.button() != Qt.RightButton:
             super().mouseDoubleClickEvent(event)
             return
+
+        self._pan_active = False
+        self._pan_start = None
+        self._rotate_active = False
+        try:
+            self.setCursor(Qt.ArrowCursor)
+        except Exception:
+            pass
         
         # Check if MVAT manager exists and is accessible
         mvat_manager = getattr(self.main_window, 'mvat_manager', None)
