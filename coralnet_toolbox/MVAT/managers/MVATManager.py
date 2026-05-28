@@ -3111,24 +3111,99 @@ class MVATManager(QObject):
         return _finish(np.flatnonzero(within).astype(np.int32))
 
     def clear_sphere_hover_overlay(self, reset_context: bool = False, render: bool = True):
+        """Hide the sphere hover overlay and clear projected cursor previews."""
+        if reset_context:
+            self._hover_overlay_context = None
 
+        self._hover_overlay_face_ids = None
+        self._hover_overlay_last_state = None
+        self._hover_overlay_color_rgb = None
+
+        try:
+            self._set_hover_overlay_geometry(None, None, render=False)
+        except Exception:
+            pass
+
+        try:
+            self._clear_projected_cursor_previews(render=False)
+        except Exception:
+            pass
+
+        if render:
+            try:
+                self.viewer.plotter.render()
+            except Exception:
+                pass
+
+    def refresh_sphere_hover_overlay(self, render: bool = True):
+        """Rebuild the hover overlay from the current hover context."""
         if not self._hover_overlay_enabled:
-            self._hover_overlay_context = current_state
-            self._hover_overlay_face_ids = None
-            self._hover_overlay_last_state = None
-            if self._hover_overlay_actor is not None:
-                try:
-                    self._hover_overlay_actor.SetVisibility(False)
-                except Exception:
-                    pass
-
-            self._sync_projected_cursor_previews(center, render=False)
-            if render:
-                try:
-                    self.viewer.plotter.render()
-                except Exception:
-                    pass
+            try:
+                self._set_hover_overlay_geometry(None, None, render=render)
+            except Exception:
+                pass
             return
+
+        context = self._hover_overlay_context
+        if not context:
+            self.clear_sphere_hover_overlay(reset_context=True, render=render)
+            return
+
+        try:
+            if not bool(getattr(self.viewer, '_sphere_visible', True)):
+                self._set_hover_overlay_geometry(None, None, render=render)
+                return
+
+            passthrough_active = getattr(self.viewer, '_is_sphere_passthrough_active', None)
+            if callable(passthrough_active) and passthrough_active():
+                self._set_hover_overlay_geometry(None, None, render=render)
+                return
+        except Exception:
+            pass
+
+        primary_target = self._get_primary_mesh_target()
+        if primary_target is None or getattr(primary_target, 'product_id', None) != context.get('product_id'):
+            self.clear_sphere_hover_overlay(reset_context=True, render=render)
+            return
+
+        color_rgb = self._normalize_color_rgb(self._get_active_label_color_rgb())
+        if color_rgb is None:
+            self._set_hover_overlay_geometry(None, None, render=render)
+            return
+
+        center = context.get('center')
+        if center is None:
+            self.clear_sphere_hover_overlay(reset_context=True, render=render)
+            return
+
+        try:
+            center = np.asarray(center, dtype=np.float64).reshape(-1)
+        except Exception:
+            self.clear_sphere_hover_overlay(reset_context=True, render=render)
+            return
+
+        if center.size < 3 or not np.all(np.isfinite(center[:3])):
+            self.clear_sphere_hover_overlay(reset_context=True, render=render)
+            return
+
+        radius = self._get_sphere_hover_radius()
+        try:
+            radius = float(radius)
+        except Exception:
+            radius = 0.0
+
+        if radius <= 0.0:
+            self._set_hover_overlay_geometry(None, color_rgb, render=render)
+            return
+
+        brush_shape = self._get_sphere_hover_shape()
+        current_state = {
+            'product_id': getattr(primary_target, 'product_id', None),
+            'center': center[:3].copy(),
+            'radius': radius,
+            'brush_shape': brush_shape,
+            'color_rgb': color_rgb,
+        }
 
         previous_state = self._hover_overlay_last_state
         if previous_state is not None and self._hover_overlay_actor is not None:
@@ -3145,7 +3220,7 @@ class MVATManager(QObject):
                 prev_center = previous_state.get('center')
 
                 if (
-                    prev_product_id == product_id and
+                    prev_product_id == current_state['product_id'] and
                     prev_shape == brush_shape and
                     prev_color == color_rgb and
                     prev_center is not None and
@@ -3153,7 +3228,7 @@ class MVATManager(QObject):
                     np.isclose(float(prev_radius), radius)
                 ):
                     try:
-                        center_delta = float(np.linalg.norm(center - np.asarray(prev_center, dtype=np.float64)))
+                        center_delta = float(np.linalg.norm(center[:3] - np.asarray(prev_center, dtype=np.float64).reshape(-1)[:3]))
                     except Exception:
                         center_delta = None
 
@@ -3162,13 +3237,16 @@ class MVATManager(QObject):
                     if center_delta is not None and center_delta <= max(1e-6, radius * 0.02):
                         self._hover_overlay_context = current_state
                         self._hover_overlay_last_state = current_state.copy()
+                        self._sync_projected_cursor_previews(center[:3], render=False)
                         return
 
         previous_face_ids = self._hover_overlay_face_ids
         self._hover_overlay_context = current_state
-        face_ids = self._get_faces_within_sphere(primary_target, center, radius, shape=brush_shape)
+        face_ids = self._get_faces_within_sphere(primary_target, center[:3], radius, shape=brush_shape)
         if face_ids is None or len(face_ids) == 0:
-            self.clear_sphere_hover_overlay(reset_context=True, render=render)
+            self._hover_overlay_face_ids = None
+            self._hover_overlay_last_state = current_state
+            self._set_hover_overlay_geometry(None, color_rgb, render=render)
             return
 
         face_ids = np.asarray(face_ids, dtype=np.int32)
@@ -3180,7 +3258,7 @@ class MVATManager(QObject):
 
         if same_faces and same_color and self._hover_overlay_actor is not None:
             self._apply_hover_overlay_color(color_rgb, render=render)
-            self._sync_projected_cursor_previews(center, render=False)
+            self._sync_projected_cursor_previews(center[:3], render=False)
             self._hover_overlay_last_state = current_state
             return
 
@@ -3193,8 +3271,43 @@ class MVATManager(QObject):
         mesh_faces_flat = np.asarray(mesh.faces.reshape(-1, 4), dtype=np.int32)
         overlay = LabelWorker.build_overlay(mesh_points, mesh_faces_flat, face_ids, color_rgb, attach_colors=False)
         self._set_hover_overlay_geometry(overlay, color_rgb, render=render)
-        self._sync_projected_cursor_previews(center, render=False)
+        self._sync_projected_cursor_previews(center[:3], render=False)
         self._hover_overlay_last_state = current_state
+
+    def update_sphere_hover_overlay(self, center, render: bool = True):
+        """Store the current hover center and refresh the sphere overlay."""
+        primary_target = self._get_primary_mesh_target()
+        if primary_target is None:
+            self.clear_sphere_hover_overlay(reset_context=True, render=render)
+            return
+
+        try:
+            if not bool(getattr(self.viewer, '_sphere_visible', True)):
+                self.clear_sphere_hover_overlay(reset_context=True, render=render)
+                return
+
+            passthrough_active = getattr(self.viewer, '_is_sphere_passthrough_active', None)
+            if callable(passthrough_active) and passthrough_active():
+                self.clear_sphere_hover_overlay(reset_context=False, render=render)
+                return
+        except Exception:
+            pass
+
+        try:
+            center = np.asarray(center, dtype=np.float64).reshape(-1)
+        except Exception:
+            self.clear_sphere_hover_overlay(reset_context=True, render=render)
+            return
+
+        if center.size < 3 or not np.all(np.isfinite(center[:3])):
+            self.clear_sphere_hover_overlay(reset_context=True, render=render)
+            return
+
+        self._hover_overlay_context = {
+            'product_id': getattr(primary_target, 'product_id', None),
+            'center': center[:3].copy(),
+        }
+        self.refresh_sphere_hover_overlay(render=render)
 
     # Note: full-GPU flush is intentionally removed. The overlay actor
     # is treated as the authoritative visualization for painted faces
@@ -3217,7 +3330,7 @@ class MVATManager(QObject):
                 - element_ids: (N,) array of element IDs or None for default indexing
                 - element_type: str ('point', 'face', or 'cell')
         """
-        from coralnet_toolbox.MVAT.core.Model import PointCloudProduct, MeshProduct
+        from coralnet_toolbox.MVAT.core.Products import PointCloudProduct, MeshProduct
         
         element_type = primary_target.get_element_type()
         
