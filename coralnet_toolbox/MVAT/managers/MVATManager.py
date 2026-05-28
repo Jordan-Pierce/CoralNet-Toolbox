@@ -5198,6 +5198,7 @@ class MVATManager(QObject):
                 'source_class_id': int(source_class_id),
                 'mask': np.asarray(brush_mask, dtype=bool),
                 'center': (px, py),
+                'projections': self._build_projection(px, py),
                 'search_radius': float(max(brush_mask.shape) * 2.5),
             },
         )
@@ -5252,6 +5253,7 @@ class MVATManager(QObject):
                 'source_class_id': int(source_class_id) if source_class_id is not None else None,
                 'mask': np.asarray(fill_mask, dtype=bool) if fill_mask is not None else None,
                 'center': (px, py),
+                'projections': self._build_projection(px, py),
                 'search_radius': float(max(fill_mask.shape) * 2.5) if fill_mask is not None else 0.0,
             },
         )
@@ -5281,6 +5283,7 @@ class MVATManager(QObject):
                 'source_class_id': 0,
                 'mask': np.asarray(brush_mask, dtype=bool),
                 'center': (px, py),
+                'projections': self._build_projection(px, py),
                 'search_radius': float(max(brush_mask.shape) * 2.5),
             },
         )
@@ -5406,6 +5409,7 @@ class MVATManager(QObject):
                 'source_class_id': int(source_class_id),
                 'mask': np.asarray(binary_mask, dtype=np.uint8),
                 'center': (px, py),
+                'projections': self._build_projection(px, py),
                 'search_radius': float(max(binary_mask.shape) * 2.5),
             },
         )
@@ -5556,6 +5560,7 @@ class MVATManager(QObject):
             fallback_search_radius = 0.0
             fallback_skip_ortho_index_lookup = False
             fallback_label_id = None
+            fallback_projections = {}
 
             if isinstance(fallback_payload, dict):
                 fallback_mode = str(fallback_payload.get('mode', '')).strip().lower()
@@ -5565,6 +5570,7 @@ class MVATManager(QObject):
                 fallback_search_radius = float(fallback_payload.get('search_radius', 0.0) or 0.0)
                 fallback_skip_ortho_index_lookup = bool(fallback_payload.get('skip_ortho_index_lookup', False))
                 fallback_label_id = fallback_payload.get('label_id')
+                fallback_projections = fallback_payload.get('projections', {}) or {}
 
             def _project_bbox_for_subset(target_camera, subset_elements):
                 if centers is None or target_camera is None or target_camera is self.ortho_camera:
@@ -5738,16 +5744,24 @@ class MVATManager(QObject):
                             target_class_id = None
 
                     if target_class_id is not None:
-                        if fallback_center is None:
-                            fallback_center = (0, 0)
+                        target_center = fallback_center
+                        if fallback_projections:
+                            proj = fallback_projections.get(target_path)
+                            if proj is not None and len(proj) >= 3 and proj[2]:
+                                target_center = (proj[0], proj[1])
+                            else:
+                                continue
+
+                        if target_center is None:
+                            target_center = (0, 0)
                         if fallback_mode in ('brush', 'erase'):
                             brush_mask = self._acquire_propagation_buffer(fallback_mask.shape, dtype=bool)
                             try:
                                 np.copyto(brush_mask, np.asarray(fallback_mask, dtype=bool))
                                 brush_h, brush_w = brush_mask.shape
                                 brush_location = QPointF(
-                                    fallback_center[0] - brush_w / 2.0,
-                                    fallback_center[1] - brush_h / 2.0,
+                                    target_center[0] - brush_w / 2.0,
+                                    target_center[1] - brush_h / 2.0,
                                 )
                                 target_mask.update_mask(
                                     brush_location,
@@ -5758,10 +5772,10 @@ class MVATManager(QObject):
                                 target_rect = _merge_update_rects(
                                     target_rect,
                                     (
-                                        max(0, int(fallback_center[0] - brush_w / 2.0)),
-                                        max(0, int(fallback_center[1] - brush_h / 2.0)),
-                                        min(target_camera.width, int(fallback_center[0] - brush_w / 2.0) + brush_w),
-                                        min(target_camera.height, int(fallback_center[1] - brush_h / 2.0) + brush_h),
+                                        max(0, int(target_center[0] - brush_w / 2.0)),
+                                        max(0, int(target_center[1] - brush_h / 2.0)),
+                                        min(target_camera.width, int(target_center[0] - brush_w / 2.0) + brush_w),
+                                        min(target_camera.height, int(target_center[1] - brush_h / 2.0) + brush_h),
                                     ),
                                 )
                                 if fallback_label_id is not None:
@@ -5769,7 +5783,7 @@ class MVATManager(QObject):
                             finally:
                                 self._release_propagation_buffer(brush_mask)
                         elif fallback_mode == 'fill':
-                            fill_pos = QPointF(fallback_center[0], fallback_center[1])
+                            fill_pos = QPointF(target_center[0], target_center[1])
                             fill_result = target_mask.fill_region(
                                 fill_pos,
                                 int(target_class_id),
@@ -5788,8 +5802,8 @@ class MVATManager(QObject):
                                 subset_mask.fill(0)
                                 subset_mask[np.asarray(fallback_mask, dtype=bool)] = int(target_class_id)
                                 mask_h, mask_w = subset_mask.shape
-                                top_left_x = int(fallback_center[0] - mask_w / 2.0)
-                                top_left_y = int(fallback_center[1] - mask_h / 2.0)
+                                top_left_x = int(target_center[0] - mask_w / 2.0)
+                                top_left_y = int(target_center[1] - mask_h / 2.0)
                                 target_mask.update_mask_with_mask(
                                     subset_mask,
                                     (top_left_x, top_left_y),

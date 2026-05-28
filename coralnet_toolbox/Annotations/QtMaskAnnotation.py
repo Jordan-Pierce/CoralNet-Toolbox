@@ -695,9 +695,6 @@ class MaskAnnotation(Annotation):
         #    graphics updates, but now only on a small, efficient region.
         self.update_mask_with_mask(merged_tile, paste_top_left, history_action=history_action)
         
-        # Proactively recalculate stats, as this signals the end of an edit session
-        self.recalculate_class_statistics()
-        
     def get_current_transparency(self):
         """Get the current transparency value for rendering."""
         # Try to get the active label's transparency from the application
@@ -1127,8 +1124,6 @@ class MaskAnnotation(Annotation):
         if self.graphics_item is not None and np.any(locked_pixels):
             self.update_graphics_item()
 
-        # Proactively recalculate stats, as this signals the end of an edit session
-        self.recalculate_class_statistics()
         if np.any(locked_pixels):
             self.annotationUpdated.emit(self)
 

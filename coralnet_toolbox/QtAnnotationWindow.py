@@ -796,10 +796,6 @@ class AnnotationWindow(BaseCanvas):
         if mask_annotation is None:
             return
 
-        mask_annotation.recalculate_class_statistics()
-
-        self.main_window.image_window.update_image_annotations(mask_annotation.image_path)
-
         if mask_annotation.image_path == self.current_image_path:
             self.viewport().update()
    
