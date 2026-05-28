@@ -5439,9 +5439,9 @@ class MVATManager(QObject):
                                   primary_target,
                                   fallback_payload=None):
         """Background worker for brush, SAM, and semantic mask propagation."""
+        from time import perf_counter
         t0 = perf_counter()
         repaint_tasks = []
-        lookup_time = 0.0
         mask_time = 0.0
 
         try:
@@ -5498,13 +5498,14 @@ class MVATManager(QObject):
                         'primary_target': primary_target,
                     })
 
+            centers = getattr(primary_target, '_element_centers_np', None)
+
             fallback_mode = None
             fallback_mask = None
             fallback_center = None
             fallback_search_radius = 0.0
             fallback_skip_ortho_index_lookup = False
             fallback_label_id = None
-            fallback_source_class_id = None
 
             if isinstance(fallback_payload, dict):
                 fallback_mode = str(fallback_payload.get('mode', '')).strip().lower()
@@ -5512,14 +5513,8 @@ class MVATManager(QObject):
                     fallback_mask = np.asarray(fallback_payload.get('mask'))
                 fallback_center = fallback_payload.get('center')
                 fallback_search_radius = float(fallback_payload.get('search_radius', 0.0) or 0.0)
-                fallback_skip_ortho_index_lookup = bool(
-                    fallback_payload.get('skip_ortho_index_lookup', False)
-                )
+                fallback_skip_ortho_index_lookup = bool(fallback_payload.get('skip_ortho_index_lookup', False))
                 fallback_label_id = fallback_payload.get('label_id')
-                fallback_source_class_id = fallback_payload.get('source_class_id')
-
-            projections = None
-            centers = getattr(primary_target, '_element_centers_np', None)
 
             def _project_bbox_for_subset(target_camera, subset_elements):
                 if centers is None or target_camera is None or target_camera is self.ortho_camera:
@@ -5599,28 +5594,12 @@ class MVATManager(QObject):
                 target_rect = None
                 target_label_ids = set()
 
-                if use_index_lookup and fallback_center is not None and fallback_search_radius > 0.0:
-                    if projections is None:
-                        projections = self._build_projection(
-                            int(fallback_center[0]),
-                            int(fallback_center[1]),
-                            source_camera=source_camera,
-                        )
-                    proj = projections.get(target_path)
-                    if proj is not None and proj[2]:
-                        target_u, target_v = proj[0], proj[1]
-                        bbox = (
-                            target_u - fallback_search_radius,
-                            target_u + fallback_search_radius,
-                            target_v - fallback_search_radius,
-                            target_v + fallback_search_radius,
-                        )
-                    else:
-                        bbox = None
-                else:
-                    bbox = None
-
                 if use_index_lookup:
+                    t_mask_start = perf_counter()
+                    target_index_map = target_camera._raster.index_map
+                    target_mask_data = target_mask.mask_data
+                    max_idx = int(np.max(target_index_map))
+
                     for source_class_id, subset_elements in class_to_elements.items():
                         if subset_elements.size == 0:
                             continue
@@ -5641,41 +5620,57 @@ class MVATManager(QObject):
                             if target_class_id is None:
                                 continue
 
-                        if bbox is None:
-                            bbox = _project_bbox_for_subset(target_camera, subset_elements)
+                        cam_bbox = _project_bbox_for_subset(target_camera, subset_elements)
+                        if cam_bbox is not None:
+                            u_min, u_max, v_min, v_max = cam_bbox
+                            u_min = max(0, int(u_min))
+                            u_max = min(target_camera.width, int(u_max))
+                            v_min = max(0, int(v_min))
+                            v_max = min(target_camera.height, int(v_max))
+                        else:
+                            u_min, u_max = 0, target_camera.width
+                            v_min, v_max = 0, target_camera.height
 
-                        t_lookup_start = perf_counter()
-                        flat_indices = target_camera.get_pixels_for_elements(subset_elements, bbox=bbox)
-                        lookup_time += perf_counter() - t_lookup_start
-                        if flat_indices is None or len(flat_indices) == 0:
+                        if u_min >= u_max or v_min >= v_max:
                             continue
 
-                        t_mask_start = perf_counter()
-                        flat_indices = np.asarray(flat_indices, dtype=np.int64).ravel()
-                        current_vals = target_mask.mask_data.ravel()[flat_indices]
-                        changed_indices = flat_indices[
-                            (current_vals < target_mask.LOCK_BIT) &
-                            (current_vals != target_class_id)
-                        ]
-                        if changed_indices.size == 0:
+                        valid_elements = subset_elements[(subset_elements >= 0) & (subset_elements <= max_idx)]
+                        if valid_elements.size == 0:
                             continue
+
+                        lut = np.zeros(max_idx + 2, dtype=bool)
+                        lut[valid_elements] = True
+
+                        sub_index = target_index_map[v_min:v_max, u_min:u_max]
+                        sub_mask = target_mask_data[v_min:v_max, u_min:u_max]
+                        paintable = lut[sub_index] & (sub_mask < target_mask.LOCK_BIT) & (sub_mask != target_class_id)
+
+                        if not np.any(paintable):
+                            continue
+
+                        y_local, x_local = np.where(paintable)
+                        y_global = y_local + v_min
+                        x_global = x_local + u_min
+                        flat_global = (y_global * target_camera.width + x_global).astype(np.int64, copy=False)
 
                         target_mask.update_mask_at_indices(
-                            changed_indices,
+                            flat_global,
                             int(target_class_id),
                             silent=True,
                         )
-                        target_rect = _merge_update_rects(
-                            target_rect,
-                            self._compute_dirty_rect_from_flat_indices(
-                                changed_indices,
-                                target_mask.mask_data.shape[1],
-                                target_mask.mask_data.shape[0],
-                            ),
+
+                        new_rect = (
+                            int(np.min(x_global)),
+                            int(np.min(y_global)),
+                            int(np.max(x_global)) + 1,
+                            int(np.max(y_global)) + 1,
                         )
+                        target_rect = _merge_update_rects(target_rect, new_rect)
+
                         if label_id is not None:
                             target_label_ids.add(label_id)
-                        mask_time += perf_counter() - t_mask_start
+
+                    mask_time += perf_counter() - t_mask_start
 
                 if fallback_mask is not None and fallback_center is not None and (not use_index_lookup or target_rect is None):
                     t_mask_start = perf_counter()
@@ -5693,84 +5688,76 @@ class MVATManager(QObject):
                             target_class_id = None
 
                     if target_class_id is not None:
-                        if projections is None:
-                            projections = self._build_projection(
-                                int(fallback_center[0]),
-                                int(fallback_center[1]),
-                                source_camera=source_camera,
+                        if fallback_center is None:
+                            fallback_center = (0, 0)
+                        if fallback_mode in ('brush', 'erase'):
+                            brush_mask = self._acquire_propagation_buffer(fallback_mask.shape, dtype=bool)
+                            try:
+                                np.copyto(brush_mask, np.asarray(fallback_mask, dtype=bool))
+                                brush_h, brush_w = brush_mask.shape
+                                brush_location = QPointF(
+                                    fallback_center[0] - brush_w / 2.0,
+                                    fallback_center[1] - brush_h / 2.0,
+                                )
+                                target_mask.update_mask(
+                                    brush_location,
+                                    brush_mask,
+                                    int(target_class_id),
+                                    silent=True,
+                                )
+                                target_rect = _merge_update_rects(
+                                    target_rect,
+                                    (
+                                        max(0, int(fallback_center[0] - brush_w / 2.0)),
+                                        max(0, int(fallback_center[1] - brush_h / 2.0)),
+                                        min(target_camera.width, int(fallback_center[0] - brush_w / 2.0) + brush_w),
+                                        min(target_camera.height, int(fallback_center[1] - brush_h / 2.0) + brush_h),
+                                    ),
+                                )
+                                if fallback_label_id is not None:
+                                    target_label_ids.add(fallback_label_id)
+                            finally:
+                                self._release_propagation_buffer(brush_mask)
+                        elif fallback_mode == 'fill':
+                            fill_pos = QPointF(fallback_center[0], fallback_center[1])
+                            fill_result = target_mask.fill_region(
+                                fill_pos,
+                                int(target_class_id),
+                                silent=True,
+                                return_update_rect=True,
                             )
-                        proj = projections.get(target_path)
-                        if proj is not None:
-                            u, v, is_valid = proj
-                            if is_valid and 0 <= u < target_camera.width and 0 <= v < target_camera.height:
-                                if fallback_mode in ('brush', 'erase'):
-                                    brush_mask = self._acquire_propagation_buffer(fallback_mask.shape, dtype=bool)
-                                    try:
-                                        np.copyto(brush_mask, np.asarray(fallback_mask, dtype=bool))
-                                        brush_h, brush_w = brush_mask.shape
-                                        brush_location = QPointF(
-                                            u - brush_w / 2.0,
-                                            v - brush_h / 2.0,
-                                        )
-                                        target_mask.update_mask(
-                                            brush_location,
-                                            brush_mask,
-                                            int(target_class_id),
-                                            silent=True,
-                                        )
-                                        target_rect = _merge_update_rects(
-                                            target_rect,
-                                            (
-                                                max(0, int(u - brush_w / 2.0)),
-                                                max(0, int(v - brush_h / 2.0)),
-                                                min(target_camera.width, int(u - brush_w / 2.0) + brush_w),
-                                                min(target_camera.height, int(v - brush_h / 2.0) + brush_h),
-                                            ),
-                                        )
-                                        if fallback_label_id is not None:
-                                            target_label_ids.add(fallback_label_id)
-                                    finally:
-                                        self._release_propagation_buffer(brush_mask)
-                                elif fallback_mode == 'fill':
-                                    fill_pos = QPointF(u, v)
-                                    fill_result = target_mask.fill_region(
-                                        fill_pos,
-                                        int(target_class_id),
-                                        silent=True,
-                                        return_update_rect=True,
-                                    )
-                                    if fill_result is not None:
-                                        fill_mask_result, fill_rect = fill_result
-                                        if fill_mask_result is not None:
-                                            target_rect = _merge_update_rects(target_rect, fill_rect)
-                                            if fallback_label_id is not None:
-                                                target_label_ids.add(fallback_label_id)
-                                elif fallback_mode == 'sam':
-                                    subset_mask = self._acquire_propagation_buffer(fallback_mask.shape, dtype=np.uint8)
-                                    try:
-                                        subset_mask.fill(0)
-                                        subset_mask[np.asarray(fallback_mask, dtype=bool)] = int(target_class_id)
-                                        mask_h, mask_w = subset_mask.shape
-                                        top_left_x = int(u - mask_w / 2.0)
-                                        top_left_y = int(v - mask_h / 2.0)
-                                        target_mask.update_mask_with_mask(
-                                            subset_mask,
-                                            (top_left_x, top_left_y),
-                                            silent=True,
-                                        )
-                                        target_rect = _merge_update_rects(
-                                            target_rect,
-                                            (
-                                                max(0, top_left_x),
-                                                max(0, top_left_y),
-                                                min(target_mask.mask_data.shape[1], top_left_x + mask_w),
-                                                min(target_mask.mask_data.shape[0], top_left_y + mask_h),
-                                            ),
-                                        )
-                                        if fallback_label_id is not None:
-                                            target_label_ids.add(fallback_label_id)
-                                    finally:
-                                        self._release_propagation_buffer(subset_mask)
+                            if fill_result is not None:
+                                fill_mask_result, fill_rect = fill_result
+                                if fill_mask_result is not None:
+                                    target_rect = _merge_update_rects(target_rect, fill_rect)
+                                    if fallback_label_id is not None:
+                                        target_label_ids.add(fallback_label_id)
+                        elif fallback_mode == 'sam':
+                            subset_mask = self._acquire_propagation_buffer(fallback_mask.shape, dtype=np.uint8)
+                            try:
+                                subset_mask.fill(0)
+                                subset_mask[np.asarray(fallback_mask, dtype=bool)] = int(target_class_id)
+                                mask_h, mask_w = subset_mask.shape
+                                top_left_x = int(fallback_center[0] - mask_w / 2.0)
+                                top_left_y = int(fallback_center[1] - mask_h / 2.0)
+                                target_mask.update_mask_with_mask(
+                                    subset_mask,
+                                    (top_left_x, top_left_y),
+                                    silent=True,
+                                )
+                                target_rect = _merge_update_rects(
+                                    target_rect,
+                                    (
+                                        max(0, top_left_x),
+                                        max(0, top_left_y),
+                                        min(target_mask.mask_data.shape[1], top_left_x + mask_w),
+                                        min(target_mask.mask_data.shape[0], top_left_y + mask_h),
+                                    ),
+                                )
+                                if fallback_label_id is not None:
+                                    target_label_ids.add(fallback_label_id)
+                            finally:
+                                self._release_propagation_buffer(subset_mask)
                     mask_time += perf_counter() - t_mask_start
 
                 if target_rect is not None:
@@ -5788,8 +5775,9 @@ class MVATManager(QObject):
             self._universal_repaint_signal.emit(repaint_tasks)
             print(
                 f"DEBUG [Sync Worker]: {len(target_paths)} Cams | Total: {(perf_counter() - t0) * 1000:.2f}ms | "
-                f"CSR Lookup: {lookup_time * 1000:.2f}ms | Mask Gen: {mask_time * 1000:.2f}ms"
+                f"Mask Gen: {mask_time * 1000:.2f}ms"
             )
+            return repaint_tasks
 
     def _on_universal_repaint(self, repaint_tasks: list):
         """Apply localized UI updates produced by the unified propagation worker."""
