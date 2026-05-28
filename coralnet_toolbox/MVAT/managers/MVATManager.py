@@ -1032,7 +1032,7 @@ class MVATManager(QObject):
         self._maybe_compute_ortho_index_map()
 
     def _prewarm_spatial_caches(self, primary_target):
-        """Build the KD-Tree in the background for fast spatial queries."""
+        """Build the KD-Tree on the main UI thread for fast spatial queries."""
         if primary_target is None or not hasattr(primary_target, 'get_render_mesh'):
             return
 
@@ -1040,42 +1040,38 @@ class MVATManager(QObject):
         tree_product_id = getattr(primary_target, '_hover_face_kdtree_product_id', None)
         if tree is not None and tree_product_id == getattr(primary_target, 'product_id', None):
             return
-        if getattr(primary_target, '_hover_face_kdtree_building', False):
-            return
 
-        primary_target._hover_face_kdtree_building = True
+        print("🌳 Building KD-Tree...")
+        try:
+            self.main_window.status_bar.showMessage("🌳 Building KD-Tree...", 0)
+        except Exception:
+            pass
 
-        def _build_tree():
-            try:
-                try:
-                    self.main_window.status_bar.showMessage("Building KD-Tree...", 0)
-                except Exception:
-                    pass
+        build_start = time.perf_counter()
 
+        try:
+            if getattr(primary_target, '_element_centers_np', None) is None:
                 primary_target.prepare_geometry()
-                centers = getattr(primary_target, '_element_centers_np', None)
 
-                if centers is not None and len(centers) > 0:
-                    from scipy.spatial import cKDTree
+            centers = getattr(primary_target, '_element_centers_np', None)
+            if centers is not None and len(centers) > 0:
+                from scipy.spatial import cKDTree
 
-                    tree = cKDTree(np.asarray(centers, dtype=np.float32))
-                    primary_target._hover_face_kdtree = tree
-                    primary_target._hover_face_kdtree_product_id = getattr(primary_target, 'product_id', None)
+                tree = cKDTree(np.asarray(centers, dtype=np.float32))
+                primary_target._hover_face_kdtree = tree
+                primary_target._hover_face_kdtree_product_id = getattr(primary_target, 'product_id', None)
 
-                try:
-                    self.main_window.status_bar.showMessage("KD-Tree built.", 3000)
-                except Exception:
-                    pass
+            try:
+                self.main_window.status_bar.showMessage("KD-Tree built.", 3000)
+            except Exception:
+                pass
 
-            except Exception as e:
-                print(f"DEBUG: Failed to build KD-Tree: {e}")
-            finally:
-                try:
-                    primary_target._hover_face_kdtree_building = False
-                except Exception:
-                    pass
+            build_elapsed_s = time.perf_counter() - build_start
+            print(f"🌳 KD-Tree built in {build_elapsed_s:.2f} s")
 
-        threading.Thread(target=_build_tree, daemon=True).start()
+        except Exception as e:
+            build_elapsed_s = time.perf_counter() - build_start
+            print(f"🌳 KD-Tree build failed after {build_elapsed_s:.2f} s: {e}")
 
     def _maybe_compute_ortho_index_map(self):
         """Build the ortho face-ID index map if ortho camera + mesh are both ready."""
@@ -3040,8 +3036,6 @@ class MVATManager(QObject):
 
         tree = getattr(primary_target, '_hover_face_kdtree', None)
         tree_product_id = getattr(primary_target, '_hover_face_kdtree_product_id', None)
-        if tree is None and getattr(primary_target, '_hover_face_kdtree_building', False):
-            return _finish(np.empty(0, dtype=np.int32))
         if tree is None or tree_product_id != getattr(primary_target, 'product_id', None):
             tree = None
             if cKDTree is not None:

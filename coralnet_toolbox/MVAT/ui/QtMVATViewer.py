@@ -2075,6 +2075,15 @@ class MVATViewer(QFrame):
                 if hasattr(product, 'prepare_geometry'):
                     product.prepare_geometry()
 
+                # Build the KD-tree immediately so the first brush interaction
+                # does not need to warm it up later.
+                manager = getattr(self, 'mvat_manager', None)
+                if manager is not None and hasattr(manager, '_prewarm_spatial_caches'):
+                    try:
+                        manager._prewarm_spatial_caches(product)
+                    except Exception:
+                        pass
+
                 self.add_product(product)
                 self.render_scene()
                 event.acceptProposedAction()

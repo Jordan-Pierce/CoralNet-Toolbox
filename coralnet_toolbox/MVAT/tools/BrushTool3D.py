@@ -102,13 +102,6 @@ class BrushTool3D(Tool3D):
 
         if primary is not None and getattr(primary, '_hover_face_kdtree', None) is None:
             try:
-                prewarm = getattr(self.mvat_manager, '_prewarm_spatial_caches', None)
-                if callable(prewarm):
-                    prewarm(primary)
-            except Exception:
-                pass
-
-            try:
                 self.mvat_manager.main_window.status_bar.showMessage("KD-Tree is still building. Please wait a moment...", 3000)
             except Exception:
                 pass
