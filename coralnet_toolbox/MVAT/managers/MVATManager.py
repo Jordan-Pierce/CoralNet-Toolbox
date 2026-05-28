@@ -5256,7 +5256,8 @@ class MVATManager(QObject):
             return
 
         try:
-            face_ids_arr = np.asarray(sorted({int(face_id) for face_id in face_ids if int(face_id) >= 0}), dtype=np.int64)
+            face_ids_arr = np.asarray(face_ids, dtype=np.int64)
+            face_ids_arr = np.unique(face_ids_arr[face_ids_arr >= 0])
         except Exception:
             return
 
@@ -5371,6 +5372,7 @@ class MVATManager(QObject):
                                   class_label_ids: dict,
                                   fallback_payload=None):
         """Queue a propagation job onto the single unified background worker."""
+        t0 = perf_counter()
         if source_camera is None or not target_paths:
             return
 
@@ -5424,6 +5426,8 @@ class MVATManager(QObject):
             )
             self._propagating_annotation = self._pending_unified_propagation_jobs > 0
             traceback.print_exc()
+        finally:
+            print(f"DEBUG [Sync Dispatch]: Packaged and queued job in {(perf_counter() - t0) * 1000:.2f}ms")
 
     def _do_universal_propagation(self,
                                   source_camera,
@@ -5435,7 +5439,10 @@ class MVATManager(QObject):
                                   primary_target,
                                   fallback_payload=None):
         """Background worker for brush, SAM, and semantic mask propagation."""
+        t0 = perf_counter()
         repaint_tasks = []
+        lookup_time = 0.0
+        mask_time = 0.0
 
         try:
             labels_by_id = {
@@ -5512,6 +5519,57 @@ class MVATManager(QObject):
                 fallback_source_class_id = fallback_payload.get('source_class_id')
 
             projections = None
+            centers = getattr(primary_target, '_element_centers_np', None)
+
+            def _project_bbox_for_subset(target_camera, subset_elements):
+                if centers is None or target_camera is None or target_camera is self.ortho_camera:
+                    return None
+                try:
+                    subset_centers = np.asarray(centers[np.asarray(subset_elements, dtype=np.int64)], dtype=np.float64)
+                    if subset_centers.size == 0:
+                        return None
+
+                    min_pt = np.min(subset_centers, axis=0)
+                    max_pt = np.max(subset_centers, axis=0)
+                    corners_3d = np.array([
+                        [min_pt[0], min_pt[1], min_pt[2]],
+                        [min_pt[0], min_pt[1], max_pt[2]],
+                        [min_pt[0], max_pt[1], min_pt[2]],
+                        [min_pt[0], max_pt[1], max_pt[2]],
+                        [max_pt[0], min_pt[1], min_pt[2]],
+                        [max_pt[0], min_pt[1], max_pt[2]],
+                        [max_pt[0], max_pt[1], min_pt[2]],
+                        [max_pt[0], max_pt[1], max_pt[2]],
+                    ], dtype=np.float64)
+
+                    projected = []
+                    for corner in corners_3d:
+                        uv = target_camera.project(corner)
+                        if uv is None or np.isnan(uv).any():
+                            continue
+                        projected.append(uv)
+
+                    if not projected:
+                        return None
+
+                    projected = np.asarray(projected, dtype=np.float64)
+                    u_min = max(0, int(np.floor(np.min(projected[:, 0]))))
+                    u_max = min(int(target_camera.width), int(np.ceil(np.max(projected[:, 0]))) + 1)
+                    v_min = max(0, int(np.floor(np.min(projected[:, 1]))))
+                    v_max = min(int(target_camera.height), int(np.ceil(np.max(projected[:, 1]))) + 1)
+                    if u_min >= u_max or v_min >= v_max:
+                        return None
+
+                    margin_u = max(1, int(round((u_max - u_min) * 0.2)))
+                    margin_v = max(1, int(round((v_max - v_min) * 0.2)))
+                    return (
+                        max(0, u_min - margin_u),
+                        min(int(target_camera.width), u_max + margin_u),
+                        max(0, v_min - margin_v),
+                        min(int(target_camera.height), v_max + margin_v),
+                    )
+                except Exception:
+                    return None
 
             for target_path in target_paths:
                 target_camera = self._get_camera_for_path(target_path)
@@ -5540,7 +5598,6 @@ class MVATManager(QObject):
 
                 target_rect = None
                 target_label_ids = set()
-                bbox = None
 
                 if use_index_lookup and fallback_center is not None and fallback_search_radius > 0.0:
                     if projections is None:
@@ -5558,6 +5615,10 @@ class MVATManager(QObject):
                             target_v - fallback_search_radius,
                             target_v + fallback_search_radius,
                         )
+                    else:
+                        bbox = None
+                else:
+                    bbox = None
 
                 if use_index_lookup:
                     for source_class_id, subset_elements in class_to_elements.items():
@@ -5580,10 +5641,16 @@ class MVATManager(QObject):
                             if target_class_id is None:
                                 continue
 
+                        if bbox is None:
+                            bbox = _project_bbox_for_subset(target_camera, subset_elements)
+
+                        t_lookup_start = perf_counter()
                         flat_indices = target_camera.get_pixels_for_elements(subset_elements, bbox=bbox)
+                        lookup_time += perf_counter() - t_lookup_start
                         if flat_indices is None or len(flat_indices) == 0:
                             continue
 
+                        t_mask_start = perf_counter()
                         flat_indices = np.asarray(flat_indices, dtype=np.int64).ravel()
                         current_vals = target_mask.mask_data.ravel()[flat_indices]
                         changed_indices = flat_indices[
@@ -5608,8 +5675,10 @@ class MVATManager(QObject):
                         )
                         if label_id is not None:
                             target_label_ids.add(label_id)
+                        mask_time += perf_counter() - t_mask_start
 
                 if fallback_mask is not None and fallback_center is not None and (not use_index_lookup or target_rect is None):
+                    t_mask_start = perf_counter()
                     if fallback_mode == 'erase':
                         target_class_id = 0
                         label = None
@@ -5702,6 +5771,7 @@ class MVATManager(QObject):
                                             target_label_ids.add(fallback_label_id)
                                     finally:
                                         self._release_propagation_buffer(subset_mask)
+                    mask_time += perf_counter() - t_mask_start
 
                 if target_rect is not None:
                     repaint_tasks.append({
@@ -5716,9 +5786,14 @@ class MVATManager(QObject):
             traceback.print_exc()
         finally:
             self._universal_repaint_signal.emit(repaint_tasks)
+            print(
+                f"DEBUG [Sync Worker]: {len(target_paths)} Cams | Total: {(perf_counter() - t0) * 1000:.2f}ms | "
+                f"CSR Lookup: {lookup_time * 1000:.2f}ms | Mask Gen: {mask_time * 1000:.2f}ms"
+            )
 
     def _on_universal_repaint(self, repaint_tasks: list):
         """Apply localized UI updates produced by the unified propagation worker."""
+        t0 = perf_counter()
         try:
             for task in repaint_tasks:
                 task_type = task.get('type')
@@ -5768,6 +5843,7 @@ class MVATManager(QObject):
                 self._pending_unified_propagation_jobs - 1,
             )
             self._propagating_annotation = self._pending_unified_propagation_jobs > 0
+            print(f"DEBUG [Sync Repaint (Main Thread)]: Pushed {len(repaint_tasks)} image updates to UI in {(perf_counter() - t0) * 1000:.2f}ms")
 
     def _on_semantic_prediction_applied(self, image_path: str, source_mask_annotation, prediction_regions=None):
         """Propagate a semantic segmentation prediction to all target cameras.
