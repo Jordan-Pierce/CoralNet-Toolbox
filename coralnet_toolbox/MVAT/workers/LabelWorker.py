@@ -1,9 +1,8 @@
 """
-Background Label Worker
+Background thread for building overlay PolyData from painted face IDs.
 
-Pre-allocated-buffer implementation that keeps appends O(M_new) and
-in-place updates for re-paints. Emits `pyvista.PolyData` overlays at a
-rate-limited cadence so the main thread can swap a tiny actor.
+Runs entirely in numpy (O(M) per stroke), signals the main thread
+with a ready-to-render tiny PolyData. Never touches VTK/OpenGL directly.
 """
 import time
 from time import perf_counter
@@ -13,41 +12,24 @@ import numpy as np
 import pyvista as pv
 from PyQt5.QtCore import QThread, pyqtSignal
 
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Label painter with pre-allocated buffers
-# ----------------------------------------------------------------------------------------------------------------------
-
-
-"""
-Background thread for building overlay PolyData from painted face IDs.
-
-Runs entirely in numpy (O(M) per stroke), signals the main thread
-with a ready-to-render tiny PolyData. Never touches VTK/OpenGL directly.
-"""
-import numpy as np
-import pyvista as pv
-from queue import Queue, Empty
-from PyQt5.QtCore import QThread, pyqtSignal
-
 from coralnet_toolbox.MVAT.utils.MVATLogger import get_visibility_logger
 
 
 class LabelWorker(QThread):
     """
-    Consumes (face_ids, color_rgb, class_id) work items from a queue.
+    Consumes (cmd, face_ids, color_rgb, class_id) work items from a queue.
     
     For each item:
-      1. Applies the color to the shared numpy labels buffer (O(M)).
-      2. Builds a tiny PolyData from scratch — NO extract_cells — (O(M)).
-      3. Emits overlay_ready so the main thread can swap the actor cheaply.
-    
-    If work items arrive faster than they're processed, the queue coalesces
-    them so the thread always works on the latest state.
+      1. Applies the color to the shared numpy labels buffer instantly.
+      2. Accumulates the faces actively painted during this stroke.
+      3. Builds a tiny PolyData from scratch for only the current stroke.
+      4. Emits overlay_ready so the main thread can swap the actor cheaply.
     """
     
     # Emits the tiny PolyData to swap into the plotter
     overlay_ready = pyqtSignal(object)
+    # Signals the main thread to push the final RAM buffers to VTK
+    flush_requested = pyqtSignal()
 
     def __init__(self, mesh_points: np.ndarray, mesh_faces_flat: np.ndarray,
                  labels_view: np.ndarray, class_ids: np.ndarray, parent=None):
@@ -67,11 +49,8 @@ class LabelWorker(QThread):
         self._labels_view = labels_view     # written by this thread
         self._class_ids = class_ids         # written by this thread
 
-        self._face_to_buf = np.full(len(class_ids), -1, dtype=np.int32)
-        self._buf_face_ids = np.full(len(class_ids), -1, dtype=np.int32)
-        self._buf_colors = np.zeros((len(class_ids), 3), dtype=np.uint8)
-        self._n_faces = 0
-        self._cached_painted_faces = np.empty(0, dtype=np.int32)
+        # Tracks only the faces painted during the current drag event.
+        self._current_stroke_faces = np.empty(0, dtype=np.int32)
         self._last_emit_time = 0
         self._min_emit_interval = 0.016
         self._overlay_state_dirty = False
@@ -81,16 +60,14 @@ class LabelWorker(QThread):
 
     def submit(self, face_ids: np.ndarray, color_rgb: tuple, class_id: int):
         """
-        Non-blocking. Called from the main thread on every brush tick.
-        Drains any stale pending item first so we never fall behind.
+        Queue paint commands. Do not drain the queue here - every face chunk
+        from the brush must be processed to keep the RAM array accurate.
         """
-        # Drain stale items — only the latest stroke matters for the overlay
-        while not self._queue.empty():
-            try:
-                self._queue.get_nowait()
-            except Empty:
-                break
-        self._queue.put((face_ids.copy(), color_rgb, class_id))
+        self._queue.put(('paint', face_ids.copy(), color_rgb, class_id))
+
+    def finish_stroke(self):
+        """Queue a signal that the user released the mouse."""
+        self._queue.put(('finish', None, None, None))
 
     def mark_state_dirty(self):
         """Flag that shared label buffers changed outside the painter thread."""
@@ -111,21 +88,29 @@ class LabelWorker(QThread):
             if item is None:
                 break
 
-            try:
-                # -----------------------------------------------------------------
-                # 1. Update RAM buffers in pure C (Instant)
-                # -----------------------------------------------------------------
-                face_ids, color_rgb, class_id = item
-                self._class_ids[face_ids] = class_id
-                self._labels_view[face_ids] = color_rgb
+            cmd = item[0]
 
-                # 2. Flag that we need to rebuild the snapshot
+            if cmd == 'paint':
+                _, face_ids, color_rgb, class_id = item
+                try:
+                    # 1. Update RAM buffers in pure C (Instant)
+                    self._class_ids[face_ids] = class_id
+                    self._labels_view[face_ids] = color_rgb
+
+                    # 2. Accumulate the current stroke geometry
+                    self._current_stroke_faces = np.union1d(self._current_stroke_faces, face_ids)
+                    self._overlay_state_dirty = True
+                except Exception as e:
+                    print(f"⚠️ LabelWorker processing error: {e}")
+            elif cmd == 'finish':
+                # Stroke is over. Clear the stroke buffer, clear the overlay, and flush.
+                self._current_stroke_faces = np.empty(0, dtype=np.int32)
                 self._overlay_state_dirty = True
-            except Exception as e:
-                print(f"⚠️ LabelWorker processing error: {e}")
-                # Thread stays alive — don't re-raise
+                self.overlay_ready.emit(None)
+                self.flush_requested.emit()
+                continue
 
-            # Always emit when queue drains — guarantees final stroke is never dropped
+            # Always emit when queue drains — guarantees final stroke state is rendered
             if self._queue.empty():
                 overlay = self._snapshot_overlay()
                 if overlay is not None:
@@ -143,18 +128,17 @@ class LabelWorker(QThread):
         get_visibility_logger().info(f"LabelWorker.run: {perf_counter() - start_time:.4f}s")
 
     def _snapshot_overlay(self):
-        if self._overlay_state_dirty:
-            painted_faces = np.flatnonzero(self._class_ids != 0).astype(np.int32, copy=False)
-            self._cached_painted_faces = painted_faces
-            self._overlay_state_dirty = False
+        if not self._overlay_state_dirty:
+            return None
+        self._overlay_state_dirty = False
 
-        if self._cached_painted_faces.size == 0:
+        if self._current_stroke_faces.size == 0:
             return None
 
-        colors = self._labels_view[self._cached_painted_faces]
-
+        # Build a tiny geometry containing only the current stroke.
+        colors = self._labels_view[self._current_stroke_faces]
         return self._build_overlay(
-            self._cached_painted_faces,
+            self._current_stroke_faces,
             colors,
         )
 

@@ -272,16 +272,26 @@ class BrushTool3D(Tool3D):
         self._last_brush_volume_state = None
 
         try:
-            if self._stroke_face_ids.size > 0 and self.mvat_manager.multi_annotate_enabled:
-                selected_label = self._stroke_label or self._get_selected_label()
-                current_kind = str(getattr(self, 'tool_kind', 'brush')).strip().lower()
-                handler_name = '_on_3d_erase_stroke_applied' if current_kind == 'erase' else '_on_3d_brush_stroke_applied'
-                handler = getattr(self.mvat_manager, handler_name, None)
-                if callable(handler):
+            if self._stroke_face_ids.size > 0:
+                # 1. Tell manager we are done so it clears overlay and flushes to GPU.
+                finish_stroke = getattr(self.mvat_manager, 'finish_3d_stroke', None)
+                if callable(finish_stroke):
                     try:
-                        handler(self._stroke_face_ids, selected_label)
-                    except Exception as e:
+                        finish_stroke()
+                    except Exception:
                         pass
+
+                # 2. Multi-annotate sync.
+                if self.mvat_manager.multi_annotate_enabled:
+                    selected_label = self._stroke_label or self._get_selected_label()
+                    current_kind = str(getattr(self, 'tool_kind', 'brush')).strip().lower()
+                    handler_name = '_on_3d_erase_stroke_applied' if current_kind == 'erase' else '_on_3d_brush_stroke_applied'
+                    handler = getattr(self.mvat_manager, handler_name, None)
+                    if callable(handler):
+                        try:
+                            handler(self._stroke_face_ids, selected_label)
+                        except Exception as e:
+                            pass
         finally:
             self._stroke_face_ids = np.empty(0, dtype=np.int32)
             self._stroke_label = None

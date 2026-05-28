@@ -1983,9 +1983,36 @@ class MVATManager(QObject):
                 class_ids=class_ids,
             )
             self._label_painter_thread.overlay_ready.connect(self._on_overlay_ready, Qt.QueuedConnection)
+            self._label_painter_thread.flush_requested.connect(self._on_flush_requested, Qt.QueuedConnection)
             self._label_painter_thread.start()
         except Exception as e:
             print(f"⚠️ _ensure_label_painter failed: {e}")
+
+    def finish_3d_stroke(self, primary_target=None):
+        """Signal the background worker that a brush stroke is complete, prompting a flush."""
+        if primary_target is None:
+            primary_target = self._get_primary_mesh_target()
+
+        painter = self._label_painter_thread
+        if painter is not None and painter.isRunning():
+            painter.finish_stroke()
+        else:
+            if primary_target and hasattr(primary_target, 'flush_labels_to_gpu'):
+                primary_target.flush_labels_to_gpu()
+                try:
+                    self.viewer.plotter.render()
+                except Exception:
+                    pass
+
+    def _on_flush_requested(self):
+        """Commit the numpy RAM buffer to VTK and trigger a heavy frame render."""
+        primary_target = self._get_primary_mesh_target()
+        if primary_target and hasattr(primary_target, 'flush_labels_to_gpu'):
+            primary_target.flush_labels_to_gpu()
+            try:
+                self.viewer.plotter.render()
+            except Exception:
+                pass
 
     def _build_primary_mesh_overlay(self):
         """Snapshot the current painted mesh faces into a tiny overlay payload."""
