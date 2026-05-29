@@ -198,6 +198,22 @@ class Camera:
         intr_undist = getattr(raster, 'intrinsics_undistorted', None)
         self.K_linear = intr_undist if intr_undist is not None else self.K
 
+        # Pre-compute float64 copies used repeatedly in project() to eliminate
+        # per-call .astype(np.float64) allocations.
+        self._t_f64 = self.t.astype(np.float64)
+        self._K_f64 = self.K.astype(np.float64)
+        self._dist_coeffs_f64 = (self.dist_coeffs.astype(np.float64)
+                                 if self.dist_coeffs is not None else None)
+        # Cache the Rodrigues rotation vector used by cv2.projectPoints.
+        # R is fixed at construction time so this never needs recomputing.
+        self._rvec = None
+        if self.is_distorted and self._dist_coeffs_f64 is not None:
+            try:
+                import cv2 as _cv2
+                self._rvec, _ = _cv2.Rodrigues(self.R.astype(np.float64))
+            except Exception:
+                pass
+
         # --- Visualization ---
         self.selected = False
         
@@ -433,28 +449,24 @@ class Camera:
         Returns:
             np.ndarray: 2D pixel coordinate [u, v] or [nan, nan] if invalid.
         """
-        if self.is_distorted and self.dist_coeffs is not None:
+        if self.is_distorted and self._dist_coeffs_f64 is not None and self._rvec is not None:
             try:
                 import cv2
                 pts = np.asarray(points_3d_world, dtype=np.float64).reshape(1, 1, 3)
-                rvec, _ = cv2.Rodrigues(self.R.astype(np.float64))
+                # Check if the point is in front of the camera (fast, no allocation)
+                pt_cam = self.R @ pts[0, 0] + self._t_f64
+                if pt_cam[2] <= 0:
+                    return np.array([np.nan, np.nan])
                 # ---> FISHEYE BRANCH <---
-                if getattr(self, 'is_fisheye', False):
-                    D = self.dist_coeffs[:4]
+                if self.is_fisheye:
                     projected, _ = cv2.fisheye.projectPoints(
-                        pts, rvec, self.t.astype(np.float64), self.K.astype(np.float64), D
+                        pts, self._rvec, self._t_f64, self._K_f64, self._dist_coeffs_f64[:4]
                     )
                 else:
                     projected, _ = cv2.projectPoints(
-                        pts, rvec, self.t.astype(np.float64), self.K.astype(np.float64), self.dist_coeffs
+                        pts, self._rvec, self._t_f64, self._K_f64, self._dist_coeffs_f64
                     )
-
-                u, v = float(projected[0, 0, 0]), float(projected[0, 0, 1])
-                # Check if the point is in front of the camera
-                pt_cam = self.R @ np.asarray(points_3d_world, dtype=np.float64) + self.t
-                if pt_cam[2] <= 0:
-                    return np.array([np.nan, np.nan])
-                return np.array([u, v])
+                return np.array([float(projected[0, 0, 0]), float(projected[0, 0, 1])])
             except ImportError:
                 pass  # Fall through to linear path
             except Exception:

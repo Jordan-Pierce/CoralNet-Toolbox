@@ -3926,8 +3926,13 @@ class MVATManager(QObject):
         # Determine which cameras should show previews
         visible_paths = self._get_annotation_target_paths()
 
-        # Use the blazingly fast center-point projection
-        projections = self._build_projection(px, py)
+        # Build a camera subset limited to only the visible context canvases —
+        # no point projecting into cameras that won't display a preview.
+        visible_cameras = {p: c for p, c in self.cameras.items() if p in visible_paths}
+        if self.ortho_camera is not None and self.ortho_camera.image_path in visible_paths:
+            visible_cameras[self.ortho_camera.image_path] = self.ortho_camera
+
+        projections = self._build_projection(px, py, target_cameras=visible_cameras)
         self.context_matrix.update_cursor_previews(projections, visible_paths, item_factory)
 
     def _on_cursor_preview_cleared(self):
@@ -4616,7 +4621,7 @@ class MVATManager(QObject):
                 return
             self.contextStatsComputed.emit(request_id, active_path, n_visible, m_overlapping)
 
-    def _build_projection(self, px: int, py: int, source_camera=None) -> dict:
+    def _build_projection(self, px: int, py: int, source_camera=None, target_cameras=None) -> dict:
         """Cast a ray from the selected camera at (px, py) and return projections.
 
         Handles both perspective cameras and OrthoCamera (orthomosaic):
@@ -4741,10 +4746,13 @@ class MVATManager(QObject):
         if ray is None:
             return {}
 
-        cameras_for_projection = self.cameras
-        if self.ortho_camera is not None and camera != self.ortho_camera:
-            cameras_for_projection = dict(self.cameras)
-            cameras_for_projection[self.ortho_camera.image_path] = self.ortho_camera
+        if target_cameras is not None:
+            cameras_for_projection = target_cameras
+        else:
+            cameras_for_projection = self.cameras
+            if self.ortho_camera is not None and camera != self.ortho_camera:
+                cameras_for_projection = dict(self.cameras)
+                cameras_for_projection[self.ortho_camera.image_path] = self.ortho_camera
 
         return ray.project_to_cameras(cameras_for_projection)
 
