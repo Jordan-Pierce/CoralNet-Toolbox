@@ -1,5 +1,6 @@
 import traceback
 import threading
+import os
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -15,6 +16,9 @@ from coralnet_toolbox.MVAT.utils.MVATLogger import (
     log_cam_stage,
 )
 from coralnet_toolbox.MVAT.core.Products import MeshProduct, PointCloudProduct
+
+
+DEBUG_EXPORT_RGB_INDEX_MAPS = False
 
 
 logger = get_visibility_logger()
@@ -155,6 +159,57 @@ class VisibilityWorker(QObject):
             # This will hold ONLY the tiny metadata payloads for all cameras
             lightweight_final_results = {}
             element_type = self.primary_target.get_element_type()
+
+            def _export_debug_index_maps(save_results):
+                if not DEBUG_EXPORT_RGB_INDEX_MAPS:
+                    return
+
+                try:
+                    import cv2
+                except Exception as exc:
+                    logger.warning(f"⚠️ Debug index export skipped (OpenCV unavailable): {exc}")
+                    return
+
+                debug_dir = os.path.join(os.path.dirname(self.target_file_path), "DEBUG_INDEX_MAPS")
+                os.makedirs(debug_dir, exist_ok=True)
+
+                # We need the max face ID to normalize the colors
+                max_face_id = self.primary_target.get_element_count()
+                if max_face_id <= 0:
+                    return
+
+                for p, result_dict in save_results.items():
+                    idx_map = result_dict.get('index_map')
+                    if idx_map is None:
+                        continue
+
+                    idx_map = np.asarray(idx_map)
+                    if idx_map.ndim < 2:
+                        continue
+
+                    valid = idx_map >= 0
+                    if not np.any(valid):
+                        continue
+
+                    face_ids = idx_map[valid]
+
+                    # Linear normalization: smoothly maps IDs from 0 to 255
+                    # Sequential IDs will now have nearly identical grayscale values
+                    normalized_ids = (face_ids.astype(np.float32) / max_face_id * 255).astype(np.uint8)
+
+                    # Create a grayscale image first
+                    gray_map = np.zeros((idx_map.shape[0], idx_map.shape[1]), dtype=np.uint8)
+                    gray_map[valid] = normalized_ids
+
+                    # Apply a vibrant colormap so the human eye can easily
+                    # distinguish the smooth face-ID transitions.
+                    color_map = cv2.applyColorMap(gray_map, cv2.COLORMAP_JET)
+
+                    # Keep the background pure black
+                    color_map[~valid] = [0, 0, 0]
+
+                    safe_name = os.path.basename(p) + "_idx.png"
+                    cv2.imwrite(os.path.join(debug_dir, safe_name), color_map)
 
             # =================================================================
             # Helper: Synchronous Disk Saver
@@ -338,6 +393,8 @@ class VisibilityWorker(QObject):
                                             cache_key, self.target_file_path, res.get('element_type', 'point'),
                                             self.dist_coeffs_bytes_dict.get(path), pixel_budget=self.pixel_budget
                                         )
+
+                                _export_debug_index_maps(chunk_results)
 
                                 # Execute synchronous save for this chunk
                                 save_to_disk_task(

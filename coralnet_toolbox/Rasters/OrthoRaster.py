@@ -101,7 +101,8 @@ class OrthoRaster(Raster):
             # Use the height ratio; width ratio should match for a correctly-built map
             self.index_map_scale_factor = index_map.shape[0] / self.height
 
-        self.index_map = index_map.copy()
+        # Preserve shared backing storage for cache-loaded ortho maps.
+        self.index_map = index_map
         self.index_map_path = index_map_path
         self.index_element_type = element_type
 
@@ -115,7 +116,7 @@ class OrthoRaster(Raster):
         if visible_indices is not None:
             if not isinstance(visible_indices, np.ndarray) or visible_indices.ndim != 1:
                 raise ValueError("visible_indices must be a 1-D numpy array")
-            self.visible_indices = visible_indices.copy()
+            self.visible_indices = visible_indices
 
     @staticmethod
     def _matrix_is_non_identity(matrix: Optional[np.ndarray]) -> bool:

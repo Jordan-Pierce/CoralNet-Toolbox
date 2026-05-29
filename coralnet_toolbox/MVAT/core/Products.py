@@ -307,11 +307,6 @@ class MeshProduct(AbstractSceneProduct):
     def __init__(self, file_path: str, opacity: float = 1.0, product_id: Optional[str] = None):
         """
         Initialize MeshProduct from file.
-        
-        Args:
-            file_path: Path to mesh file (.obj, .stl, .ply, .vtk)
-            opacity: Default rendering opacity (0.0-1.0)
-            product_id: Optional unique ID (defaults to filename)
         """
         if product_id is None:
             product_id = os.path.basename(file_path)
@@ -321,32 +316,83 @@ class MeshProduct(AbstractSceneProduct):
         self.opacity = opacity
         self.mesh: Optional[pv.PolyData] = None
         self.array_names = []
-        self.available_arrays = []  # Will be built after loading
-        self.selected_array = "RGB"  # Default to RGB
+        self.available_arrays = []
+        self.selected_array = "RGB"
         
-        # Load from file with timing
+        # Load and optimize from file with timing
         start_time = time.time()
-        self.mesh = pv.read(file_path, progress_bar=True)
+        raw_mesh = pv.read(file_path, progress_bar=True)
+        print(f"⏱️ Loaded raw mesh for {self.label} with {raw_mesh.n_cells:,} faces in {time.time() - start_time:.3f}s")
+
+        # SPATIAL SORTING INJECTED
+        sort = True
+        if sort:
+            self.mesh = self._spatially_sort_mesh(raw_mesh)
+            print(f"⏱️ Spatially sorted mesh for {self.label}, in {time.time() - start_time:.3f}s")
+        else:
+            self.mesh = raw_mesh
+        
         self.array_names = self.mesh.array_names
-        
-        # Synthesize missing scalar arrays for consistent visualization
-        self._ensure_scalar_arrays()
-        
-        # Build available arrays in priority order
+        self._ensure_scalar_arrays()        
         other_arrays = [arr for arr in self.array_names if arr.lower() not in ('rgb', 'labels', 'normals', 'class_ids')]
         self.available_arrays = ["RGB", "Labels"]
         self.available_arrays.extend(other_arrays)
         
-        print(f"Array names in mesh: {self.array_names}")
-        print(f"Available arrays for visualization (priority order): {self.available_arrays}")
-        
-        load_time = time.time() - start_time
-        
-        # Validate it has cells (faces/triangles)
         if self.mesh.n_cells == 0:
             raise ValueError(f"File '{file_path}' has no cells/faces - use PointCloudProduct instead")
         
-        print(f"⏱️ Loaded MeshProduct: {self.label} with {self.mesh.n_cells:,} faces in {load_time:.3f}s")
+        print(f"⏱️ Loaded MeshProduct: {self.label} with {self.mesh.n_cells:,} faces in {time.time() - start_time:.3f}s")
+
+    @staticmethod
+    def _spatially_sort_mesh(mesh: pv.PolyData) -> pv.PolyData:
+        """
+        Spatially sorts mesh faces using a pure NumPy Z-Order (Morton) Curve.
+        Requires zero C++ dependencies while providing massive GPU cache hits 
+        and index map entropy reduction.
+        """
+        # Ensure geometry is triangulated before attempting to reshape the face array
+        if not mesh.is_all_triangles:
+            mesh = mesh.triangulate()
+            
+        # Extract raw faces and vertices
+        faces_nx3 = mesh.faces.reshape(-1, 4)[:, 1:].astype(np.uint32)
+        pts = mesh.points
+        
+        # Calculate the centroid (center point) of every face
+        centroids = pts[faces_nx3].mean(axis=1)
+        
+        # Normalize the 3D space into a 10-bit integer grid (0 to 1023)
+        c_min = centroids.min(axis=0)
+        c_max = centroids.max(axis=0)
+        extent = np.maximum(c_max - c_min, 1e-8) 
+        
+        normalized = ((centroids - c_min) / extent * 1023).astype(np.uint32)
+        
+        x = normalized[:, 0]
+        y = normalized[:, 1]
+        z = normalized[:, 2]
+        
+        # Interleave the X, Y, Z bits to create a 30-bit Morton Code
+        def expand_bits(v):
+            v = (v | (v << 16)) & 0x030000FF
+            v = (v | (v <<  8)) & 0x0300F00F
+            v = (v | (v <<  4)) & 0x030C30C3
+            v = (v | (v <<  2)) & 0x09249249
+            return v
+            
+        morton_codes = (expand_bits(x) | (expand_bits(y) << 1) | (expand_bits(z) << 2))
+        
+        # Get the sorted indices and reorder the faces
+        sort_idx = np.argsort(morton_codes)
+        sorted_faces = faces_nx3[sort_idx]
+        
+        # Pack back into VTK's expected format (padding with 3)
+        padding = np.full((len(sorted_faces), 1), 3, dtype=np.uint32)
+        vtk_optimized_faces = np.hstack((padding, sorted_faces)).flatten()
+        
+        mesh.faces = vtk_optimized_faces
+        
+        return mesh
     
     @classmethod
     def from_file(cls, file_path: str, opacity: float = 1.0) -> 'MeshProduct':

@@ -718,7 +718,9 @@ class Raster(QObject):
                 interpolation=cv2.INTER_NEAREST
             )
         
-        self.index_map = index_map.copy()
+        # Keep the loaded array as-is so cache-backed memmaps and other large
+        # results do not get duplicated in RAM.
+        self.index_map = index_map
         self.index_map_path = index_map_path
         self.index_element_type = element_type
         
@@ -740,7 +742,7 @@ class Raster(QObject):
                 raise ValueError("Visible indices must be a numpy array")
             if visible_indices.ndim != 1:
                 raise ValueError("Visible indices must be a 1D array")
-            self.visible_indices = visible_indices.copy()
+            self.visible_indices = visible_indices
     
     # ------------------------------------------------------------------
     # Inverted-index background build
