@@ -6137,43 +6137,30 @@ class MVATManager(QObject):
         plotter  = viewer.plotter
 
         # ------------------------------------------------------------------ #
-        # 1. Collect non-mesh actors to hide temporarily
+        # 1. Hide every actor except the primary geometry actor
+        #    (rays, frustums, overlays, axes, etc. must not appear in the
+        #     screenshot used for SAM prompting)
         # ------------------------------------------------------------------ #
+        primary_actor  = viewer._get_primary_target_actor()
         actors_to_hide = []
 
-        def _hide(actor):
-            if actor is not None and hasattr(actor, 'SetVisibility'):
+        try:
+            vtk_actors = plotter.renderer.GetActors()
+            vtk_actors.InitTraversal()
+            while True:
+                actor = vtk_actors.GetNextActor()
+                if actor is None:
+                    break
+                if actor is primary_actor:
+                    continue          # keep the mesh/point-cloud visible
                 if actor.GetVisibility():
                     actor.SetVisibility(False)
                     actors_to_hide.append(actor)
-
-        # Rays
-        ray_mgr      = getattr(viewer, '_ray_manager',      None)
-        ortho_ray    = getattr(viewer, '_ortho_ray_manager', None)
-        _hide(getattr(ray_mgr,   'ray_actor', None))
-        _hide(getattr(ortho_ray, 'ray_actor', None))
-
-        # Frustums
-        frustum_mgr  = getattr(viewer, '_frustum_manager', None)
-        if frustum_mgr is not None:
-            for attr in ('frustum_actor', '_actor'):
-                _hide(getattr(frustum_mgr, attr, None))
-            # BatchedFrustumManager may store a list of actors
-            for a in getattr(frustum_mgr, '_actors', []):
-                _hide(a)
-
-        # Sphere markers (hover indicator)
-        sphere_mgr   = getattr(viewer, '_sphere_manager', None)
-        if sphere_mgr is not None:
-            for attr in ('actor', '_actor', 'sphere_actor'):
-                _hide(getattr(sphere_mgr, attr, None))
-
-        # Label / hover overlay actors (managed by MVATManager)
-        _hide(self._label_overlay_actor)
-        _hide(self._hover_overlay_actor)
+        except Exception:
+            pass
 
         # ------------------------------------------------------------------ #
-        # 2. High-resolution screenshot (mesh/point-cloud only)
+        # 2. High-resolution screenshot (geometry only)
         # ------------------------------------------------------------------ #
         try:
             win_w, win_h = plotter.window_size
@@ -6183,7 +6170,6 @@ class MVATManager(QObject):
             plotter.render()
             rgb = plotter.screenshot(return_img=True, window_size=(render_w, render_h))
         finally:
-            # Restore all hidden actors regardless of errors
             for actor in actors_to_hide:
                 actor.SetVisibility(True)
             plotter.render()
@@ -6272,12 +6258,12 @@ class MVATManager(QObject):
         sam_dialog.set_image(rgb, image_path=None)
 
         dlg = MVATSAMDialog(
+            viewer=self.viewer,
             rgb_image=rgb,
             index_map=index_map,
             element_type=element_type,
             sam_dialog=sam_dialog,
             label=selected_label,
-            parent=self.main_window,
         )
         dlg.maskAccepted.connect(
             lambda mask: self._on_viewer_sam_accepted(
