@@ -449,7 +449,7 @@ class VisibilityManager:
         # Strategy dispatch based on element type
         if element_type == 'point':
             # Strategy A: Point Cloud - existing scatter-reduce algorithm
-            from coralnet_toolbox.MVAT.core.Model import PointCloudProduct
+            from coralnet_toolbox.MVAT.core.Products import PointCloudProduct
             if isinstance(primary_target, PointCloudProduct):
                 points = primary_target.get_points_array()
                 if points is not None:

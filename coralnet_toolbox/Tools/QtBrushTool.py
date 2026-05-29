@@ -156,6 +156,12 @@ class BrushTool(Tool):
         self._sync_timer.timeout.connect(self._stream_stroke_chunk)
         self._is_finishing_stroke = False
         self._active_workers = 0
+        
+        # CURSOR MOVE DEBOUNCING (throttle MVAT 3D sync to ~10 Hz during cursor movement)
+        self._cursor_update_timer = QTimer()
+        self._cursor_update_timer.setSingleShot(True)
+        self._cursor_update_timer.timeout.connect(self._deferred_cursor_update)
+        self._pending_cursor_pos = None
 
     def _create_brush_mask(self):
         if self.shape == 'circle':
@@ -232,21 +238,44 @@ class BrushTool(Tool):
 
     def mouseMoveEvent(self, event):
         super().mouseMoveEvent(event)
-        
+
         scene_pos = self.annotation_window.mapToScene(event.pos())
         cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
-        
+
         if (cursor_in_window and self.active and self.annotation_window.selected_label):
             self.update_cursor_annotation(scene_pos)
-            if self.cursor_move_callback:
-                self.cursor_move_callback(scene_pos, self.create_cursor_preview_item)
+
+            # Only sync cursor preview to 3D viewers if Multi-Annotate is enabled
+            mvat_manager = getattr(self.main_window, 'mvat_manager', None)
+            if mvat_manager and getattr(mvat_manager, 'multi_annotate_enabled', False):
+                # DEBOUNCED: Store position and defer callback execution
+                self._pending_cursor_pos = scene_pos
+                if not self._cursor_update_timer.isActive():
+                    self._cursor_update_timer.start(100)  # ~10 Hz throttle
+            else:
+                # Multi-Annotate is OFF: don't sync to 3D viewers, but clear any existing preview
+                self._cursor_update_timer.stop()
+                if self.cursor_clear_callback:
+                    self.cursor_clear_callback()
         else:
             self.clear_cursor_annotation()
+            self._cursor_update_timer.stop()
             if self.cursor_clear_callback:
                 self.cursor_clear_callback()
 
         if self.painting:
             self._apply_brush(event)
+
+    def _deferred_cursor_update(self):
+        """Executes the throttled MVAT 3D sync callback with the latest cursor position.
+
+        Only fires if Multi-Annotate is still enabled at callback time.
+        """
+        mvat_manager = getattr(self.main_window, 'mvat_manager', None)
+        if self._pending_cursor_pos and self.cursor_move_callback:
+            # Double-check Multi-Annotate state before firing the expensive 3D sync
+            if mvat_manager and getattr(mvat_manager, 'multi_annotate_enabled', False):
+                self.cursor_move_callback(self._pending_cursor_pos, self.create_cursor_preview_item)
     
     def keyPressEvent(self, event):
         modifiers = event.modifiers()
@@ -424,6 +453,7 @@ class BrushTool(Tool):
     def deactivate(self):
         if self.painting:
             self._finish_stroke()
+        self._cursor_update_timer.stop()  # Clean up timer on deactivation
         super().deactivate()
         
     def stop_current_drawing(self):
