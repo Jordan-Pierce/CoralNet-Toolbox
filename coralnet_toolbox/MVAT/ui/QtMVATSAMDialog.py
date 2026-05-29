@@ -1,15 +1,17 @@
 """
-MVATSAMOverlay -- frameless modal SAM dialog that covers the MVATViewer.
+MVATSAMOverlay -- frameless non-modal SAM dialog that covers the MVATViewer.
 
-Feels identical to using the SAMTool inside AnnotationWindow:
-  - Screenshot fills the window as the background.
-  - Hover  -> live debounced SAM prediction (crosshair cursor, 10 ms debounce).
-  - Ctrl+Left  -> lock positive point (green dot).
-  - Ctrl+Right -> lock negative point (red dot).
-  - Left-drag (no Ctrl) -> bounding-box rectangle.
+Visually identical to SAMTool in AnnotationWindow:
+  - Animated dashed blue border around the full image (WorkArea-style).
+  - Hover  -> live debounced SAM prediction, 10 ms debounce.
+  - Ctrl+Left  -> lock positive point (green dot, white outline).
+  - Ctrl+Right -> lock negative point (red dot, white outline).
+  - Left-drag (no Ctrl) -> dashed bounding-box rectangle.
   - Backspace  -> clear all prompts.
   - Enter / Space -> accept current mask and close.
   - Escape     -> cancel.
+
+The dialog is non-modal so the user can change the active label while it is open.
 """
 
 import numpy as np
@@ -44,45 +46,46 @@ def _mask_to_qpixmap(binary_mask: np.ndarray, color: QColor) -> QPixmap:
     return QPixmap.fromImage(img)
 
 
-_POS_COLOR  = QColor(0,   200,  50,  220)
-_NEG_COLOR  = QColor(220,  30,  30,  220)
-_RECT_COLOR = QColor(0,   168, 230,  200)
-_DOT_R      = 6
+# Match SAMTool / WorkArea colours exactly
+_WORK_AREA_COLOR = QColor(0, 168, 230)      # blue  — border / rect
+_POS_COLOR       = QColor(0, 200, 50,  220) # green — positive dot
+_NEG_COLOR       = QColor(220, 30, 30, 220) # red   — negative dot
+_DOT_R           = 8                        # radius in scene pixels (matches SAMTool 10px diameter→r=10)
+_BORDER_WIDTH    = 3
 
 
 # ---------------------------------------------------------------------------
-# Dialog
+# Main dialog
 # ---------------------------------------------------------------------------
 
 class MVATSAMDialog(QDialog):
     """
-    Frameless modal dialog covering the MVATViewer for SAM interaction.
+    Frameless, non-modal dialog that covers the MVATViewer for SAM interaction.
 
     Parameters
     ----------
-    viewer       : MVATViewer  -- used to compute screen position/size
+    viewer       : MVATViewer
     rgb_image    : np.ndarray (H, W, 3) uint8
     index_map    : np.ndarray (H, W) int32
     element_type : str
     sam_dialog   : DeployPredictorDialog
-    label        : Label
+    label        : Label  (read fresh from dialog on each prediction — non-modal)
     """
 
     maskAccepted = pyqtSignal(object)   # np.ndarray bool (H x W)
 
     def __init__(self, viewer, rgb_image: np.ndarray, index_map: np.ndarray,
                  element_type: str, sam_dialog, label, parent=None):
-        super().__init__(parent,
-                         Qt.FramelessWindowHint |
-                         Qt.WindowStaysOnTopHint)
-        self.setModal(True)
+        super().__init__(parent, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        # Non-modal — user can interact with rest of UI (e.g. change label)
+        self.setModal(False)
 
         self._viewer     = viewer
         self._rgb        = rgb_image
         self._index_map  = index_map
         self._elem_type  = element_type
         self._sam        = sam_dialog
-        self._label      = label
+        self._label      = label          # initial; re-read each prediction
         self._img_h, self._img_w = rgb_image.shape[:2]
 
         self._binary_mask        = None
@@ -97,16 +100,25 @@ class MVATSAMDialog(QDialog):
         self._dot_items    = []
         self._rect_item    = None
         self._overlay_item = None
+        self._border_item  = None
 
+        # Hover debounce — same 10 ms as SAMTool
         self._hover_timer = QTimer(self)
         self._hover_timer.setSingleShot(True)
         self._hover_timer.timeout.connect(self._on_hover_timeout)
+
+        # Border pulse animation — matches WorkArea pulsing
+        self._pulse_timer    = QTimer(self)
+        self._pulse_timer.setInterval(50)           # 20 Hz
+        self._pulse_timer.timeout.connect(self._pulse_border)
+        self._pulse_phase    = 0.0
+        self._pulse_dash_off = 0
 
         self._build_ui()
         self._size_to_viewer()
 
     # ------------------------------------------------------------------
-    # UI — zero-margin layout with a single QGraphicsView
+    # UI
     # ------------------------------------------------------------------
 
     def _build_ui(self):
@@ -132,17 +144,35 @@ class MVATSAMDialog(QDialog):
         self._scene.addItem(self._bg_item)
         self._scene.setSceneRect(0, 0, self._img_w, self._img_h)
 
+        self._add_work_area_border()
+
+    def _add_work_area_border(self):
+        """Animated dashed blue border around the full image — WorkArea-style."""
+        rect = QRectF(0, 0, self._img_w, self._img_h)
+        pen  = QPen(_WORK_AREA_COLOR, _BORDER_WIDTH, Qt.DotLine)
+        pen.setCosmetic(True)
+        self._border_item = QGraphicsRectItem(rect)
+        self._border_item.setPen(pen)
+        self._border_item.setBrush(QBrush(Qt.NoBrush))
+        self._border_item.setZValue(30)
+        self._scene.addItem(self._border_item)
+        self._pulse_timer.start()
+
+    def _pulse_border(self):
+        """Animate the border by cycling dash offset — mirrors WorkArea pulse."""
+        if self._border_item is None:
+            return
+        self._pulse_dash_off = (self._pulse_dash_off + 1) % 20
+        pen = self._border_item.pen()
+        pen.setDashOffset(self._pulse_dash_off)
+        self._border_item.setPen(pen)
+
     def _size_to_viewer(self):
-        """Position this dialog to exactly cover the MVATViewer on screen."""
         if self._viewer is None:
             return
         tl = self._viewer.mapToGlobal(self._viewer.rect().topLeft())
         self.setGeometry(tl.x(), tl.y(),
                          self._viewer.width(), self._viewer.height())
-
-    # ------------------------------------------------------------------
-    # Show / fit
-    # ------------------------------------------------------------------
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -223,8 +253,19 @@ class MVATSAMDialog(QDialog):
         self._clear_overlay()
 
     # ------------------------------------------------------------------
-    # SAM prediction
+    # SAM prediction — reads current label live so user can switch labels
     # ------------------------------------------------------------------
+
+    def _current_label(self):
+        """Return the currently selected label (re-read each time, non-modal)."""
+        try:
+            ann_win = self._viewer.mvat_manager.annotation_window
+            lbl = getattr(ann_win, 'selected_label', None)
+            if lbl is not None:
+                return lbl
+        except Exception:
+            pass
+        return self._label
 
     def _predict(self, hover_pos=None):
         import torch
@@ -298,6 +339,7 @@ class MVATSAMDialog(QDialog):
     # ------------------------------------------------------------------
 
     def _add_dot(self, pos: QPointF, color: QColor):
+        """Green/red filled circle with white outline — matches SAMTool exactly."""
         r    = _DOT_R
         item = QGraphicsEllipseItem(pos.x() - r, pos.y() - r, 2 * r, 2 * r)
         pen  = QPen(Qt.white, 1.5)
@@ -309,20 +351,21 @@ class MVATSAMDialog(QDialog):
         self._dot_items.append(item)
 
     def _draw_rect_preview(self):
+        """Dashed blue rectangle — matches SAMTool display_rectangle."""
         if self._rect_item is not None:
             self._scene.removeItem(self._rect_item)
             self._rect_item = None
         if self._rect_start is None or self._rect_end is None:
             return
         rect = QRectF(self._rect_start, self._rect_end).normalized()
-        pen  = QPen(_RECT_COLOR, 2)
+        pen  = QPen(_WORK_AREA_COLOR, 2)
         pen.setCosmetic(True)
         pen.setStyle(Qt.DashLine)
         self._rect_item = QGraphicsRectItem(rect)
         self._rect_item.setPen(pen)
-        self._rect_item.setBrush(QBrush(QColor(_RECT_COLOR.red(),
-                                               _RECT_COLOR.green(),
-                                               _RECT_COLOR.blue(), 30)))
+        self._rect_item.setBrush(QBrush(QColor(_WORK_AREA_COLOR.red(),
+                                               _WORK_AREA_COLOR.green(),
+                                               _WORK_AREA_COLOR.blue(), 30)))
         self._rect_item.setZValue(10)
         self._scene.addItem(self._rect_item)
 
@@ -330,7 +373,8 @@ class MVATSAMDialog(QDialog):
         self._clear_overlay()
         if self._binary_mask is None:
             return
-        color = QColor(self._label.color) if self._label is not None else QColor(0, 200, 50)
+        label = self._current_label()
+        color = QColor(label.color) if label is not None else QColor(0, 200, 50)
         pix   = _mask_to_qpixmap(self._binary_mask, color)
         self._overlay_item = QGraphicsPixmapItem(pix)
         self._overlay_item.setZValue(5)
@@ -349,11 +393,14 @@ class MVATSAMDialog(QDialog):
         if self._binary_mask is None:
             return
         self._hover_timer.stop()
+        self._pulse_timer.stop()
+        # Emit with current label so caller uses the live selection
         self.maskAccepted.emit(self._binary_mask.copy())
         self.accept()
 
     def _on_cancel(self):
         self._hover_timer.stop()
+        self._pulse_timer.stop()
         self.reject()
 
     # ------------------------------------------------------------------

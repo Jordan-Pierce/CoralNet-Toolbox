@@ -6160,8 +6160,21 @@ class MVATManager(QObject):
             pass
 
         # ------------------------------------------------------------------ #
-        # 2. High-resolution screenshot (geometry only)
+        # 2. Switch primary product to RGB array, screenshot, switch back
         # ------------------------------------------------------------------ #
+        primary_target   = viewer.scene_context.get_primary_target()
+        prev_array       = None
+        switched_to_rgb  = False
+        if primary_target is not None and hasattr(primary_target, 'get_selected_array'):
+            prev_array = primary_target.get_selected_array()
+            if prev_array != 'RGB' and hasattr(primary_target, 'set_selected_array'):
+                if primary_target.set_selected_array('RGB'):
+                    switched_to_rgb = True
+                    try:
+                        viewer.render_scene()
+                    except Exception:
+                        pass
+
         try:
             win_w, win_h = plotter.window_size
             render_w = win_w * scale
@@ -6170,6 +6183,14 @@ class MVATManager(QObject):
             plotter.render()
             rgb = plotter.screenshot(return_img=True, window_size=(render_w, render_h))
         finally:
+            # Restore array
+            if switched_to_rgb and prev_array is not None:
+                try:
+                    primary_target.set_selected_array(prev_array)
+                    viewer.render_scene()
+                except Exception:
+                    pass
+            # Restore hidden actors
             for actor in actors_to_hide:
                 actor.SetVisibility(True)
             plotter.render()
@@ -6265,10 +6286,13 @@ class MVATManager(QObject):
             sam_dialog=sam_dialog,
             label=selected_label,
         )
-        dlg.maskAccepted.connect(
-            lambda mask: self._on_viewer_sam_accepted(
-                mask, index_map, element_type, selected_label)
-        )
+        def _on_accepted(mask):
+            # Re-read the current label at accept time (user may have changed it)
+            live_label = (getattr(self.annotation_window, 'selected_label', None)
+                          or selected_label)
+            self._on_viewer_sam_accepted(mask, index_map, element_type, live_label)
+
+        dlg.maskAccepted.connect(_on_accepted)
         dlg.exec_()
 
     def _on_viewer_sam_accepted(self, binary_mask, index_map, element_type, label):
