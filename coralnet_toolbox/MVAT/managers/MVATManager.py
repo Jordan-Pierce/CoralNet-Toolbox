@@ -2474,6 +2474,10 @@ class MVATManager(QObject):
         2D size was just set by the user (e.g. 2D Ctrl+wheel); otherwise the
         projection round-trip will overwrite the value they just chose.
         """
+        if not self.multi_annotate_enabled:
+            self._clear_projected_cursor_previews(render=render)
+            return
+
         tool_kind, active_tool = self._get_active_3d_tool_kind()
         if tool_kind not in ('brush', 'erase') or active_tool is None or world_point is None:
             self._clear_projected_cursor_previews(render=render)
