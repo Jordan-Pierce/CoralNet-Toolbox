@@ -828,13 +828,15 @@ class VisibilityManager:
         encode_time = time.perf_counter() - setup_start
         plotter_time = 0.0
 
+        # --- 3. Camera / scene prep ---
+        camera_start = time.perf_counter()
+
         # Prepare face centers for GPU depth mapping
         if compute_depth_map and HAS_TORCH and torch.cuda.is_available():
             face_centers_np = mesh.cell_centers().points.astype(np.float32)
             face_centers_pt = torch.from_numpy(face_centers_np).cuda()
 
-        # --- 3. Configure VTK camera ---
-        camera_start = time.perf_counter()
+        # Configure the VTK camera
         cls._configure_vtk_camera(plotter, K_scaled, R, t, render_w, render_h, mesh.bounds)
         camera_time = time.perf_counter() - camera_start
 
@@ -895,6 +897,7 @@ class VisibilityManager:
         total_time = time.perf_counter() - start_time
         single_summary = [
             f"   - Setup          : {encode_time + plotter_time:.4f}s",
+            f"   - Camera Setup   : {camera_time:.4f}s",
             f"   - Render & Decode: {render_time:.4f}s",
         ]
         if compute_depth_map:
