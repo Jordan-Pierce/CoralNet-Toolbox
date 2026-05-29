@@ -6118,18 +6118,76 @@ class MVATManager(QObject):
     # MVAT-SAM  (Space-bar segmentation of the current 3D viewer screenshot)
     # =========================================================================
 
-    def _capture_viewer_sam_context(self):
+    def _capture_viewer_sam_context(self, scale: int = 2):
         """Capture the current MVATViewer frame and build an on-the-fly index map.
+
+        Non-mesh actors (rays, frustums, sphere markers, hover/label overlays) are
+        hidden before the screenshot and restored afterwards so that only the mesh /
+        point-cloud geometry appears in the image used for SAM prompting.
+
+        The screenshot is rendered at ``scale`` x the current window resolution so
+        that the resulting masks are dense even on small viewer windows.
 
         Returns (rgb_image, index_map, element_type).
         Raises RuntimeError on any failure so the caller can show a message.
         """
         from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
 
-        plotter = self.viewer.plotter
+        viewer   = self.viewer
+        plotter  = viewer.plotter
 
-        # 1. Screenshot (RGB)
-        rgb = plotter.screenshot(return_img=True)
+        # ------------------------------------------------------------------ #
+        # 1. Collect non-mesh actors to hide temporarily
+        # ------------------------------------------------------------------ #
+        actors_to_hide = []
+
+        def _hide(actor):
+            if actor is not None and hasattr(actor, 'SetVisibility'):
+                if actor.GetVisibility():
+                    actor.SetVisibility(False)
+                    actors_to_hide.append(actor)
+
+        # Rays
+        ray_mgr      = getattr(viewer, '_ray_manager',      None)
+        ortho_ray    = getattr(viewer, '_ortho_ray_manager', None)
+        _hide(getattr(ray_mgr,   'ray_actor', None))
+        _hide(getattr(ortho_ray, 'ray_actor', None))
+
+        # Frustums
+        frustum_mgr  = getattr(viewer, '_frustum_manager', None)
+        if frustum_mgr is not None:
+            for attr in ('frustum_actor', '_actor'):
+                _hide(getattr(frustum_mgr, attr, None))
+            # BatchedFrustumManager may store a list of actors
+            for a in getattr(frustum_mgr, '_actors', []):
+                _hide(a)
+
+        # Sphere markers (hover indicator)
+        sphere_mgr   = getattr(viewer, '_sphere_manager', None)
+        if sphere_mgr is not None:
+            for attr in ('actor', '_actor', 'sphere_actor'):
+                _hide(getattr(sphere_mgr, attr, None))
+
+        # Label / hover overlay actors (managed by MVATManager)
+        _hide(self._label_overlay_actor)
+        _hide(self._hover_overlay_actor)
+
+        # ------------------------------------------------------------------ #
+        # 2. High-resolution screenshot (mesh/point-cloud only)
+        # ------------------------------------------------------------------ #
+        try:
+            win_w, win_h = plotter.window_size
+            render_w = win_w * scale
+            render_h = win_h * scale
+
+            plotter.render()
+            rgb = plotter.screenshot(return_img=True, window_size=(render_w, render_h))
+        finally:
+            # Restore all hidden actors regardless of errors
+            for actor in actors_to_hide:
+                actor.SetVisibility(True)
+            plotter.render()
+
         if rgb is None:
             raise RuntimeError("plotter.screenshot() returned None")
         if rgb.ndim == 3 and rgb.shape[2] == 4:
@@ -6230,32 +6288,74 @@ class MVATManager(QObject):
     def _on_viewer_sam_accepted(self, binary_mask, index_map, element_type, label):
         """Convert mask pixels to element IDs and propagate to target cameras.
 
-        Mirrors the Brush3DTool pattern:
-        - Always paints the primary annotation-window camera (if loaded).
-        - When multi_annotate_enabled is True, also propagates to all visible
-          context cameras (same as _propagate_3d_face_ids_to_context_cameras).
-        - When multi_annotate_enabled is False, only the primary camera is painted.
+        When multi_annotate_enabled is True: paints the primary annotation-window
+        camera and all visible context cameras (mirrors Brush3DTool behaviour).
+        When multi_annotate_enabled is False: only updates the 3D product — no 2D
+        camera is painted at all, because the VTK view has no corresponding image.
         """
+        # --- extract element IDs from the mask ---------------------------------
+        masked_ids  = index_map[binary_mask.astype(bool)]
+        element_ids = np.unique(masked_ids[masked_ids >= 0]).astype(np.int64)
+
+        if element_ids.size == 0:
+            self.main_window.status_bar.showMessage(
+                'MVAT-SAM: mask covers no scene geometry.', 4000)
+            return
+
+        n = element_ids.size
+        self.main_window.status_bar.showMessage(
+            f"MVAT-SAM: painting {n:,} {element_type}(s) with '{label.short_label_code}'...", 0)
+        QApplication.processEvents()
+
+        # --- resolve label color -----------------------------------------------
+        color_rgb = (label.color.red(), label.color.green(), label.color.blue())
+
+        # --- 3D-only path (multi-annotate OFF) ---------------------------------
+        if not self.multi_annotate_enabled:
+            primary_target = self.viewer.scene_context.get_primary_target()
+            if primary_target is None or not hasattr(primary_target, 'apply_labels'):
+                self.main_window.status_bar.showMessage(
+                    'MVAT-SAM: no 3D product to paint.', 4000)
+                return
+
+            # Resolve class_id from any available raster (needed for apply_labels class bookkeeping).
+            # We iterate cameras until we find one with a mask annotation.
+            source_class_id = None
+            project_labels  = list(self.main_window.label_window.labels)
+            for cam in self.cameras.values():
+                raster = self.raster_manager.get_raster(cam.image_path)
+                if raster is None:
+                    continue
+                mask_ann = raster.get_mask_annotation(project_labels)
+                if mask_ann is None:
+                    continue
+                cid = mask_ann.label_id_to_class_id_map.get(label.id)
+                if cid is None:
+                    mask_ann.sync_label_map([label])
+                    cid = mask_ann.label_id_to_class_id_map.get(label.id)
+                if cid is not None:
+                    source_class_id = cid
+                    break
+
+            if source_class_id is None:
+                # No rasters available — still paint with class_id=1 as a fallback
+                # so the user gets visual feedback on the mesh.
+                source_class_id = 1
+
+            primary_target.apply_labels(element_ids, int(source_class_id), color_rgb)
+            primary_target.flush_labels_to_gpu()
+            self.main_window.status_bar.showMessage(
+                f"MVAT-SAM: applied '{label.short_label_code}' to {n:,} {element_type}(s).", 4000)
+            return
+
+        # --- multi-annotate ON: propagate to 3D + all visible 2D cameras ------
         project_labels = list(self.main_window.label_window.labels)
 
-        # Build target set: always include the primary annotation window path.
         annotation_window = getattr(self.main_window, 'annotation_window', None)
         primary_path = getattr(annotation_window, 'current_image_path', None)
-
-        if self.multi_annotate_enabled:
-            target_paths = self._get_annotation_target_paths()
-            if primary_path:
-                target_paths.add(primary_path)
-        else:
-            # Single-camera mode: only paint the primary loaded camera.
-            if primary_path:
-                target_paths = {primary_path}
-            elif self.selected_camera is not None:
-                target_paths = {self.selected_camera.image_path}
-            else:
-                self.main_window.status_bar.showMessage(
-                    'MVAT-SAM: no target camera to paint.', 4000)
-                return
+        target_paths = self._get_annotation_target_paths()
+        if primary_path:
+            target_paths.add(primary_path)
 
         if not target_paths:
             self.main_window.status_bar.showMessage(
@@ -6277,20 +6377,7 @@ class MVATManager(QObject):
                 'MVAT-SAM: could not resolve class ID for selected label.', 4000)
             return
 
-        masked_ids  = index_map[binary_mask.astype(bool)]
-        element_ids = np.unique(masked_ids[masked_ids >= 0]).astype(np.int64)
-
-        if element_ids.size == 0:
-            self.main_window.status_bar.showMessage(
-                'MVAT-SAM: mask covers no scene geometry.', 4000)
-            return
-
-        class_ids = np.full(element_ids.size, int(source_class_id), dtype=np.int64)
-        n = element_ids.size
-        self.main_window.status_bar.showMessage(
-            f"MVAT-SAM: painting {n:,} {element_type}(s) with '{label.short_label_code}'...", 0)
-        QApplication.processEvents()
-
+        class_ids     = np.full(element_ids.size, int(source_class_id), dtype=np.int64)
         source_camera = self.cameras.get(source_path)
         self._execute_mask_propagation(
             source_camera=source_camera,
