@@ -6113,6 +6113,196 @@ class MVATManager(QObject):
             class_label_ids=class_label_ids,
         )
 
+
+    # =========================================================================
+    # MVAT-SAM  (Space-bar segmentation of the current 3D viewer screenshot)
+    # =========================================================================
+
+    def _capture_viewer_sam_context(self):
+        """Capture the current MVATViewer frame and build an on-the-fly index map.
+
+        Returns (rgb_image, index_map, element_type).
+        Raises RuntimeError on any failure so the caller can show a message.
+        """
+        from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
+
+        plotter = self.viewer.plotter
+
+        # 1. Screenshot (RGB)
+        rgb = plotter.screenshot(return_img=True)
+        if rgb is None:
+            raise RuntimeError("plotter.screenshot() returned None")
+        if rgb.ndim == 3 and rgb.shape[2] == 4:
+            rgb = rgb[:, :, :3]
+        rgb = np.ascontiguousarray(rgb, dtype=np.uint8)
+        h, w = rgb.shape[:2]
+
+        # 2. Derive K / R / t from the VTK camera
+        cam      = plotter.camera
+        pos      = np.asarray(cam.position,    dtype=np.float64)
+        focal_pt = np.asarray(cam.focal_point, dtype=np.float64)
+        view_up  = np.asarray(cam.up,          dtype=np.float64)
+
+        fwd = focal_pt - pos
+        fwd /= np.linalg.norm(fwd)
+        right = np.cross(fwd, view_up)
+        norm_r = np.linalg.norm(right)
+        if norm_r < 1e-9:
+            raise RuntimeError("Degenerate camera: forward parallel to view_up")
+        right /= norm_r
+        up = np.cross(right, fwd)
+
+        # OpenCV convention: Z forward, Y down
+        R = np.stack([right, -up, fwd], axis=0)  # 3x3 world->cam
+        t = -R @ pos
+
+        # Intrinsics from VTK view_angle (full vertical FOV in degrees)
+        fov_v_rad = np.radians(float(getattr(cam, 'view_angle', 30.0)))
+        fy = (h / 2.0) / np.tan(fov_v_rad / 2.0)
+        fx = fy
+        K = np.array([[fx, 0.0, w / 2.0],
+                      [0.0, fy, h / 2.0],
+                      [0.0, 0.0, 1.0]], dtype=np.float64)
+
+        # 3. Build index map on the fly
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            result = VisibilityManager.compute_visibility_from_scene(
+                scene_context=self.viewer.scene_context,
+                K=K, R=R, t=t,
+                width=w, height=h,
+                compute_depth_map=False,
+            )
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        index_map    = result.get('index_map',    np.full((h, w), -1, dtype=np.int32))
+        element_type = result.get('element_type', 'point')
+        return rgb, index_map, element_type
+
+    def launch_viewer_sam(self):
+        """Launch the MVAT-SAM dialog for the current 3D view (called on Space)."""
+        from coralnet_toolbox.MVAT.ui.QtMVATSAMDialog import MVATSAMDialog
+
+        sam_dialog = getattr(self.main_window, 'sam_deploy_predictor_dialog', None)
+        if sam_dialog is None or not getattr(sam_dialog, 'loaded_model', None):
+            self.main_window.status_bar.showMessage(
+                'MVAT-SAM: load a SAM model first (Machine Learning -> SAM).', 4000)
+            return
+
+        selected_label = getattr(self.annotation_window, 'selected_label', None)
+        if selected_label is None:
+            self.main_window.status_bar.showMessage(
+                'MVAT-SAM: select a label before segmenting.', 4000)
+            return
+
+        if not self.viewer.scene_context.has_any_product():
+            self.main_window.status_bar.showMessage(
+                'MVAT-SAM: no 3D scene loaded.', 4000)
+            return
+
+        self.main_window.status_bar.showMessage(
+            'MVAT-SAM: building index map for current view...', 0)
+        QApplication.processEvents()
+        try:
+            rgb, index_map, element_type = self._capture_viewer_sam_context()
+        except Exception as e:
+            self.main_window.status_bar.showMessage(
+                f'MVAT-SAM: capture failed - {e}', 5000)
+            return
+
+        sam_dialog.set_image(rgb, image_path=None)
+
+        dlg = MVATSAMDialog(
+            rgb_image=rgb,
+            index_map=index_map,
+            element_type=element_type,
+            sam_dialog=sam_dialog,
+            label=selected_label,
+            parent=self.main_window,
+        )
+        dlg.maskAccepted.connect(
+            lambda mask: self._on_viewer_sam_accepted(
+                mask, index_map, element_type, selected_label)
+        )
+        dlg.exec_()
+
+    def _on_viewer_sam_accepted(self, binary_mask, index_map, element_type, label):
+        """Convert mask pixels to element IDs and propagate to target cameras.
+
+        Mirrors the Brush3DTool pattern:
+        - Always paints the primary annotation-window camera (if loaded).
+        - When multi_annotate_enabled is True, also propagates to all visible
+          context cameras (same as _propagate_3d_face_ids_to_context_cameras).
+        - When multi_annotate_enabled is False, only the primary camera is painted.
+        """
+        project_labels = list(self.main_window.label_window.labels)
+
+        # Build target set: always include the primary annotation window path.
+        annotation_window = getattr(self.main_window, 'annotation_window', None)
+        primary_path = getattr(annotation_window, 'current_image_path', None)
+
+        if self.multi_annotate_enabled:
+            target_paths = self._get_annotation_target_paths()
+            if primary_path:
+                target_paths.add(primary_path)
+        else:
+            # Single-camera mode: only paint the primary loaded camera.
+            if primary_path:
+                target_paths = {primary_path}
+            elif self.selected_camera is not None:
+                target_paths = {self.selected_camera.image_path}
+            else:
+                self.main_window.status_bar.showMessage(
+                    'MVAT-SAM: no target camera to paint.', 4000)
+                return
+
+        if not target_paths:
+            self.main_window.status_bar.showMessage(
+                'MVAT-SAM: no target cameras to paint.', 4000)
+            return
+
+        source_path     = next(iter(target_paths))
+        source_raster   = self.raster_manager.get_raster(source_path)
+        source_mask_ann = source_raster.get_mask_annotation(project_labels) if source_raster else None
+        source_class_id = None
+        if source_mask_ann is not None:
+            source_class_id = source_mask_ann.label_id_to_class_id_map.get(label.id)
+            if source_class_id is None:
+                source_mask_ann.sync_label_map([label])
+                source_class_id = source_mask_ann.label_id_to_class_id_map.get(label.id)
+
+        if source_class_id is None:
+            self.main_window.status_bar.showMessage(
+                'MVAT-SAM: could not resolve class ID for selected label.', 4000)
+            return
+
+        masked_ids  = index_map[binary_mask.astype(bool)]
+        element_ids = np.unique(masked_ids[masked_ids >= 0]).astype(np.int64)
+
+        if element_ids.size == 0:
+            self.main_window.status_bar.showMessage(
+                'MVAT-SAM: mask covers no scene geometry.', 4000)
+            return
+
+        class_ids = np.full(element_ids.size, int(source_class_id), dtype=np.int64)
+        n = element_ids.size
+        self.main_window.status_bar.showMessage(
+            f"MVAT-SAM: painting {n:,} {element_type}(s) with '{label.short_label_code}'...", 0)
+        QApplication.processEvents()
+
+        source_camera = self.cameras.get(source_path)
+        self._execute_mask_propagation(
+            source_camera=source_camera,
+            element_ids=element_ids,
+            class_ids=class_ids,
+            target_paths=target_paths,
+            project_labels=project_labels,
+            class_label_ids={int(source_class_id): label.id},
+        )
+        self.main_window.status_bar.showMessage(
+            f"MVAT-SAM: applied '{label.short_label_code}' to {n:,} {element_type}(s).", 4000)
+
     def cleanup(self):
         """Clean up resources before closing."""
         self._on_multi_annotate_toggled(False)  # Disconnect all propagation hooks
@@ -6129,36 +6319,3 @@ class MVATManager(QObject):
                 self._label_painter_thread = None
         except Exception:
             pass
-
-        # Shutdown propagation thread pool
-        try:
-            if hasattr(self, '_propagation_executor'):
-                self._propagation_executor.shutdown(wait=False)
-        except Exception:
-            pass
-
-        # Shutdown unified propagation executor
-        try:
-            if hasattr(self, '_unified_bg_executor'):
-                self._unified_bg_executor.shutdown(wait=False)
-        except Exception:
-            pass
-
-        # Remove overlay actor if present
-        try:
-            if self._label_overlay_actor is not None:
-                try:
-                    self.viewer.plotter.remove_actor(self._label_overlay_actor, render=False)
-                except Exception:
-                    pass
-                self._label_overlay_actor = None
-        except Exception:
-            pass
-
-        try:
-            self.clear_sphere_hover_overlay(reset_context=True, render=False)
-        except Exception:
-            pass
-
-        if hasattr(self.viewer, 'close'):
-            self.viewer.close()
