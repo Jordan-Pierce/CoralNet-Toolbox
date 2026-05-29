@@ -4,7 +4,6 @@ CacheManager for MVAT Visibility Data
 Handles persistent caching of index maps and visible indices to disk.
 Uses MD5 hashing of camera parameters and point cloud paths for cache keys.
 """
-import io
 import os
 import json
 import hashlib
@@ -12,15 +11,10 @@ import functools
 import numpy as np
 from typing import Optional, Tuple, Dict
 
-# Optional fast compression backend.  blosc2 with the lz4 codec is typically
-# 3-5× faster than gzip at similar compression ratios.  Falls back gracefully
-# when the package is not installed.
-try:
-    import blosc2 as _blosc2
-    _HAS_BLOSC2 = True
-except ImportError:
-    _blosc2 = None
-    _HAS_BLOSC2 = False
+from coralnet_toolbox.MVAT.utils.IndexMapCodec import (
+    load_index_map_archive,
+    save_index_map_archive,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -64,169 +58,6 @@ def _cached_ortho_md5(ortho_path: str, mesh_path: str,
     h.update(native_size_bytes)
     h.update(element_type.encode('utf-8'))
     return h.hexdigest()
-
-
-# ---------------------------------------------------------------------------
-# Fast array I/O helpers
-# ---------------------------------------------------------------------------
-
-def _save_npy_fast(arr: np.ndarray, path: str) -> None:
-    """Save a numpy array to *path* using blosc2/lz4 if available, else plain .npy."""
-    if _HAS_BLOSC2:
-        # blosc2 with lz4 is typically 3-5× faster than gzip at similar ratios.
-        buf = io.BytesIO()
-        np.save(buf, arr)
-        compressed = _blosc2.compress(buf.getvalue(), typesize=1, codec=_blosc2.Codec.LZ4, clevel=1)
-        with open(path, 'wb') as f:
-            f.write(compressed)
-    else:
-        np.save(path, arr)
-
-
-def _load_npy_fast(path: str, mmap_mode: Optional[str] = None) -> np.ndarray:
-    """Load an array saved by _save_npy_fast, decompressing blosc2 if needed."""
-    if _HAS_BLOSC2:
-        with open(path, 'rb') as f:
-            raw = f.read()
-        try:
-            decompressed = _blosc2.decompress(raw)
-            return np.load(io.BytesIO(decompressed))
-        except Exception:
-            # Not a blosc2 file — fall through to plain numpy load
-            pass
-    return np.load(path, mmap_mode=mmap_mode)
-
-
-# TODO - Tradeoff: w/ compression, slow (0.3), w/o compression, fast (0.05) at first, then thermal damage to disk :) and slower..
-# def _save_npy_fast(arr: np.ndarray, path: str) -> None:
-#     """
-#     Saves directly to disk. 
-#     Bypassing compression guarantees maximum NVMe throughput (~0.01s per map) 
-#     and allows true memory mapping on load.
-#     """
-#     # np.save handles disk I/O at the C level, avoiding Python memory thrashing
-#     np.save(path, arr)
-
-
-# def _load_npy_fast(path: str, mmap_mode: Optional[str] = None) -> np.ndarray:
-#     """
-#     Loads an array from disk.
-#     If mmap_mode='r' is passed, it takes 0.000s and 0 MB of RAM.
-#     """
-#     return np.load(path, mmap_mode=mmap_mode)
-
-
-# ---------------------------------------------------------------------------
-# New-format helpers: save/load as separate .npy + .json files
-# (faster than .npz for random access; supports OS mmap when uncompressed)
-# ---------------------------------------------------------------------------
-
-def _npy_paths(base: str) -> dict:
-    """Return the canonical file paths for a given base (no extension)."""
-    return {
-        'meta': base + '.meta.json',
-        'idx':  base + '.idx.npy',
-        'vis':  base + '.vis.npy',
-        'dep':  base + '.dep.npy',
-    }
-
-
-def _tmp_path(p: str) -> str:
-    """
-    Return an atomic-write temp path for *p* that preserves the file extension.
-
-    np.save() auto-appends '.npy' when the destination doesn't already end in
-    '.npy', which breaks the rename step.  Keeping the extension in the temp
-    name avoids this on both Windows and POSIX.
-    """
-    if p.endswith('.npy'):
-        return p[:-4] + '_tmp.npy'
-    if p.endswith('.json'):
-        return p[:-5] + '_tmp.json'
-    return p + '_tmp'
-
-
-def _save_npy_format(base: str, index_map: np.ndarray,
-                     visible_indices: np.ndarray,
-                     depth_map: Optional[np.ndarray],
-                     element_type: str,
-                     **extra_meta) -> bool:
-    """
-    Atomically write index_map, visible_indices, optional depth_map, and metadata 
-    as separate files rooted at *base*. Returns True on success.
-    """
-    paths = _npy_paths(base)
-    tmp = {k: _tmp_path(v) for k, v in paths.items()}
-    try:
-        _save_npy_fast(index_map, tmp['idx'])
-        _save_npy_fast(visible_indices, tmp['vis'])
-        
-        meta = {'element_type': element_type, 'has_depth_map': False}
-        if depth_map is not None:
-            _save_npy_fast(depth_map, tmp['dep'])
-            meta['has_depth_map'] = True
-            
-        # Merge in any extra metadata (e.g., ortho scale_factor)
-        meta.update(extra_meta)
-        
-        with open(tmp['meta'], 'w') as f:
-            json.dump(meta, f)
-            
-        # Atomic rename
-        os.replace(tmp['idx'],  paths['idx'])
-        os.replace(tmp['vis'],  paths['vis'])
-        if depth_map is not None:
-            os.replace(tmp['dep'], paths['dep'])
-        os.replace(tmp['meta'], paths['meta'])
-        return True
-    except Exception as e:
-        print(f"Warning: fast-format save failed ({e}); tmp files will be cleaned up")
-        for p in tmp.values():
-            try:
-                if os.path.exists(p):
-                    os.remove(p)
-            except Exception:
-                pass
-        return False
-
-
-def _load_npy_format(base: str) -> Optional[Dict]:
-    """
-    Load from the fast .npy format if the sentinel meta file exists.
-    Returns None if not found or on error.
-    """
-    paths = _npy_paths(base)
-    if not os.path.exists(paths['meta']):
-        return None
-    try:
-        with open(paths['meta']) as f:
-            meta = json.load(f)
-            
-        mmap = None if _HAS_BLOSC2 else 'r'
-        index_map = _load_npy_fast(paths['idx'], mmap_mode=mmap).astype(np.int32, copy=False)
-        visible_indices = _load_npy_fast(paths['vis'], mmap_mode=mmap).astype(np.int32, copy=False)
-        
-        depth_map = None
-        if meta.get('has_depth_map') and os.path.exists(paths['dep']):
-            depth_map = _load_npy_fast(paths['dep'], mmap_mode=mmap).astype(np.float16, copy=False)
-            
-        result = {
-            'index_map':      index_map,
-            'visible_indices': visible_indices,
-            'depth_map':      depth_map,
-            'element_type':   meta.get('element_type', 'point'),
-            'inverted_index': None,
-        }
-        
-        # Inject any additional metadata stored (like scale_factor)
-        for k, v in meta.items():
-            if k not in result and k != 'has_depth_map':
-                result[k] = v
-                
-        return result
-    except Exception as e:
-        print(f"Warning: fast-format load failed for {base}: {e}")
-        return None
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -304,7 +135,7 @@ class CacheManager:
                 the current cache key (see _generate_cache_key).
 
         Returns:
-            str: Canonical cache key path (.npz anchor used by both legacy and split formats)
+            str: Canonical cache archive path.
         """
         cache_key = self._generate_cache_key(
             extrinsics, point_cloud_path, element_type, extra_hash_data, pixel_budget,
@@ -312,17 +143,8 @@ class CacheManager:
         return os.path.join(self.cache_dir, f"{cache_key}.npz")
 
     def _cache_path_exists(self, cache_path: str) -> bool:
-        """Return True if either the .npz or the split .npy form for *cache_path* is on disk."""
-        if os.path.exists(cache_path):
-            return True
-
-        npy_base = os.path.splitext(cache_path)[0]
-        paths = _npy_paths(npy_base)
-        return (
-            os.path.exists(paths['meta'])
-            and os.path.exists(paths['idx'])
-            and os.path.exists(paths['vis'])
-        )
+        """Return True if the cache archive exists on disk."""
+        return os.path.exists(cache_path)
 
     def _resolve_existing_cache_path(self,
                                      extrinsics: np.ndarray,
@@ -404,31 +226,14 @@ class CacheManager:
             native_size,
             element_type,
         )
-
-        npy_base = os.path.splitext(cache_path)[0]
-
-        # 1. Try the fast .npy format first
-        result = _load_npy_format(npy_base)
-        if result is not None:
-            result['cache_path'] = cache_path
-            return result
-
-        # 2. Fall back to legacy .npz
         if not os.path.exists(cache_path):
             return None
 
         try:
-            try:
-                data = np.load(cache_path, allow_pickle=True, mmap_mode='r')
-            except Exception:
-                data = np.load(cache_path, allow_pickle=True)
-            result = {
-                'index_map': data['index_map'].astype(np.int32, copy=False),
-                'visible_indices': np.asarray(data['visible_indices']).astype(np.int32, copy=False),
-                'scale_factor': float(data['scale_factor']) if 'scale_factor' in data else float(scale_factor),
-                'element_type': str(data['element_type']) if 'element_type' in data else element_type,
-                'cache_path': cache_path,
-            }
+            result = load_index_map_archive(cache_path)
+            result['scale_factor'] = float(result.get('scale_factor', scale_factor))
+            result['element_type'] = str(result.get('element_type', element_type))
+            result['cache_path'] = cache_path
             return result
         except Exception as e:
             print(f"Warning: Failed to load ortho index map cache from {cache_path}: {e}")
@@ -468,43 +273,17 @@ class CacheManager:
         except Exception:
             pass
 
-        npy_base = os.path.splitext(cache_path)[0]
-
-        # 1. Primary: fast .npy format (blosc2/lz4 if available, else plain npy)
-        if not compressed:
-            ok = _save_npy_format(
-                npy_base, 
-                index_map, 
-                visible_indices, 
-                depth_map=None, 
-                element_type=element_type,
-                scale_factor=float(scale_factor)
-            )
-            if ok:
-                return cache_path
-
-        # 2. Legacy / compressed .npz fallback
-        save_dict = {
-            'index_map': index_map,
-            'visible_indices': visible_indices,
-            'scale_factor': float(scale_factor),
-            'element_type': element_type,
-        }
-
-        temp_path = os.path.splitext(cache_path)[0] + '_tmp.npz'
         try:
-            if compressed:
-                np.savez_compressed(temp_path, **save_dict)
-            else:
-                np.savez(temp_path, **save_dict)
-            os.replace(temp_path, cache_path)
+            save_index_map_archive(
+                cache_path,
+                index_map,
+                visible_indices,
+                element_type=element_type,
+                depth_map=None,
+                scale_factor=float(scale_factor),
+            )
             return cache_path
         except Exception as e:
-            try:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
-            except Exception:
-                pass
             print(f"Warning: Failed to save ortho index map cache to {cache_path}: {e}")
             return None
     
@@ -534,56 +313,9 @@ class CacheManager:
         )
         if cache_path is None:
             return None
-        npy_base   = os.path.splitext(cache_path)[0]  # strip .npz for new-format paths
-
-        # ------------------------------------------------------------------
-        # 1. Try the fast .npy format first (written by new saves)
-        # ------------------------------------------------------------------
-        result = _load_npy_format(npy_base)
-        if result is not None:
-            result['cache_path'] = cache_path
-            return result
-
-        # ------------------------------------------------------------------
-        # 2. Fall back to legacy .npz (mmap_mode='r' works for uncompressed
-        #    zip entries, deferring actual disk reads until array access)
-        # ------------------------------------------------------------------
-        if not os.path.exists(cache_path):
-            return None
-
         try:
-            try:
-                data = np.load(cache_path, allow_pickle=True, mmap_mode='r')
-            except Exception:
-                # Some numpy versions / platforms reject mmap on npz — fall back
-                data = np.load(cache_path, allow_pickle=True)
-
-            result = {
-                'index_map': data['index_map'].astype(np.int32, copy=False),
-                'visible_indices': np.asarray(data['visible_indices']).astype(np.int32, copy=False)
-            }
-            # depth_map is optional in older caches
-            if 'depth_map' in data:
-                result['depth_map'] = data['depth_map'].astype(np.float16, copy=False)
-            else:
-                result['depth_map'] = None
-
-            # element_type: load from file or use provided parameter for backward compat
-            if 'element_type' in data:
-                result['element_type'] = str(data['element_type'])
-            else:
-                result['element_type'] = element_type
-
-            # CSR inverted index (new; absent in old cache files)
-            if 'inv_ids' in data and 'inv_offsets' in data and 'inv_pixels' in data:
-                result['inverted_index'] = {
-                    'inv_ids':     data['inv_ids'],
-                    'inv_offsets': data['inv_offsets'],
-                    'inv_pixels':  data['inv_pixels'],
-                }
-            else:
-                result['inverted_index'] = None  # backward compat: regenerated on next compute
-
+            result = load_index_map_archive(cache_path)
+            result['element_type'] = str(result.get('element_type', element_type))
             result['cache_path'] = cache_path
             return result
         except Exception as e:
@@ -638,42 +370,16 @@ class CacheManager:
         except Exception:
             pass
 
-        npy_base = os.path.splitext(cache_path)[0]  # strip .npz
-
-        # ------------------------------------------------------------------
-        # Primary: fast .npy format (blosc2/lz4 if available, else plain npy
-        # with OS mmap support).  Falls back to legacy .npz on error.
-        # ------------------------------------------------------------------
-        if not compressed:
-            ok = _save_npy_format(npy_base, index_map, visible_indices, depth_map, element_type)
-            if ok:
-                return cache_path  # canonical path unchanged for external callers
-
-        # ------------------------------------------------------------------
-        # Legacy / compressed .npz fallback
-        # NOTE: Inverted index and depth maps are no longer saved to disk.
-        # ------------------------------------------------------------------
-        save_dict = {
-            'index_map':      index_map,
-            'visible_indices': visible_indices,
-            'element_type':   element_type,
-        }
-
-        # Atomic write: temp file → rename
-        temp_path = os.path.splitext(cache_path)[0] + '_tmp.npz'
         try:
-            if compressed:
-                np.savez_compressed(temp_path, **save_dict)
-            else:
-                np.savez(temp_path, **save_dict)
-            os.replace(temp_path, cache_path)
+            save_index_map_archive(
+                cache_path,
+                index_map,
+                visible_indices,
+                element_type=element_type,
+                depth_map=depth_map,
+            )
             return cache_path
         except Exception as e:
-            try:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
-            except Exception:
-                pass
             print(f"Warning: Failed to save visibility cache to {cache_path}: {e}")
             return None
     
