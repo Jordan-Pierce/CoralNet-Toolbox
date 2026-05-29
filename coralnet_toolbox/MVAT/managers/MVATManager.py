@@ -6128,7 +6128,7 @@ class MVATManager(QObject):
         The screenshot is rendered at ``scale`` x the current window resolution so
         that the resulting masks are dense even on small viewer windows.
 
-        Returns (rgb_image, index_map, element_type).
+        Returns (rgb_image, index_map, depth_map, element_type).
         Raises RuntimeError on any failure so the caller can show a message.
         """
         from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
@@ -6236,14 +6236,15 @@ class MVATManager(QObject):
                 scene_context=self.viewer.scene_context,
                 K=K, R=R, t=t,
                 width=w, height=h,
-                compute_depth_map=False,
+                compute_depth_map=True,
             )
         finally:
             QApplication.restoreOverrideCursor()
 
         index_map    = result.get('index_map',    np.full((h, w), -1, dtype=np.int32))
+        depth_map    = result.get('depth_map',    None)
         element_type = result.get('element_type', 'point')
-        return rgb, index_map, element_type
+        return rgb, index_map, depth_map, element_type
 
     def launch_viewer_sam(self):
         """Launch the MVAT-SAM dialog for the current 3D view (called on Space)."""
@@ -6270,7 +6271,7 @@ class MVATManager(QObject):
             'MVAT-SAM: building index map for current view...', 0)
         QApplication.processEvents()
         try:
-            rgb, index_map, element_type = self._capture_viewer_sam_context()
+            rgb, index_map, depth_map, element_type = self._capture_viewer_sam_context(scale=1)
         except Exception as e:
             self.main_window.status_bar.showMessage(
                 f'MVAT-SAM: capture failed - {e}', 5000)
@@ -6290,12 +6291,12 @@ class MVATManager(QObject):
             # Re-read the current label at accept time (user may have changed it)
             live_label = (getattr(self.annotation_window, 'selected_label', None)
                           or selected_label)
-            self._on_viewer_sam_accepted(mask, index_map, element_type, live_label)
+            self._on_viewer_sam_accepted(mask, index_map, depth_map, element_type, live_label)
 
         dlg.maskAccepted.connect(_on_accepted)
         dlg.exec_()
 
-    def _on_viewer_sam_accepted(self, binary_mask, index_map, element_type, label):
+    def _on_viewer_sam_accepted(self, binary_mask, index_map, depth_map, element_type, label):
         """Convert mask pixels to element IDs and propagate to target cameras.
 
         When multi_annotate_enabled is True: paints the primary annotation-window
@@ -6304,8 +6305,11 @@ class MVATManager(QObject):
         camera is painted at all, because the VTK view has no corresponding image.
         """
         # --- extract element IDs from the mask ---------------------------------
-        masked_ids  = index_map[binary_mask.astype(bool)]
-        element_ids = np.unique(masked_ids[masked_ids >= 0]).astype(np.int64)
+        element_ids = self._filter_index_map_ids_by_depth(
+            index_map=index_map,
+            binary_mask=binary_mask,
+            depth_map=depth_map,
+        )
 
         if element_ids.size == 0:
             self.main_window.status_bar.showMessage(
@@ -6399,6 +6403,77 @@ class MVATManager(QObject):
         )
         self.main_window.status_bar.showMessage(
             f"MVAT-SAM: applied '{label.short_label_code}' to {n:,} {element_type}(s).", 4000)
+
+    def _filter_index_map_ids_by_depth(self,
+                                       index_map: np.ndarray,
+                                       binary_mask: np.ndarray,
+                                       depth_map: Optional[np.ndarray] = None) -> np.ndarray:
+        """Return unique element IDs under a mask, optionally rejecting depth outliers.
+
+        The depth-aware branch mirrors the 2D SAM propagation logic: it keeps the
+        interior of the mask and only accepts perimeter pixels when their depth is
+        consistent with the interior band.
+        """
+        if index_map is None or binary_mask is None:
+            return np.array([], dtype=np.int64)
+
+        index_map = np.asarray(index_map)
+        binary_mask = np.asarray(binary_mask)
+        if index_map.ndim != 2 or binary_mask.ndim != 2:
+            return np.array([], dtype=np.int64)
+
+        if index_map.shape != binary_mask.shape:
+            return np.array([], dtype=np.int64)
+
+        valid_mask = binary_mask.astype(bool)
+        if not np.any(valid_mask):
+            return np.array([], dtype=np.int64)
+
+        if depth_map is not None:
+            try:
+                import cv2
+
+                depth_map = np.asarray(depth_map)
+                if depth_map.shape != index_map.shape:
+                    depth_map = cv2.resize(
+                        depth_map.astype(np.float32),
+                        (index_map.shape[1], index_map.shape[0]),
+                        interpolation=cv2.INTER_NEAREST,
+                    )
+
+                erosion_r = int(np.clip(min(valid_mask.shape) * 0.03, 2, 12))
+                kernel = cv2.getStructuringElement(
+                    cv2.MORPH_ELLIPSE,
+                    (2 * erosion_r + 1, 2 * erosion_r + 1),
+                )
+                interior_mask = cv2.erode(
+                    valid_mask.astype(np.uint8),
+                    kernel,
+                    iterations=1,
+                ).astype(bool)
+                perimeter_mask = valid_mask & ~interior_mask
+
+                depth_slice = depth_map.astype(np.float32, copy=False)
+                interior_depths = depth_slice[interior_mask]
+                interior_depths = interior_depths[~np.isnan(interior_depths)]
+
+                if len(interior_depths) >= 10 and perimeter_mask.any():
+                    ref_depth = np.median(interior_depths)
+                    interior_spread = np.std(interior_depths)
+                    abs_floor = max(0.02, ref_depth * 0.005)
+                    full_tol = interior_spread * 2.0 + abs_floor
+                    dist = cv2.distanceTransform(valid_mask.astype(np.uint8), cv2.DIST_L2, 5)
+                    norm_dist = np.clip(dist / max(erosion_r, 1), 0.0, 1.0)
+                    per_pixel_tol = abs_floor + (full_tol - abs_floor) * norm_dist
+                    with np.errstate(invalid='ignore'):
+                        perimeter_depth_ok = np.abs(depth_slice - ref_depth) <= per_pixel_tol
+                    valid_mask = interior_mask | (perimeter_mask & perimeter_depth_ok)
+            except Exception:
+                pass
+
+        raw_ids = index_map[valid_mask]
+        unique_ids = np.unique(raw_ids)
+        return unique_ids[unique_ids > -1].astype(np.int64, copy=False)
 
     def cleanup(self):
         """Clean up resources before closing."""

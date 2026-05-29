@@ -787,7 +787,7 @@ class VisibilityManager:
         import pyvista as pv
         import time
 
-        start_time = time.time()
+        start_time = time.perf_counter()
         log_section("🎨 VTK MESH VISIBILITY RASTERIZATION", logger)
 
         mesh = mesh_product.get_mesh()
