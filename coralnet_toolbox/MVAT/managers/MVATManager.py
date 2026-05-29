@@ -3912,6 +3912,13 @@ class MVATManager(QObject):
 
         px, py = int(scene_pos.x()), int(scene_pos.y())
 
+        # Skip if the cursor hasn't moved by at least 1 pixel since the last update —
+        # avoids redundant ray casts and camera projections during tiny jitter.
+        last = getattr(self, '_last_cursor_preview_px', None)
+        if last is not None and last == (px, py):
+            return
+        self._last_cursor_preview_px = (px, py)
+
         # Determine which cameras should show previews
         visible_paths = self._get_annotation_target_paths()
 
@@ -3921,6 +3928,7 @@ class MVATManager(QObject):
 
     def _on_cursor_preview_cleared(self):
         """Clear cursor previews from all context canvases."""
+        self._last_cursor_preview_px = None
         if self.context_matrix is not None:
             self.context_matrix.clear_all_cursor_previews()
 
