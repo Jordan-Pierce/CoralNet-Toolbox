@@ -343,8 +343,7 @@ class MeshProduct(AbstractSceneProduct):
         
         print(f"⏱️ Loaded MeshProduct: {self.label} with {self.mesh.n_cells:,} faces in {time.time() - start_time:.3f}s")
 
-    @staticmethod
-    def _spatially_sort_mesh(mesh: pv.PolyData) -> pv.PolyData:
+    def _spatially_sort_mesh(self, mesh: pv.PolyData) -> pv.PolyData:
         """
         Spatially sorts mesh faces using a pure NumPy Z-Order (Morton) Curve.
         Requires zero C++ dependencies while providing massive GPU cache hits 
@@ -385,6 +384,20 @@ class MeshProduct(AbstractSceneProduct):
         # Get the sorted indices and reorder the faces
         sort_idx = np.argsort(morton_codes)
         sorted_faces = faces_nx3[sort_idx]
+
+        # Keep proof data for debug visualizations.
+        self._sort_idx = sort_idx
+        self._sort_centroids = centroids
+        self._sort_morton_codes = morton_codes
+
+        if len(morton_codes) > 1:
+            original_steps = np.abs(np.diff(morton_codes.astype(np.int64, copy=False)))
+            sorted_steps = np.abs(np.diff(np.sort(morton_codes.astype(np.int64, copy=False))))
+            self._sort_original_mean_step = float(np.mean(original_steps)) if len(original_steps) else 0.0
+            self._sort_sorted_mean_step = float(np.mean(sorted_steps)) if len(sorted_steps) else 0.0
+        else:
+            self._sort_original_mean_step = 0.0
+            self._sort_sorted_mean_step = 0.0
         
         # Pack back into VTK's expected format (padding with 3)
         padding = np.full((len(sorted_faces), 1), 3, dtype=np.uint32)
@@ -393,6 +406,130 @@ class MeshProduct(AbstractSceneProduct):
         mesh.faces = vtk_optimized_faces
         
         return mesh
+
+    def export_sort_proof(self, output_dir: str, canvas_size: int = 1024) -> Optional[str]:
+        """
+        Export a side-by-side proof image showing the effect of Morton sorting.
+
+        The left panel colors faces by their original cell order. The right
+        panel colors the same mesh by post-sort cell order, which should show
+        smoother spatial grouping when sorting is effective.
+        """
+        if self.mesh is None:
+            return None
+
+        centroids = getattr(self, '_sort_centroids', None)
+        sort_idx = getattr(self, '_sort_idx', None)
+        if centroids is None or sort_idx is None:
+            return None
+
+        centroids = np.asarray(centroids, dtype=np.float32)
+        sort_idx = np.asarray(sort_idx, dtype=np.int64)
+        if centroids.ndim != 2 or centroids.shape[0] < 2 or sort_idx.size != centroids.shape[0]:
+            return None
+
+        try:
+            import cv2
+        except Exception as exc:
+            print(f"⚠️ Mesh sort proof export skipped (OpenCV unavailable): {exc}")
+            return None
+
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Project the face centers onto their dominant 2D plane so the ordering
+        # patterns are visible without a specific camera viewpoint.
+        centered = centroids - centroids.mean(axis=0, keepdims=True)
+        _, _, vh = np.linalg.svd(centered, full_matrices=False)
+        projected = centered @ vh[:2].T
+
+        proj_min = projected.min(axis=0)
+        proj_max = projected.max(axis=0)
+        span = np.maximum(proj_max - proj_min, 1e-8)
+        projected = (projected - proj_min) / span
+
+        panel_size = max(512, int(canvas_size))
+        separator = 36
+        footer_h = 104
+        canvas = np.zeros((panel_size + footer_h, panel_size * 2 + separator, 3), dtype=np.uint8)
+        canvas[:] = (10, 10, 14)
+
+        def build_panel(ordered_indices: np.ndarray) -> np.ndarray:
+            coords = projected[ordered_indices]
+            values = np.linspace(0, 255, len(ordered_indices), dtype=np.float32)
+
+            x = np.clip(np.round(coords[:, 0] * (panel_size - 1)).astype(np.int32), 0, panel_size - 1)
+            y = np.clip(np.round((1.0 - coords[:, 1]) * (panel_size - 1)).astype(np.int32), 0, panel_size - 1)
+
+            accum = np.zeros((panel_size, panel_size), dtype=np.float32)
+            counts = np.zeros((panel_size, panel_size), dtype=np.int32)
+            np.add.at(accum, (y, x), values)
+            np.add.at(counts, (y, x), 1)
+
+            gray = np.zeros((panel_size, panel_size), dtype=np.uint8)
+            mask = counts > 0
+            gray[mask] = np.clip(accum[mask] / counts[mask], 0, 255).astype(np.uint8)
+
+            panel = cv2.applyColorMap(gray, cv2.COLORMAP_JET)
+            panel[~mask] = (0, 0, 0)
+            return panel
+
+        original_panel = build_panel(np.arange(len(centroids), dtype=np.int64))
+        sorted_panel = build_panel(sort_idx)
+
+        canvas[:panel_size, :panel_size] = original_panel
+        canvas[:panel_size, panel_size + separator:panel_size + separator + panel_size] = sorted_panel
+
+        border_color = (90, 90, 96)
+        cv2.rectangle(canvas, (0, 0), (panel_size - 1, panel_size - 1), border_color, 1)
+        cv2.rectangle(
+            canvas,
+            (panel_size + separator, 0),
+            (panel_size + separator + panel_size - 1, panel_size - 1),
+            border_color,
+            1,
+        )
+
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        title_color = (235, 235, 235)
+        body_color = (210, 210, 210)
+        cv2.putText(canvas, "Original cell order", (24, panel_size + 34), font, 0.9, title_color, 2, cv2.LINE_AA)
+        cv2.putText(
+            canvas,
+            "Morton-sorted cell order",
+            (panel_size + separator + 24, panel_size + 34),
+            font,
+            0.9,
+            title_color,
+            2,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            canvas,
+            "Color = face position in that order (early -> late)",
+            (24, panel_size + 68),
+            font,
+            0.65,
+            body_color,
+            1,
+            cv2.LINE_AA,
+        )
+
+        improvement = 0.0
+        if getattr(self, '_sort_sorted_mean_step', 0.0) > 0:
+            improvement = float(getattr(self, '_sort_original_mean_step', 0.0) / self._sort_sorted_mean_step)
+
+        metric_text = (
+            f"Mean consecutive Morton-code delta: raw={getattr(self, '_sort_original_mean_step', 0.0):.4g} | "
+            f"sorted={getattr(self, '_sort_sorted_mean_step', 0.0):.4g} | "
+            f"improvement={improvement:.2f}x"
+        )
+        cv2.putText(canvas, metric_text, (24, panel_size + 96), font, 0.58, body_color, 1, cv2.LINE_AA)
+
+        base_name = os.path.splitext(os.path.basename(self.file_path))[0]
+        output_path = os.path.join(output_dir, f"{base_name}_sort_proof.png")
+        cv2.imwrite(output_path, canvas)
+        print(f"🧪 Exported mesh sort proof: {output_path}")
+        return output_path
     
     @classmethod
     def from_file(cls, file_path: str, opacity: float = 1.0) -> 'MeshProduct':
