@@ -1457,25 +1457,13 @@ class BatchInferenceDialog(QDialog):
         except Exception:
             pass
 
-        # Remap OK → Stop Inference.
-        try:
-            try:
-                self.button_box.accepted.disconnect()
-            except Exception:
-                pass
-            self.button_box.accepted.connect(self._on_stop_inference_clicked)
-            ok_btn = self.button_box.button(QDialogButtonBox.Ok)
-            if ok_btn:
-                ok_btn.setText("Stop Inference")
-                ok_btn.setEnabled(True)
-                ok_btn.setStyleSheet("background-color: #d9534f; color: white;")
-        except Exception:
-            pass
-
         try:
             progress_bar.cancel_button.setEnabled(True)
             progress_bar.cancel_button.clicked.connect(
-                lambda checked=False: self._on_stop_inference_clicked())
+                lambda checked=False: self._batch_worker.stop()
+                    if hasattr(self, '_batch_worker') and
+                    getattr(self._batch_worker, 'isRunning', lambda: False)()
+                    else None)
         except Exception:
             pass
 
@@ -2236,24 +2224,6 @@ class BatchInferenceDialog(QDialog):
         except Exception:
             pass
 
-        # 5. Restore the Apply button routing and text
-        try:
-            try:
-                self.button_box.accepted.disconnect()
-            except TypeError:
-                pass  # Ignore if not connected
-            
-            self.button_box.accepted.connect(self.apply)
-            ok_btn = self.button_box.button(QDialogButtonBox.Ok)
-            if ok_btn:
-                ok_btn.setText("Apply")
-                ok_btn.setEnabled(True)
-                try:
-                    ok_btn.setStyleSheet("")
-                except Exception:
-                    pass
-        except Exception:
-            pass
 
         # 6. Trigger a full frame redraw on the exact frame we stopped on
         try:
@@ -2289,30 +2259,6 @@ class BatchInferenceDialog(QDialog):
             except Exception:
                 pass
             self._batch_worker = None
-
-    def _on_stop_inference_clicked(self):
-        """Called when the user clicks 'Stop Inference' (OK button remapped)."""
-        try:
-            if hasattr(self, '_batch_worker') and getattr(self._batch_worker, 'isRunning', lambda: False)():
-                try:
-                    self._batch_worker.stop()
-                except Exception:
-                    pass
-                try:
-                    ok_btn = self.button_box.button(QDialogButtonBox.Ok)
-                    if ok_btn:
-                        ok_btn.setText('Stopping...')
-                        ok_btn.setEnabled(False)
-                except Exception:
-                    pass
-            else:
-                # Fallback to default apply behavior
-                try:
-                    self.apply()
-                except Exception:
-                    pass
-        except Exception:
-            pass
 
     def set_ui_processing_state(self, processing: bool):
         """Enable/disable UI widgets while processing is active.

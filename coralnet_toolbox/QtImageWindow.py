@@ -732,6 +732,15 @@ class ImageWindow(QWidget):
                self.main_window.batch_inference_dialog and \
                self.main_window.batch_inference_dialog.isVisible():
                 highlighted = self.table_model.get_highlighted_paths()
+                # Apply same VideoRaster filtering as open_batch_inference_dialog:
+                # if mix of Rasters+VideoRasters, strip the VideoRasters
+                video_hl = [p for p in highlighted
+                            if (lambda r: r is not None and
+                                getattr(r, 'raster_type', '') == 'VideoRaster')(
+                                    self.raster_manager.get_raster(p))]
+                raster_hl = [p for p in highlighted if p not in video_hl]
+                if video_hl and raster_hl:
+                    highlighted = raster_hl
                 self.main_window.batch_inference_dialog.update_highlighted_images(highlighted)
         except Exception:
             # Swallow any errors coming from cross-widget signaling
@@ -1523,7 +1532,7 @@ class ImageWindow(QWidget):
     def open_batch_inference_dialog(self, highlighted_image_paths):
         """
         Open the batch inference dialog with the highlighted images.
-        
+
         Args:
             highlighted_image_paths (list): List of image paths to process
         """
@@ -1535,6 +1544,30 @@ class ImageWindow(QWidget):
                 "Please highlight one or more images before opening batch inference."
             )
             return
+
+        # Classify highlighted paths into VideoRasters vs regular Rasters
+        video_paths = []
+        raster_paths = []
+        for path in highlighted_image_paths:
+            raster = self.raster_manager.get_raster(path)
+            if raster is not None and getattr(raster, 'raster_type', '') == 'VideoRaster':
+                video_paths.append(path)
+            else:
+                raster_paths.append(path)
+
+        if video_paths and raster_paths:
+            # Mixed selection: silently drop VideoRasters and proceed with Rasters only
+            highlighted_image_paths = raster_paths
+        elif video_paths and not raster_paths:
+            # Only VideoRasters selected
+            if len(video_paths) > 1:
+                QMessageBox.warning(
+                    self,
+                    "Multiple Videos Selected",
+                    "Only one video can be used with batch inference at a time."
+                )
+                return
+            # Single VideoRaster — allow normally (highlighted_image_paths unchanged)
         
         # Check if any models are available
         batch_dialog = self.main_window.batch_inference_dialog
