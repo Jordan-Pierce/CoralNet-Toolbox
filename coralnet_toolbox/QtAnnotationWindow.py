@@ -1390,9 +1390,14 @@ class AnnotationWindow(BaseCanvas):
             except Exception:
                 pass
         self.main_window.set_video_playback_tools_enabled(False)
-        # Sync the worker to the current display position then start streaming frames
-        self._active_video_raster.seek_decode_worker(self._current_frame_idx)
-        self._active_video_raster.resume_decode_worker()
+        # Start the worker from the NEXT frame so the current frame (already
+        # cleanly displayed with no annotation QGraphicsItems) is not re-emitted
+        # by the worker, which would cause a brief annotation flash before
+        # the video advances to subsequent frames.
+        vr = self._active_video_raster
+        next_frame = (self._current_frame_idx + 1) % vr.frame_count
+        vr.seek_decode_worker(next_frame)
+        vr.resume_decode_worker()
 
     def _prepare_scene_for_streaming(self):
         """Reset the canvas to a base-image-only state for fast streaming.

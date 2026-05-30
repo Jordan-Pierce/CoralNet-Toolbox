@@ -1805,7 +1805,11 @@ class BatchInferenceDialog(QDialog):
                     except Exception:
                         pass
 
-                # Fast annotation overlay: new predictions + existing saved annotations
+                # Fast annotation overlay: new predictions only.
+                # Existing saved annotations are intentionally excluded here to
+                # prevent them from flashing on the first frame right after
+                # _prepare_scene_for_streaming cleared the scene.  They reload
+                # correctly via _display_video_frame when inference pauses/stops.
                 try:
                     if getattr(aw, '_base_image_item', None) is not None:
                         paths_data = []
@@ -1818,17 +1822,6 @@ class BatchInferenceDialog(QDialog):
                                         rp.generate_fast_render_paths(inf_result.yolo_result, model_type))
                                 except Exception:
                                     pass
-                        try:
-                            for ann in aw.get_image_annotations(inf_result.batch_key):
-                                if (getattr(ann.label, 'is_visible', True)
-                                        and not hasattr(ann, 'mask_data')):
-                                    try:
-                                        paths_data.append(
-                                            (ann.get_painter_path(), ann.label.color, ann.transparency))
-                                    except Exception:
-                                        pass
-                        except Exception:
-                            pass
                         aw._base_image_item.set_readonly_annotations(paths_data)
                 except Exception as e:
                     print(f"Warning: fast render failed: {e}")
