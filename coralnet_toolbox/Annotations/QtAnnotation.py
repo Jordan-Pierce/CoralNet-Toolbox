@@ -70,54 +70,91 @@ class OptimizedPathItem(QGraphicsPathItem):
 
 
 class FloatingTagItem(QGraphicsSimpleTextItem):
-    def __init__(self, text, bg_color, parent=None):
+    # Minimum annotation width/height in screen pixels before the tag is suppressed.
+    # The badge itself is ~50-70px wide, so hiding below 80px keeps the tag from
+    # being larger than the annotation it describes.
+    LOD_MIN_SCREEN_PX = 80
+
+    def __init__(self, text, bg_color, annotation_scene_size=None, parent=None):
         super().__init__(text, parent)
         self.bg_color = QColor(bg_color)
-        
+
+        # annotation_scene_size: (width, height) of the parent annotation in scene
+        # coordinates.  When supplied, the tag is hidden when the annotation's
+        # on-screen footprint shrinks below LOD_MIN_SCREEN_PX in either dimension.
+        self._ann_scene_size = annotation_scene_size
+
         # Ensure the background is fully opaque for readability
-        self.bg_color.setAlpha(255) 
-        
+        self.bg_color.setAlpha(255)
+
         # --- SMART TEXT CONTRAST ---
         # Calculate how bright the label color is (0.0 to 1.0)
         luminance = (0.299 * bg_color.red() + 0.587 * bg_color.green() + 0.114 * bg_color.blue()) / 255
-        
+
         # If the background is bright, use black text. If it's dark, use white text!
         text_color = QColor(self.bg_color)
         text_color = text_color.darker(200) if luminance > 0.5 else text_color.lighter(200)
-        
+
         # Make the text darker than the background color for contrast
         text_color.setAlpha(255)
         self.setBrush(QBrush(text_color))
-        
+
         # Set a crisp, modern font
         font = QFont("Arial", 6, QFont.Bold)
         self.setFont(font)
-        
+
         # THE MAGIC FLAG: Keeps the tag readable at any zoom level
         self.setFlag(QGraphicsItem.ItemIgnoresTransformations)
-        
+
         # Force it to render on top of everything else
         self.setZValue(20)
 
+    def _should_suppress(self):
+        """Return True when the annotation is too small on-screen to warrant a tag.
+
+        Uses the view's current scene→screen scale (transform().m11()) combined
+        with the annotation's scene-space bounding size so that large annotations
+        show their tags sooner than small ones.
+        """
+        if self._ann_scene_size is None:
+            return False
+        try:
+            scene = self.scene()
+            if not scene:
+                return False
+            views = scene.views()
+            if not views:
+                return False
+            m11 = views[0].transform().m11()  # scene px → screen px
+            ann_w, ann_h = self._ann_scene_size
+            return (ann_w * m11 < self.LOD_MIN_SCREEN_PX or
+                    ann_h * m11 < self.LOD_MIN_SCREEN_PX)
+        except Exception:
+            return False
+
     def paint(self, painter, option, widget):
         """Override paint to draw a custom rounded background behind the text."""
+        # LOD: skip entirely when the annotation is too small on screen
+        if self._should_suppress():
+            return
+
         painter.setRenderHint(QPainter.Antialiasing)
-        
+
         # Get the bounding box of the text itself
         text_rect = self.boundingRect()
-        
+
         # Add a few pixels of padding around the text
         pad_x, pad_y = 3, 1
-        bg_rect = QRectF(text_rect.x() - pad_x, 
-                         text_rect.y() - pad_y, 
-                         text_rect.width() + pad_x * 2, 
+        bg_rect = QRectF(text_rect.x() - pad_x,
+                         text_rect.y() - pad_y,
+                         text_rect.width() + pad_x * 2,
                          text_rect.height() + pad_y * 2)
-        
+
         # Draw the rounded pill/badge background
         painter.setPen(Qt.NoPen)
         painter.setBrush(QBrush(self.bg_color))
         painter.drawRoundedRect(bg_rect, 4, 4)  # 4px corner radius
-        
+
         # Draw the actual text on top
         super().paint(painter, option, widget)
         
@@ -856,10 +893,16 @@ class Annotation(QObject):
         
         # Add the floating tag
         tag_text = self.get_display_tag_text()
-        self.tag_item = FloatingTagItem(tag_text, self.label.color)
-        
-        # Position it just above the top-left corner
         top_left = self.get_bounding_box_top_left()
+        bottom_right = self.get_bounding_box_bottom_right()
+        ann_scene_size = (
+            abs(bottom_right.x() - top_left.x()),
+            abs(bottom_right.y() - top_left.y()),
+        )
+        self.tag_item = FloatingTagItem(tag_text, self.label.color,
+                                        annotation_scene_size=ann_scene_size)
+
+        # Position it at the top-left corner of the bounding box
         self.tag_item.setPos(top_left.x(), top_left.y())
         
         self.graphics_item_group.addToGroup(self.tag_item)

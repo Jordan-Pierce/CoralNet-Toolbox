@@ -590,21 +590,18 @@ class ResultsProcessor:
 
         return image_path, cls, cls_name, conf
 
-    def process_segmentation_results(self, results_list):
-        """
-        Process segmentation results. Loops through the list and processes
-        one Results object at a time.
+    def build_segmentation_annotations(self, results_list):
+        """Build segmentation annotations from results without saving them.
+
+        Returns the list of new annotations so the caller can batch-commit
+        multiple images in a single ``add_annotations`` call.
         """
         all_new_annos = []
         contributing_sources = 0
-        image_path = None
 
         for results in results_list:
             if not results or not results.boxes:
                 continue
-            if image_path is None:
-                image_path = results.path.replace("\\", "/")
-
             new_annos = self._process_single_result_set(results, 'segmentation')
             if new_annos:
                 all_new_annos.extend(new_annos)
@@ -612,6 +609,41 @@ class ResultsProcessor:
 
         if contributing_sources > 1 and len(all_new_annos) > 1:
             all_new_annos = self._dedupe_cross_work_area(all_new_annos)
+
+        return all_new_annos
+
+    def build_detection_annotations(self, results_list):
+        """Build detection annotations from results without saving them.
+
+        Returns the list of new annotations so the caller can batch-commit
+        multiple images in a single ``add_annotations`` call.
+        """
+        all_new_annos = []
+        contributing_sources = 0
+
+        for results in results_list:
+            if not results or not results.boxes:
+                continue
+            new_annos = self._process_single_result_set(results, 'detection')
+            if new_annos:
+                all_new_annos.extend(new_annos)
+                contributing_sources += 1
+
+        if contributing_sources > 1 and len(all_new_annos) > 1:
+            all_new_annos = self._dedupe_cross_work_area(all_new_annos)
+
+        return all_new_annos
+
+    def process_segmentation_results(self, results_list):
+        """
+        Process segmentation results. Loops through the list and processes
+        one Results object at a time.
+        """
+        image_path = next(
+            (r.path.replace("\\", "/") for r in results_list if r and r.boxes),
+            None,
+        )
+        all_new_annos = self.build_segmentation_annotations(results_list)
 
         if all_new_annos:
             self.annotation_window.add_annotations(all_new_annos)
@@ -623,23 +655,11 @@ class ResultsProcessor:
         Process detection results. Loops through the list and processes
         one Results object at a time.
         """
-        all_new_annos = []
-        contributing_sources = 0
-        image_path = None
-
-        for results in results_list:
-            if not results or not results.boxes:
-                continue
-            if image_path is None:
-                image_path = results.path.replace("\\", "/")
-
-            new_annos = self._process_single_result_set(results, 'detection')
-            if new_annos:
-                all_new_annos.extend(new_annos)
-                contributing_sources += 1
-
-        if contributing_sources > 1 and len(all_new_annos) > 1:
-            all_new_annos = self._dedupe_cross_work_area(all_new_annos)
+        image_path = next(
+            (r.path.replace("\\", "/") for r in results_list if r and r.boxes),
+            None,
+        )
+        all_new_annos = self.build_detection_annotations(results_list)
 
         if all_new_annos:
             self.annotation_window.add_annotations(all_new_annos)

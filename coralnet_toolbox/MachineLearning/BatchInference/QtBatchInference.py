@@ -2121,6 +2121,7 @@ class BatchInferenceDialog(QDialog):
         # Fall through even when cache is empty so the final master sync still
         # fires — _apply_sam_to_cache may have baked (and dropped) every entry
         # inline to keep peak RAM bounded to one image's worth of masks.
+        all_baked_annotations = []
         if cache:
             bake_pb = ProgressBar(None, title="Saving Annotations to Project...")
             bake_pb.setWindowFlags(bake_pb.windowFlags() | Qt.WindowStaysOnTopHint)
@@ -2132,35 +2133,54 @@ class BatchInferenceDialog(QDialog):
             self.annotation_window.is_streaming_inference = True
 
             is_segmentation = getattr(self._active_model_dialog, 'task', '') == 'segment'
+            build_fn = (self._results_processor.build_segmentation_annotations
+                        if is_segmentation
+                        else self._results_processor.build_detection_annotations)
+
+            # Accumulate all annotations across every image before committing so
+            # add_annotations only toggles the scene index once for the entire batch.
+            _last_pump = time.monotonic()
 
             for path, cached_results in cache.items():
                 # Skip non-Results overlay entries (e.g., dict overlays for masks)
-                if isinstance(cached_results, dict):
-                    # Count it as processed for the progress bar and continue
-                    bake_pb.update_progress()
-                    QApplication.processEvents()
-                    continue
-
-                # Normalise: images store lists, video frames store single Results objects
-                results_to_process = cached_results if isinstance(cached_results, list) else [cached_results]
-                try:
-                    if is_segmentation:
-                        self._results_processor.process_segmentation_results(results_to_process)
-                    else:
-                        self._results_processor.process_detection_results(results_to_process)
-                except Exception as e:
-                    print(f"Error hydrating cached results for {path}: {e}")
+                if not isinstance(cached_results, dict):
+                    # Normalise: images store lists, video frames store single Results objects
+                    results_to_process = (cached_results
+                                          if isinstance(cached_results, list)
+                                          else [cached_results])
+                    try:
+                        all_baked_annotations.extend(build_fn(results_to_process))
+                    except Exception as e:
+                        print(f"Error hydrating cached results for {path}: {e}")
 
                 bake_pb.update_progress()
-                QApplication.processEvents()  # Keep UI responsive
+
+                # Throttle UI pumps to at most ~10 Hz to keep the bar moving
+                # without spending more time in processEvents than in annotation work.
+                _now = time.monotonic()
+                if _now - _last_pump >= 0.1:
+                    QApplication.processEvents()
+                    _last_pump = _now
+
+            # Commit the entire batch in one shot
+            if all_baked_annotations:
+                self.annotation_window.add_annotations(all_baked_annotations)
+                # Reload graphics for the currently visible image if it was in the batch
+                try:
+                    cur = self.annotation_window.current_image_path
+                    if any(a.image_path == cur for a in all_baked_annotations):
+                        self.annotation_window.load_annotations()
+                except Exception:
+                    pass
 
             bake_pb.close()
 
         # Re-enable UI updates and trigger one final master sync
         self.annotation_window.is_streaming_inference = False
+        annotated_paths = {a.image_path for a in all_baked_annotations} if cache else set()
         try:
             self.main_window.label_window.update_annotation_count()
-            for path in cache.keys():
+            for path in annotated_paths:
                 self.image_window.update_image_annotations(path, update_counts=False)
         except Exception:
             pass

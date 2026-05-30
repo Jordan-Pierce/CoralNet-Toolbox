@@ -240,6 +240,7 @@ class Semantic(Base):
             except Exception:
                 imgsz = 640
 
+            self.imgsz = imgsz
             # Warm up the model
             self.loaded_model(np.zeros((imgsz, imgsz, 3), dtype=np.uint8))
 
