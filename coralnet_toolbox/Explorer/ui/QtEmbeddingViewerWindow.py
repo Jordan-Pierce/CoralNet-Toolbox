@@ -329,6 +329,16 @@ class EmbeddingViewerWindow(QWidget):
         self.cluster_k_spin.setEnabled(False)
         cluster_layout.addRow("K:", self.cluster_k_spin)
 
+        # Cluster space combo
+        self.cluster_space_combo = QComboBox()
+        self.cluster_space_combo.addItems(["Position (2D)", "Feature Vector"])
+        self.cluster_space_combo.setToolTip(
+            "Position (2D): cluster on the projected scatter-plot coordinates.\n"
+            "Feature Vector: cluster on the full high-dimensional embeddings."
+        )
+        self.cluster_space_combo.setEnabled(False)
+        cluster_layout.addRow("Space:", self.cluster_space_combo)
+
         # Buttons row
         btn_widget = QWidget()
         btn_layout = QHBoxLayout(btn_widget)
@@ -1788,6 +1798,8 @@ class EmbeddingViewerWindow(QWidget):
             self.isolate_button.setEnabled(False)
         if hasattr(self, 'cluster_k_spin'):
             self.cluster_k_spin.setEnabled(False)
+        if hasattr(self, 'cluster_space_combo'):
+            self.cluster_space_combo.setEnabled(False)
         if hasattr(self, 'cluster_run_button'):
             self.cluster_run_button.setEnabled(False)
         if hasattr(self, 'cluster_clear_button'):
@@ -1816,6 +1828,15 @@ class EmbeddingViewerWindow(QWidget):
         # Cluster controls
         if hasattr(self, 'cluster_k_spin'):
             self.cluster_k_spin.setEnabled(points_exist)
+        if hasattr(self, 'cluster_space_combo'):
+            # "Feature Vector" only makes sense when raw features are available
+            has_features = (self.current_features is not None
+                            and len(self.current_features) == self._point_ids.size)
+            self.cluster_space_combo.setEnabled(points_exist)
+            feat_item = self.cluster_space_combo.model().item(
+                self.cluster_space_combo.findText("Feature Vector"))
+            if feat_item is not None:
+                feat_item.setEnabled(has_features)
         if hasattr(self, 'cluster_run_button'):
             self.cluster_run_button.setEnabled(points_exist)
         if hasattr(self, 'cluster_clear_button'):
@@ -2258,12 +2279,39 @@ class EmbeddingViewerWindow(QWidget):
         return colours
 
     def _run_clustering(self):
-        """Run K-Means on the current 2-D projection and draw Voronoi boundaries."""
+        """Run K-Means on the current 2-D projection or full feature vectors."""
         if self._point_coords_2d.size == 0:
             return
 
         k = self.cluster_k_spin.value()
-        n_points = len(self._point_coords_2d)
+        use_features = (
+            hasattr(self, 'cluster_space_combo')
+            and self.cluster_space_combo.currentText() == "Feature Vector"
+        )
+
+        # Choose the data matrix to cluster on
+        if use_features and self.current_features is not None:
+            try:
+                feature_matrix = np.asarray(self.current_features)
+                if feature_matrix.ndim == 1:
+                    feature_matrix = feature_matrix.reshape(-1, 1)
+                # Align rows: current_features may cover more annotations than
+                # the visible point set; keep only the rows that match _point_ids
+                if len(feature_matrix) != len(self._point_ids):
+                    QMessageBox.warning(
+                        self, "Feature mismatch",
+                        "Feature vector count doesn't match the displayed points. "
+                        "Re-run embeddings and try again."
+                    )
+                    return
+                cluster_data = StandardScaler().fit_transform(feature_matrix)
+            except Exception as e:
+                QMessageBox.warning(self, "Feature error", str(e))
+                return
+        else:
+            cluster_data = self._point_coords_2d
+
+        n_points = len(cluster_data)
         if n_points < k:
             QMessageBox.warning(
                 self, "Too few points",
@@ -2276,9 +2324,15 @@ class EmbeddingViewerWindow(QWidget):
 
             # --- 1. Fit K-Means ---
             km = KMeans(n_clusters=k, random_state=42, n_init='auto')
-            km.fit(self._point_coords_2d)
+            km.fit(cluster_data)
             self._cluster_labels = km.labels_.astype(int)
-            centroids = km.cluster_centers_          # (k, 2)
+
+            # Voronoi boundaries are always drawn in 2-D scene space,
+            # so compute per-cluster centroids in 2-D regardless of input space.
+            centroids = np.array([
+                self._point_coords_2d[self._cluster_labels == c].mean(axis=0)
+                for c in range(k)
+            ])                                       # (k, 2)
 
             # --- 2. Build per-cluster colour palette (for centroid markers only) ---
             self._cluster_colors_rgba = self._cluster_palette(k)
