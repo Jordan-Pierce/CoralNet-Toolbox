@@ -1427,8 +1427,21 @@ class BatchInferenceDialog(QDialog):
 
         try:
             self.annotation_window.is_streaming_inference = True
-            if hasattr(self.annotation_window, '_clear_current_frame_annotation_graphics'):
-                self.annotation_window._clear_current_frame_annotation_graphics()
+            # Prepare the annotation window for streaming inference: prefer
+            # the new _prepare_scene_for_streaming helper (clears scene and
+            # installs a fresh base image item). Fall back to the older
+            # per-annotation clear method when the helper is not available.
+            try:
+                if hasattr(self.annotation_window, '_prepare_scene_for_streaming'):
+                    self.annotation_window._prepare_scene_for_streaming()
+                elif hasattr(self.annotation_window, '_clear_current_frame_annotation_graphics'):
+                    self.annotation_window._clear_current_frame_annotation_graphics()
+            except Exception:
+                try:
+                    if hasattr(self.annotation_window, '_clear_current_frame_annotation_graphics'):
+                        self.annotation_window._clear_current_frame_annotation_graphics()
+                except Exception:
+                    pass
         except Exception:
             pass
 

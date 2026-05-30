@@ -1373,13 +1373,73 @@ class AnnotationWindow(BaseCanvas):
         """Start the playback timer, clearing annotation graphics first."""
         if self._active_video_raster is None:
             return
-        # Remove annotation graphics for the current frame from the scene.
-        # The annotation data is preserved; graphics are rebuilt on pause.
-        self._clear_current_frame_annotation_graphics()
+        # Prepare the scene for fast streaming: reset the canvas to a
+        # clean base-image-only state (no annotation QGraphicsItems).
+        # This mirrors the full-frame redisplay that happens on pause
+        # but avoids loading annotations so playback won't show stale
+        # graphics artifacts.
+        try:
+            if hasattr(self, '_prepare_scene_for_streaming'):
+                self._prepare_scene_for_streaming()
+            else:
+                # Fallback to old, cheaper clear if helper not present
+                self._clear_current_frame_annotation_graphics()
+        except Exception:
+            try:
+                self._clear_current_frame_annotation_graphics()
+            except Exception:
+                pass
         self.main_window.set_video_playback_tools_enabled(False)
         # Sync the worker to the current display position then start streaming frames
         self._active_video_raster.seek_decode_worker(self._current_frame_idx)
         self._active_video_raster.resume_decode_worker()
+
+    def _prepare_scene_for_streaming(self):
+        """Reset the canvas to a base-image-only state for fast streaming.
+
+        This method uses the BaseCanvas loader to clear the scene and install
+        a fresh FastImageItem for the currently displayed frame. It intentionally
+        does NOT call `load_annotations()` so that no per-frame annotation
+        QGraphicsItems remain visible during playback or streaming inference.
+        """
+        vr = self._active_video_raster
+        if vr is None:
+            return
+        frame_idx = max(0, min(self._current_frame_idx, vr.frame_count - 1))
+        virtual_path = vr.make_frame_path(vr.image_path, frame_idx)
+        q_image = vr.get_frame(frame_idx)
+        if q_image is None:
+            return
+
+        # Ensure rasterio ref exists for downstream crop operations
+        try:
+            self.rasterio_image = vr.rasterio_src
+        except Exception:
+            pass
+
+        # Use canonical loader to clear scene and install fresh base image item
+        try:
+            self.load_visuals(q_image, virtual_path, None)
+        except Exception:
+            try:
+                # As a fallback, clear existing graphics for the frame
+                self._clear_current_frame_annotation_graphics()
+            except Exception:
+                pass
+
+        # Ensure the fast-image item has no annotation overlays lingering
+        try:
+            if self._base_image_item is not None:
+                try:
+                    self._base_image_item.set_readonly_annotations([])
+                except Exception:
+                    pass
+                try:
+                    self._base_image_item.set_mask_image(None)
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def _clear_current_frame_annotation_graphics(self):
         """Remove annotation graphics items for the current frame from the scene.
