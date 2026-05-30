@@ -105,6 +105,7 @@ class BatchInferenceTask(ABC):
             "device": getattr(getattr(self.dialog, "main_window", None), "device", None),
             "task": self.worker_task(),
             "batch_size": self.batch_size(),
+            "imgsz": getattr(self.model_dialog, "imgsz", None),
             "is_semantic": False,
             "sam_enabled": self.sam_enabled(),
         }

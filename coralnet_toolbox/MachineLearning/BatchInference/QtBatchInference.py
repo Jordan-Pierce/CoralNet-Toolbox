@@ -54,14 +54,15 @@ class BatchInferenceWorker(QThread):
     error = pyqtSignal(str)
 
     def __init__(self, model, items, initial_thresholds,
-                 device=None, task='detect', batch_size=16, is_semantic=False,
-                 sam_enabled=False, parent=None):
+                 device=None, task='detect', batch_size=16, imgsz=None,
+                 is_semantic=False, sam_enabled=False, parent=None):
         super().__init__(parent)
         self.model = model
         self.items = list(items)
         self.device = device
         self._task = task
         self._batch_size = max(1, int(batch_size))
+        self._imgsz = imgsz
         self._is_semantic = is_semantic
         # When SAM is enabled, skip tile→full-image remap in the worker so
         # _apply_sam_to_cache can run SAM on the tile crop (tile-space boxes
@@ -299,19 +300,21 @@ class BatchInferenceWorker(QThread):
                 # Run YOLO on the mini-batch
                 model_source = self._prepare_video_input(inputs[0]) if len(batch) == 1 and batch[0].is_video else inputs
                 inference_start = time.perf_counter()
+                _model_kwargs = dict(
+                    conf=conf,
+                    iou=iou,
+                    max_det=max_det,
+                    device=self.device,
+                    retina_masks=self._is_semantic,
+                    half=True,
+                    agnostic_nms=True,
+                    stream=True,
+                    verbose=False,
+                )
+                if self._imgsz is not None:
+                    _model_kwargs["imgsz"] = self._imgsz
                 try:
-                    results = list(self.model(
-                        model_source,
-                        conf=conf,
-                        iou=iou,
-                        max_det=max_det,
-                        device=self.device,
-                        retina_masks=self._is_semantic,
-                        half=True,
-                        agnostic_nms=True,
-                        stream=True,
-                        verbose=False,
-                    ))
+                    results = list(self.model(model_source, **_model_kwargs))
                 except Exception as e:
                     inference_seconds = time.perf_counter() - inference_start
                     self._timing.add_record(BatchTimingRecord(

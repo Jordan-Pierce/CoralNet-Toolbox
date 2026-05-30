@@ -615,6 +615,7 @@ class Semantic(Base):
             device=self.main_window.device,
             imgsz=self.imgsz,
             retina_masks=True,
+            half=True,
             stream=True,
         )
 
