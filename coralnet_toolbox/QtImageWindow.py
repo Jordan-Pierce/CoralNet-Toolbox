@@ -916,6 +916,7 @@ class ImageWindow(QWidget):
                 if key.startswith(prefix):
                     all_annotations.extend(anns)
             self.raster_manager.update_annotation_info(video_path, all_annotations)
+            self._add_video_mask_counts(video_path, prefix)
         else:
             # Check if this is a bare VideoRaster path (all frame annotations are stored
             # under virtual ::frame_ keys, so get_image_annotations() would return [] for
@@ -928,6 +929,7 @@ class ImageWindow(QWidget):
                     if key.startswith(prefix):
                         all_annotations.extend(anns)
                 self.raster_manager.update_annotation_info(image_path, all_annotations)
+                self._add_video_mask_counts(image_path, prefix)
             else:
                 annotations = self.annotation_window.get_image_annotations(image_path)
                 self.raster_manager.update_annotation_info(image_path, annotations)
@@ -935,6 +937,46 @@ class ImageWindow(QWidget):
         if update_counts:
             self.main_window.label_window.update_annotation_count()
         
+    def _add_video_mask_counts(self, video_path: str, prefix: str):
+        """Add per-frame mask-annotation counts to a VideoRaster's annotation_count.
+
+        update_annotation_info only knows about vector annotations and the shared
+        raster-level mask.  Per-frame semantic overlays are stored in
+        annotation_window.batch_results_cache keyed by virtual frame paths.
+        Each frame that has a non-empty mask overlay counts as +1.
+        """
+        try:
+            import numpy as np
+            raster = self.raster_manager.get_raster(video_path)
+            if raster is None:
+                return
+            cache = getattr(self.annotation_window, 'batch_results_cache', None) or {}
+            mask_frame_count = 0
+            for key, cached in cache.items():
+                if not (isinstance(key, str) and key.startswith(prefix) and cached):
+                    continue
+                mask_arr = cached.get('mask_arr')
+                if mask_arr is not None:
+                    try:
+                        if np.any(mask_arr):
+                            mask_frame_count += 1
+                        continue
+                    except Exception:
+                        pass
+                if cached.get('mask_qimage') is not None:
+                    mask_frame_count += 1
+            if mask_frame_count > 0:
+                # update_annotation_info already counted the shared raster mask as 1
+                # if has_mask_content is True.  Replace that with the per-frame count
+                # so the number reflects actual annotated frames.
+                shared_mask_counted = 1 if raster.has_mask_content else 0
+                raster.annotation_count = (
+                    raster.annotation_count - shared_mask_counted + mask_frame_count
+                )
+                raster.has_annotations = True
+        except Exception:
+            pass
+
     def update_current_image_annotations(self):
         """Update annotations for the currently selected image."""
         if self.selected_image_path:

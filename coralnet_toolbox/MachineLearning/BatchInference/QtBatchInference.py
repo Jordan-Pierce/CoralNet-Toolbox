@@ -2104,6 +2104,25 @@ class BatchInferenceDialog(QDialog):
             except Exception:
                 pass
             self._semantic_processed_images = set()
+
+            # Video semantic batch inference: _semantic_processed_images is never
+            # populated for video frames (results go to batch_results_cache instead).
+            # Scan the cache for ::frame_ entries and update the table count for each
+            # unique video path so the RasterTable reflects the annotated frame count.
+            try:
+                cache = getattr(self.annotation_window, 'batch_results_cache', {}) or {}
+                video_paths_to_update = set()
+                for key, cached in cache.items():
+                    if isinstance(key, str) and '::frame_' in key and isinstance(cached, dict):
+                        video_paths_to_update.add(key.rsplit('::frame_', 1)[0])
+                for vpath in video_paths_to_update:
+                    try:
+                        self.image_window.update_image_annotations(vpath)
+                    except Exception as e:
+                        print(f"Semantic video count update error for {vpath}: {e}")
+            except Exception:
+                pass
+
             return
 
         cache = getattr(self.annotation_window, 'batch_results_cache', {})

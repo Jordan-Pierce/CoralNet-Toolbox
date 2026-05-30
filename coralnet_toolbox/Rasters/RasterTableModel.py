@@ -94,9 +94,6 @@ class RasterTableModel(QAbstractTableModel):
             elif index.column() == self.FILENAME_COL:
                 return raster.display_name
             elif index.column() == self.ANNOTATION_COUNT_COL:
-                if getattr(raster, 'mask_annotation', None) is not None and not getattr(raster, 'has_mask_content', False) and raster.annotation_count == 0:
-                    return ""
-
                 return str(raster.annotation_count)
                 
         elif role == Qt.TextAlignmentRole:
