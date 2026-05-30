@@ -346,6 +346,12 @@ class Semantic(Base):
                 _before_mask_snapshot = mask_annotation.mask_data.copy()
                 semantic_regions = []
 
+                # Suppress per-tile video cache syncs during the tile loop; we do
+                # one efficient sync after all tiles are done (see below).
+                _is_video_frame = isinstance(image_path, str) and '::frame_' in image_path
+                if _is_video_frame:
+                    self.annotation_window._deferring_video_cache_sync = True
+
                 # Work-area inference should only touch the predicted tiles.
                 # Full-image inference still clears the old mask so the result
                 # replaces the entire canvas in one pass.
@@ -546,6 +552,15 @@ class Semantic(Base):
                 # This is called *after* all tiles for an image are done
                 mask_annotation.recalculate_class_statistics()
 
+                # For video frames: lift the deferral and do one final cache sync
+                # so load_mask_annotation can find the result when navigating frames.
+                if _is_video_frame:
+                    try:
+                        self.annotation_window._deferring_video_cache_sync = False
+                        self.annotation_window._sync_video_mask_to_cache()
+                    except Exception:
+                        pass
+
                 # --- 6. Multi-annotate propagation ---
                 # When MVAT multi-annotate is active, propagate the predicted mask to
                 # all visible target cameras (perspective ↔ orthomosaic) using the same
@@ -568,6 +583,12 @@ class Semantic(Base):
             import traceback
             traceback.print_exc()
         finally:
+            # Always clear the deferral flag so brush strokes after a failed
+            # predict still sync immediately.
+            try:
+                self.annotation_window._deferring_video_cache_sync = False
+            except Exception:
+                pass
             # --- 6. Final Cleanup ---
             # This block now runs ONCE at the end of the entire function
             if progress_bar_created_here and progress_bar is not None:
