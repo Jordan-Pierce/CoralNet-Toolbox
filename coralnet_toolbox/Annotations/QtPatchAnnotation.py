@@ -270,7 +270,9 @@ class PatchAnnotation(Annotation):
         # --- Add the Dimension Tag ---
         from coralnet_toolbox.Annotations.QtAnnotation import FloatingTagItem
         dimension_text = f"{int(self.annotation_size)}×{int(self.annotation_size)}"
-        self.dimension_tag_item = FloatingTagItem(dimension_text, self.label.color)
+        ann_scene_size = (float(self.annotation_size), float(self.annotation_size))
+        self.dimension_tag_item = FloatingTagItem(dimension_text, self.label.color,
+                                                  annotation_scene_size=ann_scene_size)
         
         # Position it at the bottom-left corner of the bounding box
         bottom_left = QPointF(self.get_bounding_box_top_left().x(), self.get_bounding_box_bottom_right().y())

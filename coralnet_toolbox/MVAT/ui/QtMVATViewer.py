@@ -1920,6 +1920,25 @@ class MVATViewer(QFrame):
                 event.accept()
             except Exception:
                 pass
+        elif key == Qt.Key_Space:
+            # Space: launch MVAT-SAM dialog when the SAM tool is active
+            manager = getattr(self, 'mvat_manager', None)
+            if manager is not None:
+                ann_win = getattr(manager, 'annotation_window', None)
+                selected_tool = None
+                if ann_win is not None:
+                    try:
+                        selected_tool = ann_win.get_selected_tool()
+                    except Exception:
+                        pass
+                if selected_tool == 'sam':
+                    try:
+                        manager.launch_viewer_sam()
+                    except Exception as _e:
+                        print(f"MVAT-SAM launch error: {_e}")
+                    event.accept()
+                    return
+            event.ignore()
         else:
             # Let the parent widget handle other keys
             event.ignore()

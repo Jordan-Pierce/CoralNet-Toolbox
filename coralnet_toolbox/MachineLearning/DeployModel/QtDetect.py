@@ -142,6 +142,7 @@ class Detect(Base):
             except Exception:
                 imgsz = 640
 
+            self.imgsz = imgsz
             self.loaded_model(np.zeros((imgsz, imgsz, 3), dtype=np.uint8))
             self.class_names = list(self.loaded_model.names.values())
 
@@ -432,6 +433,7 @@ class Detect(Base):
                                               iou=self.thresholds_widget.get_iou_thresh(),
                                               max_det=self.thresholds_widget.get_max_detections(),
                                               device=self.main_window.device,
+                                              imgsz=self.imgsz,
                                               retina_masks=False,
                                               half=True,
                                               stream=True)  # memory efficient inference

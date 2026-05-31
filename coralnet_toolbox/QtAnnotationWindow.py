@@ -782,8 +782,23 @@ class AnnotationWindow(BaseCanvas):
             # so is_graphics_item_valid() always returns False for it.  Call
             # refresh_graphics() directly: this recreates the QImage (busting Qt's
             # OpenGL texture cache) and marks the item dirty so paint() is invoked.
-            if updated_annotation.image_path == self.current_image_path:
+            # For video frames, current_image_path is a virtual path like
+            # "video.mp4::frame_0" while mask_annotation.image_path is "video.mp4",
+            # so check both the exact match and the prefix match.
+            cur = self.current_image_path or ''
+            ann_path = updated_annotation.image_path or ''
+            path_matches = (
+                ann_path == cur
+                or ('::frame_' in cur and cur.startswith(ann_path))
+            )
+            if path_matches:
                 updated_annotation.refresh_graphics()
+                # For video frames, also sync the updated mask into the per-frame cache
+                # so load_mask_annotation shows the right overlay on navigation.
+                # Skip when deferred (e.g. during batch predict tile loop — the caller
+                # will do a single sync at the end instead).
+                if '::frame_' in cur and not getattr(self, '_deferring_video_cache_sync', False):
+                    self._sync_video_mask_to_cache()
             self.refresh_mask_annotation_view(updated_annotation)
 
         try:
@@ -796,9 +811,27 @@ class AnnotationWindow(BaseCanvas):
         if mask_annotation is None:
             return
 
-        if mask_annotation.image_path == self.current_image_path:
+        cur = self.current_image_path or ''
+        ann_path = mask_annotation.image_path or ''
+        path_matches = (
+            ann_path == cur
+            or ('::frame_' in cur and cur.startswith(ann_path))
+        )
+        if path_matches:
             self.viewport().update()
-   
+            # For regular (non-video) images, also refresh the RasterTable count so
+            # the annotation count column updates immediately when the mask is painted
+            # or erased.  Video frames are handled by _sync_video_mask_to_cache which
+            # already calls update_image_annotations, so skip them here to avoid a
+            # double update.
+            if '::frame_' not in cur:
+                try:
+                    self.main_window.image_window.update_image_annotations(
+                        cur, update_counts=False
+                    )
+                except Exception:
+                    pass
+
     def set_incoming_marker(self, u, v, color):
         """Set the incoming marker (focal point) position and color from MVAT.
         
@@ -1089,17 +1122,45 @@ class AnnotationWindow(BaseCanvas):
             self._update_video_annotation_marks()
 
     def _get_annotated_frame_indices(self) -> set:
-        """Return the set of frame indices that have at least one annotation for the active video."""
+        """Return the set of frame indices that have at least one annotation for the active video.
+
+        Includes both vector annotations (from image_annotations_dict) and
+        per-frame semantic mask overlays (from batch_results_cache).
+        """
         if self._active_video_raster is None:
             return set()
         prefix = self._active_video_raster.image_path + '::frame_'
         frame_indices = set()
+
+        # Vector annotations
         for key, annotations in self.image_annotations_dict.items():
             if key.startswith(prefix) and annotations:
                 try:
                     frame_indices.add(int(key.split('::frame_', 1)[1]))
                 except (ValueError, IndexError):
                     pass
+
+        # Per-frame semantic mask overlays
+        cache = getattr(self, 'batch_results_cache', None) or {}
+        for key, cached in cache.items():
+            if not (isinstance(key, str) and key.startswith(prefix) and cached):
+                continue
+            # Confirm the entry has actual painted pixels, not an empty mask
+            has_content = False
+            mask_arr = cached.get('mask_arr')
+            if mask_arr is not None:
+                try:
+                    has_content = bool(np.any(mask_arr))
+                except Exception:
+                    has_content = cached.get('mask_qimage') is not None
+            else:
+                has_content = cached.get('mask_qimage') is not None
+            if has_content:
+                try:
+                    frame_indices.add(int(key.split('::frame_', 1)[1]))
+                except (ValueError, IndexError):
+                    pass
+
         return frame_indices
 
     def _update_video_annotation_marks(self):
@@ -1373,13 +1434,78 @@ class AnnotationWindow(BaseCanvas):
         """Start the playback timer, clearing annotation graphics first."""
         if self._active_video_raster is None:
             return
-        # Remove annotation graphics for the current frame from the scene.
-        # The annotation data is preserved; graphics are rebuilt on pause.
-        self._clear_current_frame_annotation_graphics()
+        # Prepare the scene for fast streaming: reset the canvas to a
+        # clean base-image-only state (no annotation QGraphicsItems).
+        # This mirrors the full-frame redisplay that happens on pause
+        # but avoids loading annotations so playback won't show stale
+        # graphics artifacts.
+        try:
+            if hasattr(self, '_prepare_scene_for_streaming'):
+                self._prepare_scene_for_streaming()
+            else:
+                # Fallback to old, cheaper clear if helper not present
+                self._clear_current_frame_annotation_graphics()
+        except Exception:
+            try:
+                self._clear_current_frame_annotation_graphics()
+            except Exception:
+                pass
         self.main_window.set_video_playback_tools_enabled(False)
-        # Sync the worker to the current display position then start streaming frames
-        self._active_video_raster.seek_decode_worker(self._current_frame_idx)
-        self._active_video_raster.resume_decode_worker()
+        # Start the worker from the NEXT frame so the current frame (already
+        # cleanly displayed with no annotation QGraphicsItems) is not re-emitted
+        # by the worker, which would cause a brief annotation flash before
+        # the video advances to subsequent frames.
+        vr = self._active_video_raster
+        next_frame = (self._current_frame_idx + 1) % vr.frame_count
+        vr.seek_decode_worker(next_frame)
+        vr.resume_decode_worker()
+
+    def _prepare_scene_for_streaming(self):
+        """Reset the canvas to a base-image-only state for fast streaming.
+
+        This method uses the BaseCanvas loader to clear the scene and install
+        a fresh FastImageItem for the currently displayed frame. It intentionally
+        does NOT call `load_annotations()` so that no per-frame annotation
+        QGraphicsItems remain visible during playback or streaming inference.
+        """
+        vr = self._active_video_raster
+        if vr is None:
+            return
+        frame_idx = max(0, min(self._current_frame_idx, vr.frame_count - 1))
+        virtual_path = vr.make_frame_path(vr.image_path, frame_idx)
+        q_image = vr.get_frame(frame_idx)
+        if q_image is None:
+            return
+
+        # Ensure rasterio ref exists for downstream crop operations
+        try:
+            self.rasterio_image = vr.rasterio_src
+        except Exception:
+            pass
+
+        # Use canonical loader to clear scene and install fresh base image item
+        try:
+            self.load_visuals(q_image, virtual_path, None)
+        except Exception:
+            try:
+                # As a fallback, clear existing graphics for the frame
+                self._clear_current_frame_annotation_graphics()
+            except Exception:
+                pass
+
+        # Ensure the fast-image item has no annotation overlays lingering
+        try:
+            if self._base_image_item is not None:
+                try:
+                    self._base_image_item.set_readonly_annotations([])
+                except Exception:
+                    pass
+                try:
+                    self._base_image_item.set_mask_image(None)
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def _clear_current_frame_annotation_graphics(self):
         """Remove annotation graphics items for the current frame from the scene.
@@ -3489,18 +3615,31 @@ class AnnotationWindow(BaseCanvas):
         # MaskAnnotation. This avoids creating a single MaskAnnotation shared
         # across all frames which leads to ghosting.
         try:
-            if '::frame_' in str(self.current_image_path) and hasattr(self, 'batch_results_cache'):
-                cached = self.batch_results_cache.get(self.current_image_path)
+            if '::frame_' in str(self.current_image_path):
+                # Video frame — always use the per-frame cache.  The VideoRaster
+                # holds ONE mask_annotation shared across ALL frames, so falling
+                # through to the raster-level path would display the mask from
+                # whichever frame was painted last on every other frame too.
+                cache = getattr(self, 'batch_results_cache', {}) or {}
+                cached = cache.get(self.current_image_path)
+                bii = getattr(self, '_base_image_item', None)
                 if cached:
                     qimg = cached.get('mask_qimage')
                     opacity = cached.get('opacity', 128 / 255.0)
                     try:
-                        if getattr(self, '_base_image_item', None) is not None:
-                            self._base_image_item.set_mask_image(qimg, opacity)
+                        if bii is not None:
+                            bii.set_mask_image(qimg, opacity)
                     except Exception:
                         pass
-                    # We displayed the per-frame overlay — do not create raster-level mask
-                    return
+                else:
+                    # No per-frame overlay — make sure nothing from a previous
+                    # frame lingers on the FastImageItem.
+                    try:
+                        if bii is not None:
+                            bii.set_mask_image(None)
+                    except Exception:
+                        pass
+                return  # Never fall through to raster-level mask for video frames
         except Exception:
             pass
 
@@ -3524,6 +3663,68 @@ class AnnotationWindow(BaseCanvas):
 
         # Update the view
         self.viewport().update()
+
+    def _sync_video_mask_to_cache(self):
+        """Store the current VideoRaster mask annotation state in batch_results_cache.
+
+        This bridges the direct-paint / single-image-predict path (which writes to
+        VideoRaster.mask_annotation) with load_mask_annotation's per-frame cache
+        lookup so the painted mask is displayed when navigating back to this frame
+        and is NOT shown on other frames.
+
+        Only does anything when the current image is a virtual video frame path.
+        """
+        try:
+            if '::frame_' not in str(self.current_image_path):
+                return
+            vr = getattr(self, '_active_video_raster', None)
+            if vr is None or vr.mask_annotation is None:
+                return
+            ma = vr.mask_annotation
+            # ma.graphics_item is often None on video frames (the scene is cleared on
+            # every navigation), which causes update_graphics_item() to early-return
+            # without rebuilding colored_mask or qimage.  Force-rebuild from mask_data
+            # so the snapshot reflects the *current* frame's pixels, not a stale copy
+            # left over from whichever frame last had a live graphics_item.
+            try:
+                ma._update_full_canvas()
+                h, w = ma.mask_data.shape
+                from PyQt5.QtGui import QImage as _QImage
+                ma.qimage = _QImage(ma.colored_mask.data, w, h, _QImage.Format_RGBA8888)
+            except Exception:
+                pass
+            if ma.qimage is None:
+                return
+            # Deep copy so mutations to colored_mask don't corrupt the cached image
+            qimg_copy = ma.qimage.copy()
+            opacity = ma.get_current_transparency() / 255.0
+            # Ensure cache dict exists
+            if not hasattr(self, 'batch_results_cache') or self.batch_results_cache is None:
+                self.batch_results_cache = {}
+            self.batch_results_cache[self.current_image_path] = {
+                'mask_qimage': qimg_copy,
+                'mask_arr': ma.mask_data.copy(),
+                'opacity': opacity,
+            }
+            # Immediately push the overlay to the fast image item
+            bii = getattr(self, '_base_image_item', None)
+            if bii is not None:
+                try:
+                    bii.set_mask_image(qimg_copy, opacity)
+                except Exception:
+                    pass
+            # Refresh slider tick marks and image-window annotation count so the
+            # new mask frame is immediately reflected in the UI.
+            try:
+                self._update_video_annotation_marks()
+            except Exception:
+                pass
+            try:
+                self.main_window.image_window.update_image_annotations(self.current_image_path)
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     def refresh_phantom_annotations(self):
         """
@@ -3815,6 +4016,17 @@ class AnnotationWindow(BaseCanvas):
             if isinstance(annotation, MaskAnnotation):
                 try:
                     self.annotation_manager.unregister_mask_annotation(annotation)
+                except Exception:
+                    pass
+                # Clear the raster's reference so has_mask_content returns False
+                # immediately — without this, update_image_annotations (called below)
+                # still sees the orphaned mask_data and keeps annotation_count at 1.
+                try:
+                    raster = self.main_window.image_window.raster_manager.get_raster(
+                        annotation.image_path
+                    )
+                    if raster is not None and raster.mask_annotation is annotation:
+                        raster.mask_annotation = None
                 except Exception:
                     pass
 

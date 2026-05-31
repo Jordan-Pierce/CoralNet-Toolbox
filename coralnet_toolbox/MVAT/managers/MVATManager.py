@@ -2474,6 +2474,10 @@ class MVATManager(QObject):
         2D size was just set by the user (e.g. 2D Ctrl+wheel); otherwise the
         projection round-trip will overwrite the value they just chose.
         """
+        if not self.multi_annotate_enabled:
+            self._clear_projected_cursor_previews(render=render)
+            return
+
         tool_kind, active_tool = self._get_active_3d_tool_kind()
         if tool_kind not in ('brush', 'erase') or active_tool is None or world_point is None:
             self._clear_projected_cursor_previews(render=render)
@@ -3912,15 +3916,28 @@ class MVATManager(QObject):
 
         px, py = int(scene_pos.x()), int(scene_pos.y())
 
+        # Skip if the cursor hasn't moved by at least 1 pixel since the last update —
+        # avoids redundant ray casts and camera projections during tiny jitter.
+        last = getattr(self, '_last_cursor_preview_px', None)
+        if last is not None and last == (px, py):
+            return
+        self._last_cursor_preview_px = (px, py)
+
         # Determine which cameras should show previews
         visible_paths = self._get_annotation_target_paths()
 
-        # Use the blazingly fast center-point projection
-        projections = self._build_projection(px, py)
+        # Build a camera subset limited to only the visible context canvases —
+        # no point projecting into cameras that won't display a preview.
+        visible_cameras = {p: c for p, c in self.cameras.items() if p in visible_paths}
+        if self.ortho_camera is not None and self.ortho_camera.image_path in visible_paths:
+            visible_cameras[self.ortho_camera.image_path] = self.ortho_camera
+
+        projections = self._build_projection(px, py, target_cameras=visible_cameras)
         self.context_matrix.update_cursor_previews(projections, visible_paths, item_factory)
 
     def _on_cursor_preview_cleared(self):
         """Clear cursor previews from all context canvases."""
+        self._last_cursor_preview_px = None
         if self.context_matrix is not None:
             self.context_matrix.clear_all_cursor_previews()
 
@@ -4604,7 +4621,7 @@ class MVATManager(QObject):
                 return
             self.contextStatsComputed.emit(request_id, active_path, n_visible, m_overlapping)
 
-    def _build_projection(self, px: int, py: int, source_camera=None) -> dict:
+    def _build_projection(self, px: int, py: int, source_camera=None, target_cameras=None) -> dict:
         """Cast a ray from the selected camera at (px, py) and return projections.
 
         Handles both perspective cameras and OrthoCamera (orthomosaic):
@@ -4729,10 +4746,13 @@ class MVATManager(QObject):
         if ray is None:
             return {}
 
-        cameras_for_projection = self.cameras
-        if self.ortho_camera is not None and camera != self.ortho_camera:
-            cameras_for_projection = dict(self.cameras)
-            cameras_for_projection[self.ortho_camera.image_path] = self.ortho_camera
+        if target_cameras is not None:
+            cameras_for_projection = target_cameras
+        else:
+            cameras_for_projection = self.cameras
+            if self.ortho_camera is not None and camera != self.ortho_camera:
+                cameras_for_projection = dict(self.cameras)
+                cameras_for_projection[self.ortho_camera.image_path] = self.ortho_camera
 
         return ray.project_to_cameras(cameras_for_projection)
 
@@ -6093,6 +6113,368 @@ class MVATManager(QObject):
             class_label_ids=class_label_ids,
         )
 
+
+    # =========================================================================
+    # MVAT-SAM  (Space-bar segmentation of the current 3D viewer screenshot)
+    # =========================================================================
+
+    def _capture_viewer_sam_context(self, scale: int = 2):
+        """Capture the current MVATViewer frame and build an on-the-fly index map.
+
+        Non-mesh actors (rays, frustums, sphere markers, hover/label overlays) are
+        hidden before the screenshot and restored afterwards so that only the mesh /
+        point-cloud geometry appears in the image used for SAM prompting.
+
+        The screenshot is rendered at ``scale`` x the current window resolution so
+        that the resulting masks are dense even on small viewer windows.
+
+        Returns (rgb_image, index_map, depth_map, element_type).
+        Raises RuntimeError on any failure so the caller can show a message.
+        """
+        from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
+
+        viewer   = self.viewer
+        plotter  = viewer.plotter
+
+        # ------------------------------------------------------------------ #
+        # 1. Hide every actor except the primary geometry actor
+        #    (rays, frustums, overlays, axes, etc. must not appear in the
+        #     screenshot used for SAM prompting)
+        # ------------------------------------------------------------------ #
+        primary_actor  = viewer._get_primary_target_actor()
+        actors_to_hide = []
+
+        try:
+            vtk_actors = plotter.renderer.GetActors()
+            vtk_actors.InitTraversal()
+            while True:
+                actor = vtk_actors.GetNextActor()
+                if actor is None:
+                    break
+                if actor is primary_actor:
+                    continue          # keep the mesh/point-cloud visible
+                if actor.GetVisibility():
+                    actor.SetVisibility(False)
+                    actors_to_hide.append(actor)
+        except Exception:
+            pass
+
+        # ------------------------------------------------------------------ #
+        # 2. Switch primary product to RGB array, screenshot, switch back
+        # ------------------------------------------------------------------ #
+        primary_target   = viewer.scene_context.get_primary_target()
+        prev_array       = None
+        switched_to_rgb  = False
+        if primary_target is not None and hasattr(primary_target, 'get_selected_array'):
+            prev_array = primary_target.get_selected_array()
+            if prev_array != 'RGB' and hasattr(primary_target, 'set_selected_array'):
+                if primary_target.set_selected_array('RGB'):
+                    switched_to_rgb = True
+                    try:
+                        viewer.render_scene()
+                    except Exception:
+                        pass
+
+        try:
+            win_w, win_h = plotter.window_size
+            render_w = win_w * scale
+            render_h = win_h * scale
+
+            plotter.render()
+            rgb = plotter.screenshot(return_img=True, window_size=(render_w, render_h))
+        finally:
+            # Restore array
+            if switched_to_rgb and prev_array is not None:
+                try:
+                    primary_target.set_selected_array(prev_array)
+                    viewer.render_scene()
+                except Exception:
+                    pass
+            # Restore hidden actors
+            for actor in actors_to_hide:
+                actor.SetVisibility(True)
+            plotter.render()
+
+        if rgb is None:
+            raise RuntimeError("plotter.screenshot() returned None")
+        if rgb.ndim == 3 and rgb.shape[2] == 4:
+            rgb = rgb[:, :, :3]
+        rgb = np.ascontiguousarray(rgb, dtype=np.uint8)
+        h, w = rgb.shape[:2]
+
+        # 2. Derive K / R / t from the VTK camera
+        cam      = plotter.camera
+        pos      = np.asarray(cam.position,    dtype=np.float64)
+        focal_pt = np.asarray(cam.focal_point, dtype=np.float64)
+        view_up  = np.asarray(cam.up,          dtype=np.float64)
+
+        fwd = focal_pt - pos
+        fwd /= np.linalg.norm(fwd)
+        right = np.cross(fwd, view_up)
+        norm_r = np.linalg.norm(right)
+        if norm_r < 1e-9:
+            raise RuntimeError("Degenerate camera: forward parallel to view_up")
+        right /= norm_r
+        up = np.cross(right, fwd)
+
+        # OpenCV convention: Z forward, Y down
+        R = np.stack([right, -up, fwd], axis=0)  # 3x3 world->cam
+        t = -R @ pos
+
+        # Intrinsics from VTK view_angle (full vertical FOV in degrees)
+        fov_v_rad = np.radians(float(getattr(cam, 'view_angle', 30.0)))
+        fy = (h / 2.0) / np.tan(fov_v_rad / 2.0)
+        fx = fy
+        K = np.array([[fx, 0.0, w / 2.0],
+                      [0.0, fy, h / 2.0],
+                      [0.0, 0.0, 1.0]], dtype=np.float64)
+
+        # 3. Build index map on the fly
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            result = VisibilityManager.compute_visibility_from_scene(
+                scene_context=self.viewer.scene_context,
+                K=K, R=R, t=t,
+                width=w, height=h,
+                compute_depth_map=True,
+            )
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        index_map    = result.get('index_map',    np.full((h, w), -1, dtype=np.int32))
+        depth_map    = result.get('depth_map',    None)
+        element_type = result.get('element_type', 'point')
+        return rgb, index_map, depth_map, element_type
+
+    def launch_viewer_sam(self):
+        """Launch the MVAT-SAM dialog for the current 3D view (called on Space)."""
+        from coralnet_toolbox.MVAT.ui.QtMVATSAMDialog import MVATSAMDialog
+
+        sam_dialog = getattr(self.main_window, 'sam_deploy_predictor_dialog', None)
+        if sam_dialog is None or not getattr(sam_dialog, 'loaded_model', None):
+            self.main_window.status_bar.showMessage(
+                'MVAT-SAM: load a SAM model first (Machine Learning -> SAM).', 4000)
+            return
+
+        selected_label = getattr(self.annotation_window, 'selected_label', None)
+        if selected_label is None:
+            self.main_window.status_bar.showMessage(
+                'MVAT-SAM: select a label before segmenting.', 4000)
+            return
+
+        if not self.viewer.scene_context.has_any_product():
+            self.main_window.status_bar.showMessage(
+                'MVAT-SAM: no 3D scene loaded.', 4000)
+            return
+
+        self.main_window.status_bar.showMessage(
+            'MVAT-SAM: building index map for current view...', 0)
+        QApplication.processEvents()
+        try:
+            rgb, index_map, depth_map, element_type = self._capture_viewer_sam_context(scale=1)
+        except Exception as e:
+            self.main_window.status_bar.showMessage(
+                f'MVAT-SAM: capture failed - {e}', 5000)
+            return
+
+        sam_dialog.set_image(rgb, image_path=None)
+
+        dlg = MVATSAMDialog(
+            viewer=self.viewer,
+            rgb_image=rgb,
+            index_map=index_map,
+            element_type=element_type,
+            sam_dialog=sam_dialog,
+            label=selected_label,
+        )
+        def _on_accepted(mask):
+            # Re-read the current label at accept time (user may have changed it)
+            live_label = (getattr(self.annotation_window, 'selected_label', None)
+                          or selected_label)
+            self._on_viewer_sam_accepted(mask, index_map, depth_map, element_type, live_label)
+
+        dlg.maskAccepted.connect(_on_accepted)
+        dlg.exec_()
+
+    def _on_viewer_sam_accepted(self, binary_mask, index_map, depth_map, element_type, label):
+        """Convert mask pixels to element IDs and propagate to target cameras.
+
+        When multi_annotate_enabled is True: paints the primary annotation-window
+        camera and all visible context cameras (mirrors Brush3DTool behaviour).
+        When multi_annotate_enabled is False: only updates the 3D product — no 2D
+        camera is painted at all, because the VTK view has no corresponding image.
+        """
+        # --- extract element IDs from the mask ---------------------------------
+        element_ids = self._filter_index_map_ids_by_depth(
+            index_map=index_map,
+            binary_mask=binary_mask,
+            depth_map=depth_map,
+        )
+
+        if element_ids.size == 0:
+            self.main_window.status_bar.showMessage(
+                'MVAT-SAM: mask covers no scene geometry.', 4000)
+            return
+
+        n = element_ids.size
+        self.main_window.status_bar.showMessage(
+            f"MVAT-SAM: painting {n:,} {element_type}(s) with '{label.short_label_code}'...", 0)
+        QApplication.processEvents()
+
+        # --- resolve label color -----------------------------------------------
+        color_rgb = (label.color.red(), label.color.green(), label.color.blue())
+
+        # --- 3D-only path (multi-annotate OFF) ---------------------------------
+        if not self.multi_annotate_enabled:
+            primary_target = self.viewer.scene_context.get_primary_target()
+            if primary_target is None or not hasattr(primary_target, 'apply_labels'):
+                self.main_window.status_bar.showMessage(
+                    'MVAT-SAM: no 3D product to paint.', 4000)
+                return
+
+            # Resolve class_id from any available raster (needed for apply_labels class bookkeeping).
+            # We iterate cameras until we find one with a mask annotation.
+            source_class_id = None
+            project_labels  = list(self.main_window.label_window.labels)
+            for cam in self.cameras.values():
+                raster = self.raster_manager.get_raster(cam.image_path)
+                if raster is None:
+                    continue
+                mask_ann = raster.get_mask_annotation(project_labels)
+                if mask_ann is None:
+                    continue
+                cid = mask_ann.label_id_to_class_id_map.get(label.id)
+                if cid is None:
+                    mask_ann.sync_label_map([label])
+                    cid = mask_ann.label_id_to_class_id_map.get(label.id)
+                if cid is not None:
+                    source_class_id = cid
+                    break
+
+            if source_class_id is None:
+                # No rasters available — still paint with class_id=1 as a fallback
+                # so the user gets visual feedback on the mesh.
+                source_class_id = 1
+
+            primary_target.apply_labels(element_ids, int(source_class_id), color_rgb)
+            primary_target.flush_labels_to_gpu()
+            self.main_window.status_bar.showMessage(
+                f"MVAT-SAM: applied '{label.short_label_code}' to {n:,} {element_type}(s).", 4000)
+            return
+
+        # --- multi-annotate ON: propagate to 3D + all visible 2D cameras ------
+        project_labels = list(self.main_window.label_window.labels)
+
+        annotation_window = getattr(self.main_window, 'annotation_window', None)
+        primary_path = getattr(annotation_window, 'current_image_path', None)
+        target_paths = self._get_annotation_target_paths()
+        if primary_path:
+            target_paths.add(primary_path)
+
+        if not target_paths:
+            self.main_window.status_bar.showMessage(
+                'MVAT-SAM: no target cameras to paint.', 4000)
+            return
+
+        source_path     = next(iter(target_paths))
+        source_raster   = self.raster_manager.get_raster(source_path)
+        source_mask_ann = source_raster.get_mask_annotation(project_labels) if source_raster else None
+        source_class_id = None
+        if source_mask_ann is not None:
+            source_class_id = source_mask_ann.label_id_to_class_id_map.get(label.id)
+            if source_class_id is None:
+                source_mask_ann.sync_label_map([label])
+                source_class_id = source_mask_ann.label_id_to_class_id_map.get(label.id)
+
+        if source_class_id is None:
+            self.main_window.status_bar.showMessage(
+                'MVAT-SAM: could not resolve class ID for selected label.', 4000)
+            return
+
+        class_ids     = np.full(element_ids.size, int(source_class_id), dtype=np.int64)
+        source_camera = self.cameras.get(source_path)
+        self._execute_mask_propagation(
+            source_camera=source_camera,
+            element_ids=element_ids,
+            class_ids=class_ids,
+            target_paths=target_paths,
+            project_labels=project_labels,
+            class_label_ids={int(source_class_id): label.id},
+        )
+        self.main_window.status_bar.showMessage(
+            f"MVAT-SAM: applied '{label.short_label_code}' to {n:,} {element_type}(s).", 4000)
+
+    def _filter_index_map_ids_by_depth(self,
+                                       index_map: np.ndarray,
+                                       binary_mask: np.ndarray,
+                                       depth_map: Optional[np.ndarray] = None) -> np.ndarray:
+        """Return unique element IDs under a mask, optionally rejecting depth outliers.
+
+        The depth-aware branch mirrors the 2D SAM propagation logic: it keeps the
+        interior of the mask and only accepts perimeter pixels when their depth is
+        consistent with the interior band.
+        """
+        if index_map is None or binary_mask is None:
+            return np.array([], dtype=np.int64)
+
+        index_map = np.asarray(index_map)
+        binary_mask = np.asarray(binary_mask)
+        if index_map.ndim != 2 or binary_mask.ndim != 2:
+            return np.array([], dtype=np.int64)
+
+        if index_map.shape != binary_mask.shape:
+            return np.array([], dtype=np.int64)
+
+        valid_mask = binary_mask.astype(bool)
+        if not np.any(valid_mask):
+            return np.array([], dtype=np.int64)
+
+        if depth_map is not None:
+            try:
+                import cv2
+
+                depth_map = np.asarray(depth_map)
+                if depth_map.shape != index_map.shape:
+                    depth_map = cv2.resize(
+                        depth_map.astype(np.float32),
+                        (index_map.shape[1], index_map.shape[0]),
+                        interpolation=cv2.INTER_NEAREST,
+                    )
+
+                erosion_r = int(np.clip(min(valid_mask.shape) * 0.03, 2, 12))
+                kernel = cv2.getStructuringElement(
+                    cv2.MORPH_ELLIPSE,
+                    (2 * erosion_r + 1, 2 * erosion_r + 1),
+                )
+                interior_mask = cv2.erode(
+                    valid_mask.astype(np.uint8),
+                    kernel,
+                    iterations=1,
+                ).astype(bool)
+                perimeter_mask = valid_mask & ~interior_mask
+
+                depth_slice = depth_map.astype(np.float32, copy=False)
+                interior_depths = depth_slice[interior_mask]
+                interior_depths = interior_depths[~np.isnan(interior_depths)]
+
+                if len(interior_depths) >= 10 and perimeter_mask.any():
+                    ref_depth = np.median(interior_depths)
+                    interior_spread = np.std(interior_depths)
+                    abs_floor = max(0.02, ref_depth * 0.005)
+                    full_tol = interior_spread * 2.0 + abs_floor
+                    dist = cv2.distanceTransform(valid_mask.astype(np.uint8), cv2.DIST_L2, 5)
+                    norm_dist = np.clip(dist / max(erosion_r, 1), 0.0, 1.0)
+                    per_pixel_tol = abs_floor + (full_tol - abs_floor) * norm_dist
+                    with np.errstate(invalid='ignore'):
+                        perimeter_depth_ok = np.abs(depth_slice - ref_depth) <= per_pixel_tol
+                    valid_mask = interior_mask | (perimeter_mask & perimeter_depth_ok)
+            except Exception:
+                pass
+
+        raw_ids = index_map[valid_mask]
+        unique_ids = np.unique(raw_ids)
+        return unique_ids[unique_ids > -1].astype(np.int64, copy=False)
+
     def cleanup(self):
         """Clean up resources before closing."""
         self._on_multi_annotate_toggled(False)  # Disconnect all propagation hooks
@@ -6109,36 +6491,3 @@ class MVATManager(QObject):
                 self._label_painter_thread = None
         except Exception:
             pass
-
-        # Shutdown propagation thread pool
-        try:
-            if hasattr(self, '_propagation_executor'):
-                self._propagation_executor.shutdown(wait=False)
-        except Exception:
-            pass
-
-        # Shutdown unified propagation executor
-        try:
-            if hasattr(self, '_unified_bg_executor'):
-                self._unified_bg_executor.shutdown(wait=False)
-        except Exception:
-            pass
-
-        # Remove overlay actor if present
-        try:
-            if self._label_overlay_actor is not None:
-                try:
-                    self.viewer.plotter.remove_actor(self._label_overlay_actor, render=False)
-                except Exception:
-                    pass
-                self._label_overlay_actor = None
-        except Exception:
-            pass
-
-        try:
-            self.clear_sphere_hover_overlay(reset_context=True, render=False)
-        except Exception:
-            pass
-
-        if hasattr(self.viewer, 'close'):
-            self.viewer.close()

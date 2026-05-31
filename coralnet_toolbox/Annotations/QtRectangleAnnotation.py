@@ -324,7 +324,8 @@ class RectangleAnnotation(Annotation):
         width = int(abs(self.bottom_right.x() - self.top_left.x()))
         height = int(abs(self.bottom_right.y() - self.top_left.y()))
         dimension_text = f"{width}×{height}"
-        self.dimension_tag_item = FloatingTagItem(dimension_text, self.label.color)
+        self.dimension_tag_item = FloatingTagItem(dimension_text, self.label.color,
+                                                  annotation_scene_size=(float(width), float(height)))
         
         # Position it at the bottom-left corner of the bounding box
         bottom_left = QPointF(self.get_bounding_box_top_left().x(), self.get_bounding_box_bottom_right().y())

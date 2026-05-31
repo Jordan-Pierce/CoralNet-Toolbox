@@ -1,5 +1,6 @@
 import traceback
 import threading
+import os
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -16,6 +17,7 @@ from coralnet_toolbox.MVAT.utils.MVATLogger import (
 )
 from coralnet_toolbox.MVAT.core.Products import MeshProduct, PointCloudProduct
 
+DEBUG_EXPORT_RGB_INDEX_MAPS = True
 
 logger = get_visibility_logger()
 
@@ -156,6 +158,25 @@ class VisibilityWorker(QObject):
             lightweight_final_results = {}
             element_type = self.primary_target.get_element_type()
 
+            def _export_mesh_sort_proof():
+                """Optional debug export of RGB index maps for visual proof of correct mesh sorting."""
+                if not DEBUG_EXPORT_RGB_INDEX_MAPS or not isinstance(self.primary_target, MeshProduct):
+                    return
+
+                try:
+                    debug_root = os.path.dirname(self.target_file_path)
+                    if not debug_root:
+                        debug_root = os.path.dirname(getattr(self.primary_target, 'file_path', '') or '')
+                    if not debug_root:
+                        debug_root = os.getcwd()
+
+                    debug_dir = os.path.join(debug_root, "DEBUG_INDEX_MAPS")
+                    proof_path = self.primary_target.export_sort_proof(debug_dir)
+                    if proof_path:
+                        logger.info(f"🧪 Wrote mesh sort proof: {proof_path}")
+                except Exception as exc:
+                    logger.warning(f"⚠️ Mesh sort proof export failed: {exc}")
+
             # =================================================================
             # Helper: Synchronous Disk Saver
             # =================================================================
@@ -206,6 +227,8 @@ class VisibilityWorker(QObject):
             # STRATEGY A: MESH PROCESSING (CHUNKED)
             # ==========================================
             if isinstance(self.primary_target, MeshProduct):
+                _export_mesh_sort_proof()
+
                 if perspective_params:
                     paths = list(perspective_params.keys())
                     params_list = list(perspective_params.values())

@@ -1,6 +1,6 @@
 import warnings
 
-from PyQt5.QtCore import Qt, QPointF
+from PyQt5.QtCore import Qt, QPointF, QTimer
 from PyQt5.QtGui import QMouseEvent, QColor, QPen
 from PyQt5.QtWidgets import QGraphicsPixmapItem, QGraphicsLineItem
 
@@ -30,6 +30,14 @@ class Tool:
         # cursor_clear_callback()
         self.cursor_clear_callback = None
 
+        # Debounce timer — throttle MVAT context-canvas projection to ~10 Hz.
+        # Subclasses call _schedule_cursor_preview_update(scene_pos) in mouseMoveEvent;
+        # the base deactivate() and _fire_cursor_preview_update() handle the rest.
+        self._cursor_update_timer = QTimer()
+        self._cursor_update_timer.setSingleShot(True)
+        self._cursor_update_timer.timeout.connect(self._fire_cursor_preview_update)
+        self._pending_cursor_pos = None
+
         # Crosshair settings
         self.show_crosshair = True  # Flag to toggle crosshair visibility for this tool
         self.h_crosshair_line = None
@@ -40,6 +48,8 @@ class Tool:
         self.annotation_window.setCursor(self.cursor)
 
     def deactivate(self):
+        self._cursor_update_timer.stop()
+        self._pending_cursor_pos = None
         self.active = False
         self.annotation_window.setCursor(self.default_cursor)
         self.clear_cursor_annotation()
@@ -48,7 +58,7 @@ class Tool:
 
         # Ensure crosshair is properly cleared when deactivating tool
         self.clear_crosshair()
-        
+
         # Stop any current drawing operation
         self.stop_current_drawing()
 
@@ -83,6 +93,21 @@ class Tool:
     def wheelEvent(self, event: QMouseEvent):
         pass
         
+    def _schedule_cursor_preview_update(self, scene_pos: QPointF):
+        """Queue a debounced MVAT context-canvas update (call from mouseMoveEvent when Multi-Annotate is on)."""
+        self._pending_cursor_pos = scene_pos
+        if not self._cursor_update_timer.isActive():
+            self._cursor_update_timer.start(100)  # ~10 Hz throttle
+
+    def _fire_cursor_preview_update(self):
+        """Timer callback — fire cursor_move_callback if Multi-Annotate is still enabled."""
+        mvat_manager = getattr(self.main_window, 'mvat_manager', None)
+        if (self._pending_cursor_pos is not None
+                and self.cursor_move_callback
+                and mvat_manager
+                and getattr(mvat_manager, 'multi_annotate_enabled', False)):
+            self.cursor_move_callback(self._pending_cursor_pos, self.create_cursor_preview_item)
+
     def stop_current_drawing(self):
         """
         Force stop of the current drawing operation if one is in progress.

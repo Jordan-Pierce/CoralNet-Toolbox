@@ -685,11 +685,12 @@ class Semantic(Base):
 
         data = {
             'path': output_dir_path,
-            'train': f"{train_dir}\images",
-            'val': f"{val_dir}\images",
-            'test': f"{test_dir}\images",
+            'train': f"{train_dir}/images",
+            'val': f"{val_dir}/images",
+            'test': f"{test_dir}/images",
             'nc': num_classes, 
             'names': names_dict, 
+            'masks_dir': 'masks'
         }
 
         with open(yaml_path, 'w') as f:

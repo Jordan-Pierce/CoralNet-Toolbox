@@ -156,6 +156,7 @@ class BrushTool(Tool):
         self._sync_timer.timeout.connect(self._stream_stroke_chunk)
         self._is_finishing_stroke = False
         self._active_workers = 0
+        
 
     def _create_brush_mask(self):
         if self.shape == 'circle':
@@ -232,16 +233,23 @@ class BrushTool(Tool):
 
     def mouseMoveEvent(self, event):
         super().mouseMoveEvent(event)
-        
+
         scene_pos = self.annotation_window.mapToScene(event.pos())
         cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
-        
+
         if (cursor_in_window and self.active and self.annotation_window.selected_label):
             self.update_cursor_annotation(scene_pos)
-            if self.cursor_move_callback:
-                self.cursor_move_callback(scene_pos, self.create_cursor_preview_item)
+
+            mvat_manager = getattr(self.main_window, 'mvat_manager', None)
+            if mvat_manager and getattr(mvat_manager, 'multi_annotate_enabled', False):
+                self._schedule_cursor_preview_update(scene_pos)
+            else:
+                self._cursor_update_timer.stop()
+                if self.cursor_clear_callback:
+                    self.cursor_clear_callback()
         else:
             self.clear_cursor_annotation()
+            self._cursor_update_timer.stop()
             if self.cursor_clear_callback:
                 self.cursor_clear_callback()
 

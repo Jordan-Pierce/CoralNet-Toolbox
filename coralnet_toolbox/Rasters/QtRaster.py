@@ -18,6 +18,7 @@ from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from coralnet_toolbox.Annotations import MaskAnnotation
+from coralnet_toolbox.MVAT.utils.IndexMapCodec import load_index_map_archive
 
 from coralnet_toolbox.WorkArea import WorkArea
 
@@ -718,7 +719,9 @@ class Raster(QObject):
                 interpolation=cv2.INTER_NEAREST
             )
         
-        self.index_map = index_map.copy()
+        # Keep the loaded array as-is so cache-backed memmaps and other large
+        # results do not get duplicated in RAM.
+        self.index_map = index_map
         self.index_map_path = index_map_path
         self.index_element_type = element_type
         
@@ -740,7 +743,7 @@ class Raster(QObject):
                 raise ValueError("Visible indices must be a numpy array")
             if visible_indices.ndim != 1:
                 raise ValueError("Visible indices must be a 1D array")
-            self.visible_indices = visible_indices.copy()
+            self.visible_indices = visible_indices
     
     # ------------------------------------------------------------------
     # Inverted-index background build
@@ -832,15 +835,13 @@ class Raster(QObject):
         # Automatically attempt to load index map data if requested and file exists
         if auto_load and index_map_path and os.path.exists(index_map_path):
             try:
-                data = np.load(index_map_path)
-                element_type = str(data.get('element_type', 'point'))
-                self.add_index_map(
-                    data['index_map'], 
-                    index_map_path, 
-                    data.get('visible_indices'),
-                    element_type=element_type
-                )
+                self._load_index_map_from_path(index_map_path)
             except Exception as e:
+                try:
+                    if isinstance(e, zipfile.BadZipFile) or 'File is not a zip file' in str(e):
+                        return
+                except Exception:
+                    pass
                 print(f"Warning: Failed to auto-load index map from {index_map_path}: {e}")
     
     def has_index_map(self) -> bool:
@@ -854,6 +855,34 @@ class Raster(QObject):
         self.visible_indices = None
         self.index_element_type = None
         self.inv_ids = self.inv_offsets = self.inv_pixels = None
+        if hasattr(self, 'index_map_scale_factor'):
+            self.index_map_scale_factor = None
+
+    def _load_index_map_from_path(self, index_map_path: str):
+        """Load the cached index-map archive and populate in-memory state."""
+        data = load_index_map_archive(index_map_path)
+
+        self.index_map = data['index_map']
+        self.visible_indices = data.get('visible_indices')
+        self.index_element_type = data.get('element_type', self.index_element_type)
+
+        if hasattr(self, 'index_map_scale_factor') and 'scale_factor' in data:
+            try:
+                self.index_map_scale_factor = float(data['scale_factor'])
+            except Exception:
+                pass
+
+        inverted_index = data.get('inverted_index')
+        if isinstance(inverted_index, dict):
+            self.inv_ids = inverted_index.get('inv_ids')
+            self.inv_offsets = inverted_index.get('inv_offsets')
+            self.inv_pixels = inverted_index.get('inv_pixels')
+        else:
+            self.inv_ids = self.inv_offsets = self.inv_pixels = None
+            if self.index_map is not None:
+                self._schedule_inverted_index_build(self.index_map)
+
+        return self.index_map
         
     @property
     def index_map_lazy(self):
@@ -871,16 +900,7 @@ class Raster(QObject):
         # If we have a path but no loaded data, try to load it
         if self.index_map_path and os.path.exists(self.index_map_path):
             try:
-                data = np.load(self.index_map_path)
-                self.index_map = data['index_map']
-                if 'visible_indices' in data:
-                    self.visible_indices = data['visible_indices']
-                # Restore CSR inverted index if present
-                if 'inv_ids' in data and 'inv_offsets' in data and 'inv_pixels' in data:
-                    self.inv_ids     = data['inv_ids']
-                    self.inv_offsets = data['inv_offsets']
-                    self.inv_pixels  = data['inv_pixels']
-                return self.index_map
+                return self._load_index_map_from_path(self.index_map_path)
             except Exception as e:
                 # If the cache file is still being written, numpy will raise a
                 # zipfile.BadZipFile / "File is not a zip file" error when trying
