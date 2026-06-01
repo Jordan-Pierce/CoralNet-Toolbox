@@ -1048,8 +1048,9 @@ class AnnotationWindow(BaseCanvas):
         
     def keyPressEvent(self, event):
         """Handle keyboard press events including undo/redo and deletion of selected annotations."""
-        # Handle Ctrl+H to reset the scene view
-        if event.key() == Qt.Key_H and event.modifiers() == Qt.ControlModifier:
+        # Handle Ctrl+H or Home to reset the scene view and clear static markers
+        if (event.key() == Qt.Key_H and event.modifiers() == Qt.ControlModifier) or \
+                event.key() == Qt.Key_Home:
             self.reset_scene_view()
             return
         
@@ -2237,6 +2238,9 @@ class AnnotationWindow(BaseCanvas):
         self._set_absolute_rotation(self.rotation_angle)  # Apply the rotation transform reset
         self.viewChanged.emit(*self.get_image_dimensions())
         
+        # Clear own static marker (focal-point crosshair)
+        self.clear_static_marker()
+
         # If MVAT viewer is active, sync 3D view to current image's perspective
         if hasattr(self.main_window, 'mvat_manager') and self.main_window.mvat_manager:
             mvat_manager = self.main_window.mvat_manager
@@ -2246,7 +2250,9 @@ class AnnotationWindow(BaseCanvas):
                     if camera.image_path == self.current_image_path:
                         mvat_manager.viewer.match_camera_perspective(camera, animate=True)
                         break
-        
+            # Reset focal-point lock so ContextMatrix resumes following the AnnotationWindow
+            mvat_manager.reset_focal_lock()
+
         # Process events
         QApplication.processEvents()
 

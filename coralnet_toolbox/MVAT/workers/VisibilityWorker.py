@@ -180,10 +180,17 @@ class VisibilityWorker(QObject):
             # =================================================================
             # Helper: Synchronous Disk Saver
             # =================================================================
+            # Accumulators for the end-of-run cache summary
+            _cache_total_start: float = 0.0
+            _cache_saved_count: int = 0
+            _cache_total_count: int = 0
+
             def save_to_disk_task(save_results, cache_mgr, target_path, keys_dict, extra_bytes_dict, pixel_budget):
-                start_cache_time = time.perf_counter()
-                total_to_save = len(save_results)
-                saved_count = 0
+                nonlocal _cache_total_start, _cache_saved_count, _cache_total_count
+                # Start the global timer on the first chunk
+                if _cache_total_count == 0:
+                    _cache_total_start = time.perf_counter()
+                _cache_total_count += len(save_results)
 
                 def _save_one(p, result_dict):
                     cache_key = keys_dict.get(p)
@@ -206,7 +213,7 @@ class VisibilityWorker(QObject):
                     log_cam_stage(self._cam_label(p, camera_labels), "Cache", elapsed, logger)
                     return True
 
-                n_workers = min(4, max(1, total_to_save))
+                n_workers = min(4, max(1, len(save_results)))
                 with ThreadPoolExecutor(max_workers=n_workers) as pool:
                     futs = {
                         pool.submit(_save_one, p, res): p
@@ -216,12 +223,9 @@ class VisibilityWorker(QObject):
                         p = futs[fut]
                         try:
                             if fut.result():
-                                saved_count += 1
+                                _cache_saved_count += 1
                         except Exception as exc:
                             logger.warning(f"⚠️ Cache save failed for {self._cam_label(p, camera_labels)}: {exc}")
-                
-                elapsed = time.perf_counter() - start_cache_time
-                logger.info(f"✅ Cached {saved_count}/{total_to_save} maps to disk in {elapsed:.2f}s")
 
             # ==========================================
             # STRATEGY A: MESH PROCESSING (CHUNKED)
@@ -391,6 +395,13 @@ class VisibilityWorker(QObject):
                                 vtk_context['plotter'].close()
                             except Exception:
                                 pass
+
+                    # Log the true total cache time after ALL chunks are saved
+                    if _cache_total_count > 0:
+                        total_elapsed = time.perf_counter() - _cache_total_start
+                        logger.info(
+                            f"✅ Cached {_cache_saved_count}/{_cache_total_count} maps to disk in {total_elapsed:.2f}s"
+                        )
 
             # ==========================================
             # STRATEGY B: POINT CLOUD (NOT YET CHUNKED)

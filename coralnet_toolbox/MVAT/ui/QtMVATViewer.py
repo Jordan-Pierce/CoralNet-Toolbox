@@ -27,7 +27,7 @@ from PyQt5.QtWidgets import (
 
 from coralnet_toolbox.MVAT.core.Ray import CameraRay
 from coralnet_toolbox.MVAT.managers.RayManager import BatchedRayManager
-from coralnet_toolbox.MVAT.managers.SphereActorManager import SphereActorManager
+from coralnet_toolbox.MVAT.managers.CursorPreview3D import CursorPreview3D
 from coralnet_toolbox.MVAT.managers.FrustumManager import BatchedFrustumManager
 from coralnet_toolbox.MVAT.core.Products import PointCloudProduct, MeshProduct, GaussianSplattingProduct
 from coralnet_toolbox.MVAT.core.SceneContext import SceneContext
@@ -35,8 +35,10 @@ from coralnet_toolbox.MVAT.core.SceneProduct import AbstractSceneProduct
 from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED
 from coralnet_toolbox.MVAT.tools import BrushTool3D, EraseTool3D
 from coralnet_toolbox.MVAT.ui.QtCameraAnimator import CameraAnimator
-from coralnet_toolbox import theme as app_theme
+
 from coralnet_toolbox.MVAT.utils.MVATLogger import get_visibility_logger
+
+from coralnet_toolbox import theme as app_theme
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -424,7 +426,7 @@ class MVATViewer(QFrame):
         self._ray_manager = BatchedRayManager()
         self._ortho_ray_manager = BatchedRayManager()
         # Sphere actor for mouse tracking on mesh
-        self._sphere_manager = SphereActorManager(radius=0.1)
+        self._cursor_preview = CursorPreview3D(radius=0.1)
         self._sphere_visible = False
         self._brush_3d_tool = None
         self._erase_3d_tool = None
@@ -840,7 +842,7 @@ class MVATViewer(QFrame):
                     pass
             else:
                 self._restore_viewer_navigation_mode()
-                sphere_manager = getattr(self, '_sphere_manager', None)
+                sphere_manager = getattr(self, '_cursor_preview', None)
                 if sphere_manager is not None:
                     try:
                         setter = getattr(sphere_manager, 'set_shape', None)
@@ -869,7 +871,7 @@ class MVATViewer(QFrame):
             self._sync_sphere_hover_binding()
             self._request_sphere_hover_refresh()
         else:
-            sphere_manager = getattr(self, '_sphere_manager', None)
+            sphere_manager = getattr(self, '_cursor_preview', None)
             if sphere_manager is not None:
                 try:
                     setter = getattr(sphere_manager, 'set_shape', None)
@@ -900,9 +902,9 @@ class MVATViewer(QFrame):
         self._last_click_time = 0
         self._sync_sphere_hover_binding()
 
-        if self._sphere_manager is not None:
+        if self._cursor_preview is not None:
             try:
-                self._sphere_manager.set_visibility(False)
+                self._cursor_preview.set_visibility(False)
             except Exception:
                 pass
 
@@ -997,11 +999,11 @@ class MVATViewer(QFrame):
         self._right_pan_last_xy = None
 
         # 3. Add sphere actor to plotter and bind mouse move event
-        if hasattr(self, '_sphere_manager') and self._sphere_manager is not None:
+        if hasattr(self, '_cursor_preview') and self._cursor_preview is not None:
             # Add sphere actor (it's created empty initially)
             from coralnet_toolbox.MVAT.core.constants import SELECT_COLOR_RGB
-            self._sphere_manager.add_to_plotter(self.plotter, color=SELECT_COLOR_RGB, line_width=1.5)
-            self._sphere_manager.set_visibility(False)  # Hidden by default
+            self._cursor_preview.add_to_plotter(self.plotter, color=SELECT_COLOR_RGB, line_width=1.5)
+            self._cursor_preview.set_visibility(False)  # Hidden by default
             self._sync_sphere_hover_binding()
 
     def _fast_hardware_pick(self):
@@ -1065,7 +1067,7 @@ class MVATViewer(QFrame):
 
     def _request_sphere_hover_refresh(self):
         """Queue a hover refresh for the current mouse position."""
-        if not self._sphere_visible or self._sphere_manager is None:
+        if not self._sphere_visible or self._cursor_preview is None:
             return
 
         try:
@@ -1079,10 +1081,10 @@ class MVATViewer(QFrame):
 
     def _adjust_sphere_size_from_wheel(self, delta_y: int):
         """Scale the sphere radius from Ctrl+wheel input."""
-        if self._sphere_manager is None:
+        if self._cursor_preview is None:
             return
 
-        current_radius = float(getattr(self._sphere_manager, 'radius', 0.1))
+        current_radius = float(getattr(self._cursor_preview, 'radius', 0.1))
         wheel_step = float(delta_y) / 120.0
         scale_factor = float(np.exp(wheel_step * 0.12))
         new_radius = float(np.clip(current_radius * scale_factor, 0.01, 10.0))
@@ -1090,7 +1092,7 @@ class MVATViewer(QFrame):
         if np.isclose(current_radius, new_radius):
             return
 
-        self._sphere_manager.set_radius(new_radius)
+        self._cursor_preview.set_radius(new_radius)
         manager = getattr(self, 'mvat_manager', None)
         if manager is not None:
             try:
@@ -1181,7 +1183,7 @@ class MVATViewer(QFrame):
                             active_tool.wheelEvent(event, delta_y)
                         except Exception:
                             pass
-                    elif self.is_sphere_tracking_enabled() and self._sphere_manager is not None:
+                    elif self.is_sphere_tracking_enabled() and self._cursor_preview is not None:
                         self._adjust_sphere_size_from_wheel(delta_y)
                     else:
                         step = 1 if delta_y > 0 else -1
@@ -1388,7 +1390,7 @@ class MVATViewer(QFrame):
             world_pos = self._fast_hardware_pick()
 
             if active_tool is not None:
-                if self._sphere_manager is None or not self._sphere_visible:
+                if self._cursor_preview is None or not self._sphere_visible:
                     try:
                         active_tool.mouseMoveEvent(None, -1, None)
                     except Exception:
@@ -1410,12 +1412,12 @@ class MVATViewer(QFrame):
                     self._sphere_hover_timer.start()
                 return
 
-            if self._sphere_manager is None:
+            if self._cursor_preview is None:
                 return
 
             if world_pos is not None:
-                self._sphere_manager.set_position(world_pos)
-                self._sphere_manager.set_visibility(True)
+                self._cursor_preview.set_position(world_pos)
+                self._cursor_preview.set_visibility(True)
 
                 manager = getattr(self, 'mvat_manager', None)
                 if manager is not None:
@@ -1424,7 +1426,7 @@ class MVATViewer(QFrame):
                     except Exception:
                         pass
             else:
-                self._sphere_manager.set_visibility(False)
+                self._cursor_preview.set_visibility(False)
 
                 manager = getattr(self, 'mvat_manager', None)
                 if manager is not None:
@@ -1454,7 +1456,7 @@ class MVATViewer(QFrame):
         once per burst instead of on every raw event.
         """
         try:
-            if self._sphere_manager is None:
+            if self._cursor_preview is None:
                 return
 
             # Only track if sphere feature is enabled
@@ -2774,9 +2776,9 @@ class MVATViewer(QFrame):
                 self._sphere_hover_pending_events = 0
             except Exception:
                 pass
-        if self._sphere_manager is not None:
+        if self._cursor_preview is not None:
             # Keep it invisible initially - it will show when mouse picks geometry
-            self._sphere_manager.set_visibility(False)
+            self._cursor_preview.set_visibility(False)
         manager = getattr(self, 'mvat_manager', None)
         if manager is not None:
             try:
@@ -3347,12 +3349,12 @@ class MVATViewer(QFrame):
             self._ortho_ray_manager.clear()
 
         # Clean up sphere manager
-        if hasattr(self, '_sphere_manager'):
+        if hasattr(self, '_cursor_preview'):
             try:
-                self._sphere_manager.remove_from_plotter(self.plotter)
+                self._cursor_preview.remove_from_plotter(self.plotter)
             except Exception:
                 pass
-            self._sphere_manager.clear()
+            self._cursor_preview.clear()
 
         manager = getattr(self, 'mvat_manager', None)
         if manager is not None:

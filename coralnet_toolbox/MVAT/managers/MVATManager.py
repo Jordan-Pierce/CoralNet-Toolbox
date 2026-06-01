@@ -454,6 +454,7 @@ class MVATManager(QObject):
         self.highlighted_cameras = []
         self.hovered_camera = None
         self.current_focal_point = None
+        self._focal_point_locked = False  # True while ContextMatrix is pinned to a 3D static marker
         self._context_view_path = None
         self._projected_cursor_context = None
         
@@ -972,6 +973,97 @@ class MVATManager(QObject):
                 self.context_matrix.update_static_markers_from_3d(point_3d, self.cameras)
             except Exception:
                 pass
+
+        # Lock the ContextMatrix to this 3D marker and sync ordering/viewports from it
+        self._focal_point_locked = True
+        self._sync_context_from_focal_point(point_3d)
+
+    def _sync_context_from_focal_point(self, point_3d):
+        """Sync ContextMatrix ordering and viewports to a 3D world point.
+
+        Projects point_3d into every loaded context camera and calls
+        request_sync / request_zoom_only so the canvases that can actually
+        see the point are snapped to it and floated to the front of the grid.
+        Used when the user double-right-clicks in the 3D viewer to set a
+        static marker — at that moment the ContextMatrix should reflect the
+        marker position rather than the AnnotationWindow viewport center.
+        """
+        if self.context_matrix is None:
+            return
+        if not self.context_matrix.target_lock_enabled:
+            return
+
+        reference_path = self.selected_camera.image_path if self.selected_camera else None
+        base_rotation = getattr(self.annotation_window, 'rotation_angle', 0.0)
+
+        targets_with_center = {}
+        zoom_only = set()
+        capacity = self.context_matrix._get_visible_capacity()
+
+        for i in range(capacity):
+            canvas = self.context_matrix._canvas_pool[i]
+            if not canvas.isVisible() or not canvas.current_image_path:
+                continue
+            camera = self.cameras.get(canvas.current_image_path)
+            if not camera:
+                continue
+            try:
+                pixel = camera.project(point_3d)
+            except Exception:
+                zoom_only.add(i)
+                continue
+            if np.isnan(pixel).any():
+                zoom_only.add(i)
+                continue
+            u, v = float(pixel[0]), float(pixel[1])
+            if 0 <= u < camera.width and 0 <= v < camera.height:
+                targets_with_center[i] = (u, v)
+            else:
+                zoom_only.add(i)
+
+        # Use a neutral relative zoom of 1.0 (fit-to-view) when snapping to a new marker
+        relative_zoom = 1.0
+
+        try:
+            self.context_matrix.request_sync(
+                targets_with_center, relative_zoom,
+                reference_path=reference_path, base_rotation=base_rotation
+            )
+            self.context_matrix.request_zoom_only(
+                zoom_only, relative_zoom,
+                reference_path=reference_path, base_rotation=base_rotation
+            )
+        except TypeError:
+            self.context_matrix.request_sync(targets_with_center, relative_zoom)
+            self.context_matrix.request_zoom_only(zoom_only, relative_zoom)
+
+    def reset_focal_lock(self):
+        """Release the focal-point lock and restore ContextMatrix to image-based navigation.
+
+        Called when the user presses Ctrl+H or Home in the AnnotationWindow.
+        Clears all static markers and re-syncs the ContextMatrix from the
+        AnnotationWindow's current viewport center.
+        """
+        self._focal_point_locked = False
+        self.current_focal_point = None
+
+        # Clear static markers in context canvases and the annotation window
+        if self.context_matrix is not None:
+            try:
+                self.context_matrix.clear_all_static_markers()
+            except Exception:
+                pass
+
+        # Trigger an immediate re-sync from the AnnotationWindow's current view
+        try:
+            aw = self.annotation_window
+            if aw.active_image and aw.pixmap_image:
+                viewport_center = aw.mapToScene(aw.viewport().rect().center())
+                self._on_main_view_navigated(
+                    viewport_center.x(), viewport_center.y(), aw.zoom_factor
+                )
+        except Exception:
+            pass
 
     def _on_camera_hovered(self, path):
         """
@@ -2255,7 +2347,7 @@ class MVATManager(QObject):
         except Exception:
             pass
 
-        sphere_manager = getattr(self.viewer, '_sphere_manager', None)
+        sphere_manager = getattr(self.viewer, '_cursor_preview', None)
         try:
             return float(getattr(sphere_manager, 'radius', 0.1))
         except Exception:
@@ -2272,7 +2364,7 @@ class MVATManager(QObject):
         except Exception:
             pass
 
-        sphere_manager = getattr(self.viewer, '_sphere_manager', None)
+        sphere_manager = getattr(self.viewer, '_cursor_preview', None)
         try:
             shape = getattr(sphere_manager, 'shape', None)
             if shape is not None:
@@ -5860,8 +5952,29 @@ class MVATManager(QObject):
                         lut = np.zeros(max_idx + 2, dtype=bool)
                         lut[valid_elements] = True
 
-                        sub_index = target_index_map[v_min:v_max, u_min:u_max]
                         sub_mask = target_mask_data[v_min:v_max, u_min:u_max]
+
+                        # index_map may be pixel-budget-downscaled while mask_data is
+                        # full resolution — scale slice coordinates accordingly.
+                        im_h, im_w = target_index_map.shape
+                        mask_h, mask_w = target_mask_data.shape
+                        if im_h != mask_h or im_w != mask_w:
+                            sy = im_h / mask_h
+                            sx = im_w / mask_w
+                            im_v_min = max(0, int(v_min * sy))
+                            im_v_max = min(im_h, int(np.ceil(v_max * sy)))
+                            im_u_min = max(0, int(u_min * sx))
+                            im_u_max = min(im_w, int(np.ceil(u_max * sx)))
+                            sub_index_small = target_index_map[im_v_min:im_v_max, im_u_min:im_u_max]
+                            import cv2 as _cv2
+                            sub_index = _cv2.resize(
+                                sub_index_small.astype(np.float32),
+                                (sub_mask.shape[1], sub_mask.shape[0]),
+                                interpolation=_cv2.INTER_NEAREST,
+                            ).astype(np.int32)
+                        else:
+                            sub_index = target_index_map[v_min:v_max, u_min:u_max]
+
                         paintable = lut[sub_index] & (sub_mask < target_mask.LOCK_BIT) & (sub_mask != target_class_id)
 
                         if not np.any(paintable):

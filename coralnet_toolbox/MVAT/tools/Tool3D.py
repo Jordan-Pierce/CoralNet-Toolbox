@@ -65,10 +65,6 @@ class Tool3D:
         self.brush_shape = 'circle'
         self._brush_size_customized = False
 
-        self._preview_mesh = None            # pv.PolyData shared with the plotter
-        self._preview_mesh_points_unit = None  # unit-scale points (radius=1) for fast transforms
-        self._preview_actor = None
-        self._preview_actor_shape = None
         self._last_hover_world_pos = None
 
     # ------------------------------------------------------------------
@@ -90,7 +86,6 @@ class Tool3D:
                 calibrate_brush_size()
             except Exception:
                 pass
-        self._init_preview_actor()
         try:
             focal_point = np.array(self.mvat_viewer.plotter.camera.focal_point)
             self._update_preview_sphere(focal_point)
@@ -329,117 +324,42 @@ class Tool3D:
         except Exception:
             return (1.0, 1.0, 1.0)
 
-    def _init_preview_actor(self):
-        """
-        Create the wireframe preview mesh once and register it with the plotter.
-
-        Uses a PyVista mesh so position/size updates are pure numpy point-array
-        assignments rather than VTK pipeline re-executions.  The mesh is built at
-        unit scale (radius = 1) so that a single multiply+add can apply both
-        brush_size and world position without ever rebuilding geometry.
-        """
-        if self._preview_actor is not None:
-            return
-
-        try:
-            if self.brush_shape == 'square':
-                # Box with half-extents of ±1 — scale by brush_size at update time
-                base = pv.Box(bounds=(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0))
-            else:
-                base = pv.Sphere(radius=1.0, theta_resolution=16, phi_resolution=16)
-
-            mesh = base.extract_all_edges()
-            self._preview_mesh = mesh
-            self._preview_mesh_points_unit = mesh.points.copy()  # immutable reference
-
-            r, g, b = self._preview_color_rgb_float()
-            actor = self.mvat_viewer.plotter.add_mesh(
-                mesh,
-                color=(r, g, b),
-                opacity=self._PREVIEW_OPACITY,
-                line_width=2.0,
-                pickable=False,
-                render=False,
-            )
-            actor.VisibilityOff()
-
-            self._preview_actor = actor
-            self._preview_actor_shape = self.brush_shape
-        except Exception as e:
-            print(f"⚠️  {self.__class__.__name__}: could not create preview actor: {e}")
-            self._preview_mesh = None
-            self._preview_mesh_points_unit = None
-            self._preview_actor = None
-            self._preview_actor_shape = None
 
     def _hide_preview_sphere(self):
-        if self._preview_actor is None:
-            return
-        try:
-            self._preview_actor.VisibilityOff()
-            if self._preview_mesh is not None:
-                self._preview_mesh.Modified()
-        except Exception:
-            pass
+        cursor = getattr(self.mvat_viewer, '_cursor_preview', None)
+        if cursor is not None:
+            cursor.set_visibility(False)
 
     def _update_preview_sphere(self, center: np.ndarray):
-        """
-        Move and resize the preview actor in-place.
+        """Move, resize, and recolor the shared cursor preview in-place.
 
-        Translates and scales the pre-built unit mesh via a single numpy
-        expression — no VTK pipeline re-execution, no forced render().
-        The plotter's own render loop picks up the Modified() flag.
+        Delegates to MVATViewer._cursor_preview.update_transform() so that
+        only one actor exists in the scene (no duplicate sphere when a tool
+        is active).  Mirrors the 2D pattern where tools call
+        annotation_window.update_cursor_preview() rather than owning an actor.
         """
-        # Rebuild actor if shape changed or not yet initialised
-        if (
-            self._preview_mesh is None or
-            self._preview_actor is None or
-            self._preview_actor_shape != self.brush_shape
-        ):
-            if self._preview_actor is not None:
-                try:
-                    self.mvat_viewer.plotter.remove_actor(self._preview_actor, render=False)
-                except Exception:
-                    pass
-            self._preview_mesh = None
-            self._preview_mesh_points_unit = None
-            self._preview_actor = None
-            self._preview_actor_shape = None
-            self._init_preview_actor()
-
-        if self._preview_mesh is None:
+        cursor = getattr(self.mvat_viewer, '_cursor_preview', None)
+        if cursor is None:
             return
-
         try:
-            c = np.asarray(center, dtype=np.float64)
-
-            # Single numpy op: scale unit geometry by brush_size, then translate
-            self._preview_mesh.points = self._preview_mesh_points_unit * self.brush_size + c
-
-            # Update color in case the active label changed (cheap property set, not pipeline)
-            r, g, b = self._preview_color_rgb_float()
-            self._preview_actor.GetProperty().SetColor(r, g, b)
-            self._preview_actor.VisibilityOn()
-
-            # Notify VTK the points changed — render loop picks this up automatically
-            self._preview_mesh.Modified()
+            cursor.update_transform(
+                center=np.asarray(center, dtype=np.float64),
+                radius=self.brush_size,
+                shape=self.brush_shape,
+                color_rgb_float=self._preview_color_rgb_float(),
+                opacity=self._PREVIEW_OPACITY,
+            )
         except Exception:
             pass
 
     def _remove_preview_sphere(self):
-        """Detach the persistent actor from the renderer on deactivation."""
-        if self._preview_actor is not None:
-            try:
-                manager = getattr(self, 'mvat_manager', None)
-                if manager is not None:
-                    try:
-                        manager.clear_sphere_hover_overlay(reset_context=True, render=False)
-                    except Exception:
-                        pass
-                self.mvat_viewer.plotter.remove_actor(self._preview_actor, render=False)
-            except Exception:
-                pass
-            self._preview_mesh = None
-            self._preview_mesh_points_unit = None
-            self._preview_actor = None
-            self._preview_actor_shape = None
+        """Return the shared cursor preview to its default viewer-owned state."""
+        try:
+            manager = getattr(self, 'mvat_manager', None)
+            if manager is not None:
+                manager.clear_sphere_hover_overlay(reset_context=True, render=False)
+        except Exception:
+            pass
+        cursor = getattr(self.mvat_viewer, '_cursor_preview', None)
+        if cursor is not None:
+            cursor.set_visibility(False)
