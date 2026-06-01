@@ -1,5 +1,5 @@
 """
-MVATSAMOverlay -- frameless non-modal SAM dialog covering the MVATViewer.
+SAMTool3D — frameless non-modal SAM tool covering the MVATViewer.
 
 Interaction matches SAMTool in AnnotationWindow exactly:
   - Pulsing dotted blue border (WorkArea-style heartbeat).
@@ -55,7 +55,7 @@ _DOT_HALF = 10                            # SAMTool uses 20x20 ellipse (r=10)
 # Main dialog
 # ---------------------------------------------------------------------------
 
-class MVATSAMDialog(QDialog):
+class SAMTool3D(QDialog):
     """
     Frameless non-modal dialog covering the MVATViewer for SAM interaction.
 
@@ -501,7 +501,7 @@ class MVATSAMDialog(QDialog):
 # ---------------------------------------------------------------------------
 
 class _PromptView(QGraphicsView):
-    def __init__(self, scene, dialog: MVATSAMDialog):
+    def __init__(self, scene, dialog: SAMTool3D):
         super().__init__(scene)
         self._dialog      = dialog
         self._drag_origin = None   # tracks first left-click for rect

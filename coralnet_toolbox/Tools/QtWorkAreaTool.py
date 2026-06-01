@@ -81,10 +81,6 @@ class WorkAreaTool(Tool):
             except Exception as e:
                 # Fallback: attempt to de-register and remove items manually
                 try:
-                    work_area.deanimate()
-                except Exception:
-                    pass
-                try:
                     if work_area.graphics_item and work_area.graphics_item.scene():
                         self.annotation_window.scene.removeItem(work_area.graphics_item)
                 except Exception as e2:
@@ -348,9 +344,7 @@ class WorkAreaTool(Tool):
         work_area = self.drawing_work_area
         
         # Set animation manager and finalize
-        work_area.set_animation_manager(self.annotation_window.animation_manager)
         work_area.create_graphics(self.annotation_window.scene)
-        work_area.animate()
         
         # Add close button
         work_area.create_remove_button()
@@ -416,11 +410,9 @@ class WorkAreaTool(Tool):
         work_area = WorkArea.from_rect(rect, self.get_current_image_name())
         
         # Set the animation manager reference
-        work_area.set_animation_manager(self.annotation_window.animation_manager)
         
         # Create graphics using the WorkArea's own method
         work_area.create_graphics(self.annotation_window.scene)
-        work_area.animate()
         
         # Add close button but initially hidden unless Ctrl is pressed
         work_area.create_remove_button()
@@ -625,13 +617,11 @@ class WorkAreaTool(Tool):
                 work_area.remove_button = None
                 
                 # Set the animation manager reference
-                work_area.set_animation_manager(self.annotation_window.animation_manager)
                 
                 # Add work area graphics to the scene
                 
                 if work_area.add_to_scene(self.annotation_window.scene, 2):
                     # Animate the work area
-                    work_area.animate()
                     # Set initial button visibility based on Ctrl state
                     work_area.set_remove_button_visibility(self.ctrl_pressed)
                     

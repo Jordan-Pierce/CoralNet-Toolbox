@@ -23,7 +23,6 @@ from coralnet_toolbox import theme as app_theme
 
 # Utilities
 from coralnet_toolbox.QtEventFilter import GlobalEventFilter
-from coralnet_toolbox.QtAnimationManager import AnimationManager
 from coralnet_toolbox.QtAnnotationManager import AnnotationManager
 from coralnet_toolbox.QtPerformanceWindow import PerformanceWindow
 from coralnet_toolbox.QtTimerWindow import TimerWindow
@@ -162,8 +161,6 @@ class MainWindow(QMainWindow):
         super().__init__()
         
         # Create the animation manager
-        self.animation_manager = AnimationManager(self)
-        self.animation_manager.start_timer(interval=50)  # 50ms interval
         
         # Get the process ID
         self.pid = os.getpid()
@@ -244,9 +241,7 @@ class MainWindow(QMainWindow):
         
         # Create dock-based explorer windows
         self.annotation_viewer_window = AnnotationViewerWindow(self)
-        self.annotation_viewer_window.set_animation_manager(self.animation_manager)
         self.embedding_viewer_window = EmbeddingViewerWindow(self)
-        self.embedding_viewer_window.set_animation_manager(self.animation_manager)
         self.annotation_viewer_window.cleared.connect(self.embedding_viewer_window.clear_view)
 
         # Create the centralized selection manager for explorer windows
@@ -1675,12 +1670,6 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'dock_manager'):
             QtLayoutManager.save_and_close(self.dock_manager, layout_name='default')
 
-        # Stop the always-on UI animation timer before widgets begin tearing down.
-        if hasattr(self, 'animation_manager') and self.animation_manager:
-            try:
-                self.animation_manager.stop_timer()
-            except Exception:
-                pass
 
         # Stop the performance monitor worker explicitly; it may be embedded in a dock,
         # so its own closeEvent is not guaranteed to run during application shutdown.
@@ -3491,45 +3480,6 @@ class MainWindow(QMainWindow):
     
     # Special Windows
     
-    def _on_gallery_selection_changed(self, selected_ids):
-        """
-        DEPRECATED: Selection syncing is now handled by SelectionManager.
-        
-        This method is kept for backward compatibility but selection
-        synchronization is managed centrally by self.selection_manager.
-        
-        Args:
-            selected_ids: List of annotation IDs that are now selected.
-        """
-        # SelectionManager handles all selection syncing automatically
-        pass
-    
-    def _on_embedding_selection_changed(self, selected_ids):
-        """
-        DEPRECATED: Selection syncing is now handled by SelectionManager.
-        
-        This method is kept for backward compatibility but selection
-        synchronization is managed centrally by self.selection_manager.
-        
-        Args:
-            selected_ids: List of annotation IDs that are now selected.
-        """
-        # SelectionManager handles all selection syncing automatically
-        pass
-    
-    def _on_annotation_selection_changed(self, selected_ids):
-        """
-        DEPRECATED: Selection syncing is now handled by SelectionManager.
-        
-        This method is kept for backward compatibility but selection
-        synchronization is managed centrally by self.selection_manager.
-        
-        Args:
-            selected_ids: List of annotation IDs that are now selected.
-        """
-        # SelectionManager handles all selection syncing automatically
-        pass
-            
     def close_image_specific_dialogs(self):
         """Close image-specific dialogs (e.g., patch sampling, rugosity) when a new image is loaded."""
         # Check if there is a dialog tool selected, if so, get the tool

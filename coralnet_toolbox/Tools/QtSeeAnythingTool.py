@@ -9,6 +9,7 @@ from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush
 from PyQt5.QtWidgets import QMessageBox, QGraphicsRectItem, QApplication
 
 from coralnet_toolbox.Tools.QtTool import Tool
+from coralnet_toolbox.Annotations.QtAnnotation import RenderMode
 
 from coralnet_toolbox.Results import ResultsProcessor
 from coralnet_toolbox.Results import CombineResults
@@ -37,7 +38,6 @@ class SeeAnythingTool(Tool):
         self.main_window = annotation_window.main_window
         self.see_anything_dialog = None
         
-        self.animation_manager = self.annotation_window.animation_manager
 
         self.top_left = None
 
@@ -138,7 +138,6 @@ class SeeAnythingTool(Tool):
         # Create the WorkArea instance
         self.working_area = WorkArea(left, top, right - left, bottom - top, self.image_path)
         # Set animation manager
-        self.working_area.set_animation_manager(self.animation_manager)
 
         # Create and add the working area graphics
         self.working_area.create_graphics(self.annotation_window.scene, 
@@ -199,7 +198,6 @@ class SeeAnythingTool(Tool):
         # Create the WorkArea instance
         self.working_area = WorkArea(left, top, right - left, bottom - top, self.image_path)
         # Set animation manager
-        self.working_area.set_animation_manager(self.animation_manager)
         
         # Create and add the working area graphics
         self.working_area.create_graphics(self.annotation_window.scene, 
@@ -658,13 +656,12 @@ class SeeAnythingTool(Tool):
 
             # Update the confidence score of annotation
             annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
-            # Set the animation manager
-            annotation.set_animation_manager(self.animation_manager)
+            # Mark selected so it gets the dashed selected-state pen
+            annotation.is_selected = True
+            annotation.render_mode = RenderMode.FULL
             # Ensure the annotation is added to the scene after creation (but not saved yet)
             # Force hydrate so these tool-generated previews behave like normal Qt objects
             annotation.create_graphics_item(self.annotation_window.scene, force_hydrate=True)
-            # Animate the annotation
-            annotation.animate(force=True)
             
             self.annotations.append(annotation)
             
@@ -696,13 +693,12 @@ class SeeAnythingTool(Tool):
 
             # Update the confidence score of annotation
             annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
-            # Set the animation manager
-            annotation.set_animation_manager(self.animation_manager)
+            # Mark selected so it gets the dashed selected-state pen
+            annotation.is_selected = True
+            annotation.render_mode = RenderMode.FULL
             # Ensure the annotation is added to the scene after creation (but not saved yet)
             # Force hydrate so these tool-generated previews behave like normal Qt objects
             annotation.create_graphics_item(self.annotation_window.scene, force_hydrate=True)
-            # Animate the annotation
-            annotation.animate(force=True)
             
             self.annotations.append(annotation)
 
@@ -723,9 +719,6 @@ class SeeAnythingTool(Tool):
 
             # Fast path for many annotations: batch-crop and add them in one operation.
             if total >= BATCH_THRESHOLD:
-                # Disable animations for all items first (cheap O(N)).
-                for ann in self.annotations:
-                    ann.deanimate()
     
                 # Batch-crop all annotations (shows its own progress UI) if requested.
                 if crop_annotations:
@@ -747,8 +740,6 @@ class SeeAnythingTool(Tool):
                     if progress_bar.wasCanceled():
                         break
 
-                    # The add_annotation_from_tool will re-bind it and show per-item feedback.
-                    annotation.deanimate()
                     
                     if crop_annotations and not annotation.cropped_image and self.annotation_window.rasterio_image:
                         annotation.create_cropped_image(self.annotation_window.rasterio_image)
@@ -867,8 +858,6 @@ class SeeAnythingTool(Tool):
         Clear all *unconfirmed* annotations created by this tool from the scene.
         """
         for annotation in self.annotations:
-            # Stop animation first
-            annotation.deanimate()  # Deanimate the annotation before removing
             annotation.delete()  # Let the annotation handle all graphics cleanup
             annotation = None
 

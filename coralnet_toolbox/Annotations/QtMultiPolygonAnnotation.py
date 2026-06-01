@@ -325,10 +325,10 @@ class MultiPolygonAnnotation(Annotation):
             scene.addItem(self.graphics_item_group)
     
     def _update_pen_styles(self):
-        """Update pen styles with current animated line offset for all polygon items."""
+        """Update pen styles for all polygon items based on selection state."""
         # Guard: if the annotation is neither selected nor animating, nothing to do.
         # Older code referenced an animation_timer which doesn't exist on this class.
-        if not self.is_selected and not getattr(self, 'is_animating', False):
+        if not self.is_selected:
             return
 
         color = QColor(self.label.color)

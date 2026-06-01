@@ -69,7 +69,6 @@ class AnnotationViewerWindow(QWidget):
         self.label_window = main_window.label_window
         
         # Animation manager reference
-        self.animation_manager = None
         # Cropping state
         self._cropping_in_progress = False
         self._cropping_worker = None
@@ -139,19 +138,7 @@ class AnnotationViewerWindow(QWidget):
         # Force a layout recalculation right after the Qt layout engine has settled
         QTimer.singleShot(100, self._recalculate_layout)
         
-    def set_animation_manager(self, manager):
-        """
-        Set the animation manager for visual effects.
-        
-        Args:
-            manager: AnimationManager instance from MainWindow.
-        """
-        self.animation_manager = manager
-        
-    # -------------------------------------------------------------------------
-    # Toolbar Creation (for DockWrapper integration)
-    # -------------------------------------------------------------------------
-    
+
     def create_top_toolbar(self) -> QToolBar:
         """
         Create the top toolbar with viewing controls.
@@ -897,42 +884,38 @@ class AnnotationViewerWindow(QWidget):
     
     @pyqtSlot(str)
     def on_annotation_deleted(self, annotation_id):
-        """
-        Handle an annotation being deleted.
-        
-        Args:
-            annotation_id: ID of the deleted annotation.
-        """
-        # Remove from cache
-        if annotation_id in self.data_item_cache:
-            del self.data_item_cache[annotation_id]
-        
-        # Remove from current data items
-        self.all_data_items = [item for item in self.all_data_items 
+        """Handle an annotation being deleted."""
+        # If the deleted annotation was isolated, exit isolation mode so
+        # _recalculate_layout can rebuild from the full remaining set rather
+        # than filtering to an empty list and showing a stale placeholder.
+        if self.isolated_mode and self.isolated_ids and annotation_id in self.isolated_ids:
+            self.isolated_mode = False
+            self.isolated_ids = None
+
+        self.data_item_cache.pop(annotation_id, None)
+        self.all_data_items = [item for item in self.all_data_items
                                if item.annotation.id != annotation_id]
-        
-        # Refresh list view
         QTimer.singleShot(0, self.refresh_annotations)
         
     @pyqtSlot(list)
     def on_annotations_deleted(self, annotation_ids):
-        """
-        Handle a bulk deletion of annotations.
-        Removes all widgets instantly and recalculates the layout exactly once.
-        """
+        """Handle bulk deletion of annotations."""
         if not annotation_ids:
             return
 
         ids_set = set(annotation_ids)
 
-        # 1. Clean up the cache and data items
+        # Exit isolation mode if any isolated annotation was deleted, for the
+        # same reason as on_annotation_deleted: the isolation filter would
+        # otherwise produce an empty list and show a stale placeholder.
+        if self.isolated_mode and self.isolated_ids and ids_set & self.isolated_ids:
+            self.isolated_mode = False
+            self.isolated_ids = None
+
         for ann_id in annotation_ids:
             self.data_item_cache.pop(ann_id, None)
-
-        self.all_data_items = [item for item in self.all_data_items 
+        self.all_data_items = [item for item in self.all_data_items
                                if item.annotation.id not in ids_set]
-
-        # Rebuild list view based on new state
         QTimer.singleShot(0, self.refresh_annotations)
 
     @pyqtSlot(list)
