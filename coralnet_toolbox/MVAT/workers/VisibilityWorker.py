@@ -182,11 +182,12 @@ class VisibilityWorker(QObject):
             # =================================================================
             # Accumulators for the end-of-run cache summary
             _cache_total_start: float = 0.0
+            _cache_wall_end:    float = 0.0   # updated inside save_to_disk_task, excludes VTK cleanup
             _cache_saved_count: int = 0
             _cache_total_count: int = 0
 
             def save_to_disk_task(save_results, cache_mgr, target_path, keys_dict, extra_bytes_dict, pixel_budget):
-                nonlocal _cache_total_start, _cache_saved_count, _cache_total_count
+                nonlocal _cache_total_start, _cache_wall_end, _cache_saved_count, _cache_total_count
                 # Start the global timer on the first chunk
                 if _cache_total_count == 0:
                     _cache_total_start = time.perf_counter()
@@ -226,6 +227,8 @@ class VisibilityWorker(QObject):
                                 _cache_saved_count += 1
                         except Exception as exc:
                             logger.warning(f"⚠️ Cache save failed for {self._cam_label(p, camera_labels)}: {exc}")
+                # Snapshot the end-of-saves wall time before any post-save work
+                _cache_wall_end = time.perf_counter()
 
             # ==========================================
             # STRATEGY A: MESH PROCESSING (CHUNKED)
@@ -396,9 +399,11 @@ class VisibilityWorker(QObject):
                             except Exception:
                                 pass
 
-                    # Log the true total cache time after ALL chunks are saved
-                    if _cache_total_count > 0:
-                        total_elapsed = time.perf_counter() - _cache_total_start
+                    # Log the true total cache time after ALL chunks are saved.
+                    # Use _cache_wall_end (set inside save_to_disk_task) so the
+                    # elapsed is pure disk-write wall time and excludes VTK cleanup.
+                    if _cache_total_count > 0 and _cache_wall_end > 0:
+                        total_elapsed = _cache_wall_end - _cache_total_start
                         logger.info(
                             f"✅ Cached {_cache_saved_count}/{_cache_total_count} maps to disk in {total_elapsed:.2f}s"
                         )

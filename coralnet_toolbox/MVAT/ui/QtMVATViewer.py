@@ -2106,6 +2106,8 @@ class MVATViewer(QFrame):
             ply_type, calculate_kd_tree = dialog_result
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
+        _t_total = perf_counter()
+        _t_parse = _t_geom = _t_kdtree = _t_render = 0.0
         try:
             try:
                 top = self.window()
@@ -2114,12 +2116,16 @@ class MVATViewer(QFrame):
             except Exception:
                 pass
 
+            _t0 = perf_counter()
             product = self._create_product_from_file(file_path, ply_type=ply_type)
+            _t_parse = perf_counter() - _t0
 
             if product is not None:
                 # Force GPU geometry extraction while the wait cursor is active.
                 if hasattr(product, 'prepare_geometry'):
+                    _t0 = perf_counter()
                     product.prepare_geometry()
+                    _t_geom = perf_counter() - _t0
 
                 if calculate_kd_tree:
                     # Build the KD-tree immediately so the first brush interaction
@@ -2127,12 +2133,16 @@ class MVATViewer(QFrame):
                     manager = getattr(self, 'mvat_manager', None)
                     if manager is not None and hasattr(manager, '_prewarm_spatial_caches'):
                         try:
+                            _t0 = perf_counter()
                             manager._prewarm_spatial_caches(product)
+                            _t_kdtree = perf_counter() - _t0
                         except Exception:
                             pass
 
+                _t0 = perf_counter()
                 self.add_product(product)
                 self.render_scene()
+                _t_render = perf_counter() - _t0
                 event.acceptProposedAction()
 
                 # Trigger visibility filtering based on the model's current selections.
@@ -2152,10 +2162,16 @@ class MVATViewer(QFrame):
             traceback.print_exc()
             event.ignore()
         finally:
+            _t_total = perf_counter() - _t_total
             try:
                 top = self.window()
                 if hasattr(top, 'status_bar'):
-                    top.status_bar.showMessage("3D data load finished.", 3000)
+                    parts = [f"Total: {_t_total:.2f}s"]
+                    if _t_parse  > 0: parts.append(f"parse: {_t_parse:.2f}s")
+                    if _t_geom   > 0: parts.append(f"geometry: {_t_geom:.2f}s")
+                    if _t_kdtree > 0: parts.append(f"KD-tree: {_t_kdtree:.2f}s")
+                    if _t_render > 0: parts.append(f"render: {_t_render:.2f}s")
+                    top.status_bar.showMessage(f"3D data loaded — {' | '.join(parts)}", 6000)
             except Exception:
                 pass
             QApplication.restoreOverrideCursor()
@@ -3420,6 +3436,7 @@ class MVATViewer(QFrame):
         """Update the plotter (alias to render/update as available)."""
         try:
             # Some PyVista versions have update(); prefer render()
+
             if hasattr(self.plotter, 'update'):
                 try:
                     self.plotter.update()
@@ -3430,21 +3447,10 @@ class MVATViewer(QFrame):
         except Exception:
             pass
 
+
     def get_bounds(self):
-        """Return the plotter bounds (wrapper)."""
+        """Return the bounding box of all loaded scene products."""
         try:
-            return self.plotter.bounds
+            return self.scene_context.get_combined_bounds()
         except Exception:
             return None
-
-    def update_camera_appearance(self, camera, opacity=None):
-        """Update camera visual appearance via its helper method using this viewer's plotter."""
-        try:
-            if camera is None:
-                return
-            if opacity is not None:
-                camera.update_appearance(self.plotter, opacity=opacity)
-            else:
-                camera.update_appearance(self.plotter)
-        except Exception:
-            pass
