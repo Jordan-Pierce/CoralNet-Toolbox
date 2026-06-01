@@ -3141,30 +3141,26 @@ class AnnotationWindow(BaseCanvas):
         # Animate the view to the padded annotation rect instead of jumping
         self.animate_to_rect(padded_rect, duration=600)
     
-    def cycle_annotations(self, direction, _bypass_debounce: bool = False):
-        """Cycle through annotations in the specified direction."""
-        # Debounce: coalesce rapid repeated calls into one action
-        debounce_ms = 150
-        if not _bypass_debounce:
-            # Lazy-create a single-shot timer to coalesce repeated calls
-            if not hasattr(self, '_cycle_debounce_timer'):
-                self._cycle_debounce_timer = QTimer(self)
-                self._cycle_debounce_timer.setSingleShot(True)
-                # When timer fires, call the cycle with bypass flag to actually run
-                self._cycle_debounce_timer.timeout.connect(lambda: self.cycle_annotations(getattr(self, '_pending_cycle', 0), True))
-            # Store the most recent requested direction
-            self._pending_cycle = direction
-            # Restart debounce timer
-            self._cycle_debounce_timer.stop()
-            self._cycle_debounce_timer.start(debounce_ms)
-            return
+    def cycle_annotations(self, direction):
+        """Cycle through annotations in the given direction.
 
-        # When bypassing debounce, clear pending marker
-        if hasattr(self, '_pending_cycle'):
+        Navigates immediately on every keypress.  The animation is only shown
+        when the user presses slowly (>= 500 ms since the last cycle press);
+        rapid presses snap the view instantly so the UI stays responsive.
+        """
+        now = time.monotonic()
+        use_animation = (now - getattr(self, '_last_cycle_time', 0.0)) >= 0.5
+        self._last_cycle_time = now
+
+        # Cancel any in-flight view animation so it cannot override the
+        # position we are about to set (fast presses arrive before the
+        # previous 500ms animation has finished).
+        for _anim in getattr(self, '_active_view_animations', []):
             try:
-                del self._pending_cycle
+                _anim.stop()
             except Exception:
-                self._pending_cycle = None
+                pass
+        self._active_view_animations = []
 
         # Get the annotations for the current image
         annotations = self.get_image_annotations()
@@ -3208,10 +3204,14 @@ class AnnotationWindow(BaseCanvas):
                 new_index = 0 if direction > 0 else len(annotations) - 1
 
             if 0 <= new_index < len(annotations):
-                # Select the new annotation
                 self.select_annotation(annotations[new_index])
-                # Center the view on the new annotation
-                self.center_on_annotation(annotations[new_index])
+                ann = annotations[new_index]
+                if use_animation:
+                    self.center_on_annotation(ann)
+                else:
+                    # Fast cycling: snap instantly without animation
+                    if ann.center_xy:
+                        self.center_on_pixel(ann.center_xy.x(), ann.center_xy.y())
                 
     def get_selected_annotation_type(self):
         """Get the type of the currently selected annotation."""
@@ -4184,6 +4184,7 @@ class AnnotationWindow(BaseCanvas):
             self.pixmap_image = None
             self.rasterio_image = None
             self.active_image = False
+
 
 class ViewAnimator(QObject):
     """Top-level helper QObject with animatable properties to smoothly update view center and zoom.

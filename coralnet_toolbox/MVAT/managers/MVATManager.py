@@ -6248,7 +6248,7 @@ class MVATManager(QObject):
 
     def launch_viewer_sam(self):
         """Launch the MVAT-SAM dialog for the current 3D view (called on Space)."""
-        from coralnet_toolbox.MVAT.ui.QtMVATSAMDialog import MVATSAMDialog
+        from coralnet_toolbox.MVAT.tools.SAMTool3D import SAMTool3D
 
         sam_dialog = getattr(self.main_window, 'sam_deploy_predictor_dialog', None)
         if sam_dialog is None or not getattr(sam_dialog, 'loaded_model', None):
@@ -6279,7 +6279,7 @@ class MVATManager(QObject):
 
         sam_dialog.set_image(rgb, image_path=None)
 
-        dlg = MVATSAMDialog(
+        dlg = SAMTool3D(
             viewer=self.viewer,
             rgb_image=rgb,
             index_map=index_map,
