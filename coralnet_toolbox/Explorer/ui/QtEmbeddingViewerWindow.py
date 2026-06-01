@@ -204,9 +204,6 @@ class EmbeddingViewerWindow(QWidget):
         self._cluster_colors_rgba: np.ndarray = np.empty((0, 4), dtype=np.uint8)
         
         # Virtualization timer
-        self.view_update_timer = QTimer(self)
-        self.view_update_timer.setSingleShot(True)
-        self.view_update_timer.timeout.connect(self._update_visible_points)
         
         # Background worker for embedding pipeline
         self._pipeline_worker = None
@@ -1729,7 +1726,6 @@ class EmbeddingViewerWindow(QWidget):
         self.is_3d_data = (n_dims == 3)
         self._apply_rotation_and_projection()
         self._update_toolbar_state()
-        self._update_visible_points()
     
     def _clear_points(self):
         """Clear all points from scene state."""
@@ -1834,18 +1830,7 @@ class EmbeddingViewerWindow(QWidget):
         if hasattr(self, 'cluster_clear_button'):
             self.cluster_clear_button.setEnabled(clusters_exist)
     
-    def _schedule_view_update(self):
-        """Schedule delayed view update for virtualization."""
-        self.view_update_timer.start(50)
-            
-    def _update_visible_points(self):
-        """
-        Qt's QGraphicsScene natively uses a highly optimized C++ BSP tree 
-        to instantly cull off-screen items before rendering. 
-        Manually looping through thousands of points to call .setVisible() 
-        actively fights the engine and causes massive lag!
-        """
-        pass  # Let the native C++ engine do its job!
+
 
     def _should_modify_cache(self):
         """Return True when this viewer should perform persistent cache mutations.
@@ -2009,7 +1994,7 @@ class EmbeddingViewerWindow(QWidget):
                 pass
 
         self._update_toolbar_state()
-        self._schedule_view_update()
+        self.graphics_view.viewport().update()
         return True
 
     def _emit_selection_changed_signal(self):
@@ -2118,7 +2103,7 @@ class EmbeddingViewerWindow(QWidget):
                 pass
 
         self._update_toolbar_state()
-        self._schedule_view_update()
+        self.graphics_view.viewport().update()
     
     # -------------------------------------------------------------------------
     # Isolation
@@ -2779,7 +2764,7 @@ class EmbeddingViewerWindow(QWidget):
             QGraphicsView.mouseMoveEvent(self.graphics_view, left_event)
             if self.locate_target_id is not None:
                 self._update_location_lines()
-            self._schedule_view_update()
+            self.graphics_view.viewport().update()
         else:
             QGraphicsView.mouseMoveEvent(self.graphics_view, event)
     
@@ -2829,7 +2814,7 @@ class EmbeddingViewerWindow(QWidget):
                 event.type(), event.localPos(), Qt.LeftButton, Qt.LeftButton, event.modifiers()
             )
             QGraphicsView.mouseReleaseEvent(self.graphics_view, left_event)
-            self._schedule_view_update()
+            self.graphics_view.viewport().update()
             self.graphics_view.setDragMode(QGraphicsView.NoDrag)
         else:
             QGraphicsView.mouseReleaseEvent(self.graphics_view, event)
@@ -2916,7 +2901,7 @@ class EmbeddingViewerWindow(QWidget):
             # refresh location indicator positions
             QTimer.singleShot(0, self._update_location_lines)
 
-        self._schedule_view_update()
+        self.graphics_view.viewport().update()
     
     # -------------------------------------------------------------------------
     # Cleanup

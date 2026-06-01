@@ -13,12 +13,11 @@ import numpy as np
 
 import pyqtgraph as pg
 from PyQt5.QtGui import (QMouseEvent, QPixmap, QImage, QBrush, QColor, QPen,
-                         QTransform, QSurfaceFormat, QPainter, QPainterPath)
+                         QTransform, QPainter, QPainterPath)
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QSize, QObject
 from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, 
                              QGraphicsItemGroup, QGraphicsEllipseItem, QGraphicsLineItem,
-                             QGraphicsItem, QGraphicsPathItem, QLabel, QApplication,
-                             QOpenGLWidget, QFrame)
+                             QGraphicsItem, QGraphicsPathItem, QLabel, QApplication, QFrame)
 
 from coralnet_toolbox import theme as app_theme
 
@@ -203,19 +202,6 @@ class BaseCanvas(QGraphicsView):
     def __init__(self, parent=None):
         """Initialize the base canvas."""
         super().__init__(parent)
-        
-        # TODO this makes MVAT and Multi-annotate very sluggish
-        # --- HARDWARE ACCELERATION ---
-        # gl_widget = QOpenGLWidget()
-
-        # # Enable Anti-Aliasing (4x MSAA) for smooth vector drawing
-        # format_gl = QSurfaceFormat()
-        # format_gl.setSamples(4)
-        # gl_widget.setFormat(format_gl)
-
-        # # Set the hardware-accelerated widget as the viewport
-        # self.setViewport(gl_widget)
-        # -----------------------------
         
         # Create and set the scene
         self.scene = QGraphicsScene(self)
@@ -612,16 +598,12 @@ class BaseCanvas(QGraphicsView):
 
         self._image_dimensions = (image_width, image_height)
         
-        # --- PHASE 3: USE FAST IMAGE ITEM ---
         self._base_image_item = FastImageItem()
-        # If q_image is a QImage, pass it directly. If it's a QPixmap (from legacy code), convert to image
         img_to_pass = q_image if isinstance(q_image, QImage) else self.pixmap_image.toImage()
         self._base_image_item.set_image(img_to_pass, target_size=self._image_dimensions)
-        
         self._base_image_item.setZValue(-10)
         self.scene.addItem(self._base_image_item)
         self.scene.setSceneRect(QRectF(0, 0, image_width, image_height))
-        # ------------------------------------
         
         # Update state
         self.current_image_path = image_path

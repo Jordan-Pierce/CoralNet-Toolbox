@@ -1364,7 +1364,6 @@ class AnnotationWindow(BaseCanvas):
         self._current_frame_idx = frame_idx
         self.current_image_path = vr.make_frame_path(vr.image_path, frame_idx)
 
-        # --- PHASE 4: FAST PLAYBACK RENDERING ---
         if self._base_image_item is not None:
             # 1. Update the background image instantly
             self._base_image_item.set_image(q_img)
@@ -1416,7 +1415,6 @@ class AnnotationWindow(BaseCanvas):
                     pass
             except Exception:
                 pass
-        # ----------------------------------------
 
         # Update slider and counter silently (no seekChanged feedback loop)
         self._video_player.slider.blockSignals(True)
@@ -1595,7 +1593,6 @@ class AnnotationWindow(BaseCanvas):
             self._active_video_raster.image_path, next_idx
         )
 
-        # --- PHASE 4: FAST PLAYBACK RENDERING ---
         if self._base_image_item is not None:
             self._base_image_item.set_image(q_image)
             try:
@@ -2127,7 +2124,6 @@ class AnnotationWindow(BaseCanvas):
     def is_annotation_moveable(self, annotation, use_status_bar=False):
         """Check if an annotation can be moved and show a warning if not verified."""
         if not annotation.verified:
-            # self.unselect_annotations()
             if use_status_bar:
                 try:
                     self.main_window.status_bar.showMessage(
@@ -4226,18 +4222,8 @@ class ViewAnimator(QObject):
         return self._zoom
 
     def _set_zoom(self, v):
-        # Apply absolute zoom by resetting transform and scaling
-        try:
-            self._zoom = float(v)
-            self.view.setTransformationAnchor(QGraphicsView.AnchorViewCenter)
-            self.view.resetTransform()
-            # Clamp zoom to a sensible positive range
-            z = max(0.0001, self._zoom)
-            self.view.scale(z, z)
-            # Remember zoom on view object as well
-            self.view.zoom_factor = z
-        except Exception:
-            pass
+        self._zoom = max(0.0001, float(v))
+        self.view.set_zoom_level(self._zoom)
 
     center_x = pyqtProperty(float, _get_center_x, _set_center_x)
     center_y = pyqtProperty(float, _get_center_y, _set_center_y)

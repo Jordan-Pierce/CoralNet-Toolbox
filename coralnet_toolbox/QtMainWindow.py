@@ -3480,45 +3480,6 @@ class MainWindow(QMainWindow):
     
     # Special Windows
     
-    def _on_gallery_selection_changed(self, selected_ids):
-        """
-        DEPRECATED: Selection syncing is now handled by SelectionManager.
-        
-        This method is kept for backward compatibility but selection
-        synchronization is managed centrally by self.selection_manager.
-        
-        Args:
-            selected_ids: List of annotation IDs that are now selected.
-        """
-        # SelectionManager handles all selection syncing automatically
-        pass
-    
-    def _on_embedding_selection_changed(self, selected_ids):
-        """
-        DEPRECATED: Selection syncing is now handled by SelectionManager.
-        
-        This method is kept for backward compatibility but selection
-        synchronization is managed centrally by self.selection_manager.
-        
-        Args:
-            selected_ids: List of annotation IDs that are now selected.
-        """
-        # SelectionManager handles all selection syncing automatically
-        pass
-    
-    def _on_annotation_selection_changed(self, selected_ids):
-        """
-        DEPRECATED: Selection syncing is now handled by SelectionManager.
-        
-        This method is kept for backward compatibility but selection
-        synchronization is managed centrally by self.selection_manager.
-        
-        Args:
-            selected_ids: List of annotation IDs that are now selected.
-        """
-        # SelectionManager handles all selection syncing automatically
-        pass
-            
     def close_image_specific_dialogs(self):
         """Close image-specific dialogs (e.g., patch sampling, rugosity) when a new image is loaded."""
         # Check if there is a dialog tool selected, if so, get the tool
