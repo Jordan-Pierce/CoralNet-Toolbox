@@ -26,12 +26,12 @@ from PyQt5.QtWidgets import (
 )
 
 from coralnet_toolbox.MVAT.core.Ray import CameraRay
-from coralnet_toolbox.MVAT.managers.RayManager import BatchedRayManager
+from coralnet_toolbox.MVAT.core.Ray import BatchedRayManager
 from coralnet_toolbox.MVAT.managers.CursorPreview3D import CursorPreview3D
-from coralnet_toolbox.MVAT.managers.FrustumManager import BatchedFrustumManager
+from coralnet_toolbox.MVAT.core.Frustum import BatchedFrustumManager
 from coralnet_toolbox.MVAT.core.Products import PointCloudProduct, MeshProduct, GaussianSplattingProduct
 from coralnet_toolbox.MVAT.core.SceneContext import SceneContext
-from coralnet_toolbox.MVAT.core.SceneProduct import AbstractSceneProduct
+from coralnet_toolbox.MVAT.core.Products import AbstractSceneProduct
 from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED
 from coralnet_toolbox.MVAT.tools import BrushTool3D, EraseTool3D
 from coralnet_toolbox.MVAT.ui.QtCameraAnimator import CameraAnimator

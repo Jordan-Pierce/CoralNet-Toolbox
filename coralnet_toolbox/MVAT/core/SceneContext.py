@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-from coralnet_toolbox.MVAT.core.SceneProduct import (
+from coralnet_toolbox.MVAT.core.Products import (
     AbstractSceneProduct,
     BoundsType,
     ElementType,

@@ -5,7 +5,7 @@ Contains core classes for camera geometry, scene products, and visualization.
 """
 
 # Scene Product Abstraction Layer
-from coralnet_toolbox.MVAT.core.SceneProduct import (
+from coralnet_toolbox.MVAT.core.Products import (
     AbstractSceneProduct,
     BoundsType,
     ElementType,

@@ -34,7 +34,7 @@ from coralnet_toolbox.MVAT.utils.MVATLogger import (
 
 if TYPE_CHECKING:
     from coralnet_toolbox.MVAT.core.SceneContext import SceneContext
-    from coralnet_toolbox.MVAT.core.SceneProduct import AbstractSceneProduct
+    from coralnet_toolbox.MVAT.core.Products import AbstractSceneProduct
 
 # Try importing torch, but handle the case where it's not installed
 try:
