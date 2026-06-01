@@ -2008,6 +2008,10 @@ class EmbeddingViewerWindow(QWidget):
         if indices.size == 0:
             return
 
+        # Cluster labels are tied to the current point ordering, so any point
+        # removal invalidates the overlay and must clear it before the arrays shrink.
+        self._clear_clustering()
+
         remove_mask = np.zeros(self._point_ids.size, dtype=bool)
         remove_mask[indices] = True
         keep_mask = ~remove_mask
