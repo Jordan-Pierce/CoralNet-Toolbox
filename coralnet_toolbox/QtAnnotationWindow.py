@@ -25,6 +25,7 @@ from coralnet_toolbox.Annotations import (
     RectangleAnnotation,
     MaskAnnotation,
 )
+from coralnet_toolbox.Annotations.QtAnnotation import RenderMode
 
 from coralnet_toolbox.Tools import (
     PatchTool,
@@ -70,14 +71,11 @@ from coralnet_toolbox.QtVideoPlayer import VideoPlayerWidget
 from coralnet_toolbox import theme as app_theme
 from coralnet_toolbox.MachineLearning.ExportDataset.export_dataset_utils import parse_frame_path
 
-
 warnings.filterwarnings("ignore", category=DeprecationWarning)
-
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
-
 
 class AnnotationWindow(BaseCanvas):
     imageLoaded = pyqtSignal(int, int)  # Signal to emit when image is loaded
@@ -109,8 +107,6 @@ class AnnotationWindow(BaseCanvas):
         self.main_window = main_window
 
         # Reference to the global animation manager
-        self.animation_manager = None
-        self.set_animation_manager(main_window.animation_manager)
         
         # Central annotation data store (owned by MainWindow's AnnotationManager)
         self.annotation_manager = self.main_window.annotation_manager
@@ -225,7 +221,6 @@ class AnnotationWindow(BaseCanvas):
         # Let the annotation transparency slider naturally expand
         self.transparency_slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.transparency_slider.valueChanged.connect(self.update_label_transparency)
-
 
         # --- Positional/Dimensional Labels ---
         self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
@@ -622,7 +617,7 @@ class AnnotationWindow(BaseCanvas):
         if hasattr(self.main_window, 'context_matrix') and self.main_window.context_matrix:
             self.main_window.context_matrix.sync_annotations_to_all_canvases()
 
-        # PHANTOM ARCHITECTURE: Re-render phantom layer with new transparency
+        # Rebuild phantom layer with updated transparency
         self.refresh_phantom_annotations()
 
         # Restore cursor
@@ -753,14 +748,6 @@ class AnnotationWindow(BaseCanvas):
         # Defines which tools trigger mask mode
         self.mask_tools = {"brush", "fill", "erase", "dropper"}
         
-    def set_animation_manager(self, manager):
-        """
-        Receives the central AnimationManager from the MainWindow.
-        
-        Args:
-            manager (AnimationManager): The central animation manager instance.
-        """
-        self.animation_manager = manager
 
     def _is_in_mask_editing_mode(self):
         """Check if the annotation window is currently in mask editing mode."""
@@ -1095,8 +1082,7 @@ class AnnotationWindow(BaseCanvas):
     def _clear_annotation_graphics_single(self, annotation):
         """Strip all graphics references from a single annotation without crashing."""
         try:
-            if (hasattr(annotation, 'graphics_item_group') and
-                    annotation.graphics_item_group is not None):
+            if annotation.graphics_item_group is not None:
                 try:
                     if annotation.graphics_item_group.scene():
                         annotation.graphics_item_group.scene().removeItem(
@@ -1108,11 +1094,10 @@ class AnnotationWindow(BaseCanvas):
             annotation.graphics_item = None
             annotation.center_graphics_item = None
             annotation.bounding_box_graphics_item = None
-            if hasattr(annotation, 'tag_item'):
-                annotation.tag_item = None
-            if hasattr(annotation, 'dimension_tag_item'):
-                annotation.dimension_tag_item = None
+            annotation.tag_item = None
+            annotation.dimension_tag_item = None
             annotation.is_selected = False
+            annotation.render_mode = RenderMode.PHANTOM
         except Exception:
             pass
 
@@ -1140,21 +1125,34 @@ class AnnotationWindow(BaseCanvas):
                 except (ValueError, IndexError):
                     pass
 
-        # Per-frame semantic mask overlays
+        # Per-frame semantic mask overlays and detect/segment video results
         cache = getattr(self, 'batch_results_cache', None) or {}
         for key, cached in cache.items():
             if not (isinstance(key, str) and key.startswith(prefix) and cached):
                 continue
-            # Confirm the entry has actual painted pixels, not an empty mask
+            # Confirm the entry has actual content
             has_content = False
-            mask_arr = cached.get('mask_arr')
-            if mask_arr is not None:
-                try:
-                    has_content = bool(np.any(mask_arr))
-                except Exception:
+            if isinstance(cached, dict):
+                # Semantic overlay stored as a legacy dict with mask_arr / mask_qimage
+                mask_arr = cached.get('mask_arr')
+                if mask_arr is not None:
+                    try:
+                        has_content = bool(np.any(mask_arr))
+                    except Exception:
+                        has_content = cached.get('mask_qimage') is not None
+                else:
                     has_content = cached.get('mask_qimage') is not None
             else:
-                has_content = cached.get('mask_qimage') is not None
+                # Raw Ultralytics Results object (detect / segment video frames)
+                try:
+                    boxes = getattr(cached, 'boxes', None)
+                    masks = getattr(cached, 'masks', None)
+                    has_content = bool(
+                        (boxes is not None and len(boxes) > 0) or
+                        (masks is not None and len(masks) > 0)
+                    )
+                except Exception:
+                    has_content = True  # assume content if we can't check
             if has_content:
                 try:
                     frame_indices.add(int(key.split('::frame_', 1)[1]))
@@ -1532,10 +1530,8 @@ class AnnotationWindow(BaseCanvas):
                 annotation.graphics_item = None
                 annotation.center_graphics_item = None
                 annotation.bounding_box_graphics_item = None
-                if hasattr(annotation, 'tag_item'):
-                    annotation.tag_item = None
-                if hasattr(annotation, 'dimension_tag_item'):
-                    annotation.dimension_tag_item = None
+                annotation.tag_item = None
+                annotation.dimension_tag_item = None
 
                 # Mark as deselected so unselect_annotations() skips the deselect path
                 annotation.is_selected = False
@@ -2123,7 +2119,6 @@ class AnnotationWindow(BaseCanvas):
         finally:
             self.blockSignals(False)
     
-        # PHANTOM ARCHITECTURE: Re-render phantom layer with visibility changes
         self.refresh_phantom_annotations()
         
         self.scene.update()
@@ -3243,11 +3238,9 @@ class AnnotationWindow(BaseCanvas):
         if annotation not in self.selected_annotations:
             self.selected_annotations.append(annotation)
 
-            # First, mark the annotation selected so create_graphics_item
-            # will not early-return due to the Phantom Gatekeeper.
             annotation.select()
 
-            # PHANTOM ARCHITECTURE: Build the Qt objects if they don't exist
+            # Build Qt objects if they don't exist yet
             if not annotation.is_graphics_item_valid():
                 annotation.create_graphics_item(self.scene)
             
@@ -3264,50 +3257,62 @@ class AnnotationWindow(BaseCanvas):
         
         self.set_annotation_visibility(annotation)
         
-        # --- BULK MODE CHECK ---
         # Skip these heavy UI operations if we are looping through hundreds of items
         if not bulk_mode:
             if len(self.selected_annotations) > 1 and not quiet_mode:
                 self.main_window.label_window.deselect_active_label()
                 self.main_window.confidence_window.clear_display()
             self.viewport().update()
-            # PHANTOM ARCHITECTURE: Re-render phantom layer to remove this annotation from it
+            # Rebuild phantom layer to exclude this now-selected annotation
             self.refresh_phantom_annotations()
             self._emit_selection_changed()
 
     def select_annotations(self):
-        """Select all annotations in the current image (Optimized for Bulk)."""
+        """Select all annotations in the current image.
+
+        Uses the same per-item path as rubber-band multi-select so the result
+        is visually identical: every annotation gets its own QGraphicsItemGroup
+        with name tag and dimension tag, and the BSP tree can cull off-screen
+        items during zoom.
+        """
         QApplication.setOverrideCursor(Qt.WaitCursor)
+
+        self._skip_phantom_refresh = True
         self.unselect_annotations()
-        
+        self._skip_phantom_refresh = False
+
         annotations = self.get_image_annotations()
+        if not annotations:
+            QApplication.restoreOverrideCursor()
+            return
+
         label_locked = self.main_window.label_window.label_locked
         locked_label_id = self.main_window.label_window.locked_label.id if label_locked else None
-        
-        # Turn on signal blocking for selection
+
         self._syncing_selection = True
-        
-        # --- Disable BSP Indexing ---
         if self.scene:
             self.scene.setItemIndexMethod(QGraphicsScene.NoIndex)
-        
+        self.blockSignals(True)
+
         for annotation in annotations:
             if label_locked and annotation.label.id != locked_label_id:
                 continue
-            # Pass bulk_mode=True to prevent viewport repaints on every item
-            self.select_annotation(annotation, multi_select=True, bulk_mode=True)
+            # Use the same path as rubber-band selection: creates full Qt items
+            # (group + shape + tag + dimension tag) so visual output is identical.
+            # bulk_mode=True and quiet_mode=True suppress per-item UI updates.
+            self.select_annotation(annotation, multi_select=True,
+                                   quiet_mode=True, bulk_mode=True)
 
-        # --- Restore BSP Indexing ---
+        self.blockSignals(False)
         if self.scene:
             self.scene.setItemIndexMethod(QGraphicsScene.BspTreeIndex)
-
         self._syncing_selection = False
-        
-        # Perform the UI updates EXACTLY ONCE at the end
+
         if len(self.selected_annotations) > 1:
             self.main_window.label_window.deselect_active_label()
             self.main_window.confidence_window.clear_display()
-            
+
+        self.refresh_phantom_annotations()
         self.viewport().update()
         self._emit_selection_changed()
         QApplication.restoreOverrideCursor()
@@ -3394,43 +3399,34 @@ class AnnotationWindow(BaseCanvas):
                 except TypeError: 
                     pass
             
-            # PHANTOM ARCHITECTURE: Destroy Qt objects BEFORE deselect() so the group's
-            # children (center, bbox, tag) are still attached and removed cleanly together,
-            # preventing orphaned items being left in the scene.
+            # Destroy Qt objects before deselect() so children are removed cleanly
             self._clear_annotation_graphics_single(annotation)
             annotation.deselect()
             
-            # --- BULK MODE CHECK ---
             if not bulk_mode:
                 if not self.selected_annotations:
                     self.main_window.confidence_window.clear_display()
                 self.viewport().update()
-                # PHANTOM ARCHITECTURE: Re-render phantom layer to draw this annotation in it
                 if not self._skip_phantom_refresh:
                     self.refresh_phantom_annotations()
                 self._emit_selection_changed()
 
     def unselect_annotations(self):
         """Unselect all currently selected annotations."""
-        _t0_unsel = time.perf_counter()
-        # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
-        # --- Disable BSP indexing ---
+        annotations_to_unselect = self.selected_annotations.copy()
+        if not annotations_to_unselect:
+            QApplication.restoreOverrideCursor()
+            self._emit_selection_changed()
+            return
+
         if self.scene:
             self.scene.setItemIndexMethod(QGraphicsScene.NoIndex)
 
-        # Create a copy to safely iterate through
-        annotations_to_unselect = self.selected_annotations.copy()
-
-        # Clear the list first to avoid modification during iteration
         self.selected_annotations = []
-
-        _t_clear = 0.0
-        _t_desel = 0.0
         for annotation in annotations_to_unselect:
-            # Disconnect from confidence window if needed
-            if hasattr(annotation, 'annotationUpdated') and self.main_window.confidence_window.isVisible():
+            if self.main_window.confidence_window.isVisible():
                 try:
                     annotation.annotationUpdated.disconnect(self.main_window.confidence_window.display_cropped_image)
                 except TypeError:
@@ -3440,53 +3436,17 @@ class AnnotationWindow(BaseCanvas):
                 except TypeError:
                     pass
 
-            # PHANTOM ARCHITECTURE: Destroy Qt objects BEFORE deselect() so the group's
-            # children (center, bbox, tag) are still attached and removed cleanly together,
-            # preventing orphaned items being left in the scene.
-            _tc = time.perf_counter()
             self._clear_annotation_graphics_single(annotation)
-            _t_clear += time.perf_counter() - _tc
-            # Update annotation's internal state
-            _tc = time.perf_counter()
             annotation.deselect()
-            _t_desel += time.perf_counter() - _tc
-            
-        # --- NEW: Restore BSP indexing ---
-        _t_bsp0 = time.perf_counter()
+
         if self.scene:
             self.scene.setItemIndexMethod(QGraphicsScene.BspTreeIndex)
-        _t_bsp = time.perf_counter() - _t_bsp0
 
-        # Clear the confidence window
         self.main_window.confidence_window.clear_display()
-
-        # PHANTOM ARCHITECTURE: Re-render phantom layer with all now-deselected annotations
-        # Skip if caller will do its own rebuild (e.g. select_annotation coalescing)
-        _t_phantom = 0.0
         if not self._skip_phantom_refresh:
-            _tp0 = time.perf_counter()
             self.refresh_phantom_annotations()
-            _t_phantom = time.perf_counter() - _tp0
-
-        # Update the viewport once for all changes
-        _tv0 = time.perf_counter()
         self.viewport().update()
-        _t_vp = time.perf_counter() - _tv0
-
-        _t_total_unsel = time.perf_counter() - _t0_unsel
-        if len(annotations_to_unselect) > 1 or _t_total_unsel > 0.05:
-            print(f"[PERF] unselect_annotations: N={len(annotations_to_unselect)}"
-                  f" | clear_graphics={_t_clear*1000:.1f}ms"
-                  f" | deselect={_t_desel*1000:.1f}ms"
-                  f" | bsp_restore={_t_bsp*1000:.1f}ms"
-                  f" | phantom_refresh={_t_phantom*1000:.1f}ms"
-                  f" | viewport_update={_t_vp*1000:.1f}ms"
-                  f" | total={_t_total_unsel*1000:.1f}ms")
-
-        # Make cursor normal again
         QApplication.restoreOverrideCursor()
-
-        # Emit selection changed signal
         self._emit_selection_changed()
     
     def _emit_selection_changed(self):
@@ -3498,9 +3458,6 @@ class AnnotationWindow(BaseCanvas):
 
     def load_annotation(self, annotation):
         """Load a single annotation into the scene."""
-        # Set the animation manager
-        annotation.set_animation_manager(self.animation_manager)
-        
         # Inject / update scale
         self.set_annotation_scale(annotation)
         
@@ -3512,8 +3469,7 @@ class AnnotationWindow(BaseCanvas):
         current_slider_value = self.main_window.get_transparency_value()
         annotation.update_transparency(current_slider_value)
 
-        # PHANTOM ARCHITECTURE: Only create graphics items for selected annotations
-        # Unselected annotations remain as phantom data (just paths and boundaries)
+        # Only create Qt items for already-selected annotations; others are phantom
         if annotation.is_selected:
             annotation.create_graphics_item(self.scene)
             # Set the visibility based on the label's visibility checkbox
@@ -3600,7 +3556,7 @@ class AnnotationWindow(BaseCanvas):
         # Update the label window tool tips (this might need to be optimized later)
         self.main_window.label_window.update_tooltips()
         
-        # PHANTOM ARCHITECTURE: Render all unselected annotations to phantom layer
+        # Render all unselected annotations to phantom layer
         self.refresh_phantom_annotations()
         
         QApplication.processEvents()
@@ -3727,26 +3683,22 @@ class AnnotationWindow(BaseCanvas):
             pass
 
     def refresh_phantom_annotations(self):
-        """
-        Draws all unselected vector annotations using the ultra-fast readonly pass.
-        This is called when selections change to update the phantom layer.
+        """Rebuild the read-only phantom layer from unselected annotations.
+
+        Only PHANTOM-mode annotations are included; FULL-mode (selected)
+        annotations own their own QGraphicsItemGroup and are excluded.
+        Mask annotations and invisible-label annotations are skipped.
         """
         if self._skip_phantom_refresh or not self.active_image:
             return
-        
-        annotations = self.get_image_annotations()
-        phantom_annotations = []
-        
-        for a in annotations:
-            # Only draw it as a Phantom if it's visible, NOT selected, and NOT a mask
-            if getattr(a.label, 'is_visible', True) and not a.is_selected and not hasattr(a, 'mask_data'):
-                try:
-                    phantom_annotations.append(a)
-                except Exception:
-                    pass
-        
-        # Hand off to the mode-aware canvas renderer.
-        self.render_readonly_annotations(phantom_annotations)
+
+        phantom = [
+            a for a in self.get_image_annotations()
+            if not hasattr(a, 'mask_data')
+            and getattr(a.label, 'is_visible', True)
+            and a.render_mode is RenderMode.PHANTOM
+        ]
+        self.render_readonly_annotations(phantom)
 
     def get_image_annotations(self, image_path=None):
         """Get all annotations for the specified image path or current image."""
@@ -3854,9 +3806,6 @@ class AnnotationWindow(BaseCanvas):
         if annotation is None:
             return
         
-        # Set the animation manager
-        annotation.set_animation_manager(self.animation_manager)
-
         # --- Core Logic (runs for every annotation) ---
         # Add to the main annotation dictionary
         self.annotations_dict[annotation.id] = annotation
@@ -3892,9 +3841,7 @@ class AnnotationWindow(BaseCanvas):
         # --- Conditional UI Logic (runs only if the image is visible AND label is visible) ---
         if annotation.image_path == self.current_image_path and annotation.label.is_visible:
             # ---> Skip heavy graphics if streaming inference <---
-            if getattr(self, 'is_streaming_inference', False):
-                pass
-            else:
+            if not getattr(self, 'is_streaming_inference', False):
                 # Create graphics item for display in the scene
                 if not annotation.graphics_item:
                     annotation.create_graphics_item(self.scene)
@@ -3907,8 +3854,6 @@ class AnnotationWindow(BaseCanvas):
                 if self._playback_timer.isActive():
                     self._clear_annotation_graphics_single(annotation)
                 else:
-                    # PHANTOM ARCHITECTURE: Push the new annotation into the phantom layer
-                    # so it is immediately visible without needing to be selected first.
                     self.refresh_phantom_annotations()
                     # Force the screen to instantly show the newly drawn item
                     self.viewport().update()
@@ -3941,7 +3886,6 @@ class AnnotationWindow(BaseCanvas):
             if annotation is None or annotation.id in self.annotations_dict:
                 continue
 
-            annotation.set_animation_manager(self.animation_manager)
             self.set_annotation_scale(annotation)
 
             # Update data dictionaries
@@ -3987,7 +3931,6 @@ class AnnotationWindow(BaseCanvas):
             
             # Repaint exactly ONCE, but only if the active image was affected by the import
             if self.current_image_path in images_to_update:
-                # PHANTOM ARCHITECTURE: Push all new annotations into the phantom layer
                 self.refresh_phantom_annotations()
                 self.viewport().update()
 
@@ -4037,7 +3980,6 @@ class AnnotationWindow(BaseCanvas):
             if record_action:
                 self.action_stack.push(DeleteAnnotationAction(self, annotation))
 
-            # --- BULK MODE CHECK ---
             if not bulk_mode:
                 try: 
                     self.main_window.image_window.update_image_annotations(annotation.image_path)
@@ -4246,7 +4188,6 @@ class AnnotationWindow(BaseCanvas):
             self.pixmap_image = None
             self.rasterio_image = None
             self.active_image = False
-
 
 class ViewAnimator(QObject):
     """Top-level helper QObject with animatable properties to smoothly update view center and zoom.

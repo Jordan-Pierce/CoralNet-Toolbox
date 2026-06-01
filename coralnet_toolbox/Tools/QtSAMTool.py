@@ -8,6 +8,7 @@ from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush
 from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem, QApplication
 
 from coralnet_toolbox.Tools.QtTool import Tool
+from coralnet_toolbox.Annotations.QtAnnotation import RenderMode
 from coralnet_toolbox.QtActions import MaskEditAction
 
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
@@ -34,9 +35,6 @@ class SAMTool(Tool):
         self.main_window = annotation_window.main_window
         self.sam_dialog = None
         
-        # Set the animation manager for pulse animations
-        self.animation_manager = self.annotation_window.animation_manager
-
         self.cursor = Qt.CrossCursor
         self.default_cursor = Qt.ArrowCursor 
 
@@ -158,7 +156,6 @@ class SAMTool(Tool):
 
         # Create the WorkArea instance
         self.working_area = WorkArea(left, top, right - left, bottom - top, self.image_path)
-        self.working_area.set_animation_manager(self.animation_manager)
         
         # Create and add the working area graphics
         self.working_area.create_graphics(self.annotation_window.scene, 
@@ -222,7 +219,6 @@ class SAMTool(Tool):
             
         # Create the WorkArea instance
         self.working_area = WorkArea(left, top, right - left, bottom - top, self.image_path)
-        self.working_area.set_animation_manager(self.animation_manager)
         
         # Create and add the working area graphics
         self.working_area.create_graphics(self.annotation_window.scene, 
@@ -297,9 +293,6 @@ class SAMTool(Tool):
         Clear the temporary annotation and its graphics.
         """
         if self.temp_annotation:
-            # Stop animation first
-            self.temp_annotation.deanimate()
-            # Then delete the annotation
             self.temp_annotation.delete()
             self.temp_annotation = None
             
@@ -456,11 +449,10 @@ class SAMTool(Tool):
                 QApplication.restoreOverrideCursor()
                 return
             
-            self.temp_annotation.set_animation_manager(self.animation_manager)
-            # Create the graphics item for the temporary annotation (force hydrate for smooth preview)
+            # Mark selected so it gets the dashed selected-state pen
+            self.temp_annotation.is_selected = True
+            self.temp_annotation.render_mode = RenderMode.FULL
             self.temp_annotation.create_graphics_item(self.annotation_window.scene, force_hydrate=True)
-            # Make the annotation animated immediately
-            self.temp_annotation.animate(force=True)
             
         finally:
             # Always restore cursor
@@ -839,8 +831,6 @@ class SAMTool(Tool):
             QApplication.restoreOverrideCursor()
             return None
 
-        # Set the animation manager for the annotation
-        annotation.set_animation_manager(self.animation_manager)
 
         # Update confidence - make sure to extract confidence from results
         confidence = float(result.boxes.conf[top1_index])

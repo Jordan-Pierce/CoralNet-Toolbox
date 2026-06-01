@@ -38,7 +38,6 @@ class WorkAreaManager(QDialog):
         self.image_window = main_window.image_window
         self.annotation_window = main_window.annotation_window
         
-        self.animation_manager = main_window.animation_manager
 
         self.setWindowIcon(get_window_icon("tile.svg"))
         self.setWindowTitle("Work Area Manager")
@@ -390,7 +389,6 @@ class WorkAreaManager(QDialog):
             self.annotation_window.current_image_path
         )
         
-        self.margin_work_area.set_animation_manager(self.animation_manager)
         
         # Set a different color for the margin boundary
         self.margin_work_area.work_area_pen = QPen(QColor(230, 62, 0), 2, Qt.DashLine)  # blood red
@@ -435,7 +433,6 @@ class WorkAreaManager(QDialog):
                         self.annotation_window.current_image_path
                     )
                     
-                    tile_work_area.set_animation_manager(self.animation_manager)
                     
                     # Add to scene with thinner line and store the graphics
                     tile_graphics = tile_work_area.create_graphics(
@@ -468,7 +465,6 @@ class WorkAreaManager(QDialog):
                             self.annotation_window.current_image_path
                         )
                         
-                        tile_work_area.set_animation_manager(self.animation_manager)
                         
                         # Add to scene with thinner line and store the graphics
                         tile_graphics = tile_work_area.create_graphics(
@@ -501,7 +497,6 @@ class WorkAreaManager(QDialog):
                             self.annotation_window.current_image_path
                         )
                         
-                        tile_work_area.set_animation_manager(self.animation_manager)
                         
                         # Add to scene with thinner line and store the graphics
                         tile_graphics = tile_work_area.create_graphics(
@@ -529,7 +524,6 @@ class WorkAreaManager(QDialog):
                                 self.annotation_window.current_image_path
                             )
                             
-                            tile_work_area.set_animation_manager(self.animation_manager)
                             
                             # Add to scene with thinner line and store the graphics
                             tile_graphics = tile_work_area.create_graphics(
@@ -564,7 +558,6 @@ class WorkAreaManager(QDialog):
                         self.annotation_window.current_image_path
                     )
                     
-                    tile_work_area.set_animation_manager(self.animation_manager)
                     
                     # Add to scene with thinner line and store the graphics
                     tile_graphics = tile_work_area.create_graphics(

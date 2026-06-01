@@ -37,13 +37,6 @@ SWATCH_SIZE = 14
 SWATCH_RADIUS = 4
 LABEL_SPACING = 6
 
-# Animation tuning
-ANIMATION = {
-    'pulse_interval_ms': 60,
-    'pulse_delta_up': 30,
-    'pulse_delta_down': 10,
-}
-
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
@@ -120,7 +113,6 @@ class LabelDisplay(QWidget):
         # --- 2. Animated Selection Indicator ---
         if self.label.is_selected:
             pen_color = QColor(self.label.color).darker(300)
-            pen_color.setAlpha(self.label.pulse_alpha)
             pen = QPen(pen_color)
             pen.setWidthF(2.5)
             pen.setStyle(Qt.DotLine)
@@ -230,13 +222,6 @@ class Label(QWidget):
         self.main_layout.addWidget(self.display_widget, 1)
         self.main_layout.addWidget(self.visibility_checkbox)
 
-        # --- Animation Properties ---
-        self.animation_manager = None
-        self.is_animating = False
-
-        # --- Animation properties (no timer) ---
-        self._pulse_alpha = 128
-        self._pulse_direction = 1
 
         self.refresh_scaling()
 
@@ -270,10 +255,6 @@ class Label(QWidget):
     def _handle_selection(self):
         """Internal slot to handle clicks from the display widget."""
         self.is_selected = not self.is_selected
-        if self.is_selected:
-            self.animate()
-        else:
-            self.deanimate()
         self.display_widget.update()  # Triggers a repaint of the child widget
         self.selected.emit(self)
 
@@ -304,14 +285,6 @@ class Label(QWidget):
             self.drag_start_position = None
         super().mouseReleaseEvent(event)
         
-    def set_animation_manager(self, manager):
-        """
-        Binds this object to the central AnimationManager.
-        
-        Args:
-            manager (AnimationManager): The central animation manager instance.
-        """
-        self.animation_manager = manager
 
     def is_graphics_item_valid(self):
         """
@@ -345,7 +318,6 @@ class Label(QWidget):
         """Programmatically select the label."""
         if not self.is_selected:
             self.is_selected = True
-            self.animate()
             self.display_widget.update()
             self.selected.emit(self)
 
@@ -353,7 +325,6 @@ class Label(QWidget):
         """Programmatically deselect the label."""
         if self.is_selected:
             self.is_selected = False
-            self.deanimate()
             self.display_widget.update()
 
     def update_color(self):
@@ -389,57 +360,6 @@ class Label(QWidget):
         self.pen_width = pen_width
         self.update_color()
         
-    def tick_animation(self):
-        """
-        Perform one 'tick' of the animation.
-        This is the public entry point for the global manager.
-        """
-        # This just calls the existing private method that holds the logic
-        # self._update_pulse_alpha()
-        pass  # TODO
-
-    @pyqtProperty(int)
-    def pulse_alpha(self):
-        """Get the current pulse alpha for animation."""
-        return self._pulse_alpha
-    
-    @pulse_alpha.setter
-    def pulse_alpha(self, value):
-        """Set the pulse alpha and update the widget."""
-        self._pulse_alpha = int(max(0, min(255, value)))
-        self.display_widget.update()
-
-    def _update_pulse_alpha(self):
-        """Update the pulse alpha for a heartbeat-like effect."""
-        if self._pulse_direction == 1:
-            self._pulse_alpha += 30
-        else:
-            self._pulse_alpha -= 10
-
-        if self._pulse_alpha >= 255:
-            self._pulse_alpha = 255
-            self._pulse_direction = -1
-        elif self._pulse_alpha <= 50:
-            self._pulse_alpha = 50
-            self._pulse_direction = 1
-        
-        self.display_widget.update()
-
-    def animate(self):
-        """Start the pulsing animation by registering with the global timer."""
-        self.is_animating = True
-        if self.animation_manager:
-            self.animation_manager.register_animating_object(self)
-    
-    def deanimate(self):
-        """Stop the pulsing animation by de-registering from the global timer."""
-        self.is_animating = False
-        if self.animation_manager:
-            self.animation_manager.unregister_animating_object(self)
-
-        self._pulse_alpha = 128
-        self.display_widget.update()
-
     def delete_label(self):
         """Emit the label_deleted signal and schedule the widget for deletion."""
         self.label_deleted.emit(self)
@@ -477,17 +397,6 @@ class Label(QWidget):
         return (f"Label(id={self.id}, "
                 f"short_label_code='{self.short_label_code}')")
         
-    def __del__(self):
-        """Clean up the timer when the label is deleted."""
-        try:
-            if hasattr(self, 'is_animating') and self.is_animating:
-                self.deanimate()
-                
-            if hasattr(self, 'animation_timer') and self.animation_timer:
-                self.animation_timer.stop()
-        except RuntimeError:
-            pass
-
 
 class LabelWindow(QWidget):
     labelSelected = pyqtSignal(object)
@@ -499,8 +408,6 @@ class LabelWindow(QWidget):
         self.main_window = main_window
         self.annotation_window = main_window.annotation_window
         
-        self.animation_manager = None
-        self.set_animation_manager(main_window.animation_manager)
 
         self.label_locked = False
         self.locked_label = None
@@ -534,14 +441,6 @@ class LabelWindow(QWidget):
         self.show_confirmation_dialog = True
         self.setAcceptDrops(True)
         
-    def set_animation_manager(self, manager):
-        """
-        Receives the central AnimationManager from the MainWindow.
-        
-        Args:
-            manager (AnimationManager): The central animation manager instance.
-        """
-        self.animation_manager = manager
 
     def setup_ui(self):
         """Set up the user interface. The payload is ONLY the scroll area now."""
@@ -926,7 +825,6 @@ class LabelWindow(QWidget):
         # Create the label
         label = Label("Review", "Review", QColor(255, 255, 255), label_id="-1")
         # Animate
-        label.set_animation_manager(self.animation_manager)
         label.refresh_scaling()
         # Connect
         label.selected.connect(self.set_active_label)
@@ -947,7 +845,6 @@ class LabelWindow(QWidget):
         # Create the label
         label = Label(short_label_code, long_label_code, color, label_id)
         # Animate
-        label.set_animation_manager(self.animation_manager)
         label.refresh_scaling()
         # Connect
         label.selected.connect(self.set_active_label)

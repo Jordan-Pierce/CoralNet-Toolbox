@@ -1,7 +1,7 @@
 import warnings
 
 from PyQt5.QtGui import QPen, QColor, QBrush, QPainterPath
-from PyQt5.QtCore import QRectF, QObject, pyqtSignal, Qt, pyqtProperty
+from PyQt5.QtCore import QRectF, QObject, pyqtSignal, Qt
 from PyQt5.QtWidgets import (QGraphicsRectItem, QGraphicsItemGroup, QGraphicsLineItem, QGraphicsPathItem,
                              QGraphicsPixmapItem)
 
@@ -40,9 +40,6 @@ class WorkArea(QObject):
         self.rect = QRectF(x, y, width, height)
         self.image_path = image_path
         
-        self.animation_manager = None  # Will hold the central manager
-        self.is_animating = False      # Tracks animation state
-        
         self.graphics_item = None  # Reference to the main graphics item in the scene
         self.remove_button = None  # Reference to the remove button graphics item
         self.shadow_area = None  # Reference to the shadow graphics item
@@ -54,83 +51,13 @@ class WorkArea(QObject):
         
         # Store the original color for reverting
         self.original_color = QColor(0, 168, 230)
-        # Animation properties (pulse value 0.0..1.0 for blending toward white)
-        self._pulse_value = 0.0  # 0.0 = no pulse, 1.0 = full pulse
-        self._pulse_direction = 1  # 1 for increasing, -1 for decreasing
         
-    @pyqtProperty(int)
-    def pulse_alpha(self):
-        """Compatibility property: returns pulse scaled to 0-255."""
-        return int(self._pulse_value * 255)
-
-    @pulse_alpha.setter
-    def pulse_alpha(self, value):
-        """Set pulse via 0-255 compatibility value (maps to 0.0-1.0)."""
-        v = max(0, min(255, int(value)))
-        self._pulse_value = float(v) / 255.0
-        self._update_pen_style()
-    
-    def tick_animation(self):
-        """
-        Update the pulse value for a heartbeat-like effect (fast rise, slow fall).
-        Called by the global AnimationManager timer.
-        """
-        if self._pulse_direction == 1:
-            # Quick increase (systole-like)
-            self._pulse_value += 0.30
-        else:
-            # Slow decrease (diastole-like)
-            self._pulse_value -= 0.10
-
-        # Clamp and flip direction to create a heartbeat rhythm
-        if self._pulse_value >= 1.0:
-            self._pulse_value = 1.0
-            self._pulse_direction = -1
-        elif self._pulse_value <= 0.0:
-            self._pulse_value = 0.0
-            self._pulse_direction = 1
-
-        # Update the pen style after the pulse value is calculated
-        self._update_pen_style()
-    
     def _create_pen(self):
-        """Create a pen that lightens (blends toward white) when animating."""
+        """Return a pen matching work_area_pen style and color."""
         pen = QPen(self.work_area_pen)
         pen.setCosmetic(True)
-
-        base_color = QColor(self.work_area_pen.color())
-
-        if self.is_animating and self._pulse_value > 0.0:
-            # Compute lighter percentage (100% = original, up to 180% at full pulse)
-            percent = 100 + int(self._pulse_value * 80)
-            try:
-                lighter_color = base_color.lighter(percent)
-            except Exception:
-                # Fallback: use base color if lighter() fails
-                lighter_color = base_color
-            pen.setColor(lighter_color)
-        else:
-            pen.setColor(base_color)
-
-        # Respect the style chosen in self.work_area_pen (do not override)
-        pen.setStyle(self.work_area_pen.style())
         return pen
 
-    def animate(self):
-        """Start the pulsing animation by registering with the global timer."""
-        self.is_animating = True
-        if self.animation_manager:
-            self.animation_manager.register_animating_object(self)
-    
-    def deanimate(self):
-        """Stop the pulsing animation by de-registering from the global timer."""
-        self.is_animating = False
-        if self.animation_manager:
-            self.animation_manager.unregister_animating_object(self)
-        
-        self._pulse_value = 0.0  # Reset to default (no pulse)
-        self._update_pen_style()  # Apply the default style
-    
     def highlight(self):
         """Highlight the working area by turning its pen blood red."""
         self.work_area_pen.setColor(QColor(230, 62, 0))  # Blood red color
@@ -148,19 +75,10 @@ class WorkArea(QObject):
             self.graphics_item.update()
 
     def _update_pen_style(self):
-        """Update the pen style of the graphics item with the current pulse alpha."""
+        """Update the pen style of the graphics item."""
         if self.graphics_item:
             self.graphics_item.setPen(self._create_pen())
             self.graphics_item.update()
-
-    def set_animation_manager(self, manager):
-        """
-        Binds this object to the central AnimationManager.
-        
-        Args:
-            manager (AnimationManager): The central animation manager instance.
-        """
-        self.animation_manager = manager
 
     def is_graphics_item_valid(self):
         """
@@ -250,10 +168,6 @@ class WorkArea(QObject):
             # Add to scene
             scene.addItem(self.graphics_item)
             
-            # It calls the new animate() which registers with the manager
-            if animate:
-                self.animate()
-                
         # Remove any existing shadow before creating a new one
         if self.shadow_area is not None and hasattr(self.shadow_area, "scene") and self.shadow_area.scene():
             self.shadow_area.scene().removeItem(self.shadow_area)
@@ -411,8 +325,6 @@ class WorkArea(QObject):
             self.graphics_item.scene().removeItem(self.graphics_item)
             self.graphics_item = None
             self.remove_button = None
-            
-            self.deanimate()
             return True
             
         return False
@@ -551,7 +463,6 @@ class WorkArea(QObject):
                 
     def remove(self):
         """Remove this work area and emit the removed signal."""
-        self.deanimate()
         
         # Remove graphics from scene
         self.remove_from_scene()
@@ -598,5 +509,3 @@ class WorkArea(QObject):
     def __del__(self):
         """Clean up when the work area is deleted."""
         # Ensure it de-registers from the global timer if it's still animating
-        if hasattr(self, 'is_animating') and self.is_animating:
-            self.deanimate()

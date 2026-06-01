@@ -97,7 +97,6 @@ class EmbeddingViewerWindow(QWidget):
         self.annotation_window = main_window.annotation_window
         
         # Animation manager reference
-        self.animation_manager = None
         
         # Sync state
         self._syncing_selection = False  # Flag to prevent selection sync loops
@@ -227,14 +226,7 @@ class EmbeddingViewerWindow(QWidget):
         # Build UI
         self._setup_ui()
         
-    def set_animation_manager(self, manager):
-        """Set the animation manager for visual effects."""
-        self.animation_manager = manager
-        
-    # -------------------------------------------------------------------------
-    # Toolbar Creation (for DockWrapper integration)
-    # -------------------------------------------------------------------------
-    
+
     def create_top_toolbar(self) -> QToolBar:
         """Create the top toolbar with model settings and view controls."""
         toolbar = QToolBar()
@@ -2769,6 +2761,9 @@ class EmbeddingViewerWindow(QWidget):
                     (self._point_coords_2d[:, 1] >= band_rect.top()) &
                     (self._point_coords_2d[:, 1] <= band_rect.bottom())
                 )
+                # In isolation mode only visible points are selectable.
+                if self.isolated_mode and self._isolated_mask.size == in_box.size:
+                    in_box &= self._isolated_mask
                 if self.selection_at_press_mask is not None:
                     new_mask = self.selection_at_press_mask.copy()
                 else:
@@ -2814,6 +2809,9 @@ class EmbeddingViewerWindow(QWidget):
                         (self._point_coords_2d[:, 1] >= band_rect.top()) &
                         (self._point_coords_2d[:, 1] <= band_rect.bottom())
                     )
+                    # In isolation mode only visible points are selectable.
+                    if self.isolated_mode and self._isolated_mask.size == in_box.size:
+                        in_box &= self._isolated_mask
                     if self.selection_at_press_mask is not None:
                         final_mask = self.selection_at_press_mask.copy()
                     else:

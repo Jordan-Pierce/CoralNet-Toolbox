@@ -45,7 +45,6 @@ class RugosityDialog(QDialog):
         self.annotation_window = self.tool.annotation_window
         self.main_window = self.annotation_window.main_window
         
-        self.animation_manager = self.annotation_window.animation_manager
         
         # Drawing state
         self.is_drawing = False
@@ -701,7 +700,6 @@ class RugosityDialog(QDialog):
         )
         
         # Set the animation manager
-        self.working_area.set_animation_manager(self.animation_manager)
         
         # Create graphics with shadow and animation
         self.working_area.create_graphics(

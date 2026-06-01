@@ -6,10 +6,12 @@ import cv2
 import math
 import numpy as np
 
+from enum import Enum, auto
+
 from PyQt5.QtGui import QColor, QPen, QBrush, QPainterPath, QFont, QPainter
-from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, pyqtProperty, QRectF
+from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, QRectF
 from PyQt5.QtWidgets import (QGraphicsRectItem, QGraphicsItem,
-                             QGraphicsScene, QGraphicsItemGroup, QGraphicsSimpleTextItem, 
+                             QGraphicsScene, QGraphicsItemGroup, QGraphicsSimpleTextItem,
                              QGraphicsPathItem)
 
 from coralnet_toolbox.QtLabelWindow import Label
@@ -17,6 +19,58 @@ from coralnet_toolbox.QtLabelWindow import Label
 from coralnet_toolbox.utilities import convert_scale_units
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Enums and module-level helpers
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+class RenderMode(Enum):
+    """Explicit render mode for each Annotation.
+
+    PHANTOM — Unselected; no Qt items. Rendered via the merged read-only path
+              in BaseCanvas.
+    FULL    — Selected; owns a complete QGraphicsItemGroup with shape,
+              crosshair, bounding-box, and tag.
+    """
+    PHANTOM = auto()
+    FULL = auto()
+
+
+def create_pen(color: QColor, is_selected: bool, verified: bool = True) -> QPen:
+    """Return a QPen styled for the given annotation state.
+
+    Extracted from ``Annotation._create_pen`` so that ``BaseCanvas`` and any
+    other renderer can call it without access to an Annotation instance,
+    eliminating the copy-paste duplication that previously existed in
+    ``_render_annotations_readonly``.
+
+    Args:
+        color:        The annotation's label colour (QColor).
+        is_selected:  Whether the annotation is in a selected state.
+        verified:     If False, unverified annotations use a black pen.
+
+    Returns:
+        A fully configured QPen.
+    """
+    if is_selected:
+        pen_color = QColor(color) if verified else QColor(0, 0, 0)
+        pen_color.setAlpha(255)
+        pen = QPen(pen_color.lighter(130), 2.5)
+        pen.setDashPattern([4, 4])
+        pen.setCapStyle(Qt.FlatCap)
+        pen.setJoinStyle(Qt.MiterJoin)
+        pen.setCosmetic(True)
+        return pen
+    else:
+        pen_color = QColor(color)
+        pen_color.setAlpha(255)
+        pen = QPen(pen_color, 2, Qt.SolidLine)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        pen.setCosmetic(True)
+        return pen
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -176,7 +230,6 @@ class Annotation(QObject):
         super().__init__()
         self.id = str(uuid.uuid4())
 
-        # ZERO OVERHEAD: Store the reference to the existing master Label widget
         self.label = label
 
         self.image_path = image_path
@@ -206,13 +259,11 @@ class Annotation(QObject):
         self.dimension_tag_item = None
 
         self.graphics_item_group = None
-        
-        self.animation_manager = None
-        self.is_animating = False
-        
-        self._dash_offset = 0.0
-        self._dash_speed = 1.0  
-        
+        self.tag_item = None
+
+        # Explicit render mode — eliminates the need to infer state from the
+        # combination of is_selected + graphics_item_group is None.
+        self.render_mode = RenderMode.PHANTOM
         self._signals_connected = False
         
     def contains_point(self, point: QPointF) -> bool:
@@ -805,27 +856,24 @@ class Annotation(QObject):
     def select(self):
         """Mark the annotation as selected and update its visual appearance."""
         self.is_selected = True
+        self.render_mode = RenderMode.FULL
         # Hydrate the UI if the group exists
         if self.graphics_item_group and self.graphics_item_group.scene():
             self._hydrate_ui_elements(self.graphics_item_group.scene())
-            
+
         self._update_pen_styles()
-        self.animate()
 
     def deselect(self):
         """Mark the annotation as not selected and update its visual appearance."""
         self.is_selected = False
+        self.render_mode = RenderMode.PHANTOM
         # Dehydrate the UI
         self._dehydrate_ui_elements()
-            
-        self.deanimate()
+
         self._update_pen_styles()
 
     def delete(self):
         """Remove the annotation and all associated graphics items from the scene."""
-        # Stop animation
-        self.deanimate()
-        
         # Emit the deletion signal first
         self.annotationDeleted.emit(self)
 
@@ -845,14 +893,14 @@ class Annotation(QObject):
         self.bounding_box_graphics_item = None
 
     def create_graphics_item(self, scene: QGraphicsScene, force_hydrate: bool = False):
-        """Create all graphics items for the annotation and add them to the scene as a group.
+        """Create Qt graphics items for this annotation and add them to the scene.
 
-        The Phantom Gatekeeper: avoid creating heavy Qt objects for sleeping (unselected)
-        annotations unless `force_hydrate` is True. This keeps thousands of annotations
-        as lightweight math-only phantoms while allowing tools to request a real Qt
-        object for smooth cursor previews.
+        Skips creation for PHANTOM-mode annotations unless ``force_hydrate`` is True,
+        keeping unselected annotations as lightweight math-only objects.
+        Crosshair, bounding-box, and tag are only built when ``is_selected`` or
+        ``force_hydrate`` is set (lazy hydration).
         """
-        # Abort early for phantoms unless explicitly forced
+        # Skip Qt item creation for unselected (PHANTOM) annotations unless forced
         if not self.is_selected and not force_hydrate:
             return
 
@@ -867,16 +915,13 @@ class Annotation(QObject):
             color = QColor(self.label.color)
             color.setAlpha(self.transparency)
             
-            if hasattr(self.graphics_item, 'setBrush'):
-                self.graphics_item.setBrush(QBrush(color))
-            if hasattr(self.graphics_item, 'setPen'):
-                self.graphics_item.setPen(self._create_pen(color))
+            self.graphics_item.setBrush(QBrush(color))
+            self.graphics_item.setPen(self._create_pen(color))
             
             self.graphics_item.setData(0, self.id)
             self.graphics_item_group.addToGroup(self.graphics_item)
 
-        # ONLY build the expensive UI elements if the item is currently selected
-        # (or force_hydrate was requested by a tool)
+        # Build crosshair, bbox, tag only for selected or force-hydrated annotations
         if self.is_selected or force_hydrate:
             self._hydrate_ui_elements(scene)
             
@@ -907,40 +952,26 @@ class Annotation(QObject):
         
         self.graphics_item_group.addToGroup(self.tag_item)
 
+    def _remove_from_group(self, attr: str):
+        """Remove a child graphics item from the group and scene, then null it."""
+        item = getattr(self, attr, None)
+        if not item:
+            return
+        try:
+            self.graphics_item_group.removeFromGroup(item)
+            if item.scene():
+                item.scene().removeItem(item)
+        except RuntimeError:
+            pass
+        setattr(self, attr, None)
+
     def _dehydrate_ui_elements(self):
-        """Destroys the heavy interactive visual elements to save memory/CPU."""
+        """Destroy crosshair, bounding-box, and tag items to free Qt resources."""
         if not self.graphics_item_group:
             return
-        
-        # Remove and destroy center crosshair
-        if self.center_graphics_item:
-            try:
-                self.graphics_item_group.removeFromGroup(self.center_graphics_item)
-                if self.center_graphics_item.scene():
-                    self.center_graphics_item.scene().removeItem(self.center_graphics_item)
-            except RuntimeError:
-                pass
-            self.center_graphics_item = None
-            
-        # Remove and destroy bounding box
-        if self.bounding_box_graphics_item:
-            try:
-                self.graphics_item_group.removeFromGroup(self.bounding_box_graphics_item)
-                if self.bounding_box_graphics_item.scene():
-                    self.bounding_box_graphics_item.scene().removeItem(self.bounding_box_graphics_item)
-            except RuntimeError:
-                pass
-            self.bounding_box_graphics_item = None
-            
-        # Remove and destroy tag
-        if hasattr(self, 'tag_item') and self.tag_item:
-            try:
-                self.graphics_item_group.removeFromGroup(self.tag_item)
-                if self.tag_item.scene():
-                    self.tag_item.scene().removeItem(self.tag_item)
-            except RuntimeError:
-                pass
-            self.tag_item = None
+        self._remove_from_group('center_graphics_item')
+        self._remove_from_group('bounding_box_graphics_item')
+        self._remove_from_group('tag_item')
 
     def is_graphics_item_valid(self):
         """
@@ -961,121 +992,34 @@ class Annotation(QObject):
         if self.graphics_item_group:
             self.graphics_item_group.setVisible(visible)
             
-    def set_animation_manager(self, manager):
-        """
-        Binds this object to the central AnimationManager.
-        
-        Args:
-            manager (AnimationManager): The central animation manager instance.
-        """
-        self.animation_manager = manager
-        
-    def animate(self, force=False):
-        """
-        Start the pulsing animation by registering with the global timer.
-        
-        Args:
-            force (bool): If True, force animation even if annotation is not selected
-        """
-        if force or self.is_selected:
-            self.is_animating = True
-            if self.animation_manager:
-                self.animation_manager.register_animating_object(self)
-        
-    def tick_animation(self):
-        """
-        Perform one 'tick' of the animation.
-        This is the public entry point for the global manager.
-        """
-        # self._update_dash_offset()  # TODO
-        pass
-        
-    @pyqtProperty(float)
-    def dash_offset(self):
-        """Get the current dash offset for animation."""
-        return self._dash_offset
-    
-    @dash_offset.setter
-    def dash_offset(self, value):
-        """Set the dash offset and update pen styles."""
-        self._dash_offset = value
-        self._update_pen_styles()
-    
-    def _update_dash_offset(self):
-        """Increment the dash offset to create the marching ants effect."""
-        self._dash_offset += self._dash_speed
-        
-        # Reset the offset once it completes a full pattern cycle to prevent float overflow.
-        # If our pattern is [4, 4] (4px line, 4px gap), the cycle length is 8.
-        if self._dash_offset >= 8.0:
-            self._dash_offset -= 8.0
 
-        self._update_pen_styles()
 
-    def deanimate(self):
-        """Stop the animation by de-registering from the global timer."""
-        self.is_animating = False
-        if self.animation_manager:
-            self.animation_manager.unregister_animating_object(self)
-            
-        self._dash_offset = 0.0  # Reset to default
-        self.update_graphics_item()  # Apply the default style
-    
+
+
     def _create_pen(self, base_color: QColor) -> QPen:
-        """Create a pen with appropriate style based on selection state."""
-        if self.is_selected or self.is_animating:
-            # Use same color if verified, black if not verified
-            pen_color = QColor(base_color) if self.verified else QColor(0, 0, 0)
-            
-            # The line stays fully opaque so you never lose contrast
-            pen_color.setAlpha(255)
-            
-            # Create a thicker, lighter pen for the selected state
-            pen = QPen(pen_color.lighter(130), 2.5) 
-            
-            # Apply the Marching Ants pattern
-            pen.setDashPattern([4, 4])  # 4 pixels painted, 4 pixels empty gap
-            pen.setDashOffset(self._dash_offset)
-            
-            # Use flat caps so the dashes butt up neatly against each other
-            pen.setCapStyle(Qt.FlatCap)
-            pen.setJoinStyle(Qt.MiterJoin)
-            pen.setCosmetic(True)
-            return pen
-        else:
-            # Modernized unselected state: Solid opaque line
-            pen_color = QColor(base_color)
-            pen_color.setAlpha(255)  
-            
-            pen = QPen(pen_color, 2, Qt.SolidLine) 
-            pen.setCapStyle(Qt.RoundCap)
-            pen.setJoinStyle(Qt.RoundJoin)
-            pen.setCosmetic(True)
-            return pen
+        """Create a pen with appropriate style based on selection state.
+
+        Delegates to the module-level :func:`create_pen` so both this method
+        and the phantom renderer share a single source of truth.
+        """
+        return create_pen(
+            base_color,
+            is_selected=self.is_selected,
+            verified=self.verified,
+        )
     
     def _update_pen_styles(self):
-        """Update the pen styles of all graphics items based on the 
-        current selection and animation state."""
-        color = QColor(self.label.color)
-        pen = self._create_pen(color)
-
-        try:
-            if self.graphics_item and self.graphics_item.scene():
-                self.graphics_item.setPen(pen)
-        except RuntimeError:
-            self.graphics_item = None
-
-        try:
-            if self.center_graphics_item and self.center_graphics_item.scene():
-                self.center_graphics_item.setPen(pen)
-        except RuntimeError:
-            self.center_graphics_item = None
-
-        try:
-            if self.bounding_box_graphics_item and self.bounding_box_graphics_item.scene():
-                self.bounding_box_graphics_item.setPen(pen)
-        except RuntimeError:
-            self.bounding_box_graphics_item = None
+        """Reapply the correct pen to every owned graphics item."""
+        pen = self._create_pen(QColor(self.label.color))
+        for attr in ('graphics_item', 'center_graphics_item', 'bounding_box_graphics_item'):
+            item = getattr(self, attr)
+            if item is None:
+                continue
+            try:
+                if item.scene():
+                    item.setPen(pen)
+            except RuntimeError:
+                setattr(self, attr, None)
 
     def create_center_graphics_item(self, center_xy, scene, add_to_group=False):
         """Create a graphical item representing the annotation's center point."""

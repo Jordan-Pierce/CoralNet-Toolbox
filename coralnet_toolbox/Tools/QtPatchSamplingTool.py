@@ -37,18 +37,11 @@ class PatchGraphic(QGraphicsRectItem):
         self.base_color = color
         self.label_text = label_text
 
-        # --- Animation Properties ---
-        self.animation_manager = None
-        self.is_animating = False
-        self.animation_offset = 0
-
         self.default_brush = QBrush(QColor(color.red(), color.green(), color.blue(), 50))
         self.setBrush(self.default_brush)
         self._update_pen()
         
-    def set_animation_manager(self, manager):
-        self.animation_manager = manager
-        
+
     def is_graphics_item_valid(self):
         try:
             return self.scene() is not None
@@ -61,26 +54,11 @@ class PatchGraphic(QGraphicsRectItem):
         pen.setCosmetic(True)
         # PyQt uses setDashPattern; provide floats for compatibility
         pen.setDashPattern([4.0, 4.0])
-        pen.setDashOffset(self.animation_offset)
         self.setPen(pen)
     
-    def tick_animation(self):
-        """Update the marching ants offset."""
-        self.animation_offset = (self.animation_offset + 1) % 8
-        self._update_pen()
-        
-    def animate(self):
-        self.is_animating = True
-        if self.animation_manager:
-            self.animation_manager.register_animating_object(self)
 
-    def deanimate(self):
-        self.is_animating = False
-        if self.animation_manager:
-            self.animation_manager.unregister_animating_object(self)
-        self.animation_offset = 0
-        self._update_pen()
-    
+
+
     def paint(self, painter, option, widget=None):
         """Draw the marching ants rectangle and the floating nametag."""
         # 1. Draw the base rectangle using QGraphicsRectItem's native logic
@@ -114,13 +92,8 @@ class PatchGraphic(QGraphicsRectItem):
         painter.drawText(bg_rect, Qt.AlignCenter, self.label_text)
     
     def itemChange(self, change, value):
-        if change == QGraphicsRectItem.ItemSceneChange and value is None:
-            self.deanimate()
         return super().itemChange(change, value)
             
-    def __del__(self):
-        if hasattr(self, 'is_animating') and self.is_animating:
-            self.deanimate()
 
 
 class PatchSamplingDialog(QDialog):
@@ -135,8 +108,6 @@ class PatchSamplingDialog(QDialog):
         self.label_window = tool.annotation_window.main_window.label_window
         self.image_window = tool.annotation_window.main_window.image_window
         
-        self.animation_manager = self.annotation_window.animation_manager
-
         self.setWindowTitle("Sample Annotations")
         self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
@@ -534,8 +505,6 @@ class PatchSamplingDialog(QDialog):
                                          inner_height, 
                                          self.annotation_window.current_image_path)
         
-        # Animate the margin work area
-        self.margin_work_area.set_animation_manager(self.animation_manager)
         
         # Create graphics using the WorkArea's own method
         margin_graphics = self.margin_work_area.create_graphics(self.annotation_window.scene, 
@@ -584,8 +553,6 @@ class PatchSamplingDialog(QDialog):
             graphic = PatchGraphic(x, y, size, used_label.color, used_label.short_label_code)
             # -----------------------------------------------
             
-            graphic.set_animation_manager(self.animation_manager)
-            graphic.animate()
             
             self.annotation_window.scene.addItem(graphic)
             self.annotation_graphics.append(graphic)
@@ -794,9 +761,6 @@ class PatchSamplingDialog(QDialog):
     def clear_graphics(self):
         """Remove all annotation preview graphics, including margin visualizations."""
         for graphic in self.annotation_graphics:
-            # Stop animation if it has the method
-            if hasattr(graphic, 'deanimate'):
-                graphic.deanimate()
             # Remove from scene if it belongs to one
             if graphic.scene():
                 graphic.scene().removeItem(graphic)

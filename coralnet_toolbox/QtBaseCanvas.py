@@ -12,8 +12,8 @@ import traceback
 import numpy as np
 
 import pyqtgraph as pg
-from PyQt5.QtGui import (QMouseEvent, QPixmap, QImage, QBrush, QColor, QPen, 
-                         QTransform, QSurfaceFormat, QPainter)
+from PyQt5.QtGui import (QMouseEvent, QPixmap, QImage, QBrush, QColor, QPen,
+                         QTransform, QSurfaceFormat, QPainter, QPainterPath)
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QSize, QObject
 from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, 
                              QGraphicsItemGroup, QGraphicsEllipseItem, QGraphicsLineItem,
@@ -204,7 +204,7 @@ class BaseCanvas(QGraphicsView):
         """Initialize the base canvas."""
         super().__init__(parent)
         
-        # TODO this makes MVAT and Multi-annotate very slow
+        # TODO this makes MVAT and Multi-annotate very sluggish
         # --- HARDWARE ACCELERATION ---
         # gl_widget = QOpenGLWidget()
 
@@ -268,8 +268,11 @@ class BaseCanvas(QGraphicsView):
         self._mask_overlay_item = None    # Read-only MaskAnnotation overlay for brush propagation
         self._perimeter_overlay = None    # Viewport border overlay
 
-        # Read-only annotation overlays (Phase 6)
-        self._readonly_annotation_items = []
+        # Read-only annotation overlays (Phase 6).
+        # Dict keyed by (r, g, b, transparency, is_selected) so incremental
+        # updates can patch just the affected path item instead of rebuilding
+        # every group.
+        self._readonly_annotation_items = {}
         
         # Placeholder label for empty canvas
         self._placeholder_label = QLabel(
@@ -549,7 +552,7 @@ class BaseCanvas(QGraphicsView):
         self._image_dimensions = None
         
         # Clear read-only annotation overlay references
-        self._readonly_annotation_items = []
+        self._readonly_annotation_items = {}
         
         # Clear Z-channel data
         self.z_data_raw = None
@@ -801,107 +804,102 @@ class BaseCanvas(QGraphicsView):
     
     def _render_annotations_readonly(self, annotations):
         """Render annotations as non-interactive overlays on this canvas.
-        
+
+        Paths are merged per unique (label_color, transparency, is_selected)
+        group so that N annotations with L distinct labels produce only L scene
+        items instead of N — dramatically faster for large annotation sets.
+
+        Items are stored in ``_readonly_annotation_items`` keyed by that same
+        tuple so incremental callers can update a single group without
+        rebuilding the entire layer.
+
         Args:
             annotations (list): List of Annotation objects to display.
         """
         from coralnet_toolbox.Annotations import MaskAnnotation
-        
+        from coralnet_toolbox.Annotations.QtAnnotation import create_pen
+        from collections import defaultdict
+
         self._clear_readonly_annotations()
-        
+
+        if not annotations:
+            return
+
+        # Group by (r, g, b, transparency, is_selected) to merge paths.
+        # is_selected separates phantom-selected annotations so they are drawn
+        # with the selected-state pen (delegates to the same create_pen() used
+        # by Annotation._create_pen, eliminating the previous copy-paste).
+        groups = defaultdict(QPainterPath)
+        group_styles = {}  # key -> (QColor, transparency, is_selected)
+
         for annotation in annotations:
-            # Skip MaskAnnotation — it's a full-image raster overlay
             if isinstance(annotation, MaskAnnotation):
                 continue
-            
             try:
-                item = self._create_readonly_graphics_item(annotation)
-                if item is not None:
-                    self.scene.addItem(item)
-                    self._readonly_annotation_items.append(item)
-            except Exception:
-                traceback.print_exc()
+                path = annotation.get_painter_path()
+            except (NotImplementedError, AttributeError):
+                continue
+            if path is None or path.isEmpty():
+                continue
+
+            c = annotation.label.color
+            is_sel = bool(annotation.is_selected)
+            key = (c.red(), c.green(), c.blue(), annotation.transparency, is_sel)
+            groups[key].addPath(path)
+            if key not in group_styles:
+                group_styles[key] = (QColor(c), annotation.transparency, is_sel)
+
+        self.scene.setItemIndexMethod(QGraphicsScene.NoIndex)
+        for key, merged_path in groups.items():
+            color, transparency, is_selected = group_styles[key]
+            fill_color = QColor(color)
+            fill_color.setAlpha(transparency)
+
+            if is_selected:
+                # Delegate to the shared create_pen() — no more copy-paste constants.
+                pen = create_pen(color, is_selected=True)
+            else:
+                # Phantom unselected: thinner 1 px pen is intentionally lighter
+                # than the 2 px pen used by a fully-owned annotation item.
+                pen = QPen(color, 1)
+                pen.setCosmetic(True)
+
+            # WindingFill prevents overlapping shapes from cancelling each other
+            # (the default even-odd rule punches holes where annotations overlap)
+            merged_path.setFillRule(Qt.WindingFill)
+            item = QGraphicsPathItem(merged_path)
+            item.setBrush(QBrush(fill_color))
+            item.setPen(pen)
+            item.setFlag(QGraphicsItem.ItemIsSelectable, False)
+            item.setFlag(QGraphicsItem.ItemIsMovable, False)
+            item.setAcceptHoverEvents(False)
+            item.setZValue(10)
+            self.scene.addItem(item)
+            # Store by key so individual groups can be patched incrementally.
+            self._readonly_annotation_items[key] = item
+        self.scene.setItemIndexMethod(QGraphicsScene.BspTreeIndex)
 
         self.viewport().update()
     
     def _clear_readonly_annotations(self):
         """Remove all read-only annotation items from the scene."""
-        for item in self._readonly_annotation_items:
+        for item in self._readonly_annotation_items.values():
             try:
                 if item.scene() is not None:
                     item.scene().removeItem(item)
             except Exception:
                 pass
-        self._readonly_annotation_items = []
+        self._readonly_annotation_items = {}
     
-    def _create_readonly_graphics_item(self, annotation):
-        """Create a non-interactive QGraphicsPathItem from an Annotation object.
-        
-        Args:
-            annotation: An Annotation object with get_painter_path() method.
-            
-        Returns:
-            QGraphicsPathItem or None if creation fails.
-        """
-        try:
-            path = annotation.get_painter_path()
-        except (NotImplementedError, AttributeError):
-            return None
-        
-        if path is None or path.isEmpty():
-            return None
-        
-        item = QGraphicsPathItem(path)
-        
-        # Style: label color at annotation transparency fill, 1px pen at full color
-        color = QColor(annotation.label.color)
-        fill_color = QColor(color)
-        fill_color.setAlpha(annotation.transparency)
-        
-        pen = QPen(color, 1)
-        pen.setCosmetic(True)  # Constant width regardless of zoom
-        
-        item.setBrush(QBrush(fill_color))
-        item.setPen(pen)
-        
-        # Non-interactive
-        item.setFlag(QGraphicsItem.ItemIsSelectable, False)
-        item.setFlag(QGraphicsItem.ItemIsMovable, False)
-        item.setAcceptHoverEvents(False)
 
-        # No QGraphicsDropShadowEffect — it uses Qt's native effect compositing
-        # pipeline which can abort() when items are removed while paint events
-        # are queued.  Simulate the shadow with a second offset path item:
-        # outline-only (no fill) so only the border gets a dark halo, matching
-        # the visual character of the original drop shadow without the crash.
-        shadow_item = QGraphicsPathItem(path, item)  # child of item
-        shadow_pen = QPen(QColor(0, 0, 0, 90), 2.5)
-        shadow_pen.setCosmetic(True)
-        shadow_item.setBrush(QBrush(Qt.NoBrush))
-        shadow_item.setPen(shadow_pen)
-        shadow_item.setPos(0.5, 1.0)
-        shadow_item.setFlag(QGraphicsItem.ItemIsSelectable, False)
-        shadow_item.setFlag(QGraphicsItem.ItemIsMovable, False)
-        shadow_item.setAcceptHoverEvents(False)
-        shadow_item.setZValue(-0.1)  # just below the parent item
-        
-        # Z-value above base image but below markers
-        item.setZValue(5)
-        
-        # Tag with source annotation ID for selection matching
-        item.setData(0, annotation.id)
-        item._source_annotation_id = annotation.id
-        
-        return item
-    
     def _highlight_readonly_annotation(self, annotation_id, highlighted):
         """Highlight or un-highlight a read-only annotation overlay.
-        
+
         Args:
             annotation_id (str): The annotation UUID to highlight.
             highlighted (bool): Whether to highlight (True) or revert (False).
         """
-        for item in self._readonly_annotation_items:
+        for item in self._readonly_annotation_items.values():
             if getattr(item, '_source_annotation_id', None) == annotation_id:
                 # Restore original style from annotation data
                 original_color = item.brush().color()
@@ -1404,4 +1402,3 @@ class BaseCanvas(QGraphicsView):
             except Exception:
                 pass
             self._mask_overlay_item = None
-
