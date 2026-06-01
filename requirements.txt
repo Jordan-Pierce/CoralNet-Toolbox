@@ -5,7 +5,7 @@ ujson
 blosc2
 rasterio
 pycocotools
-ultralytics>=8.42.5
+ultralytics
 lightly-train[ultralytics]
 lap>=0.5.12
 open-clip-torch>=2.20.0
