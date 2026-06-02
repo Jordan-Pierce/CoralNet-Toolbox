@@ -460,18 +460,12 @@ class VisibilityWorker(QObject):
                     logger.warning(f"Warning: Geometry not loaded for {target.product_id}")
                     return None, None
 
-                # Extract the true face centers for the solid mesh raycaster
                 face_centers = mesh.cell_centers().points
                 face_ids = np.arange(len(face_centers), dtype=np.int32)
-
                 return face_centers, face_ids
 
             except Exception as e:
-                logger.warning(f"Failed to extract faces in worker for {target.product_id}: {e}")
+                logger.warning(f"Warning: Could not extract face centers from {target.product_id}: {e}")
                 return None, None
-
-        # Fallback
-        if hasattr(target, 'get_points_array'):
-            return target.get_points_array(), None
 
         return None, None

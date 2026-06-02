@@ -2096,6 +2096,21 @@ class BatchInferenceDialog(QDialog):
                 pass
             self._semantic_processed_images = set()
 
+            # When MVAT multi-annotate is active, aggregate all processed images'
+            # masks onto the mesh in one vote-resolved pass.  This replaces the
+            # per-image _on_semantic_prediction_applied calls used by the
+            # single-image Semantic dialog: batch inference writes N masks first,
+            # then we aggregate once so cross-camera votes are counted together.
+            try:
+                mvat_manager = getattr(self.main_window, 'mvat_manager', None)
+                if (
+                    mvat_manager is not None
+                    and getattr(mvat_manager, 'multi_annotate_enabled', False)
+                ):
+                    mvat_manager.aggregate_camera_masks_to_mesh()
+            except Exception as _mvat_exc:
+                print(f"⚠️ BatchInference MVAT aggregate failed: {_mvat_exc}")
+
             # Video semantic batch inference: _semantic_processed_images is never
             # populated for video frames (results go to batch_results_cache instead).
             # Scan the cache for ::frame_ entries and update the table count for each
@@ -2340,7 +2355,6 @@ class BatchInferenceDialog(QDialog):
         """
         Clean up resources after batch inference.
         """
-        # Ensure any running worker is signaled to stop
         try:
             if hasattr(self, '_batch_worker') and getattr(self._batch_worker, 'isRunning', lambda: False)():
                 try:
@@ -2349,12 +2363,11 @@ class BatchInferenceDialog(QDialog):
                     pass
         except Exception:
             pass
+
         self.image_paths = []
-        
-        # Reset inference type to Standard
+
         self.inference_type_combo.blockSignals(True)
-        self.inference_type_combo.setCurrentText("Standard")
+        self.inference_type_combo.setCurrentText('Standard')
         self.inference_type_combo.blockSignals(False)
-        
-        # Untoggle all tools in the annotation window
+
         self.annotation_window.toolChanged.emit(None)

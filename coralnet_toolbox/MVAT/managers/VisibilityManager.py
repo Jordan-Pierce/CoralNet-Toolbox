@@ -1573,30 +1573,28 @@ class VisibilityManager:
             global_z_buffer = torch.full((height * width,), float('inf'), device=device, dtype=torch.float32)
             global_index_map = torch.full((height * width,), -1, device=device, dtype=torch.int32)
 
-            # Preallocate per-camera scratch buffers once; reset with fill_() each chunk
-            # to avoid repeated CUDA malloc/free overhead on large point clouds.
-            local_z_buffer = torch.empty((height * width,), device=device, dtype=torch.float32)
+            # Local buffers reused each chunk (pre-allocated once per camera)
+            local_z_buffer  = torch.empty((height * width,), device=device, dtype=torch.float32)
             local_index_map = torch.empty((height * width,), device=device, dtype=torch.int32)
 
-            logger.info(f"   -> Processing {cam_label(i + 1)}/{M} in chunks...")
+            logger.info(f'   -> Processing {cam_label(i + 1)}/{M} in chunks...')
 
             for start_idx in range(0, N_total, CHUNK_SIZE):
                 end_idx = min(start_idx + CHUNK_SIZE, N_total)
 
-                # Stream just this chunk to the GPU
                 chunk_pts = torch.as_tensor(points_world[start_idx:end_idx], dtype=torch.float32, device=device)
                 chunk_ids = torch.as_tensor(point_ids[start_idx:end_idx], dtype=torch.int32, device=device)
 
-                # 1. Transform World -> Camera
+                # Project: camera space
                 points_cam = chunk_pts @ R.T + t
                 x, y, z = points_cam[:, 0], points_cam[:, 1], points_cam[:, 2]
 
-                # 2. Project to Image Plane
-                u = (K[0, 0] * x / z) + K[0, 2]
-                v = (K[1, 1] * y / z) + K[1, 2]
+                # Project to pixel coords
+                u = K[0, 0] * x / z + K[0, 2]
+                v = K[1, 1] * y / z + K[1, 2]
 
-                # 3. Bounds check
                 u_idx, v_idx = u.round().long(), v.round().long()
+
                 valid_mask = (u_idx >= 0) & (u_idx < width) & (v_idx >= 0) & (v_idx < height) & (z > 0)
 
                 valid_u, valid_v, valid_z = u_idx[valid_mask], v_idx[valid_mask], z[valid_mask]
@@ -1608,31 +1606,28 @@ class VisibilityManager:
 
                 flat_indices = valid_v * width + valid_u
 
-                # 4. Local Z-buffering (Who won inside this specific chunk?)
-                # Reset preallocated buffers in-place — no CUDA malloc needed.
+                # Z-buffer: keep minimum depth per pixel within this chunk
                 local_z_buffer.fill_(float('inf'))
                 try:
-                    local_z_buffer.scatter_reduce_(0, flat_indices, valid_z, reduce="amin", include_self=True)
+                    local_z_buffer.scatter_reduce_(0, flat_indices, valid_z, reduce='amin', include_self=True)
                 except AttributeError:
-                    raise RuntimeError("PyTorch version too old for scatter_reduce_.")
+                    raise RuntimeError('PyTorch version too old for scatter_reduce_.')
 
-                # 5. Resolve IDs for this chunk
-                is_closest = torch.abs(valid_z - local_z_buffer[flat_indices]) < 1e-4
+                is_closest = torch.abs(valid_z - local_z_buffer[flat_indices]) < 0.0001
+
                 local_index_map.fill_(-1)
                 local_index_map[flat_indices[is_closest]] = valid_ids[is_closest]
 
-                # 6. MERGE WITH MASTER: Did this chunk beat the global record?
+                # Merge chunk result into master buffers
                 won_mask = local_z_buffer < global_z_buffer
                 global_z_buffer[won_mask] = local_z_buffer[won_mask]
                 global_index_map[won_mask] = local_index_map[won_mask]
 
-                # Free VRAM immediately for the next chunk (scratch buffers are reused)
                 del chunk_pts, chunk_ids, points_cam, x, y, z, u, v, u_idx, v_idx, valid_mask
                 del valid_u, valid_v, valid_z, valid_ids, flat_indices, is_closest, won_mask
 
-            # 7. Finalize outputs for this camera
             visible_indices = torch.unique(global_index_map[global_index_map != -1], sorted=True)
-            
+
             if compute_depth_map:
                 try:
                     global_z_buffer[global_z_buffer == float('inf')] = float('nan')
@@ -1643,28 +1638,29 @@ class VisibilityManager:
                 depth_map_np = None
 
             index_map_np = global_index_map.view(height, width).cpu().numpy()
-            
+
             results.append({
-                'index_map': index_map_np,
+                'index_map':       index_map_np,
                 'visible_indices': visible_indices.cpu().numpy(),
-                'depth_map': depth_map_np,
-                'inverted_index': VisibilityManager._build_inverted_index(index_map_np),
+                'depth_map':       depth_map_np,
+                'inverted_index':  VisibilityManager._build_inverted_index(index_map_np),
             })
-            
+
             log_cam_complete(cam_label(i + 1), perf_counter() - cam_start, logger)
 
-            # Free all per-camera buffers (scratch + master)
             del K, R, t, global_z_buffer, global_index_map, visible_indices
             del local_z_buffer, local_index_map
 
         if device == 'cuda':
             torch.cuda.empty_cache()
-            
-        logger.info(f"\n   - Total Time: {perf_counter() - start_time:.4f}s")
+
+        logger.info(f'\n   - Total Time: {perf_counter() - start_time:.4f}s')
+
         return results
 
     @staticmethod
-    def _compute_torch(points_np, ids_np, K_np, R_np, t_np, width, height, device, compute_depth_map: bool = True):
+    def _compute_torch(points_np, ids_np, K_np, R_np, t_np, width, height,
+                       device='cpu', compute_depth_map=False):
         """
         PyTorch-based visibility computation.
         Uses scatter_reduce_ for efficient Z-buffering.
@@ -1672,21 +1668,17 @@ class VisibilityManager:
         """
         stage_times = {}
         overall_start = time.time()
-        
-        # 1. Transfer Data to Device (GPU or CPU)
-        # We assume input is float32 for geometry, int32 for IDs
+
+        # --- Transfer ---
         xfer_start = time.time()
         points = torch.as_tensor(points_np, dtype=torch.float32, device=device)
-        p_ids = torch.as_tensor(ids_np, dtype=torch.int32, device=device)
-        
+        p_ids  = torch.as_tensor(ids_np,    dtype=torch.int32,   device=device)
         K = torch.as_tensor(K_np, dtype=torch.float32, device=device)
         R = torch.as_tensor(R_np, dtype=torch.float32, device=device)
         t = torch.as_tensor(t_np, dtype=torch.float32, device=device)
         stage_times['transfer'] = time.time() - xfer_start
 
-        # 2. Transform World -> Camera
-        # X_cam = R * X_world + t
-        # Shape logic: (N, 3) @ (3, 3).T + (3,)
+        # --- Transform ---
         transform_start = time.time()
         points_cam = points @ R.T + t
         stage_times['transform'] = time.time() - transform_start
@@ -1695,85 +1687,64 @@ class VisibilityManager:
         y_cam = points_cam[:, 1]
         z_cam = points_cam[:, 2]
 
-        # 3. Project to Image Plane (Vectorized)
-        # u = fx * x / z + cx
-        # v = fy * y / z + cy
-        # Note: K = [[fx, 0, cx], [0, fy, cy], [0, 0, 1]]
+        # --- Projection ---
         proj_start = time.time()
-        u = (K[0, 0] * x_cam / z_cam) + K[0, 2]
-        v = (K[1, 1] * y_cam / z_cam) + K[1, 2]
+        u = K[0, 0] * x_cam / z_cam + K[0, 2]
+        v = K[1, 1] * y_cam / z_cam + K[1, 2]
         stage_times['projection'] = time.time() - proj_start
 
-        # 4. Bounds & Depth Check
+        # --- Bounds filter ---
         bounds_start = time.time()
         u_idx = u.round().long()
         v_idx = v.round().long()
 
-        valid_mask = (u_idx >= 0) & (u_idx < width) & \
-                     (v_idx >= 0) & (v_idx < height) & \
-                     (z_cam > 0)
+        valid_mask = (
+            (u_idx >= 0) & (u_idx < width) &
+            (v_idx >= 0) & (v_idx < height) &
+            (z_cam > 0)
+        )
 
-        # Filter to keep only potentially visible points
-        valid_u = u_idx[valid_mask]
-        valid_v = v_idx[valid_mask]
-        valid_z = z_cam[valid_mask]
+        valid_u   = u_idx[valid_mask]
+        valid_v   = v_idx[valid_mask]
+        valid_z   = z_cam[valid_mask]
         valid_ids = p_ids[valid_mask]
         stage_times['bounds'] = time.time() - bounds_start
 
         if valid_ids.numel() == 0:
-            # Nothing visible
-            return VisibilityManager._normalize_result_dict({
-                'index_map': np.full((height, width), -1, dtype=np.int32),
-                'visible_indices': np.array([], dtype=np.int32),
-                'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
-                'inverted_index': None,
-            }, compute_depth_map)
+            return VisibilityManager._normalize_result_dict(
+                np.full((height, width), -1, dtype=np.int32),
+                np.array([], dtype=np.int32),
+                np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
+                None,
+                compute_depth_map,
+            )
 
-        # 5. Z-Buffering (Scatter Reduce)
-        # Flatten indices: idx = y * width + x
+        # --- Z-buffer ---
         zbuf_start = time.time()
         flat_indices = valid_v * width + valid_u
 
-        # Initialize Z-Buffer with Infinity
         z_buffer = torch.full((height * width,), float('inf'), device=device, dtype=torch.float32)
-
-        # A. Find minimum depth at every pixel
-        # Note: scatter_reduce_ is available in PyTorch 1.12+
         try:
-            z_buffer.scatter_reduce_(0, flat_indices, valid_z, reduce="amin", include_self=True)
+            z_buffer.scatter_reduce_(0, flat_indices, valid_z, reduce='amin', include_self=True)
         except AttributeError:
-            # Fallback for older torch versions lacking scatter_reduce_
-            warnings.warn("PyTorch version too old for scatter_reduce_. Falling back to NumPy implementation.")
+            warnings.warn('PyTorch version too old for scatter_reduce_. Falling back to NumPy implementation.')
             return VisibilityManager._compute_numpy(points_np, ids_np, K_np, R_np, t_np, width, height)
 
-        # B. Identify which points 'won' the Z-buffer test
-        # Get the min_z recorded at the projected location for each point
         min_z_at_pixel = z_buffer[flat_indices]
-        
-        # Check if point's depth matches the min depth (with epsilon for float precision)
-        is_closest = torch.abs(valid_z - min_z_at_pixel) < 1e-4
+        is_closest = torch.abs(valid_z - min_z_at_pixel) < 0.0001
 
-        # C. Filter final winners
         final_pixel_indices = flat_indices[is_closest]
-        final_ids = valid_ids[is_closest]
+        final_ids           = valid_ids[is_closest]
         stage_times['zbuffer'] = time.time() - zbuf_start
 
-        # 6. Construct Outputs
+        # --- Output ---
         output_start = time.time()
-        # Create blank index map
         index_map_tensor = torch.full((height * width,), -1, device=device, dtype=torch.int32)
-        
-        # Assign IDs to map
-        # Note: If multiple points are within epsilon at the same pixel, last one writes.
         index_map_tensor[final_pixel_indices] = final_ids
-        
-        # Reshape to 2D
-        index_map_2d = index_map_tensor.view(height, width)
 
-        # Extract unique visible IDs
+        index_map_2d    = index_map_tensor.view(height, width)
         visible_indices = torch.unique(final_ids, sorted=True)
 
-        # Extract the depth map from the Z-buffer if requested
         if compute_depth_map:
             try:
                 z_buffer[z_buffer == float('inf')] = float('nan')
@@ -1787,28 +1758,27 @@ class VisibilityManager:
         index_map_np = index_map_2d.cpu().numpy()
         stage_times['output'] = time.time() - output_start
 
-        # Free GPU memory back to OS/other applications
         if str(device) == 'cuda':
             torch.cuda.empty_cache()
 
-        return VisibilityManager._normalize_result_dict({
-            'index_map': index_map_np,
-            'visible_indices': visible_indices.cpu().numpy(),
-            'depth_map': depth_map_np,
-            'inverted_index': None,
-        }, compute_depth_map)
+        return VisibilityManager._normalize_result_dict(
+            index_map_np,
+            visible_indices.cpu().numpy(),
+            depth_map_np,
+            None,
+            compute_depth_map,
+        )
 
     @staticmethod
-    def _compute_numpy(points, ids, K, R, t, width, height, compute_depth_map: bool = True):
+    def _compute_numpy(points, ids, K, R, t, width, height, compute_depth_map=False):
         """
         CPU-based visibility computation (Legacy / Fallback).
         Uses 'Sort by Depth' optimization to handle occlusion efficiently without loops.
         """
         stage_times = {}
         overall_start = time.time()
-        
-        # 1. Transform World -> Camera
-        # X_cam = R * X_world + t
+
+        # --- Transform ---
         transform_start = time.time()
         points_cam = points @ R.T + t
         stage_times['transform'] = time.time() - transform_start
@@ -1817,67 +1787,63 @@ class VisibilityManager:
         y_cam = points_cam[:, 1]
         z_cam = points_cam[:, 2]
 
-        # 2. Project to Image Plane
+        # --- Projection ---
         proj_start = time.time()
         with np.errstate(divide='ignore', invalid='ignore'):
-            u = (K[0, 0] * x_cam / z_cam) + K[0, 2]
-            v = (K[1, 1] * y_cam / z_cam) + K[1, 2]
+            u = K[0, 0] * x_cam / z_cam + K[0, 2]
+            v = K[1, 1] * y_cam / z_cam + K[1, 2]
         stage_times['projection'] = time.time() - proj_start
 
-        # 3. Bounds Check & Integer Cast
+        # --- Bounds filter ---
         bounds_start = time.time()
         u_idx = np.rint(u).astype(np.int32)
         v_idx = np.rint(v).astype(np.int32)
 
-        valid_mask = (u_idx >= 0) & (u_idx < width) & \
-                     (v_idx >= 0) & (v_idx < height) & \
-                     (z_cam > 0)
+        valid_mask = (
+            (u_idx >= 0) & (u_idx < width) &
+            (v_idx >= 0) & (v_idx < height) &
+            (z_cam > 0)
+        )
 
-        # Filter invalid points
-        u_valid = u_idx[valid_mask]
-        v_valid = v_idx[valid_mask]
-        z_valid = z_cam[valid_mask]
+        u_valid  = u_idx[valid_mask]
+        v_valid  = v_idx[valid_mask]
+        z_valid  = z_cam[valid_mask]
         id_valid = ids[valid_mask]
         stage_times['bounds'] = time.time() - bounds_start
 
         if len(id_valid) == 0:
-            return VisibilityManager._normalize_result_dict({
-                'index_map': np.full((height, width), -1, dtype=np.int32),
-                'visible_indices': np.array([], dtype=np.int32),
-                'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
-                'inverted_index': None,
-            }, compute_depth_map)
+            return VisibilityManager._normalize_result_dict(
+                np.full((height, width), -1, dtype=np.int32),
+                np.array([], dtype=np.int32),
+                np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
+                None,
+                compute_depth_map,
+            )
 
-        # 4. Z-Buffering (The Sorting Trick)
-        # To handle occlusion efficiently in NumPy, we sort points by depth (Descending).
-        # When we perform array assignment index_map[y, x] = id, the LAST value overwrites previous ones.
-        # By sorting High -> Low, the Low-Z (closest) points are written last, correctly "winning" the pixel.
+        # --- Z-buffer (sort-by-depth) ---
         zbuf_start = time.time()
-        sort_order = np.argsort(z_valid)[::-1]  # Descending order
+        sort_order = np.argsort(z_valid)[::-1]   # farthest first so closer overwrites
 
-        u_sorted = u_valid[sort_order]
-        v_sorted = v_valid[sort_order]
+        u_sorted  = u_valid[sort_order]
+        v_sorted  = v_valid[sort_order]
         id_sorted = id_valid[sort_order]
-        z_sorted = z_valid[sort_order]
+        z_sorted  = z_valid[sort_order]
 
-        # 5. Create Outputs
-        # Initialize map with -1 for IDs and NaN for depth
         index_map = np.full((height, width), -1, dtype=np.int32)
         depth_map = np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None
 
-        # Bulk assignment handles the "last write wins" logic
         index_map[v_sorted, u_sorted] = id_sorted
         if compute_depth_map:
             depth_map[v_sorted, u_sorted] = z_sorted.astype(np.float32)
-        
+
         stage_times['zbuffer'] = time.time() - zbuf_start
 
-        # Extract unique IDs from the final map
         visible_indices = np.unique(index_map[index_map != -1])
 
-        return VisibilityManager._normalize_result_dict({
-            'index_map': index_map,
-            'visible_indices': visible_indices,
-            'depth_map': depth_map,
-            'inverted_index': None,
-        }, compute_depth_map)
+        return VisibilityManager._normalize_result_dict(
+            index_map,
+            visible_indices,
+            depth_map,
+            None,
+            compute_depth_map,
+        )
