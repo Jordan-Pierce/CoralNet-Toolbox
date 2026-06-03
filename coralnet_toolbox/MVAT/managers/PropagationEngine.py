@@ -2208,9 +2208,17 @@ class PropagationEngine(QObject):
 
                 target_path = task.get('path')
                 context_canvas = self._get_context_canvas_for_path(target_path)
-                should_update_now = True
-                if self.context_matrix is not None and context_canvas is not None:
-                    should_update_now = self.context_matrix.is_canvas_on_screen(context_canvas)
+                # Default to deferring: when no on-screen canvas currently
+                # displays this path (canvas not materialized, or scrolled out
+                # of view) the task must be QUEUED, not dropped.  Previously
+                # this defaulted to True, so an absent canvas silently skipped
+                # both branches below and the matrix thumbnail never refreshed
+                # even though mask_data was written.
+                should_update_now = (
+                    context_canvas is not None
+                    and self.context_matrix is not None
+                    and self.context_matrix.is_canvas_on_screen(context_canvas)
+                )
 
                 if should_update_now:
                     # Wire overlay BEFORE updating so freshly-created masks

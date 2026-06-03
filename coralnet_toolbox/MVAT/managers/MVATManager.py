@@ -1888,6 +1888,21 @@ class MVATManager(QObject):
         if int(class_id) == 0:
             color_rgb = (255, 255, 255)
 
+        # Keep the mesh class-label registry in sync so a mesh painted
+        # directly (without a prior camera -> mesh projection) can still be
+        # projected back out to the cameras.  Without this, the registry stays
+        # empty and project_mesh_labels_to_cameras aborts with "paint the mesh
+        # first" even though primary_target.class_ids is populated.
+        if int(class_id) != 0:
+            try:
+                active_label = self._get_active_label_widget()
+                label_id = getattr(active_label, 'id', None)
+                engine = getattr(self, 'propagation_engine', None)
+                if label_id is not None and engine is not None:
+                    engine._mesh_class_label_ids[int(class_id)] = label_id
+            except Exception:
+                pass
+
         self._ensure_label_painter(primary_target)
         painter = self._label_painter_thread
         if painter is not None and painter.isRunning():
