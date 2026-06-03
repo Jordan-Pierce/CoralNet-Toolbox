@@ -2088,6 +2088,7 @@ class BatchInferenceDialog(QDialog):
                     self.image_window.update_image_annotations(image_path)
                 except Exception as e:
                     print(f"Semantic finalize error for {image_path}: {e}")
+
             # Reload the mask graphics for the currently displayed image
             try:
                 if getattr(self.annotation_window, 'current_image_path', None) in processed:
@@ -2095,21 +2096,6 @@ class BatchInferenceDialog(QDialog):
             except Exception:
                 pass
             self._semantic_processed_images = set()
-
-            # When MVAT multi-annotate is active, aggregate all processed images'
-            # masks onto the mesh in one vote-resolved pass.  This replaces the
-            # per-image _on_semantic_prediction_applied calls used by the
-            # single-image Semantic dialog: batch inference writes N masks first,
-            # then we aggregate once so cross-camera votes are counted together.
-            try:
-                mvat_manager = getattr(self.main_window, 'mvat_manager', None)
-                if (
-                    mvat_manager is not None
-                    and getattr(mvat_manager, 'multi_annotate_enabled', False)
-                ):
-                    mvat_manager.aggregate_camera_masks_to_mesh()
-            except Exception as _mvat_exc:
-                print(f"⚠️ BatchInference MVAT aggregate failed: {_mvat_exc}")
 
             # Video semantic batch inference: _semantic_processed_images is never
             # populated for video frames (results go to batch_results_cache instead).

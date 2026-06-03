@@ -16,9 +16,10 @@ from typing import Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from PyQt5.QtCore import QObject, pyqtSignal, Qt, QPointF
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QApplication, QMessageBox
 
-from coralnet_toolbox.MVAT.core.Products import MeshProduct
+from coralnet_toolbox.MVAT.core.Ray import CameraRay
+
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 
 
@@ -310,17 +311,18 @@ class PropagationEngine(QObject):
         if label_id is not None and label_id not in target_mask.visible_label_ids:
             target_mask.visible_label_ids.add(label_id)
 
-        try:
-            target_mask.update_graphics_item(update_rect=update_rect)
-        except Exception:
-            pass
-
+        # Wire the overlay FIRST so update_graphics_item has a scene to paint into.
         context_canvas = self._get_context_canvas_for_path(target_path)
         if context_canvas is not None and context_canvas._mask_overlay_item is None:
             try:
                 context_canvas.set_mask_overlay(target_mask)
             except Exception:
                 pass
+
+        try:
+            target_mask.update_graphics_item(update_rect=update_rect)
+        except Exception:
+            pass
 
     def _get_visible_context_camera_paths(self) -> list:
         """Return the ordered list of image paths currently visible in the context matrix."""
@@ -2158,6 +2160,31 @@ class PropagationEngine(QObject):
                                 pass
                     continue
 
+                if task_type == 'reload_annotation_window':
+                    # Refresh the annotation window's mask display after a bulk write.
+                    # This ensures the currently-open image shows the new labels
+                    # without requiring the user to navigate away and back.
+                    try:
+                        aw = getattr(self.main_window, 'annotation_window', None)
+                        if aw is not None and hasattr(aw, 'load_mask_annotation'):
+                            aw.load_mask_annotation()
+                    except Exception:
+                        pass
+                    continue
+
+                if task_type == 'update_image_table':
+                    # Refresh the image-table annotation counts for all paths that
+                    # received new mask labels during a bulk projection.
+                    paths = task.get('paths', ())
+                    iw = getattr(self.main_window, 'image_window', None)
+                    if iw is not None:
+                        for _p in paths:
+                            try:
+                                iw.update_image_annotations(_p)
+                            except Exception:
+                                pass
+                    continue
+
                 if task_type == '3d_paint':
                     self.submit_3d_face_paint(
                         task['painted_ids'],
@@ -2186,9 +2213,11 @@ class PropagationEngine(QObject):
                     should_update_now = self.context_matrix.is_canvas_on_screen(context_canvas)
 
                 if should_update_now:
-                    target_mask.update_graphics_item(update_rect=task.get('update_rect'))
+                    # Wire overlay BEFORE updating so freshly-created masks
+                    # (e.g. pre-allocated for cache-loaded cameras) are visible.
                     if context_canvas is not None and context_canvas._mask_overlay_item is None:
                         context_canvas.set_mask_overlay(target_mask)
+                    target_mask.update_graphics_item(update_rect=task.get('update_rect'))
                 elif self.context_matrix is not None:
                     self.context_matrix.queue_pending_repaint(
                         target_path,
@@ -2408,7 +2437,76 @@ class PropagationEngine(QObject):
         unique_ids = np.unique(raw_ids)
         return unique_ids[unique_ids > -1].astype(np.int64, copy=False)
 
-    # ── Flow 2: All cameras → Mesh ────────────────────────────────────────────
+    # ── Flow 1b: This camera → Mesh ──────────────────────────────────────────────
+
+    def aggregate_active_camera_mask_to_mesh(self):
+        """Aggregate the active camera's semantic mask onto the 3D mesh.
+
+        Convenience wrapper around aggregate_camera_masks_to_mesh that restricts
+        the source to only the currently selected/active camera.  Useful when the
+        user wants to push just one camera's annotations to the mesh without
+        re-aggregating all cameras.
+        """
+        camera = getattr(self, 'selected_camera', None)
+        if camera is None:
+            self._warn_semantic_propagation(
+                "No active camera selected.  Open an image first."
+            )
+            return
+
+        camera_path = getattr(camera, 'image_path', None)
+        if camera_path is None:
+            self._warn_semantic_propagation("Active camera has no image path.")
+            return
+
+        raster = getattr(camera, '_raster', None)
+        if raster is None or getattr(raster, 'index_map', None) is None:
+            self._warn_semantic_propagation(
+                f"'{camera.label}' has no index map.  "
+                "Enable Multi-Annotate or load the index map first."
+            )
+            return
+
+        self.aggregate_camera_masks_to_mesh(
+            camera_paths=[camera_path],
+            also_project_to_cameras=False,
+        )
+
+    # ── Flow 3b: Mesh → This camera ──────────────────────────────────────────────
+
+    def project_mesh_labels_to_active_camera(self, skip_unlabeled: bool = True):
+        """Project the 3D mesh's face labels to the active camera's semantic mask.
+
+        Convenience wrapper around project_mesh_labels_to_cameras that writes only
+        to the currently active camera.  Unlabeled mesh faces are skipped when
+        ``skip_unlabeled`` is True so existing hand-painted regions are preserved.
+        """
+        camera = getattr(self, 'selected_camera', None)
+        if camera is None:
+            self._warn_semantic_propagation(
+                "No active camera selected.  Open an image first."
+            )
+            return
+
+        camera_path = getattr(camera, 'image_path', None)
+        if camera_path is None:
+            self._warn_semantic_propagation("Active camera has no image path.")
+            return
+
+        raster = getattr(camera, '_raster', None)
+        if raster is None or getattr(raster, 'index_map', None) is None:
+            self._warn_semantic_propagation(
+                f"'{camera.label}' has no index map.  "
+                "Enable Multi-Annotate or load the index map first."
+            )
+            return
+
+        self.project_mesh_labels_to_cameras(
+            camera_paths=[camera_path],
+            skip_unlabeled=skip_unlabeled,
+        )
+
+        # ── Flow 2: All cameras → Mesh ────────────────────────────────────────────
 
     def aggregate_camera_masks_to_mesh(self, camera_paths=None, also_project_to_cameras=False):
         """Aggregate semantic masks from cameras onto the 3D mesh via vote resolution.
@@ -2459,7 +2557,8 @@ class PropagationEngine(QObject):
         if status_bar is not None:
             try:
                 status_bar.showMessage(
-                    f"Cameras → Mesh: aggregating {len(source_cameras)} camera(s)…", 0
+                    f"Cameras → Mesh: scanning {len(source_cameras)} camera(s) "
+                    f"(only those with index maps + labeled masks will contribute)…", 0
                 )
             except Exception:
                 pass
@@ -2757,6 +2856,13 @@ class PropagationEngine(QObject):
         cam_count = sum(1 for t in repaint_tasks if t.get('type') == 'repaint')
         done_msg = f"Mesh → Cameras: {cam_count} camera(s) updated in {elapsed_ms:.0f} ms"
         print(f"[Mesh→Cameras] {done_msg}")
+        # Collect updated paths for image-table refresh
+        updated_paths = tuple(t['path'] for t in repaint_tasks if t.get('type') == 'repaint')
+        if updated_paths:
+            repaint_tasks.append({'type': 'update_image_table', 'paths': updated_paths})
+        # Reload the annotation window so the currently-open image reflects the new
+        # labels immediately without requiring a manual navigation round-trip.
+        repaint_tasks.append({'type': 'reload_annotation_window'})
         repaint_tasks.append({'type': 'status_message', 'message': done_msg, 'timeout': 5000})
         self._universal_repaint_signal.emit(repaint_tasks)
 

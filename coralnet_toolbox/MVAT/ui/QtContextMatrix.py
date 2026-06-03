@@ -21,7 +21,6 @@ from PyQt5.QtWidgets import (
     QLabel, QToolBar, QToolButton, QSizePolicy, QFrame,
     QScrollArea, QLayout, QLayoutItem, QGraphicsOpacityEffect,
     QSpinBox, QAbstractSpinBox,
-    QDialog, QDialogButtonBox, QCheckBox, QGroupBox, QFormLayout,
     QMenu, QAction,
 )
 
@@ -39,175 +38,21 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # Propagation mode constants used by maskPropagationRequested signal
-PROPAGATE_ACTIVE_TO_CONTEXT  = "active_to_context"
-PROPAGATE_CAMERAS_TO_MESH    = "cameras_to_mesh"
-PROPAGATE_MESH_TO_CAMERAS    = "mesh_to_cameras"
+PROPAGATE_ACTIVE_TO_CONTEXT    = "active_to_context"   # Primary → Secondary Cameras
+PROPAGATE_PRIMARY_TO_MESH      = "active_camera_to_mesh"  # Primary → Mesh (alias for PROPAGATE_ACTIVE_CAMERA_TO_MESH)
+PROPAGATE_ACTIVE_CAMERA_TO_MESH = "active_camera_to_mesh"  # same value; kept for back-compat
+PROPAGATE_CAMERAS_TO_MESH      = "cameras_to_mesh"
+PROPAGATE_MESH_TO_ACTIVE_CAMERA = "mesh_to_active_camera"
+PROPAGATE_MESH_TO_CAMERAS      = "mesh_to_cameras"
 
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Propagation option dialogs
-# ----------------------------------------------------------------------------------------------------------------------
-
-
-class _PropagateActiveToCameraDialog(QDialog):
-    """Options for Flow 1 — active camera mask → context cameras."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Propagate Active Mask")
-        self.setMinimumWidth(340)
-
-        layout = QVBoxLayout(self)
-
-        info = QLabel(
-            "Propagates the active image's semantic mask to all visible context "
-            "cameras using the 3D mesh index maps."
-        )
-        info.setWordWrap(True)
-        layout.addWidget(info)
-
-        layout.addSpacing(8)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    # No extra options yet; placeholder for future additions (e.g. camera scope).
-
-
-class _PropagateCamerasToMeshDialog(QDialog):
-    """Options for Flow 2 — all camera masks → mesh."""
-
-    def __init__(self, parent=None, counts=None):
-        super().__init__(parent)
-        self.setWindowTitle("Aggregate Camera Masks to Mesh")
-        self.setMinimumWidth(400)
-
-        layout = QVBoxLayout(self)
-
-        info = QLabel(
-            "Aggregates semantic masks from all loaded cameras onto the 3D mesh "
-            "using majority-vote conflict resolution.  Each pixel casts one vote "
-            "for the mesh face visible at that position."
-        )
-        info.setWordWrap(True)
-        layout.addWidget(info)
-
-        if counts:
-            total    = counts.get('total', 0)
-            with_map = counts.get('have_index_map', 0)
-            with_mask = counts.get('have_mask', 0)
-            parts = [
-                f"<b>Scope:</b> <b>{with_mask}</b> of {total} camera(s) have both "
-                f"an index map and a labeled mask and will contribute votes."
-            ]
-            if with_map > with_mask:
-                parts.append(
-                    f"{with_map - with_mask} camera(s) have an index map but no mask "
-                    f"yet (they will be skipped)."
-                )
-            if total > with_map:
-                parts.append(
-                    f"{total - with_map} camera(s) have no index map — enable "
-                    f"Multi-Annotate and scroll through them to compute index maps."
-                )
-            scope_label = QLabel("  ".join(parts))
-            scope_label.setWordWrap(True)
-            layout.addSpacing(6)
-            layout.addWidget(scope_label)
-
-        layout.addSpacing(8)
-
-        group = QGroupBox("Options")
-        form = QFormLayout(group)
-
-        self._also_project = QCheckBox("Also project result back to all cameras")
-        self._also_project.setToolTip(
-            "After updating the mesh, immediately run Mesh → Cameras\n"
-            "so every image reflects the aggregated result in one step."
-        )
-        self._also_project.setChecked(False)
-        form.addRow(self._also_project)
-
-        layout.addWidget(group)
-        layout.addSpacing(4)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    @property
-    def also_project_to_cameras(self) -> bool:
-        return self._also_project.isChecked()
-
-
-class _PropagateMeshToCamerasDialog(QDialog):
-    """Options for Flow 3 — mesh labels → all camera masks."""
-
-    def __init__(self, parent=None, counts=None):
-        super().__init__(parent)
-        self.setWindowTitle("Project Mesh Labels to Cameras")
-        self.setMinimumWidth(400)
-
-        layout = QVBoxLayout(self)
-
-        info = QLabel(
-            "Projects face labels from the 3D mesh onto every camera's semantic "
-            "mask.  Each pixel receives the class of the mesh face visible at "
-            "that position.  Cameras without a pre-computed index map are skipped."
-        )
-        info.setWordWrap(True)
-        layout.addWidget(info)
-
-        if counts:
-            total    = counts.get('total', 0)
-            with_map = counts.get('have_index_map', 0)
-            parts = [
-                f"<b>Scope:</b> <b>{with_map}</b> of {total} camera(s) have a "
-                f"pre-computed index map and will receive labels."
-            ]
-            if total > with_map:
-                parts.append(
-                    f"{total - with_map} camera(s) have no index map — enable "
-                    f"Multi-Annotate and scroll through them to compute index maps."
-                )
-            scope_label = QLabel("  ".join(parts))
-            scope_label.setWordWrap(True)
-            layout.addSpacing(6)
-            layout.addWidget(scope_label)
-
-        layout.addSpacing(8)
-
-        group = QGroupBox("Options")
-        form = QFormLayout(group)
-
-        self._skip_unlabeled = QCheckBox("Skip unlabeled mesh faces (preserve existing pixel labels)")
-        self._skip_unlabeled.setToolTip(
-            "When checked, pixels whose mesh face has no label are left\n"
-            "unchanged.  Uncheck to clear those pixels instead."
-        )
-        self._skip_unlabeled.setChecked(True)
-        form.addRow(self._skip_unlabeled)
-
-        layout.addWidget(group)
-        layout.addSpacing(4)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    @property
-    def skip_unlabeled(self) -> bool:
-        return self._skip_unlabeled.isChecked()
+# Human-readable button labels for each mode
+_PROPAGATE_MODE_LABELS = {
+    PROPAGATE_ACTIVE_TO_CONTEXT:    "Primary → Secondary",
+    PROPAGATE_ACTIVE_CAMERA_TO_MESH: "Primary → Mesh",
+    PROPAGATE_CAMERAS_TO_MESH:       "All Cams → Mesh",
+    PROPAGATE_MESH_TO_ACTIVE_CAMERA: "Mesh → Primary",
+    PROPAGATE_MESH_TO_CAMERAS:       "Mesh → All Cams",
+}
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -325,6 +170,7 @@ class ContextMatrixWidget(QWidget):
 
     # Migrated from legacy CameraGrid
     loadCamerasRequested = pyqtSignal()
+    loadIndexMapsRequested = pyqtSignal()
     clearSelectionsRequested = pyqtSignal()
     previousCameraRequested = pyqtSignal()
     nextCameraRequested = pyqtSignal()
@@ -1223,10 +1069,35 @@ class ContextMatrixWidget(QWidget):
         layout.setSpacing(app_theme.scale_int(5))
 
         self.load_btn = QToolButton()
+        self.load_btn.setPopupMode(QToolButton.MenuButtonPopup)
         self.load_btn.setText("Load Cameras")
-        self.load_btn.setToolTip("Load camera lists into the context matrix.")
+        self.load_btn.setToolTip("Load cameras or pre-load index maps for all cameras.")
         self.load_btn.setAutoRaise(True)
-        self.load_btn.clicked.connect(lambda _checked=False: self.loadCamerasRequested.emit())
+        def _load_btn_clicked(_checked=False):
+            self.load_btn.setEnabled(False)
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            QApplication.processEvents()
+            try:
+                self.loadCamerasRequested.emit()
+            finally:
+                QApplication.restoreOverrideCursor()
+                QTimer.singleShot(1500, lambda: self.load_btn.setEnabled(True))
+
+        self.load_btn.clicked.connect(_load_btn_clicked)
+
+        load_menu = QMenu(self.load_btn)
+        _act_load_cams = QAction("Load Cameras", self.load_btn)
+        _act_load_cams.setToolTip("Load camera parameters from the project into the context matrix.")
+        _act_load_cams.triggered.connect(lambda: self.loadCamerasRequested.emit())
+        _act_load_idx = QAction("Load Index Maps", self.load_btn)
+        _act_load_idx.setToolTip(
+            "Attempt to load pre-computed index maps from disk cache for every loaded camera.\n"
+            "Index maps are required for propagation between cameras and the mesh."
+        )
+        _act_load_idx.triggered.connect(lambda: self.loadIndexMapsRequested.emit())
+        load_menu.addAction(_act_load_cams)
+        load_menu.addAction(_act_load_idx)
+        self.load_btn.setMenu(load_menu)
         layout.addWidget(self.load_btn)
 
         sep0 = QFrame()
@@ -1257,48 +1128,53 @@ class ContextMatrixWidget(QWidget):
 
         propagate_menu = QMenu(self._propagate_mask_btn)
 
-        act_active = QAction("Active → Context Cameras", self._propagate_mask_btn)
-        act_active.setData(PROPAGATE_ACTIVE_TO_CONTEXT)
-        act_active.setToolTip(
-            "Propagate the active image's semantic mask to all visible context "
-            "cameras via the 3D mesh index maps."
-        )
-        act_active.triggered.connect(
+        act_primary_secondary = QAction("Primary → Secondary Cameras", self._propagate_mask_btn)
+        act_primary_secondary.setData(PROPAGATE_ACTIVE_TO_CONTEXT)
+        act_primary_secondary.triggered.connect(
             lambda: self._on_propagate_mode_selected(PROPAGATE_ACTIVE_TO_CONTEXT)
+        )
+
+        act_primary_mesh = QAction("Primary → Mesh", self._propagate_mask_btn)
+        act_primary_mesh.setData(PROPAGATE_ACTIVE_CAMERA_TO_MESH)
+        act_primary_mesh.triggered.connect(
+            lambda: self._on_propagate_mode_selected(PROPAGATE_ACTIVE_CAMERA_TO_MESH)
         )
 
         act_cameras_mesh = QAction("All Cameras → Mesh", self._propagate_mask_btn)
         act_cameras_mesh.setData(PROPAGATE_CAMERAS_TO_MESH)
-        act_cameras_mesh.setToolTip(
-            "Aggregate semantic masks from all cameras onto the 3D mesh using "
-            "majority-vote conflict resolution."
-        )
         act_cameras_mesh.triggered.connect(
             lambda: self._on_propagate_mode_selected(PROPAGATE_CAMERAS_TO_MESH)
         )
 
+        act_mesh_primary = QAction("Mesh → Primary", self._propagate_mask_btn)
+        act_mesh_primary.setData(PROPAGATE_MESH_TO_ACTIVE_CAMERA)
+        act_mesh_primary.triggered.connect(
+            lambda: self._on_propagate_mode_selected(PROPAGATE_MESH_TO_ACTIVE_CAMERA)
+        )
+
         act_mesh_cameras = QAction("Mesh → All Cameras", self._propagate_mask_btn)
         act_mesh_cameras.setData(PROPAGATE_MESH_TO_CAMERAS)
-        act_mesh_cameras.setToolTip(
-            "Project the 3D mesh's face labels back to every camera's semantic "
-            "mask annotation via each camera's index map."
-        )
         act_mesh_cameras.triggered.connect(
             lambda: self._on_propagate_mode_selected(PROPAGATE_MESH_TO_CAMERAS)
         )
 
-        propagate_menu.addAction(act_active)
+        propagate_menu.addAction(act_primary_secondary)
         propagate_menu.addSeparator()
+        propagate_menu.addAction(act_primary_mesh)
         propagate_menu.addAction(act_cameras_mesh)
+        propagate_menu.addSeparator()
+        propagate_menu.addAction(act_mesh_primary)
         propagate_menu.addAction(act_mesh_cameras)
         self._propagate_mask_btn.setMenu(propagate_menu)
 
         # Default mode shown on the button face
         self._propagate_current_mode = PROPAGATE_ACTIVE_TO_CONTEXT
-        self._propagate_mask_btn.setText("Active → Context")
+        self._propagate_mask_btn.setText(
+            _PROPAGATE_MODE_LABELS.get(PROPAGATE_ACTIVE_TO_CONTEXT, "Propagate")
+        )
         self._propagate_mask_btn.setToolTip(
-            "Propagate semantic masks between cameras and the 3D mesh.\n"
-            "Click to run the selected mode; use the arrow to switch modes."
+            "Propagate the primary image\u2019s mask to secondary context cameras.\n"
+            "Use the arrow to switch mode; click to run."
         )
         layout.addWidget(self._propagate_mask_btn)
 
@@ -1410,22 +1286,14 @@ class ContextMatrixWidget(QWidget):
         return toolbar
 
     def update_stats_label(self, visible_count: int, overlapping_count: int):
-        """Updates the bottom toolbar text."""
-        total_count = len(self._camera_paths) if self._camera_paths else overlapping_count
+        """Updates the bottom toolbar text.
+
+        The camera-count cap is intentionally NOT applied here so users can
+        increase the visible count up to the total number of loaded cameras.
+        The denominator shown in the toolbar always reflects the total.
+        """
+        total_count = len(self._camera_paths) if self._camera_paths else 0
         self._sync_camera_status_label(visible_count, total_count)
-
-        try:
-            overlapping_count = int(overlapping_count)
-        except Exception:
-            overlapping_count = self._canvas_count_min
-
-        self._camera_count_cap = max(self._canvas_count_min, overlapping_count)
-
-        if self.target_camera_count > self._camera_count_cap:
-            self.target_camera_count = self._camera_count_cap
-            if self._evaluate_auto_layout():
-                self._refresh_visible_canvases()
-
         self._update_canvas_count_controls()
 
     def refresh_scaling(self):
@@ -1433,14 +1301,60 @@ class ContextMatrixWidget(QWidget):
         self._sync_context_toolbar_scaling()
 
     def _on_propagate_mode_selected(self, mode: str):
-        """Called from the dropdown — switch the active mode only, don't run yet."""
+        """Called from the dropdown — switch the active mode and update tooltip."""
         self._propagate_current_mode = mode
-        labels = {
-            PROPAGATE_ACTIVE_TO_CONTEXT: "Active → Context",
-            PROPAGATE_CAMERAS_TO_MESH:   "Cameras → Mesh",
-            PROPAGATE_MESH_TO_CAMERAS:   "Mesh → Cameras",
-        }
-        self._propagate_mask_btn.setText(labels.get(mode, "Propagate"))
+        self._propagate_mask_btn.setText(
+            _PROPAGATE_MODE_LABELS.get(mode, "Propagate")
+        )
+        self._update_propagate_btn_tooltip(mode)
+
+    def _update_propagate_btn_tooltip(self, mode: str = None):
+        """Rebuild the propagate-button tooltip with live camera counts."""
+        if mode is None:
+            mode = getattr(self, '_propagate_current_mode', PROPAGATE_ACTIVE_TO_CONTEXT)
+        counts = self._get_propagation_counts() or {}
+        total        = counts.get('total', 0)
+        have_idx     = counts.get('have_index_map', 0)
+        have_mask    = counts.get('have_mask', 0)
+
+        if mode == PROPAGATE_ACTIVE_TO_CONTEXT:
+            tip = (
+                "Propagate the primary image's semantic mask to all visible\n"
+                "secondary (context) cameras via the 3D mesh index maps.\n"
+                "Use the arrow to switch mode; click to run."
+            )
+        elif mode == PROPAGATE_ACTIVE_CAMERA_TO_MESH:
+            tip = (
+                "Aggregate the primary camera's semantic mask onto the 3D mesh\n"
+                "using majority-vote conflict resolution.\n"
+                "Requires an index map for the primary camera.\n"
+                "Use the arrow to switch mode; click to run."
+            )
+        elif mode == PROPAGATE_CAMERAS_TO_MESH:
+            tip = (
+                f"Aggregate semantic masks from all cameras onto the 3D mesh\n"
+                f"using majority-vote conflict resolution.\n"
+                f"{have_mask} of {total} camera(s) have both an index map and a labeled mask.\n"
+                "Use the arrow to switch mode; click to run."
+            )
+        elif mode == PROPAGATE_MESH_TO_ACTIVE_CAMERA:
+            tip = (
+                "Project the 3D mesh's face labels to the primary camera's semantic mask.\n"
+                "Requires an index map for the primary camera.\n"
+                "Unlabeled mesh faces are skipped (existing labels preserved).\n"
+                "Use the arrow to switch mode; click to run."
+            )
+        elif mode == PROPAGATE_MESH_TO_CAMERAS:
+            tip = (
+                f"Project the 3D mesh's face labels to every camera's semantic mask.\n"
+                f"{have_idx} of {total} camera(s) have an index map and will receive labels.\n"
+                "Unlabeled mesh faces are skipped (existing pixel labels preserved).\n"
+                "Use the arrow to switch mode; click to run."
+            )
+        else:
+            tip = "Use the arrow to switch propagation mode; click to run."
+
+        self._propagate_mask_btn.setToolTip(tip)
 
     def _on_propagate_mask_clicked(self, _checked=False):
         """Called when the button face (not the arrow) is clicked."""
@@ -1457,46 +1371,51 @@ class ContextMatrixWidget(QWidget):
             return None
 
     def _run_propagate_mode(self, mode: str):
-        """Show the options dialog (if any) for *mode* then emit maskPropagationRequested."""
-        if mode == PROPAGATE_ACTIVE_TO_CONTEXT:
-            # No options — run immediately.
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            QApplication.processEvents()
-            try:
+        """Emit maskPropagationRequested for the selected propagation mode.
+
+        Dialogs have been removed.  Behaviors are hardcoded:
+        - Cameras → Mesh: always run without the "also project back" option
+          (user can press the Mesh → Cameras button separately afterwards).
+        - Mesh → Cameras / Primary: always skip unlabeled faces so existing
+          pixel labels are preserved.
+
+        The button is disabled and a WaitCursor shown immediately so the user
+        gets visual feedback.  The cursor is restored once the signal handler
+        returns (background work continues asynchronously).  The button is
+        re-enabled via a short QTimer delay to prevent accidental double-clicks.
+        """
+        btn = getattr(self, '_propagate_mask_btn', None)
+        if btn is not None:
+            btn.setEnabled(False)
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        QApplication.processEvents()
+        try:
+            if mode == PROPAGATE_ACTIVE_TO_CONTEXT:
                 self.semanticMaskPropagationRequested.emit()   # back-compat
                 self.maskPropagationRequested.emit(mode)
-            finally:
-                QApplication.restoreOverrideCursor()
 
-        elif mode == PROPAGATE_CAMERAS_TO_MESH:
-            counts = self._get_propagation_counts()
-            dlg = _PropagateCamerasToMeshDialog(self, counts=counts)
-            if dlg.exec_() != QDialog.Accepted:
-                return
-            also_project = dlg.also_project_to_cameras
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            QApplication.processEvents()
-            try:
-                self.maskPropagationRequested.emit(
-                    mode + (":+project" if also_project else "")
-                )
-            finally:
-                QApplication.restoreOverrideCursor()
+            elif mode == PROPAGATE_ACTIVE_CAMERA_TO_MESH:
+                self.maskPropagationRequested.emit(mode)
 
-        elif mode == PROPAGATE_MESH_TO_CAMERAS:
-            counts = self._get_propagation_counts()
-            dlg = _PropagateMeshToCamerasDialog(self, counts=counts)
-            if dlg.exec_() != QDialog.Accepted:
-                return
-            skip_unlabeled = dlg.skip_unlabeled
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            QApplication.processEvents()
-            try:
-                self.maskPropagationRequested.emit(
-                    mode + (":skip_unlabeled" if skip_unlabeled else ":keep_all")
-                )
-            finally:
-                QApplication.restoreOverrideCursor()
+            elif mode == PROPAGATE_CAMERAS_TO_MESH:
+                # No "also_project" — user can chain manually
+                self.maskPropagationRequested.emit(mode)
+
+            elif mode == PROPAGATE_MESH_TO_ACTIVE_CAMERA:
+                # Always skip unlabeled mesh faces
+                self.maskPropagationRequested.emit(mode + ":skip_unlabeled")
+
+            elif mode == PROPAGATE_MESH_TO_CAMERAS:
+                # Always skip unlabeled mesh faces
+                self.maskPropagationRequested.emit(mode + ":skip_unlabeled")
+        finally:
+            QApplication.restoreOverrideCursor()
+            # Re-enable after a short delay to absorb any accidental double-click.
+            # Background propagation work may still be running — the status bar
+            # will show completion.
+            if btn is not None:
+                QTimer.singleShot(1500, lambda: btn.setEnabled(self._scene_controls_enabled))
 
     def update_stats(self, perspective_count: int):
         return

@@ -73,14 +73,39 @@ class MVATManager(QObject):
         Allows tool code (e.g. BrushTool3D) and legacy call sites to call
         ``manager._on_3d_brush_stroke_applied`` etc. without knowing they now
         live on PropagationEngine.
+
+        IMPORTANT: We deliberately do NOT use ``getattr(pe, name)`` here
+        because PropagationEngine.__getattr__ delegates unknown names BACK to
+        this manager, creating infinite recursion.  Instead we look up the
+        attribute on pe using object.__getattribute__ (instance dict only) and
+        then walk pe's MRO for class-level attributes (bound methods, etc.).
+        If the name is not found on pe at all we raise AttributeError cleanly.
         """
         try:
             pe = object.__getattribute__(self, 'propagation_engine')
-            return getattr(pe, name)
         except AttributeError:
             raise AttributeError(
                 f"'{type(self).__name__}' object has no attribute '{name}'"
             )
+
+        # 1. Instance dict (fastest path — avoids triggering pe's __getattr__)
+        try:
+            return object.__getattribute__(pe, name)
+        except AttributeError:
+            pass
+
+        # 2. Class hierarchy (covers methods defined on PropagationEngine itself)
+        for klass in type(pe).__mro__:
+            if name in klass.__dict__:
+                val = klass.__dict__[name]
+                # Bind descriptors (plain functions become bound methods)
+                if hasattr(val, '__get__'):
+                    return val.__get__(pe, type(pe))
+                return val
+
+        raise AttributeError(
+            f"'{type(self).__name__}' object has no attribute '{name}'"
+        )
 
     def __init__(self, main_window, viewer):
         super().__init__()
@@ -213,6 +238,7 @@ class MVATManager(QObject):
         if self.context_matrix is not None:
             # Toolbar buttons
             self.context_matrix.loadCamerasRequested.connect(self.load_cameras)
+            self.context_matrix.loadIndexMapsRequested.connect(self.load_index_maps)
             self.context_matrix.clearSelectionsRequested.connect(self.selection_model.clear_selections)
             self.context_matrix.previousCameraRequested.connect(self._on_previous_camera_requested)
             self.context_matrix.nextCameraRequested.connect(self._on_next_camera_requested)
@@ -420,6 +446,101 @@ class MVATManager(QObject):
             elif self.cameras:
                 self.selection_model.set_active(next(iter(self.cameras)))
 
+    def load_index_maps(self):
+        """Attempt to load pre-computed index maps from disk cache for all loaded cameras.
+
+        Walks every loaded perspective camera and tries the cache manager.  Cameras
+        that already have an index map in RAM are skipped.  This lets the user
+        trigger a bulk cache-load without navigating to each camera individually.
+        """
+        if not self.cameras:
+            self.main_window.status_bar.showMessage("No cameras loaded yet.", 3000)
+            return
+
+        primary_target = self.viewer.scene_context.get_primary_target()
+        if primary_target is None or self.cache_manager is None:
+            self.main_window.status_bar.showMessage(
+                "No 3D target or cache manager available for index map loading.", 4000
+            )
+            return
+
+        target_file_path = primary_target.file_path
+        element_type = primary_target.get_element_type()
+
+        candidates = [
+            cam for cam in self.cameras.values()
+            if getattr(cam._raster, 'index_map', None) is None
+        ]
+
+        if not candidates:
+            self.main_window.status_bar.showMessage(
+                "All cameras already have index maps loaded.", 3000
+            )
+            return
+
+        self.main_window.status_bar.showMessage(
+            f"Loading index maps for {len(candidates)} camera(s)...", 0
+        )
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        QApplication.processEvents()
+
+        loaded = 0
+        skipped = 0
+        try:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            def _load_one(cam):
+                cache_key = cam._raster.extrinsics
+                extra = (
+                    cam._raster.dist_coeffs.tobytes()
+                    if cam.is_distorted and cam._raster.dist_coeffs is not None
+                    else None
+                )
+                try:
+                    return cam, self.cache_manager.load_visibility(
+                        cache_key, target_file_path, element_type, extra,
+                        pixel_budget=self.pixel_budget,
+                    )
+                except Exception as exc:
+                    print(f"load_index_maps: cache load error for {cam.label}: {exc}")
+                    return cam, None
+
+            n_workers = min(8, max(1, len(candidates)))
+            with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                futs = {pool.submit(_load_one, cam): cam for cam in candidates}
+                for fut in as_completed(futs):
+                    cam, data = fut.result()
+                    if data is not None:
+                        cache_path = data.get('cache_path') or self.cache_manager.get_cache_path(
+                            cam._raster.extrinsics, target_file_path, element_type,
+                            (cam._raster.dist_coeffs.tobytes()
+                             if cam.is_distorted and cam._raster.dist_coeffs is not None
+                             else None),
+                            pixel_budget=self.pixel_budget,
+                        )
+                        cam._raster.add_index_map(
+                            data.get('index_map'),
+                            cache_path,
+                            data.get('visible_indices'),
+                            element_type=element_type,
+                            inverted_index=data.get('inverted_index'),
+                        )
+                        if self.compute_depth_maps_enabled:
+                            depth_map = data.get('depth_map')
+                            if depth_map is not None:
+                                try:
+                                    cam._raster.merge_or_set_depth_map(depth_map)
+                                except Exception:
+                                    pass
+                        loaded += 1
+                    else:
+                        skipped += 1
+        finally:
+            QApplication.restoreOverrideCursor()
+            self.main_window.status_bar.showMessage(
+                f"Index maps: {loaded} loaded from cache, {skipped} not cached.", 5000
+            )
+
     def _render_frustums(self):
         """
         Update the 3D scene to render frustums, point cloud and axes.
@@ -565,15 +686,18 @@ class MVATManager(QObject):
 
         Examples
         --------
-        ``"active_to_context"``             → propagate_current_semantic_mask()
-        ``"cameras_to_mesh"``               → aggregate_camera_masks_to_mesh()
-        ``"cameras_to_mesh:+project"``      → aggregate_camera_masks_to_mesh(also_project_to_cameras=True)
-        ``"mesh_to_cameras:skip_unlabeled"``→ project_mesh_labels_to_cameras(skip_unlabeled=True)
-        ``"mesh_to_cameras:keep_all"``      → project_mesh_labels_to_cameras(skip_unlabeled=False)
+        ``"active_to_context"``              → propagate_current_semantic_mask()
+        ``"active_camera_to_mesh"``          → aggregate_active_camera_mask_to_mesh()
+        ``"cameras_to_mesh"``                → aggregate_camera_masks_to_mesh()
+        ``"mesh_to_active_camera:skip_unlabeled"`` → project_mesh_labels_to_active_camera(skip_unlabeled=True)
+        ``"mesh_to_cameras:skip_unlabeled"`` → project_mesh_labels_to_cameras(skip_unlabeled=True)
+        ``"mesh_to_cameras:keep_all"``       → project_mesh_labels_to_cameras(skip_unlabeled=False)
         """
         from coralnet_toolbox.MVAT.ui.QtContextMatrix import (
             PROPAGATE_ACTIVE_TO_CONTEXT,
+            PROPAGATE_ACTIVE_CAMERA_TO_MESH,
             PROPAGATE_CAMERAS_TO_MESH,
+            PROPAGATE_MESH_TO_ACTIVE_CAMERA,
             PROPAGATE_MESH_TO_CAMERAS,
         )
 
@@ -585,9 +709,15 @@ class MVATManager(QObject):
             # Already handled by semanticMaskPropagationRequested → propagate_current_semantic_mask
             pass
 
+        elif base_mode == PROPAGATE_ACTIVE_CAMERA_TO_MESH:
+            self.aggregate_active_camera_mask_to_mesh()
+
         elif base_mode == PROPAGATE_CAMERAS_TO_MESH:
-            also_project = "+project" in flags
-            self.aggregate_camera_masks_to_mesh(also_project_to_cameras=also_project)
+            self.aggregate_camera_masks_to_mesh(also_project_to_cameras=False)
+
+        elif base_mode == PROPAGATE_MESH_TO_ACTIVE_CAMERA:
+            skip_unlabeled = "keep_all" not in flags
+            self.project_mesh_labels_to_active_camera(skip_unlabeled=skip_unlabeled)
 
         elif base_mode == PROPAGATE_MESH_TO_CAMERAS:
             skip_unlabeled = "keep_all" not in flags  # default True; opt-out with :keep_all
@@ -1135,6 +1265,21 @@ class MVATManager(QObject):
             self._pending_depth_build_paths.add(camera_path)
 
         def _lazy_build_depth():
+            from PyQt5.QtCore import QMetaObject, Q_ARG
+
+            def _show_status(msg, timeout=0):
+                try:
+                    QMetaObject.invokeMethod(
+                        self.main_window.status_bar,
+                        "showMessage",
+                        Qt.QueuedConnection,
+                        Q_ARG(str, msg),
+                        Q_ARG(int, timeout),
+                    )
+                except Exception:
+                    pass
+
+            _show_status(f"Building depth map for {camera.label}...")
             try:
                 depth_map = self._reconstruct_depth_map_for_camera_fast(primary_target, camera)
                 if depth_map is None:
@@ -1146,6 +1291,9 @@ class MVATManager(QObject):
                         camera._raster.merge_or_set_depth_map(depth_map)
                     except Exception:
                         pass
+                    _show_status(f"Depth map ready for {camera.label}.", 3000)
+                else:
+                    _show_status(f"Depth map could not be built for {camera.label}.", 4000)
             finally:
                 with self._depth_build_lock:
                     self._pending_depth_build_paths.discard(camera_path)
@@ -1518,14 +1666,22 @@ class MVATManager(QObject):
                     return path, None
 
             n_workers = min(8, max(1, len(cache_candidates)))
-            with ThreadPoolExecutor(max_workers=n_workers) as pool:
-                futs = {
-                    pool.submit(_load_one, path, cam): path
-                    for path, cam in cache_candidates.items()
-                }
-                for fut in as_completed(futs):
-                    path, data = fut.result()
-                    cache_results[path] = data
+            self.main_window.status_bar.showMessage(
+                f"Loading index maps for {len(cache_candidates)} camera(s) from cache...", 0
+            )
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            QApplication.processEvents()
+            try:
+                with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                    futs = {
+                        pool.submit(_load_one, path, cam): path
+                        for path, cam in cache_candidates.items()
+                    }
+                    for fut in as_completed(futs):
+                        path, data = fut.result()
+                        cache_results[path] = data
+            finally:
+                QApplication.restoreOverrideCursor()
 
         # ------------------------------------------------------------------
         # Phase 3: Apply cache results on the main (Qt) thread, queue misses
@@ -3369,27 +3525,34 @@ class MVATManager(QObject):
             
         return combined_score
 
-    def _reorder_cameras(self, reference_path, hide_distant_cameras=True):
-        """Reorder cameras based on proximity to reference camera."""
+    def _reorder_cameras(self, reference_path):
+        """Reorder cameras based on proximity to reference camera.
+
+        All loaded cameras are always included so the user can scroll to any
+        camera regardless of its angle relative to the active one.  Nearby
+        cameras (non-zero proximity score) are floated to the front; distant /
+        facing-away cameras are appended at the end.
+        """
         reference_camera = self.cameras.get(reference_path)
-        if not reference_camera: 
+        if not reference_camera:
             return
-        
-        camera_scores = []
+
+        nearby = []    # (path, score) with score > 0
+        distant = []   # paths with score == 0
+
         for path, camera in self.cameras.items():
             if path == reference_path:
-                score = float('inf')
+                nearby.append((path, float('inf')))
             else:
                 score = self._calculate_camera_proximity_score(reference_camera, camera)
-            
-            if hide_distant_cameras and score == 0.0 and path != reference_path:
-                continue
-            camera_scores.append((path, score))
-            
-        camera_scores.sort(key=lambda x: x[1], reverse=True)
-        ordered_paths = [p for p, s in camera_scores]
-        
-        # Feed ContextMatrixWidget with proximity-ordered neighbors
+                if score > 0.0:
+                    nearby.append((path, score))
+                else:
+                    distant.append(path)
+
+        nearby.sort(key=lambda x: x[1], reverse=True)
+        ordered_paths = [p for p, _ in nearby] + distant
+
         if self.context_matrix is not None:
             self.context_matrix.set_camera_order(ordered_paths, reference_path)
 
