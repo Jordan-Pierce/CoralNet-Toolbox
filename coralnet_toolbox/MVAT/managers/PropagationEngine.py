@@ -1836,8 +1836,6 @@ class PropagationEngine(QObject):
                     if label_id is not None:
                         self._mesh_class_label_ids[canonical_class_id] = label_id
 
-                    print(f"DEBUG [_do_universal_propagation]: Painting mesh with source_class_id={source_class_id} -> canonical_class_id={canonical_class_id}, label_id={label_id}, label_name={label.short_label_code if hasattr(label, 'short_label_code') else 'unknown'}")
-
                     repaint_tasks.append({
                         'type': '3d_paint',
                         'painted_ids': subset_elements.copy(),
@@ -2768,13 +2766,10 @@ class PropagationEngine(QObject):
             # Translate local class IDs → canonical IDs so votes from cameras
             # with different label orderings count toward the same label.
             canonical_ids = np.zeros_like(local_class_ids)
-            print(f"DEBUG [_bg_aggregate_cameras_to_mesh]: class_label_ids={class_label_ids}, canonical_id_for={canonical_id_for}")
             for local_id, label_id in class_label_ids.items():
                 canon_id = canonical_id_for.get(label_id)
                 if canon_id is None:
-                    print(f"DEBUG: No canonical_id for label_id={label_id}")
                     continue
-                print(f"DEBUG: Mapping local_id={local_id} -> label_id={label_id} -> canon_id={canon_id}")
                 canonical_ids[local_class_ids == local_id] = canon_id
 
             valid = canonical_ids > 0
@@ -2842,9 +2837,7 @@ class PropagationEngine(QObject):
 
         # Persist the canonical mapping so project_mesh_labels_to_cameras can
         # resolve these class IDs back to label UUIDs.
-        print(f"DEBUG [_bg_aggregate_cameras_to_mesh]: new_mesh_class_label_ids = {new_mesh_class_label_ids}")
         self._mesh_class_label_ids.update(new_mesh_class_label_ids)
-        print(f"DEBUG [_bg_aggregate_cameras_to_mesh]: After update, _mesh_class_label_ids = {self._mesh_class_label_ids}")
 
         elapsed_ms = (perf_counter() - t0) * 1000
         label_summary = ", ".join(
@@ -2888,7 +2881,6 @@ class PropagationEngine(QObject):
                 'timeout': 5000,
             })
 
-        print(f"DEBUG [_bg_aggregate_cameras_to_mesh]: EMIT - About to emit repaint tasks. Final _mesh_class_label_ids = {self._mesh_class_label_ids}")
         self._universal_repaint_signal.emit(repaint_tasks)
 
     # ── Flow 3: Mesh → All cameras ────────────────────────────────────────────
@@ -2908,7 +2900,6 @@ class PropagationEngine(QObject):
                             face carries a non-zero class.  When False, unlabeled
                             faces clear the pixel's existing label.
         """
-        print(f"DEBUG [project_mesh_labels_to_cameras]: CALLED - _mesh_class_label_ids = {self._mesh_class_label_ids}")
         primary_target = self.viewer.scene_context.get_primary_target()
         if primary_target is None or not hasattr(primary_target, 'class_ids'):
             self._warn_semantic_propagation(
@@ -2928,10 +2919,7 @@ class PropagationEngine(QObject):
             return
 
         mesh_class_ids = np.asarray(primary_target.class_ids, dtype=np.int32).copy()
-        print(f"DEBUG [project_mesh_labels_to_cameras]: Mesh's actual class_ids (unique values) = {np.unique(mesh_class_ids)}")
-        print(f"DEBUG [project_mesh_labels_to_cameras]: self._mesh_class_label_ids BEFORE copy = {self._mesh_class_label_ids}")
         mesh_class_label_ids = dict(self._mesh_class_label_ids)
-        print(f"DEBUG [project_mesh_labels_to_cameras]: mesh_class_label_ids AFTER copy = {mesh_class_label_ids}")
         labels_by_id = {
             getattr(lbl, 'id', None): lbl
             for lbl in project_labels
