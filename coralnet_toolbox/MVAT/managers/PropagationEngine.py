@@ -99,6 +99,9 @@ class PropagationEngine(QObject):
         self.multi_annotate_enabled = False
         self._propagating_annotation = False
         self._pending_unified_propagation_jobs = 0
+        # Busy state for the async multi-annotate semantic-prediction path.
+        self._semantic_propagation_busy = False
+        self._semantic_propagation_done_msg = None
         self._propagation_buffer_pool = {}
 
         # Thread pools for parallel propagation
@@ -2267,13 +2270,18 @@ class PropagationEngine(QObject):
             # last queued unified-repaint job has been applied.  This ties the
             # UI indicators to actual completion instead of a fixed timer, so
             # they stay active until every camera has really been updated.
-            if self._pending_unified_propagation_jobs <= 0 and self.context_matrix is not None:
-                set_busy = getattr(self.context_matrix, 'set_propagation_busy', None)
-                if callable(set_busy):
-                    try:
-                        set_busy(False)
-                    except Exception:
-                        pass
+            if self._pending_unified_propagation_jobs <= 0:
+                if self.context_matrix is not None:
+                    set_busy = getattr(self.context_matrix, 'set_propagation_busy', None)
+                    if callable(set_busy):
+                        try:
+                            set_busy(False)
+                        except Exception:
+                            pass
+                # Restore the cursor / post the done message for a multi-annotate
+                # semantic-prediction propagation, which is async and therefore
+                # cannot restore these in its own call frame.
+                self._end_semantic_propagation_busy()
             print(f"DEBUG [Sync Repaint (Main Thread)]: Pushed {len(repaint_tasks)} image updates to UI in {(perf_counter() - t0) * 1000:.2f}ms")
 
     def _on_semantic_prediction_applied(self, image_path: str, source_mask_annotation, prediction_regions=None):
@@ -2296,6 +2304,15 @@ class PropagationEngine(QObject):
             source_mask_annotation: The MaskAnnotation whose mask_data was just
                                     updated by the Semantic model.
         """
+        status_bar = getattr(self.main_window, 'status_bar', None)
+
+        def _status(msg, timeout=0):
+            if status_bar is not None and msg:
+                try:
+                    status_bar.showMessage(msg, timeout)
+                except Exception:
+                    pass
+
         source_camera = self._get_camera_for_path(image_path)
         if source_camera is None:
             return
@@ -2303,16 +2320,55 @@ class PropagationEngine(QObject):
         selected_paths = self._get_semantic_target_paths(source_camera)
 
         if not selected_paths:
+            _status("Multi-annotate: no target cameras with index maps to propagate to.", 4000)
             return
 
-        project_labels = list(self.main_window.label_window.labels)
-        element_ids, class_ids, class_label_ids = self._extract_semantic_element_votes(
-            source_camera,
-            source_mask_annotation,
-            prediction_regions=prediction_regions,
+        # This path is otherwise dead silent.  Show a WaitCursor and status-bar
+        # progress so the user knows the semantic prediction is being projected
+        # across the context cameras.  The actual propagation runs asynchronously
+        # on the unified background executor, so the cursor is restored from the
+        # completion handler (_on_universal_repaint) once the job finishes --
+        # NOT here -- otherwise the indicators would clear before the work does.
+        # The synchronous vote-extraction below happens first; if it yields no
+        # geometry we bail and restore the cursor immediately.
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        self._semantic_propagation_busy = True
+        _status(
+            f"Multi-annotate: projecting semantic prediction to {len(selected_paths)} camera(s)...",
+            0,
         )
+        QApplication.processEvents()
+
+        try:
+            project_labels = list(self.main_window.label_window.labels)
+            element_ids, class_ids, class_label_ids = self._extract_semantic_element_votes(
+                source_camera,
+                source_mask_annotation,
+                prediction_regions=prediction_regions,
+            )
+        except Exception:
+            self._end_semantic_propagation_busy()
+            _status("Multi-annotate: semantic prediction failed during vote extraction.", 4000)
+            raise
+
         if element_ids.size == 0 or class_ids.size == 0 or not class_label_ids:
+            self._end_semantic_propagation_busy()
+            _status(
+                "Multi-annotate: semantic prediction covers no scene geometry; nothing to propagate.",
+                4000,
+            )
             return
+
+        _status(
+            f"Multi-annotate: painting {element_ids.size:,} element(s) "
+            f"across {len(selected_paths)} camera(s)...",
+            0,
+        )
+        # Stash a completion message the async handler will post when done.
+        self._semantic_propagation_done_msg = (
+            f"Multi-annotate: propagated semantic prediction to {len(selected_paths)} camera(s)."
+        )
+        QApplication.processEvents()
 
         self._execute_mask_propagation(
             source_camera=source_camera,
@@ -2322,6 +2378,29 @@ class PropagationEngine(QObject):
             project_labels=project_labels,
             class_label_ids=class_label_ids,
         )
+
+    def _end_semantic_propagation_busy(self):
+        """Restore the cursor / post the done message for a semantic propagation.
+
+        Safe to call multiple times; only the first call after a busy period
+        takes effect.
+        """
+        if not getattr(self, '_semantic_propagation_busy', False):
+            return
+        self._semantic_propagation_busy = False
+        try:
+            QApplication.restoreOverrideCursor()
+        except Exception:
+            pass
+        done_msg = getattr(self, '_semantic_propagation_done_msg', None)
+        self._semantic_propagation_done_msg = None
+        if done_msg:
+            status_bar = getattr(self.main_window, 'status_bar', None)
+            if status_bar is not None:
+                try:
+                    status_bar.showMessage(done_msg, 4000)
+                except Exception:
+                    pass
 
     def _on_viewer_sam_accepted(self, binary_mask, index_map, depth_map, element_type, label):
         """Convert mask pixels to element IDs and propagate to target cameras.
@@ -3027,3 +3106,4 @@ class PropagationEngine(QObject):
                 traceback.print_exc()
 
         return repaint_tasks
+
