@@ -1856,13 +1856,19 @@ class MVATManager(QObject):
             QApplication.restoreOverrideCursor()
 
     # --- Label painter management ------------------------------------------------
-    def submit_3d_face_paint(self, face_ids, color_rgb, class_id: int, primary_target=None):
+    def submit_3d_face_paint(self, face_ids, color_rgb, class_id: int, primary_target=None, label_id=None):
         """Queue a 3D face paint update through the shared overlay painter.
 
         Tool code should compute the covered face IDs, then call this helper
         instead of reaching into ``_label_painter_thread`` directly.  The helper
         keeps thread lifecycle, mesh validation, and queue submission in one
         place while leaving geometry selection in the caller.
+
+        Args:
+            label_id: Optional UUID of the label for this class_id. When provided
+                     (especially during programmatic mesh painting from semantic
+                     predictions or aggregation), this prevents the code from
+                     looking up the active UI label, which could be incorrect.
         """
         try:
             face_ids = np.asarray(face_ids, dtype=np.int32).ravel()
@@ -1888,12 +1894,26 @@ class MVATManager(QObject):
         # first" even though primary_target.class_ids is populated.
         if int(class_id) != 0:
             try:
-                active_label = self._get_active_label_widget()
-                label_id = getattr(active_label, 'id', None)
                 engine = getattr(self, 'propagation_engine', None)
-                if label_id is not None and engine is not None:
-                    engine._mesh_class_label_ids[int(class_id)] = label_id
-            except Exception:
+                if engine is not None:
+                    # CRITICAL FIX: Use provided label_id if available to avoid
+                    # relying on the active UI label, which could overwrite
+                    # the wrong mesh_class_label_ids entry during semantic prediction
+                    # or mesh aggregation workflows.
+                    if label_id is not None:
+                        print(f"DEBUG [submit_3d_face_paint]: Using provided label_id={label_id} for class_id={class_id}")
+                        engine._mesh_class_label_ids[int(class_id)] = label_id
+                    else:
+                        # Fallback to active label only when no label_id provided
+                        # (e.g., direct brush painting on the 3D mesh)
+                        print(f"DEBUG [submit_3d_face_paint]: label_id is None, using active label for class_id={class_id}")
+                        active_label = self._get_active_label_widget()
+                        fallback_label_id = getattr(active_label, 'id', None)
+                        if fallback_label_id is not None:
+                            print(f"DEBUG [submit_3d_face_paint]: Setting _mesh_class_label_ids[{class_id}] = {fallback_label_id} (active label)")
+                            engine._mesh_class_label_ids[int(class_id)] = fallback_label_id
+            except Exception as e:
+                print(f"DEBUG [submit_3d_face_paint]: Exception: {e}")
                 pass
 
         self._ensure_label_painter(primary_target)
