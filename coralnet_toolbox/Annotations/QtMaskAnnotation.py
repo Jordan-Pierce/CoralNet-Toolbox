@@ -257,10 +257,18 @@ class MaskAnnotation(Annotation):
         self.graphics_item.update()
 
     def update_graphics_item(self, update_rect=None):
-        """Update the graphics item when mask data has changed."""
-        if self.graphics_item is None:
-            return
+        """Update the colored canvas / qimage when mask data has changed.
 
+        IMPORTANT: the colored_mask recompute and qimage rebuild must run even
+        when this annotation has no AnnotationWindow ``graphics_item`` yet.
+        Context-matrix cameras that were never opened in the AnnotationWindow
+        (e.g. masks pre-allocated for cache-loaded cameras during a
+        Mesh -> All Cameras projection) carry a read-only overlay item on their
+        matrix canvas but no primary graphics_item.  Returning early here left
+        their qimage stale, so the matrix thumbnail never reflected the new
+        labels until the camera was activated as the primary view.  Only the
+        ``graphics_item.update()`` call is gated on graphics_item existing.
+        """
         height, width = self.mask_data.shape
 
         if update_rect:
@@ -268,17 +276,19 @@ class MaskAnnotation(Annotation):
             self._update_canvas_slice(update_rect)
             # Recreate QImage so Qt's OpenGL texture cache sees a new cacheKey
             self.qimage = QImage(self.colored_mask.data, width, height, QImage.Format_RGBA8888)
-            qt_rect = QRectF(update_rect[0],
-                             update_rect[1],
-                             update_rect[2] - update_rect[0],
-                             update_rect[3] - update_rect[1])
-            self.graphics_item.update(qt_rect)
+            if self.graphics_item is not None:
+                qt_rect = QRectF(update_rect[0],
+                                 update_rect[1],
+                                 update_rect[2] - update_rect[0],
+                                 update_rect[3] - update_rect[1])
+                self.graphics_item.update(qt_rect)
         else:
             # Full update for global changes (e.g., label color changes)
             self._update_full_canvas()
             # Recreate QImage so Qt's OpenGL texture cache sees a new cacheKey
             self.qimage = QImage(self.colored_mask.data, width, height, QImage.Format_RGBA8888)
-            self.graphics_item.update()
+            if self.graphics_item is not None:
+                self.graphics_item.update()
 
     def apply_flat_values_at_indices(self, flat_indices, class_values, silent: bool = False, update_rect=None):
         """Apply raw mask values at exact flat indices without lock filtering.

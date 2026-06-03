@@ -1388,7 +1388,11 @@ class ContextMatrixWidget(QWidget):
         if btn is not None:
             btn.setEnabled(False)
 
-        QApplication.setOverrideCursor(Qt.WaitCursor)
+        # Enter the busy state.  The cursor and button are NOT restored here;
+        # propagation may continue asynchronously on a background executor.
+        # set_propagation_busy(False) is called from the PropagationEngine once
+        # the last unified-repaint job completes (see _maybe_finish_propagation).
+        self.set_propagation_busy(True)
         QApplication.processEvents()
         try:
             if mode == PROPAGATE_ACTIVE_TO_CONTEXT:
@@ -1410,12 +1414,51 @@ class ContextMatrixWidget(QWidget):
                 # Always skip unlabeled mesh faces
                 self.maskPropagationRequested.emit(mode + ":skip_unlabeled")
         finally:
-            QApplication.restoreOverrideCursor()
-            # Re-enable after a short delay to absorb any accidental double-click.
-            # Background propagation work may still be running — the status bar
-            # will show completion.
+            # NOTE: cursor/button restoration deliberately omitted here.
+            # Synchronous modes (e.g. Primary -> Secondary) complete within the
+            # emit above and will have already driven set_propagation_busy(False)
+            # via the engine's completion callback.  Async modes (Mesh -> All
+            # Cameras) clear the busy state when their background jobs finish.
+            # As a safety net against a mode that schedules no jobs at all, clear
+            # the busy state on the next event-loop turn if no job is pending.
+            QTimer.singleShot(0, self._clear_busy_if_idle)
+
+    def set_propagation_busy(self, busy: bool):
+        """Enter or leave the propagation busy state.
+
+        While busy, the propagate button is disabled and a WaitCursor is shown.
+        Driven by the PropagationEngine so the indicators stay active until the
+        actual (possibly asynchronous) work finishes, rather than being cleared
+        on a fixed timer.
+        """
+        was_busy = getattr(self, '_propagation_busy', False)
+        self._propagation_busy = bool(busy)
+        btn = getattr(self, '_propagate_mask_btn', None)
+
+        if busy:
+            if not was_busy:
+                QApplication.setOverrideCursor(Qt.WaitCursor)
             if btn is not None:
-                QTimer.singleShot(1500, lambda: btn.setEnabled(self._scene_controls_enabled))
+                btn.setEnabled(False)
+        else:
+            if was_busy:
+                QApplication.restoreOverrideCursor()
+            if btn is not None:
+                btn.setEnabled(self._scene_controls_enabled)
+
+    def _clear_busy_if_idle(self):
+        """Safety net: clear the busy state if no propagation job is pending.
+
+        Covers modes that complete synchronously without scheduling a background
+        job (so the engine never fires a completion callback).
+        """
+        mgr = getattr(self, '_mvat_manager', None)
+        pending = 0
+        if mgr is not None:
+            engine = getattr(mgr, 'propagation_engine', None)
+            pending = int(getattr(engine, '_pending_unified_propagation_jobs', 0) or 0)
+        if pending <= 0:
+            self.set_propagation_busy(False)
 
     def update_stats(self, perspective_count: int):
         return

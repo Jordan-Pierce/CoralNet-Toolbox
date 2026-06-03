@@ -2223,9 +2223,26 @@ class PropagationEngine(QObject):
                 if should_update_now:
                     # Wire overlay BEFORE updating so freshly-created masks
                     # (e.g. pre-allocated for cache-loaded cameras) are visible.
-                    if context_canvas is not None and context_canvas._mask_overlay_item is None:
-                        context_canvas.set_mask_overlay(target_mask)
+                    # Always (re)wire: set_mask_overlay is a no-op when the item
+                    # already points at this mask, but it guarantees the matrix
+                    # canvas has a live MaskGraphicsItem even for cameras that
+                    # were never opened in the AnnotationWindow.
+                    context_canvas.set_mask_overlay(target_mask)
+                    # Recompute colored_mask + qimage from mask_data.  This must
+                    # run even when the mask has no AnnotationWindow graphics_item
+                    # (cache-loaded context cameras), otherwise the matrix overlay
+                    # would paint a stale image and the thumbnail would not update
+                    # until the camera was activated as primary.
                     target_mask.update_graphics_item(update_rect=task.get('update_rect'))
+                    # Force the matrix overlay item itself to repaint from the
+                    # freshly rebuilt qimage (the mask's update_graphics_item only
+                    # repaints its own AnnotationWindow item, not this overlay).
+                    overlay_item = getattr(context_canvas, '_mask_overlay_item', None)
+                    if overlay_item is not None:
+                        try:
+                            overlay_item.update()
+                        except Exception:
+                            pass
                 elif self.context_matrix is not None:
                     self.context_matrix.queue_pending_repaint(
                         target_path,
@@ -2246,6 +2263,17 @@ class PropagationEngine(QObject):
                 request_flush = getattr(self, 'request_lazy_flush', None)
                 if callable(request_flush):
                     request_flush()
+            # Clear the matrix busy state (cursor + propagate button) once the
+            # last queued unified-repaint job has been applied.  This ties the
+            # UI indicators to actual completion instead of a fixed timer, so
+            # they stay active until every camera has really been updated.
+            if self._pending_unified_propagation_jobs <= 0 and self.context_matrix is not None:
+                set_busy = getattr(self.context_matrix, 'set_propagation_busy', None)
+                if callable(set_busy):
+                    try:
+                        set_busy(False)
+                    except Exception:
+                        pass
             print(f"DEBUG [Sync Repaint (Main Thread)]: Pushed {len(repaint_tasks)} image updates to UI in {(perf_counter() - t0) * 1000:.2f}ms")
 
     def _on_semantic_prediction_applied(self, image_path: str, source_mask_annotation, prediction_regions=None):

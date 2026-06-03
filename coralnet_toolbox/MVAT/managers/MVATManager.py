@@ -35,9 +35,6 @@ from coralnet_toolbox.MVAT.core.constants import (
     MARKER_COLOR_SELECTED,
     MARKER_COLOR_HIGHLIGHTED,
     MARKER_COLOR_INVALID,
-    RAY_COLOR_SELECTED,
-    RAY_COLOR_HIGHLIGHTED,
-    RAY_COLOR_INVALID,
 )
 
 from coralnet_toolbox.MVAT.core.Products import MeshProduct
@@ -50,13 +47,9 @@ from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 logger = get_visibility_logger()
 
 
-
-
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
-
-
 
 
 class MVATManager(QObject):
