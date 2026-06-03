@@ -2165,7 +2165,6 @@ class PropagationEngine(QObject):
 
     def _on_universal_repaint(self, repaint_tasks: list):
         """Apply localized UI updates produced by the unified propagation worker."""
-        print(f"DEBUG [_on_universal_repaint]: START - _mesh_class_label_ids = {self._mesh_class_label_ids}")
         t0 = perf_counter()
         needs_3d_flush = False
         try:
@@ -2214,7 +2213,6 @@ class PropagationEngine(QObject):
                     # IMPORTANT: Pass label_id to avoid relying on active UI label
                     # which could overwrite the wrong mesh_class_label_ids entry
                     label_id = task.get('label_id')
-                    print(f"DEBUG [_on_universal_repaint 3d_paint]: task['source_class_id']={task.get('source_class_id')}, label_id from task={label_id}")
                     self.submit_3d_face_paint(
                         task['painted_ids'],
                         task['target_color'],
@@ -2284,7 +2282,6 @@ class PropagationEngine(QObject):
         except Exception as e:
             print(f"Error in _on_universal_repaint: {e}")
         finally:
-            print(f"DEBUG [_on_universal_repaint]: END - _mesh_class_label_ids = {self._mesh_class_label_ids}")
             self._pending_unified_propagation_jobs = max(
                 0,
                 self._pending_unified_propagation_jobs - 1,
@@ -2310,7 +2307,6 @@ class PropagationEngine(QObject):
                 # semantic-prediction propagation, which is async and therefore
                 # cannot restore these in its own call frame.
                 self._end_semantic_propagation_busy()
-            print(f"DEBUG [Sync Repaint (Main Thread)]: Pushed {len(repaint_tasks)} image updates to UI in {(perf_counter() - t0) * 1000:.2f}ms")
 
     def _on_semantic_prediction_applied(self, image_path: str, source_mask_annotation, prediction_regions=None):
         """Propagate a semantic segmentation prediction to all target cameras.
@@ -2999,7 +2995,6 @@ class PropagationEngine(QObject):
         skip_unlabeled,
     ):
         """Background worker: project mesh class_ids to each camera's mask."""
-        print(f"DEBUG [_bg_project_mesh_to_cameras]: CALLED with mesh_class_label_ids = {mesh_class_label_ids}")
         from time import perf_counter
         t0 = perf_counter()
 
@@ -3058,8 +3053,6 @@ class PropagationEngine(QObject):
 
         repaint_tasks = []
 
-        print(f"DEBUG [_compute_mesh_to_camera_repaint_tasks]: mesh_class_label_ids = {mesh_class_label_ids}")
-
         for path, camera in cameras:
             try:
                 raster = getattr(camera, '_raster', None)
@@ -3112,7 +3105,6 @@ class PropagationEngine(QObject):
                 # canon_id=2→target_id=3 would remapped pixels from step 1).
                 written_classes = np.unique(new_class_layer[write_mask])
                 written_classes = written_classes[written_classes > 0]
-                print(f"DEBUG [_compute_mesh_to_camera_repaint_tasks]: For camera {path}, write_mask has {np.sum(write_mask)} pixels, written_classes={list(written_classes)}")
                 written_label_ids = set()
 
                 # Build complete canon_id → target_class_id mapping FIRST
@@ -3120,23 +3112,18 @@ class PropagationEngine(QObject):
                 for canon_id in written_classes:
                     label_id = mesh_class_label_ids.get(int(canon_id))
                     if label_id is None:
-                        print(f"DEBUG [_compute_mesh_to_camera_repaint_tasks]: No label_id found for mesh canon_id={canon_id}")
                         continue
                     label = labels_by_id.get(label_id)
                     if label is None:
-                        print(f"DEBUG [_compute_mesh_to_camera_repaint_tasks]: No label found for label_id={label_id}")
                         continue
 
                     target_class_id = mask_annotation.label_id_to_class_id_map.get(label_id)
                     if target_class_id is None:
-                        print(f"DEBUG [_compute_mesh_to_camera_repaint_tasks]: Syncing label_map for {label.short_label_code if hasattr(label, 'short_label_code') else label_id}")
                         mask_annotation.sync_label_map([label])
                         target_class_id = mask_annotation.label_id_to_class_id_map.get(label_id)
                     if target_class_id is None:
-                        print(f"DEBUG [_compute_mesh_to_camera_repaint_tasks]: Failed to get target_class_id for {label_id}")
                         continue
 
-                    print(f"DEBUG [_compute_mesh_to_camera_repaint_tasks]: Mapping canon_id={canon_id} -> target_class_id={target_class_id} for label={label.short_label_code if hasattr(label, 'short_label_code') else label_id}")
                     canon_to_target_lut[int(canon_id)] = int(target_class_id)
                     written_label_ids.add(label_id)
 
@@ -3145,10 +3132,8 @@ class PropagationEngine(QObject):
                     final_class_layer = new_class_layer.copy()
                     for canon_id, target_id in canon_to_target_lut.items():
                         final_class_layer[new_class_layer == canon_id] = target_id
-                    print(f"DEBUG [_compute_mesh_to_camera_repaint_tasks]: Writing to {path}: unique values being written = {np.unique(final_class_layer[write_mask])}, total pixels = {np.sum(write_mask)}")
                     mask_data[write_mask] = final_class_layer[write_mask]
                 else:
-                    print(f"DEBUG [_compute_mesh_to_camera_repaint_tasks]: Writing to {path}: unique values being written = {np.unique(new_class_layer[write_mask])}, total pixels = {np.sum(write_mask)}")
                     mask_data[write_mask] = new_class_layer[write_mask]
 
                 ys, xs = np.where(write_mask)
