@@ -214,6 +214,7 @@ class ContextMatrixWidget(QWidget):
 
         # Multi-camera annotation state
         self.multi_annotate_enabled = False
+        self._skip_unlabeled_mesh_faces = False
         self._pending_sync = None
         self._active_camera_path = None
 
@@ -718,10 +719,8 @@ class ContextMatrixWidget(QWidget):
         self._scene_controls_enabled = bool(enabled)
         if hasattr(self, 'load_btn'):
             self.load_btn.setEnabled(self._scene_controls_enabled)
-        if hasattr(self, '_multi_annotate_btn'):
-            self._multi_annotate_btn.setEnabled(self._scene_controls_enabled)
-        if hasattr(self, '_propagate_mask_btn'):
-            self._propagate_mask_btn.setEnabled(self._scene_controls_enabled)
+        if hasattr(self, '_propagate_hub_btn'):
+            self._propagate_hub_btn.setEnabled(self._scene_controls_enabled)
         self._update_canvas_size_controls()
         self._update_canvas_count_controls()
 
@@ -1120,78 +1119,10 @@ class ContextMatrixWidget(QWidget):
         sep0.setFrameShadow(QFrame.Sunken)
         layout.addWidget(sep0)
 
-        self._multi_annotate_btn = QToolButton()
-        self._multi_annotate_btn.setText("Multi-Annotate")
-        self._multi_annotate_btn.setCheckable(True)
-        self._multi_annotate_btn.setChecked(False)
-        self._multi_annotate_btn.setToolTip("Multi-Camera Annotation")
-        self._multi_annotate_btn.setAutoRaise(True)
-        self._multi_annotate_btn.toggled.connect(self._on_multi_annotate_toggled)
-        layout.addWidget(self._multi_annotate_btn)
+        # Build the unified Propagation Hub dropdown
+        self._propagate_hub_btn = self._build_propagation_hub()
+        layout.addWidget(self._propagate_hub_btn)
 
-        sep1 = QFrame()
-        sep1.setFrameShape(QFrame.VLine)
-        sep1.setFrameShadow(QFrame.Sunken)
-        layout.addWidget(sep1)
-
-        # Split-button: left area triggers the selected propagation mode;
-        # arrow area opens a dropdown to choose the mode.
-        self._propagate_mask_btn = QToolButton()
-        self._propagate_mask_btn.setPopupMode(QToolButton.MenuButtonPopup)
-        self._propagate_mask_btn.setAutoRaise(True)
-        self._propagate_mask_btn.clicked.connect(self._on_propagate_mask_clicked)
-
-        propagate_menu = QMenu(self._propagate_mask_btn)
-
-        act_primary_secondary = QAction("Primary → Secondary Cameras", self._propagate_mask_btn)
-        act_primary_secondary.setData(PROPAGATE_ACTIVE_TO_CONTEXT)
-        act_primary_secondary.triggered.connect(
-            lambda: self._on_propagate_mode_selected(PROPAGATE_ACTIVE_TO_CONTEXT)
-        )
-
-        act_primary_mesh = QAction("Primary → Mesh", self._propagate_mask_btn)
-        act_primary_mesh.setData(PROPAGATE_ACTIVE_CAMERA_TO_MESH)
-        act_primary_mesh.triggered.connect(
-            lambda: self._on_propagate_mode_selected(PROPAGATE_ACTIVE_CAMERA_TO_MESH)
-        )
-
-        act_cameras_mesh = QAction("All Cameras → Mesh", self._propagate_mask_btn)
-        act_cameras_mesh.setData(PROPAGATE_CAMERAS_TO_MESH)
-        act_cameras_mesh.triggered.connect(
-            lambda: self._on_propagate_mode_selected(PROPAGATE_CAMERAS_TO_MESH)
-        )
-
-        act_mesh_primary = QAction("Mesh → Primary", self._propagate_mask_btn)
-        act_mesh_primary.setData(PROPAGATE_MESH_TO_ACTIVE_CAMERA)
-        act_mesh_primary.triggered.connect(
-            lambda: self._on_propagate_mode_selected(PROPAGATE_MESH_TO_ACTIVE_CAMERA)
-        )
-
-        act_mesh_cameras = QAction("Mesh → All Cameras", self._propagate_mask_btn)
-        act_mesh_cameras.setData(PROPAGATE_MESH_TO_CAMERAS)
-        act_mesh_cameras.triggered.connect(
-            lambda: self._on_propagate_mode_selected(PROPAGATE_MESH_TO_CAMERAS)
-        )
-
-        propagate_menu.addAction(act_primary_secondary)
-        propagate_menu.addSeparator()
-        propagate_menu.addAction(act_primary_mesh)
-        propagate_menu.addAction(act_cameras_mesh)
-        propagate_menu.addSeparator()
-        propagate_menu.addAction(act_mesh_primary)
-        propagate_menu.addAction(act_mesh_cameras)
-        self._propagate_mask_btn.setMenu(propagate_menu)
-
-        # Default mode shown on the button face
-        self._propagate_current_mode = PROPAGATE_ACTIVE_TO_CONTEXT
-        self._propagate_mask_btn.setText(
-            _PROPAGATE_MODE_LABELS.get(PROPAGATE_ACTIVE_TO_CONTEXT, "Propagate")
-        )
-        self._propagate_mask_btn.setToolTip(
-            "Propagate the primary image\u2019s mask to secondary context cameras.\n"
-            "Use the arrow to switch mode; click to run."
-        )
-        layout.addWidget(self._propagate_mask_btn)
 
         layout.addStretch(1)
 
@@ -1314,6 +1245,135 @@ class ContextMatrixWidget(QWidget):
     def refresh_scaling(self):
         """Refresh toolbar sizing after a UI scale change."""
         self._sync_context_toolbar_scaling()
+
+    def _build_propagation_hub(self) -> QToolButton:
+        """
+        Build the unified Propagation Hub dropdown button with all propagation modes
+        and settings consolidated into a single dropdown menu.
+
+        Structure:
+        ├─ Primary Camera
+        │  ├─ Project to Mesh → Visible Cameras
+        │  └─ Project to Mesh → All Cameras
+        ├─ Mesh
+        │  ├─ Project to Primary
+        │  ├─ Project to Visible Cameras
+        │  ├─ Project to All Cameras
+        │  └─ Project to Specific Cameras... (disabled)
+        └─ Settings
+           ├─ ☑ Multi-annotate: ON
+           └─ ☐ Skip unlabeled mesh faces
+        """
+        # Create the dropdown button
+        hub_btn = QToolButton()
+        hub_btn.setPopupMode(QToolButton.MenuButtonPopup)
+        hub_btn.setAutoRaise(True)
+        hub_btn.setText("⊕ Propagation")
+        hub_btn.setToolTip("Unified propagation control panel")
+        hub_btn.clicked.connect(self._on_propagate_mask_clicked)
+
+        # Create the main menu
+        hub_menu = QMenu(hub_btn)
+
+        # ===== PRIMARY CAMERA SECTION =====
+        # Section header (non-clickable, just a visual label)
+        primary_header = QAction("Primary Camera", hub_btn)
+        primary_header.setEnabled(False)  # Make it non-clickable
+        hub_menu.addAction(primary_header)
+
+        # Project to Mesh → Visible Cameras (multi-annotate to visible)
+        act_primary_to_visible = QAction("→ Project to Mesh → Visible Cameras", hub_btn)
+        act_primary_to_visible.setData(PROPAGATE_ACTIVE_TO_CONTEXT)
+        act_primary_to_visible.triggered.connect(
+            lambda: self._on_propagate_mode_selected(PROPAGATE_ACTIVE_TO_CONTEXT)
+        )
+        hub_menu.addAction(act_primary_to_visible)
+
+        # Project to Mesh → All Cameras (aggregate primary to mesh, then project to all)
+        act_primary_to_all = QAction("→ Project to Mesh → All Cameras", hub_btn)
+        act_primary_to_all.setData(PROPAGATE_ACTIVE_CAMERA_TO_MESH)
+        act_primary_to_all.triggered.connect(
+            lambda: self._on_propagate_mode_selected(PROPAGATE_ACTIVE_CAMERA_TO_MESH)
+        )
+        hub_menu.addAction(act_primary_to_all)
+
+        hub_menu.addSeparator()
+
+        # ===== MESH SECTION =====
+        mesh_header = QAction("Mesh", hub_btn)
+        mesh_header.setEnabled(False)
+        hub_menu.addAction(mesh_header)
+
+        # Project to Primary
+        act_mesh_to_primary = QAction("→ Project to Primary", hub_btn)
+        act_mesh_to_primary.setData(PROPAGATE_MESH_TO_ACTIVE_CAMERA)
+        act_mesh_to_primary.triggered.connect(
+            lambda: self._on_propagate_mode_selected(PROPAGATE_MESH_TO_ACTIVE_CAMERA)
+        )
+        hub_menu.addAction(act_mesh_to_primary)
+
+        # Project to Visible Cameras (everything in ContextMatrix)
+        act_mesh_to_visible = QAction("→ Project to Visible Cameras", hub_btn)
+        act_mesh_to_visible.setData(PROPAGATE_ACTIVE_TO_CONTEXT)
+        act_mesh_to_visible.triggered.connect(
+            lambda: self._on_propagate_mode_selected(PROPAGATE_ACTIVE_TO_CONTEXT)
+        )
+        hub_menu.addAction(act_mesh_to_visible)
+
+        # Project to All Cameras (everyone with an index map)
+        act_mesh_to_all = QAction("→ Project to All Cameras", hub_btn)
+        act_mesh_to_all.setData(PROPAGATE_MESH_TO_CAMERAS)
+        act_mesh_to_all.triggered.connect(
+            lambda: self._on_propagate_mode_selected(PROPAGATE_MESH_TO_CAMERAS)
+        )
+        hub_menu.addAction(act_mesh_to_all)
+
+        # Project to Specific Cameras (disabled for now)
+        act_mesh_to_specific = QAction("→ Project to Specific Cameras...", hub_btn)
+        act_mesh_to_specific.setEnabled(False)
+        hub_menu.addAction(act_mesh_to_specific)
+
+        hub_menu.addSeparator()
+
+        # ===== SETTINGS SECTION =====
+        settings_header = QAction("Settings", hub_btn)
+        settings_header.setEnabled(False)
+        hub_menu.addAction(settings_header)
+
+        # Multi-annotate checkbox
+        act_multi_annotate = QAction("Multi-annotate", hub_btn)
+        act_multi_annotate.setCheckable(True)
+        act_multi_annotate.setChecked(self.multi_annotate_enabled)
+        act_multi_annotate.triggered.connect(lambda checked: self._on_multi_annotate_toggled(checked))
+        self._multi_annotate_action = act_multi_annotate
+        hub_menu.addAction(act_multi_annotate)
+
+        # Skip unlabeled mesh faces checkbox
+        act_skip_unlabeled = QAction("Skip unlabeled mesh faces", hub_btn)
+        act_skip_unlabeled.setCheckable(True)
+        act_skip_unlabeled.setChecked(False)
+        act_skip_unlabeled.triggered.connect(lambda checked: self._on_skip_unlabeled_toggled(checked))
+        self._skip_unlabeled_action = act_skip_unlabeled
+        hub_menu.addAction(act_skip_unlabeled)
+
+        hub_btn.setMenu(hub_menu)
+
+        # Store references for later updates (MUST be before _update_propagate_btn_tooltip)
+        self._propagate_mask_btn = hub_btn
+        self._hub_menu = hub_menu
+        self._propagate_hub_btn = hub_btn
+
+        # Initialize state
+        self._propagate_current_mode = PROPAGATE_ACTIVE_TO_CONTEXT
+        hub_btn.setText("⊕ Propagation")
+        self._update_propagate_btn_tooltip(PROPAGATE_ACTIVE_TO_CONTEXT)
+
+        return hub_btn
+
+    def _on_skip_unlabeled_toggled(self, checked: bool):
+        """Called when Skip Unlabeled Mesh Faces checkbox is toggled."""
+        # Store the setting; it can be read when propagation operations run
+        self._skip_unlabeled_mesh_faces = checked
 
     def _on_propagate_mode_selected(self, mode: str):
         """Called from the dropdown — switch the active mode and update tooltip."""
@@ -1483,6 +1543,9 @@ class ContextMatrixWidget(QWidget):
 
     def _on_multi_annotate_toggled(self, checked: bool):
         self.multi_annotate_enabled = checked
+        # Update the action checkbox state if it exists
+        if hasattr(self, '_multi_annotate_action'):
+            self._multi_annotate_action.setChecked(checked)
         self.multiAnnotateToggled.emit(checked)
 
     # ==================== Marker Routing (Phase 4) ====================
@@ -1705,6 +1768,7 @@ class ContextMatrixWidget(QWidget):
 
     # ==================== Annotation Visualization (Phase 6) ====================
 
+
     def clear_all_annotation_overlays(self):
         """Synchronously remove every annotation overlay item from every
         visible canvas.
@@ -1713,7 +1777,7 @@ class ContextMatrixWidget(QWidget):
         objects (e.g. bake + delete).  By clearing the overlays while all
         objects are still alive and consistent, we guarantee that no
         QGraphicsDropShadowEffect item remains in a canvas scene when Qt
-        later coalesces window repaints — eliminating the C-level crash that
+        later coalesces window repaints - eliminating the C-level crash that
         occurs when Qt tries to render a shadow effect whose item is being
         torn down.
         """

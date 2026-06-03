@@ -1901,19 +1901,15 @@ class MVATManager(QObject):
                     # the wrong mesh_class_label_ids entry during semantic prediction
                     # or mesh aggregation workflows.
                     if label_id is not None:
-                        print(f"DEBUG [submit_3d_face_paint]: Using provided label_id={label_id} for class_id={class_id}")
                         engine._mesh_class_label_ids[int(class_id)] = label_id
                     else:
                         # Fallback to active label only when no label_id provided
                         # (e.g., direct brush painting on the 3D mesh)
-                        print(f"DEBUG [submit_3d_face_paint]: label_id is None, using active label for class_id={class_id}")
                         active_label = self._get_active_label_widget()
                         fallback_label_id = getattr(active_label, 'id', None)
                         if fallback_label_id is not None:
-                            print(f"DEBUG [submit_3d_face_paint]: Setting _mesh_class_label_ids[{class_id}] = {fallback_label_id} (active label)")
                             engine._mesh_class_label_ids[int(class_id)] = fallback_label_id
             except Exception as e:
-                print(f"DEBUG [submit_3d_face_paint]: Exception: {e}")
                 pass
 
         self._ensure_label_painter(primary_target)
