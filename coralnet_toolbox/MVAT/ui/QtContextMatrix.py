@@ -499,10 +499,25 @@ class ContextMatrixWidget(QWidget):
         if max_count is not None:
             count = min(count, max_count)
 
+        previous_target = getattr(self, 'target_camera_count', self._canvas_count_min)
         self.target_camera_count = max(self._canvas_count_min, count)
-        layout_ready = self._evaluate_auto_layout()
-        if layout_ready:
-            self._refresh_visible_canvases()
+
+        # Loading additional canvases (and their index maps / images) can take a
+        # noticeable moment, especially when the user ramps the count up to pull
+        # in many cameras at once.  Show a WaitCursor for the duration so there
+        # is clear feedback that work is happening.  Only do so when the count
+        # actually grows -- shrinking is cheap and shouldn't flash the cursor.
+        _show_busy = self.target_camera_count > previous_target
+        if _show_busy:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            QApplication.processEvents()
+        try:
+            layout_ready = self._evaluate_auto_layout()
+            if layout_ready:
+                self._refresh_visible_canvases()
+        finally:
+            if _show_busy:
+                QApplication.restoreOverrideCursor()
 
     def increase_canvas_count(self):
         self.set_target_camera_count(self.target_camera_count + self._canvas_count_step)
