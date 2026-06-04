@@ -68,6 +68,55 @@ class VisibilityManager:
     annotation engines to properly interpret index map values.
     """
 
+    @classmethod
+    def _get_2d_bounding_box(cls, bounds, K, R, t, width, height):
+        """Project 3D mesh bounds to 2D pixel coordinates to find the render crop."""
+        import numpy as np
+        xmin, xmax, ymin, ymax, zmin, zmax = bounds
+        corners_3d = np.array([
+            [xmin, ymin, zmin], [xmin, ymin, zmax],
+            [xmin, ymax, zmin], [xmin, ymax, zmax],
+            [xmax, ymin, zmin], [xmax, ymin, zmax],
+            [xmax, ymax, zmin], [xmax, ymax, zmax],
+        ], dtype=np.float32)
+
+        cam_pos = -R.T @ t
+        
+        # If camera is inside the box, we can't project all corners safely.
+        if (xmin <= cam_pos[0] <= xmax and 
+            ymin <= cam_pos[1] <= ymax and 
+            zmin <= cam_pos[2] <= zmax):
+            return 0, width, 0, height, "FULL_SCREEN"
+
+        corners_cam = corners_3d @ R.T + t
+        
+        # If any corner is behind the camera, the perspective divide will invert them.
+        # This usually means the mesh surrounds the camera or covers the whole view.
+        if np.any(corners_cam[:, 2] <= 0.1):
+            return 0, width, 0, height, "FULL_SCREEN"
+
+        # Project 3D corners to 2D pixels
+        u = K[0, 0] * corners_cam[:, 0] / corners_cam[:, 2] + K[0, 2]
+        v = K[1, 1] * corners_cam[:, 1] / corners_cam[:, 2] + K[1, 2]
+
+        u_min = int(np.floor(np.min(u)))
+        u_max = int(np.ceil(np.max(u)))
+        v_min = int(np.floor(np.min(v)))
+        v_max = int(np.ceil(np.max(v)))
+
+        # Add a 5-pixel padding buffer
+        pad = 5
+        u_min = max(0, u_min - pad)
+        u_max = min(width, u_max + pad)
+        v_min = max(0, v_min - pad)
+        v_max = min(height, v_max + pad)
+
+        # If the box is entirely outside the image bounds, it's off-screen
+        if u_max <= 0 or u_min >= width or v_max <= 0 or v_min >= height:
+            return 0, 0, 0, 0, "OFF_SCREEN"
+
+        return u_min, u_max, v_min, v_max, "CROP"
+
     @staticmethod
     def _build_inverted_index(index_map: np.ndarray):
         """
@@ -968,13 +1017,17 @@ class VisibilityManager:
                                           pixel_budget: Optional[int] = None,
                                           progress_callback=None,
                                           vtk_context: dict = None,
-                                          camera_index_offset: int = 0) -> list:
+                                          camera_index_offset: int = 0,
+                                          use_viewport_cropping: bool = True) -> list:
         """
-        Batched VTK-based mesh rasterization.
-        Performs RGB encoding and Plotter setup ONCE, then iterates through cameras.
-        Yields to the Qt event loop between cameras to keep the UI responsive.
+        Batched VTK-based mesh rasterization with Viewport Cropping.
+        Dynamically calculates the 2D bounding box of the mesh to avoid rendering
+        and transferring empty sky pixels from the GPU.
         """
         import time
+        import pyvista as pv
+        import torch
+        import numpy as np
 
         perf_counter = time.perf_counter
 
@@ -990,6 +1043,7 @@ class VisibilityManager:
         
         mesh = mesh_product.get_mesh()
         n_cells = mesh.n_cells
+        mesh_bounds = mesh.bounds
         
         if n_cells == 0:
             logger.info("   ⚠️ No cells in mesh. Returning empty maps.")
@@ -1003,7 +1057,7 @@ class VisibilityManager:
             
         logger.info(f"   Mesh: {n_cells:,} cells")
         
-        # --- 1. SETUP PHASE (Done Once unless a persistent context is supplied) ---
+        # --- 1. SETUP PHASE ---
         if vtk_context is None:
             setup_start = perf_counter()
             logger.info("   -> Encoding face IDs as RGB colors...")
@@ -1042,7 +1096,6 @@ class VisibilityManager:
             plotter_setup_time = 0.0
             face_center_prep_time = 0.0
             logger.info("   -> Reusing persistent VTK plotter context...")
-        # -----------------------------------------------------------
 
         # --- 2. RENDER LOOP ---
         logger.info(f"\n   -> Rendering {len(camera_params_list)} cameras (Budget: {budget_str})...")
@@ -1052,39 +1105,68 @@ class VisibilityManager:
         
         for i, (K, R, t, width, height) in enumerate(camera_params_list):
             cam_start = perf_counter()
-
             prep_start = perf_counter()
+            t_crop = 0.0
 
-            # Progress callback (thread-safe status bar update)
             if progress_callback is not None:
                 progress_callback(camera_index_offset + i + 1, camera_index_offset + len(camera_params_list))
 
-            # Calculate budget-derived render dimensions for this camera.
             dynamic_scale = _scale_for_dimensions(width, height)
             render_w = max(1, int(round(width * dynamic_scale)))
             render_h = max(1, int(round(height * dynamic_scale)))
 
-            # 2. Resize check (to scaled dimensions)
-            current_size = plotter.window_size
-            if current_size[0] != render_w or current_size[1] != render_h:
-                plotter.window_size = (render_w, render_h)
-
-            # Scale the intrinsic matrix
+            # -----------------------------------------------------------
+            # VIEWPORT CROPPING LOGIC
+            # -----------------------------------------------------------
             K_scaled = K.copy()
             K_scaled[0, :3] *= dynamic_scale
             K_scaled[1, :3] *= dynamic_scale
 
-            # 2. Config & Render using scaled parameters
+            if use_viewport_cropping:
+                t0_crop = perf_counter()
+                u_min, u_max, v_min, v_max, crop_status = cls._get_2d_bounding_box(mesh_bounds, K_scaled, R, t, render_w, render_h)
+                t_crop = perf_counter() - t0_crop
+                
+                if crop_status == "OFF_SCREEN":
+                    # The mesh is completely off-screen. Skip rendering entirely!
+                    results.append({
+                        'index_map': np.full((render_h, render_w), -1, dtype=np.int32),
+                        'visible_indices': np.array([], dtype=np.int32),
+                        'depth_map': np.full((render_h, render_w), np.nan, dtype=np.float32) if compute_depth_map else None,
+                        'inverted_index': None,
+                        'scale_factor': dynamic_scale,
+                    })
+                    results[-1] = cls._normalize_result_dict(results[-1], compute_depth_map)
+                    log_cam_breakdown(cam_label(camera_index_offset + i + 1), perf_counter() - cam_start, t_crop, 0, 0, 0, 0, 0, 0, logger)
+                    continue
+                elif crop_status == "FULL_SCREEN":
+                    crop_w, crop_h = render_w, render_h
+                    u_min, v_min = 0, 0
+                else: # "CROP"
+                    crop_w = u_max - u_min
+                    crop_h = v_max - v_min
+                    K_scaled[0, 2] -= u_min
+                    K_scaled[1, 2] -= v_min
+            else:
+                crop_w, crop_h = render_w, render_h
+                u_min, v_min = 0, 0
+
+            # Resize VTK window to the crop size
+            current_size = plotter.window_size
+            if current_size[0] != crop_w or current_size[1] != crop_h:
+                plotter.window_size = (crop_w, crop_h)
+
+            # Config & Render
             t0 = perf_counter()
-            cls._configure_vtk_camera(plotter, K_scaled, R, t, render_w, render_h, mesh.bounds)
+            cls._configure_vtk_camera(plotter, K_scaled, R, t, crop_w, crop_h, mesh_bounds)
             if is_dual_pass and actor_high is not None:
                 actor_low.SetVisibility(True)
                 actor_high.SetVisibility(False)
             plotter.render()
             t_render = perf_counter() - t0
-            t_prep = t0 - prep_start
+            t_prep = (t0 - prep_start) - t_crop
 
-            # 3. Screenshot transfer (GPU -> CPU)
+            # Screenshot transfer (Tiny footprint if cropped)
             t0 = perf_counter()
             screenshot_low = plotter.screenshot(return_img=True)
             if screenshot_low.shape[2] == 4:
@@ -1100,17 +1182,17 @@ class VisibilityManager:
                     screenshot_high = screenshot_high[:, :, :3]
             t_screenshot = perf_counter() - t0
 
-            # 4. Decoding & Unique Extraction (GPU Math)
+            # Decoding (GPU Math)
             t0 = perf_counter()
-            index_map, visible_indices, index_map_tensor = cls._decode_face_id_screenshot(
+            crop_index_map, visible_indices, crop_index_tensor = cls._decode_face_id_screenshot(
                 screenshot_low,
                 screenshot_high,
             )
             t_decode = perf_counter() - t0
             
-            # 5. Depth Extraction
+            # Depth Extraction
             t0 = perf_counter()
-            depth_map = None
+            crop_depth_map = None
             if compute_depth_map:
                 if HAS_TORCH and torch.cuda.is_available():
                     R_pt = torch.from_numpy(R).to(torch.float32).cuda()
@@ -1119,33 +1201,37 @@ class VisibilityManager:
                     z_cam = torch.matmul(face_centers_pt, R_pt.T)[:, 2] + t_pt[2]
                     z_cam_padded = torch.cat([z_cam, torch.tensor([float('nan')], device='cuda')])
                     
-                    small_depth_tensor = z_cam_padded[index_map_tensor.long()]
-                    
-                    # NO RESIZING!
-                    depth_map = small_depth_tensor.cpu().numpy()
+                    small_depth_tensor = z_cam_padded[crop_index_tensor.long()]
+                    crop_depth_map = small_depth_tensor.cpu().numpy()
                 else:
                     try:
                         vtk_depth = plotter.get_image_depth(fill_value=np.nan)
-                        # NO RESIZING!
-                        depth_map = -vtk_depth.astype(np.float32)
+                        crop_depth_map = -vtk_depth.astype(np.float32)
                     except Exception as e:
-                        logger.warning(f"   ⚠️ Failed to extract depth for {cam_label(i + 1)}: {e}")
-                        # Create an empty map matching the SMALL dimensions
-                        depth_map = np.full((render_h, render_w), np.nan, dtype=np.float32)
+                        crop_depth_map = np.full((crop_h, crop_w), np.nan, dtype=np.float32)
             t_depth = perf_counter() - t0
 
-            # 6. Finalize results and pump the Qt event loop.
+            # Finalize: Paste the crop back into the full-resolution canvas
             t0 = perf_counter()
             
+            full_index_map = np.full((render_h, render_w), -1, dtype=np.int32)
+            full_index_map[v_min:v_min + crop_h, u_min:u_min + crop_w] = crop_index_map
+            
+            if compute_depth_map:
+                full_depth_map = np.full((render_h, render_w), np.nan, dtype=np.float32)
+                full_depth_map[v_min:v_min + crop_h, u_min:u_min + crop_w] = crop_depth_map
+            else:
+                full_depth_map = None
+
             results.append({
-                'index_map': index_map,
+                'index_map': full_index_map,
                 'visible_indices': visible_indices,
-                'depth_map': depth_map,
+                'depth_map': full_depth_map,
                 'inverted_index': None,
                 'scale_factor': dynamic_scale,
             })
             results[-1] = cls._normalize_result_dict(results[-1], compute_depth_map)
-            # 7. UI Yielding
+            
             try:
                 from PyQt5.QtWidgets import QApplication
                 app = QApplication.instance()
@@ -1157,12 +1243,13 @@ class VisibilityManager:
             
             cam_time = perf_counter() - cam_start
             camera_total_sum += cam_time
-            accounted_time = t_prep + t_render + t_screenshot + t_decode + t_depth + t_finalize
+            accounted_time = t_prep + t_crop + t_render + t_screenshot + t_decode + t_depth + t_finalize
             residual_time = max(0.0, cam_time - accounted_time)
+            
             log_cam_breakdown(
                 cam_label(camera_index_offset + i + 1),
                 cam_time,
-                t_prep,
+                t_prep + t_crop,
                 t_render,
                 t_screenshot,
                 t_decode,
@@ -1183,7 +1270,7 @@ class VisibilityManager:
         loop_residual = max(0.0, total_render_time - camera_total_sum - plotter_close_time)
         
         log_summary(
-            "Batch VTK Rasterization",
+            "Batch VTK Rasterization (Viewport Cropping)",
             [
                 f"   - Setup Time     : {encode_time + plotter_setup_time:.4f}s",
                 f"   - Face Center Prep: {face_center_prep_time:.4f}s",
