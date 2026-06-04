@@ -515,43 +515,75 @@ class MeshProduct(AbstractSceneProduct):
         opacity (float): Default rendering opacity.
     """
     
-    def __init__(self, file_path: str, opacity: float = 1.0, product_id: Optional[str] = None):
+    def __init__(self, file_path: str, opacity: float = 1.0, product_id: Optional[str] = None,
+                 sort_mesh: bool = True, simplification_ratio: float = 0.0):
         """
         Initialize MeshProduct from file.
+
+        Args:
+            sort_mesh: When True, spatially sort faces via Morton Z-order after
+                       loading for better GPU cache coherence.
+            simplification_ratio: Fraction of faces to *remove* via
+                fast-simplification (0.0 = no simplification, 1.0 = remove all
+                faces).  Applied before sorting so the sort operates on the
+                already-reduced mesh.  Values above 0.99 are clamped to 0.99 to
+                ensure a non-degenerate result.
         """
         if product_id is None:
             product_id = os.path.basename(file_path)
-        
+
         super().__init__(product_id=product_id, file_path=file_path)
-        
+
         self.opacity = opacity
         self.mesh: Optional[pv.PolyData] = None
         self.array_names = []
         self.available_arrays = []
         self.selected_array = "RGB"
-        
-        # Load and optimize from file with timing
+
         start_time = time.time()
         raw_mesh = pv.read(file_path, progress_bar=True)
         print(f"⏱️ Loaded raw mesh for {self.label} with {raw_mesh.n_cells:,} faces in {time.time() - start_time:.3f}s")
 
-        # SPATIAL SORTING INJECTED
-        sort = True
-        if sort:
-            self.mesh = self._spatially_sort_mesh(raw_mesh)
-            print(f"⏱️ Spatially sorted mesh for {self.label}, in {time.time() - start_time:.3f}s")
+        # Step 1: optional simplification (decimate before sorting so the sort
+        # operates on the already-reduced mesh — smaller work, better locality).
+        working_mesh = raw_mesh
+        if simplification_ratio and simplification_ratio > 0.0:
+            ratio = min(float(simplification_ratio), 0.99)
+            faces_before = working_mesh.n_cells
+            try:
+                import fast_simplification
+                if not working_mesh.is_all_triangles:
+                    working_mesh = working_mesh.triangulate()
+                tris = working_mesh.faces.reshape(-1, 4)[:, 1:]
+                pts_out, tris_out = fast_simplification.simplify(
+                    working_mesh.points, tris, target_reduction=ratio
+                )
+                padding = np.full((len(tris_out), 1), 3, dtype=np.uint32)
+                working_mesh = pv.PolyData(pts_out, np.hstack([padding, tris_out]).flatten())
+                # Preserve cell data arrays where possible (best-effort)
+                print(f"⏱️ fast_simplification: {faces_before:,} → {working_mesh.n_cells:,} faces "
+                      f"({ratio:.0%} reduction) in {time.time() - start_time:.3f}s")
+            except ImportError:
+                working_mesh = raw_mesh.decimate(ratio)
+                print(f"⏱️ PyVista decimate (fast_simplification not installed): "
+                      f"{faces_before:,} → {working_mesh.n_cells:,} faces in {time.time() - start_time:.3f}s")
+
+        # Step 2: optional spatial sort for GPU cache coherence.
+        if sort_mesh:
+            self.mesh = self._spatially_sort_mesh(working_mesh)
+            print(f"⏱️ Spatially sorted mesh for {self.label} in {time.time() - start_time:.3f}s")
         else:
-            self.mesh = raw_mesh
-        
+            self.mesh = working_mesh
+
         self.array_names = self.mesh.array_names
-        self._ensure_scalar_arrays()        
+        self._ensure_scalar_arrays()
         other_arrays = [arr for arr in self.array_names if arr.lower() not in ('rgb', 'labels', 'normals', 'class_ids')]
         self.available_arrays = ["RGB", "Labels"]
         self.available_arrays.extend(other_arrays)
-        
+
         if self.mesh.n_cells == 0:
             raise ValueError(f"File '{file_path}' has no cells/faces - use PointCloudProduct instead")
-        
+
         print(f"⏱️ Loaded MeshProduct: {self.label} with {self.mesh.n_cells:,} faces in {time.time() - start_time:.3f}s")
 
     def _spatially_sort_mesh(self, mesh: pv.PolyData) -> pv.PolyData:
@@ -743,9 +775,11 @@ class MeshProduct(AbstractSceneProduct):
         return output_path
     
     @classmethod
-    def from_file(cls, file_path: str, opacity: float = 1.0) -> 'MeshProduct':
+    def from_file(cls, file_path: str, opacity: float = 1.0,
+                  sort_mesh: bool = True, simplification_ratio: float = 0.0) -> 'MeshProduct':
         """Load a mesh from file."""
-        return cls(file_path=file_path, opacity=opacity)
+        return cls(file_path=file_path, opacity=opacity,
+                   sort_mesh=sort_mesh, simplification_ratio=simplification_ratio)
     
     # Custom method to build and cache Open3D RaycastingScene for this mesh
     def prepare_geometry(self):

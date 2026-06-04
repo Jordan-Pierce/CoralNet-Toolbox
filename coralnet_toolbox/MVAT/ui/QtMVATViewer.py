@@ -2028,9 +2028,12 @@ class MVATViewer(QFrame):
         Show a modal dialog asking the user what type of data a .ply file
         contains.
 
-        Returns ``(ply_type, calculate_kd_tree)`` or ``None`` if cancelled.
+        Returns ``(ply_type, calculate_kd_tree, sort_mesh, simplification_ratio)``
+        or ``None`` if cancelled.
         """
-        from PyQt5.QtWidgets import QDialog, QDialogButtonBox, QComboBox, QLabel, QVBoxLayout, QFormLayout
+        from PyQt5.QtWidgets import (QDialog, QDialogButtonBox, QComboBox, QLabel,
+                                     QVBoxLayout, QFormLayout, QSlider, QHBoxLayout)
+        from PyQt5.QtCore import Qt as _Qt
 
         detected = self._detect_ply_type(file_path)
 
@@ -2040,7 +2043,7 @@ class MVATViewer(QFrame):
         dialog = QDialog(self.window())
         dialog.setWindowTitle('PLY File Type')
         dialog.setModal(True)
-        dialog.resize(420, 200)
+        dialog.resize(460, 260)
 
         layout = QVBoxLayout(dialog)
         layout.addWidget(QLabel(f'<b>{os.path.basename(file_path)}</b>'))
@@ -2058,6 +2061,44 @@ class MVATViewer(QFrame):
         kd_combo.setCurrentIndex(0)
         form_layout.addRow('Calculate KD-Tree:', kd_combo)
 
+        # Sort Mesh
+        sort_combo = QComboBox(dialog)
+        sort_combo.addItems(['True', 'False'])
+        sort_combo.setCurrentIndex(0)  # default True
+        sort_combo.setToolTip(
+            'Spatially sort mesh faces using a Morton Z-order curve after loading.\n'
+            'Improves GPU cache coherence and index-map quality. Recommended.'
+        )
+        form_layout.addRow('Sort Mesh:', sort_combo)
+
+        # Simplification slider
+        slider_row = QHBoxLayout()
+        simplify_slider = QSlider(_Qt.Horizontal, dialog)
+        simplify_slider.setRange(0, 100)
+        simplify_slider.setValue(0)       # 0 = off by default
+        simplify_slider.setTickInterval(10)
+        simplify_slider.setTickPosition(QSlider.TicksBelow)
+        simplify_slider.setToolTip(
+            'Fraction of faces to remove before loading (0 = no simplification, '
+            '1.0 = maximum simplification).\n\n'
+            '0.0  — Full mesh; highest detail, slowest to render and rasterize.\n'
+            '0.5  — Remove 50 % of faces; good balance of speed vs. detail.\n'
+            '0.9  — Remove 90 % of faces; fastest, lowest detail.\n\n'
+            'Simplification is applied once at load time and produces a single\n'
+            '"proxy mesh" used for all visualization and index-map creation.\n'
+            'Requires the fast-simplification package; falls back to PyVista decimate.'
+        )
+        simplify_label = QLabel('0.00')
+        simplify_label.setMinimumWidth(36)
+
+        def _on_slider(val):
+            simplify_label.setText(f'{val / 100:.2f}')
+
+        simplify_slider.valueChanged.connect(_on_slider)
+        slider_row.addWidget(simplify_slider)
+        slider_row.addWidget(simplify_label)
+        form_layout.addRow('Simplification:', slider_row)
+
         layout.addLayout(form_layout)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, dialog)
@@ -2067,7 +2108,13 @@ class MVATViewer(QFrame):
 
         if dialog.exec_() != QDialog.Accepted:
             return None
-        return combo.currentText(), kd_combo.currentText() == 'True'
+
+        return (
+            combo.currentText(),
+            kd_combo.currentText() == 'True',
+            sort_combo.currentText() == 'True',
+            simplify_slider.value() / 100.0,
+        )
 
     def dragEnterEvent(self, event):
         """Accept drag if a single supported 3D file is being dragged."""
@@ -2097,13 +2144,14 @@ class MVATViewer(QFrame):
         # setting the wait cursor so the dialog is fully interactive.
         ply_type = None
         calculate_kd_tree = True
+        sort_mesh = True
+        simplification_ratio = 0.0
         if file_ext == '.ply':
             dialog_result = self._prompt_ply_type_dialog(file_path)
             if dialog_result is None:
-                # User cancelled the dialog — abort the drop silently.
                 event.ignore()
                 return
-            ply_type, calculate_kd_tree = dialog_result
+            ply_type, calculate_kd_tree, sort_mesh, simplification_ratio = dialog_result
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
         _t_total = perf_counter()
@@ -2117,7 +2165,10 @@ class MVATViewer(QFrame):
                 pass
 
             _t0 = perf_counter()
-            product = self._create_product_from_file(file_path, ply_type=ply_type)
+            product = self._create_product_from_file(
+                file_path, ply_type=ply_type,
+                sort_mesh=sort_mesh, simplification_ratio=simplification_ratio,
+            )
             _t_parse = perf_counter() - _t0
 
             if product is not None:
@@ -2176,7 +2227,8 @@ class MVATViewer(QFrame):
                 pass
             QApplication.restoreOverrideCursor()
 
-    def _create_product_from_file(self, file_path: str, ply_type: str = None) -> 'AbstractSceneProduct':
+    def _create_product_from_file(self, file_path: str, ply_type: str = None,
+                                  sort_mesh: bool = True, simplification_ratio: float = 0.0) -> 'AbstractSceneProduct':
         """
         Create the appropriate scene product for a 3D data file.
 
@@ -2195,10 +2247,12 @@ class MVATViewer(QFrame):
         """
         file_ext = os.path.splitext(file_path)[1].lower()
 
+        _mesh_kwargs = dict(sort_mesh=sort_mesh, simplification_ratio=simplification_ratio)
+
         # STL and OBJ are always meshes by format definition.
         if file_ext in ['.stl', '.obj']:
             print(f"📐 {file_ext.upper()} is a mesh-only format, creating MeshProduct")
-            return MeshProduct.from_file(file_path)
+            return MeshProduct.from_file(file_path, **_mesh_kwargs)
 
         # PCD is always a point cloud.
         if file_ext == '.pcd':
@@ -2209,7 +2263,7 @@ class MVATViewer(QFrame):
         if file_ext == '.ply':
             if ply_type == 'Mesh':
                 print(f"📐 PLY → MeshProduct (user selection)")
-                return MeshProduct.from_file(file_path)
+                return MeshProduct.from_file(file_path, **_mesh_kwargs)
             elif ply_type == 'Point Cloud':
                 print(f"☁️ PLY → PointCloudProduct (user selection)")
                 return PointCloudProduct.from_file(file_path, point_size=self.point_size)
@@ -2217,9 +2271,8 @@ class MVATViewer(QFrame):
                 print(f"✨ PLY → GaussianSplattingProduct (user selection)")
                 return GaussianSplattingProduct.from_file(file_path)
             else:
-                # Fallback if called without a prior dialog (should not normally happen).
                 print(f"📐 PLY type unknown — defaulting to MeshProduct")
-                return MeshProduct.from_file(file_path)
+                return MeshProduct.from_file(file_path, **_mesh_kwargs)
 
         # VTK: infer from structure.
         if file_ext == '.vtk':
@@ -2227,7 +2280,7 @@ class MVATViewer(QFrame):
             temp_mesh = pv.read(file_path)
             if temp_mesh.n_cells > 0 and temp_mesh.n_cells < temp_mesh.n_points:
                 print(f"📐 VTK detected as mesh (cells < points)")
-                return MeshProduct.from_file(file_path)
+                return MeshProduct.from_file(file_path, **_mesh_kwargs)
             else:
                 print(f"☁️ VTK detected as point cloud")
                 return PointCloudProduct.from_file(file_path, point_size=self.point_size)

@@ -308,6 +308,8 @@ class MVATManager(QObject):
         # Build Camera objects only for new perspective cameras.
         # ------------------------------------------------------------------
         valid_count = 0
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        QApplication.processEvents()
         try:
             self.main_window.status_bar.showMessage("Loading cameras...", 0)
             for path, raster in new_perspective_rasters:
@@ -318,6 +320,7 @@ class MVATManager(QObject):
                     print(f"❌ Failed to load perspective camera {raster.basename}: {e}")
                     print(traceback.format_exc())
         finally:
+            QApplication.restoreOverrideCursor()
             self.main_window.status_bar.showMessage(
                 f"Loaded {valid_count} new camera(s)", 3000
             )

@@ -1095,12 +1095,9 @@ class ContextMatrixWidget(QWidget):
         self.load_btn.setAutoRaise(True)
         def _load_btn_clicked(_checked=False):
             self.load_btn.setEnabled(False)
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            QApplication.processEvents()
             try:
                 self.loadCamerasRequested.emit()
             finally:
-                QApplication.restoreOverrideCursor()
                 QTimer.singleShot(1500, lambda: self.load_btn.setEnabled(True))
 
         self.load_btn.clicked.connect(_load_btn_clicked)
