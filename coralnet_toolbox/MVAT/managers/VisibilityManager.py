@@ -1102,7 +1102,10 @@ class VisibilityManager:
         render_start_time = perf_counter()
         results = []
         camera_total_sum = 0.0
-        
+        _t_render_total = 0.0      # GPU rasterization only
+        _t_screenshot_total = 0.0  # GPU→CPU transfer only
+        _t_decode_total = 0.0      # CPU→GPU decode only
+
         for i, (K, R, t, width, height) in enumerate(camera_params_list):
             cam_start = perf_counter()
             prep_start = perf_counter()
@@ -1243,6 +1246,9 @@ class VisibilityManager:
             
             cam_time = perf_counter() - cam_start
             camera_total_sum += cam_time
+            _t_render_total     += t_render
+            _t_screenshot_total += t_screenshot
+            _t_decode_total     += t_decode
             accounted_time = t_prep + t_crop + t_render + t_screenshot + t_decode + t_depth + t_finalize
             residual_time = max(0.0, cam_time - accounted_time)
             
@@ -1268,7 +1274,17 @@ class VisibilityManager:
         total_render_time = perf_counter() - render_start_time
         total_time = perf_counter() - start_time
         loop_residual = max(0.0, total_render_time - camera_total_sum - plotter_close_time)
-        
+
+        n_cams = max(1, len(camera_params_list))
+        print(
+            f"\n⏱️  PCIe TRANSFER BREAKDOWN ({n_cams} cameras)\n"
+            f"   GPU rasterize  : {_t_render_total:.3f}s total  ({_t_render_total/n_cams*1000:.1f}ms/cam)\n"
+            f"   GPU→CPU snap   : {_t_screenshot_total:.3f}s total  ({_t_screenshot_total/n_cams*1000:.1f}ms/cam)  ← PCIe readback\n"
+            f"   CPU→GPU decode : {_t_decode_total:.3f}s total  ({_t_decode_total/n_cams*1000:.1f}ms/cam)  ← upload + GPU math\n"
+            f"   Round-trip overhead: {(_t_screenshot_total + _t_decode_total):.3f}s  "
+            f"({(_t_screenshot_total + _t_decode_total) / max(0.001, _t_render_total + _t_screenshot_total + _t_decode_total) * 100:.1f}% of render+transfer+decode)\n"
+        )
+
         log_summary(
             "Batch VTK Rasterization (Viewport Cropping)",
             [
