@@ -555,15 +555,33 @@ class MeshProduct(AbstractSceneProduct):
                 if not working_mesh.is_all_triangles:
                     working_mesh = working_mesh.triangulate()
                 tris = working_mesh.faces.reshape(-1, 4)[:, 1:]
+
+                # Snapshot point arrays before simplification changes the topology.
+                src_points = np.asarray(working_mesh.points, dtype=np.float32)
+                pd = working_mesh.point_data
+                array_names = list(pd.keys())
+                src_arrays  = [np.asarray(pd[n]) for n in array_names]
+
                 pts_out, tris_out = fast_simplification.simplify(
-                    working_mesh.points, tris, target_reduction=ratio
+                    src_points, tris, target_reduction=ratio,
                 )
+
                 padding = np.full((len(tris_out), 1), 3, dtype=np.uint32)
-                working_mesh = pv.PolyData(pts_out, np.hstack([padding, tris_out]).flatten())
-                # Preserve cell data arrays where possible (best-effort)
-                print(f"⏱️ fast_simplification: {faces_before:,} → {working_mesh.n_cells:,} faces "
+                simplified = pv.PolyData(pts_out, np.hstack([padding, tris_out]).flatten())
+
+                # Transfer point arrays to output vertices via nearest-neighbour
+                # lookup — works regardless of fast_simplification version.
+                if array_names:
+                    from scipy.spatial import cKDTree
+                    _, nn_idx = cKDTree(src_points).query(pts_out, k=1, workers=-1)
+                    for name, arr in zip(array_names, src_arrays):
+                        simplified.point_data[name] = arr[nn_idx]
+
+                working_mesh = simplified
+                print(f"⏱️ (Fast) Simplification: {faces_before:,} → {working_mesh.n_cells:,} faces "
                       f"({ratio:.0%} reduction) in {time.time() - start_time:.3f}s")
             except ImportError:
+                # PyVista's decimate preserves point/cell data automatically.
                 working_mesh = raw_mesh.decimate(ratio)
                 print(f"⏱️ PyVista decimate (fast_simplification not installed): "
                       f"{faces_before:,} → {working_mesh.n_cells:,} faces in {time.time() - start_time:.3f}s")
