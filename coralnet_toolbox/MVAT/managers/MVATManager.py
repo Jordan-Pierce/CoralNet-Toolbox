@@ -679,18 +679,22 @@ class MVATManager(QObject):
 
         Examples
         --------
-        ``"active_to_context"``              → propagate_current_semantic_mask()
-        ``"active_camera_to_mesh"``          → aggregate_active_camera_mask_to_mesh()
-        ``"cameras_to_mesh"``                → aggregate_camera_masks_to_mesh()
+        ``"active_to_context"``               → propagate_current_semantic_mask()
+        ``"active_camera_to_mesh"``           → aggregate_active_camera_mask_to_mesh()
+        ``"active_to_all_cameras"``           → propagate_current_semantic_mask_to_all_cameras()
+        ``"cameras_to_mesh"``                 → aggregate_camera_masks_to_mesh()
         ``"mesh_to_active_camera:skip_unlabeled"`` → project_mesh_labels_to_active_camera(skip_unlabeled=True)
-        ``"mesh_to_cameras:skip_unlabeled"`` → project_mesh_labels_to_cameras(skip_unlabeled=True)
-        ``"mesh_to_cameras:keep_all"``       → project_mesh_labels_to_cameras(skip_unlabeled=False)
+        ``"mesh_to_visible_cameras"``         → project_mesh_labels_to_visible_cameras()
+        ``"mesh_to_cameras:skip_unlabeled"``  → project_mesh_labels_to_cameras(skip_unlabeled=True)
+        ``"mesh_to_cameras:keep_all"``        → project_mesh_labels_to_cameras(skip_unlabeled=False)
         """
         from coralnet_toolbox.MVAT.ui.QtContextMatrix import (
             PROPAGATE_ACTIVE_TO_CONTEXT,
             PROPAGATE_ACTIVE_CAMERA_TO_MESH,
+            PROPAGATE_ACTIVE_TO_ALL_CAMERAS,
             PROPAGATE_CAMERAS_TO_MESH,
             PROPAGATE_MESH_TO_ACTIVE_CAMERA,
+            PROPAGATE_MESH_TO_VISIBLE_CAMERAS,
             PROPAGATE_MESH_TO_CAMERAS,
         )
 
@@ -705,12 +709,19 @@ class MVATManager(QObject):
         elif base_mode == PROPAGATE_ACTIVE_CAMERA_TO_MESH:
             self.aggregate_active_camera_mask_to_mesh()
 
+        elif base_mode == PROPAGATE_ACTIVE_TO_ALL_CAMERAS:
+            self.propagate_current_semantic_mask_to_all_cameras()
+
         elif base_mode == PROPAGATE_CAMERAS_TO_MESH:
             self.aggregate_camera_masks_to_mesh(also_project_to_cameras=False)
 
         elif base_mode == PROPAGATE_MESH_TO_ACTIVE_CAMERA:
             skip_unlabeled = "keep_all" not in flags
             self.project_mesh_labels_to_active_camera(skip_unlabeled=skip_unlabeled)
+
+        elif base_mode == PROPAGATE_MESH_TO_VISIBLE_CAMERAS:
+            skip_unlabeled = "keep_all" not in flags
+            self.project_mesh_labels_to_visible_cameras(skip_unlabeled=skip_unlabeled)
 
         elif base_mode == PROPAGATE_MESH_TO_CAMERAS:
             skip_unlabeled = "keep_all" not in flags  # default True; opt-out with :keep_all

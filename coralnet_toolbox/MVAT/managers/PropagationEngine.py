@@ -2306,7 +2306,8 @@ class PropagationEngine(QObject):
                 # cannot restore these in its own call frame.
                 self._end_semantic_propagation_busy()
 
-    def _on_semantic_prediction_applied(self, image_path: str, source_mask_annotation, prediction_regions=None):
+    def _on_semantic_prediction_applied(self, image_path: str, source_mask_annotation,
+                                        prediction_regions=None, override_target_paths=None):
         """Propagate a semantic segmentation prediction to all target cameras.
 
         Called by Semantic.predict() after each image is processed when multi-annotate
@@ -2325,6 +2326,10 @@ class PropagationEngine(QObject):
             image_path: Path of the image whose Semantic prediction just completed.
             source_mask_annotation: The MaskAnnotation whose mask_data was just
                                     updated by the Semantic model.
+            override_target_paths: When provided, use this set of paths as the
+                                   propagation targets instead of the default
+                                   visible-context-camera set.  Used by
+                                   propagate_current_semantic_mask_to_all_cameras.
         """
         status_bar = getattr(self.main_window, 'status_bar', None)
 
@@ -2339,7 +2344,10 @@ class PropagationEngine(QObject):
         if source_camera is None:
             return
 
-        selected_paths = self._get_semantic_target_paths(source_camera)
+        if override_target_paths is not None:
+            selected_paths = set(override_target_paths)
+        else:
+            selected_paths = self._get_semantic_target_paths(source_camera)
 
         if not selected_paths:
             _status("Multi-annotate: no target cameras with index maps to propagate to.", 4000)
@@ -2640,6 +2648,94 @@ class PropagationEngine(QObject):
 
         self.project_mesh_labels_to_cameras(
             camera_paths=[camera_path],
+            skip_unlabeled=skip_unlabeled,
+        )
+
+    # ── Flow 1c: Primary camera → all cameras (with index map) ───────────────────
+
+    def propagate_current_semantic_mask_to_all_cameras(self):
+        """Propagate the primary camera's semantic mask to every camera that has an index map.
+
+        Like propagate_current_semantic_mask but targets the entire project rather
+        than only the cameras currently loaded in the context matrix.
+        """
+        annotation_window = getattr(self.main_window, 'annotation_window', None)
+        if annotation_window is None:
+            self._warn_semantic_propagation("AnnotationWindow is not available.")
+            return
+
+        image_path = getattr(annotation_window, 'current_image_path', None)
+        if not image_path:
+            self._warn_semantic_propagation("No image is currently active in the AnnotationWindow.")
+            return
+
+        source_camera = self._get_camera_for_path(image_path)
+        if source_camera is None:
+            self._warn_semantic_propagation("The active image is not loaded in MVAT.")
+            return
+
+        # Build target set: all cameras with an index map, excluding the source
+        all_target_paths = set()
+        for path, cam in self.cameras.items():
+            raster = getattr(cam, '_raster', None)
+            if raster is not None and getattr(raster, 'index_map', None) is not None:
+                all_target_paths.add(path)
+        all_target_paths.discard(image_path)
+
+        if not all_target_paths:
+            self._warn_semantic_propagation(
+                "No other cameras have an index map loaded.  "
+                "Load index maps first (Load Cameras → Load Index Maps)."
+            )
+            return
+
+        source_raster = self.raster_manager.get_raster(image_path) if self.raster_manager is not None else None
+        source_mask = getattr(source_raster, 'mask_annotation', None)
+        if source_mask is None:
+            self._warn_semantic_propagation("The active image does not have a semantic mask to propagate.")
+            return
+
+        if getattr(source_camera, '_raster', None) is None or \
+                getattr(source_camera._raster, 'index_map', None) is None:
+            self._warn_semantic_propagation(
+                "The active camera does not have an index map, so semantic propagation is unavailable."
+            )
+            return
+
+        try:
+            self._on_semantic_prediction_applied(
+                image_path,
+                source_mask,
+                override_target_paths=all_target_paths,
+            )
+        except Exception as exc:
+            import traceback as _tb
+            print(f"Error while propagating semantic mask from {image_path} to all cameras: {exc}")
+            _tb.print_exc()
+            self._warn_semantic_propagation("Semantic propagation failed. See console for details.")
+
+    # ── Flow 3c: Mesh → visible (context-matrix) cameras ─────────────────────────
+
+    def project_mesh_labels_to_visible_cameras(self, skip_unlabeled: bool = True):
+        """Project the 3D mesh's face labels to cameras currently in the context matrix.
+
+        Convenience wrapper around project_mesh_labels_to_cameras restricted to the
+        camera paths that are currently loaded in the context matrix view.
+
+        Args:
+            skip_unlabeled: When True (default), only overwrite pixels whose face
+                            carries a non-zero class so existing hand-painted
+                            regions are preserved.
+        """
+        visible_paths = self._get_visible_context_camera_paths()
+        if not visible_paths:
+            self._warn_semantic_propagation(
+                "No cameras are currently visible in the context matrix."
+            )
+            return
+
+        self.project_mesh_labels_to_cameras(
+            camera_paths=visible_paths,
             skip_unlabeled=skip_unlabeled,
         )
 

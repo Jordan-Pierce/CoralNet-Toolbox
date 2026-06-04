@@ -38,22 +38,26 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # Propagation mode constants used by maskPropagationRequested signal
-PROPAGATE_ACTIVE_TO_CONTEXT    = "active_to_context"   # Primary → Secondary Cameras
-PROPAGATE_PRIMARY_TO_MESH      = "active_camera_to_mesh"  # Primary → Mesh (alias for PROPAGATE_ACTIVE_CAMERA_TO_MESH)
-PROPAGATE_ACTIVE_CAMERA_TO_MESH = "active_camera_to_mesh"  # same value; kept for back-compat
-PROPAGATE_CAMERAS_TO_MESH      = "cameras_to_mesh"
-PROPAGATE_MESH_TO_ACTIVE_CAMERA = "mesh_to_active_camera"
-PROPAGATE_MESH_TO_CAMERAS      = "mesh_to_cameras"
-PROPAGATE_MULTI_ANNOTATE       = "multi_annotate"       # Special: toggles live annotation mode
+PROPAGATE_ACTIVE_TO_CONTEXT       = "active_to_context"        # Primary → context-matrix cameras
+PROPAGATE_PRIMARY_TO_MESH         = "active_camera_to_mesh"    # alias kept for back-compat
+PROPAGATE_ACTIVE_CAMERA_TO_MESH   = "active_camera_to_mesh"    # Primary → Mesh only
+PROPAGATE_ACTIVE_TO_ALL_CAMERAS   = "active_to_all_cameras"    # Primary → all cameras with index map
+PROPAGATE_CAMERAS_TO_MESH         = "cameras_to_mesh"          # All cameras → Mesh
+PROPAGATE_MESH_TO_ACTIVE_CAMERA   = "mesh_to_active_camera"    # Mesh → Primary
+PROPAGATE_MESH_TO_VISIBLE_CAMERAS = "mesh_to_visible_cameras"  # Mesh → context-matrix cameras
+PROPAGATE_MESH_TO_CAMERAS         = "mesh_to_cameras"          # Mesh → all cameras with index map
+PROPAGATE_MULTI_ANNOTATE          = "multi_annotate"           # Special: toggles live annotation mode
 
 # Human-readable button labels for each mode (matched to menu item wording)
 _PROPAGATE_MODE_LABELS = {
-    PROPAGATE_MULTI_ANNOTATE:        "Multi-Annotate",
-    PROPAGATE_ACTIVE_TO_CONTEXT:     "Primary → Visible Cams",
-    PROPAGATE_ACTIVE_CAMERA_TO_MESH: "Primary → Mesh",
-    PROPAGATE_CAMERAS_TO_MESH:       "All Cams → Mesh",
-    PROPAGATE_MESH_TO_ACTIVE_CAMERA: "Mesh → Primary",
-    PROPAGATE_MESH_TO_CAMERAS:       "Mesh → All Cams",
+    PROPAGATE_MULTI_ANNOTATE:          "Multi-Annotate",
+    PROPAGATE_ACTIVE_CAMERA_TO_MESH:   "Primary → Mesh",
+    PROPAGATE_ACTIVE_TO_CONTEXT:       "Primary → Visible Cams",
+    PROPAGATE_ACTIVE_TO_ALL_CAMERAS:   "Primary → All Cams",
+    PROPAGATE_CAMERAS_TO_MESH:         "All Cams → Mesh",
+    PROPAGATE_MESH_TO_ACTIVE_CAMERA:   "Mesh → Primary",
+    PROPAGATE_MESH_TO_VISIBLE_CAMERAS: "Mesh → Visible Cams",
+    PROPAGATE_MESH_TO_CAMERAS:         "Mesh → All Cams",
 }
 
 
@@ -1293,7 +1297,15 @@ class ContextMatrixWidget(QWidget):
         primary_header.setEnabled(False)
         hub_menu.addAction(primary_header)
 
-        # Primary mask → mesh → visible context cameras
+        # Primary mask → aggregate onto mesh only (no back-projection)
+        act_primary_to_mesh = QAction("Project to Mesh", hub_btn)
+        act_primary_to_mesh.setData(PROPAGATE_ACTIVE_CAMERA_TO_MESH)
+        act_primary_to_mesh.triggered.connect(
+            lambda: self._on_propagate_mode_selected(PROPAGATE_ACTIVE_CAMERA_TO_MESH)
+        )
+        hub_menu.addAction(act_primary_to_mesh)
+
+        # Primary mask → mesh → cameras currently in the context matrix
         act_primary_to_visible = QAction("Project to Visible Cameras", hub_btn)
         act_primary_to_visible.setData(PROPAGATE_ACTIVE_TO_CONTEXT)
         act_primary_to_visible.triggered.connect(
@@ -1301,13 +1313,13 @@ class ContextMatrixWidget(QWidget):
         )
         hub_menu.addAction(act_primary_to_visible)
 
-        # Primary mask → project onto mesh only
-        act_primary_to_mesh = QAction("Project to Mesh", hub_btn)
-        act_primary_to_mesh.setData(PROPAGATE_ACTIVE_CAMERA_TO_MESH)
-        act_primary_to_mesh.triggered.connect(
-            lambda: self._on_propagate_mode_selected(PROPAGATE_ACTIVE_CAMERA_TO_MESH)
+        # Primary mask → mesh → all cameras that have an index map
+        act_primary_to_all = QAction("Project to All Cameras", hub_btn)
+        act_primary_to_all.setData(PROPAGATE_ACTIVE_TO_ALL_CAMERAS)
+        act_primary_to_all.triggered.connect(
+            lambda: self._on_propagate_mode_selected(PROPAGATE_ACTIVE_TO_ALL_CAMERAS)
         )
-        hub_menu.addAction(act_primary_to_mesh)
+        hub_menu.addAction(act_primary_to_all)
 
         hub_menu.addSeparator()
 
@@ -1316,8 +1328,8 @@ class ContextMatrixWidget(QWidget):
         all_cams_header.setEnabled(False)
         hub_menu.addAction(all_cams_header)
 
-        # All camera masks → project onto mesh
-        act_all_to_mesh = QAction("Project to Mesh", hub_btn)
+        # All camera masks → aggregate onto mesh
+        act_all_to_mesh = QAction("Aggregate to Mesh", hub_btn)
         act_all_to_mesh.setData(PROPAGATE_CAMERAS_TO_MESH)
         act_all_to_mesh.triggered.connect(
             lambda: self._on_propagate_mode_selected(PROPAGATE_CAMERAS_TO_MESH)
@@ -1338,6 +1350,14 @@ class ContextMatrixWidget(QWidget):
             lambda: self._on_propagate_mode_selected(PROPAGATE_MESH_TO_ACTIVE_CAMERA)
         )
         hub_menu.addAction(act_mesh_to_primary)
+
+        # Mesh face labels → cameras currently in the context matrix
+        act_mesh_to_visible = QAction("Project to Visible Cameras", hub_btn)
+        act_mesh_to_visible.setData(PROPAGATE_MESH_TO_VISIBLE_CAMERAS)
+        act_mesh_to_visible.triggered.connect(
+            lambda: self._on_propagate_mode_selected(PROPAGATE_MESH_TO_VISIBLE_CAMERAS)
+        )
+        hub_menu.addAction(act_mesh_to_visible)
 
         # Mesh face labels → all cameras with an index map
         act_mesh_to_all = QAction("Project to All Cameras", hub_btn)
@@ -1512,11 +1532,9 @@ class ContextMatrixWidget(QWidget):
     def _run_propagate_mode(self, mode: str):
         """Emit maskPropagationRequested for the selected propagation mode.
 
-        Dialogs have been removed.  Behaviors are hardcoded:
-        - Cameras → Mesh: always run without the "also project back" option
-          (user can press the Mesh → Cameras button separately afterwards).
-        - Mesh → Cameras / Primary: always skip unlabeled faces so existing
-          pixel labels are preserved.
+        For Mesh → camera(s) operations the ":skip_unlabeled" / ":keep_all" flag
+        is derived from the "Skip unlabeled mesh faces" Settings checkbox so that
+        the setting actually takes effect.
 
         The button is disabled and a WaitCursor shown immediately so the user
         gets visual feedback.  The cursor is restored once the signal handler
@@ -1526,6 +1544,12 @@ class ContextMatrixWidget(QWidget):
         btn = getattr(self, '_propagate_mask_btn', None)
         if btn is not None:
             btn.setEnabled(False)
+
+        # Build the skip flag once; used by every Mesh → camera(s) emit below.
+        # When the checkbox is checked the user wants unlabeled faces skipped so
+        # existing pixel labels are preserved.  When unchecked, unlabeled faces
+        # will clear the corresponding pixels.
+        skip_flag = ":skip_unlabeled" if self._skip_unlabeled_mesh_faces else ":keep_all"
 
         # Enter the busy state.  The cursor and button are NOT restored here;
         # propagation may continue asynchronously on a background executor.
@@ -1541,17 +1565,21 @@ class ContextMatrixWidget(QWidget):
             elif mode == PROPAGATE_ACTIVE_CAMERA_TO_MESH:
                 self.maskPropagationRequested.emit(mode)
 
+            elif mode == PROPAGATE_ACTIVE_TO_ALL_CAMERAS:
+                self.maskPropagationRequested.emit(mode)
+
             elif mode == PROPAGATE_CAMERAS_TO_MESH:
                 # No "also_project" — user can chain manually
                 self.maskPropagationRequested.emit(mode)
 
             elif mode == PROPAGATE_MESH_TO_ACTIVE_CAMERA:
-                # Always skip unlabeled mesh faces
-                self.maskPropagationRequested.emit(mode + ":skip_unlabeled")
+                self.maskPropagationRequested.emit(mode + skip_flag)
+
+            elif mode == PROPAGATE_MESH_TO_VISIBLE_CAMERAS:
+                self.maskPropagationRequested.emit(mode + skip_flag)
 
             elif mode == PROPAGATE_MESH_TO_CAMERAS:
-                # Always skip unlabeled mesh faces
-                self.maskPropagationRequested.emit(mode + ":skip_unlabeled")
+                self.maskPropagationRequested.emit(mode + skip_flag)
         finally:
             # NOTE: cursor/button restoration deliberately omitted here.
             # Synchronous modes (e.g. Primary -> Secondary) complete within the
