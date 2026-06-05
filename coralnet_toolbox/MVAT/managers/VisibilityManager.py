@@ -43,6 +43,251 @@ try:
 except ImportError:
     HAS_TORCH = False
 
+# ---------------------------------------------------------------------------
+# CUDA-GL interop state
+# None = untested, True = working, False = unavailable/failed
+# ---------------------------------------------------------------------------
+_CUDA_GL_INTEROP_OK: Optional[bool] = None
+_cudart = None  # cached ctypes handle to libcudart
+
+
+def _load_cudart():
+    """Load libcudart via ctypes.
+
+    Search order:
+      1. PyTorch's bundled lib directory — the most reliable source since we know
+         CUDA is already working through torch (conda/pip installs keep the DLL here).
+      2. System PATH / ldconfig via ctypes.util.find_library.
+      3. Hard-coded common names as a last resort.
+    """
+    global _cudart
+    if _cudart is not None:
+        return _cudart
+
+    import ctypes, ctypes.util, os, platform
+
+    candidates = []
+
+    # 1. PyTorch's own lib directory (works on conda/pip Windows and Linux)
+    try:
+        import torch
+        torch_lib = os.path.join(os.path.dirname(torch.__file__), 'lib')
+        if os.path.isdir(torch_lib):
+            for fname in os.listdir(torch_lib):
+                if 'cudart' in fname.lower():
+                    candidates.append(os.path.join(torch_lib, fname))
+    except Exception:
+        pass
+
+    # 2. System-level search
+    sys_name = ctypes.util.find_library('cudart')
+    if sys_name:
+        candidates.append(sys_name)
+
+    # 3. Hard-coded fallbacks (CUDA 12 changed naming: cudart64_12.dll not cudart64_120.dll)
+    if platform.system() == 'Windows':
+        candidates += [
+            'cudart64_12.dll', 'cudart64_11.dll',
+            'cudart64_120.dll', 'cudart64_110.dll', 'cudart64_100.dll',
+            'cudart64.dll',
+        ]
+    else:
+        candidates += [
+            'libcudart.so', 'libcudart.so.12', 'libcudart.so.11', 'libcudart.so.10',
+        ]
+
+    for c in candidates:
+        try:
+            _cudart = ctypes.CDLL(c)
+            return _cudart
+        except OSError:
+            pass
+
+    raise OSError("Could not find libcudart. CUDA-GL interop unavailable.")
+
+
+# ---------------------------------------------------------------------------
+# moderngl shader sources (face-ID RGB encoding — identical to VTK path so
+# _decode_face_id_screenshot works unchanged on both paths)
+# ---------------------------------------------------------------------------
+_MGL_VERT = '''
+#version 330 core
+in vec3 position;
+uniform mat4 mvp;
+void main() {
+    gl_Position = mvp * vec4(position, 1.0);
+}
+'''
+
+_MGL_FRAG_LOW = '''
+#version 330 core
+out vec4 fragColor;
+void main() {
+    int encoded = gl_PrimitiveID + 1;
+    fragColor = vec4(
+        float( encoded        & 0xFF) / 255.0,
+        float((encoded >>  8) & 0xFF) / 255.0,
+        float((encoded >> 16) & 0xFF) / 255.0,
+        1.0
+    );
+}
+'''
+
+_MGL_FRAG_HIGH = '''
+#version 330 core
+out vec4 fragColor;
+void main() {
+    int encoded = gl_PrimitiveID + 1;
+    fragColor = vec4(
+        float((encoded >> 24) & 0xFF) / 255.0,
+        0.0, 0.0, 1.0
+    );
+}
+'''
+
+
+def _resolve_gl_fns():
+    """Resolve OpenGL extension function pointers via the platform proc-address loader.
+
+    Returns a namespace object with callable GL functions.  Raises on failure.
+    Must be called while the target GL context is current.
+    """
+    import ctypes, platform, types
+
+    ns = types.SimpleNamespace()
+
+    if platform.system() == 'Windows':
+        _gl32 = ctypes.WinDLL('opengl32')
+        _get_proc = _gl32.wglGetProcAddress
+        _get_proc.restype  = ctypes.c_void_p
+        _get_proc.argtypes = [ctypes.c_char_p]
+        ns.glReadPixels = _gl32.glReadPixels
+        ns.glFinish     = _gl32.glFinish
+    else:
+        import ctypes.util
+        _libgl = ctypes.CDLL(ctypes.util.find_library('GL') or 'libGL.so')
+        _get_proc = _libgl.glXGetProcAddressARB
+        _get_proc.restype  = ctypes.c_void_p
+        _get_proc.argtypes = [ctypes.c_char_p]
+        ns.glReadPixels = _libgl.glReadPixels
+        ns.glFinish     = _libgl.glFinish
+
+    def _ext(name, restype, *argtypes):
+        ptr = _get_proc(name.encode())
+        if not ptr:
+            raise RuntimeError(f"proc-address lookup failed for '{name}'")
+        return ctypes.CFUNCTYPE(restype, *argtypes)(ptr)
+
+    ns.glGenBuffers    = _ext('glGenBuffers',    None, ctypes.c_int,    ctypes.POINTER(ctypes.c_uint))
+    ns.glBindBuffer    = _ext('glBindBuffer',    None, ctypes.c_uint,   ctypes.c_uint)
+    ns.glBufferData    = _ext('glBufferData',    None, ctypes.c_uint,   ctypes.c_ssize_t, ctypes.c_void_p, ctypes.c_uint)
+    ns.glDeleteBuffers = _ext('glDeleteBuffers', None, ctypes.c_int,    ctypes.POINTER(ctypes.c_uint))
+
+    ns.glReadPixels.restype  = None
+    ns.glReadPixels.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                 ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p]
+    ns.glFinish.restype  = None
+    ns.glFinish.argtypes = []
+
+    # GL constants
+    ns.GL_PIXEL_PACK_BUFFER = 0x88EB
+    ns.GL_STREAM_READ       = 0x88E1
+    ns.GL_RGB               = 0x1907
+    ns.GL_UNSIGNED_BYTE     = 0x1401
+
+    return ns
+
+
+def _pbo_cuda_readback(gl: 'types.SimpleNamespace', cudart, width: int, height: int) -> Optional['torch.Tensor']:
+    """Read the current GL read framebuffer into a CUDA uint8 tensor via PBO.
+
+    VRAM → PBO (GPU-side) → CUDA map → D2D copy → torch tensor.  No PCIe.
+    Returns None on any error (caller should fall back to CPU screenshot).
+    """
+    import ctypes
+    n_bytes = width * height * 3
+    pbo      = ctypes.c_uint(0)
+    resource = ctypes.c_void_p(0)
+    mapped   = False
+    try:
+        gl.glGenBuffers(1, ctypes.byref(pbo))
+        gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, pbo.value)
+        gl.glBufferData(gl.GL_PIXEL_PACK_BUFFER, n_bytes, None, gl.GL_STREAM_READ)
+        gl.glReadPixels(0, 0, width, height, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, ctypes.c_void_p(0))
+        gl.glFinish()
+
+        err = cudart.cudaGraphicsGLRegisterBuffer(ctypes.byref(resource), pbo.value, 1)
+        if err: raise RuntimeError(f"cudaGraphicsGLRegisterBuffer err={err}")
+        err = cudart.cudaGraphicsMapResources(1, ctypes.byref(resource), ctypes.c_void_p(0))
+        if err: raise RuntimeError(f"cudaGraphicsMapResources err={err}")
+        mapped = True
+
+        dev_ptr = ctypes.c_void_p(0); sz = ctypes.c_size_t(0)
+        err = cudart.cudaGraphicsResourceGetMappedPointer(ctypes.byref(dev_ptr), ctypes.byref(sz), resource)
+        if err: raise RuntimeError(f"cudaGraphicsGetMappedPointer err={err}")
+
+        out = torch.empty(height, width, 3, dtype=torch.uint8, device='cuda')
+        err = cudart.cudaMemcpy(ctypes.c_void_p(out.data_ptr()), dev_ptr, ctypes.c_size_t(n_bytes), 3)
+        if err: raise RuntimeError(f"cudaMemcpy(D2D) err={err}")
+
+        cudart.cudaGraphicsUnmapResources(1, ctypes.byref(resource), ctypes.c_void_p(0))
+        mapped = False
+        cudart.cudaGraphicsUnregisterResource(resource); resource = ctypes.c_void_p(0)
+        gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, 0)
+        gl.glDeleteBuffers(1, ctypes.byref(pbo)); pbo.value = 0
+
+        return torch.flip(out, [0])  # GL bottom-to-top → top-to-bottom
+
+    except Exception:
+        try:
+            if mapped:
+                cudart.cudaGraphicsUnmapResources(1, ctypes.byref(resource), ctypes.c_void_p(0))
+            if resource.value:
+                cudart.cudaGraphicsUnregisterResource(resource)
+            gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, 0)
+            if pbo.value:
+                gl.glDeleteBuffers(1, ctypes.byref(pbo))
+        except Exception:
+            pass
+        return None
+
+
+def _build_mvp(K: np.ndarray, R: np.ndarray, t: np.ndarray,
+               width: int, height: int,
+               near: float = 0.01, far: float = 100_000.0) -> np.ndarray:
+    """Build a column-major 4×4 MVP matrix for OpenGL from CV camera params.
+
+    Converts from computer-vision convention (Y-down, Z-forward) to OpenGL
+    convention (Y-up, Z-backward) via a flip on Y and Z before projection.
+    The returned matrix is already transposed for direct upload to a GLSL mat4
+    uniform (which is column-major).
+    """
+    fx, fy = float(K[0, 0]), float(K[1, 1])
+    cx, cy = float(K[0, 2]), float(K[1, 2])
+    W, H = float(width), float(height)
+
+    # View: world → CV camera, then flip Y and Z to GL camera convention
+    V = np.eye(4, dtype=np.float64)
+    V[:3, :3] = R
+    V[:3,  3] = t
+    flip_yz = np.diag([1.0, -1.0, -1.0, 1.0])
+    V = flip_yz @ V
+
+    # Projection: CV camera space → OpenGL clip space
+    P = np.zeros((4, 4), dtype=np.float64)
+    P[0, 0] = 2.0 * fx / W
+    P[0, 2] = 1.0 - 2.0 * cx / W
+    P[1, 1] = 2.0 * fy / H
+    P[1, 2] = 2.0 * cy / H - 1.0
+    P[2, 2] = -(far + near) / (far - near)
+    P[2, 3] = -2.0 * far * near / (far - near)
+    P[3, 2] = -1.0
+
+    mvp = (P @ V).astype(np.float32)
+    # Transpose: numpy is row-major; GLSL mat4 is column-major.
+    # Writing mvp.T means GLSL sees the correct matrix for `mvp * vec4(pos, 1)`.
+    return mvp.T
+
 
 FACE_ID_RGB_BASE = 1 << 24
 FACE_ID_RGB_LIMIT = FACE_ID_RGB_BASE - 1
@@ -176,44 +421,236 @@ class VisibilityManager:
             pass
         return result
 
+    @classmethod
+    def _cuda_gl_screenshot(cls, width: int, height: int,
+                            ren_win=None) -> Optional['torch.Tensor']:
+        """Read the current OpenGL framebuffer into a CUDA tensor without a PCIe transfer.
+
+        Mechanism:
+          1. Bind a Pixel Buffer Object (PBO) and call glReadPixels — OpenGL writes
+             framebuffer VRAM → PBO VRAM entirely on the GPU (no PCIe).
+          2. Register the PBO with the CUDA runtime via cudaGraphicsGLRegisterBuffer,
+             obtaining a CUDA device pointer into that same VRAM allocation.
+          3. cudaMemcpy(DeviceToDevice) into a torch tensor — GPU-to-GPU, no PCIe.
+          4. Flip vertically (OpenGL origin is bottom-left; arrays are top-left).
+
+        Args:
+            ren_win: VTK vtkRenderWindow.  When provided, MakeCurrent() is called
+                     before any GL work so PyOpenGL resolves extension function
+                     pointers (e.g. glGenBuffers) against the active context.
+
+        Falls back gracefully: returns None on the first failure and sets
+        _CUDA_GL_INTEROP_OK=False so subsequent calls skip the attempt entirely.
+
+        Returns:
+            CUDA uint8 tensor of shape (height, width, 3), or None.
+        """
+        global _CUDA_GL_INTEROP_OK
+        if _CUDA_GL_INTEROP_OK is False:
+            return None
+        if not (HAS_TORCH and torch.cuda.is_available()):
+            _CUDA_GL_INTEROP_OK = False
+            return None
+
+        import ctypes
+        import platform
+
+        pbo       = ctypes.c_uint(0)
+        resource  = ctypes.c_void_p(0)
+        mapped    = False
+        pbo_bound = False
+
+        try:
+            cudart = _load_cudart()
+            n_bytes = width * height * 3  # RGB uint8
+
+            # Make VTK's context current for this thread before any GL calls.
+            if ren_win is not None:
+                ren_win.MakeCurrent()
+
+            # ------------------------------------------------------------------
+            # Resolve OpenGL function pointers via ctypes — bypasses PyOpenGL's
+            # lazy loader which fails when its own context isn't current.
+            # On Windows: core functions live in opengl32.dll; extension functions
+            # (glGenBuffers etc., OpenGL 1.5+) must be fetched via wglGetProcAddress.
+            # On Linux:   all functions are in libGL.so via glXGetProcAddressARB.
+            # ------------------------------------------------------------------
+            if platform.system() == 'Windows':
+                _gl32 = ctypes.WinDLL('opengl32')
+                _wglGetProcAddress = _gl32.wglGetProcAddress
+                _wglGetProcAddress.restype  = ctypes.c_void_p
+                _wglGetProcAddress.argtypes = [ctypes.c_char_p]
+
+                def _gl_ext(name, restype, *argtypes):
+                    ptr = _wglGetProcAddress(name.encode())
+                    if not ptr:
+                        raise RuntimeError(
+                            f"wglGetProcAddress('{name}') returned NULL "
+                            f"— context may not be current or function unsupported"
+                        )
+                    return ctypes.CFUNCTYPE(restype, *argtypes)(ptr)
+
+                # Core GL functions are directly in opengl32.dll
+                _glReadPixels = _gl32.glReadPixels
+                _glFinish     = _gl32.glFinish
+            else:
+                import ctypes.util
+                _libgl = ctypes.CDLL(ctypes.util.find_library('GL') or 'libGL.so')
+                _glXGetProc = _libgl.glXGetProcAddressARB
+                _glXGetProc.restype  = ctypes.c_void_p
+                _glXGetProc.argtypes = [ctypes.c_char_p]
+
+                def _gl_ext(name, restype, *argtypes):
+                    ptr = _glXGetProc(name.encode())
+                    if not ptr:
+                        raise RuntimeError(f"glXGetProcAddressARB('{name}') returned NULL")
+                    return ctypes.CFUNCTYPE(restype, *argtypes)(ptr)
+
+                _glReadPixels = _libgl.glReadPixels
+                _glFinish     = _libgl.glFinish
+
+            # Set signatures on the core functions
+            _glReadPixels.restype  = None
+            _glReadPixels.argtypes = [
+                ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p,
+            ]
+            _glFinish.restype  = None
+            _glFinish.argtypes = []
+
+            # Extension functions (OpenGL 1.5+)
+            _glGenBuffers    = _gl_ext('glGenBuffers',    None, ctypes.c_int,    ctypes.POINTER(ctypes.c_uint))
+            _glBindBuffer    = _gl_ext('glBindBuffer',    None, ctypes.c_uint,   ctypes.c_uint)
+            _glBufferData    = _gl_ext('glBufferData',    None, ctypes.c_uint,   ctypes.c_ssize_t, ctypes.c_void_p, ctypes.c_uint)
+            _glDeleteBuffers = _gl_ext('glDeleteBuffers', None, ctypes.c_int,    ctypes.POINTER(ctypes.c_uint))
+
+            # GL constants
+            GL_PIXEL_PACK_BUFFER = 0x88EB
+            GL_STREAM_READ       = 0x88E1
+            GL_RGB               = 0x1907
+            GL_UNSIGNED_BYTE     = 0x1401
+
+            # 1. Create PBO sized for one RGB frame
+            _glGenBuffers(1, ctypes.byref(pbo))
+            _glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo.value)
+            pbo_bound = True
+            _glBufferData(GL_PIXEL_PACK_BUFFER, n_bytes, None, GL_STREAM_READ)
+
+            # 2. Read framebuffer → PBO (VRAM→VRAM, no PCIe)
+            _glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, ctypes.c_void_p(0))
+            _glFinish()
+
+            # 3. Register the PBO with CUDA
+            err = cudart.cudaGraphicsGLRegisterBuffer(
+                ctypes.byref(resource), pbo.value, 1,  # READ_ONLY
+            )
+            if err != 0:
+                raise RuntimeError(f"cudaGraphicsGLRegisterBuffer → error {err}")
+
+            # 4. Map into CUDA address space
+            err = cudart.cudaGraphicsMapResources(1, ctypes.byref(resource), ctypes.c_void_p(0))
+            if err != 0:
+                raise RuntimeError(f"cudaGraphicsMapResources → error {err}")
+            mapped = True
+
+            # 5. Get raw device pointer
+            dev_ptr    = ctypes.c_void_p(0)
+            mapped_sz  = ctypes.c_size_t(0)
+            err = cudart.cudaGraphicsResourceGetMappedPointer(
+                ctypes.byref(dev_ptr), ctypes.byref(mapped_sz), resource
+            )
+            if err != 0:
+                raise RuntimeError(f"cudaGraphicsResourceGetMappedPointer → error {err}")
+
+            # 6. Device-to-device copy into a torch tensor — never crosses PCIe
+            out = torch.empty(height, width, 3, dtype=torch.uint8, device='cuda')
+            err = cudart.cudaMemcpy(
+                ctypes.c_void_p(out.data_ptr()), dev_ptr,
+                ctypes.c_size_t(n_bytes), 3,  # cudaMemcpyDeviceToDevice
+            )
+            if err != 0:
+                raise RuntimeError(f"cudaMemcpy(D2D) → error {err}")
+
+            # 7. Cleanup
+            cudart.cudaGraphicsUnmapResources(1, ctypes.byref(resource), ctypes.c_void_p(0))
+            mapped = False
+            cudart.cudaGraphicsUnregisterResource(resource)
+            resource = ctypes.c_void_p(0)
+            _glBindBuffer(GL_PIXEL_PACK_BUFFER, 0)
+            pbo_bound = False
+            _glDeleteBuffers(1, ctypes.byref(pbo))
+            pbo.value = 0
+
+            # 8. OpenGL origin is bottom-left; flip to top-left convention
+            out = torch.flip(out, [0])
+
+            if _CUDA_GL_INTEROP_OK is None:
+                print("✅ CUDA-GL interop active — framebuffer readback stays on GPU")
+            _CUDA_GL_INTEROP_OK = True
+            return out
+
+        except Exception as exc:
+            try:
+                if mapped:
+                    cudart.cudaGraphicsUnmapResources(1, ctypes.byref(resource), ctypes.c_void_p(0))
+                if resource.value:
+                    cudart.cudaGraphicsUnregisterResource(resource)
+            except Exception:
+                pass
+            if _CUDA_GL_INTEROP_OK is None:
+                print(f"⚠️  CUDA-GL interop unavailable ({exc}); using PCIe fallback")
+            _CUDA_GL_INTEROP_OK = False
+            return None
+
     @staticmethod
-    def _decode_face_id_screenshot(screenshot_low: np.ndarray,
-                                   screenshot_high: Optional[np.ndarray] = None):
+    def _decode_face_id_screenshot(screenshot_low,
+                                   screenshot_high=None):
         """Decode one or two RGB screenshots into an int32 face-ID map.
+
+        Accepts either numpy arrays (PCIe path) or CUDA uint8 tensors
+        (CUDA-GL interop path — already on GPU, no upload needed).
 
         When `screenshot_high` is provided, the red channel holds the upper 8 bits
         of the encoded face ID and is combined with the lower 24 bits from the
         first pass.
         """
-        low_rgb = np.ascontiguousarray(np.asarray(screenshot_low)[..., :3])
-        high_rgb = None if screenshot_high is None else np.ascontiguousarray(np.asarray(screenshot_high)[..., :3])
-
         if HAS_TORCH and torch.cuda.is_available():
-            low_tensor = torch.from_numpy(low_rgb).cuda()
+            # Accept either a numpy array or an already-on-GPU tensor.
+            if isinstance(screenshot_low, torch.Tensor):
+                low_tensor = screenshot_low[..., :3].to(torch.int64)
+            else:
+                low_rgb = np.ascontiguousarray(np.asarray(screenshot_low)[..., :3])
+                low_tensor = torch.from_numpy(low_rgb).cuda().to(torch.int64)
+
             decoded = (
-                low_tensor[..., 0].to(torch.int64)
-                + low_tensor[..., 1].to(torch.int64) * 256
-                + low_tensor[..., 2].to(torch.int64) * 65536
+                low_tensor[..., 0]
+                + low_tensor[..., 1] * 256
+                + low_tensor[..., 2] * 65536
             )
 
-            if high_rgb is not None:
-                high_tensor = torch.from_numpy(high_rgb).cuda()
-                decoded += high_tensor[..., 0].to(torch.int64) * FACE_ID_RGB_BASE
+            if screenshot_high is not None:
+                if isinstance(screenshot_high, torch.Tensor):
+                    high_r = screenshot_high[..., 0].to(torch.int64)
+                else:
+                    high_rgb = np.ascontiguousarray(np.asarray(screenshot_high)[..., :3])
+                    high_r = torch.from_numpy(high_rgb).cuda()[..., 0].to(torch.int64)
+                decoded += high_r * FACE_ID_RGB_BASE
 
             index_map_tensor = (decoded - 1).to(torch.int32)
             valid_mask = index_map_tensor >= 0
             visible_indices = torch.unique(index_map_tensor[valid_mask]).cpu().numpy().astype(np.int32)
             return index_map_tensor.cpu().numpy(), visible_indices, index_map_tensor
 
+        # CPU-only fallback
+        low_rgb = np.ascontiguousarray(np.asarray(screenshot_low)[..., :3])
+        high_rgb = None if screenshot_high is None else np.ascontiguousarray(np.asarray(screenshot_high)[..., :3])
         decoded = (
             low_rgb[..., 0].astype(np.int64, copy=False)
             + low_rgb[..., 1].astype(np.int64, copy=False) * 256
             + low_rgb[..., 2].astype(np.int64, copy=False) * 65536
         )
-
         if high_rgb is not None:
             decoded += high_rgb[..., 0].astype(np.int64, copy=False) * FACE_ID_RGB_BASE
-
         index_map = (decoded - 1).astype(np.int32, copy=False)
         visible_indices = np.unique(index_map[index_map >= 0]).astype(np.int32)
         return index_map, visible_indices, None
@@ -963,6 +1400,291 @@ class VisibilityManager:
             'scale_factor': dynamic_scale
         }, compute_depth_map)
     
+    # =========================================================================
+    # moderngl batch rasterizer  (zero-PCIe primary path)
+    # =========================================================================
+
+    @classmethod
+    def setup_batch_moderngl_context(cls, mesh_product, pixel_budget,
+                                     sample_width, sample_height):
+        """Create a moderngl offscreen context and upload mesh geometry once.
+
+        Returns a context dict consumed by compute_batch_mesh_visibility_moderngl,
+        or raises if moderngl is unavailable.
+        """
+        import moderngl
+
+        ctx = moderngl.create_context(standalone=True)
+        ctx.enable(moderngl.DEPTH_TEST)
+
+        mesh = mesh_product.get_mesh()
+        if not mesh.is_all_triangles:
+            mesh = mesh.triangulate()
+
+        n_cells  = mesh.n_cells
+        vertices = np.asarray(mesh.points, dtype=np.float32)
+        faces    = mesh.faces.reshape(-1, 4)[:, 1:].astype(np.int32)
+
+        vbo = ctx.buffer(vertices.tobytes())
+        ibo = ctx.buffer(faces.tobytes())
+
+        is_dual_pass = n_cells > FACE_ID_RGB_LIMIT
+        prog_low = ctx.program(vertex_shader=_MGL_VERT, fragment_shader=_MGL_FRAG_LOW)
+        vao_low  = ctx.vertex_array(prog_low, [(vbo, '3f', 'position')], ibo)
+
+        prog_high = vao_high = None
+        if is_dual_pass:
+            prog_high = ctx.program(vertex_shader=_MGL_VERT, fragment_shader=_MGL_FRAG_HIGH)
+            vao_high  = ctx.vertex_array(prog_high, [(vbo, '3f', 'position')], ibo)
+
+        # Resolve GL extension functions while the moderngl context is current
+        gl_fns = _resolve_gl_fns()
+
+        # Pre-upload face centres to GPU for depth computation (same as VTK path)
+        face_centers_pt = None
+        if HAS_TORCH and torch.cuda.is_available():
+            face_centers_pt = torch.from_numpy(
+                mesh.cell_centers().points.astype(np.float32)
+            ).cuda()
+
+        logger.info(
+            f"   ✅ moderngl context ready: {n_cells:,} faces, "
+            f"dual-pass={'yes' if is_dual_pass else 'no'}"
+        )
+
+        return {
+            'ctx':             ctx,
+            'prog_low':        prog_low,
+            'prog_high':       prog_high,
+            'vao_low':         vao_low,
+            'vao_high':        vao_high,
+            'is_dual_pass':    is_dual_pass,
+            'n_cells':         n_cells,
+            'gl_fns':          gl_fns,
+            'pixel_budget':    pixel_budget,
+            'face_centers_pt': face_centers_pt,
+            '_fbo_cache':      {},   # (w, h) → moderngl.Framebuffer
+        }
+
+    @classmethod
+    def compute_batch_mesh_visibility_moderngl(
+        cls,
+        mesh_product,
+        camera_params_list: list,
+        compute_depth_map: bool = True,
+        pixel_budget: Optional[int] = None,
+        upsample_to_native: bool = False,
+        progress_callback=None,
+        mgl_context: dict = None,
+        camera_index_offset: int = 0,
+        use_viewport_cropping: bool = True,
+    ) -> list:
+        """GPU rasterization via moderngl with zero-PCIe CUDA-GL framebuffer readback.
+
+        Drop-in replacement for compute_batch_mesh_visibility_vtk.  All outputs
+        are identical in format; downstream code is unchanged.
+        """
+        import time
+        perf_counter = time.perf_counter
+
+        def _scale_for(w, h):
+            native = w * h
+            if pixel_budget is None or pixel_budget <= 0 or native <= pixel_budget:
+                return 1.0
+            return float(np.sqrt(pixel_budget / native))
+
+        budget_str = "Native" if not pixel_budget else f"{pixel_budget/1e6:.1f}MP"
+        log_section(
+            f"🎨 MODERNGL BATCH RASTERIZATION — {len(camera_params_list)} cameras "
+            f"(budget: {budget_str})", logger
+        )
+        start_time = perf_counter()
+
+        # ── Context ──────────────────────────────────────────────────────────
+        if mgl_context is None:
+            mgl_context = cls.setup_batch_moderngl_context(
+                mesh_product, pixel_budget,
+                camera_params_list[0][3], camera_params_list[0][4],
+            )
+
+        ctx          = mgl_context['ctx']
+        prog_low     = mgl_context['prog_low']
+        prog_high    = mgl_context['prog_high']
+        vao_low      = mgl_context['vao_low']
+        vao_high     = mgl_context['vao_high']
+        is_dual_pass = mgl_context['is_dual_pass']
+        gl_fns       = mgl_context['gl_fns']
+        fbo_cache    = mgl_context['_fbo_cache']
+        face_centers_pt = mgl_context['face_centers_pt']
+
+        cudart = None
+        use_cuda_gl = HAS_TORCH and torch.cuda.is_available()
+        if use_cuda_gl:
+            try:
+                cudart = _load_cudart()
+            except Exception:
+                use_cuda_gl = False
+
+        mesh        = mesh_product.get_mesh()
+        mesh_bounds = mesh.bounds
+
+        def _get_fbo(w, h):
+            key = (w, h)
+            if key not in fbo_cache:
+                fbo_cache[key] = ctx.framebuffer(
+                    color_attachments=[ctx.texture((w, h), 4)],
+                    depth_attachment=ctx.depth_texture((w, h)),
+                )
+            return fbo_cache[key]
+
+        results = []
+        _t_render_total     = 0.0
+        _t_readback_total   = 0.0
+        _t_decode_total     = 0.0
+        camera_total_sum    = 0.0
+
+        for i, (K, R, t, width, height) in enumerate(camera_params_list):
+            cam_start = perf_counter()
+
+            if progress_callback is not None:
+                progress_callback(camera_index_offset + i + 1,
+                                  camera_index_offset + len(camera_params_list))
+
+            dynamic_scale = _scale_for(width, height)
+            render_w = max(1, int(round(width  * dynamic_scale)))
+            render_h = max(1, int(round(height * dynamic_scale)))
+
+            K_scaled       = K.copy()
+            K_scaled[0, :3] *= dynamic_scale
+            K_scaled[1, :3] *= dynamic_scale
+
+            # Viewport cropping (same logic as VTK path)
+            u_min = v_min = 0
+            crop_w, crop_h = render_w, render_h
+            if use_viewport_cropping:
+                u_min, u_max, v_min, v_max, crop_status = cls._get_2d_bounding_box(
+                    mesh_bounds, K_scaled, R, t, render_w, render_h
+                )
+                if crop_status == "OFF_SCREEN":
+                    results.append(cls._normalize_result_dict({
+                        'index_map':      np.full((render_h, render_w), -1, dtype=np.int32),
+                        'visible_indices': np.array([], dtype=np.int32),
+                        'depth_map':      np.full((render_h, render_w), np.nan, dtype=np.float32) if compute_depth_map else None,
+                        'inverted_index': None,
+                        'scale_factor':   dynamic_scale,
+                    }, compute_depth_map))
+                    camera_total_sum += perf_counter() - cam_start
+                    continue
+                elif crop_status == "CROP":
+                    crop_w = u_max - u_min
+                    crop_h = v_max - v_min
+                    K_scaled[0, 2] -= u_min
+                    K_scaled[1, 2] -= v_min
+
+            fbo = _get_fbo(crop_w, crop_h)
+            fbo.use()
+            ctx.clear(0.0, 0.0, 0.0, 0.0, depth=1.0)
+
+            # ── Render ───────────────────────────────────────────────────────
+            t0 = perf_counter()
+            mvp = _build_mvp(K_scaled, R, t, crop_w, crop_h)
+            prog_low['mvp'].write(mvp.tobytes())
+            vao_low.render()
+            ctx.finish()
+            t_render = perf_counter() - t0
+
+            # ── Readback: try CUDA-GL PBO, fall back to CPU ───────────────
+            t0 = perf_counter()
+            shot_low = None
+            if use_cuda_gl:
+                shot_low = _pbo_cuda_readback(gl_fns, cudart, crop_w, crop_h)
+
+            if shot_low is None:
+                # CPU fallback: read via moderngl (still faster than VTK for small sizes)
+                raw = fbo.read(components=3, dtype='u1')
+                shot_low = np.frombuffer(raw, dtype=np.uint8).reshape(crop_h, crop_w, 3)[::-1].copy()
+
+            shot_high = None
+            if is_dual_pass:
+                fbo.use()
+                ctx.clear(0.0, 0.0, 0.0, 0.0, depth=1.0)
+                prog_high['mvp'].write(mvp.tobytes())
+                vao_high.render()
+                ctx.finish()
+                if use_cuda_gl:
+                    shot_high = _pbo_cuda_readback(gl_fns, cudart, crop_w, crop_h)
+                if shot_high is None:
+                    raw = fbo.read(components=3, dtype='u1')
+                    shot_high = np.frombuffer(raw, dtype=np.uint8).reshape(crop_h, crop_w, 3)[::-1].copy()
+
+            t_readback = perf_counter() - t0
+
+            # ── Decode (reuses existing function — accepts CUDA tensors) ────
+            t0 = perf_counter()
+            crop_index_map, visible_indices, crop_index_tensor = cls._decode_face_id_screenshot(
+                shot_low, shot_high
+            )
+            t_decode = perf_counter() - t0
+
+            # ── Depth ────────────────────────────────────────────────────────
+            crop_depth_map = None
+            if compute_depth_map and face_centers_pt is not None and crop_index_tensor is not None:
+                R_pt = torch.from_numpy(R).float().cuda()
+                t_pt = torch.from_numpy(t).float().cuda()
+                z_cam = torch.matmul(face_centers_pt, R_pt.T)[:, 2] + t_pt[2]
+                z_cam_padded = torch.cat([z_cam, torch.tensor([float('nan')], device='cuda')])
+                crop_depth_map = z_cam_padded[crop_index_tensor.long()].cpu().numpy()
+
+            # ── Paste crop back into full canvas ────────────────────────────
+            full_index_map = np.full((render_h, render_w), -1, dtype=np.int32)
+            full_index_map[v_min:v_min + crop_h, u_min:u_min + crop_w] = crop_index_map
+
+            full_depth_map = None
+            if compute_depth_map:
+                full_depth_map = np.full((render_h, render_w), np.nan, dtype=np.float32)
+                if crop_depth_map is not None:
+                    full_depth_map[v_min:v_min + crop_h, u_min:u_min + crop_w] = crop_depth_map
+
+            # ── Optional upsample to native ──────────────────────────────────
+            result_scale = dynamic_scale
+            if upsample_to_native and dynamic_scale < 1.0:
+                import cv2 as _cv2
+                full_index_map = _cv2.resize(full_index_map, (width, height), interpolation=_cv2.INTER_NEAREST)
+                if full_depth_map is not None:
+                    full_depth_map = _cv2.resize(full_depth_map, (width, height), interpolation=_cv2.INTER_NEAREST)
+                result_scale = 1.0
+
+            results.append(cls._normalize_result_dict({
+                'index_map':       full_index_map,
+                'visible_indices': visible_indices,
+                'depth_map':       full_depth_map,
+                'inverted_index':  None,
+                'scale_factor':    result_scale,
+            }, compute_depth_map))
+
+            cam_time = perf_counter() - cam_start
+            camera_total_sum  += cam_time
+            _t_render_total   += t_render
+            _t_readback_total += t_readback
+            _t_decode_total   += t_decode
+
+            log_cam_breakdown(
+                cam_label(camera_index_offset + i + 1),
+                cam_time, 0.0, t_render, t_readback, t_decode, 0.0, 0.0, 0.0, logger
+            )
+
+        n_cams = max(1, len(camera_params_list))
+        total_time = perf_counter() - start_time
+        readback_mode = "CUDA-GL (no PCIe)" if use_cuda_gl else "CPU fallback"
+        print(
+            f"\n⏱️  moderngl BREAKDOWN ({n_cams} cameras, {readback_mode})\n"
+            f"   GPU rasterize : {_t_render_total:.3f}s  ({_t_render_total/n_cams*1000:.1f}ms/cam)\n"
+            f"   Readback      : {_t_readback_total:.3f}s  ({_t_readback_total/n_cams*1000:.1f}ms/cam)\n"
+            f"   Decode        : {_t_decode_total:.3f}s  ({_t_decode_total/n_cams*1000:.1f}ms/cam)\n"
+            f"   Total         : {total_time:.3f}s  ({total_time/n_cams*1000:.1f}ms/cam)\n"
+        )
+        return results
+
     @classmethod
     def setup_batch_vtk_context(cls, mesh_product, pixel_budget, sample_width, sample_height):
         """Pre-load the VTK plotter and upload mesh geometry once for all chunks."""
@@ -1169,20 +1891,28 @@ class VisibilityManager:
             t_render = perf_counter() - t0
             t_prep = (t0 - prep_start) - t_crop
 
-            # Screenshot transfer (Tiny footprint if cropped)
+            # Screenshot / framebuffer readback
+            # Try CUDA-GL interop first (PBO → D2D copy, no PCIe).
+            # Fall back to plotter.screenshot() (PCIe readback) if unavailable.
             t0 = perf_counter()
-            screenshot_low = plotter.screenshot(return_img=True)
-            if screenshot_low.shape[2] == 4:
-                screenshot_low = screenshot_low[:, :, :3]
+            _ren_win = plotter.ren_win
+            screenshot_low = cls._cuda_gl_screenshot(crop_w, crop_h, ren_win=_ren_win)
+            if screenshot_low is None:
+                # PCIe fallback
+                screenshot_low = plotter.screenshot(return_img=True)
+                if screenshot_low.shape[2] == 4:
+                    screenshot_low = screenshot_low[:, :, :3]
 
             screenshot_high = None
             if is_dual_pass and actor_high is not None:
                 actor_low.SetVisibility(False)
                 actor_high.SetVisibility(True)
                 plotter.render()
-                screenshot_high = plotter.screenshot(return_img=True)
-                if screenshot_high.shape[2] == 4:
-                    screenshot_high = screenshot_high[:, :, :3]
+                screenshot_high = cls._cuda_gl_screenshot(crop_w, crop_h, ren_win=_ren_win)
+                if screenshot_high is None:
+                    screenshot_high = plotter.screenshot(return_img=True)
+                    if screenshot_high.shape[2] == 4:
+                        screenshot_high = screenshot_high[:, :, :3]
             t_screenshot = perf_counter() - t0
 
             # Decoding (GPU Math)

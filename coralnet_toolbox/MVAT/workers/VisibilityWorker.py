@@ -45,6 +45,7 @@ class VisibilityWorker(QObject):
         self.camera_params_dict = camera_params_dict
         self.compute_depth_maps = compute_depth_maps
         self.pixel_budget = pixel_budget
+        self.upsample_to_native = True
         self.warp_callables_dict = warp_callables_dict or {}
         # path -> dist_coeffs.tobytes() for distorted cameras; used for cache-key disambiguation
         self.dist_coeffs_bytes_dict = dist_coeffs_bytes_dict or {}
@@ -246,14 +247,25 @@ class VisibilityWorker(QObject):
                     sample_w = params_list[0][3]
                     sample_h = params_list[0][4]
 
+                    # Try moderngl first (zero-PCIe); fall back to VTK if unavailable
+                    _use_moderngl = False
+                    mgl_context   = None
                     try:
+                        mgl_context   = VisibilityManager.setup_batch_moderngl_context(
+                            self.primary_target, self.pixel_budget, sample_w, sample_h,
+                        )
+                        _use_moderngl = True
+                        print("✅ Using moderngl rasterizer (zero-PCIe CUDA-GL path)")
+                    except Exception as _mgl_err:
+                        print(f"⚠️  moderngl unavailable ({_mgl_err}); falling back to VTK")
+
+                    vtk_context = None
+                    if not _use_moderngl:
                         vtk_context = VisibilityManager.setup_batch_vtk_context(
-                            self.primary_target,
-                            self.pixel_budget,
-                            sample_w,
-                            sample_h,
+                            self.primary_target, self.pixel_budget, sample_w, sample_h,
                         )
 
+                    try:
                         for i in range(0, total_cameras, CHUNK_SIZE):
                             chunk_paths = paths[i : i + CHUNK_SIZE]
                             chunk_params = params_list[i : i + CHUNK_SIZE]
@@ -264,13 +276,24 @@ class VisibilityWorker(QObject):
                                 self._status(f"Computing 3D maps... (Chunk {i+current}/{total_cameras} at {budget_str})")
 
                             # --- A. RENDER THE CHUNK ---
-                            batch_results = VisibilityManager.compute_batch_mesh_visibility_vtk(
-                                self.primary_target, chunk_params, False,
-                                pixel_budget=self.pixel_budget,
-                                progress_callback=update_status,
-                                vtk_context=vtk_context,
-                                camera_index_offset=i,
-                            )
+                            if _use_moderngl:
+                                batch_results = VisibilityManager.compute_batch_mesh_visibility_moderngl(
+                                    self.primary_target, chunk_params, False,
+                                    pixel_budget=self.pixel_budget,
+                                    upsample_to_native=self.upsample_to_native,
+                                    progress_callback=update_status,
+                                    mgl_context=mgl_context,
+                                    camera_index_offset=i,
+                                )
+                            else:
+                                batch_results = VisibilityManager.compute_batch_mesh_visibility_vtk(
+                                    self.primary_target, chunk_params, False,
+                                    pixel_budget=self.pixel_budget,
+                                    upsample_to_native=self.upsample_to_native,
+                                    progress_callback=update_status,
+                                    vtk_context=vtk_context,
+                                    camera_index_offset=i,
+                                )
                             
                             for p, r in zip(chunk_paths, batch_results):
                                 r['element_type'] = element_type
@@ -396,6 +419,13 @@ class VisibilityWorker(QObject):
                         if vtk_context is not None:
                             try:
                                 vtk_context['plotter'].close()
+                            except Exception:
+                                pass
+                        if mgl_context is not None:
+                            try:
+                                for fbo in mgl_context.get('_fbo_cache', {}).values():
+                                    fbo.release()
+                                mgl_context['ctx'].release()
                             except Exception:
                                 pass
 
