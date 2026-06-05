@@ -2088,6 +2088,7 @@ class BatchInferenceDialog(QDialog):
                     self.image_window.update_image_annotations(image_path)
                 except Exception as e:
                     print(f"Semantic finalize error for {image_path}: {e}")
+
             # Reload the mask graphics for the currently displayed image
             try:
                 if getattr(self.annotation_window, 'current_image_path', None) in processed:
@@ -2340,7 +2341,6 @@ class BatchInferenceDialog(QDialog):
         """
         Clean up resources after batch inference.
         """
-        # Ensure any running worker is signaled to stop
         try:
             if hasattr(self, '_batch_worker') and getattr(self._batch_worker, 'isRunning', lambda: False)():
                 try:
@@ -2349,12 +2349,11 @@ class BatchInferenceDialog(QDialog):
                     pass
         except Exception:
             pass
+
         self.image_paths = []
-        
-        # Reset inference type to Standard
+
         self.inference_type_combo.blockSignals(True)
-        self.inference_type_combo.setCurrentText("Standard")
+        self.inference_type_combo.setCurrentText('Standard')
         self.inference_type_combo.blockSignals(False)
-        
-        # Untoggle all tools in the annotation window
+
         self.annotation_window.toolChanged.emit(None)

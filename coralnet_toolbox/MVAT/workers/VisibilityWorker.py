@@ -17,7 +17,7 @@ from coralnet_toolbox.MVAT.utils.MVATLogger import (
 )
 from coralnet_toolbox.MVAT.core.Products import MeshProduct, PointCloudProduct
 
-DEBUG_EXPORT_RGB_INDEX_MAPS = True
+DEBUG_EXPORT_RGB_INDEX_MAPS = False
 
 logger = get_visibility_logger()
 
@@ -34,8 +34,8 @@ class VisibilityWorkerSignals(QObject):
 
 class VisibilityWorker(QObject):
     """
-    Background worker for computing camera visibility maps.
-    Now safely handles Meshes (via Open3D), PointClouds, and DEMs.
+    Background worker for computing camera visibility (index) maps.
+    Uses moderngl GPU rasterization as the primary path, with VTK as fallback.
     """
     def __init__(self, primary_target, camera_params_dict, compute_depth_maps=True,
                  cache_manager=None, cache_keys_dict=None, target_file_path="", pixel_budget=None,
@@ -45,6 +45,7 @@ class VisibilityWorker(QObject):
         self.camera_params_dict = camera_params_dict
         self.compute_depth_maps = compute_depth_maps
         self.pixel_budget = pixel_budget
+        self.upsample_to_native = True
         self.warp_callables_dict = warp_callables_dict or {}
         # path -> dist_coeffs.tobytes() for distorted cameras; used for cache-key disambiguation
         self.dist_coeffs_bytes_dict = dist_coeffs_bytes_dict or {}
@@ -180,10 +181,18 @@ class VisibilityWorker(QObject):
             # =================================================================
             # Helper: Synchronous Disk Saver
             # =================================================================
+            # Accumulators for the end-of-run cache summary
+            _cache_total_start: float = 0.0
+            _cache_wall_end:    float = 0.0   # updated inside save_to_disk_task, excludes VTK cleanup
+            _cache_saved_count: int = 0
+            _cache_total_count: int = 0
+
             def save_to_disk_task(save_results, cache_mgr, target_path, keys_dict, extra_bytes_dict, pixel_budget):
-                start_cache_time = time.perf_counter()
-                total_to_save = len(save_results)
-                saved_count = 0
+                nonlocal _cache_total_start, _cache_wall_end, _cache_saved_count, _cache_total_count
+                # Start the global timer on the first chunk
+                if _cache_total_count == 0:
+                    _cache_total_start = time.perf_counter()
+                _cache_total_count += len(save_results)
 
                 def _save_one(p, result_dict):
                     cache_key = keys_dict.get(p)
@@ -206,7 +215,7 @@ class VisibilityWorker(QObject):
                     log_cam_stage(self._cam_label(p, camera_labels), "Cache", elapsed, logger)
                     return True
 
-                n_workers = min(4, max(1, total_to_save))
+                n_workers = min(4, max(1, len(save_results)))
                 with ThreadPoolExecutor(max_workers=n_workers) as pool:
                     futs = {
                         pool.submit(_save_one, p, res): p
@@ -216,12 +225,11 @@ class VisibilityWorker(QObject):
                         p = futs[fut]
                         try:
                             if fut.result():
-                                saved_count += 1
+                                _cache_saved_count += 1
                         except Exception as exc:
                             logger.warning(f"⚠️ Cache save failed for {self._cam_label(p, camera_labels)}: {exc}")
-                
-                elapsed = time.perf_counter() - start_cache_time
-                logger.info(f"✅ Cached {saved_count}/{total_to_save} maps to disk in {elapsed:.2f}s")
+                # Snapshot the end-of-saves wall time before any post-save work
+                _cache_wall_end = time.perf_counter()
 
             # ==========================================
             # STRATEGY A: MESH PROCESSING (CHUNKED)
@@ -239,14 +247,17 @@ class VisibilityWorker(QObject):
                     sample_w = params_list[0][3]
                     sample_h = params_list[0][4]
 
+                    # Setup ModernGL context for batch rasterization
                     try:
-                        vtk_context = VisibilityManager.setup_batch_vtk_context(
-                            self.primary_target,
-                            self.pixel_budget,
-                            sample_w,
-                            sample_h,
+                        mgl_context = VisibilityManager.setup_batch_moderngl_context(
+                            self.primary_target, self.pixel_budget, sample_w, sample_h,
                         )
+                        logger.info("✅ Using moderngl rasterizer (zero-PCIe CUDA-GL path)")
+                    except Exception as _mgl_err:
+                        logger.error("❌ ModernGL unavailable (%s); cannot proceed (VTK removed in Phase 3)", _mgl_err)
+                        raise
 
+                    try:
                         for i in range(0, total_cameras, CHUNK_SIZE):
                             chunk_paths = paths[i : i + CHUNK_SIZE]
                             chunk_params = params_list[i : i + CHUNK_SIZE]
@@ -256,12 +267,15 @@ class VisibilityWorker(QObject):
                                 budget_str = "Native" if not self.pixel_budget else f"{self.pixel_budget / 1_000_000:.1f}MP"
                                 self._status(f"Computing 3D maps... (Chunk {i+current}/{total_cameras} at {budget_str})")
 
-                            # --- A. RENDER THE CHUNK ---
-                            batch_results = VisibilityManager.compute_batch_mesh_visibility_vtk(
-                                self.primary_target, chunk_params, False,
+                            # --- A. RENDER THE CHUNK (ModernGL only) ---
+                            batch_results = VisibilityManager.compute_batch_mesh_visibility_moderngl(
+                                self.primary_target, chunk_params,
+                                compute_depth_map=self.compute_depth_maps,
+                                compute_visible_indices=False,
                                 pixel_budget=self.pixel_budget,
+                                upsample_to_native=self.upsample_to_native,
                                 progress_callback=update_status,
-                                vtk_context=vtk_context,
+                                mgl_context=mgl_context,
                                 camera_index_offset=i,
                             )
                             
@@ -391,6 +405,22 @@ class VisibilityWorker(QObject):
                                 vtk_context['plotter'].close()
                             except Exception:
                                 pass
+                        if mgl_context is not None:
+                            try:
+                                for fbo in mgl_context.get('_fbo_cache', {}).values():
+                                    fbo.release()
+                                mgl_context['ctx'].release()
+                            except Exception:
+                                pass
+
+                    # Log the true total cache time after ALL chunks are saved.
+                    # Use _cache_wall_end (set inside save_to_disk_task) so the
+                    # elapsed is pure disk-write wall time and excludes VTK cleanup.
+                    if _cache_total_count > 0 and _cache_wall_end > 0:
+                        total_elapsed = _cache_wall_end - _cache_total_start
+                        logger.info(
+                            f"✅ Cached {_cache_saved_count}/{_cache_total_count} maps to disk in {total_elapsed:.2f}s"
+                        )
 
             # ==========================================
             # STRATEGY B: POINT CLOUD (NOT YET CHUNKED)
@@ -403,7 +433,7 @@ class VisibilityWorker(QObject):
                         paths = list(perspective_params.keys())
                         params_list = list(perspective_params.values())
 
-                        batch_results = VisibilityManager.compute_batch_visibility(
+                        batch_results = VisibilityManager.compute_batch_point_cloud_visibility(
                             points_world=points_world,
                             camera_params_list=params_list,
                             point_ids=element_ids,
@@ -444,18 +474,12 @@ class VisibilityWorker(QObject):
                     logger.warning(f"Warning: Geometry not loaded for {target.product_id}")
                     return None, None
 
-                # Extract the true face centers for the solid mesh raycaster
                 face_centers = mesh.cell_centers().points
                 face_ids = np.arange(len(face_centers), dtype=np.int32)
-
                 return face_centers, face_ids
 
             except Exception as e:
-                logger.warning(f"Failed to extract faces in worker for {target.product_id}: {e}")
+                logger.warning(f"Warning: Could not extract face centers from {target.product_id}: {e}")
                 return None, None
-
-        # Fallback
-        if hasattr(target, 'get_points_array'):
-            return target.get_points_array(), None
 
         return None, None

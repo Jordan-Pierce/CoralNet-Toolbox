@@ -476,7 +476,7 @@ class Raster(QObject):
 
     def warp_linear_map_to_distorted(self, linear_map, border_value=-1):
         """
-        Warp a perfectly linear VTK/Open3D render back into the distorted photo space.
+        Warp a perfectly linear VTK render back into the distorted photo space.
         Uses CUDA via PyTorch if available, falling back to cached cv2.remap.
         """
         self._ensure_warp_maps()

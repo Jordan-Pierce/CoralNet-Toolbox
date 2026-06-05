@@ -35,12 +35,11 @@ from coralnet_toolbox.MVAT.core.constants import (
     MARKER_COLOR_SELECTED,
     MARKER_COLOR_HIGHLIGHTED,
     MARKER_COLOR_INVALID,
-    RAY_COLOR_SELECTED,
-    RAY_COLOR_HIGHLIGHTED,
-    RAY_COLOR_INVALID,
 )
 
 from coralnet_toolbox.MVAT.core.Products import MeshProduct
+from coralnet_toolbox.MVAT.managers.MousePositionBridge import MousePositionBridge
+from coralnet_toolbox.MVAT.managers.PropagationEngine import PropagationEngine
 
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 
@@ -48,376 +47,9 @@ from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 logger = get_visibility_logger()
 
 
-def resolve_class_conflicts_vectorized(element_ids: np.ndarray, class_ids: np.ndarray):
-    """Resolve per-element class conflicts using vectorized vote counts."""
-    try:
-        element_ids = np.asarray(element_ids, dtype=np.int64).ravel()
-        class_ids = np.asarray(class_ids, dtype=np.int64).ravel()
-    except Exception:
-        return np.array([], dtype=np.int64), np.array([], dtype=np.int64)
-
-    if element_ids.size == 0 or class_ids.size == 0 or element_ids.size != class_ids.size:
-        return np.array([], dtype=np.int64), np.array([], dtype=np.int64)
-
-    max_classes = max(100000, int(np.max(class_ids)) + 1)
-    compound_ids = (element_ids * max_classes) + class_ids
-
-    unique_compounds, vote_counts = np.unique(compound_ids, return_counts=True)
-    unique_elements = unique_compounds // max_classes
-    unique_classes = unique_compounds % max_classes
-
-    # Within each element group, keep the highest vote count and prefer the
-    # smaller class ID when the vote count is tied.
-    sort_indices = np.lexsort((-unique_classes, vote_counts, unique_elements))
-    sorted_elements = unique_elements[sort_indices]
-    sorted_classes = unique_classes[sort_indices]
-
-    _, winner_indices = np.unique(sorted_elements[::-1], return_index=True)
-    winner_indices = (len(sorted_elements) - 1) - winner_indices
-
-    return sorted_elements[winner_indices], sorted_classes[winner_indices]
-
-
-def _merge_update_rects(existing_rect, new_rect):
-    """Return the union of two update rects in (x1, y1, x2, y2) form."""
-    if new_rect is None:
-        return existing_rect
-    if existing_rect is None:
-        return new_rect
-
-    return (
-        min(existing_rect[0], new_rect[0]),
-        min(existing_rect[1], new_rect[1]),
-        max(existing_rect[2], new_rect[2]),
-        max(existing_rect[3], new_rect[3]),
-    )
-
-
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
-
-
-class MousePositionBridge(QObject):
-    """
-    Bridges mouse position events from the AnnotationWindow to the MVAT
-    controller.
-
-    Responsibilities:
-    - Build a 3D ray from a selected camera and a 2D image pixel (uses depth
-        from a z-channel when available, otherwise falls back to a scene
-        median/default depth).
-    - Create corresponding rays from highlighted cameras to the same world
-        point and choose colors based on depth accuracy.
-    - Project the selected ray into other camera image spaces and forward
-        marker/visibility updates to the ContextMatrix for UI presentation.
-
-    This class mirrors the behavior previously implemented on the window
-    layer but is now manager-owned so it can operate without direct UI
-    responsibilities.
-    """
-    def __init__(self, manager: 'MVATManager'):
-        super().__init__()
-        self.manager = manager
-        self.enabled = True
-        self._last_update_time = 0
-        self._last_mouse_x = -1
-        self._last_mouse_y = -1
-
-    def on_mouse_moved(self, x: int, y: int):
-        if not self.enabled:
-            return
-        # Skip duplicate pixels (Qt can fire multiple events for the same position)
-        if x == self._last_mouse_x and y == self._last_mouse_y:
-            return
-        # Time-gate: cap at ~60 fps to avoid flooding the ortho ray-trace / perspective
-        # projection loop on every raw mouse event.
-        now = time.monotonic()
-        if now - self._last_update_time < 0.016:
-            return
-        self._last_update_time = now
-        self._last_mouse_x = x
-        self._last_mouse_y = y
-        self._process_pending_position(x, y)
-            
-    def _process_pending_position(self, x: int, y: int):
-        # --- Ortho path: route to ortho handler when OrthoRaster is displayed ---
-        ortho_camera = self.manager.ortho_camera
-        if ortho_camera is not None:
-            current_path = getattr(self.manager.annotation_window, 'current_image_path', None)
-            if current_path == ortho_camera.image_path:
-                self.manager.viewer.clear_ray()
-                self._process_ortho_position(x, y, ortho_camera)
-                return
-
-        self.manager.viewer.clear_ortho_ray()
-
-        camera = self.manager.selected_camera
-        if camera is None or not (0 <= x < camera.width and 0 <= y < camera.height):
-            self.clear_all_markers()
-            self.manager.viewer.clear_ray()
-            return
-
-        visible_cameras = self.manager._get_visible_context_cameras()
-        visible_paths = {cam.image_path for cam in visible_cameras}
-        if camera.image_path not in visible_paths:
-            self.clear_all_markers()
-            self.manager.viewer.clear_ray()
-            return
-
-        primary_target = self.manager.viewer.scene_context.get_primary_target()
-
-        # --- Path A: Index Map (preferred) ---
-        ray = None
-        candidate_id = -1
-        index_map = camera._raster.index_map
-        if index_map is not None:
-            candidate_id = int(index_map[y, x])
-
-        if candidate_id > -1 and primary_target is not None:
-            coord = primary_target.get_element_coordinate(candidate_id)
-            if coord is not None:
-                # ---> Perspective logic <---
-                origin = camera.position.copy()
-                direction = coord - origin
-                norm = np.linalg.norm(direction)
-                direction = direction / norm if norm > 0 else camera.R.T @ np.array([0, 0, 1])
-                
-                ray = CameraRay(
-                    origin=origin,
-                    direction=direction,
-                    terminal_point=coord,
-                    has_accurate_depth=True,
-                    pixel_coord=(x, y),
-                    source_camera=camera,
-                    element_id=candidate_id
-                )
-
-        # --- Path B: Z-channel / depth fallback ---
-        if ray is None:
-            raster = camera._raster
-            depth = None
-            z_data_type = raster.z_data_type if hasattr(raster, 'z_data_type') else None
-            
-            if raster.z_channel is not None:
-                z_value = raster.get_z_value(x, y)
-                # For depth maps, only accept positive values
-                # For elevation maps, accept any value (including negative)
-                if z_value is not None:
-                    if z_data_type == 'elevation' or (z_data_type == 'depth' and z_value > 0) or z_data_type is None:
-                        depth = z_value
-            
-            if depth is None or np.isnan(depth):
-                default_depth = self.manager.viewer.get_scene_median_depth(camera.position)
-            else:
-                default_depth = depth
-            
-            ray = CameraRay.from_pixel_and_camera(
-                pixel_xy=(x, y),
-                camera=camera,
-                depth=depth,
-                default_depth=default_depth,
-            )
-
-        primary_ray_valid = ray.has_accurate_depth or ray.element_id > -1
-        rays_with_colors = [(ray, RAY_COLOR_SELECTED if primary_ray_valid else RAY_COLOR_INVALID)]
-        
-        # --- Short-Circuit Invalid Primary Rays ---
-        # If the primary ray did not hit real scene geometry, skip secondary rays entirely.
-        if not primary_ray_valid:
-            # Primary ray is invalid: keep only the selected-camera ray, clear markers, and return.
-            self.manager.viewer.show_rays(rays_with_colors)
-            self.clear_all_markers()
-            return
-        
-        # --- Primary ray is valid: proceed with secondary rays ---
-        visibility_status = {}
-        accuracies = {camera.image_path: ray.has_accurate_depth}
-        highlighted_cameras = visible_cameras
-
-        for target_cam in highlighted_cameras:
-            if target_cam.image_path == camera.image_path:
-                continue
-
-            # Project primary terminal point into this camera
-            proj = target_cam.project(ray.terminal_point)
-            u_proj = int(round(float(proj[0]))) if not np.isnan(proj[0]) else -1
-            v_proj = int(round(float(proj[1]))) if not np.isnan(proj[1]) else -1
-            in_bounds = (
-                not np.isnan(proj[0])
-                and 0 <= u_proj < target_cam.width
-                and 0 <= v_proj < target_cam.height
-            )
-
-            # If the projected point is out of bounds, skip this camera entirely
-            # (no secondary ray should be drawn into empty space outside the image)
-            if not in_bounds:
-                continue
-
-            target_terminal = ray.terminal_point
-            ray_color = RAY_COLOR_INVALID
-            is_occluded = True
-            found_id = -1
-
-            if getattr(target_cam, '_raster', None) is not None and target_cam._raster.index_map is not None and ray.element_id > -1:
-                found_id = int(target_cam._raster.index_map[v_proj, u_proj])
-
-                # Determine visibility with spatial tolerance.
-                # METHOD A: 3D Distance Threshold (ACTIVE)
-                # Resolves false-positive occlusions caused by sub-pixel rounding when
-                # projecting the primary 3D point into the secondary camera.  A found_id
-                # that differs from primary_element_id may still belong to the same
-                # physical surface patch; we accept it as visible when its 3D centre is
-                # within 5% of the camera-to-point distance.
-                is_visible = False
-                if found_id == ray.element_id:
-                    is_visible = True
-                elif found_id > -1 and primary_target is not None:
-                    found_coord = primary_target.get_element_coordinate(found_id)
-                    if found_coord is not None:
-                        surface_dist = np.linalg.norm(found_coord - ray.terminal_point)
-                        cam_to_point_dist = np.linalg.norm(target_cam.position - ray.terminal_point)
-                        tolerance = 0.05 * cam_to_point_dist
-                        if surface_dist <= tolerance:
-                            is_visible = True
-
-                # METHOD B: 2D Neighbourhood Search (COMMENTED OUT — for comparison testing)
-                # Checks whether primary_element_id appears anywhere in a 5×5 pixel window
-                # around the projected pixel, catching cases where aliasing shifts the hit
-                # by 1-2 pixels.
-                # -----------------------------------------------------------------------
-                # HALF = 2  # half-width of the search window (full window = 2*HALF+1)
-                # v_lo = max(0, v_proj - HALF)
-                # v_hi = min(target_cam.height, v_proj + HALF + 1)
-                # u_lo = max(0, u_proj - HALF)
-                # u_hi = min(target_cam.width,  u_proj + HALF + 1)
-                # neighbourhood = target_cam.index_map[v_lo:v_hi, u_lo:u_hi]
-                # is_visible = int(ray.element_id) in neighbourhood
-                # -----------------------------------------------------------------------
-
-                if is_visible:
-                    target_terminal = ray.terminal_point
-                    is_occluded = False
-                    accuracies[target_cam.image_path] = True
-
-                elif found_id > -1:                                 # TRUE OCCLUSION
-                    occluder = primary_target.get_element_coordinate(found_id) if primary_target else None
-                    target_terminal = occluder if occluder is not None else ray.terminal_point
-                    accuracies[target_cam.image_path] = False
-
-                else:                                               # BACKGROUND (-1)
-                    accuracies[target_cam.image_path] = False
-
-            else:
-                # Legacy fallback: depth-based occlusion test
-                is_occluded = target_cam.is_point_occluded_depth_based(
-                    ray.terminal_point, depth_threshold=0.15)
-                accuracies[target_cam.image_path] = target_cam._raster.z_channel is not None
-
-            visibility_status[target_cam.image_path] = is_occluded
-            ray_color = RAY_COLOR_HIGHLIGHTED if (accuracies.get(target_cam.image_path, False) and not is_occluded) else RAY_COLOR_INVALID
-
-            # Build secondary ray directly
-            t_origin = target_cam.position.copy()
-            t_direction = target_terminal - t_origin
-            t_norm = np.linalg.norm(t_direction)
-            t_direction = t_direction / t_norm if t_norm > 0 else target_cam.R.T @ np.array([0, 0, 1])
-            is_ray_accurate = accuracies.get(target_cam.image_path, False) and not is_occluded
-            target_ray = CameraRay(
-                origin=t_origin,
-                direction=t_direction,
-                terminal_point=target_terminal,
-                has_accurate_depth=is_ray_accurate,
-                source_camera=target_cam,
-                element_id=found_id,
-            )
-            rays_with_colors.append((target_ray, ray_color))
-
-        self.manager.viewer.show_rays(rays_with_colors)
-        # Project only into visible cameras — avoids O(all_cameras) work per frame
-        visible_cam_dict = {cam.image_path: cam for cam in highlighted_cameras}
-        visible_cam_dict[camera.image_path] = camera  # include the primary camera
-        projections = ray.project_to_cameras(visible_cam_dict)
-
-        # Update context matrix canvases (Phase 4)
-        if self.manager.context_matrix is not None:
-            try:
-                self.manager.context_matrix.update_dynamic_markers(
-                    projections, accuracies, visibility_status
-                )
-            except Exception:
-                self.manager.context_matrix.clear_all_dynamic_markers()
-                
-    def _process_ortho_position(self, x: int, y: int, ortho_camera):
-        """
-        Handle mouse-move events when the AnnotationWindow is showing an OrthoRaster.
-
-        Resolves the 3D world point via z-channel lookup (O(1)) instead of mesh
-        ray tracing.  The z-channel is stored at full ortho resolution so pixel
-        coords map directly; the raw CRS elevation is fed into geo_to_world.
-        """
-
-        if not (0 <= x < ortho_camera.width and 0 <= y < ortho_camera.height):
-            self.manager.viewer.clear_ortho_ray()
-            self.clear_all_markers()
-            return
-
-        # Geo XY from affine transform
-        X, Y = ortho_camera.pixel_to_geo(x, y)
-
-        # CRS elevation from z-channel (stored at full ortho resolution, raw units)
-        Z = ortho_camera._raster.get_z_value(x, y)
-        if Z is None:
-            self.manager.viewer.clear_ortho_ray()
-            self.clear_all_markers()
-            return
-
-        world_pt = ortho_camera.geo_to_world(X, Y, Z)
-
-        try:
-            self.manager.viewer.show_ortho_ray(
-                world_pt,
-                ortho_camera.get_vertical_direction_world(),
-            )
-        except Exception:
-            pass
-
-        # Project to all visible context cameras and build marker dicts
-        projections = {}
-        accuracies = {}
-        visibility_status = {}
-
-        for cam in self.manager._get_visible_context_cameras():
-            try:
-                proj = cam.project(world_pt)
-                if np.isnan(proj).any():
-                    continue
-                u = float(proj[0])
-                v = float(proj[1])
-                in_bounds = 0 <= u < cam.width and 0 <= v < cam.height
-                projections[cam.image_path] = (u, v, in_bounds)
-                accuracies[cam.image_path] = True
-                visibility_status[cam.image_path] = False
-            except Exception:
-                pass
-
-        if self.manager.context_matrix is not None:
-            try:
-                self.manager.context_matrix.update_dynamic_markers(
-                    projections, accuracies, visibility_status
-                )
-            except Exception:
-                self.manager.context_matrix.clear_all_dynamic_markers()
-
-    def clear_all_markers(self):
-        if self.manager.context_matrix is not None:
-            try:
-                self.manager.context_matrix.clear_all_dynamic_markers()
-            except Exception:
-                pass
-
-    def cleanup(self):
-        self.clear_all_markers()
 
 
 class MVATManager(QObject):
@@ -427,8 +59,47 @@ class MVATManager(QObject):
     cameraSelectedInMVAT = pyqtSignal(str)
     contextStatsComputed = pyqtSignal(int, str, int, int)
     _orthoIndexMapReady  = pyqtSignal(object)  # internal: carries result dict from worker thread
-    _universal_repaint_signal = pyqtSignal(list)  # internal: UI update tasks from unified propagation worker
-    
+
+    def __getattr__(self, name):
+        """Delegate unknown attributes to propagation_engine.
+
+        Allows tool code (e.g. BrushTool3D) and legacy call sites to call
+        ``manager._on_3d_brush_stroke_applied`` etc. without knowing they now
+        live on PropagationEngine.
+
+        IMPORTANT: We deliberately do NOT use ``getattr(pe, name)`` here
+        because PropagationEngine.__getattr__ delegates unknown names BACK to
+        this manager, creating infinite recursion.  Instead we look up the
+        attribute on pe using object.__getattribute__ (instance dict only) and
+        then walk pe's MRO for class-level attributes (bound methods, etc.).
+        If the name is not found on pe at all we raise AttributeError cleanly.
+        """
+        try:
+            pe = object.__getattribute__(self, 'propagation_engine')
+        except AttributeError:
+            raise AttributeError(
+                f"'{type(self).__name__}' object has no attribute '{name}'"
+            )
+
+        # 1. Instance dict (fastest path — avoids triggering pe's __getattr__)
+        try:
+            return object.__getattribute__(pe, name)
+        except AttributeError:
+            pass
+
+        # 2. Class hierarchy (covers methods defined on PropagationEngine itself)
+        for klass in type(pe).__mro__:
+            if name in klass.__dict__:
+                val = klass.__dict__[name]
+                # Bind descriptors (plain functions become bound methods)
+                if hasattr(val, '__get__'):
+                    return val.__get__(pe, type(pe))
+                return val
+
+        raise AttributeError(
+            f"'{type(self).__name__}' object has no attribute '{name}'"
+        )
+
     def __init__(self, main_window, viewer):
         super().__init__()
         
@@ -454,6 +125,7 @@ class MVATManager(QObject):
         self.highlighted_cameras = []
         self.hovered_camera = None
         self.current_focal_point = None
+        self._focal_point_locked = False  # True while ContextMatrix is pinned to a 3D static marker
         self._context_view_path = None
         self._projected_cursor_context = None
         
@@ -472,11 +144,8 @@ class MVATManager(QObject):
         self._depth_build_lock = threading.Lock()
         self._pending_depth_build_paths = set()
 
-        # Multi-camera annotation state
-        self.multi_annotate_enabled = False
-        self._propagating_annotation = False
-        self._pending_unified_propagation_jobs = 0
-        self._propagation_buffer_pool = {}
+        # PropagationEngine handles all mask propagation and multi-annotate logic
+        self.propagation_engine = PropagationEngine(self)
 
         # Ortho state: chunk transform T and OrthoCamera (set during load_cameras
         # when an OrthoRaster is present in the project)
@@ -488,19 +157,6 @@ class MVATManager(QObject):
         self.selection_model = SelectionManager(self)
         self.cache_manager = CacheManager("")
         self.mouse_bridge = MousePositionBridge(self)
-
-        # Propagation thread pool for parallel camera updates
-        self._propagation_executor = ThreadPoolExecutor(
-            max_workers=min(8, os.cpu_count() or 4),
-            thread_name_prefix='mvat_propagate'
-        )
-
-        # Single background worker for all 2D/3D propagation writes.
-        self._unified_bg_executor = ThreadPoolExecutor(
-            max_workers=1,
-            thread_name_prefix='mvat_unified_bg'
-        )
-        self._universal_repaint_signal.connect(self._on_universal_repaint, Qt.QueuedConnection)
 
         # Lazy flush debounce timer: 3D GPU uploads happen only after the user pauses.
         self._lazy_flush_timer = QTimer(self)
@@ -575,6 +231,7 @@ class MVATManager(QObject):
         if self.context_matrix is not None:
             # Toolbar buttons
             self.context_matrix.loadCamerasRequested.connect(self.load_cameras)
+            self.context_matrix.loadIndexMapsRequested.connect(self.load_index_maps)
             self.context_matrix.clearSelectionsRequested.connect(self.selection_model.clear_selections)
             self.context_matrix.previousCameraRequested.connect(self._on_previous_camera_requested)
             self.context_matrix.nextCameraRequested.connect(self._on_next_camera_requested)
@@ -587,6 +244,9 @@ class MVATManager(QObject):
             self.context_matrix.multiAnnotateToggled.connect(self._on_multi_annotate_toggled)
             self.context_matrix.semanticMaskPropagationRequested.connect(
                 self.propagate_current_semantic_mask
+            )
+            self.context_matrix.maskPropagationRequested.connect(
+                self._on_mask_propagation_requested
             )
         
         # 7. Target-Lock Sync (Phase 5): AnnotationWindow viewNavigated -> sync engine
@@ -648,6 +308,8 @@ class MVATManager(QObject):
         # Build Camera objects only for new perspective cameras.
         # ------------------------------------------------------------------
         valid_count = 0
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        QApplication.processEvents()
         try:
             self.main_window.status_bar.showMessage("Loading cameras...", 0)
             for path, raster in new_perspective_rasters:
@@ -658,6 +320,7 @@ class MVATManager(QObject):
                     print(f"❌ Failed to load perspective camera {raster.basename}: {e}")
                     print(traceback.format_exc())
         finally:
+            QApplication.restoreOverrideCursor()
             self.main_window.status_bar.showMessage(
                 f"Loaded {valid_count} new camera(s)", 3000
             )
@@ -779,6 +442,101 @@ class MVATManager(QObject):
             elif self.cameras:
                 self.selection_model.set_active(next(iter(self.cameras)))
 
+    def load_index_maps(self):
+        """Attempt to load pre-computed index maps from disk cache for all loaded cameras.
+
+        Walks every loaded perspective camera and tries the cache manager.  Cameras
+        that already have an index map in RAM are skipped.  This lets the user
+        trigger a bulk cache-load without navigating to each camera individually.
+        """
+        if not self.cameras:
+            self.main_window.status_bar.showMessage("No cameras loaded yet.", 3000)
+            return
+
+        primary_target = self.viewer.scene_context.get_primary_target()
+        if primary_target is None or self.cache_manager is None:
+            self.main_window.status_bar.showMessage(
+                "No 3D target or cache manager available for index map loading.", 4000
+            )
+            return
+
+        target_file_path = primary_target.file_path
+        element_type = primary_target.get_element_type()
+
+        candidates = [
+            cam for cam in self.cameras.values()
+            if getattr(cam._raster, 'index_map', None) is None
+        ]
+
+        if not candidates:
+            self.main_window.status_bar.showMessage(
+                "All cameras already have index maps loaded.", 3000
+            )
+            return
+
+        self.main_window.status_bar.showMessage(
+            f"Loading index maps for {len(candidates)} camera(s)...", 0
+        )
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        QApplication.processEvents()
+
+        loaded = 0
+        skipped = 0
+        try:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            def _load_one(cam):
+                cache_key = cam._raster.extrinsics
+                extra = (
+                    cam._raster.dist_coeffs.tobytes()
+                    if cam.is_distorted and cam._raster.dist_coeffs is not None
+                    else None
+                )
+                try:
+                    return cam, self.cache_manager.load_visibility(
+                        cache_key, target_file_path, element_type, extra,
+                        pixel_budget=self.pixel_budget,
+                    )
+                except Exception as exc:
+                    print(f"load_index_maps: cache load error for {cam.label}: {exc}")
+                    return cam, None
+
+            n_workers = min(8, max(1, len(candidates)))
+            with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                futs = {pool.submit(_load_one, cam): cam for cam in candidates}
+                for fut in as_completed(futs):
+                    cam, data = fut.result()
+                    if data is not None:
+                        cache_path = data.get('cache_path') or self.cache_manager.get_cache_path(
+                            cam._raster.extrinsics, target_file_path, element_type,
+                            (cam._raster.dist_coeffs.tobytes()
+                             if cam.is_distorted and cam._raster.dist_coeffs is not None
+                             else None),
+                            pixel_budget=self.pixel_budget,
+                        )
+                        cam._raster.add_index_map(
+                            data.get('index_map'),
+                            cache_path,
+                            data.get('visible_indices'),
+                            element_type=element_type,
+                            inverted_index=data.get('inverted_index'),
+                        )
+                        if self.compute_depth_maps_enabled:
+                            depth_map = data.get('depth_map')
+                            if depth_map is not None:
+                                try:
+                                    cam._raster.merge_or_set_depth_map(depth_map)
+                                except Exception:
+                                    pass
+                        loaded += 1
+                    else:
+                        skipped += 1
+        finally:
+            QApplication.restoreOverrideCursor()
+            self.main_window.status_bar.showMessage(
+                f"Index maps: {loaded} loaded from cache, {skipped} not cached.", 5000
+            )
+
     def _render_frustums(self):
         """
         Update the 3D scene to render frustums, point cloud and axes.
@@ -891,6 +649,87 @@ class MVATManager(QObject):
 
     # --- Signal Handlers ---
 
+    def get_propagation_camera_counts(self):
+        """Return counts used by the propagation option dialogs.
+
+        Returns a dict with:
+          total          -- total loaded cameras
+          have_index_map -- cameras with a pre-computed index map
+          have_mask      -- cameras with both an index map and a mask annotation
+        """
+        total = len(self.cameras)
+        have_index_map = 0
+        have_mask = 0
+        for camera in self.cameras.values():
+            raster = getattr(camera, '_raster', None)
+            if raster is None:
+                continue
+            if getattr(raster, 'index_map', None) is not None:
+                have_index_map += 1
+                if getattr(raster, 'mask_annotation', None) is not None:
+                    have_mask += 1
+        return {
+            'total': total,
+            'have_index_map': have_index_map,
+            'have_mask': have_mask,
+        }
+
+    def _on_mask_propagation_requested(self, mode: str):
+        """Route maskPropagationRequested(mode) to the correct PropagationEngine method.
+
+        The mode string is one of the PROPAGATE_* constants defined in
+        QtContextMatrix, optionally suffixed with option flags separated by ':'.
+
+        Examples
+        --------
+        ``"active_to_context"``               → propagate_current_semantic_mask()
+        ``"active_camera_to_mesh"``           → aggregate_active_camera_mask_to_mesh()
+        ``"active_to_all_cameras"``           → propagate_current_semantic_mask_to_all_cameras()
+        ``"cameras_to_mesh"``                 → aggregate_camera_masks_to_mesh()
+        ``"mesh_to_active_camera:skip_unlabeled"`` → project_mesh_labels_to_active_camera(skip_unlabeled=True)
+        ``"mesh_to_visible_cameras"``         → project_mesh_labels_to_visible_cameras()
+        ``"mesh_to_cameras:skip_unlabeled"``  → project_mesh_labels_to_cameras(skip_unlabeled=True)
+        ``"mesh_to_cameras:keep_all"``        → project_mesh_labels_to_cameras(skip_unlabeled=False)
+        """
+        from coralnet_toolbox.MVAT.ui.QtContextMatrix import (
+            PROPAGATE_ACTIVE_TO_CONTEXT,
+            PROPAGATE_ACTIVE_CAMERA_TO_MESH,
+            PROPAGATE_ACTIVE_TO_ALL_CAMERAS,
+            PROPAGATE_CAMERAS_TO_MESH,
+            PROPAGATE_MESH_TO_ACTIVE_CAMERA,
+            PROPAGATE_MESH_TO_VISIBLE_CAMERAS,
+            PROPAGATE_MESH_TO_CAMERAS,
+        )
+
+        parts = mode.split(":")
+        base_mode = parts[0]
+        flags = set(parts[1:])
+
+        if base_mode == PROPAGATE_ACTIVE_TO_CONTEXT:
+            # Already handled by semanticMaskPropagationRequested → propagate_current_semantic_mask
+            pass
+
+        elif base_mode == PROPAGATE_ACTIVE_CAMERA_TO_MESH:
+            self.aggregate_active_camera_mask_to_mesh()
+
+        elif base_mode == PROPAGATE_ACTIVE_TO_ALL_CAMERAS:
+            self.propagate_current_semantic_mask_to_all_cameras()
+
+        elif base_mode == PROPAGATE_CAMERAS_TO_MESH:
+            self.aggregate_camera_masks_to_mesh(also_project_to_cameras=False)
+
+        elif base_mode == PROPAGATE_MESH_TO_ACTIVE_CAMERA:
+            skip_unlabeled = "keep_all" not in flags
+            self.project_mesh_labels_to_active_camera(skip_unlabeled=skip_unlabeled)
+
+        elif base_mode == PROPAGATE_MESH_TO_VISIBLE_CAMERAS:
+            skip_unlabeled = "keep_all" not in flags
+            self.project_mesh_labels_to_visible_cameras(skip_unlabeled=skip_unlabeled)
+
+        elif base_mode == PROPAGATE_MESH_TO_CAMERAS:
+            skip_unlabeled = "keep_all" not in flags  # default True; opt-out with :keep_all
+            self.project_mesh_labels_to_cameras(skip_unlabeled=skip_unlabeled)
+
     def _on_main_image_loaded(self, path: str):
         """
         Handler for when the main image window loads a new image.
@@ -972,6 +811,97 @@ class MVATManager(QObject):
                 self.context_matrix.update_static_markers_from_3d(point_3d, self.cameras)
             except Exception:
                 pass
+
+        # Lock the ContextMatrix to this 3D marker and sync ordering/viewports from it
+        self._focal_point_locked = True
+        self._sync_context_from_focal_point(point_3d)
+
+    def _sync_context_from_focal_point(self, point_3d):
+        """Sync ContextMatrix ordering and viewports to a 3D world point.
+
+        Projects point_3d into every loaded context camera and calls
+        request_sync / request_zoom_only so the canvases that can actually
+        see the point are snapped to it and floated to the front of the grid.
+        Used when the user double-right-clicks in the 3D viewer to set a
+        static marker — at that moment the ContextMatrix should reflect the
+        marker position rather than the AnnotationWindow viewport center.
+        """
+        if self.context_matrix is None:
+            return
+        if not self.context_matrix.target_lock_enabled:
+            return
+
+        reference_path = self.selected_camera.image_path if self.selected_camera else None
+        base_rotation = getattr(self.annotation_window, 'rotation_angle', 0.0)
+
+        targets_with_center = {}
+        zoom_only = set()
+        capacity = self.context_matrix._get_visible_capacity()
+
+        for i in range(capacity):
+            canvas = self.context_matrix._canvas_pool[i]
+            if not canvas.isVisible() or not canvas.current_image_path:
+                continue
+            camera = self.cameras.get(canvas.current_image_path)
+            if not camera:
+                continue
+            try:
+                pixel = camera.project(point_3d)
+            except Exception:
+                zoom_only.add(i)
+                continue
+            if np.isnan(pixel).any():
+                zoom_only.add(i)
+                continue
+            u, v = float(pixel[0]), float(pixel[1])
+            if 0 <= u < camera.width and 0 <= v < camera.height:
+                targets_with_center[i] = (u, v)
+            else:
+                zoom_only.add(i)
+
+        # Use a neutral relative zoom of 1.0 (fit-to-view) when snapping to a new marker
+        relative_zoom = 1.0
+
+        try:
+            self.context_matrix.request_sync(
+                targets_with_center, relative_zoom,
+                reference_path=reference_path, base_rotation=base_rotation
+            )
+            self.context_matrix.request_zoom_only(
+                zoom_only, relative_zoom,
+                reference_path=reference_path, base_rotation=base_rotation
+            )
+        except TypeError:
+            self.context_matrix.request_sync(targets_with_center, relative_zoom)
+            self.context_matrix.request_zoom_only(zoom_only, relative_zoom)
+
+    def reset_focal_lock(self):
+        """Release the focal-point lock and restore ContextMatrix to image-based navigation.
+
+        Called when the user presses Ctrl+H or Home in the AnnotationWindow.
+        Clears all static markers and re-syncs the ContextMatrix from the
+        AnnotationWindow's current viewport center.
+        """
+        self._focal_point_locked = False
+        self.current_focal_point = None
+
+        # Clear static markers in context canvases and the annotation window
+        if self.context_matrix is not None:
+            try:
+                self.context_matrix.clear_all_static_markers()
+            except Exception:
+                pass
+
+        # Trigger an immediate re-sync from the AnnotationWindow's current view
+        try:
+            aw = self.annotation_window
+            if aw.active_image and aw.pixmap_image:
+                viewport_center = aw.mapToScene(aw.viewport().rect().center())
+                self._on_main_view_navigated(
+                    viewport_center.x(), viewport_center.y(), aw.zoom_factor
+                )
+        except Exception:
+            pass
 
     def _on_camera_hovered(self, path):
         """
@@ -1176,7 +1106,8 @@ class MVATManager(QObject):
 
         def _build():
             from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
-            return VisibilityManager.compute_ortho_index_map_vtk(
+            # ModernGL-only path (VTK removed in Phase 3)
+            return VisibilityManager.compute_ortho_index_map_moderngl(
                 ortho_camera,
                 mesh_product,
                 pixel_budget=requested_budget,
@@ -1320,9 +1251,6 @@ class MVATManager(QObject):
         if getattr(camera._raster, 'z_channel', None) is not None:
             return
 
-        if camera.visible_indices is None or len(camera.visible_indices) == 0:
-            return
-
         if getattr(camera._raster, 'index_map', None) is None:
             return
 
@@ -1342,6 +1270,21 @@ class MVATManager(QObject):
             self._pending_depth_build_paths.add(camera_path)
 
         def _lazy_build_depth():
+            from PyQt5.QtCore import QMetaObject, Q_ARG
+
+            def _show_status(msg, timeout=0):
+                try:
+                    QMetaObject.invokeMethod(
+                        self.main_window.status_bar,
+                        "showMessage",
+                        Qt.QueuedConnection,
+                        Q_ARG(str, msg),
+                        Q_ARG(int, timeout),
+                    )
+                except Exception:
+                    pass
+
+            _show_status(f"Building depth map for {camera.label}...")
             try:
                 depth_map = self._reconstruct_depth_map_for_camera_fast(primary_target, camera)
                 if depth_map is None:
@@ -1353,6 +1296,9 @@ class MVATManager(QObject):
                         camera._raster.merge_or_set_depth_map(depth_map)
                     except Exception:
                         pass
+                    _show_status(f"Depth map ready for {camera.label}.", 3000)
+                else:
+                    _show_status(f"Depth map could not be built for {camera.label}.", 4000)
             finally:
                 with self._depth_build_lock:
                     self._pending_depth_build_paths.discard(camera_path)
@@ -1394,7 +1340,7 @@ class MVATManager(QObject):
                     result['index_map'] = loaded_data.get('index_map')
                     result['depth_map'] = loaded_data.get('depth_map')
 
-            # 2. Fallback for sync paths (like VTK) that run on the main thread
+            # 2. Fallback to check cache if result is not yet computed
             if cache_path is None and self.cache_manager is not None and target_file_path:
                 try:
                     cache_key = camera._raster.extrinsics
@@ -1725,14 +1671,22 @@ class MVATManager(QObject):
                     return path, None
 
             n_workers = min(8, max(1, len(cache_candidates)))
-            with ThreadPoolExecutor(max_workers=n_workers) as pool:
-                futs = {
-                    pool.submit(_load_one, path, cam): path
-                    for path, cam in cache_candidates.items()
-                }
-                for fut in as_completed(futs):
-                    path, data = fut.result()
-                    cache_results[path] = data
+            self.main_window.status_bar.showMessage(
+                f"Loading index maps for {len(cache_candidates)} camera(s) from cache...", 0
+            )
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            QApplication.processEvents()
+            try:
+                with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                    futs = {
+                        pool.submit(_load_one, path, cam): path
+                        for path, cam in cache_candidates.items()
+                    }
+                    for fut in as_completed(futs):
+                        path, data = fut.result()
+                        cache_results[path] = data
+            finally:
+                QApplication.restoreOverrideCursor()
 
         # ------------------------------------------------------------------
         # Phase 3: Apply cache results on the main (Qt) thread, queue misses
@@ -1788,58 +1742,64 @@ class MVATManager(QObject):
         self._compute_visibility_async(primary_target, cameras_needing_visibility)
 
     def _compute_mesh_visibility_sync(self, mesh_product, cameras):
-        """
-        Compute mesh visibility using VTK rasterization (main thread).
-        
-        VTK/PyVista rendering requires the GUI thread's OpenGL context.
-        This method performs synchronous rasterization for accurate mesh depth maps.
-        """
+        """Compute mesh visibility synchronously on the calling thread via moderngl."""
         from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
-        
+
         self._is_computing_visibility = True
+        QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-        except Exception:
-            pass
-        
-        try:
-            target_file_path = mesh_product.file_path
             n_cameras = len(cameras)
-            
-            self.main_window.status_bar.showMessage(f"Rasterizing mesh for {n_cameras} camera(s)...")
-            print(f"MVATManager: VTK mesh rasterization for {n_cameras} cameras")
-            
+            self.main_window.status_bar.showMessage(
+                f"Computing index maps for {n_cameras} camera(s)...", 0
+            )
+
+            camera_params = [
+                (cam.K_linear, cam.R, cam.t, cam.width, cam.height)
+                for cam in cameras
+            ]
+
+            mgl_ctx = None
+            try:
+                mgl_ctx = VisibilityManager.setup_batch_moderngl_context(
+                    mesh_product, self.pixel_budget,
+                    cameras[0].width, cameras[0].height,
+                )
+                batch = VisibilityManager.compute_batch_mesh_visibility_moderngl(
+                    mesh_product, camera_params,
+                    compute_depth_map=self.compute_depth_maps_enabled,
+                    compute_visible_indices=False,
+                    pixel_budget=self.pixel_budget,
+                    mgl_context=mgl_ctx,
+                )
+            except Exception as mgl_err:
+                print(f"⚠️ moderngl sync failed ({mgl_err})")
+                raise
+            finally:
+                if mgl_ctx is not None:
+                    try:
+                        for fbo in mgl_ctx.get('_fbo_cache', {}).values():
+                            fbo.release()
+                        mgl_ctx['ctx'].release()
+                    except Exception:
+                        pass
+
             results = {}
-            for i, camera in enumerate(cameras):
-                try:
-                    # Use K_linear so the 3D engine renders a linear (undistorted) map
-                    K_for_render = camera.K_linear
-                    result = VisibilityManager._compute_mesh_visibility(
-                        mesh_product,
-                        K_for_render, camera.R, camera.t,
-                        camera.width, camera.height,
-                        compute_depth_map=False
-                    )
-                    result['element_type'] = 'face'
-                    # Warp result back to distorted-pixel space if needed
-                    if camera.is_distorted and camera._raster.intrinsics_undistorted is not None:
-                        warp_fn = camera._raster.warp_linear_map_to_distorted
-                        if result.get('index_map') is not None:
-                            result['index_map'] = warp_fn(result['index_map'], nodata=-1)
-                    results[camera.image_path] = result
-                except Exception as e:
-                    print(f"⚠️ Failed to compute mesh visibility for {camera.label}: {e}")
-            
-            # Process results (same logic as _on_visibility_computed)
-            self._process_visibility_results(results, target_file_path)
-            
+            for camera, result in zip(cameras, batch):
+                result['element_type'] = 'face'
+                if camera.is_distorted and camera._raster.intrinsics_undistorted is not None:
+                    warp_fn = camera._raster.warp_linear_map_to_distorted
+                    if result.get('index_map') is not None:
+                        result['index_map'] = warp_fn(result['index_map'], nodata=-1)
+                results[camera.image_path] = result
+
+            self._process_visibility_results(results, mesh_product.file_path)
+
         except Exception as e:
             print(f"⚠️ Mesh visibility computation failed: {e}")
-            import traceback
-            traceback.print_exc()
+            import traceback; traceback.print_exc()
         finally:
             self._is_computing_visibility = False
-            self.main_window.status_bar.showMessage("Visibility maps updated.", 3000)
+            self.main_window.status_bar.showMessage("Index maps ready.", 3000)
             QApplication.restoreOverrideCursor()
 
     def _compute_visibility_async(self, primary_target, cameras):
@@ -1887,23 +1847,40 @@ class MVATManager(QObject):
             worker.moveToThread(thread)
             thread.started.connect(worker.run)
 
-            # Connect signals
+            # Connect result / error signals
             worker.signals.finished.connect(self._on_visibility_computed)
             worker.signals.error.connect(self._on_visibility_error)
 
-            # Cleanup when done
+            # Both finished and error must quit the thread so it can be cleaned up
             worker.signals.finished.connect(thread.quit)
+            worker.signals.error.connect(thread.quit)
             worker.signals.finished.connect(worker.deleteLater)
-            thread.finished.connect(thread.deleteLater)
 
-            # Drop finished workers so the retention list only tracks live work.
+            # Remove this entry from _active_workers when the thread finishes.
+            # Using a closure avoids the "wrapped C/C++ object deleted" RuntimeError
+            # that occurs when thread.deleteLater() is connected to thread.finished
+            # and the Python wrapper is later accessed through _active_workers.
+            def _remove_worker(t=thread, w=worker):
+                self._active_workers = [
+                    (ot, ow) for ot, ow in self._active_workers
+                    if ot is not t
+                ]
+
+            thread.finished.connect(_remove_worker)
+
+            # Drop any stale entries left by threads that finished without a
+            # clean signal (e.g. after an unhandled exception in an older run).
+            def _is_alive(t):
+                try:
+                    return t.isRunning()
+                except RuntimeError:
+                    return False
+
             self._active_workers = [
-                (active_thread, active_worker)
-                for active_thread, active_worker in self._active_workers
-                if active_thread.isRunning()
+                (t, w) for t, w in self._active_workers if _is_alive(t)
             ]
 
-            # Keep references to avoid GC
+            # Keep a strong reference so neither thread nor worker is GC'd
             self._active_workers.append((thread, worker))
 
             thread.start()
@@ -1914,13 +1891,19 @@ class MVATManager(QObject):
             QApplication.restoreOverrideCursor()
 
     # --- Label painter management ------------------------------------------------
-    def submit_3d_face_paint(self, face_ids, color_rgb, class_id: int, primary_target=None):
+    def submit_3d_face_paint(self, face_ids, color_rgb, class_id: int, primary_target=None, label_id=None):
         """Queue a 3D face paint update through the shared overlay painter.
 
         Tool code should compute the covered face IDs, then call this helper
         instead of reaching into ``_label_painter_thread`` directly.  The helper
         keeps thread lifecycle, mesh validation, and queue submission in one
         place while leaving geometry selection in the caller.
+
+        Args:
+            label_id: Optional UUID of the label for this class_id. When provided
+                     (especially during programmatic mesh painting from semantic
+                     predictions or aggregation), this prevents the code from
+                     looking up the active UI label, which could be incorrect.
         """
         try:
             face_ids = np.asarray(face_ids, dtype=np.int32).ravel()
@@ -1938,6 +1921,31 @@ class MVATManager(QObject):
 
         if int(class_id) == 0:
             color_rgb = (255, 255, 255)
+
+        # Keep the mesh class-label registry in sync so a mesh painted
+        # directly (without a prior camera -> mesh projection) can still be
+        # projected back out to the cameras.  Without this, the registry stays
+        # empty and project_mesh_labels_to_cameras aborts with "paint the mesh
+        # first" even though primary_target.class_ids is populated.
+        if int(class_id) != 0:
+            try:
+                engine = getattr(self, 'propagation_engine', None)
+                if engine is not None:
+                    # CRITICAL FIX: Use provided label_id if available to avoid
+                    # relying on the active UI label, which could overwrite
+                    # the wrong mesh_class_label_ids entry during semantic prediction
+                    # or mesh aggregation workflows.
+                    if label_id is not None:
+                        engine._mesh_class_label_ids[int(class_id)] = label_id
+                    else:
+                        # Fallback to active label only when no label_id provided
+                        # (e.g., direct brush painting on the 3D mesh)
+                        active_label = self._get_active_label_widget()
+                        fallback_label_id = getattr(active_label, 'id', None)
+                        if fallback_label_id is not None:
+                            engine._mesh_class_label_ids[int(class_id)] = fallback_label_id
+            except Exception as e:
+                pass
 
         self._ensure_label_painter(primary_target)
         painter = self._label_painter_thread
@@ -2002,7 +2010,7 @@ class MVATManager(QObject):
             status_bar.showMessage("Waiting for pause to commit 3D paint...", 1500)
 
     def _execute_lazy_flush(self):
-        """The actual heavy VTK upload. Runs only when the user pauses."""
+        """Commit painted labels to the GPU and refresh the 3D view. Runs when the user pauses."""
         status_bar = getattr(self.main_window, 'status_bar', None)
         if status_bar is not None:
             status_bar.showMessage("Saving paint to 3D model...", 0)
@@ -2097,7 +2105,6 @@ class MVATManager(QObject):
 
     def _on_overlay_ready(self, overlay, force_recreate: bool = False, render: bool = True):
         """Main thread: update the overlay actor in place when possible."""
-        start_time = perf_counter()
         try:
             if overlay is None:
                 if self._label_overlay_actor is not None:
@@ -2112,8 +2119,6 @@ class MVATManager(QObject):
                         except Exception:
                             pass
                 return
-
-            t1 = perf_counter()
 
             def _add_overlay_actor(mesh_to_add):
                 return self.viewer.plotter.add_mesh(
@@ -2183,7 +2188,6 @@ class MVATManager(QObject):
                 self._label_overlay_actor.SetVisibility(True)
             except Exception:
                 pass
-            t2 = perf_counter()
             if render:
                 try:
                     last_render_time = getattr(self, '_last_vtk_render_time', None)
@@ -2192,12 +2196,8 @@ class MVATManager(QObject):
                         self._last_vtk_render_time = perf_counter()
                 except Exception:
                     pass
-            t3 = perf_counter()
-            print(f"DEBUG [OverlayReady (Main Thread)]: VTK Swap: {(t1 - start_time) * 1000:.2f}ms | Render: {(t3 - t2) * 1000:.2f}ms")
         except Exception as e:
             print(f"⚠️ Overlay swap failed: {e}")
-        finally:
-            get_visibility_logger().info(f"_on_overlay_ready: {perf_counter() - start_time:.4f}s")
 
     def _on_label_window_selected(self, *_args):
         """Refresh the hover overlay when the active label changes."""
@@ -2255,7 +2255,7 @@ class MVATManager(QObject):
         except Exception:
             pass
 
-        sphere_manager = getattr(self.viewer, '_sphere_manager', None)
+        sphere_manager = getattr(self.viewer, '_cursor_preview', None)
         try:
             return float(getattr(sphere_manager, 'radius', 0.1))
         except Exception:
@@ -2272,7 +2272,7 @@ class MVATManager(QObject):
         except Exception:
             pass
 
-        sphere_manager = getattr(self.viewer, '_sphere_manager', None)
+        sphere_manager = getattr(self.viewer, '_cursor_preview', None)
         try:
             shape = getattr(sphere_manager, 'shape', None)
             if shape is not None:
@@ -3576,27 +3576,34 @@ class MVATManager(QObject):
             
         return combined_score
 
-    def _reorder_cameras(self, reference_path, hide_distant_cameras=True):
-        """Reorder cameras based on proximity to reference camera."""
+    def _reorder_cameras(self, reference_path):
+        """Reorder cameras based on proximity to reference camera.
+
+        All loaded cameras are always included so the user can scroll to any
+        camera regardless of its angle relative to the active one.  Nearby
+        cameras (non-zero proximity score) are floated to the front; distant /
+        facing-away cameras are appended at the end.
+        """
         reference_camera = self.cameras.get(reference_path)
-        if not reference_camera: 
+        if not reference_camera:
             return
-        
-        camera_scores = []
+
+        nearby = []    # (path, score) with score > 0
+        distant = []   # paths with score == 0
+
         for path, camera in self.cameras.items():
             if path == reference_path:
-                score = float('inf')
+                nearby.append((path, float('inf')))
             else:
                 score = self._calculate_camera_proximity_score(reference_camera, camera)
-            
-            if hide_distant_cameras and score == 0.0 and path != reference_path:
-                continue
-            camera_scores.append((path, score))
-            
-        camera_scores.sort(key=lambda x: x[1], reverse=True)
-        ordered_paths = [p for p, s in camera_scores]
-        
-        # Feed ContextMatrixWidget with proximity-ordered neighbors
+                if score > 0.0:
+                    nearby.append((path, score))
+                else:
+                    distant.append(path)
+
+        nearby.sort(key=lambda x: x[1], reverse=True)
+        ordered_paths = [p for p, _ in nearby] + distant
+
         if self.context_matrix is not None:
             self.context_matrix.set_camera_order(ordered_paths, reference_path)
 
@@ -3817,599 +3824,6 @@ class MVATManager(QObject):
 
     # --- Multi-Camera Annotation ---
 
-    def _on_multi_annotate_toggled(self, enabled: bool):
-        """Connect or disconnect annotation propagation handlers when toggle changes."""
-        self.multi_annotate_enabled = enabled
-        brush_tool = self.annotation_window.tools.get('brush')
-        patch_tool = self.annotation_window.tools.get('patch')
-        sam_tool = self.annotation_window.tools.get('sam')
-        fill_tool = self.annotation_window.tools.get('fill')
-        erase_tool = self.annotation_window.tools.get('erase')
-
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-
-        if enabled:
-            self.annotation_window.annotationCreated.connect(self._on_patch_annotation_created)
-            if brush_tool is not None:
-                brush_tool.post_stroke_callback = self._on_brush_stroke_applied
-                brush_tool.cursor_move_callback = self._on_cursor_preview_moved
-                brush_tool.cursor_clear_callback = self._on_cursor_preview_cleared
-            if patch_tool is not None:
-                patch_tool.cursor_move_callback = self._on_cursor_preview_moved
-                patch_tool.cursor_clear_callback = self._on_cursor_preview_cleared
-            if fill_tool is not None:
-                fill_tool.post_stroke_callback = self._on_fill_stroke_applied
-                fill_tool.cursor_move_callback = self._on_cursor_preview_moved
-                fill_tool.cursor_clear_callback = self._on_cursor_preview_cleared
-            if erase_tool is not None:
-                erase_tool.post_stroke_callback = self._on_erase_stroke_applied
-                erase_tool.cursor_move_callback = self._on_cursor_preview_moved
-                erase_tool.cursor_clear_callback = self._on_cursor_preview_cleared
-            if sam_tool is not None:
-                # Final-mask propagation callback (no live-hover propagation for now)
-                sam_tool.post_prediction_callback = self._on_sam_prediction_applied
-            # Proactively compute visibility/index maps for visible context cameras
-            # so True 3D mapping will be available when the user paints or applies SAM.
-            try:
-                visible = list(self._get_visible_context_paths())
-                target_paths = set(visible)
-                if self.ortho_camera is not None and not self._is_ortho_annotation_source():
-                    target_paths.add(self.ortho_camera.image_path)
-                if visible and self.compute_index_maps_enabled:
-                    self.main_window.status_bar.showMessage("Preparing context visibility maps...", 2000)
-                    # Ask the visibility system to compute index maps for these visible cameras
-                    # _update_visibility_filter handles cache checks and async worker dispatch.
-                    self._update_visibility_filter(visible)
-
-                # --- Force Mask Canvas Allocation NOW ---
-                # Don't wait for the first brush stroke to allocate canvases!
-                project_labels = list(self.main_window.label_window.labels)
-                for path in target_paths:
-                    raster = self.raster_manager.get_raster(path)
-                    if raster and raster.mask_annotation is None:
-                        raster.get_mask_annotation(project_labels)
-
-            except Exception:
-                pass
-        else:
-            try:
-                self.annotation_window.annotationCreated.disconnect(self._on_patch_annotation_created)
-            except TypeError:
-                pass
-
-            if brush_tool is not None:
-                brush_tool.post_stroke_callback = None
-                brush_tool.cursor_move_callback = None
-                brush_tool.cursor_clear_callback = None
-            if patch_tool is not None:
-                patch_tool.cursor_move_callback = None
-                patch_tool.cursor_clear_callback = None
-            if fill_tool is not None:
-                fill_tool.post_stroke_callback = None
-                fill_tool.cursor_move_callback = None
-                fill_tool.cursor_clear_callback = None
-            if erase_tool is not None:
-                erase_tool.post_stroke_callback = None
-                erase_tool.cursor_move_callback = None
-                erase_tool.cursor_clear_callback = None
-            if sam_tool is not None:
-                sam_tool.post_prediction_callback = None
-            self._on_cursor_preview_cleared()
-
-        # Restore cursor
-        QApplication.restoreOverrideCursor()
-
-    def _on_cursor_preview_moved(self, scene_pos, item_factory):
-        """Project the cursor position into visible context cameras and show previews.
-
-        When on an OrthoCamera (orthomosaic), projects the cursor into all visible
-        perspective cameras. When on a perspective camera, projects into all visible
-        context cameras.
-
-        Uses the blazingly fast center-point projection to display brush previews
-        in all visible context cameras. The tool factory already draws the correct
-        brush size visually; we just need to tell it where the center is.
-        """
-        if self.selected_camera is None or self.context_matrix is None:
-            return
-
-        px, py = int(scene_pos.x()), int(scene_pos.y())
-
-        # Skip if the cursor hasn't moved by at least 1 pixel since the last update —
-        # avoids redundant ray casts and camera projections during tiny jitter.
-        last = getattr(self, '_last_cursor_preview_px', None)
-        if last is not None and last == (px, py):
-            return
-        self._last_cursor_preview_px = (px, py)
-
-        # Determine which cameras should show previews
-        visible_paths = self._get_annotation_target_paths()
-
-        # Build a camera subset limited to only the visible context canvases —
-        # no point projecting into cameras that won't display a preview.
-        visible_cameras = {p: c for p, c in self.cameras.items() if p in visible_paths}
-        if self.ortho_camera is not None and self.ortho_camera.image_path in visible_paths:
-            visible_cameras[self.ortho_camera.image_path] = self.ortho_camera
-
-        projections = self._build_projection(px, py, target_cameras=visible_cameras)
-        self.context_matrix.update_cursor_previews(projections, visible_paths, item_factory)
-
-    def _on_cursor_preview_cleared(self):
-        """Clear cursor previews from all context canvases."""
-        self._last_cursor_preview_px = None
-        if self.context_matrix is not None:
-            self.context_matrix.clear_all_cursor_previews()
-
-    def _get_context_canvas_for_path(self, image_path: str):
-        """Return the context canvas currently displaying image_path, or None."""
-        if self.context_matrix is None:
-            return None
-        for canvas in self.context_matrix._visible_canvases:
-            if canvas is not None and canvas.current_image_path == image_path:
-                return canvas
-        return None
-
-    def _compute_dirty_rect_from_flat_indices(self, flat_indices, width: int, height: int, padding: int = 1):
-        """Return an x/y dirty rectangle for a flat index set, or None if empty."""
-        if flat_indices is None or width <= 0 or height <= 0:
-            return None
-
-        flat_indices = np.asarray(flat_indices, dtype=np.int64).ravel()
-        if flat_indices.size == 0:
-            return None
-
-        y_coords, x_coords = np.divmod(flat_indices, width)
-        return (
-            max(0, int(x_coords.min()) - padding),
-            max(0, int(y_coords.min()) - padding),
-            min(width, int(x_coords.max()) + padding + 1),
-            min(height, int(y_coords.max()) + padding + 1),
-        )
-
-    def _acquire_propagation_buffer(self, shape, dtype=np.uint8):
-        """Return a reusable NumPy buffer for background propagation work."""
-        key = (tuple(shape), np.dtype(dtype).str)
-        pool = self._propagation_buffer_pool.get(key)
-        if pool:
-            return pool.pop()
-        return np.empty(shape, dtype=dtype)
-
-    def _release_propagation_buffer(self, buffer):
-        """Return a temporary propagation buffer to the local pool."""
-        if buffer is None:
-            return
-        key = (tuple(buffer.shape), np.dtype(buffer.dtype).str)
-        self._propagation_buffer_pool.setdefault(key, []).append(buffer)
-
-    def _apply_mask_visual_update(self, target_path: str, target_mask, label_id: Optional[str] = None, update_rect=None):
-        """Apply the minimal UI refresh needed after a silent mask write."""
-        if target_mask is None:
-            return
-
-        if label_id is not None and label_id not in target_mask.visible_label_ids:
-            target_mask.visible_label_ids.add(label_id)
-
-        try:
-            target_mask.update_graphics_item(update_rect=update_rect)
-        except Exception:
-            pass
-
-        context_canvas = self._get_context_canvas_for_path(target_path)
-        if context_canvas is not None and context_canvas._mask_overlay_item is None:
-            try:
-                context_canvas.set_mask_overlay(target_mask)
-            except Exception:
-                pass
-
-    def _get_visible_context_camera_paths(self) -> list:
-        """Return the ordered list of image paths currently visible in the context matrix."""
-        if self.context_matrix is None:
-            return []
-        if hasattr(self.context_matrix, 'get_visible_camera_paths'):
-            try:
-                return list(self.context_matrix.get_visible_camera_paths())
-            except Exception:
-                pass
-
-        visible_paths = []
-        for canvas in self.context_matrix._visible_canvases:
-            if canvas and canvas.active_image and canvas.current_image_path:
-                visible_paths.append(canvas.current_image_path)
-        return visible_paths
-
-    def _get_visible_context_cameras(self) -> list:
-        """Return the Camera objects currently visible in the context matrix."""
-        return [self.cameras[path] for path in self._get_visible_context_camera_paths() if path in self.cameras]
-
-    def _get_visible_context_target_paths(self) -> set:
-        """Return visible context camera paths excluding the active annotation camera."""
-        paths = set(self._get_visible_context_camera_paths())
-        if self.selected_camera and self.selected_camera.image_path in paths:
-            paths.discard(self.selected_camera.image_path)
-        return paths
-
-    def _get_semantic_target_paths(self, source_camera) -> set:
-        """Return source-aware target paths for semantic prediction propagation."""
-        if source_camera is None:
-            return set()
-
-        target_paths = set(self._get_visible_context_camera_paths())
-        target_paths.discard(source_camera.image_path)
-
-        if self.ortho_camera is not None and source_camera is not self.ortho_camera:
-            target_paths.add(self.ortho_camera.image_path)
-
-        return target_paths
-
-    def _warn_semantic_propagation(self, message: str):
-        """Show a short warning when semantic propagation cannot run."""
-        print(f"⚠️ Semantic propagation skipped: {message}")
-
-        status_bar = getattr(self.main_window, 'status_bar', None)
-        if status_bar is not None:
-            try:
-                status_bar.showMessage(message, 5000)
-                return
-            except Exception:
-                pass
-
-        try:
-            QMessageBox.warning(self.main_window, "Semantic Propagation", message)
-        except Exception:
-            pass
-
-    def propagate_current_semantic_mask(self):
-        """Propagate the active AnnotationWindow semantic mask to MVAT targets."""
-        annotation_window = getattr(self.main_window, 'annotation_window', None)
-        if annotation_window is None:
-            self._warn_semantic_propagation("AnnotationWindow is not available.")
-            return
-
-        image_path = getattr(annotation_window, 'current_image_path', None)
-        if not image_path:
-            self._warn_semantic_propagation("No image is currently active in the AnnotationWindow.")
-            return
-
-        source_camera = self._get_camera_for_path(image_path)
-        if source_camera is None:
-            self._warn_semantic_propagation("The active image is not loaded in MVAT.")
-            return
-
-        target_paths = self._get_semantic_target_paths(source_camera)
-        if not target_paths:
-            self._warn_semantic_propagation("No target cameras are currently visible for semantic propagation.")
-            return
-
-        status_bar = getattr(self.main_window, 'status_bar', None)
-        if status_bar is not None:
-            try:
-                status_bar.showMessage(
-                    f"Propagating semantic mask to {len(target_paths)} target camera(s)...",
-                    0,
-                )
-            except Exception:
-                pass
-
-        source_raster = self.raster_manager.get_raster(image_path) if self.raster_manager is not None else None
-        source_mask = getattr(source_raster, 'mask_annotation', None)
-        if source_mask is None:
-            self._warn_semantic_propagation("The active image does not have a semantic mask to propagate.")
-            return
-
-        label_window = getattr(self.main_window, 'label_window', None)
-        project_labels = list(getattr(label_window, 'labels', [])) if label_window is not None else []
-        if not project_labels:
-            self._warn_semantic_propagation("No project labels are available for semantic propagation.")
-            return
-
-        try:
-            source_mask.sync_label_map(project_labels)
-        except Exception:
-            pass
-
-        try:
-            source_mask.update_graphics_item()
-        except Exception:
-            pass
-
-        mask_data = getattr(source_mask, 'mask_data', None)
-        if mask_data is None:
-            self._warn_semantic_propagation("The active semantic mask is missing mask data.")
-            return
-
-        lock_bit = getattr(source_mask, 'LOCK_BIT', None)
-        try:
-            if lock_bit is not None and int(lock_bit) > 1:
-                semantic_values = np.unique(mask_data % int(lock_bit))
-            else:
-                semantic_values = np.unique(mask_data)
-        except Exception:
-            semantic_values = np.unique(mask_data)
-
-        semantic_values = semantic_values[semantic_values > 0]
-        if len(semantic_values) == 0:
-            self._warn_semantic_propagation("The active semantic mask does not contain any labels to propagate.")
-            return
-
-        if getattr(source_camera, '_raster', None) is None or getattr(source_camera._raster, 'index_map', None) is None:
-            self._warn_semantic_propagation(
-                "The active camera does not have an index map, so semantic propagation is unavailable."
-            )
-            return
-
-        try:
-            self._on_semantic_prediction_applied(image_path, source_mask)
-        except Exception as exc:
-            print(f"Error while propagating semantic mask from {image_path}: {exc}")
-            traceback.print_exc()
-            self._warn_semantic_propagation("Semantic propagation failed. See console for details.")
-            return
-
-        if status_bar is not None:
-            try:
-                status_bar.showMessage(
-                    f"Semantic mask propagated to {len(target_paths)} target camera(s).",
-                    3000,
-                )
-            except Exception:
-                pass
-
-    def _is_ortho_annotation_source(self) -> bool:
-        """Return True when the active annotation source is the ortho view."""
-        return self.ortho_camera is not None and self.selected_camera == self.ortho_camera
-
-    def _get_annotation_target_paths(self) -> set:
-        """Return the target camera paths for the current annotation source."""
-        if self._is_ortho_annotation_source():
-            return self._get_ortho_target_cameras()
-        target_paths = self._get_visible_context_target_paths()
-        if self.ortho_camera is not None:
-            target_paths.add(self.ortho_camera.image_path)
-        return target_paths
-
-    def _extract_source_ids_from_crop_mask(self,
-                                           source_camera,
-                                           source_mask: np.ndarray,
-                                           px: int,
-                                           py: int) -> Optional[np.ndarray]:
-        """Extract visible element IDs from a crop-centred binary mask."""
-        raster = getattr(source_camera, '_raster', None)
-        if raster is None or source_mask is None:
-            return None
-
-        source_index_map = getattr(raster, 'index_map', None)
-        if source_index_map is None:
-            return None
-
-        source_mask = np.asarray(source_mask)
-        mask_h, mask_w = source_mask.shape
-        scale_factor = getattr(raster, 'index_map_scale_factor', None)
-
-        if scale_factor is not None and scale_factor != 1.0:
-            map_px = int(px * scale_factor)
-            map_py = int(py * scale_factor)
-            map_bw = max(1, int(mask_w * scale_factor))
-            map_bh = max(1, int(mask_h * scale_factor))
-        else:
-            map_px, map_py = px, py
-            map_bw, map_bh = mask_w, mask_h
-
-        x0 = map_px - map_bw // 2
-        y0 = map_py - map_bh // 2
-        x1 = x0 + map_bw
-        y1 = y0 + map_bh
-
-        img_h, img_w = source_index_map.shape
-        if x0 >= img_w or y0 >= img_h or x1 <= 0 or y1 <= 0:
-            return np.array([], dtype=np.int64)
-
-        cx0 = max(x0, 0)
-        cy0 = max(y0, 0)
-        cx1 = min(x1, img_w)
-        cy1 = min(y1, img_h)
-        index_slice = source_index_map[cy0:cy1, cx0:cx1]
-
-        if scale_factor is not None and scale_factor != 1.0:
-            raw_ids = index_slice.ravel()
-        else:
-            bx0 = cx0 - x0
-            by0 = cy0 - y0
-            bx1 = bx0 + (cx1 - cx0)
-            by1 = by0 + (cy1 - cy0)
-            mask_clip = source_mask[by0:by1, bx0:bx1]
-            raw_ids = index_slice[mask_clip.astype(bool)]
-
-        unique_ids = np.unique(raw_ids)
-        return unique_ids[unique_ids > -1].astype(np.int64, copy=False)
-
-    def _extract_source_ids_from_full_mask(self,
-                                           source_camera,
-                                           source_mask: np.ndarray) -> Optional[np.ndarray]:
-        """Extract visible element IDs from a full-frame binary mask."""
-        raster = getattr(source_camera, '_raster', None)
-        if raster is None or source_mask is None:
-            return None
-
-        source_index_map = getattr(raster, 'index_map', None)
-        if source_index_map is None:
-            return None
-
-        source_mask = np.asarray(source_mask)
-        if source_mask.ndim != 2:
-            return None
-
-        needs_resize = (
-            source_mask.shape != source_index_map.shape or
-            (getattr(raster, 'index_map_scale_factor', None) not in (None, 1.0))
-        )
-
-        if needs_resize:
-            import cv2
-            mask_bool = cv2.resize(
-                source_mask.astype(np.uint8),
-                (source_index_map.shape[1], source_index_map.shape[0]),
-                interpolation=cv2.INTER_NEAREST,
-            ).astype(bool)
-        else:
-            mask_bool = source_mask.astype(bool)
-
-        if not np.any(mask_bool):
-            return np.array([], dtype=np.int64)
-
-        raw_ids = source_index_map[mask_bool]
-        unique_ids = np.unique(raw_ids)
-        return unique_ids[unique_ids > -1].astype(np.int64, copy=False)
-
-    def _extract_source_element_ids_from_full_mask(self,
-                                                   source_camera,
-                                                   source_mask: np.ndarray) -> Optional[np.ndarray]:
-        """Extract raw visible element IDs from a full-frame binary mask.
-
-        Unlike _extract_source_ids_from_full_mask, this preserves duplicates so
-        callers can compute per-element class votes before collapsing to one
-        class per element.
-        """
-        raster = getattr(source_camera, '_raster', None)
-        if raster is None or source_mask is None:
-            return None
-
-        source_index_map = getattr(raster, 'index_map', None)
-        if source_index_map is None:
-            return None
-
-        source_mask = np.asarray(source_mask)
-        if source_mask.ndim != 2:
-            return None
-
-        needs_resize = (
-            source_mask.shape != source_index_map.shape or
-            (getattr(raster, 'index_map_scale_factor', None) not in (None, 1.0))
-        )
-
-        if needs_resize:
-            import cv2
-            mask_bool = cv2.resize(
-                source_mask.astype(np.uint8),
-                (source_index_map.shape[1], source_index_map.shape[0]),
-                interpolation=cv2.INTER_NEAREST,
-            ).astype(bool)
-        else:
-            mask_bool = source_mask.astype(bool)
-
-        if not np.any(mask_bool):
-            return np.array([], dtype=np.int64)
-
-        raw_ids = source_index_map[mask_bool]
-        return raw_ids[raw_ids > -1].astype(np.int64, copy=False)
-
-    def _extract_source_element_ids_from_region(self,
-                                                 source_camera,
-                                                 source_mask: np.ndarray,
-                                                 top_left) -> Optional[np.ndarray]:
-        """Extract raw visible element IDs from a partial mask region.
-
-        This mirrors the full-mask helper, but only samples the work-area tile
-        (or other region payload) so semantic propagation does not leak stale
-        pixels from untouched parts of the image.
-        """
-        raster = getattr(source_camera, '_raster', None)
-        if raster is None or source_mask is None:
-            return None
-
-        source_index_map = getattr(raster, 'index_map', None)
-        if source_index_map is None:
-            return None
-
-        source_mask = np.asarray(source_mask)
-        if source_mask.ndim != 2:
-            return None
-
-        x, y = top_left
-        mask_h, mask_w = source_mask.shape
-        scale_factor = getattr(raster, 'index_map_scale_factor', None)
-
-        if scale_factor is not None and scale_factor != 1.0:
-            map_x0 = int(x * scale_factor)
-            map_y0 = int(y * scale_factor)
-            map_w = max(1, int(mask_w * scale_factor))
-            map_h = max(1, int(mask_h * scale_factor))
-        else:
-            map_x0 = int(x)
-            map_y0 = int(y)
-            map_w = mask_w
-            map_h = mask_h
-
-        map_x1 = map_x0 + map_w
-        map_y1 = map_y0 + map_h
-
-        img_h, img_w = source_index_map.shape
-        if map_x0 >= img_w or map_y0 >= img_h or map_x1 <= 0 or map_y1 <= 0:
-            return np.array([], dtype=np.int64)
-
-        cx0 = max(map_x0, 0)
-        cy0 = max(map_y0, 0)
-        cx1 = min(map_x1, img_w)
-        cy1 = min(map_y1, img_h)
-        index_slice = source_index_map[cy0:cy1, cx0:cx1]
-
-        if index_slice.size == 0:
-            return np.array([], dtype=np.int64)
-
-        if scale_factor is not None and scale_factor != 1.0:
-            import cv2
-
-            mask_resized = cv2.resize(
-                source_mask.astype(np.uint8),
-                (map_w, map_h),
-                interpolation=cv2.INTER_NEAREST,
-            ).astype(bool)
-
-            bx0 = cx0 - map_x0
-            by0 = cy0 - map_y0
-            bx1 = bx0 + (cx1 - cx0)
-            by1 = by0 + (cy1 - cy0)
-            mask_clip = mask_resized[by0:by1, bx0:bx1]
-        else:
-            bx0 = cx0 - map_x0
-            by0 = cy0 - map_y0
-            bx1 = bx0 + (cx1 - cx0)
-            by1 = by0 + (cy1 - cy0)
-            mask_clip = source_mask[by0:by1, bx0:bx1].astype(bool)
-
-        if mask_clip.size == 0 or not np.any(mask_clip):
-            return np.array([], dtype=np.int64)
-
-        raw_ids = index_slice[mask_clip]
-        return raw_ids[raw_ids > -1].astype(np.int64, copy=False)
-
-    def _get_visible_context_paths(self) -> set:
-        """Return the set of image paths currently visible in the context matrix."""
-        return set(self._get_visible_context_camera_paths())
-
-    def _get_ortho_target_cameras(self) -> set:
-        """Get target camera paths when painting on OrthoCamera.
-
-        Returns the set of visible perspective camera paths that should receive
-        multi-annotations when painting on an orthomosaic. This is the same as
-        the visible context target paths, since we want to paint all visible cameras
-        that can see the orthomosaic's geometry.
-        """
-        if self.ortho_camera is None:
-            return set()
-        # When on orthomosaic, propagate to all visible context cameras
-        # (the ContextMatrix handles filtering for which cameras are viewable)
-        return self._get_visible_context_target_paths()
-
-    def _get_camera_for_path(self, image_path: str):
-        """Return the loaded camera object for a path, including the orthocamera."""
-        if self.ortho_camera is not None and image_path == self.ortho_camera.image_path:
-            return self.ortho_camera
-        return self.cameras.get(image_path)
-
-    def _is_ortho_path(self, image_path: str) -> bool:
-        return self.ortho_camera is not None and image_path == self.ortho_camera.image_path
-
     def _on_context_visible_cameras_changed(self, visible_paths):
         """Refresh viewer state when the ContextMatrix changes its visible cameras."""
         try:
@@ -4621,1499 +4035,6 @@ class MVATManager(QObject):
                 return
             self.contextStatsComputed.emit(request_id, active_path, n_visible, m_overlapping)
 
-    def _build_projection(self, px: int, py: int, source_camera=None, target_cameras=None) -> dict:
-        """Cast a ray from the selected camera at (px, py) and return projections.
-
-        Handles both perspective cameras and OrthoCamera (orthomosaic):
-        - For perspective cameras: uses existing ray-projection logic
-        - For OrthoCamera: converts orthomosaic pixel → geo → world space
-
-        Returns:
-            dict mapping image_path -> (u, v, is_valid), or empty dict on failure.
-        """
-        camera = source_camera if source_camera is not None else self.selected_camera
-        if camera is None:
-            return {}
-
-        primary_target = self.viewer.scene_context.get_primary_target()
-        ray = None
-
-        # Special handling for OrthoCamera (orthomosaic)
-        if self.ortho_camera is not None and camera == self.ortho_camera:
-            try:
-                if not camera.is_valid:
-                    return {}
-
-                # Convert orthomosaic pixel → geo → world space
-                X, Y = camera.pixel_to_geo(px, py)
-                Z = camera._raster.get_z_value(px, py)
-                if Z is None or np.isnan(Z):
-                    Z = 0.0
-
-                world_pt = camera.geo_to_world(X, Y, Z)
-
-                # Get element ID if index_map is available
-                element_id = None
-                index_map = camera._raster.index_map
-                if index_map is not None and 0 <= px < camera.width and 0 <= py < camera.height:
-                    sf = getattr(camera._raster, 'index_map_scale_factor', None)
-                    map_px = int(px * sf) if sf else px
-                    map_py = int(py * sf) if sf else py
-                    map_px = min(map_px, index_map.shape[1] - 1)
-                    map_py = min(map_py, index_map.shape[0] - 1)
-                    candidate_id = int(index_map[map_py, map_px])
-                    if candidate_id > -1:
-                        element_id = candidate_id
-
-                # Construct a vertical ray from the orthomosaic
-                # The ray origin is slightly above the world point, direction points down
-                vertical_dir = camera.get_vertical_direction_world()
-                ray_origin = world_pt - vertical_dir * 0.1  # Slightly above the surface
-                ray_direction = vertical_dir
-
-                ray = CameraRay(
-                    origin=ray_origin,
-                    direction=ray_direction,
-                    terminal_point=world_pt,
-                    has_accurate_depth=True,
-                    pixel_coord=(px, py),
-                    source_camera=camera,
-                    element_id=element_id
-                )
-            except Exception as e:
-                print(f"Error building ortho projection: {e}")
-                return {}
-        else:
-            # Standard perspective camera logic
-            # --- PLAN A: Index Map (Flawless 3D Coordinate) ---
-            index_map = camera._raster.index_map
-            if index_map is not None and primary_target is not None:
-                try:
-                    # Ensure we are inside the image bounds
-                    if 0 <= px < camera.width and 0 <= py < camera.height:
-                        candidate_id = int(index_map[py, px])
-                        if candidate_id > -1:
-                            coord = primary_target.get_element_coordinate(candidate_id)
-                            if coord is not None:
-                                origin = camera.position.copy()
-                                direction = coord - origin
-                                norm = np.linalg.norm(direction)
-                                direction = direction / norm if norm > 0 else camera.R.T @ np.array([0, 0, 1])
-
-                                ray = CameraRay(
-                                    origin=origin,
-                                    direction=direction,
-                                    terminal_point=coord,
-                                    has_accurate_depth=True,
-                                    pixel_coord=(px, py),
-                                    source_camera=camera,
-                                    element_id=candidate_id
-                                )
-                except Exception:
-                    pass
-
-            # --- PLAN B: Depth Map / Scene Median Fallback ---
-            if ray is None:
-                depth = None
-                try:
-                    raster = camera._raster
-                    if raster.z_channel is not None and raster.z_data_type == 'depth':
-                        depth = raster.get_z_value(px, py)
-                except Exception:
-                    pass
-
-                # Cache median depth per camera — only recompute when active camera changes
-                cache_key = id(camera)
-                if getattr(self, '_median_depth_cache_key', None) != cache_key:
-                    try:
-                        self._cached_median_depth = self.viewer.get_scene_median_depth(camera.position)
-                    except Exception:
-                        self._cached_median_depth = 10.0
-                    self._median_depth_cache_key = cache_key
-
-                default_depth = self._cached_median_depth or 10.0
-
-                try:
-                    ray = CameraRay.from_pixel_and_camera(
-                        pixel_xy=(px, py),
-                        camera=camera,
-                        depth=depth,
-                        default_depth=default_depth,
-                    )
-                except Exception:
-                    return {}
-
-        if ray is None:
-            return {}
-
-        if target_cameras is not None:
-            cameras_for_projection = target_cameras
-        else:
-            cameras_for_projection = self.cameras
-            if self.ortho_camera is not None and camera != self.ortho_camera:
-                cameras_for_projection = dict(self.cameras)
-                cameras_for_projection[self.ortho_camera.image_path] = self.ortho_camera
-
-        return ray.project_to_cameras(cameras_for_projection)
-
-    def _on_patch_annotation_created(self, annotation_id: str):
-        """Propagate a newly created PatchAnnotation into all target cameras (perspective and ortho-aware)."""
-        if self._propagating_annotation:
-            return
-
-        annotation = self.annotation_window.annotations_dict.get(annotation_id)
-        if annotation is None or not isinstance(annotation, PatchAnnotation):
-            return
-        if self.selected_camera is None:
-            return
-        if annotation.image_path != self.selected_camera.image_path:
-            return
-
-        px = int(annotation.center_xy.x())
-        py = int(annotation.center_xy.y())
-
-        selected_paths = self._get_annotation_target_paths()
-
-        # Quick exit: nothing to propagate to
-        if not selected_paths:
-            return
-
-        from PyQt5.QtCore import QPointF
-        self._propagating_annotation = True
-        try:
-            # ------------------------------------------------------------------
-            # Source element-ID extraction: sample a sparse grid within the
-            # annotation bounding box so that get_pixels_for_elements has many
-            # IDs to work with — not just the single center pixel.  More IDs
-            # dramatically reduces stride false-negatives in the target cameras.
-            # ------------------------------------------------------------------
-            source_raster = getattr(self.selected_camera, '_raster', None)
-            source_index_map = source_raster.index_map if source_raster is not None else None
-            source_element_ids = None   # list[int] — passed to get_pixels_for_elements
-            element_id = None           # center-pixel ID — used by _build_projection ray
-            use_3d = False
-
-            if source_index_map is not None:
-                try:
-                    sf = getattr(source_raster, 'index_map_scale_factor', None) or 1.0
-                    img_h, img_w = source_index_map.shape
-                    ann_size = annotation.annotation_size   # half-extent in image pixels
-
-                    # Clamp the annotation bounding box to the index-map bounds
-                    # (coordinates scaled by sf to match the index-map resolution).
-                    x0 = max(0,       int((px - ann_size) * sf))
-                    x1 = min(img_w,   int((px + ann_size) * sf) + 1)
-                    y0 = max(0,       int((py - ann_size) * sf))
-                    y1 = min(img_h,   int((py + ann_size) * sf) + 1)
-
-                    if x0 < x1 and y0 < y1:
-                        patch = source_index_map[y0:y1, x0:x1].ravel()
-                        valid = patch[patch > -1]
-                        if valid.size > 0:
-                            source_element_ids = list(np.unique(valid).tolist())
-                            # Prefer the exact center-pixel ID for the ray direction
-                            cx = min(int(px * sf), img_w - 1)
-                            cy = min(int(py * sf), img_h - 1)
-                            center_eid = int(source_index_map[cy, cx])
-                            element_id = center_eid if center_eid > -1 else source_element_ids[0]
-                            use_3d = True
-                except Exception:
-                    pass
-
-            # Lazy projection cache for fallback
-            projections = None
-
-            for target_path in selected_paths:
-
-                target_camera = self._get_camera_for_path(target_path)
-                if target_camera is None:
-                    continue
-
-                try:
-                    placed = False
-
-                    # ----------------------------------------------------------
-                    # 3D centroid path: look up every sampled element ID in the
-                    # target's index map and use the resulting pixel centroid.
-                    # Falls through to 2D when the lookup returns empty (element
-                    # too small / edge-on in target, or stride miss) rather than
-                    # hard-skipping the camera.
-                    # ----------------------------------------------------------
-                    target_has_index = (getattr(target_camera, '_raster', None) is not None
-                                        and target_camera._raster.index_map is not None)
-                    if use_3d and target_has_index and source_element_ids:
-                        flat = target_camera.get_pixels_for_elements(
-                            np.array(source_element_ids, dtype=np.int64)
-                        )
-                        if flat.size > 0:
-                            v_arr, u_arr = np.divmod(flat, target_camera.width)
-                            u_centroid = float(np.mean(u_arr))
-                            v_centroid = float(np.mean(v_arr))
-                            if 0 <= u_centroid < target_camera.width and 0 <= v_centroid < target_camera.height:
-                                new_annotation = PatchAnnotation(
-                                    center_xy=QPointF(u_centroid, v_centroid),
-                                    annotation_size=annotation.annotation_size,
-                                    label=annotation.label,
-                                    image_path=target_path,
-                                    transparency=annotation.transparency,
-                                )
-                                try:
-                                    self.annotation_window.add_annotation(new_annotation, record_action=True)
-                                    placed = True
-                                except Exception:
-                                    pass
-
-                    # ----------------------------------------------------------
-                    # 2D fallback: used when no index map is available OR when
-                    # the 3D lookup returned empty (element occluded / missed).
-                    # ----------------------------------------------------------
-                    if not placed:
-                        if projections is None:
-                            projections = self._build_projection(px, py)
-                        proj = projections.get(target_path)
-                        if proj is None:
-                            continue
-                        u, v, is_valid = proj
-                        if not is_valid:
-                            continue
-                        if not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
-                            continue
-
-                        new_annotation = PatchAnnotation(
-                            center_xy=QPointF(u, v),
-                            annotation_size=annotation.annotation_size,
-                            label=annotation.label,
-                            image_path=target_path,
-                            transparency=annotation.transparency,
-                        )
-                        try:
-                            self.annotation_window.add_annotation(new_annotation, record_action=True)
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
-        finally:
-            self._propagating_annotation = False
-
-    # TODO Note: dense mesh hit fills in the face IDs when the quality of index map < Highest; otherwise VTK does this fine.
-    # If we can find a way to not use Open3D always, then we don't need to calculate a BVH, which takes times to build.
-    # Figure out how we can allow the user to use lower quality index maps, but still fill in the gaps.
-    # 
-    # Leagcy code; do not delete
-    def _dense_mesh_hit_test(self, source_camera, pixel_mask: np.ndarray, px: int, py: int, mesh_product) -> np.ndarray:
-        """Cast rays through every True pixel in pixel_mask against the mesh surface.
-
-        Unlike the index_map approach (which captures face IDs from a downsampled
-        raycasting pass), this method casts a ray through every individual painted
-        pixel at full resolution, intersecting the actual triangle surface area of
-        the mesh.  This guarantees that every triangle touched by the brush or SAM
-        mask contributes its face ID to the output set, regardless of its projected
-        pixel size.
-
-        The Open3D RaycastingScene BVH is built once per mesh product and cached on
-        the product object to amortise the cost across many brush strokes.
-
-        Args:
-            source_camera: Perspective Camera for the selected image.
-            pixel_mask: (H, W) bool/uint8 array; True pixels are ray-cast targets.
-            px: X coordinate of the mask centre in source image space.
-            py: Y coordinate of the mask centre in source image space.
-            mesh_product: MeshProduct whose cached geometry is used.
-
-        Returns:
-            np.ndarray[int32]: Unique face IDs that were hit, or empty array on
-            failure, missing Open3D, or orthographic source camera.
-        """
-        try:
-            import open3d as o3d
-        except ImportError:
-            return np.array([], dtype=np.int32)
-
-        try:
-            # 1. Ensure the GPU tensor geometry cache exists (idempotent call).
-            mesh_product.prepare_geometry()
-            vertices  = mesh_product._cached_vertices                                      # (V, 3) float32
-            # Use the CPU-cached triangle array to avoid GPU->CPU transfers
-            # on every brush tick. The tensor copy was created for fast GPU ops
-            # but we keep a numpy copy for fast CPU-side BVH/path queries.
-            triangles = getattr(mesh_product, '_cached_triangles_np', None)
-            if triangles is None:
-                # Fallback: materialize from the tensor once
-                triangles = mesh_product._cached_triangles_pt.cpu().numpy().astype(np.uint32)
-
-            if len(triangles) == 0:
-                return np.array([], dtype=np.int32)
-
-            # 2. Build (or reuse) the Open3D RaycastingScene BVH.
-            #    Mesh vertex/face topology never changes during annotation, so the
-            #    cached scene remains valid for the entire session.
-            if not getattr(mesh_product, '_o3d_raycasting_scene', None):
-                scene = o3d.t.geometry.RaycastingScene()
-                scene.add_triangles(
-                    o3d.core.Tensor(vertices,   dtype=o3d.core.Dtype.Float32),
-                    o3d.core.Tensor(triangles,  dtype=o3d.core.Dtype.UInt32),
-                )
-                mesh_product._o3d_raycasting_scene = scene
-            scene = mesh_product._o3d_raycasting_scene
-
-            # 3. Map the True pixels in pixel_mask to source image coordinates.
-            mask_h, mask_w = pixel_mask.shape
-            x0 = px - mask_w // 2
-            y0 = py - mask_h // 2
-
-            ys, xs = np.where(pixel_mask.astype(bool))
-            if len(xs) == 0:
-                return np.array([], dtype=np.int32)
-
-            u_img = (xs + x0).astype(np.float32)
-            v_img = (ys + y0).astype(np.float32)
-
-            # Discard pixels that fall outside the image frame.
-            valid = (
-                (u_img >= 0) & (u_img < source_camera.width) &
-                (v_img >= 0) & (v_img < source_camera.height)
-            )
-            u_img = u_img[valid]
-            v_img = v_img[valid]
-
-            if len(u_img) == 0:
-                return np.array([], dtype=np.int32)
-
-            # 4. Unproject pixels to world-space ray directions.
-            #    Pinhole camera model (row-vector convention):
-            #      d_cam   = K_inv @ [u, v, 1]^T   →   d_cam_row   = [u,v,1] @ K_inv.T
-            #      d_world = R.T   @ d_cam          →   d_world_row = d_cam_row  @ R
-            ones        = np.ones(len(u_img), dtype=np.float32)
-            pixel_homog = np.stack([u_img, v_img, ones], axis=1)     # (N, 3)
-            K_inv       = source_camera.K_inv.astype(np.float32)     # (3, 3)
-            R           = source_camera.R.astype(np.float32)         # (3, 3)
-
-            dirs_cam   = pixel_homog @ K_inv.T    # (N, 3) camera-space directions
-            dirs_world = dirs_cam   @ R            # (N, 3) world-space directions
-
-            norms = np.linalg.norm(dirs_world, axis=1, keepdims=True)
-            norms[norms < 1e-8] = 1.0
-            dirs_world /= norms
-
-            # 5. Build and cast the ray batch against the BVH.
-            cam_origin = source_camera.position.astype(np.float32)          # (3,)
-            origins    = np.tile(cam_origin, (len(u_img), 1))               # (N, 3)
-            rays_np    = np.concatenate([origins, dirs_world], axis=1)      # (N, 6)
-
-            ans = scene.cast_rays(o3d.core.Tensor(rays_np, dtype=o3d.core.Dtype.Float32))
-
-            # 6. Extract hit triangle indices (Open3D uses uint32 max = miss).
-            INVALID_O3D = np.uint32(4294967295)
-            prim_ids     = ans['primitive_ids'].numpy()
-            hit_prim_ids = prim_ids[prim_ids != INVALID_O3D].astype(np.int64)
-
-            if len(hit_prim_ids) == 0:
-                return np.array([], dtype=np.int32)
-
-            # 7. Remap sub-triangle primitive IDs to original PyVista cell IDs
-            #    when the mesh was triangulated from non-triangular faces during
-            #    prepare_geometry().
-            original_cell_ids = getattr(mesh_product, '_original_cell_ids', None)
-            if original_cell_ids is not None:
-                in_range     = hit_prim_ids < len(original_cell_ids)
-                hit_prim_ids = hit_prim_ids[in_range]
-                face_ids     = original_cell_ids[hit_prim_ids].astype(np.int32)
-            else:
-                face_ids = hit_prim_ids.astype(np.int32)
-
-            return np.unique(face_ids)
-
-        except Exception as e:
-            print(f"⚠️ Dense mesh hit test failed: {e}")
-            return np.array([], dtype=np.int32)
-
-    def _propagate_to_camera(self, target_path, painted_ids, target_class_id_map,
-                              projections, brush_w, brush_h, brush_mask, use_3d):
-        """Single-camera propagation — runs in thread pool, no Qt calls."""
-        target_camera = self._get_camera_for_path(target_path)
-        if target_camera is None:
-            return target_path, False, None
-
-        target_raster = self.raster_manager.get_raster(target_path)
-        if target_raster is None:
-            return target_path, False, None
-
-        target_mask = target_raster.mask_annotation
-        if target_mask is None:
-            return target_path, False, None
-
-        target_class_id = target_class_id_map.get(target_path)
-        if target_class_id is None:
-            return target_path, False, None
-
-        target_has_index = target_camera._raster.index_map is not None
-
-        if use_3d and target_has_index and target_camera is not self.ortho_camera:
-            proj = projections.get(target_path)
-            bbox = None
-            if proj is not None and proj[2]:
-                target_u, target_v = proj[0], proj[1]
-                search_radius = max(brush_w, brush_h) * 2.5
-                bbox = (target_u - search_radius, target_u + search_radius,
-                        target_v - search_radius, target_v + search_radius)
-
-            flat_indices = target_camera.get_pixels_for_elements(painted_ids, bbox=bbox)
-            if len(flat_indices) == 0:
-                return target_path, False, None
-
-            if hasattr(target_mask, 'mask_data'):
-                current_vals = target_mask.mask_data.ravel()[flat_indices]
-                flat_indices = flat_indices[(current_vals < target_mask.LOCK_BIT) &
-                                            (current_vals != target_class_id)]
-            if len(flat_indices) == 0:
-                return target_path, False, None
-
-            target_mask.update_mask_at_indices(flat_indices, target_class_id, silent=True)
-            update_rect = self._compute_dirty_rect_from_flat_indices(
-                flat_indices,
-                target_camera.width,
-                target_camera.height,
-            )
-        else:
-            proj = projections.get(target_path)
-            if proj is None:
-                return target_path, False, None
-            u, v, is_valid = proj
-            if not is_valid or not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
-                return target_path, False, None
-            brush_location = QPointF(u - brush_w / 2.0, v - brush_h / 2.0)
-            target_mask.update_mask(brush_location, brush_mask, target_class_id, silent=True)
-            x_start = max(0, int(u - brush_w / 2.0))
-            y_start = max(0, int(v - brush_h / 2.0))
-            update_rect = (
-                x_start,
-                y_start,
-                min(target_camera.width, x_start + brush_w),
-                min(target_camera.height, y_start + brush_h),
-            )
-
-        return target_path, True, update_rect
-
-    def _resolve_source_mask_class_context(self, source_camera, label_id: str, project_labels: list):
-        """Resolve the source label, mask, and internal class ID for propagation."""
-        if source_camera is None:
-            return None, None
-
-        source_label = next((lbl for lbl in project_labels if lbl.id == label_id), None)
-        if source_label is None:
-            return None, None
-
-        source_raster = self.raster_manager.get_raster(source_camera.image_path)
-        if source_raster is None:
-            return source_label, None
-
-        source_mask = source_raster.mask_annotation
-        if source_mask is None:
-            source_mask = source_raster.get_mask_annotation(project_labels)
-        if source_mask is None:
-            return source_label, None
-
-        source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
-        if source_class_id is None:
-            source_mask.sync_label_map([source_label])
-            source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
-
-        return source_label, source_class_id
-
-    def _extract_source_ids_from_sam_prediction(self,
-                                                source_camera,
-                                                binary_mask: np.ndarray,
-                                                px: int,
-                                                py: int) -> Optional[np.ndarray]:
-        """Extract source element IDs for a SAM prediction on the active image."""
-        if source_camera is None or binary_mask is None:
-            return None
-
-        binary_mask = np.asarray(binary_mask)
-        if binary_mask.ndim != 2 or not np.any(binary_mask):
-            return np.array([], dtype=np.int64)
-
-        if self.ortho_camera is not None and source_camera is self.ortho_camera:
-            return self._extract_source_ids_from_crop_mask(
-                source_camera,
-                binary_mask.astype(bool),
-                px,
-                py,
-            )
-
-        raster = getattr(source_camera, '_raster', None)
-        source_index_map = getattr(raster, 'index_map', None)
-        if source_index_map is None:
-            return None
-
-        mask_h, mask_w = binary_mask.shape
-        x0 = px - mask_w // 2
-        y0 = py - mask_h // 2
-        x1 = x0 + mask_w
-        y1 = y0 + mask_h
-
-        img_h, img_w = source_index_map.shape
-        if x0 >= img_w or y0 >= img_h or x1 <= 0 or y1 <= 0:
-            return np.array([], dtype=np.int64)
-
-        cx0 = max(x0, 0)
-        cy0 = max(y0, 0)
-        cx1 = min(x1, img_w)
-        cy1 = min(y1, img_h)
-
-        bx0 = cx0 - x0
-        by0 = cy0 - y0
-        bx1 = bx0 + (cx1 - cx0)
-        by1 = by0 + (cy1 - cy0)
-
-        index_slice = source_index_map[cy0:cy1, cx0:cx1]
-        mask_clip = binary_mask[by0:by1, bx0:bx1]
-        valid_mask = mask_clip.astype(bool)
-        if not np.any(valid_mask):
-            return np.array([], dtype=np.int64)
-
-        source_depth_map = getattr(raster, 'z_channel', None)
-        if source_depth_map is not None:
-            try:
-                import cv2
-
-                depth_slice = source_depth_map[cy0:cy1, cx0:cx1]
-                erosion_r = int(np.clip(min(mask_clip.shape) * 0.03, 2, 12))
-                kernel = cv2.getStructuringElement(
-                    cv2.MORPH_ELLIPSE,
-                    (2 * erosion_r + 1, 2 * erosion_r + 1),
-                )
-                interior_mask = cv2.erode(
-                    valid_mask.astype(np.uint8),
-                    kernel,
-                    iterations=1,
-                ).astype(bool)
-                perimeter_mask = valid_mask & ~interior_mask
-
-                interior_depths = depth_slice[interior_mask]
-                interior_depths = interior_depths[~np.isnan(interior_depths)]
-
-                if len(interior_depths) >= 10 and perimeter_mask.any():
-                    ref_depth = np.median(interior_depths)
-                    interior_spread = np.std(interior_depths)
-                    abs_floor = max(0.02, ref_depth * 0.005)
-                    full_tol = interior_spread * 2.0 + abs_floor
-                    dist = cv2.distanceTransform(valid_mask.astype(np.uint8), cv2.DIST_L2, 5)
-                    norm_dist = np.clip(dist / max(erosion_r, 1), 0.0, 1.0)
-                    per_pixel_tol = abs_floor + (full_tol - abs_floor) * norm_dist
-                    with np.errstate(invalid='ignore'):
-                        perimeter_depth_ok = np.abs(depth_slice - ref_depth) <= per_pixel_tol
-                    valid_mask = interior_mask | (perimeter_mask & perimeter_depth_ok)
-            except Exception:
-                pass
-
-        raw_ids = index_slice[valid_mask]
-        unique_ids = np.unique(raw_ids)
-        return unique_ids[unique_ids > -1].astype(np.int64, copy=False)
-
-    def _extract_semantic_element_votes(self,
-                                        source_camera,
-                                        source_mask_annotation,
-                                        prediction_regions=None):
-        """Build raw element/class vote arrays for semantic propagation."""
-        if source_camera is None or source_mask_annotation is None:
-            return np.array([], dtype=np.int64), np.array([], dtype=np.int64), {}
-
-        raster = getattr(source_camera, '_raster', None)
-        if getattr(raster, 'index_map', None) is None:
-            return np.array([], dtype=np.int64), np.array([], dtype=np.int64), {}
-
-        lock_bit = source_mask_annotation.LOCK_BIT
-        element_chunks = []
-        class_chunks = []
-        class_label_ids = {}
-
-        def _append_votes(real_class_id, label, raw_element_ids):
-            if label is None or raw_element_ids is None:
-                return
-
-            raw_element_ids = np.asarray(raw_element_ids, dtype=np.int64).ravel()
-            raw_element_ids = raw_element_ids[raw_element_ids > -1]
-            if raw_element_ids.size == 0:
-                return
-
-            real_class_id = int(real_class_id)
-            class_label_ids[real_class_id] = label.id
-            element_chunks.append(raw_element_ids)
-            class_chunks.append(
-                np.full(raw_element_ids.size, real_class_id, dtype=np.int64)
-            )
-
-        if prediction_regions is not None:
-            for region_mask, top_left in prediction_regions:
-                if region_mask is None:
-                    continue
-
-                region_mask = np.asarray(region_mask)
-                if region_mask.ndim != 2:
-                    continue
-
-                unique_real_ids = np.unique(region_mask % lock_bit)
-                unique_real_ids = unique_real_ids[unique_real_ids > 0]
-                for real_class_id in unique_real_ids:
-                    label = source_mask_annotation.class_id_to_label_map.get(int(real_class_id))
-                    if label is None:
-                        continue
-
-                    binary_mask = (region_mask % lock_bit == real_class_id)
-                    if not np.any(binary_mask):
-                        continue
-
-                    raw_element_ids = self._extract_source_element_ids_from_region(
-                        source_camera,
-                        binary_mask,
-                        top_left,
-                    )
-                    _append_votes(real_class_id, label, raw_element_ids)
-        else:
-            semantic_mask = np.asarray(source_mask_annotation.mask_data)
-            if semantic_mask.ndim != 2:
-                return np.array([], dtype=np.int64), np.array([], dtype=np.int64), {}
-
-            unique_real_ids = np.unique(semantic_mask % lock_bit)
-            unique_real_ids = unique_real_ids[unique_real_ids > 0]
-            for real_class_id in unique_real_ids:
-                label = source_mask_annotation.class_id_to_label_map.get(int(real_class_id))
-                if label is None:
-                    continue
-
-                binary_mask = (semantic_mask % lock_bit == real_class_id)
-                if not np.any(binary_mask):
-                    continue
-
-                raw_element_ids = self._extract_source_element_ids_from_full_mask(
-                    source_camera,
-                    binary_mask,
-                )
-                _append_votes(real_class_id, label, raw_element_ids)
-
-        if not element_chunks or not class_chunks:
-            return np.array([], dtype=np.int64), np.array([], dtype=np.int64), {}
-
-        return (
-            np.concatenate(element_chunks).astype(np.int64, copy=False),
-            np.concatenate(class_chunks).astype(np.int64, copy=False),
-            class_label_ids,
-        )
-
-    def _on_brush_stroke_applied(self, scene_pos, label_id: str, brush_mask):
-        """Propagate a brush stroke into all visible context cameras.
-
-        When painting on an OrthoRaster/OrthoCamera, applies the brush to all visible
-        perspective cameras that can see the same 3D geometry.
-
-        Uses True 3D Mapping when the source camera's index map is available:
-        1. Extract the element IDs painted under the brush using the source
-           camera's index_map.
-        2. Update the 3D Scene Product directly with the new Class ID and Color.
-        3. Query each target camera's inverted index for the same IDs.
-        4. Paint exactly those pixels with update_mask_at_indices().
-
-        Falls back to the legacy 2D center-stamp when the index map is absent
-        (e.g., visibility not yet computed) or when no scene geometry was hit.
-        """
-        if self.selected_camera is None:
-            return
-
-        px = int(scene_pos.x())
-        py = int(scene_pos.y())
-
-        selected_paths = self._get_annotation_target_paths()
-
-        project_labels = list(self.main_window.label_window.labels)
-
-        # Quick exit: nothing to propagate to
-        if not selected_paths:
-            return
-
-        source_label, source_class_id = self._resolve_source_mask_class_context(
-            self.selected_camera,
-            label_id,
-            project_labels,
-        )
-        if source_label is None or source_class_id is None:
-            return
-
-        painted_ids = self._extract_source_ids_from_crop_mask(
-            self.selected_camera,
-            brush_mask,
-            px,
-            py,
-        )
-        painted_ids = np.asarray(painted_ids if painted_ids is not None else [], dtype=np.int64)
-        class_ids = np.full(painted_ids.size, int(source_class_id), dtype=np.int64)
-
-        self._execute_mask_propagation(
-            source_camera=self.selected_camera,
-            element_ids=painted_ids,
-            class_ids=class_ids,
-            target_paths=selected_paths,
-            project_labels=project_labels,
-            class_label_ids={int(source_class_id): label_id},
-            fallback_payload={
-                'mode': 'brush',
-                'label_id': label_id,
-                'source_class_id': int(source_class_id),
-                'mask': np.asarray(brush_mask, dtype=bool),
-                'center': (px, py),
-                'projections': self._build_projection(px, py),
-                'search_radius': float(max(brush_mask.shape) * 2.5),
-            },
-        )
-
-    def _on_fill_stroke_applied(self, scene_pos, label_id: str, fill_mask=None):
-        """Propagate a fill operation into all visible context cameras."""
-        if self.selected_camera is None:
-            return
-
-        selected_paths = self._get_annotation_target_paths()
-        if not selected_paths:
-            return
-
-        project_labels = list(self.main_window.label_window.labels)
-        source_label = next((lbl for lbl in project_labels if lbl.id == label_id), None)
-        if source_label is None:
-            return
-
-        source_raster = self.raster_manager.get_raster(self.selected_camera.image_path)
-        source_mask = source_raster.get_mask_annotation(project_labels) if source_raster else None
-        source_class_id = None
-        if source_mask is not None:
-            source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
-            if source_class_id is None:
-                source_mask.sync_label_map([source_label])
-                source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
-
-        px = int(scene_pos.x())
-        py = int(scene_pos.y())
-
-        painted_ids = None
-        if fill_mask is not None:
-            painted_ids = self._extract_source_ids_from_full_mask(self.selected_camera, fill_mask)
-
-        painted_ids = np.asarray(painted_ids if painted_ids is not None else [], dtype=np.int64)
-        class_ids = (
-            np.full(painted_ids.size, int(source_class_id), dtype=np.int64)
-            if source_class_id is not None
-            else np.array([], dtype=np.int64)
-        )
-
-        self._execute_mask_propagation(
-            source_camera=self.selected_camera,
-            element_ids=painted_ids,
-            class_ids=class_ids,
-            target_paths=selected_paths,
-            project_labels=project_labels,
-            class_label_ids={int(source_class_id): label_id} if source_class_id is not None else {},
-            fallback_payload={
-                'mode': 'fill',
-                'label_id': label_id,
-                'source_class_id': int(source_class_id) if source_class_id is not None else None,
-                'mask': np.asarray(fill_mask, dtype=bool) if fill_mask is not None else None,
-                'center': (px, py),
-                'projections': self._build_projection(px, py),
-                'search_radius': float(max(fill_mask.shape) * 2.5) if fill_mask is not None else 0.0,
-            },
-        )
-
-    def _on_erase_stroke_applied(self, scene_pos, label_id: str, brush_mask: np.ndarray):
-        """Propagate an erase operation into all visible context cameras."""
-        if self.selected_camera is None:
-            return
-
-        selected_paths = self._get_annotation_target_paths()
-        if not selected_paths:
-            return
-
-        px, py = int(scene_pos.x()), int(scene_pos.y())
-        painted_ids = self._extract_source_ids_from_crop_mask(self.selected_camera, brush_mask, px, py)
-        painted_ids = np.asarray(painted_ids if painted_ids is not None else [], dtype=np.int64)
-
-        self._execute_mask_propagation(
-            source_camera=self.selected_camera,
-            element_ids=painted_ids,
-            class_ids=np.zeros(painted_ids.size, dtype=np.int64),
-            target_paths=selected_paths,
-            project_labels=list(self.main_window.label_window.labels),
-            class_label_ids={},
-            fallback_payload={
-                'mode': 'erase',
-                'source_class_id': 0,
-                'mask': np.asarray(brush_mask, dtype=bool),
-                'center': (px, py),
-                'projections': self._build_projection(px, py),
-                'search_radius': float(max(brush_mask.shape) * 2.5),
-            },
-        )
-
-    def _propagate_3d_face_ids_to_context_cameras(self, face_ids, label, erase: bool = False):
-        """Propagate a 3D brush/erase stroke into visible context cameras."""
-        if self.selected_camera is None:
-            return
-
-        selected_paths = self._get_annotation_target_paths()
-        annotation_window = getattr(self.main_window, 'annotation_window', None)
-        primary_path = getattr(annotation_window, 'current_image_path', None)
-        if primary_path:
-            selected_paths.add(primary_path)
-        if not selected_paths:
-            return
-
-        try:
-            face_ids_arr = np.asarray(face_ids, dtype=np.int64)
-            face_ids_arr = np.unique(face_ids_arr[face_ids_arr >= 0])
-        except Exception:
-            return
-
-        if face_ids_arr.size == 0:
-            return
-
-        project_labels = list(self.main_window.label_window.labels)
-        label_id = getattr(label, 'id', None)
-
-        if erase:
-            source_class_id = 0
-        else:
-            if label is None or label_id is None:
-                return
-
-            source_raster = self.raster_manager.get_raster(self.selected_camera.image_path)
-            source_mask = source_raster.get_mask_annotation(project_labels) if source_raster else None
-            if source_mask is None:
-                return
-
-            source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
-            if source_class_id is None:
-                source_mask.sync_label_map([label])
-                source_class_id = source_mask.label_id_to_class_id_map.get(label_id)
-            if source_class_id is None:
-                return
-
-        self._execute_mask_propagation(
-            source_camera=self.selected_camera,
-            element_ids=face_ids_arr,
-            class_ids=np.full(face_ids_arr.size, int(source_class_id), dtype=np.int64),
-            target_paths=selected_paths,
-            project_labels=project_labels,
-            class_label_ids={int(source_class_id): label_id} if int(source_class_id) != 0 else {},
-            fallback_payload=None,
-            skip_3d_paint=True,
-        )
-
-    def _on_3d_brush_stroke_applied(self, face_ids, label):
-        self._propagate_3d_face_ids_to_context_cameras(face_ids, label, erase=False)
-
-    def _on_3d_erase_stroke_applied(self, face_ids, label=None):
-        self._propagate_3d_face_ids_to_context_cameras(face_ids, label, erase=True)
-
-    def _on_sam_prediction_applied(self, scene_pos, label_id: str, binary_mask: np.ndarray):
-        """Propagate a final SAM mask prediction into all visible context cameras.
-
-        When painting on an OrthoRaster/OrthoCamera, applies the SAM prediction to all visible
-        perspective cameras that can see the same 3D geometry.
-        Uses True 3D Mapping when the source camera's index map is available:
-        1. Extract the element IDs beneath the predicted binary_mask using the
-           source camera's index_map (the mask is a crop centred at scene_pos).
-        2. Update the 3D Scene Product directly with the new Class ID and Color.
-        3. Query each target camera's inverted index for the same IDs.
-        4. Paint exactly those pixels with update_mask_at_indices().
-
-        Falls back to the legacy 2D stamp when the index map is absent or when
-        no scene geometry was hit (e.g., sky prediction).
-
-        Args:
-            scene_pos: QPointF — centre of the prediction crop in source image pixels.
-            label_id: UUID of the label used for the prediction.
-            binary_mask: small (H,W) uint8 array with 1 for predicted pixels.
-        """
-        if self.selected_camera is None:
-            return
-
-        selected_camera = self.selected_camera
-        selected_paths  = self._get_annotation_target_paths()
-        if not selected_paths:
-            return
-
-        project_labels  = list(self.main_window.label_window.labels)
-        source_label, source_class_id = self._resolve_source_mask_class_context(
-            selected_camera,
-            label_id,
-            project_labels,
-        )
-        if source_label is None or source_class_id is None:
-            return
-
-        px = int(scene_pos.x())
-        py = int(scene_pos.y())
-        painted_ids = self._extract_source_ids_from_sam_prediction(
-            selected_camera,
-            binary_mask,
-            px,
-            py,
-        )
-        painted_ids = np.asarray(painted_ids if painted_ids is not None else [], dtype=np.int64)
-        class_ids = np.full(painted_ids.size, int(source_class_id), dtype=np.int64)
-
-        self._execute_mask_propagation(
-            source_camera=selected_camera,
-            element_ids=painted_ids,
-            class_ids=class_ids,
-            target_paths=selected_paths,
-            project_labels=project_labels,
-            class_label_ids={int(source_class_id): label_id},
-            fallback_payload={
-                'mode': 'sam',
-                'label_id': label_id,
-                'source_class_id': int(source_class_id),
-                'mask': np.asarray(binary_mask, dtype=np.uint8),
-                'center': (px, py),
-                'projections': self._build_projection(px, py),
-                'search_radius': float(max(binary_mask.shape) * 2.5),
-            },
-        )
-
-    def _execute_mask_propagation(self,
-                                  source_camera,
-                                  element_ids: np.ndarray,
-                                  class_ids: np.ndarray,
-                                  target_paths: set,
-                                  project_labels: list,
-                                  class_label_ids: dict,
-                                  fallback_payload=None,
-                                  skip_3d_paint: bool = False):
-        """Queue a propagation job onto the single unified background worker."""
-        t0 = perf_counter()
-        if source_camera is None or not target_paths:
-            return
-
-        try:
-            element_ids = np.asarray(element_ids, dtype=np.int64).ravel()
-        except Exception:
-            element_ids = np.array([], dtype=np.int64)
-
-        try:
-            class_ids = np.asarray(class_ids, dtype=np.int64).ravel()
-        except Exception:
-            class_ids = np.array([], dtype=np.int64)
-
-        has_3d_payload = (
-            element_ids.size > 0 and
-            class_ids.size > 0 and
-            element_ids.size == class_ids.size
-        )
-        if not has_3d_payload:
-            element_ids = np.array([], dtype=np.int64)
-            class_ids = np.array([], dtype=np.int64)
-
-        if not has_3d_payload and fallback_payload is None:
-            return
-
-        target_paths = tuple(sorted({path for path in target_paths if path}))
-        if not target_paths:
-            return
-
-        primary_target = self.viewer.scene_context.get_primary_target()
-        self._pending_unified_propagation_jobs += 1
-        self._propagating_annotation = True
-
-        try:
-            payload = dict(fallback_payload) if isinstance(fallback_payload, dict) else fallback_payload
-            self._unified_bg_executor.submit(
-                self._do_universal_propagation,
-                source_camera,
-                element_ids.copy(),
-                class_ids.copy(),
-                target_paths,
-                list(project_labels),
-                dict(class_label_ids or {}),
-                primary_target,
-                payload,
-                skip_3d_paint,
-            )
-        except Exception:
-            self._pending_unified_propagation_jobs = max(
-                0,
-                self._pending_unified_propagation_jobs - 1,
-            )
-            self._propagating_annotation = self._pending_unified_propagation_jobs > 0
-            traceback.print_exc()
-        finally:
-            print(f"DEBUG [Sync Dispatch]: Packaged and queued job in {(perf_counter() - t0) * 1000:.2f}ms")
-
-    def _do_universal_propagation(self,
-                                  source_camera,
-                                  element_ids: np.ndarray,
-                                  class_ids: np.ndarray,
-                                  target_paths,
-                                  project_labels,
-                                  class_label_ids,
-                                  primary_target,
-                                  fallback_payload=None,
-                                  skip_3d_paint: bool = False):
-        """Background worker for brush, SAM, and semantic mask propagation."""
-        from time import perf_counter
-        t0 = perf_counter()
-        repaint_tasks = []
-        mask_time = 0.0
-
-        try:
-            labels_by_id = {
-                getattr(label, 'id', None): label
-                for label in project_labels
-                if getattr(label, 'id', None) is not None
-            }
-
-            winning_elements = np.array([], dtype=np.int64)
-            winning_classes = np.array([], dtype=np.int64)
-            if element_ids is not None and class_ids is not None:
-                winning_elements, winning_classes = resolve_class_conflicts_vectorized(
-                    element_ids,
-                    class_ids,
-                )
-
-            class_to_elements = {}
-            if winning_elements.size > 0 and winning_classes.size > 0:
-                for source_class_id in np.unique(winning_classes):
-                    class_to_elements[int(source_class_id)] = winning_elements[
-                        winning_classes == source_class_id
-                    ]
-
-            if primary_target and hasattr(primary_target, 'apply_labels') and not skip_3d_paint:
-                for source_class_id, subset_elements in class_to_elements.items():
-                    if subset_elements.size == 0:
-                        continue
-
-                    label_id = class_label_ids.get(int(source_class_id))
-                    if int(source_class_id) == 0:
-                        repaint_tasks.append({
-                            'type': '3d_paint',
-                            'painted_ids': subset_elements.copy(),
-                            'target_color': (255, 255, 255),
-                            'source_class_id': 0,
-                            'primary_target': primary_target,
-                        })
-                        continue
-
-                    label = labels_by_id.get(label_id)
-                    if label is None:
-                        continue
-
-                    repaint_tasks.append({
-                        'type': '3d_paint',
-                        'painted_ids': subset_elements.copy(),
-                        'target_color': (
-                            label.color.red(),
-                            label.color.green(),
-                            label.color.blue(),
-                        ),
-                        'source_class_id': int(source_class_id),
-                        'primary_target': primary_target,
-                    })
-
-            centers = getattr(primary_target, '_element_centers_np', None)
-
-            fallback_mode = None
-            fallback_mask = None
-            fallback_center = None
-            fallback_search_radius = 0.0
-            fallback_skip_ortho_index_lookup = False
-            fallback_label_id = None
-            fallback_projections = {}
-
-            if isinstance(fallback_payload, dict):
-                fallback_mode = str(fallback_payload.get('mode', '')).strip().lower()
-                if fallback_payload.get('mask') is not None:
-                    fallback_mask = np.asarray(fallback_payload.get('mask'))
-                fallback_center = fallback_payload.get('center')
-                fallback_search_radius = float(fallback_payload.get('search_radius', 0.0) or 0.0)
-                fallback_skip_ortho_index_lookup = bool(fallback_payload.get('skip_ortho_index_lookup', False))
-                fallback_label_id = fallback_payload.get('label_id')
-                fallback_projections = fallback_payload.get('projections', {}) or {}
-
-            def _project_bbox_for_subset(target_camera, subset_elements):
-                if centers is None or target_camera is None or target_camera is self.ortho_camera:
-                    return None
-                try:
-                    subset_centers = np.asarray(centers[np.asarray(subset_elements, dtype=np.int64)], dtype=np.float64)
-                    if subset_centers.size == 0:
-                        return None
-
-                    min_pt = np.min(subset_centers, axis=0)
-                    max_pt = np.max(subset_centers, axis=0)
-                    corners_3d = np.array([
-                        [min_pt[0], min_pt[1], min_pt[2]],
-                        [min_pt[0], min_pt[1], max_pt[2]],
-                        [min_pt[0], max_pt[1], min_pt[2]],
-                        [min_pt[0], max_pt[1], max_pt[2]],
-                        [max_pt[0], min_pt[1], min_pt[2]],
-                        [max_pt[0], min_pt[1], max_pt[2]],
-                        [max_pt[0], max_pt[1], min_pt[2]],
-                        [max_pt[0], max_pt[1], max_pt[2]],
-                    ], dtype=np.float64)
-
-                    projected = []
-                    for corner in corners_3d:
-                        uv = target_camera.project(corner)
-                        if uv is None or np.isnan(uv).any():
-                            continue
-                        projected.append(uv)
-
-                    if not projected:
-                        return None
-
-                    projected = np.asarray(projected, dtype=np.float64)
-                    u_min = max(0, int(np.floor(np.min(projected[:, 0]))))
-                    u_max = min(int(target_camera.width), int(np.ceil(np.max(projected[:, 0]))) + 1)
-                    v_min = max(0, int(np.floor(np.min(projected[:, 1]))))
-                    v_max = min(int(target_camera.height), int(np.ceil(np.max(projected[:, 1]))) + 1)
-                    if u_min >= u_max or v_min >= v_max:
-                        return None
-
-                    margin_u = max(1, int(round((u_max - u_min) * 0.2)))
-                    margin_v = max(1, int(round((v_max - v_min) * 0.2)))
-                    return (
-                        max(0, u_min - margin_u),
-                        min(int(target_camera.width), u_max + margin_u),
-                        max(0, v_min - margin_v),
-                        min(int(target_camera.height), v_max + margin_v),
-                    )
-                except Exception:
-                    return None
-
-            for target_path in target_paths:
-                target_camera = self._get_camera_for_path(target_path)
-                if target_camera is None:
-                    continue
-
-                target_raster = self.raster_manager.get_raster(target_path)
-                if target_raster is None:
-                    continue
-
-                target_mask = target_raster.mask_annotation
-                if target_mask is None:
-                    target_mask = target_raster.get_mask_annotation(project_labels)
-                if target_mask is None:
-                    continue
-
-                target_has_index = (
-                    getattr(target_camera, '_raster', None) is not None and
-                    target_camera._raster.index_map is not None
-                )
-                use_index_lookup = (
-                    winning_elements.size > 0 and
-                    target_has_index and
-                    not (fallback_skip_ortho_index_lookup and target_camera is self.ortho_camera)
-                )
-
-                target_rect = None
-                target_label_ids = set()
-
-                if use_index_lookup:
-                    t_mask_start = perf_counter()
-                    target_index_map = target_camera._raster.index_map
-                    target_mask_data = target_mask.mask_data
-                    max_idx = int(np.max(target_index_map))
-
-                    for source_class_id, subset_elements in class_to_elements.items():
-                        if subset_elements.size == 0:
-                            continue
-
-                        if int(source_class_id) == 0:
-                            target_class_id = 0
-                            label_id = None
-                        else:
-                            label_id = class_label_ids.get(int(source_class_id))
-                            label = labels_by_id.get(label_id)
-                            if label is None:
-                                continue
-
-                            target_class_id = target_mask.label_id_to_class_id_map.get(label_id)
-                            if target_class_id is None:
-                                target_mask.sync_label_map([label])
-                                target_class_id = target_mask.label_id_to_class_id_map.get(label_id)
-                            if target_class_id is None:
-                                continue
-
-                        cam_bbox = _project_bbox_for_subset(target_camera, subset_elements)
-                        if cam_bbox is not None:
-                            u_min, u_max, v_min, v_max = cam_bbox
-                            u_min = max(0, int(u_min))
-                            u_max = min(target_camera.width, int(u_max))
-                            v_min = max(0, int(v_min))
-                            v_max = min(target_camera.height, int(v_max))
-                        else:
-                            u_min, u_max = 0, target_camera.width
-                            v_min, v_max = 0, target_camera.height
-
-                        if u_min >= u_max or v_min >= v_max:
-                            continue
-
-                        valid_elements = subset_elements[(subset_elements >= 0) & (subset_elements <= max_idx)]
-                        if valid_elements.size == 0:
-                            continue
-
-                        lut = np.zeros(max_idx + 2, dtype=bool)
-                        lut[valid_elements] = True
-
-                        sub_index = target_index_map[v_min:v_max, u_min:u_max]
-                        sub_mask = target_mask_data[v_min:v_max, u_min:u_max]
-                        paintable = lut[sub_index] & (sub_mask < target_mask.LOCK_BIT) & (sub_mask != target_class_id)
-
-                        if not np.any(paintable):
-                            continue
-
-                        y_local, x_local = np.where(paintable)
-                        y_global = y_local + v_min
-                        x_global = x_local + u_min
-                        flat_global = (y_global * target_camera.width + x_global).astype(np.int64, copy=False)
-
-                        target_mask.update_mask_at_indices(
-                            flat_global,
-                            int(target_class_id),
-                            silent=True,
-                        )
-
-                        new_rect = (
-                            int(np.min(x_global)),
-                            int(np.min(y_global)),
-                            int(np.max(x_global)) + 1,
-                            int(np.max(y_global)) + 1,
-                        )
-                        target_rect = _merge_update_rects(target_rect, new_rect)
-
-                        if label_id is not None:
-                            target_label_ids.add(label_id)
-
-                    mask_time += perf_counter() - t_mask_start
-
-                if fallback_mask is not None and fallback_center is not None and (not use_index_lookup or target_rect is None):
-                    t_mask_start = perf_counter()
-                    if fallback_mode == 'erase':
-                        target_class_id = 0
-                        label = None
-                    else:
-                        label = labels_by_id.get(fallback_label_id)
-                        if label is not None:
-                            target_class_id = target_mask.label_id_to_class_id_map.get(fallback_label_id)
-                            if target_class_id is None:
-                                target_mask.sync_label_map([label])
-                                target_class_id = target_mask.label_id_to_class_id_map.get(fallback_label_id)
-                        else:
-                            target_class_id = None
-
-                    if target_class_id is not None:
-                        target_center = fallback_center
-                        if fallback_projections:
-                            proj = fallback_projections.get(target_path)
-                            if proj is not None and len(proj) >= 3 and proj[2]:
-                                target_center = (proj[0], proj[1])
-                            else:
-                                continue
-
-                        if target_center is None:
-                            target_center = (0, 0)
-                        if fallback_mode in ('brush', 'erase'):
-                            brush_mask = self._acquire_propagation_buffer(fallback_mask.shape, dtype=bool)
-                            try:
-                                np.copyto(brush_mask, np.asarray(fallback_mask, dtype=bool))
-                                brush_h, brush_w = brush_mask.shape
-                                brush_location = QPointF(
-                                    target_center[0] - brush_w / 2.0,
-                                    target_center[1] - brush_h / 2.0,
-                                )
-                                target_mask.update_mask(
-                                    brush_location,
-                                    brush_mask,
-                                    int(target_class_id),
-                                    silent=True,
-                                )
-                                target_rect = _merge_update_rects(
-                                    target_rect,
-                                    (
-                                        max(0, int(target_center[0] - brush_w / 2.0)),
-                                        max(0, int(target_center[1] - brush_h / 2.0)),
-                                        min(target_camera.width, int(target_center[0] - brush_w / 2.0) + brush_w),
-                                        min(target_camera.height, int(target_center[1] - brush_h / 2.0) + brush_h),
-                                    ),
-                                )
-                                if fallback_label_id is not None:
-                                    target_label_ids.add(fallback_label_id)
-                            finally:
-                                self._release_propagation_buffer(brush_mask)
-                        elif fallback_mode == 'fill':
-                            fill_pos = QPointF(target_center[0], target_center[1])
-                            fill_result = target_mask.fill_region(
-                                fill_pos,
-                                int(target_class_id),
-                                silent=True,
-                                return_update_rect=True,
-                            )
-                            if fill_result is not None:
-                                fill_mask_result, fill_rect = fill_result
-                                if fill_mask_result is not None:
-                                    target_rect = _merge_update_rects(target_rect, fill_rect)
-                                    if fallback_label_id is not None:
-                                        target_label_ids.add(fallback_label_id)
-                        elif fallback_mode == 'sam':
-                            subset_mask = self._acquire_propagation_buffer(fallback_mask.shape, dtype=np.uint8)
-                            try:
-                                subset_mask.fill(0)
-                                subset_mask[np.asarray(fallback_mask, dtype=bool)] = int(target_class_id)
-                                mask_h, mask_w = subset_mask.shape
-                                top_left_x = int(target_center[0] - mask_w / 2.0)
-                                top_left_y = int(target_center[1] - mask_h / 2.0)
-                                target_mask.update_mask_with_mask(
-                                    subset_mask,
-                                    (top_left_x, top_left_y),
-                                    silent=True,
-                                )
-                                target_rect = _merge_update_rects(
-                                    target_rect,
-                                    (
-                                        max(0, top_left_x),
-                                        max(0, top_left_y),
-                                        min(target_mask.mask_data.shape[1], top_left_x + mask_w),
-                                        min(target_mask.mask_data.shape[0], top_left_y + mask_h),
-                                    ),
-                                )
-                                if fallback_label_id is not None:
-                                    target_label_ids.add(fallback_label_id)
-                            finally:
-                                self._release_propagation_buffer(subset_mask)
-                    mask_time += perf_counter() - t_mask_start
-
-                if target_rect is not None:
-                    repaint_tasks.append({
-                        'type': 'repaint',
-                        'path': target_path,
-                        'mask': target_mask,
-                        'label_ids': tuple(sorted(target_label_ids)),
-                        'update_rect': target_rect,
-                    })
-
-        except Exception:
-            traceback.print_exc()
-        finally:
-            self._universal_repaint_signal.emit(repaint_tasks)
-            print(
-                f"DEBUG [Sync Worker]: {len(target_paths)} Cams | Total: {(perf_counter() - t0) * 1000:.2f}ms | "
-                f"Mask Gen: {mask_time * 1000:.2f}ms"
-            )
-            return repaint_tasks
-
-    def _on_universal_repaint(self, repaint_tasks: list):
-        """Apply localized UI updates produced by the unified propagation worker."""
-        t0 = perf_counter()
-        needs_3d_flush = False
-        try:
-            for task in repaint_tasks:
-                task_type = task.get('type')
-                if task_type == '3d_paint':
-                    self.submit_3d_face_paint(
-                        task['painted_ids'],
-                        task['target_color'],
-                        task['source_class_id'],
-                        primary_target=task.get('primary_target'),
-                    )
-                    needs_3d_flush = True
-                    continue
-
-                if task_type != 'repaint':
-                    continue
-
-                target_mask = task.get('mask')
-                if target_mask is None:
-                    continue
-
-                for label_id in task.get('label_ids', ()):
-                    if label_id is not None and label_id not in target_mask.visible_label_ids:
-                        target_mask.visible_label_ids.add(label_id)
-
-                target_path = task.get('path')
-                context_canvas = self._get_context_canvas_for_path(target_path)
-                should_update_now = True
-                if self.context_matrix is not None and context_canvas is not None:
-                    should_update_now = self.context_matrix.is_canvas_on_screen(context_canvas)
-
-                if should_update_now:
-                    target_mask.update_graphics_item(update_rect=task.get('update_rect'))
-                    if context_canvas is not None and context_canvas._mask_overlay_item is None:
-                        context_canvas.set_mask_overlay(target_mask)
-                elif self.context_matrix is not None:
-                    self.context_matrix.queue_pending_repaint(
-                        target_path,
-                        target_mask,
-                        update_rect=task.get('update_rect'),
-                        label_ids=task.get('label_ids', ()),
-                    )
-
-        except Exception as e:
-            print(f"Error in _on_universal_repaint: {e}")
-        finally:
-            self._pending_unified_propagation_jobs = max(
-                0,
-                self._pending_unified_propagation_jobs - 1,
-            )
-            self._propagating_annotation = self._pending_unified_propagation_jobs > 0
-            if needs_3d_flush:
-                request_flush = getattr(self, 'request_lazy_flush', None)
-                if callable(request_flush):
-                    request_flush()
-            print(f"DEBUG [Sync Repaint (Main Thread)]: Pushed {len(repaint_tasks)} image updates to UI in {(perf_counter() - t0) * 1000:.2f}ms")
-
-    def _on_semantic_prediction_applied(self, image_path: str, source_mask_annotation, prediction_regions=None):
-        """Propagate a semantic segmentation prediction to all target cameras.
-
-        Called by Semantic.predict() after each image is processed when multi-annotate
-        is enabled. When region payloads are supplied, only those tiles contribute
-        to the 3D element votes, which keeps work-area predictions scoped to the
-        predicted region instead of the entire source mask.
-
-        Perspective ↔ orthomosaic propagation is supported: when the source is an
-        OrthoCamera, targets are all visible perspective cameras; when the source is a
-        perspective camera, targets include visible context cameras plus the ortho.
-
-        Cameras without a pre-computed index map are skipped — full-image warping
-        without geometry is too imprecise to be useful for semantic masks.
-
-        Args:
-            image_path: Path of the image whose Semantic prediction just completed.
-            source_mask_annotation: The MaskAnnotation whose mask_data was just
-                                    updated by the Semantic model.
-        """
-        source_camera = self._get_camera_for_path(image_path)
-        if source_camera is None:
-            return
-
-        selected_paths = self._get_semantic_target_paths(source_camera)
-
-        if not selected_paths:
-            return
-
-        project_labels = list(self.main_window.label_window.labels)
-        element_ids, class_ids, class_label_ids = self._extract_semantic_element_votes(
-            source_camera,
-            source_mask_annotation,
-            prediction_regions=prediction_regions,
-        )
-        if element_ids.size == 0 or class_ids.size == 0 or not class_label_ids:
-            return
-
-        self._execute_mask_propagation(
-            source_camera=source_camera,
-            element_ids=element_ids,
-            class_ids=class_ids,
-            target_paths=selected_paths,
-            project_labels=project_labels,
-            class_label_ids=class_label_ids,
-        )
-
-
     # =========================================================================
     # MVAT-SAM  (Space-bar segmentation of the current 3D viewer screenshot)
     # =========================================================================
@@ -6229,7 +4150,7 @@ class MVATManager(QObject):
                       [0.0, fy, h / 2.0],
                       [0.0, 0.0, 1.0]], dtype=np.float64)
 
-        # 3. Build index map on the fly
+        # 3. Build index map via moderngl — stays on GPU when CUDA is available.
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             result = VisibilityManager.compute_visibility_from_scene(
@@ -6241,10 +4162,12 @@ class MVATManager(QObject):
         finally:
             QApplication.restoreOverrideCursor()
 
-        index_map    = result.get('index_map',    np.full((h, w), -1, dtype=np.int32))
-        depth_map    = result.get('depth_map',    None)
-        element_type = result.get('element_type', 'point')
-        return rgb, index_map, depth_map, element_type
+        index_map     = result.get('index_map',     np.full((h, w), -1, dtype=np.int32))
+        index_map_gpu = result.get('index_map_gpu', None)   # CUDA int32 tensor or None
+        depth_map     = result.get('depth_map',     None)
+        element_type  = result.get('element_type',  'point')
+
+        return rgb, index_map, index_map_gpu, depth_map, element_type
 
     def launch_viewer_sam(self):
         """Launch the MVAT-SAM dialog for the current 3D view (called on Space)."""
@@ -6268,219 +4191,56 @@ class MVATManager(QObject):
             return
 
         self.main_window.status_bar.showMessage(
-            'MVAT-SAM: building index map for current view...', 0)
+            'MVAT-SAM: building index map (moderngl)...', 0)
         QApplication.processEvents()
         try:
-            rgb, index_map, depth_map, element_type = self._capture_viewer_sam_context(scale=1)
+            rgb, index_map, index_map_gpu, depth_map, element_type = (
+                self._capture_viewer_sam_context(scale=1)
+            )
         except Exception as e:
             self.main_window.status_bar.showMessage(
                 f'MVAT-SAM: capture failed - {e}', 5000)
             return
 
+        # SAM's set_image expects numpy HWC uint8 — it handles its own GPU upload
+        # and preprocessing (resize, normalise, BCHW conversion) internally.
+        # We get GPU benefit from index_map_gpu staying on CUDA for the face-ID
+        # lookup after the mask is accepted, not from this encoding step.
         sam_dialog.set_image(rgb, image_path=None)
+
+        logger.info(
+            "🎯 [MVAT-SAM] Index map: %s | GPU tensor: %s | element_type: %s",
+            index_map.shape,
+            "yes" if index_map_gpu is not None else "no",
+            element_type,
+        )
 
         dlg = SAMTool3D(
             viewer=self.viewer,
             rgb_image=rgb,
             index_map=index_map,
+            index_map_gpu=index_map_gpu,
             element_type=element_type,
             sam_dialog=sam_dialog,
             label=selected_label,
         )
+
         def _on_accepted(mask):
-            # Re-read the current label at accept time (user may have changed it)
             live_label = (getattr(self.annotation_window, 'selected_label', None)
                           or selected_label)
-            self._on_viewer_sam_accepted(mask, index_map, depth_map, element_type, live_label)
+            self._on_viewer_sam_accepted(
+                mask, index_map, index_map_gpu, depth_map, element_type, live_label
+            )
 
         dlg.maskAccepted.connect(_on_accepted)
         dlg.exec_()
 
-    def _on_viewer_sam_accepted(self, binary_mask, index_map, depth_map, element_type, label):
-        """Convert mask pixels to element IDs and propagate to target cameras.
-
-        When multi_annotate_enabled is True: paints the primary annotation-window
-        camera and all visible context cameras (mirrors Brush3DTool behaviour).
-        When multi_annotate_enabled is False: only updates the 3D product — no 2D
-        camera is painted at all, because the VTK view has no corresponding image.
-        """
-        # --- extract element IDs from the mask ---------------------------------
-        element_ids = self._filter_index_map_ids_by_depth(
-            index_map=index_map,
-            binary_mask=binary_mask,
-            depth_map=depth_map,
-        )
-
-        if element_ids.size == 0:
-            self.main_window.status_bar.showMessage(
-                'MVAT-SAM: mask covers no scene geometry.', 4000)
-            return
-
-        n = element_ids.size
-        self.main_window.status_bar.showMessage(
-            f"MVAT-SAM: painting {n:,} {element_type}(s) with '{label.short_label_code}'...", 0)
-        QApplication.processEvents()
-
-        # --- resolve label color -----------------------------------------------
-        color_rgb = (label.color.red(), label.color.green(), label.color.blue())
-
-        # --- 3D-only path (multi-annotate OFF) ---------------------------------
-        if not self.multi_annotate_enabled:
-            primary_target = self.viewer.scene_context.get_primary_target()
-            if primary_target is None or not hasattr(primary_target, 'apply_labels'):
-                self.main_window.status_bar.showMessage(
-                    'MVAT-SAM: no 3D product to paint.', 4000)
-                return
-
-            # Resolve class_id from any available raster (needed for apply_labels class bookkeeping).
-            # We iterate cameras until we find one with a mask annotation.
-            source_class_id = None
-            project_labels  = list(self.main_window.label_window.labels)
-            for cam in self.cameras.values():
-                raster = self.raster_manager.get_raster(cam.image_path)
-                if raster is None:
-                    continue
-                mask_ann = raster.get_mask_annotation(project_labels)
-                if mask_ann is None:
-                    continue
-                cid = mask_ann.label_id_to_class_id_map.get(label.id)
-                if cid is None:
-                    mask_ann.sync_label_map([label])
-                    cid = mask_ann.label_id_to_class_id_map.get(label.id)
-                if cid is not None:
-                    source_class_id = cid
-                    break
-
-            if source_class_id is None:
-                # No rasters available — still paint with class_id=1 as a fallback
-                # so the user gets visual feedback on the mesh.
-                source_class_id = 1
-
-            primary_target.apply_labels(element_ids, int(source_class_id), color_rgb)
-            primary_target.flush_labels_to_gpu()
-            self.main_window.status_bar.showMessage(
-                f"MVAT-SAM: applied '{label.short_label_code}' to {n:,} {element_type}(s).", 4000)
-            return
-
-        # --- multi-annotate ON: propagate to 3D + all visible 2D cameras ------
-        project_labels = list(self.main_window.label_window.labels)
-
-        annotation_window = getattr(self.main_window, 'annotation_window', None)
-        primary_path = getattr(annotation_window, 'current_image_path', None)
-        target_paths = self._get_annotation_target_paths()
-        if primary_path:
-            target_paths.add(primary_path)
-
-        if not target_paths:
-            self.main_window.status_bar.showMessage(
-                'MVAT-SAM: no target cameras to paint.', 4000)
-            return
-
-        source_path     = next(iter(target_paths))
-        source_raster   = self.raster_manager.get_raster(source_path)
-        source_mask_ann = source_raster.get_mask_annotation(project_labels) if source_raster else None
-        source_class_id = None
-        if source_mask_ann is not None:
-            source_class_id = source_mask_ann.label_id_to_class_id_map.get(label.id)
-            if source_class_id is None:
-                source_mask_ann.sync_label_map([label])
-                source_class_id = source_mask_ann.label_id_to_class_id_map.get(label.id)
-
-        if source_class_id is None:
-            self.main_window.status_bar.showMessage(
-                'MVAT-SAM: could not resolve class ID for selected label.', 4000)
-            return
-
-        class_ids     = np.full(element_ids.size, int(source_class_id), dtype=np.int64)
-        source_camera = self.cameras.get(source_path)
-        self._execute_mask_propagation(
-            source_camera=source_camera,
-            element_ids=element_ids,
-            class_ids=class_ids,
-            target_paths=target_paths,
-            project_labels=project_labels,
-            class_label_ids={int(source_class_id): label.id},
-        )
-        self.main_window.status_bar.showMessage(
-            f"MVAT-SAM: applied '{label.short_label_code}' to {n:,} {element_type}(s).", 4000)
-
-    def _filter_index_map_ids_by_depth(self,
-                                       index_map: np.ndarray,
-                                       binary_mask: np.ndarray,
-                                       depth_map: Optional[np.ndarray] = None) -> np.ndarray:
-        """Return unique element IDs under a mask, optionally rejecting depth outliers.
-
-        The depth-aware branch mirrors the 2D SAM propagation logic: it keeps the
-        interior of the mask and only accepts perimeter pixels when their depth is
-        consistent with the interior band.
-        """
-        if index_map is None or binary_mask is None:
-            return np.array([], dtype=np.int64)
-
-        index_map = np.asarray(index_map)
-        binary_mask = np.asarray(binary_mask)
-        if index_map.ndim != 2 or binary_mask.ndim != 2:
-            return np.array([], dtype=np.int64)
-
-        if index_map.shape != binary_mask.shape:
-            return np.array([], dtype=np.int64)
-
-        valid_mask = binary_mask.astype(bool)
-        if not np.any(valid_mask):
-            return np.array([], dtype=np.int64)
-
-        if depth_map is not None:
-            try:
-                import cv2
-
-                depth_map = np.asarray(depth_map)
-                if depth_map.shape != index_map.shape:
-                    depth_map = cv2.resize(
-                        depth_map.astype(np.float32),
-                        (index_map.shape[1], index_map.shape[0]),
-                        interpolation=cv2.INTER_NEAREST,
-                    )
-
-                erosion_r = int(np.clip(min(valid_mask.shape) * 0.03, 2, 12))
-                kernel = cv2.getStructuringElement(
-                    cv2.MORPH_ELLIPSE,
-                    (2 * erosion_r + 1, 2 * erosion_r + 1),
-                )
-                interior_mask = cv2.erode(
-                    valid_mask.astype(np.uint8),
-                    kernel,
-                    iterations=1,
-                ).astype(bool)
-                perimeter_mask = valid_mask & ~interior_mask
-
-                depth_slice = depth_map.astype(np.float32, copy=False)
-                interior_depths = depth_slice[interior_mask]
-                interior_depths = interior_depths[~np.isnan(interior_depths)]
-
-                if len(interior_depths) >= 10 and perimeter_mask.any():
-                    ref_depth = np.median(interior_depths)
-                    interior_spread = np.std(interior_depths)
-                    abs_floor = max(0.02, ref_depth * 0.005)
-                    full_tol = interior_spread * 2.0 + abs_floor
-                    dist = cv2.distanceTransform(valid_mask.astype(np.uint8), cv2.DIST_L2, 5)
-                    norm_dist = np.clip(dist / max(erosion_r, 1), 0.0, 1.0)
-                    per_pixel_tol = abs_floor + (full_tol - abs_floor) * norm_dist
-                    with np.errstate(invalid='ignore'):
-                        perimeter_depth_ok = np.abs(depth_slice - ref_depth) <= per_pixel_tol
-                    valid_mask = interior_mask | (perimeter_mask & perimeter_depth_ok)
-            except Exception:
-                pass
-
-        raw_ids = index_map[valid_mask]
-        unique_ids = np.unique(raw_ids)
-        return unique_ids[unique_ids > -1].astype(np.int64, copy=False)
 
     def cleanup(self):
         """Clean up resources before closing."""
-        self._on_multi_annotate_toggled(False)  # Disconnect all propagation hooks
+        self._on_multi_annotate_toggled(False)
         self.mouse_bridge.cleanup()
 
-        # Stop label painter thread if running
         try:
             if self._label_painter_thread is not None:
                 try:
@@ -6491,3 +4251,11 @@ class MVATManager(QObject):
                 self._label_painter_thread = None
         except Exception:
             pass
+
+        for thread, worker in list(self._active_workers):
+            try:
+                thread.quit()
+                thread.wait(2000)
+            except Exception:
+                pass
+        self._active_workers.clear()

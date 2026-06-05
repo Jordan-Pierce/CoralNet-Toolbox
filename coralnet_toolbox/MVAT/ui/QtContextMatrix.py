@@ -20,7 +20,8 @@ from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QToolBar, QToolButton, QSizePolicy, QFrame,
     QScrollArea, QLayout, QLayoutItem, QGraphicsOpacityEffect,
-    QSpinBox, QAbstractSpinBox
+    QSpinBox, QAbstractSpinBox,
+    QMenu, QAction,
 )
 
 from coralnet_toolbox.Icons import get_icon
@@ -34,6 +35,30 @@ from coralnet_toolbox.MVAT.core.constants import (
 from coralnet_toolbox import theme as app_theme
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+
+# Propagation mode constants used by maskPropagationRequested signal
+PROPAGATE_ACTIVE_TO_CONTEXT       = "active_to_context"        # Primary → context-matrix cameras
+PROPAGATE_PRIMARY_TO_MESH         = "active_camera_to_mesh"    # alias kept for back-compat
+PROPAGATE_ACTIVE_CAMERA_TO_MESH   = "active_camera_to_mesh"    # Primary → Mesh only
+PROPAGATE_ACTIVE_TO_ALL_CAMERAS   = "active_to_all_cameras"    # Primary → all cameras with index map
+PROPAGATE_CAMERAS_TO_MESH         = "cameras_to_mesh"          # All cameras → Mesh
+PROPAGATE_MESH_TO_ACTIVE_CAMERA   = "mesh_to_active_camera"    # Mesh → Primary
+PROPAGATE_MESH_TO_VISIBLE_CAMERAS = "mesh_to_visible_cameras"  # Mesh → context-matrix cameras
+PROPAGATE_MESH_TO_CAMERAS         = "mesh_to_cameras"          # Mesh → all cameras with index map
+PROPAGATE_MULTI_ANNOTATE          = "multi_annotate"           # Special: toggles live annotation mode
+
+# Human-readable button labels for each mode (matched to menu item wording)
+_PROPAGATE_MODE_LABELS = {
+    PROPAGATE_MULTI_ANNOTATE:          "Multi-Annotate",
+    PROPAGATE_ACTIVE_CAMERA_TO_MESH:   "Primary → Mesh",
+    PROPAGATE_ACTIVE_TO_CONTEXT:       "Primary → Visible Cams",
+    PROPAGATE_ACTIVE_TO_ALL_CAMERAS:   "Primary → All Cams",
+    PROPAGATE_CAMERAS_TO_MESH:         "All Cams → Mesh",
+    PROPAGATE_MESH_TO_ACTIVE_CAMERA:   "Mesh → Primary",
+    PROPAGATE_MESH_TO_VISIBLE_CAMERAS: "Mesh → Visible Cams",
+    PROPAGATE_MESH_TO_CAMERAS:         "Mesh → All Cams",
+}
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -146,10 +171,12 @@ class ContextMatrixWidget(QWidget):
     contextImagePromoted = pyqtSignal(str)            # camera_path
     rankIndicatorUpdated = pyqtSignal(int, int, int)  # start, end, total
     multiAnnotateToggled = pyqtSignal(bool)           # enabled state
-    semanticMaskPropagationRequested = pyqtSignal()
+    semanticMaskPropagationRequested = pyqtSignal()  # kept for back-compat
+    maskPropagationRequested = pyqtSignal(str)        # carries a PROPAGATE_* mode constant
 
     # Migrated from legacy CameraGrid
     loadCamerasRequested = pyqtSignal()
+    loadIndexMapsRequested = pyqtSignal()
     clearSelectionsRequested = pyqtSignal()
     previousCameraRequested = pyqtSignal()
     nextCameraRequested = pyqtSignal()
@@ -193,6 +220,7 @@ class ContextMatrixWidget(QWidget):
 
         # Multi-camera annotation state
         self.multi_annotate_enabled = False
+        self._skip_unlabeled_mesh_faces = False
         self._pending_sync = None
         self._active_camera_path = None
 
@@ -478,10 +506,25 @@ class ContextMatrixWidget(QWidget):
         if max_count is not None:
             count = min(count, max_count)
 
+        previous_target = getattr(self, 'target_camera_count', self._canvas_count_min)
         self.target_camera_count = max(self._canvas_count_min, count)
-        layout_ready = self._evaluate_auto_layout()
-        if layout_ready:
-            self._refresh_visible_canvases()
+
+        # Loading additional canvases (and their index maps / images) can take a
+        # noticeable moment, especially when the user ramps the count up to pull
+        # in many cameras at once.  Show a WaitCursor for the duration so there
+        # is clear feedback that work is happening.  Only do so when the count
+        # actually grows -- shrinking is cheap and shouldn't flash the cursor.
+        _show_busy = self.target_camera_count > previous_target
+        if _show_busy:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            QApplication.processEvents()
+        try:
+            layout_ready = self._evaluate_auto_layout()
+            if layout_ready:
+                self._refresh_visible_canvases()
+        finally:
+            if _show_busy:
+                QApplication.restoreOverrideCursor()
 
     def increase_canvas_count(self):
         self.set_target_camera_count(self.target_camera_count + self._canvas_count_step)
@@ -682,10 +725,8 @@ class ContextMatrixWidget(QWidget):
         self._scene_controls_enabled = bool(enabled)
         if hasattr(self, 'load_btn'):
             self.load_btn.setEnabled(self._scene_controls_enabled)
-        if hasattr(self, '_multi_annotate_btn'):
-            self._multi_annotate_btn.setEnabled(self._scene_controls_enabled)
-        if hasattr(self, '_propagate_mask_btn'):
-            self._propagate_mask_btn.setEnabled(self._scene_controls_enabled)
+        if hasattr(self, '_propagate_hub_btn'):
+            self._propagate_hub_btn.setEnabled(self._scene_controls_enabled)
         self._update_canvas_size_controls()
         self._update_canvas_count_controls()
 
@@ -1048,10 +1089,32 @@ class ContextMatrixWidget(QWidget):
         layout.setSpacing(app_theme.scale_int(5))
 
         self.load_btn = QToolButton()
+        self.load_btn.setPopupMode(QToolButton.MenuButtonPopup)
         self.load_btn.setText("Load Cameras")
-        self.load_btn.setToolTip("Load camera lists into the context matrix.")
+        self.load_btn.setToolTip("Load cameras or pre-load index maps for all cameras.")
         self.load_btn.setAutoRaise(True)
-        self.load_btn.clicked.connect(lambda _checked=False: self.loadCamerasRequested.emit())
+        def _load_btn_clicked(_checked=False):
+            self.load_btn.setEnabled(False)
+            try:
+                self.loadCamerasRequested.emit()
+            finally:
+                QTimer.singleShot(1500, lambda: self.load_btn.setEnabled(True))
+
+        self.load_btn.clicked.connect(_load_btn_clicked)
+
+        load_menu = QMenu(self.load_btn)
+        _act_load_cams = QAction("Load Cameras", self.load_btn)
+        _act_load_cams.setToolTip("Load camera parameters from the project into the context matrix.")
+        _act_load_cams.triggered.connect(lambda: self.loadCamerasRequested.emit())
+        _act_load_idx = QAction("Load Index Maps", self.load_btn)
+        _act_load_idx.setToolTip(
+            "Attempt to load pre-computed index maps from disk cache for every loaded camera.\n"
+            "Index maps are required for propagation between cameras and the mesh."
+        )
+        _act_load_idx.triggered.connect(lambda: self.loadIndexMapsRequested.emit())
+        load_menu.addAction(_act_load_cams)
+        load_menu.addAction(_act_load_idx)
+        self.load_btn.setMenu(load_menu)
         layout.addWidget(self.load_btn)
 
         sep0 = QFrame()
@@ -1059,28 +1122,10 @@ class ContextMatrixWidget(QWidget):
         sep0.setFrameShadow(QFrame.Sunken)
         layout.addWidget(sep0)
 
-        self._multi_annotate_btn = QToolButton()
-        self._multi_annotate_btn.setText("Multi-Annotate")
-        self._multi_annotate_btn.setCheckable(True)
-        self._multi_annotate_btn.setChecked(False)
-        self._multi_annotate_btn.setToolTip("Multi-Camera Annotation")
-        self._multi_annotate_btn.setAutoRaise(True)
-        self._multi_annotate_btn.toggled.connect(self._on_multi_annotate_toggled)
-        layout.addWidget(self._multi_annotate_btn)
+        # Build the unified Propagation Hub dropdown
+        self._propagate_hub_btn = self._build_propagation_hub()
+        layout.addWidget(self._propagate_hub_btn)
 
-        sep1 = QFrame()
-        sep1.setFrameShape(QFrame.VLine)
-        sep1.setFrameShadow(QFrame.Sunken)
-        layout.addWidget(sep1)
-
-        self._propagate_mask_btn = QToolButton()
-        self._propagate_mask_btn.setText("Propagate Mask")
-        self._propagate_mask_btn.setToolTip(
-            "Transfer the active semantic mask to the mesh and visible MVAT targets."
-        )
-        self._propagate_mask_btn.setAutoRaise(True)
-        self._propagate_mask_btn.clicked.connect(self._on_propagate_mask_clicked)
-        layout.addWidget(self._propagate_mask_btn)
 
         layout.addStretch(1)
 
@@ -1190,35 +1235,394 @@ class ContextMatrixWidget(QWidget):
         return toolbar
 
     def update_stats_label(self, visible_count: int, overlapping_count: int):
-        """Updates the bottom toolbar text."""
-        total_count = len(self._camera_paths) if self._camera_paths else overlapping_count
+        """Updates the bottom toolbar text.
+
+        The camera-count cap is intentionally NOT applied here so users can
+        increase the visible count up to the total number of loaded cameras.
+        The denominator shown in the toolbar always reflects the total.
+        """
+        total_count = len(self._camera_paths) if self._camera_paths else 0
         self._sync_camera_status_label(visible_count, total_count)
-
-        try:
-            overlapping_count = int(overlapping_count)
-        except Exception:
-            overlapping_count = self._canvas_count_min
-
-        self._camera_count_cap = max(self._canvas_count_min, overlapping_count)
-
-        if self.target_camera_count > self._camera_count_cap:
-            self.target_camera_count = self._camera_count_cap
-            if self._evaluate_auto_layout():
-                self._refresh_visible_canvases()
-
         self._update_canvas_count_controls()
 
     def refresh_scaling(self):
         """Refresh toolbar sizing after a UI scale change."""
         self._sync_context_toolbar_scaling()
 
+    def _build_propagation_hub(self) -> QToolButton:
+        """
+        Build the unified Propagation Hub dropdown button with all propagation modes
+        and settings consolidated into a single dropdown menu.
+
+        Structure:
+        ├─ Primary Camera
+        │  ├─ Project to Mesh to Visible Cameras
+        │  └─ Project to Mesh to All Cameras
+        ├─ Mesh
+        │  ├─ Project to Primary Camera
+        │  ├─ Project to Visible Cameras
+        │  ├─ Project to All Cameras
+        │  └─ Project to Specific Cameras... (disabled)
+        └─ Settings
+           ├─ ☑ Multi-annotate
+           └─ ☐ Skip unlabeled mesh faces
+        """
+        # Create the dropdown button
+        hub_btn = QToolButton()
+        hub_btn.setPopupMode(QToolButton.MenuButtonPopup)  # Left face = action; arrow = menu
+        hub_btn.setAutoRaise(True)
+        hub_btn.setToolTip("Click to run selected action; use arrow to pick a different action")
+
+        # Create the main menu
+        hub_menu = QMenu(hub_btn)
+
+        # ===== LIVE SECTION (Top Priority) =====
+        # Section header (non-clickable, just a visual label)
+        live_header = QAction("Live", hub_btn)
+        live_header.setEnabled(False)  # Make it non-clickable
+        hub_menu.addAction(live_header)
+
+        # Multi-annotate action (like all other propagation operations)
+        act_multi_annotate = QAction("Multi-annotate", hub_btn)
+        act_multi_annotate.triggered.connect(self._on_multi_annotate_action_selected)
+        hub_menu.addAction(act_multi_annotate)
+
+        hub_menu.addSeparator()
+
+        # ===== PRIMARY CAMERA SECTION =====
+        primary_header = QAction("Primary Camera", hub_btn)
+        primary_header.setEnabled(False)
+        hub_menu.addAction(primary_header)
+
+        # Primary mask → aggregate onto mesh only (no back-projection)
+        act_primary_to_mesh = QAction("Project to Mesh", hub_btn)
+        act_primary_to_mesh.setData(PROPAGATE_ACTIVE_CAMERA_TO_MESH)
+        act_primary_to_mesh.triggered.connect(
+            lambda: self._on_propagate_mode_selected(PROPAGATE_ACTIVE_CAMERA_TO_MESH)
+        )
+        hub_menu.addAction(act_primary_to_mesh)
+
+        # Primary mask → mesh → cameras currently in the context matrix
+        act_primary_to_visible = QAction("Project to Visible Cameras", hub_btn)
+        act_primary_to_visible.setData(PROPAGATE_ACTIVE_TO_CONTEXT)
+        act_primary_to_visible.triggered.connect(
+            lambda: self._on_propagate_mode_selected(PROPAGATE_ACTIVE_TO_CONTEXT)
+        )
+        hub_menu.addAction(act_primary_to_visible)
+
+        # Primary mask → mesh → all cameras that have an index map
+        act_primary_to_all = QAction("Project to All Cameras", hub_btn)
+        act_primary_to_all.setData(PROPAGATE_ACTIVE_TO_ALL_CAMERAS)
+        act_primary_to_all.triggered.connect(
+            lambda: self._on_propagate_mode_selected(PROPAGATE_ACTIVE_TO_ALL_CAMERAS)
+        )
+        hub_menu.addAction(act_primary_to_all)
+
+        hub_menu.addSeparator()
+
+        # ===== ALL CAMERAS SECTION =====
+        all_cams_header = QAction("All Cameras", hub_btn)
+        all_cams_header.setEnabled(False)
+        hub_menu.addAction(all_cams_header)
+
+        # All camera masks → aggregate onto mesh
+        act_all_to_mesh = QAction("Aggregate to Mesh", hub_btn)
+        act_all_to_mesh.setData(PROPAGATE_CAMERAS_TO_MESH)
+        act_all_to_mesh.triggered.connect(
+            lambda: self._on_propagate_mode_selected(PROPAGATE_CAMERAS_TO_MESH)
+        )
+        hub_menu.addAction(act_all_to_mesh)
+
+        hub_menu.addSeparator()
+
+        # ===== MESH SECTION =====
+        mesh_header = QAction("Mesh", hub_btn)
+        mesh_header.setEnabled(False)
+        hub_menu.addAction(mesh_header)
+
+        # Mesh face labels → primary camera
+        act_mesh_to_primary = QAction("Project to Primary Camera", hub_btn)
+        act_mesh_to_primary.setData(PROPAGATE_MESH_TO_ACTIVE_CAMERA)
+        act_mesh_to_primary.triggered.connect(
+            lambda: self._on_propagate_mode_selected(PROPAGATE_MESH_TO_ACTIVE_CAMERA)
+        )
+        hub_menu.addAction(act_mesh_to_primary)
+
+        # Mesh face labels → cameras currently in the context matrix
+        act_mesh_to_visible = QAction("Project to Visible Cameras", hub_btn)
+        act_mesh_to_visible.setData(PROPAGATE_MESH_TO_VISIBLE_CAMERAS)
+        act_mesh_to_visible.triggered.connect(
+            lambda: self._on_propagate_mode_selected(PROPAGATE_MESH_TO_VISIBLE_CAMERAS)
+        )
+        hub_menu.addAction(act_mesh_to_visible)
+
+        # Mesh face labels → all cameras with an index map
+        act_mesh_to_all = QAction("Project to All Cameras", hub_btn)
+        act_mesh_to_all.setData(PROPAGATE_MESH_TO_CAMERAS)
+        act_mesh_to_all.triggered.connect(
+            lambda: self._on_propagate_mode_selected(PROPAGATE_MESH_TO_CAMERAS)
+        )
+        hub_menu.addAction(act_mesh_to_all)
+
+        # Project to Specific Cameras (disabled for now)
+        act_mesh_to_specific = QAction("Project to Specific Cameras...", hub_btn)
+        act_mesh_to_specific.setEnabled(False)
+        hub_menu.addAction(act_mesh_to_specific)
+
+        hub_menu.addSeparator()
+
+        # ===== SETTINGS SECTION =====
+        settings_header = QAction("Settings", hub_btn)
+        settings_header.setEnabled(False)
+        hub_menu.addAction(settings_header)
+
+        # Skip unlabeled mesh faces checkbox
+        act_skip_unlabeled = QAction("Skip unlabeled mesh faces", hub_btn)
+        act_skip_unlabeled.setCheckable(True)
+        act_skip_unlabeled.setChecked(False)
+        act_skip_unlabeled.triggered.connect(lambda checked: self._on_skip_unlabeled_toggled(checked))
+        self._skip_unlabeled_action = act_skip_unlabeled
+        hub_menu.addAction(act_skip_unlabeled)
+
+        hub_btn.setMenu(hub_menu)
+        hub_btn.clicked.connect(self._on_hub_btn_face_clicked)
+
+        # Store references for later updates (MUST be before _update_propagate_btn_tooltip)
+        self._propagate_mask_btn = hub_btn
+        self._hub_menu = hub_menu
+        self._propagate_hub_btn = hub_btn
+
+        # Initialize state — Multi-Annotate is the default selected action
+        self._propagate_current_mode = PROPAGATE_MULTI_ANNOTATE
+        self._update_button_appearance()  # Set initial label and colour
+
+        return hub_btn
+
+    def _update_button_appearance(self):
+        """Update the hub button label and colour based on the current mode / multi-annotate state."""
+        if not hasattr(self, '_propagate_hub_btn'):
+            return
+
+        mode = getattr(self, '_propagate_current_mode', PROPAGATE_MULTI_ANNOTATE)
+        label = _PROPAGATE_MODE_LABELS.get(mode, mode)
+
+        # Append ON/OFF indicator when Multi-Annotate is the selected action
+        if mode == PROPAGATE_MULTI_ANNOTATE:
+            label = f"Multi-Annotate"
+
+        self._propagate_hub_btn.setText(label)
+
+        # Blue tint when Multi-Annotate is active (enabled)
+        if self.multi_annotate_enabled and mode == PROPAGATE_MULTI_ANNOTATE:
+            self._propagate_hub_btn.setStyleSheet("""
+                QToolButton {
+                    background-color: #2E5090;
+                    color: white;
+                    border: 1px solid #1a3050;
+                    border-radius: 3px;
+                    padding: 2px;
+                }
+                QToolButton:hover {
+                    background-color: #3561a8;
+                }
+                QToolButton:pressed {
+                    background-color: #1f4070;
+                }
+            """)
+        else:
+            self._propagate_hub_btn.setStyleSheet("")
+
+    def _on_skip_unlabeled_toggled(self, checked: bool):
+        """Called when Skip Unlabeled Mesh Faces checkbox is toggled."""
+        # Store the setting; it can be read when propagation operations run
+        self._skip_unlabeled_mesh_faces = checked
+
+    def _on_multi_annotate_button_clicked(self, _checked=False):
+        """Called when the Multi-Annotate button (not arrow) is clicked to toggle the state."""
+        # Toggle multi-annotate on/off
+        self._on_multi_annotate_toggled(not self.multi_annotate_enabled)
+
+    def _on_multi_annotate_action_selected(self):
+        """Called when Multi-Annotate is selected from the dropdown — makes it the active button action."""
+        self._propagate_current_mode = PROPAGATE_MULTI_ANNOTATE
+        self._update_button_appearance()
+
+    def _on_propagate_mode_selected(self, mode: str):
+        """Called from the dropdown — switch the active mode and update the button label."""
+        self._propagate_current_mode = mode
+        self._update_button_appearance()
+
+    def _on_hub_btn_face_clicked(self, _checked=False):
+        """Called when the button face (not the arrow) is clicked.
+
+        If the current mode is Multi-Annotate, toggle that on/off.
+        Otherwise run the selected propagation operation.
+        """
+        mode = getattr(self, '_propagate_current_mode', PROPAGATE_MULTI_ANNOTATE)
+        if mode == PROPAGATE_MULTI_ANNOTATE:
+            self._on_multi_annotate_toggled(not self.multi_annotate_enabled)
+        else:
+            self._run_propagate_mode(mode)
+
+    def _update_propagate_btn_tooltip(self, mode: str = None):
+        """Rebuild the propagate-button tooltip with live camera counts."""
+        if mode is None:
+            mode = getattr(self, '_propagate_current_mode', PROPAGATE_ACTIVE_TO_CONTEXT)
+        counts = self._get_propagation_counts() or {}
+        total        = counts.get('total', 0)
+        have_idx     = counts.get('have_index_map', 0)
+        have_mask    = counts.get('have_mask', 0)
+
+        if mode == PROPAGATE_ACTIVE_TO_CONTEXT:
+            tip = (
+                "Propagate the primary image's semantic mask to all visible\n"
+                "secondary (context) cameras via the 3D mesh index maps.\n"
+                "Use the arrow to switch mode; click to run."
+            )
+        elif mode == PROPAGATE_ACTIVE_CAMERA_TO_MESH:
+            tip = (
+                "Project the primary camera's semantic mask onto the 3D mesh\n"
+                "using majority-vote conflict resolution.\n"
+                "Requires an index map for the primary camera.\n"
+                "Use the arrow to switch mode; click to run."
+            )
+        elif mode == PROPAGATE_CAMERAS_TO_MESH:
+            tip = (
+                f"Project semantic masks from all cameras onto the 3D mesh\n"
+                f"using majority-vote conflict resolution.\n"
+                f"{have_mask} of {total} camera(s) have both an index map and a labeled mask.\n"
+                "Use the arrow to switch mode; click to run."
+            )
+        elif mode == PROPAGATE_MESH_TO_ACTIVE_CAMERA:
+            tip = (
+                "Project the 3D mesh's face labels to the primary camera's semantic mask.\n"
+                "Requires an index map for the primary camera.\n"
+                "Unlabeled mesh faces are skipped (existing labels preserved).\n"
+                "Use the arrow to switch mode; click to run."
+            )
+        elif mode == PROPAGATE_MESH_TO_CAMERAS:
+            tip = (
+                f"Project the 3D mesh's face labels to every camera's semantic mask.\n"
+                f"{have_idx} of {total} camera(s) have an index map and will receive labels.\n"
+                "Unlabeled mesh faces are skipped (existing pixel labels preserved).\n"
+                "Use the arrow to switch mode; click to run."
+            )
+        else:
+            tip = "Use the arrow to switch propagation mode; click to run."
+
+        self._propagate_mask_btn.setToolTip(tip)
+
     def _on_propagate_mask_clicked(self, _checked=False):
-        QApplication.setOverrideCursor(Qt.WaitCursor)
+        """Called when the button face (not the arrow) is clicked."""
+        self._run_propagate_mode(self._propagate_current_mode)
+
+    def _get_propagation_counts(self):
+        """Return camera index-map / mask counts from the MVATManager, or None."""
+        mgr = getattr(self, '_mvat_manager', None)
+        if mgr is None:
+            return None
+        try:
+            return mgr.get_propagation_camera_counts()
+        except Exception:
+            return None
+
+    def _run_propagate_mode(self, mode: str):
+        """Emit maskPropagationRequested for the selected propagation mode.
+
+        For Mesh → camera(s) operations the ":skip_unlabeled" / ":keep_all" flag
+        is derived from the "Skip unlabeled mesh faces" Settings checkbox so that
+        the setting actually takes effect.
+
+        The button is disabled and a WaitCursor shown immediately so the user
+        gets visual feedback.  The cursor is restored once the signal handler
+        returns (background work continues asynchronously).  The button is
+        re-enabled via a short QTimer delay to prevent accidental double-clicks.
+        """
+        btn = getattr(self, '_propagate_mask_btn', None)
+        if btn is not None:
+            btn.setEnabled(False)
+
+        # Build the skip flag once; used by every Mesh → camera(s) emit below.
+        # When the checkbox is checked the user wants unlabeled faces skipped so
+        # existing pixel labels are preserved.  When unchecked, unlabeled faces
+        # will clear the corresponding pixels.
+        skip_flag = ":skip_unlabeled" if self._skip_unlabeled_mesh_faces else ":keep_all"
+
+        # Enter the busy state.  The cursor and button are NOT restored here;
+        # propagation may continue asynchronously on a background executor.
+        # set_propagation_busy(False) is called from the PropagationEngine once
+        # the last unified-repaint job completes (see _maybe_finish_propagation).
+        self.set_propagation_busy(True)
         QApplication.processEvents()
         try:
-            self.semanticMaskPropagationRequested.emit()
+            if mode == PROPAGATE_ACTIVE_TO_CONTEXT:
+                self.semanticMaskPropagationRequested.emit()   # back-compat
+                self.maskPropagationRequested.emit(mode)
+
+            elif mode == PROPAGATE_ACTIVE_CAMERA_TO_MESH:
+                self.maskPropagationRequested.emit(mode)
+
+            elif mode == PROPAGATE_ACTIVE_TO_ALL_CAMERAS:
+                self.maskPropagationRequested.emit(mode)
+
+            elif mode == PROPAGATE_CAMERAS_TO_MESH:
+                # No "also_project" — user can chain manually
+                self.maskPropagationRequested.emit(mode)
+
+            elif mode == PROPAGATE_MESH_TO_ACTIVE_CAMERA:
+                self.maskPropagationRequested.emit(mode + skip_flag)
+
+            elif mode == PROPAGATE_MESH_TO_VISIBLE_CAMERAS:
+                self.maskPropagationRequested.emit(mode + skip_flag)
+
+            elif mode == PROPAGATE_MESH_TO_CAMERAS:
+                self.maskPropagationRequested.emit(mode + skip_flag)
         finally:
-            QApplication.restoreOverrideCursor()
+            # NOTE: cursor/button restoration deliberately omitted here.
+            # Synchronous modes (e.g. Primary -> Secondary) complete within the
+            # emit above and will have already driven set_propagation_busy(False)
+            # via the engine's completion callback.  Async modes (Mesh -> All
+            # Cameras) clear the busy state when their background jobs finish.
+            # As a safety net against a mode that schedules no jobs at all, clear
+            # the busy state on the next event-loop turn if no job is pending.
+            QTimer.singleShot(0, self._clear_busy_if_idle)
+
+    def set_propagation_busy(self, busy: bool):
+        """Enter or leave the propagation busy state.
+
+        While busy, the propagate button is disabled and a WaitCursor is shown.
+        Driven by the PropagationEngine so the indicators stay active until the
+        actual (possibly asynchronous) work finishes, rather than being cleared
+        on a fixed timer.
+        """
+        was_busy = getattr(self, '_propagation_busy', False)
+        self._propagation_busy = bool(busy)
+        btn = getattr(self, '_propagate_mask_btn', None)
+
+        if busy:
+            if not was_busy:
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+            if btn is not None:
+                btn.setEnabled(False)
+        else:
+            if was_busy:
+                QApplication.restoreOverrideCursor()
+            if btn is not None:
+                btn.setEnabled(self._scene_controls_enabled)
+
+    def _clear_busy_if_idle(self):
+        """Safety net: clear the busy state if no propagation job is pending.
+
+        Covers modes that complete synchronously without scheduling a background
+        job (so the engine never fires a completion callback).
+        """
+        mgr = getattr(self, '_mvat_manager', None)
+        pending = 0
+        if mgr is not None:
+            engine = getattr(mgr, 'propagation_engine', None)
+            pending = int(getattr(engine, '_pending_unified_propagation_jobs', 0) or 0)
+        if pending <= 0:
+            self.set_propagation_busy(False)
 
     def update_stats(self, perspective_count: int):
         return
@@ -1228,6 +1632,8 @@ class ContextMatrixWidget(QWidget):
 
     def _on_multi_annotate_toggled(self, checked: bool):
         self.multi_annotate_enabled = checked
+        # Update button appearance (blue when enabled, normal when disabled)
+        self._update_button_appearance()
         self.multiAnnotateToggled.emit(checked)
 
     # ==================== Marker Routing (Phase 4) ====================
@@ -1450,6 +1856,8 @@ class ContextMatrixWidget(QWidget):
 
     # ==================== Annotation Visualization (Phase 6) ====================
 
+
+
     def clear_all_annotation_overlays(self):
         """Synchronously remove every annotation overlay item from every
         visible canvas.
@@ -1458,7 +1866,7 @@ class ContextMatrixWidget(QWidget):
         objects (e.g. bake + delete).  By clearing the overlays while all
         objects are still alive and consistent, we guarantee that no
         QGraphicsDropShadowEffect item remains in a canvas scene when Qt
-        later coalesces window repaints — eliminating the C-level crash that
+        later coalesces window repaints - eliminating the C-level crash that
         occurs when Qt tries to render a shadow effect whose item is being
         torn down.
         """
@@ -1498,7 +1906,7 @@ class ContextMatrixWidget(QWidget):
                     raster = self._raster_manager.get_raster(path)
                     if raster is not None and raster.mask_annotation is not None:
                         canvas.set_mask_overlay(raster.mask_annotation)
-    
+
     def set_annotation_manager(self, manager):
         self._annotation_manager = manager
         if manager is None:
@@ -1506,19 +1914,21 @@ class ContextMatrixWidget(QWidget):
         manager.annotationAdded.connect(self._on_annotation_changed)
         manager.annotationRemoved.connect(self._on_annotation_changed)
         manager.annotationModified.connect(self._on_annotation_changed)
-        manager.annotationLabelChanged.connect(lambda ann_id, _: self._on_annotation_changed(ann_id))
+        manager.annotationLabelChanged.connect(
+            lambda ann_id: self._on_annotation_changed(ann_id)
+        )
         manager.annotationsAdded.connect(self._on_annotations_changed)
         manager.annotationsRemoved.connect(self._on_annotations_changed)
         manager.selectionChanged.connect(self._on_selection_changed)
 
-    def _on_annotation_changed(self, annotation_id: str):
+    def _on_annotation_changed(self, annotation_id):
         if self._annotation_updates_suspended or not self._annotation_manager:
             return
         annotation = self._annotation_manager.annotations_dict.get(annotation_id)
         affected_path = annotation.image_path if annotation else None
         self._refresh_annotations_for_path(affected_path)
 
-    def _on_annotations_changed(self, annotation_ids: list):
+    def _on_annotations_changed(self, annotation_ids):
         if self._annotation_updates_suspended or not self._annotation_manager:
             return
         affected_paths = set()
@@ -1532,13 +1942,15 @@ class ContextMatrixWidget(QWidget):
         else:
             self._refresh_annotations_for_path(None)
 
-    def _refresh_annotations_for_path(self, image_path: str = None):
+    def _refresh_annotations_for_path(self, image_path):
         if not self._annotation_manager:
             return
         for canvas in self._visible_canvases:
             if canvas and canvas.active_image and canvas.current_image_path:
                 if image_path is None or canvas.current_image_path == image_path:
-                    annotations = self._annotation_manager.get_image_annotations(canvas.current_image_path)
+                    annotations = self._annotation_manager.get_image_annotations(
+                        canvas.current_image_path
+                    )
                     canvas._render_annotations_readonly(annotations)
                     if self._raster_manager:
                         raster = self._raster_manager.get_raster(canvas.current_image_path)
@@ -1554,29 +1966,25 @@ class ContextMatrixWidget(QWidget):
                 for item in canvas._readonly_annotation_items:
                     ann_id = getattr(item, '_source_annotation_id', None)
                     if ann_id:
-                        canvas._highlight_readonly_annotation(ann_id, ann_id in selected_set)
+                        canvas._highlight_readonly_annotation(
+                            ann_id, ann_id in selected_set
+                        )
 
-    # ==================== Cursor Preview (Tool Propagation) ====================
-
-    def update_cursor_previews(self, projections: dict, visible_paths: set, item_factory):
+    def update_cursor_previews(self, projections, visible_paths, item_factory):
         """Show a tool cursor preview on each visible context canvas."""
         canvas_map = self._get_canvas_camera_map()
-
         for path, canvas in canvas_map.items():
             if path not in visible_paths:
                 canvas.clear_cursor_preview()
                 continue
-
             proj = projections.get(path)
             if not proj:
                 canvas.clear_cursor_preview()
                 continue
-
             u, v, is_valid = proj
             if not is_valid:
                 canvas.clear_cursor_preview()
                 continue
-
             target_camera = None
             if self._mvat_manager is not None:
                 target_camera = self._mvat_manager.cameras.get(path)
@@ -1584,7 +1992,6 @@ class ContextMatrixWidget(QWidget):
                 if not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
                     canvas.clear_cursor_preview()
                     continue
-
             canvas.update_cursor_preview(u, v, item_factory)
 
     def clear_all_cursor_previews(self):
@@ -1592,49 +1999,42 @@ class ContextMatrixWidget(QWidget):
         for canvas in self._canvas_pool:
             canvas.clear_cursor_preview()
 
-    # ==================== Z-Channel Synchronization ====================
-
-    def _apply_z_channel_state_to_canvas(self, canvas: BaseCanvas):
+    def _apply_z_channel_state_to_canvas(self, canvas):
         """
         Apply the current z-channel state from AnnotationWindow to a specific canvas.
         Called after a canvas loads a new image to ensure z-channel visualization matches.
         """
         try:
-            # Get the main annotation window to fetch current z-channel state
-            annotation_window = getattr(self._mvat_manager.main_window, 'annotation_window', None) if self._mvat_manager else None
+            annotation_window = (
+                getattr(self._mvat_manager.main_window, 'annotation_window', None)
+                if self._mvat_manager else None
+            )
             if not annotation_window:
                 return
-            
-            # Only apply if z-channel is displayed in the main window
             current_colormap = getattr(annotation_window.main_window, 'z_colormap_dropdown', None)
             if not current_colormap:
                 return
-                
             colormap_name = current_colormap.currentText()
-            if colormap_name != "None":
-                # Apply colormap
+            if colormap_name != 'None':
                 canvas.update_z_colormap(colormap_name)
-                
-                # Apply opacity
                 z_transparency = getattr(annotation_window.main_window, 'z_transparency_widget', None)
                 if z_transparency:
                     opacity = z_transparency.value() / 255.0
                     canvas.set_z_opacity(opacity)
-                
-                # Apply dynamic scaling state
                 z_dynamic = getattr(annotation_window.main_window, 'z_dynamic_scaling_checkbox', None)
                 if z_dynamic:
                     is_dynamic = z_dynamic.isChecked()
                     canvas.toggle_dynamic_z_scaling(is_dynamic)
+                    return
         except Exception:
-            pass  # Silently ignore any errors applying z-channel state
+            pass
 
-    def sync_z_colormap_to_all_canvases(self, colormap_name: str):
+    def sync_z_colormap_to_all_canvases(self, colormap_name):
         """Broadcast z-channel colormap changes to all visible canvases."""
         for canvas in self._canvas_pool:
             canvas.update_z_colormap(colormap_name)
 
-    def sync_z_opacity_to_all_canvases(self, opacity: float):
+    def sync_z_opacity_to_all_canvases(self, opacity):
         """Broadcast z-channel opacity changes to all visible canvases."""
         opacity = max(0.0, min(1.0, opacity))
         for canvas in self._canvas_pool:
@@ -1644,7 +2044,7 @@ class ContextMatrixWidget(QWidget):
         """Re-render readonly annotation overlays on all visible canvases (e.g., after transparency change)."""
         self._refresh_annotations_for_path(None)
 
-    def sync_z_dynamic_scaling_to_all_canvases(self, enabled: bool):
+    def sync_z_dynamic_scaling_to_all_canvases(self, enabled):
         """Broadcast z-channel dynamic scaling toggle to all visible canvases."""
         for canvas in self._canvas_pool:
             canvas.toggle_dynamic_z_scaling(enabled)

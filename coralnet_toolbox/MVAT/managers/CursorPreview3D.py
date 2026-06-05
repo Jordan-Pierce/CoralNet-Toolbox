@@ -1,9 +1,9 @@
 """
-Sphere Actor Manager for MVAT.
+CursorPreview3D — 3D brush cursor preview for the MVATViewer.
 
 Manages a single hollow sphere or cube wireframe actor that follows the mouse
-on the mesh surface, providing a visual brush-radius preview.
-Extracted from core/Ray.py — batching helpers live in managers/.
+on the mesh surface, previewing the active brush size and shape.
+Analogous to BaseCanvas._cursor_preview_item in the 2D viewer.
 """
 from typing import Optional
 
@@ -16,7 +16,7 @@ import pyvista as pv
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class SphereActorManager:
+class CursorPreview3D:
     """
     Manages a single hollow sphere or cube actor that follows the mouse on the mesh.
 
@@ -33,7 +33,7 @@ class SphereActorManager:
 
     def __init__(self, radius: float = 0.1):
         """
-        Initialize the SphereActorManager.
+        Initialize the CursorPreview3D.
 
         Args:
             radius: Radius of the sphere to create
@@ -53,15 +53,17 @@ class SphereActorManager:
             self.sphere_mesh.translate(self.current_position)
 
     def _create_sphere(self):
-        """Create the hollow preview mesh (sphere or cube wireframe)."""
+        """Create the hollow preview mesh at unit scale (radius=1.0 / half-extents=1.0).
+
+        All geometry is built at unit scale so that update_transform can multiply
+        directly by the desired world radius without double-scaling.  Every other
+        method that writes sphere_mesh.points applies the ``self.radius`` factor
+        explicitly (``original_points * self.radius + position``).
+        """
         if self.shape == 'square':
-            base_sphere = pv.Cube(
-                x_length=self.radius * 2.0,
-                y_length=self.radius * 2.0,
-                z_length=self.radius * 2.0,
-            )
+            base_sphere = pv.Cube(x_length=2.0, y_length=2.0, z_length=2.0)
         else:
-            base_sphere = pv.Sphere(radius=self.radius, theta_resolution=16, phi_resolution=16)
+            base_sphere = pv.Sphere(radius=1.0, theta_resolution=16, phi_resolution=16)
         try:
             self._original_sphere_mesh = base_sphere.extract_all_edges()
         except AttributeError:
@@ -84,7 +86,7 @@ class SphereActorManager:
         if self.current_position is None or not np.allclose(self.current_position, position):
             self.current_position = position.copy()
             original_points = self._original_sphere_mesh.points
-            self.sphere_mesh.points = original_points + position
+            self.sphere_mesh.points = original_points * self.radius + position
             self.sphere_mesh.Modified()
 
     def add_to_plotter(self, plotter, color: tuple = (144, 238, 144),
@@ -166,7 +168,7 @@ class SphereActorManager:
         self._create_sphere()
 
         if self.current_position is not None and self.sphere_mesh is not None and self._original_sphere_mesh is not None:
-            self.sphere_mesh.points = self._original_sphere_mesh.points + self.current_position
+            self.sphere_mesh.points = self._original_sphere_mesh.points * self.radius + self.current_position
             self.sphere_mesh.Modified()
 
         if plotter is not None and self.sphere_actor is not None:
@@ -216,7 +218,7 @@ class SphereActorManager:
         self._create_sphere()
 
         if self.current_position is not None and self.sphere_mesh is not None and self._original_sphere_mesh is not None:
-            self.sphere_mesh.points = self._original_sphere_mesh.points + self.current_position
+            self.sphere_mesh.points = self._original_sphere_mesh.points * self.radius + self.current_position
             self.sphere_mesh.Modified()
 
         if plotter is not None and self.sphere_actor is not None:
@@ -231,6 +233,49 @@ class SphereActorManager:
                     self.sphere_actor.SetVisibility(False)
                 except Exception:
                     pass
+
+
+    def update_transform(self, center: np.ndarray, radius: float,
+                         shape: str = None, color_rgb_float=None,
+                         opacity: float = None):
+        """Efficiently update position, radius, shape and color in one call.
+
+        Uses the same unit-scale numpy approach as the old Tool3D preview: the
+        mesh is built once at unit radius and scaled+translated via a single
+        numpy expression on every update, avoiding VTK pipeline rebuilds.
+        """
+        if shape and shape != self.shape:
+            self.set_shape(shape)
+
+        if (self.sphere_mesh is None or self._original_sphere_mesh is None
+                or self.sphere_actor is None):
+            return
+
+        try:
+            c = np.asarray(center, dtype=np.float64)
+            r = max(1e-6, float(radius))
+            # Scale the unit geometry then translate — no mesh rebuild
+            self.sphere_mesh.points = self._original_sphere_mesh.points * r + c
+            self.sphere_mesh.Modified()
+            self.current_position = c.copy()
+            self.radius = r
+
+            if color_rgb_float is not None:
+                try:
+                    rc, gc, bc = color_rgb_float
+                    self.sphere_actor.GetProperty().SetColor(float(rc), float(gc), float(bc))
+                except Exception:
+                    pass
+
+            if opacity is not None:
+                try:
+                    self.sphere_actor.GetProperty().SetOpacity(float(opacity))
+                except Exception:
+                    pass
+
+            self.sphere_actor.VisibilityOn()
+        except Exception:
+            pass
 
     def set_visibility(self, visible: bool):
         """Set visibility of sphere actor."""

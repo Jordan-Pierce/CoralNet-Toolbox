@@ -26,17 +26,19 @@ from PyQt5.QtWidgets import (
 )
 
 from coralnet_toolbox.MVAT.core.Ray import CameraRay
-from coralnet_toolbox.MVAT.managers.RayManager import BatchedRayManager
-from coralnet_toolbox.MVAT.managers.SphereActorManager import SphereActorManager
-from coralnet_toolbox.MVAT.managers.FrustumManager import BatchedFrustumManager
+from coralnet_toolbox.MVAT.core.Ray import BatchedRayManager
+from coralnet_toolbox.MVAT.managers.CursorPreview3D import CursorPreview3D
+from coralnet_toolbox.MVAT.core.Frustum import BatchedFrustumManager
 from coralnet_toolbox.MVAT.core.Products import PointCloudProduct, MeshProduct, GaussianSplattingProduct
 from coralnet_toolbox.MVAT.core.SceneContext import SceneContext
-from coralnet_toolbox.MVAT.core.SceneProduct import AbstractSceneProduct
+from coralnet_toolbox.MVAT.core.Products import AbstractSceneProduct
 from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED
 from coralnet_toolbox.MVAT.tools import BrushTool3D, EraseTool3D
 from coralnet_toolbox.MVAT.ui.QtCameraAnimator import CameraAnimator
-from coralnet_toolbox import theme as app_theme
+
 from coralnet_toolbox.MVAT.utils.MVATLogger import get_visibility_logger
+
+from coralnet_toolbox import theme as app_theme
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -424,7 +426,7 @@ class MVATViewer(QFrame):
         self._ray_manager = BatchedRayManager()
         self._ortho_ray_manager = BatchedRayManager()
         # Sphere actor for mouse tracking on mesh
-        self._sphere_manager = SphereActorManager(radius=0.1)
+        self._cursor_preview = CursorPreview3D(radius=0.1)
         self._sphere_visible = False
         self._brush_3d_tool = None
         self._erase_3d_tool = None
@@ -840,7 +842,7 @@ class MVATViewer(QFrame):
                     pass
             else:
                 self._restore_viewer_navigation_mode()
-                sphere_manager = getattr(self, '_sphere_manager', None)
+                sphere_manager = getattr(self, '_cursor_preview', None)
                 if sphere_manager is not None:
                     try:
                         setter = getattr(sphere_manager, 'set_shape', None)
@@ -869,7 +871,7 @@ class MVATViewer(QFrame):
             self._sync_sphere_hover_binding()
             self._request_sphere_hover_refresh()
         else:
-            sphere_manager = getattr(self, '_sphere_manager', None)
+            sphere_manager = getattr(self, '_cursor_preview', None)
             if sphere_manager is not None:
                 try:
                     setter = getattr(sphere_manager, 'set_shape', None)
@@ -900,9 +902,9 @@ class MVATViewer(QFrame):
         self._last_click_time = 0
         self._sync_sphere_hover_binding()
 
-        if self._sphere_manager is not None:
+        if self._cursor_preview is not None:
             try:
-                self._sphere_manager.set_visibility(False)
+                self._cursor_preview.set_visibility(False)
             except Exception:
                 pass
 
@@ -997,11 +999,11 @@ class MVATViewer(QFrame):
         self._right_pan_last_xy = None
 
         # 3. Add sphere actor to plotter and bind mouse move event
-        if hasattr(self, '_sphere_manager') and self._sphere_manager is not None:
+        if hasattr(self, '_cursor_preview') and self._cursor_preview is not None:
             # Add sphere actor (it's created empty initially)
             from coralnet_toolbox.MVAT.core.constants import SELECT_COLOR_RGB
-            self._sphere_manager.add_to_plotter(self.plotter, color=SELECT_COLOR_RGB, line_width=1.5)
-            self._sphere_manager.set_visibility(False)  # Hidden by default
+            self._cursor_preview.add_to_plotter(self.plotter, color=SELECT_COLOR_RGB, line_width=1.5)
+            self._cursor_preview.set_visibility(False)  # Hidden by default
             self._sync_sphere_hover_binding()
 
     def _fast_hardware_pick(self):
@@ -1065,7 +1067,7 @@ class MVATViewer(QFrame):
 
     def _request_sphere_hover_refresh(self):
         """Queue a hover refresh for the current mouse position."""
-        if not self._sphere_visible or self._sphere_manager is None:
+        if not self._sphere_visible or self._cursor_preview is None:
             return
 
         try:
@@ -1079,10 +1081,10 @@ class MVATViewer(QFrame):
 
     def _adjust_sphere_size_from_wheel(self, delta_y: int):
         """Scale the sphere radius from Ctrl+wheel input."""
-        if self._sphere_manager is None:
+        if self._cursor_preview is None:
             return
 
-        current_radius = float(getattr(self._sphere_manager, 'radius', 0.1))
+        current_radius = float(getattr(self._cursor_preview, 'radius', 0.1))
         wheel_step = float(delta_y) / 120.0
         scale_factor = float(np.exp(wheel_step * 0.12))
         new_radius = float(np.clip(current_radius * scale_factor, 0.01, 10.0))
@@ -1090,7 +1092,7 @@ class MVATViewer(QFrame):
         if np.isclose(current_radius, new_radius):
             return
 
-        self._sphere_manager.set_radius(new_radius)
+        self._cursor_preview.set_radius(new_radius)
         manager = getattr(self, 'mvat_manager', None)
         if manager is not None:
             try:
@@ -1181,7 +1183,7 @@ class MVATViewer(QFrame):
                             active_tool.wheelEvent(event, delta_y)
                         except Exception:
                             pass
-                    elif self.is_sphere_tracking_enabled() and self._sphere_manager is not None:
+                    elif self.is_sphere_tracking_enabled() and self._cursor_preview is not None:
                         self._adjust_sphere_size_from_wheel(delta_y)
                     else:
                         step = 1 if delta_y > 0 else -1
@@ -1216,7 +1218,6 @@ class MVATViewer(QFrame):
 
     def _on_left_press(self, obj, event):
         """Handle Left Click to detect tool presses and legacy double-clicks."""
-        start_time = perf_counter()
         active_tool = getattr(self, '_active_3d_tool', None)
         try:
             if active_tool is not None and not bool(getattr(active_tool, 'preview_only', True)):
@@ -1237,13 +1238,11 @@ class MVATViewer(QFrame):
                 self._handle_double_click()
 
             self._last_click_time = current_time
-        finally:
-            get_visibility_logger().info(f"_on_left_press: {perf_counter() - start_time:.4f}s")
-        # Pass event through so standard rotation (Left Drag) still works
+        except Exception:
+            pass
 
     def _on_right_press(self, obj, event):
         """Handle Right Click to detect double-right-click focal-point picks."""
-        start_time = perf_counter()
         try:
             current_time = time.time() * 1000
             dc_interval = QApplication.doubleClickInterval()
@@ -1251,9 +1250,8 @@ class MVATViewer(QFrame):
                 self._handle_double_click()
 
             self._last_right_click_time = current_time
-        finally:
-            get_visibility_logger().info(f"_on_right_press: {perf_counter() - start_time:.4f}s")
-        # Right-drag pan is handled separately in eventFilter.
+        except Exception:
+            pass
 
     def _apply_right_pan_delta(self, x: int, y: int):
         """Pan the camera based on the latest Qt mouse-move position.
@@ -1388,7 +1386,7 @@ class MVATViewer(QFrame):
             world_pos = self._fast_hardware_pick()
 
             if active_tool is not None:
-                if self._sphere_manager is None or not self._sphere_visible:
+                if self._cursor_preview is None or not self._sphere_visible:
                     try:
                         active_tool.mouseMoveEvent(None, -1, None)
                     except Exception:
@@ -1410,12 +1408,12 @@ class MVATViewer(QFrame):
                     self._sphere_hover_timer.start()
                 return
 
-            if self._sphere_manager is None:
+            if self._cursor_preview is None:
                 return
 
             if world_pos is not None:
-                self._sphere_manager.set_position(world_pos)
-                self._sphere_manager.set_visibility(True)
+                self._cursor_preview.set_position(world_pos)
+                self._cursor_preview.set_visibility(True)
 
                 manager = getattr(self, 'mvat_manager', None)
                 if manager is not None:
@@ -1424,7 +1422,7 @@ class MVATViewer(QFrame):
                     except Exception:
                         pass
             else:
-                self._sphere_manager.set_visibility(False)
+                self._cursor_preview.set_visibility(False)
 
                 manager = getattr(self, 'mvat_manager', None)
                 if manager is not None:
@@ -1454,7 +1452,7 @@ class MVATViewer(QFrame):
         once per burst instead of on every raw event.
         """
         try:
-            if self._sphere_manager is None:
+            if self._cursor_preview is None:
                 return
 
             # Only track if sphere feature is enabled
@@ -2026,9 +2024,12 @@ class MVATViewer(QFrame):
         Show a modal dialog asking the user what type of data a .ply file
         contains.
 
-        Returns ``(ply_type, calculate_kd_tree)`` or ``None`` if cancelled.
+        Returns ``(ply_type, calculate_kd_tree, sort_mesh, simplification_ratio)``
+        or ``None`` if cancelled.
         """
-        from PyQt5.QtWidgets import QDialog, QDialogButtonBox, QComboBox, QLabel, QVBoxLayout, QFormLayout
+        from PyQt5.QtWidgets import (QDialog, QDialogButtonBox, QComboBox, QLabel,
+                                     QVBoxLayout, QFormLayout, QSlider, QHBoxLayout)
+        from PyQt5.QtCore import Qt as _Qt
 
         detected = self._detect_ply_type(file_path)
 
@@ -2038,7 +2039,7 @@ class MVATViewer(QFrame):
         dialog = QDialog(self.window())
         dialog.setWindowTitle('PLY File Type')
         dialog.setModal(True)
-        dialog.resize(420, 200)
+        dialog.resize(460, 260)
 
         layout = QVBoxLayout(dialog)
         layout.addWidget(QLabel(f'<b>{os.path.basename(file_path)}</b>'))
@@ -2056,6 +2057,44 @@ class MVATViewer(QFrame):
         kd_combo.setCurrentIndex(0)
         form_layout.addRow('Calculate KD-Tree:', kd_combo)
 
+        # Sort Mesh
+        sort_combo = QComboBox(dialog)
+        sort_combo.addItems(['True', 'False'])
+        sort_combo.setCurrentIndex(0)  # default True
+        sort_combo.setToolTip(
+            'Spatially sort mesh faces using a Morton Z-order curve after loading.\n'
+            'Improves GPU cache coherence and index-map quality. Recommended.'
+        )
+        form_layout.addRow('Sort Mesh:', sort_combo)
+
+        # Simplification slider
+        slider_row = QHBoxLayout()
+        simplify_slider = QSlider(_Qt.Horizontal, dialog)
+        simplify_slider.setRange(0, 100)
+        simplify_slider.setValue(0)       # 0 = off by default
+        simplify_slider.setTickInterval(10)
+        simplify_slider.setTickPosition(QSlider.TicksBelow)
+        simplify_slider.setToolTip(
+            'Fraction of faces to remove before loading (0 = no simplification, '
+            '1.0 = maximum simplification).\n\n'
+            '0.0  — Full mesh; highest detail, slowest to render and rasterize.\n'
+            '0.5  — Remove 50 % of faces; good balance of speed vs. detail.\n'
+            '0.9  — Remove 90 % of faces; fastest, lowest detail.\n\n'
+            'Simplification is applied once at load time and produces a single\n'
+            '"proxy mesh" used for all visualization and index-map creation.\n'
+            'Requires the fast-simplification package; falls back to PyVista decimate.'
+        )
+        simplify_label = QLabel('0.00')
+        simplify_label.setMinimumWidth(36)
+
+        def _on_slider(val):
+            simplify_label.setText(f'{val / 100:.2f}')
+
+        simplify_slider.valueChanged.connect(_on_slider)
+        slider_row.addWidget(simplify_slider)
+        slider_row.addWidget(simplify_label)
+        form_layout.addRow('Simplification:', slider_row)
+
         layout.addLayout(form_layout)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, dialog)
@@ -2065,7 +2104,13 @@ class MVATViewer(QFrame):
 
         if dialog.exec_() != QDialog.Accepted:
             return None
-        return combo.currentText(), kd_combo.currentText() == 'True'
+
+        return (
+            combo.currentText(),
+            kd_combo.currentText() == 'True',
+            sort_combo.currentText() == 'True',
+            simplify_slider.value() / 100.0,
+        )
 
     def dragEnterEvent(self, event):
         """Accept drag if a single supported 3D file is being dragged."""
@@ -2095,15 +2140,18 @@ class MVATViewer(QFrame):
         # setting the wait cursor so the dialog is fully interactive.
         ply_type = None
         calculate_kd_tree = True
+        sort_mesh = True
+        simplification_ratio = 0.0
         if file_ext == '.ply':
             dialog_result = self._prompt_ply_type_dialog(file_path)
             if dialog_result is None:
-                # User cancelled the dialog — abort the drop silently.
                 event.ignore()
                 return
-            ply_type, calculate_kd_tree = dialog_result
+            ply_type, calculate_kd_tree, sort_mesh, simplification_ratio = dialog_result
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
+        _t_total = perf_counter()
+        _t_parse = _t_geom = _t_kdtree = _t_render = 0.0
         try:
             try:
                 top = self.window()
@@ -2112,12 +2160,19 @@ class MVATViewer(QFrame):
             except Exception:
                 pass
 
-            product = self._create_product_from_file(file_path, ply_type=ply_type)
+            _t0 = perf_counter()
+            product = self._create_product_from_file(
+                file_path, ply_type=ply_type,
+                sort_mesh=sort_mesh, simplification_ratio=simplification_ratio,
+            )
+            _t_parse = perf_counter() - _t0
 
             if product is not None:
                 # Force GPU geometry extraction while the wait cursor is active.
                 if hasattr(product, 'prepare_geometry'):
+                    _t0 = perf_counter()
                     product.prepare_geometry()
+                    _t_geom = perf_counter() - _t0
 
                 if calculate_kd_tree:
                     # Build the KD-tree immediately so the first brush interaction
@@ -2125,12 +2180,16 @@ class MVATViewer(QFrame):
                     manager = getattr(self, 'mvat_manager', None)
                     if manager is not None and hasattr(manager, '_prewarm_spatial_caches'):
                         try:
+                            _t0 = perf_counter()
                             manager._prewarm_spatial_caches(product)
+                            _t_kdtree = perf_counter() - _t0
                         except Exception:
                             pass
 
+                _t0 = perf_counter()
                 self.add_product(product)
                 self.render_scene()
+                _t_render = perf_counter() - _t0
                 event.acceptProposedAction()
 
                 # Trigger visibility filtering based on the model's current selections.
@@ -2150,15 +2209,22 @@ class MVATViewer(QFrame):
             traceback.print_exc()
             event.ignore()
         finally:
+            _t_total = perf_counter() - _t_total
             try:
                 top = self.window()
                 if hasattr(top, 'status_bar'):
-                    top.status_bar.showMessage("3D data load finished.", 3000)
+                    parts = [f"Total: {_t_total:.2f}s"]
+                    if _t_parse  > 0: parts.append(f"parse: {_t_parse:.2f}s")
+                    if _t_geom   > 0: parts.append(f"geometry: {_t_geom:.2f}s")
+                    if _t_kdtree > 0: parts.append(f"KD-tree: {_t_kdtree:.2f}s")
+                    if _t_render > 0: parts.append(f"render: {_t_render:.2f}s")
+                    top.status_bar.showMessage(f"3D data loaded — {' | '.join(parts)}", 6000)
             except Exception:
                 pass
             QApplication.restoreOverrideCursor()
 
-    def _create_product_from_file(self, file_path: str, ply_type: str = None) -> 'AbstractSceneProduct':
+    def _create_product_from_file(self, file_path: str, ply_type: str = None,
+                                  sort_mesh: bool = True, simplification_ratio: float = 0.0) -> 'AbstractSceneProduct':
         """
         Create the appropriate scene product for a 3D data file.
 
@@ -2177,10 +2243,12 @@ class MVATViewer(QFrame):
         """
         file_ext = os.path.splitext(file_path)[1].lower()
 
+        _mesh_kwargs = dict(sort_mesh=sort_mesh, simplification_ratio=simplification_ratio)
+
         # STL and OBJ are always meshes by format definition.
         if file_ext in ['.stl', '.obj']:
             print(f"📐 {file_ext.upper()} is a mesh-only format, creating MeshProduct")
-            return MeshProduct.from_file(file_path)
+            return MeshProduct.from_file(file_path, **_mesh_kwargs)
 
         # PCD is always a point cloud.
         if file_ext == '.pcd':
@@ -2191,7 +2259,7 @@ class MVATViewer(QFrame):
         if file_ext == '.ply':
             if ply_type == 'Mesh':
                 print(f"📐 PLY → MeshProduct (user selection)")
-                return MeshProduct.from_file(file_path)
+                return MeshProduct.from_file(file_path, **_mesh_kwargs)
             elif ply_type == 'Point Cloud':
                 print(f"☁️ PLY → PointCloudProduct (user selection)")
                 return PointCloudProduct.from_file(file_path, point_size=self.point_size)
@@ -2199,9 +2267,8 @@ class MVATViewer(QFrame):
                 print(f"✨ PLY → GaussianSplattingProduct (user selection)")
                 return GaussianSplattingProduct.from_file(file_path)
             else:
-                # Fallback if called without a prior dialog (should not normally happen).
                 print(f"📐 PLY type unknown — defaulting to MeshProduct")
-                return MeshProduct.from_file(file_path)
+                return MeshProduct.from_file(file_path, **_mesh_kwargs)
 
         # VTK: infer from structure.
         if file_ext == '.vtk':
@@ -2209,7 +2276,7 @@ class MVATViewer(QFrame):
             temp_mesh = pv.read(file_path)
             if temp_mesh.n_cells > 0 and temp_mesh.n_cells < temp_mesh.n_points:
                 print(f"📐 VTK detected as mesh (cells < points)")
-                return MeshProduct.from_file(file_path)
+                return MeshProduct.from_file(file_path, **_mesh_kwargs)
             else:
                 print(f"☁️ VTK detected as point cloud")
                 return PointCloudProduct.from_file(file_path, point_size=self.point_size)
@@ -2774,9 +2841,9 @@ class MVATViewer(QFrame):
                 self._sphere_hover_pending_events = 0
             except Exception:
                 pass
-        if self._sphere_manager is not None:
+        if self._cursor_preview is not None:
             # Keep it invisible initially - it will show when mouse picks geometry
-            self._sphere_manager.set_visibility(False)
+            self._cursor_preview.set_visibility(False)
         manager = getattr(self, 'mvat_manager', None)
         if manager is not None:
             try:
@@ -3347,12 +3414,12 @@ class MVATViewer(QFrame):
             self._ortho_ray_manager.clear()
 
         # Clean up sphere manager
-        if hasattr(self, '_sphere_manager'):
+        if hasattr(self, '_cursor_preview'):
             try:
-                self._sphere_manager.remove_from_plotter(self.plotter)
+                self._cursor_preview.remove_from_plotter(self.plotter)
             except Exception:
                 pass
-            self._sphere_manager.clear()
+            self._cursor_preview.clear()
 
         manager = getattr(self, 'mvat_manager', None)
         if manager is not None:
@@ -3418,6 +3485,7 @@ class MVATViewer(QFrame):
         """Update the plotter (alias to render/update as available)."""
         try:
             # Some PyVista versions have update(); prefer render()
+
             if hasattr(self.plotter, 'update'):
                 try:
                     self.plotter.update()
@@ -3428,21 +3496,10 @@ class MVATViewer(QFrame):
         except Exception:
             pass
 
+
     def get_bounds(self):
-        """Return the plotter bounds (wrapper)."""
+        """Return the bounding box of all loaded scene products."""
         try:
-            return self.plotter.bounds
+            return self.scene_context.get_combined_bounds()
         except Exception:
             return None
-
-    def update_camera_appearance(self, camera, opacity=None):
-        """Update camera visual appearance via its helper method using this viewer's plotter."""
-        try:
-            if camera is None:
-                return
-            if opacity is not None:
-                camera.update_appearance(self.plotter, opacity=opacity)
-            else:
-                camera.update_appearance(self.plotter)
-        except Exception:
-            pass

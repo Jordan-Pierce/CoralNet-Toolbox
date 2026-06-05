@@ -1,27 +1,238 @@
 """
-3D Scene Product Implementations for MVAT
+3D Scene Products for MVAT
 
-Provides concrete implementations of AbstractSceneProduct for:
-- PointCloudProduct: Point cloud data (.ply, .pcd, etc.)
-- MeshProduct: Surface meshes with faces (.obj, .stl, .ply with faces)
+Defines the abstract product interface and all concrete implementations:
+- AbstractSceneProduct: ABC that all 3D products must implement
+- PointCloudProduct:    Point cloud data (.ply, .pcd, etc.)
+- MeshProduct:          Surface meshes with faces (.obj, .stl, .ply with faces)
 - GaussianSplattingProduct: 3D Gaussian Splatting scenes (.ply with 3DGS fields)
 
 Backward Compatibility:
 - PointCloud class is preserved as an alias for PointCloudProduct
 """
+from abc import ABC, abstractmethod
+from typing import Dict, Literal, Optional, Tuple, Union
+
+import numpy as np
+import pyvista as pv
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Type Aliases
+# ----------------------------------------------------------------------------------------------------------------------
+
+ElementType = Literal['point', 'face', 'cell']
+BoundsType = Tuple[float, float, float, float, float, float]  # xmin, xmax, ymin, ymax, zmin, zmax
+RenderStyle = Dict[str, Union[str, int, float, bool]]
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Classes
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+class AbstractSceneProduct(ABC):
+    """
+    Abstract base class for all 3D scene products.
+    
+    Defines the contract that point clouds, meshes, and DEMs must implement
+    to participate in the MVAT scene rendering and visibility computation.
+    
+    Attributes:
+        product_id (str): Unique identifier for this product instance.
+        file_path (str): Path to the source file, if loaded from disk.
+        label (str): Human-readable display name.
+    """
+    
+    def __init__(self, product_id: str, file_path: Optional[str] = None, label: Optional[str] = None):
+        """
+        Initialize the base scene product.
+        
+        Args:
+            product_id: Unique identifier for this product.
+            file_path: Optional path to the source file.
+            label: Optional display name (defaults to filename if file_path provided).
+        """
+        self.product_id = product_id
+        self.file_path = file_path
+        
+        if label is not None:
+            self.label = label
+        elif file_path is not None:
+            import os
+            self.label = os.path.basename(file_path)
+        else:
+            self.label = product_id
+    
+    # --------------------------------------------------------------------------
+    # Abstract Methods - Must be implemented by subclasses
+    # --------------------------------------------------------------------------
+    
+    @abstractmethod
+    def get_render_mesh(self) -> Union[pv.PolyData, pv.UnstructuredGrid, pv.StructuredGrid]:
+        """
+        Get the PyVista mesh geometry for rendering.
+        
+        Returns:
+            PyVista mesh object suitable for adding to a plotter.
+        """
+        pass
+    
+    @abstractmethod
+    def get_render_style(self) -> RenderStyle:
+        """
+        Get the preferred rendering style for this product.
+        
+        Returns:
+            Dictionary of PyVista add_mesh() keyword arguments, e.g.:
+            {'style': 'points', 'point_size': 2, 'render_points_as_spheres': False}
+            {'style': 'surface', 'opacity': 0.8, 'show_edges': False}
+        """
+        pass
+    
+    @abstractmethod
+    def get_bounds(self) -> BoundsType:
+        """
+        Get the 3D bounding box of the product.
+        
+        Returns:
+            Tuple of (xmin, xmax, ymin, ymax, zmin, zmax).
+        """
+        pass
+    
+    @abstractmethod
+    def is_solid(self) -> bool:
+        """
+        Whether this product represents a solid surface suitable for occlusion testing.
+        
+        Point clouds return False (require splatting for pseudo-occlusion).
+        Meshes and DEMs return True.
+        
+        Returns:
+            True if suitable for accurate occlusion/ray-casting tests.
+        """
+        pass
+    
+    @abstractmethod
+    def supports_index_mapping(self) -> bool:
+        """
+        Whether this product can generate visibility index maps.
+        
+        Returns:
+            True if the product has addressable elements that can be indexed.
+        """
+        pass
+    
+    @abstractmethod
+    def get_element_type(self) -> ElementType:
+        """
+        Get the type of addressable elements in this product.
+        
+        Returns:
+            'point' for point clouds (index = point ID)
+            'face' for meshes (index = face/polygon ID)
+            'cell' for DEMs/grids (index = grid cell linear index)
+        """
+        pass
+    
+    @abstractmethod
+    def get_element_count(self) -> int:
+        """
+        Get the total number of addressable elements.
+        
+        Returns:
+            Number of elements (points, faces, or cells).
+        """
+        pass
+
+    @abstractmethod
+    def get_element_coordinate(self, element_id: int) -> Optional[np.ndarray]:
+        """
+        Return the 3D world coordinate [X, Y, Z] for the given element as a (3,) float64 array.
+
+        For point clouds: the point's XYZ.
+        For meshes / DEMs: the face / cell center.
+
+        Element IDs must match values stored in the visibility index_map.
+
+        Returns:
+            np.ndarray of shape (3,) or None if element_id is out of range or
+            geometry is not yet loaded.
+        """
+        pass
+
+    @abstractmethod
+    def apply_labels(self, element_ids: np.ndarray, class_id: int, color_rgb: tuple) -> None:
+        """
+        Update the class ID and visual color for specific elements.
+        
+        Args:
+            element_ids: 1D array of element indices (points, faces, or cells) to update.
+            class_id: The semantic integer ID of the label.
+            color_rgb: Tuple of (R, G, B) values (0-255) for visualization.
+        """
+        pass
+
+    # --------------------------------------------------------------------------
+    # Optional Methods - Override in subclasses if needed
+    # --------------------------------------------------------------------------
+    
+    def get_label(self) -> str:
+        """Get the human-readable display name."""
+        return self.label
+    
+    def get_center(self) -> np.ndarray:
+        """
+        Get the center point of the product's bounding box.
+        
+        Returns:
+            np.ndarray of shape (3,) with (x, y, z) center coordinates.
+        """
+        bounds = self.get_bounds()
+        return np.array([
+            (bounds[0] + bounds[1]) / 2,
+            (bounds[2] + bounds[3]) / 2,
+            (bounds[4] + bounds[5]) / 2
+        ])
+    
+    def get_diagonal_length(self) -> float:
+        """
+        Get the diagonal length of the bounding box.
+        
+        Useful for computing scene scale factors.
+        
+        Returns:
+            Length of the bounding box diagonal.
+        """
+        bounds = self.get_bounds()
+        return np.sqrt(
+            (bounds[1] - bounds[0])**2 +
+            (bounds[3] - bounds[2])**2 +
+            (bounds[5] - bounds[4])**2
+        )
+    
+    def can_cast_rays(self) -> bool:
+        """
+        Whether ray-casting is supported for this product.
+        
+        Default implementation returns is_solid(). Override if different.
+        
+        Returns:
+            True if ray-mesh intersection is supported.
+        """
+        return self.is_solid()
+    
+    def __repr__(self) -> str:
+        return (f"{self.__class__.__name__}(id='{self.product_id}', "
+                f"label='{self.label}', elements={self.get_element_count():,})")
+
+
 import os
 import time
 from typing import Optional
 
 import numpy as np
 import pyvista as pv
-
-from coralnet_toolbox.MVAT.core.SceneProduct import (
-    AbstractSceneProduct,
-    BoundsType,
-    ElementType,
-    RenderStyle,
-)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -304,43 +515,93 @@ class MeshProduct(AbstractSceneProduct):
         opacity (float): Default rendering opacity.
     """
     
-    def __init__(self, file_path: str, opacity: float = 1.0, product_id: Optional[str] = None):
+    def __init__(self, file_path: str, opacity: float = 1.0, product_id: Optional[str] = None,
+                 sort_mesh: bool = True, simplification_ratio: float = 0.0):
         """
         Initialize MeshProduct from file.
+
+        Args:
+            sort_mesh: When True, spatially sort faces via Morton Z-order after
+                       loading for better GPU cache coherence.
+            simplification_ratio: Fraction of faces to *remove* via
+                fast-simplification (0.0 = no simplification, 1.0 = remove all
+                faces).  Applied before sorting so the sort operates on the
+                already-reduced mesh.  Values above 0.99 are clamped to 0.99 to
+                ensure a non-degenerate result.
         """
         if product_id is None:
             product_id = os.path.basename(file_path)
-        
+
         super().__init__(product_id=product_id, file_path=file_path)
-        
+
         self.opacity = opacity
         self.mesh: Optional[pv.PolyData] = None
         self.array_names = []
         self.available_arrays = []
         self.selected_array = "RGB"
-        
-        # Load and optimize from file with timing
+
         start_time = time.time()
         raw_mesh = pv.read(file_path, progress_bar=True)
         print(f"⏱️ Loaded raw mesh for {self.label} with {raw_mesh.n_cells:,} faces in {time.time() - start_time:.3f}s")
 
-        # SPATIAL SORTING INJECTED
-        sort = True
-        if sort:
-            self.mesh = self._spatially_sort_mesh(raw_mesh)
-            print(f"⏱️ Spatially sorted mesh for {self.label}, in {time.time() - start_time:.3f}s")
+        # Step 1: optional simplification (decimate before sorting so the sort
+        # operates on the already-reduced mesh — smaller work, better locality).
+        working_mesh = raw_mesh
+        if simplification_ratio and simplification_ratio > 0.0:
+            ratio = min(float(simplification_ratio), 0.99)
+            faces_before = working_mesh.n_cells
+            try:
+                import fast_simplification
+                if not working_mesh.is_all_triangles:
+                    working_mesh = working_mesh.triangulate()
+                tris = working_mesh.faces.reshape(-1, 4)[:, 1:]
+
+                # Snapshot point arrays before simplification changes the topology.
+                src_points = np.asarray(working_mesh.points, dtype=np.float32)
+                pd = working_mesh.point_data
+                array_names = list(pd.keys())
+                src_arrays  = [np.asarray(pd[n]) for n in array_names]
+
+                pts_out, tris_out = fast_simplification.simplify(
+                    src_points, tris, target_reduction=ratio,
+                )
+
+                padding = np.full((len(tris_out), 1), 3, dtype=np.uint32)
+                simplified = pv.PolyData(pts_out, np.hstack([padding, tris_out]).flatten())
+
+                # Transfer point arrays to output vertices via nearest-neighbour
+                # lookup — works regardless of fast_simplification version.
+                if array_names:
+                    from scipy.spatial import cKDTree
+                    _, nn_idx = cKDTree(src_points).query(pts_out, k=1, workers=-1)
+                    for name, arr in zip(array_names, src_arrays):
+                        simplified.point_data[name] = arr[nn_idx]
+
+                working_mesh = simplified
+                print(f"⏱️ (Fast) Simplification: {faces_before:,} → {working_mesh.n_cells:,} faces "
+                      f"({ratio:.0%} reduction) in {time.time() - start_time:.3f}s")
+            except ImportError:
+                # PyVista's decimate preserves point/cell data automatically.
+                working_mesh = raw_mesh.decimate(ratio)
+                print(f"⏱️ PyVista decimate (fast_simplification not installed): "
+                      f"{faces_before:,} → {working_mesh.n_cells:,} faces in {time.time() - start_time:.3f}s")
+
+        # Step 2: optional spatial sort for GPU cache coherence.
+        if sort_mesh:
+            self.mesh = self._spatially_sort_mesh(working_mesh)
+            print(f"⏱️ Spatially sorted mesh for {self.label} in {time.time() - start_time:.3f}s")
         else:
-            self.mesh = raw_mesh
-        
+            self.mesh = working_mesh
+
         self.array_names = self.mesh.array_names
-        self._ensure_scalar_arrays()        
+        self._ensure_scalar_arrays()
         other_arrays = [arr for arr in self.array_names if arr.lower() not in ('rgb', 'labels', 'normals', 'class_ids')]
         self.available_arrays = ["RGB", "Labels"]
         self.available_arrays.extend(other_arrays)
-        
+
         if self.mesh.n_cells == 0:
             raise ValueError(f"File '{file_path}' has no cells/faces - use PointCloudProduct instead")
-        
+
         print(f"⏱️ Loaded MeshProduct: {self.label} with {self.mesh.n_cells:,} faces in {time.time() - start_time:.3f}s")
 
     def _spatially_sort_mesh(self, mesh: pv.PolyData) -> pv.PolyData:
@@ -532,22 +793,20 @@ class MeshProduct(AbstractSceneProduct):
         return output_path
     
     @classmethod
-    def from_file(cls, file_path: str, opacity: float = 1.0) -> 'MeshProduct':
+    def from_file(cls, file_path: str, opacity: float = 1.0,
+                  sort_mesh: bool = True, simplification_ratio: float = 0.0) -> 'MeshProduct':
         """Load a mesh from file."""
-        return cls(file_path=file_path, opacity=opacity)
+        return cls(file_path=file_path, opacity=opacity,
+                   sort_mesh=sort_mesh, simplification_ratio=simplification_ratio)
     
     # Custom method to build and cache Open3D RaycastingScene for this mesh
     def prepare_geometry(self):
-        if hasattr(self, '_cached_triangles_pt'):
-            return
 
         print(f"📐 Extracting raw geometry arrays for {self.label}...")
         import time
         import numpy as np
         import torch
         
-        start_time = time.time()
-
         if not self.mesh.is_all_triangles:
             tri_mesh = self.mesh.triangulate()
             raw_ids = tri_mesh.cell_data.get('vtkOriginalCellIds', None)
@@ -555,9 +814,6 @@ class MeshProduct(AbstractSceneProduct):
         else:
             tri_mesh = self.mesh
             self._original_cell_ids = None
-
-        # Keep vertices in numpy for Open3D
-        self._cached_vertices = np.asarray(tri_mesh.points, dtype=np.float32)
         
         # Extract the rest to numpy temporarily
         triangles_np = np.asarray(tri_mesh.faces.reshape(-1, 4)[:, 1:], dtype=np.uint32)
@@ -571,7 +827,6 @@ class MeshProduct(AbstractSceneProduct):
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'        
         self._cached_face_centers_pt = torch.tensor(centers_np, device=self.device)
         self._cached_centers_sq_norm_pt = torch.tensor(centers_sq_norm_np, device=self.device)
-        self._cached_triangles_pt = torch.tensor(triangles_np.astype(np.int64), device=self.device)
         
         if self._original_cell_ids is not None:
             self._original_cell_ids_pt = torch.tensor(self._original_cell_ids.astype(np.int64), device=self.device)
