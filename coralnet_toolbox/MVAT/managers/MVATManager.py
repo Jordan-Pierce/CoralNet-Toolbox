@@ -1106,6 +1106,15 @@ class MVATManager(QObject):
 
         def _build():
             from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
+            # Try ModernGL first, fall back to VTK
+            result = VisibilityManager.compute_ortho_index_map_moderngl(
+                ortho_camera,
+                mesh_product,
+                pixel_budget=requested_budget,
+            )
+            if result is not None:
+                return result
+            # Fallback to VTK
             return VisibilityManager.compute_ortho_index_map_vtk(
                 ortho_camera,
                 mesh_product,
@@ -2119,7 +2128,6 @@ class MVATManager(QObject):
 
     def _on_overlay_ready(self, overlay, force_recreate: bool = False, render: bool = True):
         """Main thread: update the overlay actor in place when possible."""
-        start_time = perf_counter()
         try:
             if overlay is None:
                 if self._label_overlay_actor is not None:
@@ -2134,8 +2142,6 @@ class MVATManager(QObject):
                         except Exception:
                             pass
                 return
-
-            t1 = perf_counter()
 
             def _add_overlay_actor(mesh_to_add):
                 return self.viewer.plotter.add_mesh(
@@ -2205,7 +2211,6 @@ class MVATManager(QObject):
                 self._label_overlay_actor.SetVisibility(True)
             except Exception:
                 pass
-            t2 = perf_counter()
             if render:
                 try:
                     last_render_time = getattr(self, '_last_vtk_render_time', None)
@@ -2214,12 +2219,8 @@ class MVATManager(QObject):
                         self._last_vtk_render_time = perf_counter()
                 except Exception:
                     pass
-            t3 = perf_counter()
-            print(f"DEBUG [OverlayReady (Main Thread)]: VTK Swap: {(t1 - start_time) * 1000:.2f}ms | Render: {(t3 - t2) * 1000:.2f}ms")
         except Exception as e:
             print(f"⚠️ Overlay swap failed: {e}")
-        finally:
-            get_visibility_logger().info(f"_on_overlay_ready: {perf_counter() - start_time:.4f}s")
 
     def _on_label_window_selected(self, *_args):
         """Refresh the hover overlay when the active label changes."""

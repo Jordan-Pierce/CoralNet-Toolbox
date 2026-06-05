@@ -71,7 +71,6 @@ class BrushTool3D(Tool3D):
     # ------------------------------------------------------------------
 
     def mousePressEvent(self, event, face_id: int, world_pos):
-        start_time = perf_counter()
         button = Qt.LeftButton
         try:
             try:
@@ -110,8 +109,8 @@ class BrushTool3D(Tool3D):
             if primary is not None:
                 self.mvat_manager._ensure_label_painter(primary)
             self._apply_brush(world_pos)
-        finally:
-            get_visibility_logger().info(f"mousePressEvent: {perf_counter() - start_time:.4f}s")
+        except Exception:
+            pass
 
     def mouseMoveEvent(self, event, face_id: int, world_pos):
         super().mouseMoveEvent(event, face_id, world_pos)
@@ -135,11 +134,8 @@ class BrushTool3D(Tool3D):
             return
         self._last_apply_time = now
 
-        start_time = perf_counter()
         primary = self._get_primary_mesh()
         radius = 0.0
-        face_count = 0
-        t1 = t2 = t3 = start_time
         try:
             if primary is None:
                 return
@@ -191,8 +187,6 @@ class BrushTool3D(Tool3D):
                 return
 
             face_ids_arr = np.asarray(face_ids, dtype=np.int32)
-            t1 = perf_counter()
-            face_count = int(face_ids_arr.size)
             new_face_ids = np.setdiff1d(face_ids_arr, self._stroke_face_ids, assume_unique=False)
             if new_face_ids.size == 0:
                 self._last_brush_volume_state = (
@@ -205,7 +199,6 @@ class BrushTool3D(Tool3D):
                 return
 
             self._stroke_face_ids = np.union1d(self._stroke_face_ids, new_face_ids).astype(np.int32, copy=False)
-            t2 = perf_counter()
 
             submit_3d_face_paint = getattr(self.mvat_manager, 'submit_3d_face_paint', None)
             if callable(submit_3d_face_paint):
@@ -215,7 +208,6 @@ class BrushTool3D(Tool3D):
                     class_id,
                     primary_target=primary,
                 )
-            t3 = perf_counter()
 
             self._last_brush_volume_state = (
                 product_id,
@@ -224,11 +216,8 @@ class BrushTool3D(Tool3D):
                 radius,
                 current_center.copy(),
             )
-        finally:
-            print(
-                f"DEBUG [Brush]: KDTree: {(t1 - start_time) * 1000:.2f}ms | "
-                f"NP Math: {(t2 - t1) * 1000:.2f}ms | Submit: {(t3 - t2) * 1000:.2f}ms"
-            )
+        except Exception:
+            pass
 
     def _get_face_ids_in_brush_volume(self, world_pos: np.ndarray):
         primary = self._get_primary_mesh()
@@ -296,7 +285,6 @@ class BrushTool3D(Tool3D):
             self._stroke_face_ids = np.empty(0, dtype=np.int32)
             self._stroke_label = None
             self._refresh_hover_overlay_after_stroke()
-            print(f"DEBUG [FinishStroke]: Dispatch & Cleanup took {(perf_counter() - start_time) * 1000:.2f}ms")
 
     def _refresh_hover_overlay_after_stroke(self):
         manager = getattr(self, 'mvat_manager', None)

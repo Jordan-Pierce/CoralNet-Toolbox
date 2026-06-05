@@ -1679,7 +1679,7 @@ class VisibilityManager:
         n_cells = mesh.n_cells
         ortho_w, ortho_h = ortho_camera.width, ortho_camera.height
         native_pixels = ortho_w * ortho_h
-        scale = 1.0 if (pixel_budget is None or pixel_budget <= 0 or native_pixels <= pixel_budget)                     else float(np.sqrt(pixel_budget / native_pixels))
+        scale = 1.0 if (pixel_budget is None or pixel_budget <= 0 or native_pixels <= pixel_budget) else float(np.sqrt(pixel_budget / native_pixels))
         render_w = max(1, int(round(ortho_w * scale)))
         render_h = max(1, int(round(ortho_h * scale)))
         logger.info(f"   Ortho: {ortho_w}×{ortho_h}  →  render: {render_w}×{render_h}  (scale={scale:.4f})")
@@ -1718,6 +1718,129 @@ class VisibilityManager:
             'index_map': index_map, 'visible_indices': visible_indices,
             'depth_map': None, 'inverted_index': None, 'scale_factor': scale,
         }, compute_depth_map=False)
+
+    @classmethod
+    def compute_ortho_index_map_moderngl(cls, ortho_camera, mesh_product, pixel_budget=None):
+        """Build a downsampled face-ID index map for an OrthoCamera using ModernGL."""
+        import numpy as np
+        from time import perf_counter
+
+        start = perf_counter()
+        log_section("🗺️  MODERNGL ORTHO INDEX MAP RASTERIZATION", logger)
+
+        if not ortho_camera.is_valid:
+            logger.info("   ⚠️ OrthoCamera has no valid geo metadata — aborting.")
+            return {'index_map': None, 'visible_indices': np.array([], dtype=np.int32), 'scale_factor': 1.0}
+
+        mesh = mesh_product.get_mesh()
+        if mesh is None or mesh.n_cells == 0:
+            logger.info("   ⚠️ Mesh has no cells — aborting.")
+            return {'index_map': None, 'visible_indices': np.array([], dtype=np.int32), 'scale_factor': 1.0}
+
+        n_cells = mesh.n_cells
+        ortho_w, ortho_h = ortho_camera.width, ortho_camera.height
+        native_pixels = ortho_w * ortho_h
+        scale = 1.0 if (pixel_budget is None or pixel_budget <= 0 or native_pixels <= pixel_budget) else float(np.sqrt(pixel_budget / native_pixels))
+        render_w = max(1, int(round(ortho_w * scale)))
+        render_h = max(1, int(round(ortho_h * scale)))
+        logger.info(f"   Ortho: {ortho_w}×{ortho_h}  →  render: {render_w}×{render_h}  (scale={scale:.4f})")
+        logger.info(f"   Mesh: {n_cells:,} cells")
+
+        # Extract ortho camera geometry
+        W, H = ortho_camera.width, ortho_camera.height
+        TL = ortho_camera.pixel_to_xy_world(0, 0)
+        TR = ortho_camera.pixel_to_xy_world(W-1, 0)
+        BL = ortho_camera.pixel_to_xy_world(0, H-1)
+        BR = ortho_camera.pixel_to_xy_world(W-1, H-1)
+
+        if any(c is None for c in [TL, TR, BL, BR]):
+            logger.warning("   ⚠️ Could not compute ortho camera corners — falling back to VTK")
+            return None
+
+        center = (TL + TR + BL + BR) * 0.25
+        top_center = (TL + TR) * 0.5
+        bot_center = (BL + BR) * 0.5
+        vu = top_center - bot_center
+        vu_len = np.linalg.norm(vu)
+        view_up = vu / vu_len if vu_len > 1e-12 else np.array([0., 1., 0.])
+        parallel_scale = vu_len * 0.5
+
+        vertical_dir = ortho_camera.get_vertical_direction_world()
+        bounds = mesh.bounds
+        z_range = max(abs(bounds[5] - bounds[4]), 1.0)
+        lift = z_range * 5.0
+        cam_pos = center - vertical_dir * lift
+
+        # Build view matrix (R, t) from camera position, focal point, and up vector
+        # Forward vector: from camera to focal point
+        forward = (center - cam_pos)
+        forward_len = np.linalg.norm(forward)
+        if forward_len < 1e-12:
+            logger.warning("   ⚠️ Invalid camera geometry — falling back to VTK")
+            return None
+        forward = forward / forward_len
+
+        # Right vector: cross(forward, view_up)
+        right = np.cross(forward, view_up)
+        right_len = np.linalg.norm(right)
+        if right_len < 1e-12:
+            logger.warning("   ⚠️ Invalid view-up direction — falling back to VTK")
+            return None
+        right = right / right_len
+
+        # Corrected up vector: cross(right, forward)
+        up = np.cross(right, forward)
+        up_len = np.linalg.norm(up)
+        if up_len < 1e-12:
+            logger.warning("   ⚠️ Could not build view frame — falling back to VTK")
+            return None
+        up = up / up_len
+
+        # Rotation matrix (column-major: [right, up, -forward])
+        R = np.column_stack([right, up, -forward])
+        t = -R @ cam_pos
+
+        # Build orthographic intrinsic matrix
+        # For ortho: K = [[2/width, 0, 0.5], [0, 2/height, 0.5], [0, 0, 1], [0, 0, 0]]
+        # But we use the standard format with focal lengths replaced by ortho scaling
+        ortho_scale_x = parallel_scale / render_w
+        ortho_scale_y = parallel_scale / render_h
+        K = np.array([
+            [1.0 / ortho_scale_x, 0.0, 0.5],
+            [0.0, 1.0 / ortho_scale_y, 0.5],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, 0.0],
+        ], dtype=np.float64)
+
+        # Call batch moderngl with single ortho camera
+        try:
+            results = cls.compute_batch_mesh_visibility_moderngl(
+                mesh_product,
+                [(K, R, t, render_w, render_h)],
+                compute_depth_map=False,
+                pixel_budget=None,
+                upsample_to_native=False,
+            )
+            index_map, visible_indices, _, _ = (results[0].get(k) for k in ['index_map', 'visible_indices', 'depth_map', 'inverted_index'])
+
+            # Flip horizontally to match VTK output
+            index_map = np.fliplr(index_map)
+
+            total = perf_counter() - start
+            cov = np.sum(index_map >= 0) / (render_w * render_h) * 100
+            logger.info(f"   ✅ Done in {total:.2f}s — {len(visible_indices):,} visible faces, {cov:.1f}% coverage")
+            logger.info(f"{'='*50}\n")
+
+            return cls._normalize_result_dict({
+                'index_map': index_map,
+                'visible_indices': visible_indices,
+                'depth_map': None,
+                'inverted_index': None,
+                'scale_factor': scale,
+            }, compute_depth_map=False)
+        except Exception as e:
+            logger.warning(f"   ⚠️ ModernGL ortho rasterization failed ({e}); will use VTK fallback")
+            return None
 
     @classmethod
     def _configure_vtk_camera_ortho(cls, plotter, ortho_camera, bounds):

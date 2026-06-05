@@ -1218,7 +1218,6 @@ class MVATViewer(QFrame):
 
     def _on_left_press(self, obj, event):
         """Handle Left Click to detect tool presses and legacy double-clicks."""
-        start_time = perf_counter()
         active_tool = getattr(self, '_active_3d_tool', None)
         try:
             if active_tool is not None and not bool(getattr(active_tool, 'preview_only', True)):
@@ -1239,13 +1238,11 @@ class MVATViewer(QFrame):
                 self._handle_double_click()
 
             self._last_click_time = current_time
-        finally:
-            get_visibility_logger().info(f"_on_left_press: {perf_counter() - start_time:.4f}s")
-        # Pass event through so standard rotation (Left Drag) still works
+        except Exception:
+            pass
 
     def _on_right_press(self, obj, event):
         """Handle Right Click to detect double-right-click focal-point picks."""
-        start_time = perf_counter()
         try:
             current_time = time.time() * 1000
             dc_interval = QApplication.doubleClickInterval()
@@ -1253,9 +1250,8 @@ class MVATViewer(QFrame):
                 self._handle_double_click()
 
             self._last_right_click_time = current_time
-        finally:
-            get_visibility_logger().info(f"_on_right_press: {perf_counter() - start_time:.4f}s")
-        # Right-drag pan is handled separately in eventFilter.
+        except Exception:
+            pass
 
     def _apply_right_pan_delta(self, x: int, y: int):
         """Pan the camera based on the latest Qt mouse-move position.
