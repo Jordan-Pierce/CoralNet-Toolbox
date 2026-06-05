@@ -801,16 +801,12 @@ class MeshProduct(AbstractSceneProduct):
     
     # Custom method to build and cache Open3D RaycastingScene for this mesh
     def prepare_geometry(self):
-        if hasattr(self, '_cached_triangles_pt'):
-            return
 
         print(f"📐 Extracting raw geometry arrays for {self.label}...")
         import time
         import numpy as np
         import torch
         
-        start_time = time.time()
-
         if not self.mesh.is_all_triangles:
             tri_mesh = self.mesh.triangulate()
             raw_ids = tri_mesh.cell_data.get('vtkOriginalCellIds', None)
@@ -818,9 +814,6 @@ class MeshProduct(AbstractSceneProduct):
         else:
             tri_mesh = self.mesh
             self._original_cell_ids = None
-
-        # Keep vertices in numpy for Open3D
-        self._cached_vertices = np.asarray(tri_mesh.points, dtype=np.float32)
         
         # Extract the rest to numpy temporarily
         triangles_np = np.asarray(tri_mesh.faces.reshape(-1, 4)[:, 1:], dtype=np.uint32)
@@ -834,7 +827,6 @@ class MeshProduct(AbstractSceneProduct):
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'        
         self._cached_face_centers_pt = torch.tensor(centers_np, device=self.device)
         self._cached_centers_sq_norm_pt = torch.tensor(centers_sq_norm_np, device=self.device)
-        self._cached_triangles_pt = torch.tensor(triangles_np.astype(np.int64), device=self.device)
         
         if self._original_cell_ids is not None:
             self._original_cell_ids_pt = torch.tensor(self._original_cell_ids.astype(np.int64), device=self.device)

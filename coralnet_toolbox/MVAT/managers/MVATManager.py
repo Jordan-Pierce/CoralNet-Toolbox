@@ -4189,18 +4189,7 @@ class MVATManager(QObject):
         depth_map     = result.get('depth_map',     None)
         element_type  = result.get('element_type',  'point')
 
-        # 4. Upload the VTK RGB snapshot to the GPU immediately so SAM's image
-        #    encoder can run without a separate PCIe transfer.
-        rgb_gpu = None
-        try:
-            import torch
-            if torch.cuda.is_available():
-                rgb_gpu = torch.from_numpy(rgb).cuda()   # (H, W, 3) uint8 on CUDA
-                logger.info("🖼️  [SAM] RGB snapshot on GPU: %s", tuple(rgb_gpu.shape))
-        except Exception as _e:
-            logger.warning("⚠️  [SAM] Could not upload RGB to GPU: %s", _e)
-
-        return rgb, index_map, index_map_gpu, rgb_gpu, depth_map, element_type
+        return rgb, index_map, index_map_gpu, depth_map, element_type
 
     def launch_viewer_sam(self):
         """Launch the MVAT-SAM dialog for the current 3D view (called on Space)."""
@@ -4227,7 +4216,7 @@ class MVATManager(QObject):
             'MVAT-SAM: building index map (moderngl)...', 0)
         QApplication.processEvents()
         try:
-            rgb, index_map, index_map_gpu, rgb_gpu, depth_map, element_type = (
+            rgb, index_map, index_map_gpu, depth_map, element_type = (
                 self._capture_viewer_sam_context(scale=1)
             )
         except Exception as e:
@@ -4235,16 +4224,11 @@ class MVATManager(QObject):
                 f'MVAT-SAM: capture failed - {e}', 5000)
             return
 
-        # Feed SAM the GPU tensor directly when available — skips a PCIe upload
-        # inside the predictor.  Fall back to numpy if CUDA isn't active.
-        try:
-            if rgb_gpu is not None and hasattr(sam_dialog, 'set_image'):
-                sam_dialog.set_image(rgb_gpu, image_path=None)
-            else:
-                sam_dialog.set_image(rgb, image_path=None)
-        except Exception:
-            # Some SAM backends don't accept tensors — retry with numpy
-            sam_dialog.set_image(rgb, image_path=None)
+        # SAM's set_image expects numpy HWC uint8 — it handles its own GPU upload
+        # and preprocessing (resize, normalise, BCHW conversion) internally.
+        # We get GPU benefit from index_map_gpu staying on CUDA for the face-ID
+        # lookup after the mask is accepted, not from this encoding step.
+        sam_dialog.set_image(rgb, image_path=None)
 
         logger.info(
             "🎯 [MVAT-SAM] Index map: %s | GPU tensor: %s | element_type: %s",

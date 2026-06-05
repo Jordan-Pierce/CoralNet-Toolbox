@@ -17,7 +17,7 @@ from coralnet_toolbox.MVAT.utils.MVATLogger import (
 )
 from coralnet_toolbox.MVAT.core.Products import MeshProduct, PointCloudProduct
 
-DEBUG_EXPORT_RGB_INDEX_MAPS = True
+DEBUG_EXPORT_RGB_INDEX_MAPS = False
 
 logger = get_visibility_logger()
 
