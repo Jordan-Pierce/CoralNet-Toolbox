@@ -631,6 +631,7 @@ class VisibilityManager:
             crop_depth_map = None
             crop_index_tensor_gpu = None
             if compute_depth_map:
+                logger.info(f"      → Computing depth map for camera {camera_index_offset + i + 1}")
                 # Read depth texture directly from FBO depth attachment
                 try:
                     # ModernGL depth texture is read without components parameter
@@ -648,9 +649,12 @@ class VisibilityManager:
                     # Mask out the background (where the camera sees nothing)
                     linear_depth[crop_index_map == -1] = np.nan
                     crop_depth_map = linear_depth.astype(np.float32)
+                    logger.info(f"      ✓ Depth map extracted: shape={crop_depth_map.shape}, range=[{np.nanmin(crop_depth_map):.2f}, {np.nanmax(crop_depth_map):.2f}]")
                 except Exception as depth_err:
-                    logger.warning(f"⚠️ Depth map extraction failed ({depth_err}); skipping depth")
+                    logger.warning(f"      ⚠️ Depth map extraction failed ({depth_err}); skipping depth")
                     crop_depth_map = None
+            else:
+                logger.info(f"      ⊘ Depth computation disabled for camera {camera_index_offset + i + 1}")
 
                 if HAS_TORCH and torch.cuda.is_available():
                     crop_index_tensor_gpu = torch.from_numpy(crop_index_map).int().cuda()

@@ -270,7 +270,7 @@ class VisibilityWorker(QObject):
                             # --- A. RENDER THE CHUNK (ModernGL only) ---
                             batch_results = VisibilityManager.compute_batch_mesh_visibility_moderngl(
                                 self.primary_target, chunk_params,
-                                compute_depth_map=False,
+                                compute_depth_map=self.compute_depth_maps,
                                 compute_visible_indices=False,
                                 pixel_budget=self.pixel_budget,
                                 upsample_to_native=self.upsample_to_native,
