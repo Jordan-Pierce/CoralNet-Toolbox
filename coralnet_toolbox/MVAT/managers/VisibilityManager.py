@@ -416,7 +416,7 @@ class VisibilityManager:
             results = cls.compute_batch_mesh_visibility_moderngl(
                 primary_target, [(K, R, t, width, height)],
                 compute_depth_map=compute_depth_map,
-                compute_visible_indices=True,
+                compute_visible_indices=False,
                 pixel_budget=None,
             )
             result = results[0]

@@ -281,7 +281,9 @@ class VisibilityWorker(QObject):
                             # --- A. RENDER THE CHUNK ---
                             if _use_moderngl:
                                 batch_results = VisibilityManager.compute_batch_mesh_visibility_moderngl(
-                                    self.primary_target, chunk_params, False,
+                                    self.primary_target, chunk_params,
+                                    compute_depth_map=False,
+                                    compute_visible_indices=False,
                                     pixel_budget=self.pixel_budget,
                                     upsample_to_native=self.upsample_to_native,
                                     progress_callback=update_status,
