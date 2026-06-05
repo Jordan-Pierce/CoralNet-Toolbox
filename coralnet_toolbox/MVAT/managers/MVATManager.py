@@ -1106,16 +1106,8 @@ class MVATManager(QObject):
 
         def _build():
             from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
-            # Try ModernGL first, fall back to VTK
-            result = VisibilityManager.compute_ortho_index_map_moderngl(
-                ortho_camera,
-                mesh_product,
-                pixel_budget=requested_budget,
-            )
-            if result is not None:
-                return result
-            # Fallback to VTK
-            return VisibilityManager.compute_ortho_index_map_vtk(
+            # ModernGL-only path (VTK removed in Phase 3)
+            return VisibilityManager.compute_ortho_index_map_moderngl(
                 ortho_camera,
                 mesh_product,
                 pixel_budget=requested_budget,
@@ -1351,7 +1343,7 @@ class MVATManager(QObject):
                     result['index_map'] = loaded_data.get('index_map')
                     result['depth_map'] = loaded_data.get('depth_map')
 
-            # 2. Fallback for sync paths (like VTK) that run on the main thread
+            # 2. Fallback to check cache if result is not yet computed
             if cache_path is None and self.cache_manager is not None and target_file_path:
                 try:
                     cache_key = camera._raster.extrinsics
@@ -1782,21 +1774,8 @@ class MVATManager(QObject):
                     mgl_context=mgl_ctx,
                 )
             except Exception as mgl_err:
-                print(f"⚠️ moderngl sync failed ({mgl_err}); falling back to VTK single-camera path")
-                mgl_ctx = None
-                batch = []
-                for params in camera_params:
-                    K, R, t, w, h = params
-                    try:
-                        r = VisibilityManager._compute_mesh_visibility_vtk(
-                            mesh_product, K, R, t, w, h,
-                            compute_depth_map=False,
-                            pixel_budget=self.pixel_budget,
-                        )
-                        batch.append(r)
-                    except Exception as vtk_err:
-                        print(f"⚠️ VTK fallback also failed: {vtk_err}")
-                        batch.append({'index_map': None, 'visible_indices': [], 'scale_factor': 1.0})
+                print(f"⚠️ moderngl sync failed ({mgl_err})")
+                raise
             finally:
                 if mgl_ctx is not None:
                     try:
@@ -2033,7 +2012,7 @@ class MVATManager(QObject):
             status_bar.showMessage("Waiting for pause to commit 3D paint...", 1500)
 
     def _execute_lazy_flush(self):
-        """The actual heavy VTK upload. Runs only when the user pauses."""
+        """Commit painted labels to the GPU and refresh the 3D view. Runs when the user pauses."""
         status_bar = getattr(self.main_window, 'status_bar', None)
         if status_bar is not None:
             status_bar.showMessage("Saving paint to 3D model...", 0)

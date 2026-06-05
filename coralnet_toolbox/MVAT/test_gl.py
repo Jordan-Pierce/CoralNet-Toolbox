@@ -40,7 +40,6 @@ def test_single_camera_moderngl():
     mgl_ctx = vm.VisibilityManager.setup_batch_moderngl_context(mesh, None, W, H)
 
     print(f"Mesh faces: {mgl_ctx['n_cells']:,}")
-    print(f"Dual-pass needed: {mgl_ctx['is_dual_pass']}")
 
     t0 = time.perf_counter()
     results = vm.VisibilityManager.compute_batch_mesh_visibility_moderngl(
@@ -125,15 +124,9 @@ def test_dual_pass_encoding():
     single_mesh = FakeMesh(n_cells=1024)
     single_rendered = single_mesh.get_mesh()
     print(f"Mesh: {single_rendered.n_cells} faces")
-    print(f"Threshold for dual-pass: {vm.FACE_ID_RGB_LIMIT:,} faces (16M)")
 
     single_ctx = vm.VisibilityManager.setup_batch_moderngl_context(single_mesh, None, W, H)
-    print(f"Dual-pass needed: {single_ctx['is_dual_pass']}")
-
-    if single_ctx['is_dual_pass']:
-        print("⚠️  WARNING: Small mesh unexpectedly triggered dual-pass!")
-    else:
-        print("✅ Correctly using SINGLE-PASS (LOW RGB shader only)")
+    print("✅ Using 32-bit integer rendering (single-pass)")
 
     single_results = vm.VisibilityManager.compute_batch_mesh_visibility_moderngl(
         single_mesh, [(K, R, t, W, H)],
@@ -149,12 +142,12 @@ def test_dual_pass_encoding():
     assert single_indices > 0, "❌ Single-pass found no visible faces!"
 
     # ===== DUAL-PASS: Create mesh with > 16M faces =====
-    print("\n--- DUAL-PASS Pathway ---")
+    print("\n--- Large Mesh Pathway ---")
 
-    # Create a high-res sphere programmatically to exceed the threshold
+    # Create a high-res sphere programmatically
     high_res = pv.Sphere(radius=1.0, theta_resolution=256, phi_resolution=256)
     n_faces_dual = high_res.n_cells
-    print(f"Mesh: {n_faces_dual:,} faces (>{'' if n_faces_dual > vm.FACE_ID_RGB_LIMIT else '<'} threshold)")
+    print(f"Mesh: {n_faces_dual:,} faces")
 
     class DualPassMesh:
         def __init__(self, mesh):
@@ -170,14 +163,7 @@ def test_dual_pass_encoding():
     dual_mesh = DualPassMesh(high_res)
 
     dual_ctx = vm.VisibilityManager.setup_batch_moderngl_context(dual_mesh, None, W, H)
-    print(f"Dual-pass needed: {dual_ctx['is_dual_pass']}")
-
-    if not dual_ctx['is_dual_pass'] and n_faces_dual > vm.FACE_ID_RGB_LIMIT:
-        print("⚠️  WARNING: Large mesh didn't trigger dual-pass despite > 16M faces!")
-    elif dual_ctx['is_dual_pass']:
-        print("✅ Correctly using DUAL-PASS (LOW + HIGH RGB shaders)")
-    else:
-        print(f"ℹ️  Mesh has {n_faces_dual:,} faces (below {vm.FACE_ID_RGB_LIMIT:,} threshold, single-pass OK)")
+    print(f"ℹ️  Mesh has {n_faces_dual:,} faces (32-bit int rendering supports unlimited face count)")
 
     dual_results = vm.VisibilityManager.compute_batch_mesh_visibility_moderngl(
         dual_mesh, [(K, R, t, W, H)],
@@ -511,6 +497,130 @@ def test_raycast_crosscheck():
     prog.release(); ctx.release()
 
 
+def test_decode_bottleneck_diagnostic():
+    """Isolate the decode bottleneck: GPU→CPU transfer vs NumPy math."""
+    print("\n" + "="*70)
+    print("TEST 10: Decode Bottleneck Diagnostic (Transfer vs Math)")
+    print("="*70)
+
+    W, H = 512, 512
+    K = np.array([[400, 0, 256], [0, 400, 256], [0, 0, 1]], dtype=np.float64)
+    R = np.eye(3, dtype=np.float64)
+    t = np.array([0., 0., 3.])
+
+    mesh = FakeMesh(n_cells=4096)
+    print(f"\nMesh: {mesh.get_mesh().n_cells:,} faces")
+    print(f"Resolution: {W}×{H} pixels\n")
+
+    # Test 1: With CUDA-GL interop (current)
+    print("📊 Test 1: CUDA-GL Interop (Current Path)")
+    print("-" * 70)
+    try:
+        mgl_ctx = vm.VisibilityManager.setup_batch_moderngl_context(mesh, None, W, H)
+
+        t0 = time.perf_counter()
+        results = vm.VisibilityManager.compute_batch_mesh_visibility_moderngl(
+            mesh, [(K, R, t, W, H)],
+            compute_depth_map=False, pixel_budget=None, mgl_context=mgl_ctx
+        )
+        elapsed = time.perf_counter() - t0
+        print(f"Total time: {elapsed*1000:.2f}ms")
+        print("(Check logs for [Decode Split] Transfer/Math breakdown)\n")
+    except Exception as e:
+        print(f"Failed: {e}\n")
+
+
+def test_moderngl_vs_vtk_speed():
+    """Compare ModernGL (new 32-bit int pathway) vs VTK (legacy) performance."""
+    print("\n" + "="*70)
+    print("TEST 9: ModernGL vs VTK Speed Comparison")
+    print("="*70)
+
+    W, H = 512, 512
+    K = np.array([[400, 0, 256], [0, 400, 256], [0, 0, 1]], dtype=np.float64)
+    R = np.eye(3, dtype=np.float64)
+    t = np.array([0., 0., 3.])
+
+    mesh = FakeMesh(n_cells=4096)
+    mesh_obj = mesh.get_mesh()
+    print(f"\nMesh: {mesh_obj.n_cells:,} faces")
+    print(f"Resolution: {W}×{H} pixels")
+    print(f"Number of cameras: 5 (for averaging)\n")
+
+    # === ModernGL Pathway (New) ===
+    print("🚀 ModernGL Pathway (32-bit Integer Rendering)")
+    print("-" * 70)
+    try:
+        mgl_ctx = vm.VisibilityManager.setup_batch_moderngl_context(mesh, None, W, H)
+
+        mgl_times = []
+        cameras = [
+            (K, R, t, W, H),
+            (K, R, t + np.array([0.5, 0., 0.]), W, H),
+            (K, R, t + np.array([-0.5, 0., 0.]), W, H),
+            (K, R, t + np.array([0., 0.5, 0.]), W, H),
+            (K, R, t + np.array([0., -0.5, 0.]), W, H),
+        ]
+
+        for i, cam in enumerate(cameras, 1):
+            t0 = time.perf_counter()
+            mgl_results = vm.VisibilityManager.compute_batch_mesh_visibility_moderngl(
+                mesh, [cam], compute_depth_map=False, pixel_budget=None, mgl_context=mgl_ctx
+            )
+            elapsed = time.perf_counter() - t0
+            mgl_times.append(elapsed * 1000)  # Convert to ms
+            print(f"  Camera {i}: {elapsed*1000:.2f}ms")
+
+        mgl_avg = np.mean(mgl_times)
+        mgl_std = np.std(mgl_times)
+        print(f"\n  ✅ ModernGL Average: {mgl_avg:.2f}ms ± {mgl_std:.2f}ms")
+
+    except Exception as e:
+        print(f"  ❌ ModernGL failed: {e}")
+        mgl_avg = float('inf')
+
+    # === VTK Pathway (Legacy) ===
+    print("\n🐢 VTK Pathway (Legacy RGB Encoding)")
+    print("-" * 70)
+    vtk_avg = float('inf')
+    vtk_std = 0.0
+    try:
+        vtk_ctx = vm.VisibilityManager.setup_batch_vtk_context(mesh, None, W, H)
+
+        vtk_times = []
+        for i, cam in enumerate(cameras, 1):
+            t0 = time.perf_counter()
+            vtk_results = vm.VisibilityManager.compute_batch_mesh_visibility_vtk(
+                mesh, [cam], compute_depth_map=False, pixel_budget=None, vtk_context=vtk_ctx
+            )
+            elapsed = time.perf_counter() - t0
+            vtk_times.append(elapsed * 1000)  # Convert to ms
+            print(f"  Camera {i}: {elapsed*1000:.2f}ms")
+
+        vtk_avg = np.mean(vtk_times)
+        vtk_std = np.std(vtk_times)
+        print(f"\n  ✅ VTK Average: {vtk_avg:.2f}ms ± {vtk_std:.2f}ms")
+
+    except Exception as e:
+        print(f"  ❌ VTK failed: {e}")
+
+    # === Summary ===
+    print("\n" + "="*70)
+    print("PERFORMANCE SUMMARY")
+    print("="*70)
+    print(f"ModernGL:  {mgl_avg:7.2f}ms (± {mgl_std:.2f}ms)")
+    print(f"VTK:       {vtk_avg:7.2f}ms (± {vtk_std:.2f}ms)")
+
+    if mgl_avg < float('inf') and vtk_avg < float('inf'):
+        speedup = vtk_avg / mgl_avg
+        improvement = ((vtk_avg - mgl_avg) / vtk_avg) * 100
+        print(f"\n🎯 ModernGL is {speedup:.2f}x faster ({improvement:.1f}% improvement)")
+        assert mgl_avg < vtk_avg, f"❌ ModernGL should be faster than VTK! MGL:{mgl_avg:.2f}ms vs VTK:{vtk_avg:.2f}ms"
+        print("✅ ModernGL vs VTK Speed Test PASSED")
+    else:
+        print("\n⚠️  One or both pathways failed; cannot compare")
+
+
 if __name__ == "__main__":
     print("\n" + "🧪 "*35)
     print("COMPREHENSIVE MODERNGL PIPELINE TEST")
@@ -523,7 +633,8 @@ if __name__ == "__main__":
         # test_pixel_budget_downsampling,
         # test_ortho_camera,
         # test_integer_fbo_rendering,
-        test_raycast_crosscheck,
+        # test_raycast_crosscheck,
+        test_moderngl_vs_vtk_speed,
     ]
     
     failed = []

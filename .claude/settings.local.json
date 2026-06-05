@@ -11,7 +11,9 @@
       "Read(//tmp/**)",
       "Bash(git checkout *)",
       "PowerShell(python -c \"import ast; ast.parse\\(open\\('coralnet_toolbox/MVAT/managers/PropagationEngine.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
-      "Bash(cat > *)"
+      "Bash(cat > *)",
+      "Bash(python coralnet_toolbox\\\\MVAT\\\\test_gl.py)",
+      "Bash(python -m pytest coralnet_toolbox/MVAT/test_gl.py -v)"
     ],
     "additionalDirectories": [
       "\\tmp"

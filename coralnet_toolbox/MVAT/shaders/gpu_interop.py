@@ -112,14 +112,14 @@ def _resolve_gl_fns():
     # GL constants
     ns.GL_PIXEL_PACK_BUFFER = 0x88EB
     ns.GL_STREAM_READ       = 0x88E1
-    ns.GL_RGB               = 0x1907
-    ns.GL_UNSIGNED_BYTE     = 0x1401
+    ns.GL_RED_INTEGER       = 0x8D94
+    ns.GL_INT               = 0x1404
 
     return ns
 
 
 def _pbo_cuda_readback(gl: 'types.SimpleNamespace', cudart, width: int, height: int) -> Optional['torch.Tensor']:
-    """Read the current GL read framebuffer into a CUDA uint8 tensor via PBO.
+    """Read the current GL read framebuffer into a CUDA int32 tensor via PBO.
 
     VRAM → PBO (GPU-side) → CUDA map → D2D copy → torch tensor.  No PCIe.
     Returns None on any error (caller should fall back to CPU screenshot).
@@ -127,7 +127,7 @@ def _pbo_cuda_readback(gl: 'types.SimpleNamespace', cudart, width: int, height: 
     import ctypes
     import torch
 
-    n_bytes = width * height * 3
+    n_bytes = width * height * 4
     pbo      = ctypes.c_uint(0)
     resource = ctypes.c_void_p(0)
     mapped   = False
@@ -135,7 +135,7 @@ def _pbo_cuda_readback(gl: 'types.SimpleNamespace', cudart, width: int, height: 
         gl.glGenBuffers(1, ctypes.byref(pbo))
         gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, pbo.value)
         gl.glBufferData(gl.GL_PIXEL_PACK_BUFFER, n_bytes, None, gl.GL_STREAM_READ)
-        gl.glReadPixels(0, 0, width, height, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, ctypes.c_void_p(0))
+        gl.glReadPixels(0, 0, width, height, gl.GL_RED_INTEGER, gl.GL_INT, ctypes.c_void_p(0))
         gl.glFinish()
 
         err = cudart.cudaGraphicsGLRegisterBuffer(ctypes.byref(resource), pbo.value, 1)
@@ -148,7 +148,7 @@ def _pbo_cuda_readback(gl: 'types.SimpleNamespace', cudart, width: int, height: 
         err = cudart.cudaGraphicsResourceGetMappedPointer(ctypes.byref(dev_ptr), ctypes.byref(sz), resource)
         if err: raise RuntimeError(f"cudaGraphicsGetMappedPointer err={err}")
 
-        out = torch.empty(height, width, 3, dtype=torch.uint8, device='cuda')
+        out = torch.empty(height, width, dtype=torch.int32, device='cuda')
         err = cudart.cudaMemcpy(ctypes.c_void_p(out.data_ptr()), dev_ptr, ctypes.c_size_t(n_bytes), 3)
         if err: raise RuntimeError(f"cudaMemcpy(D2D) err={err}")
 
@@ -209,7 +209,3 @@ def _build_mvp(K: np.ndarray, R: np.ndarray, t: np.ndarray,
     # Transpose: numpy is row-major; GLSL mat4 is column-major.
     # Writing mvp.T means GLSL sees the correct matrix for `mvp * vec4(pos, 1)`.
     return mvp.T
-
-
-FACE_ID_RGB_BASE = 1 << 24
-FACE_ID_RGB_LIMIT = FACE_ID_RGB_BASE - 1
