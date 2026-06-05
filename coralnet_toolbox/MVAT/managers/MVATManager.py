@@ -1251,9 +1251,6 @@ class MVATManager(QObject):
         if getattr(camera._raster, 'z_channel', None) is not None:
             return
 
-        if camera.visible_indices is None or len(camera.visible_indices) == 0:
-            return
-
         if getattr(camera._raster, 'index_map', None) is None:
             return
 

@@ -220,19 +220,16 @@ class VisibilityManager:
         if element_count is not None and element_count <= 0:
             return np.full(index_map_np.shape, np.nan, dtype=np.float32)
 
-        # Prepare cached geometry where available so repeated reconstructions
-        # reuse the same underlying element-coordinate arrays/tensors.
-        if hasattr(scene_product, 'prepare_geometry'):
-            try:
-                scene_product.prepare_geometry()
-            except Exception:
-                pass
+        # Try fast GPU/CPU paths first using already-cached coordinates.
+        # Only call prepare_geometry() if caches are missing.
+        coords_cached_np = getattr(scene_product, '_element_centers_np', None)
+        coords_cached_pt = getattr(scene_product, '_cached_face_centers_pt', None)
 
         # Fast GPU path using cached coordinates when available.
         if HAS_TORCH and torch.cuda.is_available():
-            coords_t = getattr(scene_product, '_cached_face_centers_pt', None)
+            coords_t = coords_cached_pt
             if coords_t is None:
-                coords_np = getattr(scene_product, '_element_centers_np', None)
+                coords_np = coords_cached_np
                 if coords_np is None and hasattr(scene_product, 'get_points_array'):
                     coords_np = scene_product.get_points_array()
                 if coords_np is None and hasattr(scene_product, 'get_face_centers'):
@@ -257,11 +254,19 @@ class VisibilityManager:
                     return lookup[index_map_t].cpu().numpy().astype(np.float32, copy=False)
 
         # CPU path using cached arrays when available.
-        coords_np = getattr(scene_product, '_element_centers_np', None)
+        coords_np = coords_cached_np
         if coords_np is None and hasattr(scene_product, 'get_points_array'):
             coords_np = scene_product.get_points_array()
         if coords_np is None and hasattr(scene_product, 'get_face_centers'):
             coords_np = scene_product.get_face_centers()
+
+        # Only prepare geometry if we still don't have coordinates
+        if coords_np is None and hasattr(scene_product, 'prepare_geometry'):
+            try:
+                scene_product.prepare_geometry()
+                coords_np = getattr(scene_product, '_element_centers_np', None)
+            except Exception:
+                pass
 
         if coords_np is not None:
             coords_np = np.asarray(coords_np, dtype=np.float32)
@@ -653,8 +658,6 @@ class VisibilityManager:
                 except Exception as depth_err:
                     logger.warning(f"      ⚠️ Depth map extraction failed ({depth_err}); skipping depth")
                     crop_depth_map = None
-            else:
-                logger.info(f"      ⊘ Depth computation disabled for camera {camera_index_offset + i + 1}")
 
                 if HAS_TORCH and torch.cuda.is_available():
                     crop_index_tensor_gpu = torch.from_numpy(crop_index_map).int().cuda()
