@@ -593,24 +593,12 @@ class VisibilityManager:
             ctx.clear(0.0, 0.0, 0.0, 0.0, depth=1.0)
 
             t0 = perf_counter()
-            t0_mvp = perf_counter()
             mvp = _build_mvp(K_scaled, R, t, crop_w, crop_h)
-            t_mvp = perf_counter() - t0_mvp
-
-            t0_write = perf_counter()
             prog_int['mvp'].write(mvp.tobytes())
-            t_write = perf_counter() - t0_write
-
-            t0_draw = perf_counter()
             vao_int.render()
-            t_draw = perf_counter() - t0_draw
-
             # NOTE: Removed ctx.finish() — fbo.read() synchronizes implicitly.
             # This saves ~3.2ms per camera by avoiding redundant GPU stall.
-            t_finish = 0.0
-
             t_render = perf_counter() - t0
-            logger.info(f"      [Render] MVP: {t_mvp*1000:.2f}ms | Write: {t_write*1000:.2f}ms | Draw: {t_draw*1000:.2f}ms | Finish: {t_finish*1000:.2f}ms")
 
             t0 = perf_counter()
             raw = fbo.read(components=1, dtype='i4')
@@ -619,37 +607,19 @@ class VisibilityManager:
 
             t0 = perf_counter()
             crop_index_tensor = shot_int32 - 1
-
-            # DIAGNOSTIC: Time the GPU→CPU transfer separately from the math
-            t0_transfer = perf_counter()
             crop_index_map = crop_index_tensor.cpu().numpy() if hasattr(crop_index_tensor, 'cpu') else crop_index_tensor
-            t_transfer = perf_counter() - t0_transfer
-
-            # DIAGNOSTIC: Time the CPU math separately
-            t0_math = perf_counter()
 
             # Compute visible indices only if requested (skip for ~47ms savings in batch mode)
             if compute_visible_indices:
-                t0_mask = perf_counter()
                 valid_indices = crop_index_map[crop_index_map >= 0]
-                t_mask = perf_counter() - t0_mask
-
-                t0_unique = perf_counter()
                 if valid_indices.size > 0:
                     visible_indices = np.where(np.bincount(valid_indices) > 0)[0].astype(np.int32)
                 else:
                     visible_indices = np.array([], dtype=np.int32)
-                t_unique = perf_counter() - t0_unique
             else:
                 visible_indices = np.array([], dtype=np.int32)
-                t_mask = 0.0
-                t_unique = 0.0
-
-            t_math = perf_counter() - t0_math
 
             t_decode = perf_counter() - t0
-            # Log the split for diagnostics
-            logger.info(f"      [Decode Split] Transfer: {t_transfer*1000:.1f}ms | Mask: {t_mask*1000:.1f}ms | Unique: {t_unique*1000:.1f}ms | Total Math: {t_math*1000:.1f}ms")
 
             crop_depth_map = None
             crop_index_tensor_gpu = None

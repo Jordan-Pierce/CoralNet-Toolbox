@@ -247,26 +247,15 @@ class VisibilityWorker(QObject):
                     sample_w = params_list[0][3]
                     sample_h = params_list[0][4]
 
-                    # Try moderngl first (zero-PCIe); fall back to VTK if unavailable
-                    _use_moderngl = False
-                    mgl_context   = None
+                    # Setup ModernGL context for batch rasterization
                     try:
-                        mgl_context   = VisibilityManager.setup_batch_moderngl_context(
+                        mgl_context = VisibilityManager.setup_batch_moderngl_context(
                             self.primary_target, self.pixel_budget, sample_w, sample_h,
                         )
-                        _use_moderngl = True
                         logger.info("✅ Using moderngl rasterizer (zero-PCIe CUDA-GL path)")
                     except Exception as _mgl_err:
-                        logger.warning("⚠️  moderngl unavailable (%s); falling back to VTK", _mgl_err)
-
-                    vtk_context = None
-                    if not _use_moderngl:
-                        try:
-                            vtk_context = VisibilityManager.setup_batch_vtk_context(
-                                self.primary_target, self.pixel_budget, sample_w, sample_h,
-                            )
-                        except Exception as _vtk_setup_err:
-                            logger.warning(f"VTK context setup failed: {_vtk_setup_err}")
+                        logger.error("❌ ModernGL unavailable (%s); cannot proceed (VTK removed in Phase 3)", _mgl_err)
+                        raise
 
                     try:
                         for i in range(0, total_cameras, CHUNK_SIZE):
@@ -278,27 +267,17 @@ class VisibilityWorker(QObject):
                                 budget_str = "Native" if not self.pixel_budget else f"{self.pixel_budget / 1_000_000:.1f}MP"
                                 self._status(f"Computing 3D maps... (Chunk {i+current}/{total_cameras} at {budget_str})")
 
-                            # --- A. RENDER THE CHUNK ---
-                            if _use_moderngl:
-                                batch_results = VisibilityManager.compute_batch_mesh_visibility_moderngl(
-                                    self.primary_target, chunk_params,
-                                    compute_depth_map=False,
-                                    compute_visible_indices=False,
-                                    pixel_budget=self.pixel_budget,
-                                    upsample_to_native=self.upsample_to_native,
-                                    progress_callback=update_status,
-                                    mgl_context=mgl_context,
-                                    camera_index_offset=i,
-                                )
-                            else:
-                                batch_results = VisibilityManager.compute_batch_mesh_visibility_vtk(
-                                    self.primary_target, chunk_params, False,
-                                    pixel_budget=self.pixel_budget,
-                                    upsample_to_native=self.upsample_to_native,
-                                    progress_callback=update_status,
-                                    vtk_context=vtk_context,
-                                    camera_index_offset=i,
-                                )
+                            # --- A. RENDER THE CHUNK (ModernGL only) ---
+                            batch_results = VisibilityManager.compute_batch_mesh_visibility_moderngl(
+                                self.primary_target, chunk_params,
+                                compute_depth_map=False,
+                                compute_visible_indices=False,
+                                pixel_budget=self.pixel_budget,
+                                upsample_to_native=self.upsample_to_native,
+                                progress_callback=update_status,
+                                mgl_context=mgl_context,
+                                camera_index_offset=i,
+                            )
                             
                             for p, r in zip(chunk_paths, batch_results):
                                 r['element_type'] = element_type
