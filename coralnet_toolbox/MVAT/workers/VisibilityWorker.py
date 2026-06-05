@@ -255,9 +255,9 @@ class VisibilityWorker(QObject):
                             self.primary_target, self.pixel_budget, sample_w, sample_h,
                         )
                         _use_moderngl = True
-                        print("✅ Using moderngl rasterizer (zero-PCIe CUDA-GL path)")
+                        logger.info("✅ Using moderngl rasterizer (zero-PCIe CUDA-GL path)")
                     except Exception as _mgl_err:
-                        print(f"⚠️  moderngl unavailable ({_mgl_err}); falling back to VTK")
+                        logger.warning("⚠️  moderngl unavailable (%s); falling back to VTK", _mgl_err)
 
                     vtk_context = None
                     if not _use_moderngl:

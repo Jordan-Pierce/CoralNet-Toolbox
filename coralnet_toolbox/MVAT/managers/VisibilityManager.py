@@ -551,7 +551,7 @@ class VisibilityManager:
             out = torch.flip(out, [0])
 
             if _CUDA_GL_INTEROP_OK is None:
-                print("✅ CUDA-GL interop active — framebuffer readback stays on GPU")
+                logger.info("✅ CUDA-GL interop active — framebuffer readback stays on GPU")
             _CUDA_GL_INTEROP_OK = True
             return out
 
@@ -564,7 +564,7 @@ class VisibilityManager:
             except Exception:
                 pass
             if _CUDA_GL_INTEROP_OK is None:
-                print(f"⚠️  CUDA-GL interop unavailable ({exc}); using PCIe fallback")
+                logger.warning("⚠️  CUDA-GL interop unavailable (%s); using CPU readback fallback", exc)
             _CUDA_GL_INTEROP_OK = False
             return None
 
@@ -936,13 +936,21 @@ class VisibilityManager:
                                  height: int,
                                  compute_depth_map: bool = True,
                                  pixel_budget: Optional[int] = None) -> dict:
-        """Single-camera mesh visibility.  moderngl → VTK fallback."""
-        results = cls.compute_batch_mesh_visibility_moderngl(
-            mesh_product, [(K, R, t, width, height)],
-            compute_depth_map=compute_depth_map,
-            pixel_budget=pixel_budget,
-        )
-        return results[0]
+        """Single-camera mesh visibility — moderngl primary, VTK fallback."""
+        try:
+            results = cls.compute_batch_mesh_visibility_moderngl(
+                mesh_product, [(K, R, t, width, height)],
+                compute_depth_map=compute_depth_map,
+                pixel_budget=pixel_budget,
+            )
+            return results[0]
+        except Exception as _mgl_err:
+            logger.warning("⚠️  moderngl single-camera rasterization failed (%s); falling back to VTK", _mgl_err)
+            return cls._compute_mesh_visibility_vtk(
+                mesh_product, K, R, t, width, height,
+                compute_depth_map=compute_depth_map,
+                pixel_budget=pixel_budget,
+            )
                 
     @classmethod
     def _compute_mesh_visibility_vtk(cls,
@@ -1364,13 +1372,16 @@ class VisibilityManager:
 
         n_cams = max(1, len(camera_params_list))
         total_time = perf_counter() - start_time
-        readback_mode = "CUDA-GL (no PCIe)" if use_cuda_gl else "CPU fallback"
-        print(
-            f"\n⏱️  moderngl BREAKDOWN ({n_cams} cameras, {readback_mode})\n"
-            f"   GPU rasterize : {_t_render_total:.3f}s  ({_t_render_total/n_cams*1000:.1f}ms/cam)\n"
-            f"   Readback      : {_t_readback_total:.3f}s  ({_t_readback_total/n_cams*1000:.1f}ms/cam)\n"
-            f"   Decode        : {_t_decode_total:.3f}s  ({_t_decode_total/n_cams*1000:.1f}ms/cam)\n"
-            f"   Total         : {total_time:.3f}s  ({total_time/n_cams*1000:.1f}ms/cam)\n"
+        readback_mode = "CUDA-GL (no PCIe)" if use_cuda_gl else "CPU readback"
+        log_summary(
+            f"moderngl Batch Rasterization ({readback_mode})",
+            [
+                f"   - GPU Rasterize  : {_t_render_total:.3f}s total  ({_t_render_total/n_cams*1000:.1f}ms/cam)",
+                f"   - Readback       : {_t_readback_total:.3f}s total  ({_t_readback_total/n_cams*1000:.1f}ms/cam)",
+                f"   - Decode         : {_t_decode_total:.3f}s total  ({_t_decode_total/n_cams*1000:.1f}ms/cam)",
+                f"   - Total Time     : {total_time:.3f}s  (Avg: {total_time/n_cams*1000:.1f}ms/cam)",
+            ],
+            logger,
         )
         return results
 
@@ -1695,25 +1706,18 @@ class VisibilityManager:
         loop_residual = max(0.0, total_render_time - camera_total_sum - plotter_close_time)
 
         n_cams = max(1, len(camera_params_list))
-        print(
-            f"\n⏱️  PCIe TRANSFER BREAKDOWN ({n_cams} cameras)\n"
-            f"   GPU rasterize  : {_t_render_total:.3f}s total  ({_t_render_total/n_cams*1000:.1f}ms/cam)\n"
-            f"   GPU→CPU snap   : {_t_screenshot_total:.3f}s total  ({_t_screenshot_total/n_cams*1000:.1f}ms/cam)  ← PCIe readback\n"
-            f"   CPU→GPU decode : {_t_decode_total:.3f}s total  ({_t_decode_total/n_cams*1000:.1f}ms/cam)  ← upload + GPU math\n"
-            f"   Round-trip overhead: {(_t_screenshot_total + _t_decode_total):.3f}s  "
-            f"({(_t_screenshot_total + _t_decode_total) / max(0.001, _t_render_total + _t_screenshot_total + _t_decode_total) * 100:.1f}% of render+transfer+decode)\n"
-        )
-
+        pcie_overhead = _t_screenshot_total + _t_decode_total
+        pcie_pct = pcie_overhead / max(0.001, _t_render_total + pcie_overhead) * 100
         log_summary(
-            "Batch VTK Rasterization (Viewport Cropping)",
+            f"VTK Batch Rasterization — PCIe transfer breakdown ({n_cams} cameras)",
             [
+                f"   - GPU Rasterize  : {_t_render_total:.3f}s total  ({_t_render_total/n_cams*1000:.1f}ms/cam)",
+                f"   - GPU→CPU snap   : {_t_screenshot_total:.3f}s total  ({_t_screenshot_total/n_cams*1000:.1f}ms/cam)  ← PCIe readback",
+                f"   - CPU→GPU decode : {_t_decode_total:.3f}s total  ({_t_decode_total/n_cams*1000:.1f}ms/cam)  ← upload + GPU math",
+                f"   - PCIe overhead  : {pcie_overhead:.3f}s  ({pcie_pct:.1f}% of render+transfer+decode)",
                 f"   - Setup Time     : {encode_time + plotter_setup_time:.4f}s",
-                f"   - Face Center Prep: {face_center_prep_time:.4f}s",
                 f"   - Camera Time Sum: {camera_total_sum:.4f}s",
-                f"   - Plotter Close   : {plotter_close_time:.4f}s",
-                f"   - Loop Residual   : {loop_residual:.4f}s",
-                f"   - Render Loop    : {total_render_time:.4f}s",
-                f"   - Total Time     : {total_time:.4f}s (Avg: {total_time/len(camera_params_list):.4f}s per camera)",
+                f"   - Total Time     : {total_time:.4f}s (Avg: {total_time/n_cams:.4f}s per camera)",
             ],
             logger,
         )
@@ -2233,13 +2237,12 @@ class VisibilityManager:
         stage_times['bounds'] = time.time() - bounds_start
 
         if valid_ids.numel() == 0:
-            return VisibilityManager._normalize_result_dict(
-                np.full((height, width), -1, dtype=np.int32),
-                np.array([], dtype=np.int32),
-                np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
-                None,
-                compute_depth_map,
-            )
+            return VisibilityManager._normalize_result_dict({
+                'index_map':      np.full((height, width), -1, dtype=np.int32),
+                'visible_indices': np.array([], dtype=np.int32),
+                'depth_map':      np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
+                'inverted_index': None,
+            }, compute_depth_map)
 
         # --- Z-buffer ---
         zbuf_start = time.time()
@@ -2283,13 +2286,12 @@ class VisibilityManager:
         if str(device) == 'cuda':
             torch.cuda.empty_cache()
 
-        return VisibilityManager._normalize_result_dict(
-            index_map_np,
-            visible_indices.cpu().numpy(),
-            depth_map_np,
-            None,
-            compute_depth_map,
-        )
+        return VisibilityManager._normalize_result_dict({
+            'index_map':      index_map_np,
+            'visible_indices': visible_indices.cpu().numpy(),
+            'depth_map':      depth_map_np,
+            'inverted_index': None,
+        }, compute_depth_map)
 
     @staticmethod
     def _compute_numpy(points, ids, K, R, t, width, height, compute_depth_map=False):
@@ -2334,16 +2336,14 @@ class VisibilityManager:
         stage_times['bounds'] = time.time() - bounds_start
 
         if len(id_valid) == 0:
-            return VisibilityManager._normalize_result_dict(
-                np.full((height, width), -1, dtype=np.int32),
-                np.array([], dtype=np.int32),
-                np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
-                None,
-                compute_depth_map,
-            )
+            return VisibilityManager._normalize_result_dict({
+                'index_map':      np.full((height, width), -1, dtype=np.int32),
+                'visible_indices': np.array([], dtype=np.int32),
+                'depth_map':      np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
+                'inverted_index': None,
+            }, compute_depth_map)
 
         # --- Z-buffer (sort-by-depth) ---
-        zbuf_start = time.time()
         sort_order = np.argsort(z_valid)[::-1]   # farthest first so closer overwrites
 
         u_sorted  = u_valid[sort_order]
@@ -2358,15 +2358,11 @@ class VisibilityManager:
         if compute_depth_map:
             depth_map[v_sorted, u_sorted] = z_sorted.astype(np.float32)
 
-        stage_times['zbuffer'] = time.time() - zbuf_start
-
         visible_indices = np.unique(index_map[index_map != -1])
 
-        return VisibilityManager._normalize_result_dict(
-            index_map,
-            visible_indices,
-            depth_map,
-            None,
-            compute_depth_map,
-        )
-    
+        return VisibilityManager._normalize_result_dict({
+            'index_map':      index_map,
+            'visible_indices': visible_indices,
+            'depth_map':      depth_map,
+            'inverted_index': None,
+        }, compute_depth_map)

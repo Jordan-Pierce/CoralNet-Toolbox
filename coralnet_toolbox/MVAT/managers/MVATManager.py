@@ -4239,6 +4239,7 @@ class MVATManager(QObject):
         dlg.maskAccepted.connect(_on_accepted)
         dlg.exec_()
 
+
     def cleanup(self):
         """Clean up resources before closing."""
         self._on_multi_annotate_toggled(False)  # Disconnect all propagation hooks
@@ -4255,3 +4256,12 @@ class MVATManager(QObject):
                 self._label_painter_thread = None
         except Exception:
             pass
+
+        # Stop any active visibility worker threads cleanly
+        for thread, worker in list(self._active_workers):
+            try:
+                thread.quit()
+                thread.wait(2000)
+            except Exception:
+                pass
+        self._active_workers.clear()

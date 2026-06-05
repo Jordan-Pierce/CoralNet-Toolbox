@@ -1013,14 +1013,13 @@ class PropagationEngine(QObject):
         """Cast rays through every True pixel in pixel_mask against the mesh surface.
 
         Unlike the index_map approach (which captures face IDs from a downsampled
-        raycasting pass), this method casts a ray through every individual painted
-        pixel at full resolution, intersecting the actual triangle surface area of
-        the mesh.  This guarantees that every triangle touched by the brush or SAM
-        mask contributes its face ID to the output set, regardless of its projected
-        pixel size.
+        rasterization pass), this method casts a ray through every individual painted
+        pixel at full resolution, intersecting the actual triangle surface.  This
+        guarantees that every triangle touched by the brush or SAM mask contributes
+        its face ID to the output set, regardless of its projected pixel size.
 
-        The Open3D RaycastingScene BVH is built once per mesh product and cached on
-        the product object to amortise the cost across many brush strokes.
+        Uses PyVista / VTK multi_ray_trace with a per-product cached triangulated
+        surface so the geometry is only prepared once per session.
 
         Args:
             source_camera: Perspective Camera for the selected image.
@@ -1031,41 +1030,22 @@ class PropagationEngine(QObject):
 
         Returns:
             np.ndarray[int32]: Unique face IDs that were hit, or empty array on
-            failure, missing Open3D, or orthographic source camera.
+            failure or orthographic source camera.
         """
         try:
-            import open3d as o3d
-        except ImportError:
-            return np.array([], dtype=np.int32)
+            # 1. Obtain (or build) the cached triangulated surface for VTK ray-casting.
+            #    Mesh topology never changes during annotation, so the cached surface
+            #    stays valid for the entire session.
+            mesh_surf = getattr(mesh_product, '_vtk_raycasting_mesh', None)
+            if mesh_surf is None:
+                mesh_product.prepare_geometry()
+                mesh_pv = mesh_product.get_mesh()
+                if mesh_pv is None or mesh_pv.n_cells == 0:
+                    return np.array([], dtype=np.int32)
+                mesh_surf = mesh_pv.triangulate() if not mesh_pv.is_all_triangles else mesh_pv
+                mesh_product._vtk_raycasting_mesh = mesh_surf
 
-        try:
-            # 1. Ensure the GPU tensor geometry cache exists (idempotent call).
-            mesh_product.prepare_geometry()
-            vertices  = mesh_product._cached_vertices                                      # (V, 3) float32
-            # Use the CPU-cached triangle array to avoid GPU->CPU transfers
-            # on every brush tick. The tensor copy was created for fast GPU ops
-            # but we keep a numpy copy for fast CPU-side BVH/path queries.
-            triangles = getattr(mesh_product, '_cached_triangles_np', None)
-            if triangles is None:
-                # Fallback: materialize from the tensor once
-                triangles = mesh_product._cached_triangles_pt.cpu().numpy().astype(np.uint32)
-
-            if len(triangles) == 0:
-                return np.array([], dtype=np.int32)
-
-            # 2. Build (or reuse) the Open3D RaycastingScene BVH.
-            #    Mesh vertex/face topology never changes during annotation, so the
-            #    cached scene remains valid for the entire session.
-            if not getattr(mesh_product, '_o3d_raycasting_scene', None):
-                scene = o3d.t.geometry.RaycastingScene()
-                scene.add_triangles(
-                    o3d.core.Tensor(vertices,   dtype=o3d.core.Dtype.Float32),
-                    o3d.core.Tensor(triangles,  dtype=o3d.core.Dtype.UInt32),
-                )
-                mesh_product._o3d_raycasting_scene = scene
-            scene = mesh_product._o3d_raycasting_scene
-
-            # 3. Map the True pixels in pixel_mask to source image coordinates.
+            # 2. Map True pixels to source-image coordinates.
             mask_h, mask_w = pixel_mask.shape
             x0 = px - mask_w // 2
             y0 = py - mask_h // 2
@@ -1077,21 +1057,20 @@ class PropagationEngine(QObject):
             u_img = (xs + x0).astype(np.float32)
             v_img = (ys + y0).astype(np.float32)
 
-            # Discard pixels that fall outside the image frame.
+            # Discard pixels outside the image frame.
             valid = (
                 (u_img >= 0) & (u_img < source_camera.width) &
                 (v_img >= 0) & (v_img < source_camera.height)
             )
             u_img = u_img[valid]
             v_img = v_img[valid]
-
             if len(u_img) == 0:
                 return np.array([], dtype=np.int32)
 
-            # 4. Unproject pixels to world-space ray directions.
+            # 3. Unproject pixels to world-space ray directions.
             #    Pinhole camera model (row-vector convention):
-            #      d_cam   = K_inv @ [u, v, 1]^T   →   d_cam_row   = [u,v,1] @ K_inv.T
-            #      d_world = R.T   @ d_cam          →   d_world_row = d_cam_row  @ R
+            #      d_cam   = K_inv @ [u, v, 1]^T   →   d_cam_row = [u,v,1] @ K_inv.T
+            #      d_world = R.T   @ d_cam          →   d_world_row = d_cam_row @ R
             ones        = np.ones(len(u_img), dtype=np.float32)
             pixel_homog = np.stack([u_img, v_img, ones], axis=1)     # (N, 3)
             K_inv       = source_camera.K_inv.astype(np.float32)     # (3, 3)
@@ -1104,24 +1083,23 @@ class PropagationEngine(QObject):
             norms[norms < 1e-8] = 1.0
             dirs_world /= norms
 
-            # 5. Build and cast the ray batch against the BVH.
-            cam_origin = source_camera.position.astype(np.float32)          # (3,)
-            origins    = np.tile(cam_origin, (len(u_img), 1))               # (N, 3)
-            rays_np    = np.concatenate([origins, dirs_world], axis=1)      # (N, 6)
+            # 4. Build origins (all from the camera position) and cast rays.
+            cam_origin = source_camera.position.astype(np.float32)   # (3,)
+            origins    = np.tile(cam_origin, (len(u_img), 1))        # (N, 3)
 
-            ans = scene.cast_rays(o3d.core.Tensor(rays_np, dtype=o3d.core.Dtype.Float32))
+            # PyVista multi_ray_trace returns (points, ray_indices, cell_ids).
+            # We only need cell_ids (the hit triangle IDs in the triangulated mesh).
+            _, _, intersection_cells = mesh_surf.multi_ray_trace(
+                origins, dirs_world, first_point=True, retry=False
+            )
 
-            # 6. Extract hit triangle indices (Open3D uses uint32 max = miss).
-            INVALID_O3D = np.uint32(4294967295)
-            prim_ids     = ans['primitive_ids'].numpy()
-            hit_prim_ids = prim_ids[prim_ids != INVALID_O3D].astype(np.int64)
-
-            if len(hit_prim_ids) == 0:
+            if len(intersection_cells) == 0:
                 return np.array([], dtype=np.int32)
 
-            # 7. Remap sub-triangle primitive IDs to original PyVista cell IDs
-            #    when the mesh was triangulated from non-triangular faces during
-            #    prepare_geometry().
+            hit_prim_ids = np.asarray(intersection_cells, dtype=np.int64)
+
+            # 5. Remap triangulated-face IDs to original PyVista cell IDs when the
+            #    mesh was triangulated from non-triangular faces during prepare_geometry().
             original_cell_ids = getattr(mesh_product, '_original_cell_ids', None)
             if original_cell_ids is not None:
                 in_range     = hit_prim_ids < len(original_cell_ids)
