@@ -34,8 +34,8 @@ class VisibilityWorkerSignals(QObject):
 
 class VisibilityWorker(QObject):
     """
-    Background worker for computing camera visibility maps.
-    Now safely handles Meshes (via Open3D), PointClouds, and DEMs.
+    Background worker for computing camera visibility (index) maps.
+    Uses moderngl GPU rasterization as the primary path, with VTK as fallback.
     """
     def __init__(self, primary_target, camera_params_dict, compute_depth_maps=True,
                  cache_manager=None, cache_keys_dict=None, target_file_path="", pixel_budget=None,
@@ -261,9 +261,12 @@ class VisibilityWorker(QObject):
 
                     vtk_context = None
                     if not _use_moderngl:
-                        vtk_context = VisibilityManager.setup_batch_vtk_context(
-                            self.primary_target, self.pixel_budget, sample_w, sample_h,
-                        )
+                        try:
+                            vtk_context = VisibilityManager.setup_batch_vtk_context(
+                                self.primary_target, self.pixel_budget, sample_w, sample_h,
+                            )
+                        except Exception as _vtk_setup_err:
+                            logger.warning(f"VTK context setup failed: {_vtk_setup_err}")
 
                     try:
                         for i in range(0, total_cameras, CHUNK_SIZE):

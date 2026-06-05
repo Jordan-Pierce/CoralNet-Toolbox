@@ -106,44 +106,10 @@ def _load_cudart():
     raise OSError("Could not find libcudart. CUDA-GL interop unavailable.")
 
 
-# ---------------------------------------------------------------------------
-# moderngl shader sources (face-ID RGB encoding — identical to VTK path so
-# _decode_face_id_screenshot works unchanged on both paths)
-# ---------------------------------------------------------------------------
-_MGL_VERT = '''
-#version 330 core
-in vec3 position;
-uniform mat4 mvp;
-void main() {
-    gl_Position = mvp * vec4(position, 1.0);
-}
-'''
-
-_MGL_FRAG_LOW = '''
-#version 330 core
-out vec4 fragColor;
-void main() {
-    int encoded = gl_PrimitiveID + 1;
-    fragColor = vec4(
-        float( encoded        & 0xFF) / 255.0,
-        float((encoded >>  8) & 0xFF) / 255.0,
-        float((encoded >> 16) & 0xFF) / 255.0,
-        1.0
-    );
-}
-'''
-
-_MGL_FRAG_HIGH = '''
-#version 330 core
-out vec4 fragColor;
-void main() {
-    int encoded = gl_PrimitiveID + 1;
-    fragColor = vec4(
-        float((encoded >> 24) & 0xFF) / 255.0,
-        0.0, 0.0, 1.0
-    );
-}
-'''
+# Shader sources live in the sibling shaders/ package
+from coralnet_toolbox.MVAT.shaders import VERT as _MGL_VERT
+from coralnet_toolbox.MVAT.shaders import FRAG_FACE_ID_LOW  as _MGL_FRAG_LOW
+from coralnet_toolbox.MVAT.shaders import FRAG_FACE_ID_HIGH as _MGL_FRAG_HIGH
 
 
 def _resolve_gl_fns():
@@ -970,292 +936,14 @@ class VisibilityManager:
                                  height: int,
                                  compute_depth_map: bool = True,
                                  pixel_budget: Optional[int] = None) -> dict:
-        """
-        Strategy B: Compute visibility for mesh products.
-        Attempts VTK rasterization first, falls back to Open3D raycasting,
-        and finally falls back to face-center point sampling.
-        """
-        try:
-            # First Choice: VTK (Pixel-perfect, supports all mesh types)
-            # Now passes the pixel_budget down for dynamic scaling and fast caching!
-            return cls._compute_mesh_visibility_vtk(
-                mesh_product, K, R, t, width, height, compute_depth_map, pixel_budget=pixel_budget
-            )
-        except Exception as e:
-            logger.warning(f"⚠️ VTK mesh rasterization failed: {e}. Trying Open3D raycasting...")
-            try:
-                # Second Choice: Open3D (Thread-safe, fast, no OpenGL context required)
-                import open3d
-                return cls._compute_mesh_visibility_open3d(
-                    mesh_product, K, R, t, width, height, compute_depth_map
-                )
-            except Exception as o3d_err:
-                logger.warning(f"⚠️ Open3D raycasting failed: {o3d_err}. Falling back to face-center sampling")
-                # Last Resort: Point Sampling
-                return cls._compute_mesh_visibility_fallback(
-                    mesh_product, K, R, t, width, height, compute_depth_map
-                )
-                
-    @classmethod
-    def _build_subset_bvh(cls, mesh_product, camera_params_list):
-        import open3d as o3d
-        import time
-        import numpy as np
-        import torch
-        
-        start_time = time.perf_counter()
-        mesh_product.prepare_geometry() 
-        
-        # Grab tensors and the designated device from the model
-        centers = mesh_product._cached_face_centers_pt
-        centers_sq_norm = mesh_product._cached_centers_sq_norm_pt
-        triangles = mesh_product._cached_triangles_pt
-        device = mesh_product.device
-        
-        # Initialize the global mask directly on the target device
-        global_mask = torch.zeros(len(centers), dtype=torch.bool, device=device)
-        
-        ANGLE_THRESHOLD = 0.6
-        angle_sq_threshold = ANGLE_THRESHOLD ** 2
-
-        for K, R, t, w, h in camera_params_list:
-            cam_pos = -R.T @ t
-            cam_dir = R.T @ np.array([0, 0, 1]) 
-            cam_dir = cam_dir / np.linalg.norm(cam_dir)
-            
-            # Pack the small camera matrix and push to the device
-            cam_matrix = np.column_stack((cam_dir, -2.0 * cam_pos)).astype(np.float32)
-            cam_matrix_pt = torch.tensor(cam_matrix, device=device)
-            
-            # Massive Matrix Multiplication (GPU or CPU!)
-            proj = torch.matmul(centers, cam_matrix_pt)
-            
-            # Calculate standard scalars in python to avoid tensor device mismatches
-            cam_pos_dir_dot = float(np.dot(cam_pos, cam_dir))
-            cam_pos_sq_norm = float(np.dot(cam_pos, cam_pos))
-            
-            dot_prods = proj[:, 0] - cam_pos_dir_dot
-            sq_dists = centers_sq_norm + cam_pos_sq_norm + proj[:, 1]
-            
-            front_mask = dot_prods > 0
-            valid_mask = front_mask & (sq_dists > 1e-6)
-            camera_mask = valid_mask & ((dot_prods**2) > (sq_dists * angle_sq_threshold))
-            
-            global_mask |= camera_mask
-
-        # Pull ONLY the surviving tiny subset back to the CPU for Open3D
-        subset_triangles = triangles[global_mask].cpu().numpy().astype(np.uint32)
-        
-        subset_cell_ids = None
-        if getattr(mesh_product, '_original_cell_ids_pt', None) is not None:
-            subset_cell_ids = mesh_product._original_cell_ids_pt[global_mask].cpu().numpy()
-        else:
-            # If the mesh was already triangles, we must still map the subset back 
-            # to the global face IDs so the painter thread hits the right targets!
-            global_indices = torch.arange(len(global_mask), device=device)
-            subset_cell_ids = global_indices[global_mask].cpu().numpy().astype(np.int32)
-            
-        cull_time = time.time() - start_time
-        logger.info(f"✂️ {device.upper()} Frustum Cull: Kept {len(subset_triangles):,} faces in {cull_time:.3f}s")
-        
-        # Build Open3D Scene
-        scene = o3d.t.geometry.RaycastingScene()
-        
-        if len(subset_triangles) > 0:
-            build_start = time.time()
-            v_tensor = o3d.core.Tensor(mesh_product._cached_vertices)
-            t_tensor = o3d.core.Tensor(subset_triangles)
-            scene.add_triangles(v_tensor, t_tensor)
-            
-            dummy_ray = o3d.core.Tensor([[0.0, 0.0, 0.0, 0.0, 0.0, 1.0]], dtype=o3d.core.Dtype.Float32)
-            scene.cast_rays(dummy_ray)
-            logger.info(f"🎯 Built Sub-BVH in {time.time() - build_start:.3f}s")
-            
-        return scene, subset_cell_ids, len(subset_triangles)
-    
-    @classmethod
-    def _compute_mesh_visibility_open3d(cls,
-                                        mesh_product: 'AbstractSceneProduct',
-                                        K: np.ndarray,
-                                        R: np.ndarray,
-                                        t: np.ndarray,
-                                        width: int,
-                                        height: int,
-                                        compute_depth_map: bool = True) -> dict:
-        """
-        Single-camera wrapper for Open3D mesh visibility computation.
-        Delegates to the optimized batched method.
-        """
-        # Package the single camera parameters into the expected list format
-        camera_params_list = [(K, R, t, width, height)]
-        
-        # Call the existing batched Open3D method
-        results = cls.compute_batch_mesh_visibility_open3d(
-            mesh_product, 
-            camera_params_list, 
-            compute_depth_maps=compute_depth_map
+        """Single-camera mesh visibility.  moderngl → VTK fallback."""
+        results = cls.compute_batch_mesh_visibility_moderngl(
+            mesh_product, [(K, R, t, width, height)],
+            compute_depth_map=compute_depth_map,
+            pixel_budget=pixel_budget,
         )
-        
-        # Return the single result dictionary
-        if results and len(results) > 0:
-            return results[0]
-            
-        # Fallback empty dictionary if something goes wrong
-        return {
-            'index_map': np.full((height, width), -1, dtype=np.int32),
-            'visible_indices': np.array([], dtype=np.int32),
-            'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
-            'inverted_index': None,
-        }
-            
-    @classmethod
-    def compute_batch_mesh_visibility_open3d(cls, 
-                                             mesh_product, 
-                                             camera_params_list, 
-                                             compute_depth_maps=True,
-                                             use_global_bvh=False) -> list:
-        """
-        Batched Open3D raycasting with dynamic options for Frustum Culling or Global BVH.
-        Includes detailed timing metrics for performance comparison.
-        """
-        import open3d as o3d
-        import time
-        import cv2
-        
-        start_time = time.time()
-        log_section(f"🚀 STARTING BATCH VISIBILITY FOR {len(camera_params_list)} CAMERAS", logger)
-        
-        if use_global_bvh:
-            # ---------------------------------------------------------
-            # STRATEGY 1: Global BVH (Build once, cast deeper tree)
-            # ---------------------------------------------------------
-            logger.info("🌐 STRATEGY: Global BVH")
-            mesh_product.prepare_geometry()
-            
-            # If the persistent BVH hasn't been built yet, build it now
-            if not getattr(mesh_product, '_o3d_raycasting_scene', None):
-                logger.info("   -> Building Global BVH from scratch...")
-                build_start = time.time()
-                scene = o3d.t.geometry.RaycastingScene()
-                v_tensor = o3d.core.Tensor(mesh_product._cached_vertices, dtype=o3d.core.Dtype.Float32)
+        return results[0]
                 
-                # Get the full list of triangles (not culled)
-                triangles = mesh_product._cached_triangles_pt.cpu().numpy().astype(np.uint32)
-                t_tensor = o3d.core.Tensor(triangles, dtype=o3d.core.Dtype.UInt32)
-                
-                scene.add_triangles(v_tensor, t_tensor)
-                mesh_product._o3d_raycasting_scene = scene
-                bvh_build_time = time.time() - build_start
-                logger.info(f"   ✅ Global BVH built in {bvh_build_time:.4f}s (Faces: {len(triangles):,})")
-            else:
-                logger.info("   ✅ Using cached Global BVH")
-                bvh_build_time = 0.0
-            
-            scene = mesh_product._o3d_raycasting_scene
-            original_cell_ids = getattr(mesh_product, '_original_cell_ids', None)
-            num_faces = len(mesh_product._cached_triangles_pt)
-            
-        else:
-            # ---------------------------------------------------------
-            # STRATEGY 2: Dynamic Sub-BVH (Cull on GPU, build shallow tree)
-            # ---------------------------------------------------------
-            logger.info("✂️ STRATEGY: Culled Sub-BVH")
-            bvh_build_start = time.time()
-            scene, original_cell_ids, num_faces = cls._build_subset_bvh(mesh_product, camera_params_list)
-            bvh_build_time = time.time() - bvh_build_start
-            logger.info(f"   ✅ Sub-BVH prep & build completed in {bvh_build_time:.4f}s")
-
-        results = []
-        
-        # If the culler removed everything (or empty mesh), return empty maps
-        if num_faces == 0:
-            logger.info("   ⚠️ No faces visible. Returning empty maps.")
-            return [{
-                'index_map': np.full((h, w), -1, dtype=np.int32),
-                'visible_indices': np.array([], dtype=np.int32),
-                'depth_map': np.full((h, w), np.nan, dtype=np.float32) if compute_depth_maps else None,
-                'inverted_index': None,
-            } for _, _, _, w, h in camera_params_list]
-
-        # 2. Fast Downsampled Raycasting
-        SCALE_FACTOR = 0.25  # 1/4 resolution raycasting
-        logger.info(f"\n   -> Starting Raycasting (Scale: {SCALE_FACTOR}x)...")
-        
-        raycast_start_time = time.time()
-        
-        for K, R, t, width, height in camera_params_list:
-            E = np.eye(4, dtype=np.float64)
-            E[:3, :3] = R
-            E[:3, 3] = t
-            
-            small_w = int(width * SCALE_FACTOR)
-            small_h = int(height * SCALE_FACTOR)
-            
-            K_small = K.copy()
-            K_small[0, :3] *= SCALE_FACTOR
-            K_small[1, :3] *= SCALE_FACTOR
-
-            K_tensor = o3d.core.Tensor(K_small, dtype=o3d.core.Dtype.Float64)
-            E_tensor = o3d.core.Tensor(E, dtype=o3d.core.Dtype.Float64)
-
-            rays = scene.create_rays_pinhole(
-                intrinsic_matrix=K_tensor,
-                extrinsic_matrix=E_tensor,
-                width_px=small_w,
-                height_px=small_h
-            )
-            ans = scene.cast_rays(rays)
-
-            # Extract Maps
-            index_map_raw = ans['primitive_ids'].numpy()
-            invalid_mask = (index_map_raw == 4294967295)
-            
-            index_map_small = index_map_raw.astype(np.int64)
-            index_map_small[invalid_mask] = -1
-            index_map_small = index_map_small.astype(np.int32)
-
-            # Re-map triangle IDs
-            if original_cell_ids is not None:
-                valid_mask = (index_map_small != -1)
-                index_map_small[valid_mask] = original_cell_ids[index_map_small[valid_mask]]
-
-            # Upsample
-            index_map = cv2.resize(index_map_small, (width, height), interpolation=cv2.INTER_NEAREST)
-            visible_indices = np.unique(index_map_small[index_map_small != -1]).astype(np.int32)
-
-            if compute_depth_maps:
-                depth_map_small = ans['t_hit'].numpy().astype(np.float32)
-                depth_map_small[invalid_mask] = np.nan
-                depth_map = cv2.resize(depth_map_small, (width, height), interpolation=cv2.INTER_NEAREST)
-            else:
-                depth_map = None
-
-            results.append({
-                'index_map': index_map,
-                'visible_indices': visible_indices,
-                'depth_map': depth_map,
-                'inverted_index': None,
-            })
-            results[-1] = cls._normalize_result_dict(results[-1], compute_depth_maps)
-            # Normalize dtypes for consistency and memory savings
-            results[-1] = cls._normalize_result_dict(results[-1], compute_depth_maps)
-            
-        raycast_time = time.time() - raycast_start_time
-        total_time = time.time() - start_time
-        
-        logger.info(f"   ✅ Raycasting finished in {raycast_time:.4f}s (Avg: {raycast_time/len(camera_params_list):.4f}s per camera)")
-        log_summary(
-            f"{'Global BVH' if use_global_bvh else 'Sub-BVH'}",
-            [
-                f"   - BVH Build/Prep : {bvh_build_time:.4f}s",
-                f"   - Raycast Loop   : {raycast_time:.4f}s",
-                f"   - Total Time     : {total_time:.4f}s",
-            ],
-            logger,
-        )
-        
-        return results
-
     @classmethod
     def _compute_mesh_visibility_vtk(cls,
                                      mesh_product: 'AbstractSceneProduct',
@@ -1583,6 +1271,7 @@ class VisibilityManager:
 
             fbo = _get_fbo(crop_w, crop_h)
             fbo.use()
+            ctx.viewport = (0, 0, crop_w, crop_h)  # must be explicit; standalone ctx has no default
             ctx.clear(0.0, 0.0, 0.0, 0.0, depth=1.0)
 
             # ── Render ───────────────────────────────────────────────────────
@@ -2680,3 +2369,4 @@ class VisibilityManager:
             None,
             compute_depth_map,
         )
+    

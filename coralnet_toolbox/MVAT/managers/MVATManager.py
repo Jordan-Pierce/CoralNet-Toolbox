@@ -1744,58 +1744,76 @@ class MVATManager(QObject):
         self._compute_visibility_async(primary_target, cameras_needing_visibility)
 
     def _compute_mesh_visibility_sync(self, mesh_product, cameras):
-        """
-        Compute mesh visibility using VTK rasterization (main thread).
-        
-        VTK/PyVista rendering requires the GUI thread's OpenGL context.
-        This method performs synchronous rasterization for accurate mesh depth maps.
-        """
+        """Compute mesh visibility synchronously on the calling thread via moderngl."""
         from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
-        
+
         self._is_computing_visibility = True
+        QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-        except Exception:
-            pass
-        
-        try:
-            target_file_path = mesh_product.file_path
             n_cameras = len(cameras)
-            
-            self.main_window.status_bar.showMessage(f"Rasterizing mesh for {n_cameras} camera(s)...")
-            print(f"MVATManager: VTK mesh rasterization for {n_cameras} cameras")
-            
+            self.main_window.status_bar.showMessage(
+                f"Computing index maps for {n_cameras} camera(s)...", 0
+            )
+
+            camera_params = [
+                (cam.K_linear, cam.R, cam.t, cam.width, cam.height)
+                for cam in cameras
+            ]
+
+            mgl_ctx = None
+            try:
+                mgl_ctx = VisibilityManager.setup_batch_moderngl_context(
+                    mesh_product, self.pixel_budget,
+                    cameras[0].width, cameras[0].height,
+                )
+                batch = VisibilityManager.compute_batch_mesh_visibility_moderngl(
+                    mesh_product, camera_params,
+                    compute_depth_map=False,
+                    pixel_budget=self.pixel_budget,
+                    mgl_context=mgl_ctx,
+                )
+            except Exception as mgl_err:
+                print(f"⚠️ moderngl sync failed ({mgl_err}); falling back to VTK single-camera path")
+                mgl_ctx = None
+                batch = []
+                for params in camera_params:
+                    K, R, t, w, h = params
+                    try:
+                        r = VisibilityManager._compute_mesh_visibility_vtk(
+                            mesh_product, K, R, t, w, h,
+                            compute_depth_map=False,
+                            pixel_budget=self.pixel_budget,
+                        )
+                        batch.append(r)
+                    except Exception as vtk_err:
+                        print(f"⚠️ VTK fallback also failed: {vtk_err}")
+                        batch.append({'index_map': None, 'visible_indices': [], 'scale_factor': 1.0})
+            finally:
+                if mgl_ctx is not None:
+                    try:
+                        for fbo in mgl_ctx.get('_fbo_cache', {}).values():
+                            fbo.release()
+                        mgl_ctx['ctx'].release()
+                    except Exception:
+                        pass
+
             results = {}
-            for i, camera in enumerate(cameras):
-                try:
-                    # Use K_linear so the 3D engine renders a linear (undistorted) map
-                    K_for_render = camera.K_linear
-                    result = VisibilityManager._compute_mesh_visibility(
-                        mesh_product,
-                        K_for_render, camera.R, camera.t,
-                        camera.width, camera.height,
-                        compute_depth_map=False
-                    )
-                    result['element_type'] = 'face'
-                    # Warp result back to distorted-pixel space if needed
-                    if camera.is_distorted and camera._raster.intrinsics_undistorted is not None:
-                        warp_fn = camera._raster.warp_linear_map_to_distorted
-                        if result.get('index_map') is not None:
-                            result['index_map'] = warp_fn(result['index_map'], nodata=-1)
-                    results[camera.image_path] = result
-                except Exception as e:
-                    print(f"⚠️ Failed to compute mesh visibility for {camera.label}: {e}")
-            
-            # Process results (same logic as _on_visibility_computed)
-            self._process_visibility_results(results, target_file_path)
-            
+            for camera, result in zip(cameras, batch):
+                result['element_type'] = 'face'
+                if camera.is_distorted and camera._raster.intrinsics_undistorted is not None:
+                    warp_fn = camera._raster.warp_linear_map_to_distorted
+                    if result.get('index_map') is not None:
+                        result['index_map'] = warp_fn(result['index_map'], nodata=-1)
+                results[camera.image_path] = result
+
+            self._process_visibility_results(results, mesh_product.file_path)
+
         except Exception as e:
             print(f"⚠️ Mesh visibility computation failed: {e}")
-            import traceback
-            traceback.print_exc()
+            import traceback; traceback.print_exc()
         finally:
             self._is_computing_visibility = False
-            self.main_window.status_bar.showMessage("Visibility maps updated.", 3000)
+            self.main_window.status_bar.showMessage("Index maps ready.", 3000)
             QApplication.restoreOverrideCursor()
 
     def _compute_visibility_async(self, primary_target, cameras):
@@ -1843,23 +1861,40 @@ class MVATManager(QObject):
             worker.moveToThread(thread)
             thread.started.connect(worker.run)
 
-            # Connect signals
+            # Connect result / error signals
             worker.signals.finished.connect(self._on_visibility_computed)
             worker.signals.error.connect(self._on_visibility_error)
 
-            # Cleanup when done
+            # Both finished and error must quit the thread so it can be cleaned up
             worker.signals.finished.connect(thread.quit)
+            worker.signals.error.connect(thread.quit)
             worker.signals.finished.connect(worker.deleteLater)
-            thread.finished.connect(thread.deleteLater)
 
-            # Drop finished workers so the retention list only tracks live work.
+            # Remove this entry from _active_workers when the thread finishes.
+            # Using a closure avoids the "wrapped C/C++ object deleted" RuntimeError
+            # that occurs when thread.deleteLater() is connected to thread.finished
+            # and the Python wrapper is later accessed through _active_workers.
+            def _remove_worker(t=thread, w=worker):
+                self._active_workers = [
+                    (ot, ow) for ot, ow in self._active_workers
+                    if ot is not t
+                ]
+
+            thread.finished.connect(_remove_worker)
+
+            # Drop any stale entries left by threads that finished without a
+            # clean signal (e.g. after an unhandled exception in an older run).
+            def _is_alive(t):
+                try:
+                    return t.isRunning()
+                except RuntimeError:
+                    return False
+
             self._active_workers = [
-                (active_thread, active_worker)
-                for active_thread, active_worker in self._active_workers
-                if active_thread.isRunning()
+                (t, w) for t, w in self._active_workers if _is_alive(t)
             ]
 
-            # Keep references to avoid GC
+            # Keep a strong reference so neither thread nor worker is GC'd
             self._active_workers.append((thread, worker))
 
             thread.start()
