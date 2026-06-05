@@ -627,13 +627,13 @@ if __name__ == "__main__":
     print("🧪 "*35)
 
     tests = [
-        # test_single_camera_moderngl,
-        # test_batch_rendering,
-        # test_dual_pass_encoding,
-        # test_pixel_budget_downsampling,
-        # test_ortho_camera,
-        # test_integer_fbo_rendering,
-        # test_raycast_crosscheck,
+        test_single_camera_moderngl,
+        test_batch_rendering,
+        test_dual_pass_encoding,
+        test_pixel_budget_downsampling,
+        test_ortho_camera,
+        test_integer_fbo_rendering,
+        test_raycast_crosscheck,
         test_moderngl_vs_vtk_speed,
     ]
     
