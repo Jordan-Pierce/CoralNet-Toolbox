@@ -413,6 +413,8 @@ class VisibilityManager:
 
         elif element_type == 'face':
             # Mesh visibility with ModernGL (VTK removed in Phase 3)
+            # Keep visible_indices=False to skip expensive computation in batch paths.
+            # compute_depth_map is controlled by caller (True for interactive SAM, False for batch).
             results = cls.compute_batch_mesh_visibility_moderngl(
                 primary_target, [(K, R, t, width, height)],
                 compute_depth_map=compute_depth_map,
@@ -547,6 +549,9 @@ class VisibilityManager:
         _t_render_total     = 0.0
         _t_readback_total   = 0.0
         _t_decode_total     = 0.0
+        _t_setup_total      = 0.0
+        _t_depth_total      = 0.0
+        _t_assembly_total   = 0.0
         camera_total_sum    = 0.0
 
         for i, (K, R, t, width, height) in enumerate(camera_params_list):
@@ -587,10 +592,12 @@ class VisibilityManager:
                     K_scaled[0, 2] -= u_min
                     K_scaled[1, 2] -= v_min
 
+            t0_setup = perf_counter()
             fbo = _get_fbo(crop_w, crop_h)
             fbo.use()
             ctx.viewport = (0, 0, crop_w, crop_h)
             ctx.clear(0.0, 0.0, 0.0, 0.0, depth=1.0)
+            t_setup = perf_counter() - t0_setup
 
             t0 = perf_counter()
             mvp = _build_mvp(K_scaled, R, t, crop_w, crop_h)
@@ -624,26 +631,26 @@ class VisibilityManager:
             crop_depth_map = None
             crop_index_tensor_gpu = None
             if compute_depth_map:
-                t0_depth = perf_counter()
+                # Read depth texture directly from FBO depth attachment
+                try:
+                    # ModernGL depth texture is read without components parameter
+                    depth_raw = fbo.depth_attachment.read()
+                    depth_buffer = np.frombuffer(depth_raw, dtype=np.float32).reshape(crop_h, crop_w)[::-1]
 
-                # 1. Read the raw Z-buffer directly from the ModernGL FBO (attachment=-1 is depth)
-                depth_raw = fbo.read(attachment=-1, dtype='f4')
-                depth_buffer = np.frombuffer(depth_raw, dtype=np.float32).reshape(crop_h, crop_w)[::-1]
+                    # Linearize OpenGL depth [0, 1] to CV depth (meters)
+                    # Using the exact near/far clipping planes defined in _build_mvp
+                    near, far = 0.01, 100000.0
+                    z_ndc = 2.0 * depth_buffer - 1.0
 
-                # 2. Linearize OpenGL depth [0, 1] to CV depth (meters)
-                # Using the exact near/far clipping planes defined in _build_mvp
-                near, far = 0.01, 100000.0
-                z_ndc = 2.0 * depth_buffer - 1.0
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        linear_depth = (2.0 * near * far) / (far + near - z_ndc * (far - near))
 
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    linear_depth = (2.0 * near * far) / (far + near - z_ndc * (far - near))
-
-                # 3. Mask out the background (where the camera sees nothing)
-                linear_depth[crop_index_map == -1] = np.nan
-                crop_depth_map = linear_depth.astype(np.float32)
-
-                t_depth = perf_counter() - t0_depth
-                logger.info(f"      [Depth Z-Buffer Read] {t_depth*1000:.2f}ms")
+                    # Mask out the background (where the camera sees nothing)
+                    linear_depth[crop_index_map == -1] = np.nan
+                    crop_depth_map = linear_depth.astype(np.float32)
+                except Exception as depth_err:
+                    logger.warning(f"⚠️ Depth map extraction failed ({depth_err}); skipping depth")
+                    crop_depth_map = None
 
                 if HAS_TORCH and torch.cuda.is_available():
                     crop_index_tensor_gpu = torch.from_numpy(crop_index_map).int().cuda()
@@ -692,9 +699,11 @@ class VisibilityManager:
 
             cam_time = perf_counter() - cam_start
             camera_total_sum  += cam_time
+            _t_setup_total    += t_setup
             _t_render_total   += t_render
             _t_readback_total += t_readback
             _t_decode_total   += t_decode
+            # Note: depth and assembly times included in decode/other measurements
 
             log_cam_breakdown(
                 cam_label(camera_index_offset + i + 1),
@@ -703,13 +712,17 @@ class VisibilityManager:
 
         n_cams = max(1, len(camera_params_list))
         total_time = perf_counter() - start_time
+        accounted_time = _t_setup_total + _t_render_total + _t_readback_total + _t_decode_total
+        unaccounted_time = total_time - accounted_time
         readback_mode = "CPU readback"
         log_summary(
             f"moderngl Batch Rasterization ({readback_mode})",
             [
+                f"   - Setup (FBO)    : {_t_setup_total:.3f}s total  ({_t_setup_total/n_cams*1000:.1f}ms/cam)",
                 f"   - GPU Rasterize  : {_t_render_total:.3f}s total  ({_t_render_total/n_cams*1000:.1f}ms/cam)",
                 f"   - Readback       : {_t_readback_total:.3f}s total  ({_t_readback_total/n_cams*1000:.1f}ms/cam)",
                 f"   - Decode         : {_t_decode_total:.3f}s total  ({_t_decode_total/n_cams*1000:.1f}ms/cam)",
+                f"   - Overhead       : {unaccounted_time:.3f}s total  ({unaccounted_time/n_cams*1000:.1f}ms/cam)",
                 f"   - Total Time     : {total_time:.3f}s  (Avg: {total_time/n_cams*1000:.1f}ms/cam)",
             ],
             logger,
