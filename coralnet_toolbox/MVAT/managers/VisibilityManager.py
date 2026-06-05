@@ -891,44 +891,41 @@ class VisibilityManager:
             return cls._normalize_result_dict({
                 'index_map': np.full((height, width), -1, dtype=np.int32),
                 'visible_indices': np.array([], dtype=np.int32),
-                'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
-                'element_type': 'point',
+                'depth_map':      np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
                 'inverted_index': None,
             }, compute_depth_map)
-        
+
         element_type = primary_target.get_element_type()
-        
+
         # Strategy dispatch based on element type
         if element_type == 'point':
-            # Strategy A: Point Cloud - existing scatter-reduce algorithm
             from coralnet_toolbox.MVAT.core.Products import PointCloudProduct
             if isinstance(primary_target, PointCloudProduct):
                 points = primary_target.get_points_array()
                 if points is not None:
-                    result = cls.compute_visibility(points, K, R, t, width, height, 
+                    result = cls.compute_visibility(points, K, R, t, width, height,
                                                     compute_depth_map=compute_depth_map)
                     result['element_type'] = 'point'
                     return result
-                    
+
         elif element_type == 'face':
-            # Strategy B: Mesh - ray-casting/rasterization
-            result = cls._compute_mesh_visibility(primary_target, K, R, t, width, height, 
+            result = cls._compute_mesh_visibility(primary_target, K, R, t, width, height,
                                                   compute_depth_map=compute_depth_map)
             result['element_type'] = 'face'
             return result
-        
+
         # Fallback: empty result
         return cls._normalize_result_dict({
-            'index_map': np.full((height, width), -1, dtype=np.int32),
+            'index_map':      np.full((height, width), -1, dtype=np.int32),
             'visible_indices': np.array([], dtype=np.int32),
-            'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
-            'element_type': element_type,
+            'depth_map':      np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
+            'element_type':   element_type,
             'inverted_index': None,
         }, compute_depth_map)
 
     @classmethod
     def _compute_mesh_visibility(cls,
-                                 mesh_product: 'AbstractSceneProduct',
+                                 mesh_product,
                                  K: np.ndarray,
                                  R: np.ndarray,
                                  t: np.ndarray,
@@ -951,10 +948,10 @@ class VisibilityManager:
                 compute_depth_map=compute_depth_map,
                 pixel_budget=pixel_budget,
             )
-                
+
     @classmethod
     def _compute_mesh_visibility_vtk(cls,
-                                     mesh_product: 'AbstractSceneProduct',
+                                     mesh_product,
                                      K: np.ndarray,
                                      R: np.ndarray,
                                      t: np.ndarray,
@@ -962,12 +959,8 @@ class VisibilityManager:
                                      height: int,
                                      compute_depth_map: bool = True,
                                      pixel_budget: Optional[int] = None) -> dict:
-        """
-        VTK-based mesh rasterization for pixel-perfect face ID and depth maps.
-        Now dynamically scales resolution and offloads decode/depth to PyTorch.
-        """
+        """VTK-based mesh rasterization for a single camera."""
         import pyvista as pv
-        import time
 
         start_time = time.perf_counter()
         log_section("🎨 VTK MESH VISIBILITY RASTERIZATION", logger)
@@ -975,7 +968,6 @@ class VisibilityManager:
         mesh = mesh_product.get_mesh()
         n_cells = mesh.n_cells
 
-        # --- DYNAMIC SCALING ---
         native_pixels = width * height
         if pixel_budget is None or native_pixels <= pixel_budget:
             dynamic_scale = 1.0
@@ -984,7 +976,6 @@ class VisibilityManager:
 
         render_w = max(1, int(width * dynamic_scale))
         render_h = max(1, int(height * dynamic_scale))
-
         K_scaled = K.copy()
         K_scaled[0, :3] *= dynamic_scale
         K_scaled[1, :3] *= dynamic_scale
@@ -992,38 +983,27 @@ class VisibilityManager:
         if n_cells == 0:
             logger.info("   ⚠️ No cells in mesh. Returning empty maps.")
             return cls._normalize_result_dict({
-                'index_map': np.full((render_h, render_w), -1, dtype=np.int32),
+                'index_map':      np.full((render_h, render_w), -1, dtype=np.int32),
                 'visible_indices': np.array([], dtype=np.int32),
-                'depth_map': np.full((render_h, render_w), np.nan, dtype=np.float32) if compute_depth_map else None,
+                'depth_map':      np.full((render_h, render_w), np.nan, dtype=np.float32) if compute_depth_map else None,
                 'inverted_index': None,
-                'scale_factor': dynamic_scale
+                'scale_factor':   dynamic_scale,
             }, compute_depth_map)
 
         logger.info(f"   Mesh: {n_cells:,} cells | Render: {render_w}x{render_h} pixels (Scale: {dynamic_scale:.4f})")
 
-        # --- 1. Setup face-ID rendering actors ---
-        setup_start = time.perf_counter()
         plotter = pv.Plotter(off_screen=True, window_size=(render_w, render_h))
         plotter.set_background('black')
         plotter.disable_anti_aliasing()
         actor_low, actor_high, is_dual_pass = cls._create_face_id_mesh_actors(plotter, mesh, n_cells)
-        encode_time = time.perf_counter() - setup_start
-        plotter_time = 0.0
 
-        # --- 3. Camera / scene prep ---
-        camera_start = time.perf_counter()
-
-        # Prepare face centers for GPU depth mapping
         if compute_depth_map and HAS_TORCH and torch.cuda.is_available():
-            face_centers_np = mesh.cell_centers().points.astype(np.float32)
-            face_centers_pt = torch.from_numpy(face_centers_np).cuda()
+            face_centers_pt = torch.from_numpy(
+                mesh.cell_centers().points.astype(np.float32)
+            ).cuda()
 
-        # Configure the VTK camera
         cls._configure_vtk_camera(plotter, K_scaled, R, t, render_w, render_h, mesh.bounds)
-        camera_time = time.perf_counter() - camera_start
 
-        # --- 4. Render and extract face IDs ---
-        render_start = time.perf_counter()
         if is_dual_pass and actor_high is not None:
             actor_low.SetVisibility(True)
             actor_high.SetVisibility(False)
@@ -1042,60 +1022,38 @@ class VisibilityManager:
                 screenshot_high = screenshot_high[:, :, :3]
 
         index_map, visible_indices, index_map_tensor = cls._decode_face_id_screenshot(
-            screenshot_low,
-            screenshot_high,
+            screenshot_low, screenshot_high,
         )
 
-        render_time = time.perf_counter() - render_start
-
-        # --- 5. Extract depth buffer ---
-        depth_start = time.perf_counter()
         depth_map = None
         if compute_depth_map:
-            if HAS_TORCH and torch.cuda.is_available():
+            if HAS_TORCH and torch.cuda.is_available() and index_map_tensor is not None:
                 R_pt = torch.from_numpy(R).to(torch.float32).cuda()
                 t_pt = torch.from_numpy(t).to(torch.float32).cuda()
-                
-                # Z-depth in camera space
                 z_cam = torch.matmul(face_centers_pt, R_pt.T)[:, 2] + t_pt[2]
                 z_cam_padded = torch.cat([z_cam, torch.tensor([float('nan')], device='cuda')])
-                
-                # Map Face IDs directly to their computed depths
-                depth_tensor = z_cam_padded[index_map_tensor.long()]
-                # Keep small, NO resizing!
-                depth_map = depth_tensor.cpu().numpy()
+                depth_map = z_cam_padded[index_map_tensor.long()].cpu().numpy()
             else:
                 try:
                     vtk_depth = plotter.get_image_depth(fill_value=np.nan)
-                    # Keep small, NO resizing!
                     depth_map = -vtk_depth.astype(np.float32)
                 except Exception as e:
                     logger.warning(f"   ⚠️ Failed to extract depth: {e}")
                     depth_map = np.full((render_h, render_w), np.nan, dtype=np.float32)
 
-        depth_time = time.perf_counter() - depth_start
         plotter.close()
-
         total_time = time.perf_counter() - start_time
-        single_summary = [
-            f"   - Setup          : {encode_time + plotter_time:.4f}s",
-            f"   - Camera Setup   : {camera_time:.4f}s",
-            f"   - Render & Decode: {render_time:.4f}s",
-        ]
-        if compute_depth_map:
-            single_summary.append(f"   - Depth Tricks   : {depth_time:.4f}s")
-        single_summary.append(f"   - Total Time     : {total_time:.4f}s")
-        log_summary("Single VTK Rasterization", single_summary, logger)
+        log_summary("Single VTK Rasterization",
+                    [f"   - Total Time: {total_time:.4f}s"], logger)
 
-        # Crucial: Include the dynamic_scale so caching knows the resolution mapping
         return cls._normalize_result_dict({
-            'index_map': index_map,
+            'index_map':      index_map,
             'visible_indices': visible_indices,
-            'depth_map': depth_map,
+            'depth_map':      depth_map,
             'inverted_index': None,
-            'scale_factor': dynamic_scale
+            'scale_factor':   dynamic_scale,
         }, compute_depth_map)
-    
+
     # =========================================================================
     # moderngl batch rasterizer  (zero-PCIe primary path)
     # =========================================================================
@@ -1103,11 +1061,7 @@ class VisibilityManager:
     @classmethod
     def setup_batch_moderngl_context(cls, mesh_product, pixel_budget,
                                      sample_width, sample_height):
-        """Create a moderngl offscreen context and upload mesh geometry once.
-
-        Returns a context dict consumed by compute_batch_mesh_visibility_moderngl,
-        or raises if moderngl is unavailable.
-        """
+        """Create a moderngl offscreen context and upload mesh geometry once."""
         import moderngl
 
         ctx = moderngl.create_context(standalone=True)
@@ -1133,10 +1087,8 @@ class VisibilityManager:
             prog_high = ctx.program(vertex_shader=_MGL_VERT, fragment_shader=_MGL_FRAG_HIGH)
             vao_high  = ctx.vertex_array(prog_high, [(vbo, '3f', 'position')], ibo)
 
-        # Resolve GL extension functions while the moderngl context is current
         gl_fns = _resolve_gl_fns()
 
-        # Pre-upload face centres to GPU for depth computation (same as VTK path)
         face_centers_pt = None
         if HAS_TORCH and torch.cuda.is_available():
             face_centers_pt = torch.from_numpy(
@@ -1159,7 +1111,7 @@ class VisibilityManager:
             'gl_fns':          gl_fns,
             'pixel_budget':    pixel_budget,
             'face_centers_pt': face_centers_pt,
-            '_fbo_cache':      {},   # (w, h) → moderngl.Framebuffer
+            '_fbo_cache':      {},
         }
 
     @classmethod
@@ -1177,8 +1129,9 @@ class VisibilityManager:
     ) -> list:
         """GPU rasterization via moderngl with zero-PCIe CUDA-GL framebuffer readback.
 
-        Drop-in replacement for compute_batch_mesh_visibility_vtk.  All outputs
-        are identical in format; downstream code is unchanged.
+        Each result dict includes 'index_map_gpu' — a CUDA int32 tensor that stays
+        on the GPU so callers (e.g. SAM) can do mask→face-ID lookups without a
+        PCIe upload.
         """
         import time
         perf_counter = time.perf_counter
@@ -1196,7 +1149,6 @@ class VisibilityManager:
         )
         start_time = perf_counter()
 
-        # ── Context ──────────────────────────────────────────────────────────
         if mgl_context is None:
             mgl_context = cls.setup_batch_moderngl_context(
                 mesh_product, pixel_budget,
@@ -1254,7 +1206,6 @@ class VisibilityManager:
             K_scaled[0, :3] *= dynamic_scale
             K_scaled[1, :3] *= dynamic_scale
 
-            # Viewport cropping (same logic as VTK path)
             u_min = v_min = 0
             crop_w, crop_h = render_w, render_h
             if use_viewport_cropping:
@@ -1264,6 +1215,7 @@ class VisibilityManager:
                 if crop_status == "OFF_SCREEN":
                     results.append(cls._normalize_result_dict({
                         'index_map':      np.full((render_h, render_w), -1, dtype=np.int32),
+                        'index_map_gpu':  None,
                         'visible_indices': np.array([], dtype=np.int32),
                         'depth_map':      np.full((render_h, render_w), np.nan, dtype=np.float32) if compute_depth_map else None,
                         'inverted_index': None,
@@ -1279,10 +1231,9 @@ class VisibilityManager:
 
             fbo = _get_fbo(crop_w, crop_h)
             fbo.use()
-            ctx.viewport = (0, 0, crop_w, crop_h)  # must be explicit; standalone ctx has no default
+            ctx.viewport = (0, 0, crop_w, crop_h)
             ctx.clear(0.0, 0.0, 0.0, 0.0, depth=1.0)
 
-            # ── Render ───────────────────────────────────────────────────────
             t0 = perf_counter()
             mvp = _build_mvp(K_scaled, R, t, crop_w, crop_h)
             prog_low['mvp'].write(mvp.tobytes())
@@ -1290,14 +1241,11 @@ class VisibilityManager:
             ctx.finish()
             t_render = perf_counter() - t0
 
-            # ── Readback: try CUDA-GL PBO, fall back to CPU ───────────────
             t0 = perf_counter()
             shot_low = None
             if use_cuda_gl:
                 shot_low = _pbo_cuda_readback(gl_fns, cudart, crop_w, crop_h)
-
             if shot_low is None:
-                # CPU fallback: read via moderngl (still faster than VTK for small sizes)
                 raw = fbo.read(components=3, dtype='u1')
                 shot_low = np.frombuffer(raw, dtype=np.uint8).reshape(crop_h, crop_w, 3)[::-1].copy()
 
@@ -1313,17 +1261,14 @@ class VisibilityManager:
                 if shot_high is None:
                     raw = fbo.read(components=3, dtype='u1')
                     shot_high = np.frombuffer(raw, dtype=np.uint8).reshape(crop_h, crop_w, 3)[::-1].copy()
-
             t_readback = perf_counter() - t0
 
-            # ── Decode (reuses existing function — accepts CUDA tensors) ────
             t0 = perf_counter()
             crop_index_map, visible_indices, crop_index_tensor = cls._decode_face_id_screenshot(
                 shot_low, shot_high
             )
             t_decode = perf_counter() - t0
 
-            # ── Depth ────────────────────────────────────────────────────────
             crop_depth_map = None
             if compute_depth_map and face_centers_pt is not None and crop_index_tensor is not None:
                 R_pt = torch.from_numpy(R).float().cuda()
@@ -1332,9 +1277,17 @@ class VisibilityManager:
                 z_cam_padded = torch.cat([z_cam, torch.tensor([float('nan')], device='cuda')])
                 crop_depth_map = z_cam_padded[crop_index_tensor.long()].cpu().numpy()
 
-            # ── Paste crop back into full canvas ────────────────────────────
+            # Paste crop back into full canvas
             full_index_map = np.full((render_h, render_w), -1, dtype=np.int32)
             full_index_map[v_min:v_min + crop_h, u_min:u_min + crop_w] = crop_index_map
+
+            # GPU tensor — stays on CUDA for downstream consumers (e.g. SAM lookup)
+            full_index_map_gpu = None
+            if HAS_TORCH and torch.cuda.is_available() and crop_index_tensor is not None:
+                full_index_map_gpu = torch.full(
+                    (render_h, render_w), -1, dtype=torch.int32, device='cuda'
+                )
+                full_index_map_gpu[v_min:v_min + crop_h, u_min:u_min + crop_w] = crop_index_tensor
 
             full_depth_map = None
             if compute_depth_map:
@@ -1342,17 +1295,22 @@ class VisibilityManager:
                 if crop_depth_map is not None:
                     full_depth_map[v_min:v_min + crop_h, u_min:u_min + crop_w] = crop_depth_map
 
-            # ── Optional upsample to native ──────────────────────────────────
             result_scale = dynamic_scale
             if upsample_to_native and dynamic_scale < 1.0:
                 import cv2 as _cv2
                 full_index_map = _cv2.resize(full_index_map, (width, height), interpolation=_cv2.INTER_NEAREST)
                 if full_depth_map is not None:
                     full_depth_map = _cv2.resize(full_depth_map, (width, height), interpolation=_cv2.INTER_NEAREST)
+                if full_index_map_gpu is not None:
+                    full_index_map_gpu = full_index_map_gpu.unsqueeze(0).unsqueeze(0).float()
+                    full_index_map_gpu = torch.nn.functional.interpolate(
+                        full_index_map_gpu, size=(height, width), mode='nearest'
+                    ).squeeze().to(torch.int32)
                 result_scale = 1.0
 
             results.append(cls._normalize_result_dict({
                 'index_map':       full_index_map,
+                'index_map_gpu':   full_index_map_gpu,
                 'visible_indices': visible_indices,
                 'depth_map':       full_depth_map,
                 'inverted_index':  None,
@@ -1389,7 +1347,6 @@ class VisibilityManager:
     def setup_batch_vtk_context(cls, mesh_product, pixel_budget, sample_width, sample_height):
         """Pre-load the VTK plotter and upload mesh geometry once for all chunks."""
         import pyvista as pv
-        import time
 
         start_time = time.perf_counter()
         logger.info("   -> Setting up Persistent VTK Plotter Context...")
@@ -1417,40 +1374,32 @@ class VisibilityManager:
             face_centers_np = mesh.cell_centers().points.astype(np.float32)
             face_centers_pt = torch.from_numpy(face_centers_np).cuda()
 
-        # Force the geometry upload/VBO build once up front so later cameras reuse VRAM data.
         plotter.render()
-
         logger.info(f"   ✅ Persistent Plotter setup in {time.perf_counter() - start_time:.4f}s")
 
         return {
-            'plotter': plotter,
-            'actor_low': actor_low,
-            'actor_high': actor_high,
-            'is_dual_pass': is_dual_pass,
+            'plotter':        plotter,
+            'actor_low':      actor_low,
+            'actor_high':     actor_high,
+            'is_dual_pass':   is_dual_pass,
             'face_centers_pt': face_centers_pt,
-            'mesh_bounds': mesh.bounds,
+            'mesh_bounds':    mesh.bounds,
         }
 
     @classmethod
     def compute_batch_mesh_visibility_vtk(cls,
-                                          mesh_product: 'AbstractSceneProduct',
+                                          mesh_product,
                                           camera_params_list: list,
                                           compute_depth_map: bool = True,
                                           pixel_budget: Optional[int] = None,
+                                          upsample_to_native: bool = False,
                                           progress_callback=None,
                                           vtk_context: dict = None,
                                           camera_index_offset: int = 0,
                                           use_viewport_cropping: bool = True) -> list:
-        """
-        Batched VTK-based mesh rasterization with Viewport Cropping.
-        Dynamically calculates the 2D bounding box of the mesh to avoid rendering
-        and transferring empty sky pixels from the GPU.
-        """
+        """Batched VTK-based mesh rasterization with Viewport Cropping."""
         import time
         import pyvista as pv
-        import torch
-        import numpy as np
-
         perf_counter = time.perf_counter
 
         def _scale_for_dimensions(width: int, height: int) -> float:
@@ -1458,33 +1407,30 @@ class VisibilityManager:
             if pixel_budget is None or pixel_budget <= 0 or native_pixels <= pixel_budget:
                 return 1.0
             return float(np.sqrt(pixel_budget / native_pixels))
-        
+
         start_time = perf_counter()
         budget_str = "Native" if pixel_budget is None or pixel_budget <= 0 else f"{pixel_budget / 1_000_000:.1f}MP"
         log_section(f"🎨 STARTING BATCH VTK RASTERIZATION FOR {len(camera_params_list)} CAMERAS (Budget: {budget_str})", logger)
-        
+
         mesh = mesh_product.get_mesh()
         n_cells = mesh.n_cells
         mesh_bounds = mesh.bounds
-        
+
         if n_cells == 0:
             logger.info("   ⚠️ No cells in mesh. Returning empty maps.")
             return [{
-                'index_map': np.full((h, w), -1, dtype=np.int32),
+                'index_map':      np.full((h, w), -1, dtype=np.int32),
                 'visible_indices': np.array([], dtype=np.int32),
-                'depth_map': np.full((h, w), np.nan, dtype=np.float32) if compute_depth_map else None,
+                'depth_map':      np.full((h, w), np.nan, dtype=np.float32) if compute_depth_map else None,
                 'inverted_index': None,
-                'scale_factor': _scale_for_dimensions(w, h),
+                'scale_factor':   _scale_for_dimensions(w, h),
             } for _, _, _, w, h in camera_params_list]
-            
+
         logger.info(f"   Mesh: {n_cells:,} cells")
-        
-        # --- 1. SETUP PHASE ---
+
         if vtk_context is None:
             setup_start = perf_counter()
             logger.info("   -> Encoding face IDs as RGB colors...")
-            logger.info("   -> Creating off-screen plotter...")
-
             first_w = camera_params_list[0][3]
             first_h = camera_params_list[0][4]
             first_scale = _scale_for_dimensions(first_w, first_h)
@@ -1493,13 +1439,11 @@ class VisibilityManager:
             plotter = pv.Plotter(off_screen=True, window_size=(first_w, first_h))
             plotter.set_background('black')
             plotter.disable_anti_aliasing()
-
             actor_low, actor_high, is_dual_pass = cls._create_face_id_mesh_actors(plotter, mesh, n_cells)
             encode_time = perf_counter() - setup_start
             plotter_setup_time = 0.0
             logger.info(f"   ✅ Setup completed in {encode_time + plotter_setup_time:.4f}s")
 
-            logger.info("   -> Preparing face centers for GPU depth mapping...")
             face_center_prep_time = 0.0
             if HAS_TORCH and torch.cuda.is_available():
                 face_center_prep_start = perf_counter()
@@ -1508,25 +1452,20 @@ class VisibilityManager:
                 face_center_prep_time = perf_counter() - face_center_prep_start
             logger.info(f"      Face center prep completed in {face_center_prep_time:.4f}s")
         else:
-            plotter = vtk_context['plotter']
-            actor_low = vtk_context['actor_low']
-            actor_high = vtk_context['actor_high']
-            is_dual_pass = vtk_context['is_dual_pass']
+            plotter         = vtk_context['plotter']
+            actor_low       = vtk_context['actor_low']
+            actor_high      = vtk_context['actor_high']
+            is_dual_pass    = vtk_context['is_dual_pass']
             face_centers_pt = vtk_context['face_centers_pt']
-            mesh = mesh_product.get_mesh()
-            encode_time = 0.0
-            plotter_setup_time = 0.0
-            face_center_prep_time = 0.0
+            mesh            = mesh_product.get_mesh()
+            encode_time = plotter_setup_time = face_center_prep_time = 0.0
             logger.info("   -> Reusing persistent VTK plotter context...")
 
-        # --- 2. RENDER LOOP ---
         logger.info(f"\n   -> Rendering {len(camera_params_list)} cameras (Budget: {budget_str})...")
         render_start_time = perf_counter()
         results = []
         camera_total_sum = 0.0
-        _t_render_total = 0.0      # GPU rasterization only
-        _t_screenshot_total = 0.0  # GPU→CPU transfer only
-        _t_decode_total = 0.0      # CPU→GPU decode only
+        _t_render_total = _t_screenshot_total = _t_decode_total = 0.0
 
         for i, (K, R, t, width, height) in enumerate(camera_params_list):
             cam_start = perf_counter()
@@ -1540,34 +1479,28 @@ class VisibilityManager:
             render_w = max(1, int(round(width * dynamic_scale)))
             render_h = max(1, int(round(height * dynamic_scale)))
 
-            # -----------------------------------------------------------
-            # VIEWPORT CROPPING LOGIC
-            # -----------------------------------------------------------
             K_scaled = K.copy()
             K_scaled[0, :3] *= dynamic_scale
             K_scaled[1, :3] *= dynamic_scale
 
             if use_viewport_cropping:
                 t0_crop = perf_counter()
-                u_min, u_max, v_min, v_max, crop_status = cls._get_2d_bounding_box(mesh_bounds, K_scaled, R, t, render_w, render_h)
+                u_min, u_max, v_min, v_max, crop_status = cls._get_2d_bounding_box(
+                    mesh_bounds, K_scaled, R, t, render_w, render_h)
                 t_crop = perf_counter() - t0_crop
-                
+
                 if crop_status == "OFF_SCREEN":
-                    # The mesh is completely off-screen. Skip rendering entirely!
-                    results.append({
-                        'index_map': np.full((render_h, render_w), -1, dtype=np.int32),
-                        'visible_indices': np.array([], dtype=np.int32),
-                        'depth_map': np.full((render_h, render_w), np.nan, dtype=np.float32) if compute_depth_map else None,
-                        'inverted_index': None,
-                        'scale_factor': dynamic_scale,
-                    })
+                    results.append({'index_map': np.full((render_h, render_w), -1, dtype=np.int32),
+                                    'visible_indices': np.array([], dtype=np.int32),
+                                    'depth_map': np.full((render_h, render_w), np.nan, dtype=np.float32) if compute_depth_map else None,
+                                    'inverted_index': None, 'scale_factor': dynamic_scale})
                     results[-1] = cls._normalize_result_dict(results[-1], compute_depth_map)
                     log_cam_breakdown(cam_label(camera_index_offset + i + 1), perf_counter() - cam_start, t_crop, 0, 0, 0, 0, 0, 0, logger)
                     continue
                 elif crop_status == "FULL_SCREEN":
                     crop_w, crop_h = render_w, render_h
                     u_min, v_min = 0, 0
-                else: # "CROP"
+                else:
                     crop_w = u_max - u_min
                     crop_h = v_max - v_min
                     K_scaled[0, 2] -= u_min
@@ -1576,12 +1509,10 @@ class VisibilityManager:
                 crop_w, crop_h = render_w, render_h
                 u_min, v_min = 0, 0
 
-            # Resize VTK window to the crop size
             current_size = plotter.window_size
             if current_size[0] != crop_w or current_size[1] != crop_h:
                 plotter.window_size = (crop_w, crop_h)
 
-            # Config & Render
             t0 = perf_counter()
             cls._configure_vtk_camera(plotter, K_scaled, R, t, crop_w, crop_h, mesh_bounds)
             if is_dual_pass and actor_high is not None:
@@ -1591,14 +1522,10 @@ class VisibilityManager:
             t_render = perf_counter() - t0
             t_prep = (t0 - prep_start) - t_crop
 
-            # Screenshot / framebuffer readback
-            # Try CUDA-GL interop first (PBO → D2D copy, no PCIe).
-            # Fall back to plotter.screenshot() (PCIe readback) if unavailable.
             t0 = perf_counter()
             _ren_win = plotter.ren_win
             screenshot_low = cls._cuda_gl_screenshot(crop_w, crop_h, ren_win=_ren_win)
             if screenshot_low is None:
-                # PCIe fallback
                 screenshot_low = plotter.screenshot(return_img=True)
                 if screenshot_low.shape[2] == 4:
                     screenshot_low = screenshot_low[:, :, :3]
@@ -1615,56 +1542,45 @@ class VisibilityManager:
                         screenshot_high = screenshot_high[:, :, :3]
             t_screenshot = perf_counter() - t0
 
-            # Decoding (GPU Math)
             t0 = perf_counter()
             crop_index_map, visible_indices, crop_index_tensor = cls._decode_face_id_screenshot(
-                screenshot_low,
-                screenshot_high,
+                screenshot_low, screenshot_high,
             )
             t_decode = perf_counter() - t0
-            
-            # Depth Extraction
+
             t0 = perf_counter()
             crop_depth_map = None
             if compute_depth_map:
-                if HAS_TORCH and torch.cuda.is_available():
+                if HAS_TORCH and torch.cuda.is_available() and crop_index_tensor is not None:
                     R_pt = torch.from_numpy(R).to(torch.float32).cuda()
                     t_pt = torch.from_numpy(t).to(torch.float32).cuda()
-                    
                     z_cam = torch.matmul(face_centers_pt, R_pt.T)[:, 2] + t_pt[2]
                     z_cam_padded = torch.cat([z_cam, torch.tensor([float('nan')], device='cuda')])
-                    
-                    small_depth_tensor = z_cam_padded[crop_index_tensor.long()]
-                    crop_depth_map = small_depth_tensor.cpu().numpy()
+                    crop_depth_map = z_cam_padded[crop_index_tensor.long()].cpu().numpy()
                 else:
                     try:
                         vtk_depth = plotter.get_image_depth(fill_value=np.nan)
                         crop_depth_map = -vtk_depth.astype(np.float32)
-                    except Exception as e:
+                    except Exception:
                         crop_depth_map = np.full((crop_h, crop_w), np.nan, dtype=np.float32)
             t_depth = perf_counter() - t0
 
-            # Finalize: Paste the crop back into the full-resolution canvas
             t0 = perf_counter()
-            
             full_index_map = np.full((render_h, render_w), -1, dtype=np.int32)
             full_index_map[v_min:v_min + crop_h, u_min:u_min + crop_w] = crop_index_map
-            
+
             if compute_depth_map:
                 full_depth_map = np.full((render_h, render_w), np.nan, dtype=np.float32)
-                full_depth_map[v_min:v_min + crop_h, u_min:u_min + crop_w] = crop_depth_map
+                if crop_depth_map is not None:
+                    full_depth_map[v_min:v_min + crop_h, u_min:u_min + crop_w] = crop_depth_map
             else:
                 full_depth_map = None
 
-            results.append({
-                'index_map': full_index_map,
-                'visible_indices': visible_indices,
-                'depth_map': full_depth_map,
-                'inverted_index': None,
-                'scale_factor': dynamic_scale,
-            })
+            results.append({'index_map': full_index_map, 'visible_indices': visible_indices,
+                             'depth_map': full_depth_map, 'inverted_index': None,
+                             'scale_factor': dynamic_scale})
             results[-1] = cls._normalize_result_dict(results[-1], compute_depth_map)
-            
+
             try:
                 from PyQt5.QtWidgets import QApplication
                 app = QApplication.instance()
@@ -1673,7 +1589,7 @@ class VisibilityManager:
             except ImportError:
                 pass
             t_finalize = perf_counter() - t0
-            
+
             cam_time = perf_counter() - cam_start
             camera_total_sum += cam_time
             _t_render_total     += t_render
@@ -1681,30 +1597,18 @@ class VisibilityManager:
             _t_decode_total     += t_decode
             accounted_time = t_prep + t_crop + t_render + t_screenshot + t_decode + t_depth + t_finalize
             residual_time = max(0.0, cam_time - accounted_time)
-            
-            log_cam_breakdown(
-                cam_label(camera_index_offset + i + 1),
-                cam_time,
-                t_prep + t_crop,
-                t_render,
-                t_screenshot,
-                t_decode,
-                t_depth,
-                t_finalize,
-                residual_time,
-                logger,
-            )
+            log_cam_breakdown(cam_label(camera_index_offset + i + 1), cam_time,
+                              t_prep + t_crop, t_render, t_screenshot, t_decode,
+                              t_depth, t_finalize, residual_time, logger)
 
         plotter_close_time = 0.0
         if vtk_context is None:
             close_start = perf_counter()
             plotter.close()
             plotter_close_time = perf_counter() - close_start
-        
+
         total_render_time = perf_counter() - render_start_time
         total_time = perf_counter() - start_time
-        loop_residual = max(0.0, total_render_time - camera_total_sum - plotter_close_time)
-
         n_cams = max(1, len(camera_params_list))
         pcie_overhead = _t_screenshot_total + _t_decode_total
         pcie_pct = pcie_overhead / max(0.001, _t_render_total + pcie_overhead) * 100
@@ -1721,102 +1625,44 @@ class VisibilityManager:
             ],
             logger,
         )
-        
         return results
 
     @classmethod
-    def _configure_vtk_camera(cls, plotter, K: np.ndarray, R: np.ndarray, t: np.ndarray,
-                              width: int, height: int, bounds: tuple) -> None:
-        
+    def _configure_vtk_camera(cls, plotter, K, R, t, width, height, bounds):
         position = -R.T @ t
-        forward_cam = np.array([0.0, 0.0, 1.0])
-        forward_world = R.T @ forward_cam
+        forward_world = R.T @ np.array([0.0, 0.0, 1.0])
         focal_point = position + forward_world
-        
-        up_cam = np.array([0.0, -1.0, 0.0])  
-        view_up = R.T @ up_cam
-        
+        view_up = R.T @ np.array([0.0, -1.0, 0.0])
+
         camera = plotter.camera
-        camera.position = position.tolist()
+        camera.position    = position.tolist()
         camera.focal_point = focal_point.tolist()
-        camera.up = view_up.tolist()
-        
-        # --- Set clipping range based on scene bounds ---
-        scene_center = np.array([
-            (bounds[0] + bounds[1]) / 2,
-            (bounds[2] + bounds[3]) / 2,
-            (bounds[4] + bounds[5]) / 2
-        ])
-        scene_radius = np.linalg.norm([
-            bounds[1] - bounds[0],
-            bounds[3] - bounds[2],
-            bounds[5] - bounds[4]
-        ]) / 2
-        
+        camera.up          = view_up.tolist()
+
+        scene_center = np.array([(bounds[0]+bounds[1])/2, (bounds[2]+bounds[3])/2, (bounds[4]+bounds[5])/2])
+        scene_radius = np.linalg.norm([bounds[1]-bounds[0], bounds[3]-bounds[2], bounds[5]-bounds[4]]) / 2
         dist_to_center = np.linalg.norm(scene_center - position)
         near_clip = max(0.01, dist_to_center - scene_radius * 2)
-        far_clip = dist_to_center + scene_radius * 2
+        far_clip  = dist_to_center + scene_radius * 2
         camera.clipping_range = (near_clip, far_clip)
-        
-        # ---> EXPLICIT PROJECTION MATRIX <---
-        # Bypasses VTK's aspect ratio assumptions by explicitly mapping
-        # the true horizontal (fx) and vertical (fy) OpenCV focal lengths.
-        
-        fx = K[0, 0]
-        fy = K[1, 1]
-        cx = K[0, 2]
-        cy = K[1, 2]
-        
+
         import vtk
         mat = vtk.vtkMatrix4x4()
         mat.Zero()
-        
-        # Map X
-        mat.SetElement(0, 0, 2.0 * fx / width)
-        mat.SetElement(0, 2, (width - 2.0 * cx) / width)
-        
-        # Map Y (Y is flipped between OpenCV and OpenGL)
-        mat.SetElement(1, 1, 2.0 * fy / height)
-        mat.SetElement(1, 2, (2.0 * cy - height) / height)
-        
-        # Map Z (Clipping Range)
+        mat.SetElement(0, 0,  2.0 * K[0,0] / width)
+        mat.SetElement(0, 2,  (width  - 2.0 * K[0,2]) / width)
+        mat.SetElement(1, 1,  2.0 * K[1,1] / height)
+        mat.SetElement(1, 2,  (2.0 * K[1,2] - height) / height)
         mat.SetElement(2, 2, -(far_clip + near_clip) / (far_clip - near_clip))
         mat.SetElement(2, 3, -2.0 * far_clip * near_clip / (far_clip - near_clip))
-        
-        # W (Perspective divide)
         mat.SetElement(3, 2, -1.0)
-        
-        # Force VTK to use our raw matrix
         camera.SetUseExplicitProjectionTransformMatrix(True)
         camera.SetExplicitProjectionTransformMatrix(mat)
 
     @classmethod
-    def compute_ortho_index_map_vtk(cls,
-                                    ortho_camera,
-                                    mesh_product: 'AbstractSceneProduct',
-                                    pixel_budget: Optional[int] = None) -> dict:
-        """Build a downsampled face-ID index map for an OrthoCamera.
-
-        Renders the mesh off-screen with VTK orthographic projection looking
-        straight down over the ortho's world-space extent.  The result is stored
-        at a resolution derived from the shared MVAT pixel budget, where values
-        at or above the native resolution keep the full image and lower budgets
-        trade fidelity for speed.
-
-        Args:
-            ortho_camera:    OrthoCamera instance (must be is_valid).
-            mesh_product:    MeshProduct whose faces are being indexed.
-            scale_factor:    Quality scale factor in the range (0, 1].
-
-        Returns:
-            dict with keys:
-                'index_map'      – (H_r, W_r) int32 face-ID map (-1 = no face)
-                'visible_indices'– 1-D int32 array of unique visible face IDs
-                'scale_factor'   – float, render_h / ortho_height
-        """
+    def compute_ortho_index_map_vtk(cls, ortho_camera, mesh_product, pixel_budget=None):
+        """Build a downsampled face-ID index map for an OrthoCamera using VTK."""
         import pyvista as pv
-        import time
-
         perf_counter = time.perf_counter
         start = perf_counter()
         log_section("🗺️  VTK ORTHO INDEX MAP RASTERIZATION", logger)
@@ -1832,30 +1678,21 @@ class VisibilityManager:
 
         n_cells = mesh.n_cells
         ortho_w, ortho_h = ortho_camera.width, ortho_camera.height
-
         native_pixels = ortho_w * ortho_h
-        if pixel_budget is None or pixel_budget <= 0 or native_pixels <= pixel_budget:
-            scale = 1.0
-        else:
-            scale = float(np.sqrt(pixel_budget / native_pixels))
+        scale = 1.0 if (pixel_budget is None or pixel_budget <= 0 or native_pixels <= pixel_budget)                     else float(np.sqrt(pixel_budget / native_pixels))
         render_w = max(1, int(round(ortho_w * scale)))
         render_h = max(1, int(round(ortho_h * scale)))
         logger.info(f"   Ortho: {ortho_w}×{ortho_h}  →  render: {render_w}×{render_h}  (scale={scale:.4f})")
         logger.info(f"   Mesh: {n_cells:,} cells")
 
-        # --- 1. Setup face-ID rendering actors ---
         plotter = pv.Plotter(off_screen=True, window_size=(render_w, render_h))
         plotter.set_background('black')
         plotter.disable_anti_aliasing()
         actor_low, actor_high, is_dual_pass = cls._create_face_id_mesh_actors(plotter, mesh, n_cells)
-
-        # --- 3. Configure orthographic camera ---
         cls._configure_vtk_camera_ortho(plotter, ortho_camera, mesh.bounds)
 
-        # --- 4. Render and decode ---
         if is_dual_pass and actor_high is not None:
-            actor_low.SetVisibility(True)
-            actor_high.SetVisibility(False)
+            actor_low.SetVisibility(True); actor_high.SetVisibility(False)
         plotter.render()
         screenshot_low = plotter.screenshot(return_img=True)
         if screenshot_low.shape[2] == 4:
@@ -1863,297 +1700,163 @@ class VisibilityManager:
 
         screenshot_high = None
         if is_dual_pass and actor_high is not None:
-            actor_low.SetVisibility(False)
-            actor_high.SetVisibility(True)
+            actor_low.SetVisibility(False); actor_high.SetVisibility(True)
             plotter.render()
             screenshot_high = plotter.screenshot(return_img=True)
             if screenshot_high.shape[2] == 4:
                 screenshot_high = screenshot_high[:, :, :3]
 
-        index_map, visible_indices, _ = cls._decode_face_id_screenshot(
-            screenshot_low,
-            screenshot_high,
-        )
+        index_map, visible_indices, _ = cls._decode_face_id_screenshot(screenshot_low, screenshot_high)
         index_map = np.fliplr(index_map)
-
         plotter.close()
-        
-        total = perf_counter() - start
-        n_vis = len(visible_indices)
-        cov   = np.sum(index_map >= 0) / (render_w * render_h) * 100
-        logger.info(f"   ✅ Done in {total:.2f}s — {n_vis:,} visible faces, {cov:.1f}% coverage")
-        logger.info(f"{'='*50}\n")
 
+        total = perf_counter() - start
+        cov = np.sum(index_map >= 0) / (render_w * render_h) * 100
+        logger.info(f"   ✅ Done in {total:.2f}s — {len(visible_indices):,} visible faces, {cov:.1f}% coverage")
+        logger.info(f"{'='*50}\n")
         return cls._normalize_result_dict({
-            'index_map':       index_map,
-            'visible_indices': visible_indices,
-            'depth_map':       None,
-            'inverted_index':  None,
-            'scale_factor':    scale,
+            'index_map': index_map, 'visible_indices': visible_indices,
+            'depth_map': None, 'inverted_index': None, 'scale_factor': scale,
         }, compute_depth_map=False)
 
     @classmethod
-    def _configure_vtk_camera_ortho(cls, plotter, ortho_camera, bounds: tuple) -> None:
-        """Configure a PyVista plotter for a nadir orthographic view matching OrthoCamera.
-
-        The camera looks straight down along OrthoCamera.get_vertical_direction_world(),
-        covers the full ortho extent, and has parallel (orthographic) projection.
-        """
+    def _configure_vtk_camera_ortho(cls, plotter, ortho_camera, bounds):
         W, H = ortho_camera.width, ortho_camera.height
-
-        # World-space corners at Z=0 CRS base plane
-        TL = ortho_camera.pixel_to_xy_world(0,     0    )
-        TR = ortho_camera.pixel_to_xy_world(W - 1, 0    )
-        BL = ortho_camera.pixel_to_xy_world(0,     H - 1)
-        BR = ortho_camera.pixel_to_xy_world(W - 1, H - 1)
-
+        TL = ortho_camera.pixel_to_xy_world(0,   0  )
+        TR = ortho_camera.pixel_to_xy_world(W-1, 0  )
+        BL = ortho_camera.pixel_to_xy_world(0,   H-1)
+        BR = ortho_camera.pixel_to_xy_world(W-1, H-1)
         if any(c is None for c in [TL, TR, BL, BR]):
             return
-
-        center       = (TL + TR + BL + BR) * 0.25
-        top_center   = (TL + TR) * 0.5
-        bot_center   = (BL + BR) * 0.5
-
-        # View-up = direction from bottom-centre to top-centre (ortho "north")
+        center     = (TL + TR + BL + BR) * 0.25
+        top_center = (TL + TR) * 0.5
+        bot_center = (BL + BR) * 0.5
         vu = top_center - bot_center
-        vu_len = np.linalg.norm(vu)
-        view_up = vu / vu_len if vu_len > 1e-12 else np.array([0., 1., 0.])
-
-        # Parallel scale = half the world-space height of the ortho
+        vu_len   = np.linalg.norm(vu)
+        view_up  = vu / vu_len if vu_len > 1e-12 else np.array([0., 1., 0.])
         parallel_scale = vu_len * 0.5
-
-        # Camera position: lift above scene along the vertical direction
-        vertical_dir  = ortho_camera.get_vertical_direction_world()
-        z_range       = max(abs(bounds[5] - bounds[4]), 1.0)
-        lift          = z_range * 5.0
-        cam_pos       = center - vertical_dir * lift
-
-        camera = plotter.camera
-        camera.position        = cam_pos.tolist()
-        camera.focal_point     = center.tolist()
-        camera.up              = view_up.tolist()
+        vertical_dir   = ortho_camera.get_vertical_direction_world()
+        z_range  = max(abs(bounds[5] - bounds[4]), 1.0)
+        lift     = z_range * 5.0
+        cam_pos  = center - vertical_dir * lift
+        camera   = plotter.camera
+        camera.position           = cam_pos.tolist()
+        camera.focal_point        = center.tolist()
+        camera.up                 = view_up.tolist()
         camera.parallel_projection = True
-        camera.parallel_scale  = float(parallel_scale)
-        camera.clipping_range  = (lift * 0.05, lift + z_range * 4.0)
+        camera.parallel_scale     = float(parallel_scale)
+        camera.clipping_range     = (lift * 0.05, lift + z_range * 4.0)
 
     @classmethod
-    def _compute_mesh_visibility_fallback(cls,
-                                          mesh_product: 'AbstractSceneProduct',
-                                          K: np.ndarray,
-                                          R: np.ndarray,
-                                          t: np.ndarray,
-                                          width: int,
-                                          height: int,
-                                          compute_depth_map: bool = True) -> dict:
-        """
-        Fallback: Compute mesh visibility using face-center point sampling.
-        
-        Used when VTK rasterization fails. Less accurate (sparse) but reliable.
-        """
-        logger.info("⚠️ Mesh visibility: Using face-center sampling (fallback)")
-        
+    def _compute_mesh_visibility_fallback(cls, mesh_product, K, R, t, width, height,
+                                          compute_depth_map=True):
+        """Fallback: compute mesh visibility using face-center point sampling."""
+        logger.info("⚠️ Mesh visibility: using face-center sampling (fallback)")
         try:
             face_centers = mesh_product.get_face_centers()
             face_ids = np.arange(len(face_centers), dtype=np.int32)
-            
-            result = cls.compute_visibility(
-                face_centers, K, R, t, width, height,
-                point_ids=face_ids,
-                compute_depth_map=compute_depth_map
-            )
+            result = cls.compute_visibility(face_centers, K, R, t, width, height,
+                                            point_ids=face_ids,
+                                            compute_depth_map=compute_depth_map)
             return result
-            
         except Exception as e:
             logger.warning(f"⚠️ Mesh visibility fallback failed: {e}")
-            return {
-                'index_map': np.full((height, width), -1, dtype=np.int32),
-                'visible_indices': np.array([], dtype=np.int32),
-                'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
-                'inverted_index': None,
-            }
+            return {'index_map': np.full((height, width), -1, dtype=np.int32),
+                    'visible_indices': np.array([], dtype=np.int32),
+                    'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
+                    'inverted_index': None}
 
     @classmethod
-    def compute_visibility(cls, 
-                           points_world: np.ndarray, 
-                           K: np.ndarray, 
-                           R: np.ndarray, 
-                           t: np.ndarray, 
-                           width: int, 
-                           height: int,
-                           point_ids: np.ndarray = None,
-                           compute_depth_map: bool = True) -> dict:
-        """
-        Compute visibility for a cloud of points given camera parameters.
-
-        Args:
-            points_world (np.ndarray): (N, 3) array of 3D points in World Coordinates.
-            K (np.ndarray): (3, 3) Intrinsic matrix.
-            R (np.ndarray): (3, 3) Rotation matrix (World -> Camera).
-            t (np.ndarray): (3,) Translation vector (World -> Camera).
-            width (int): Image width.
-            height (int): Image height.
-            point_ids (np.ndarray, optional): (N,) array of global IDs. 
-                                              If None, indices 0..N-1 are used.
-
-        Returns:
-            dict: {
-                'index_map': (H, W) int32 array. Pixel value is Point ID or -1.
-                'visible_indices': (M,) int32 array. Unique IDs of visible points.
-            }
-        """
+    def compute_visibility(cls, points_world, K, R, t, width, height,
+                           point_ids=None, compute_depth_map=True):
+        """Compute visibility for a cloud of points given camera parameters."""
         perf_counter = time.perf_counter
         start_time = perf_counter()
         log_section("👁️  POINT CLOUD VISIBILITY COMPUTATION", logger)
-        
-        # Default point IDs if not provided
         if point_ids is None:
             point_ids = np.arange(len(points_world), dtype=np.int32)
-        
         logger.info(f"   Points: {len(points_world):,} | Render: {width}x{height} pixels")
 
-        # 1. Prefer PyTorch (CUDA or CPU)
         if HAS_TORCH:
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
             logger.info(f"   Using {device.upper()} backend")
             compute_start = perf_counter()
-            result = cls._compute_torch(points_world, 
-                                        point_ids, 
-                                        K, R, t, 
-                                        width,
-                                        height, 
-                                        device, 
-                                        compute_depth_map=compute_depth_map)
+            result = cls._compute_torch(points_world, point_ids, K, R, t,
+                                        width, height, device, compute_depth_map=compute_depth_map)
             compute_time = perf_counter() - compute_start
         else:
-            # 2. Fallback to NumPy if Torch is missing
-            device = 'numpy'
-            logger.info(f"   Using NUMPY backend (PyTorch not available)")
+            logger.info("   Using NUMPY backend (PyTorch not available)")
             compute_start = perf_counter()
-            result = cls._compute_numpy(points_world, 
-                                        point_ids, 
-                                        K, R, t, 
-                                        width, 
-                                        height, 
-                                        compute_depth_map=compute_depth_map)
+            result = cls._compute_numpy(points_world, point_ids, K, R, t,
+                                        width, height, compute_depth_map=compute_depth_map)
             compute_time = perf_counter() - compute_start
-        # Normalize result dtypes for consistency (index_map int32, depth_map float16)
-        result = cls._normalize_result_dict(result, compute_depth_map)
 
+        result = cls._normalize_result_dict(result, compute_depth_map)
         total_time = perf_counter() - start_time
         visible_count = len(result['visible_indices'])
         coverage = np.sum(result['index_map'] >= 0) / (width * height) * 100
-        
-        log_summary(
-            "Point Cloud Visibility",
-            [
-                f"   - Computation (Z-buffer): {compute_time:.4f}s",
-                f"   - Total Time            : {total_time:.4f}s",
-                f"   - Result: {visible_count:,} visible points, {coverage:.1f}% pixel coverage",
-            ],
-            logger,
-        )
-        
+        log_summary("Point Cloud Visibility",
+                    [f"   - Computation (Z-buffer): {compute_time:.4f}s",
+                     f"   - Total Time            : {total_time:.4f}s",
+                     f"   - Result: {visible_count:,} visible points, {coverage:.1f}% pixel coverage"],
+                    logger)
         return result
 
     @classmethod
-    def compute_batch_visibility(cls, 
-                                 points_world: np.ndarray, 
-                                 camera_params_list: list,
-                                 point_ids: np.ndarray = None,
-                                 compute_depth_map: bool = True) -> list:
+    def compute_batch_visibility(cls, points_world, camera_params_list,
+                                 point_ids=None, compute_depth_map=True):
         perf_counter = time.perf_counter
         start_time = perf_counter()
         log_section("👁️  BATCH POINT CLOUD VISIBILITY COMPUTATION (STREAMING MODE)", logger)
-        
         N_total = len(points_world)
         if point_ids is None:
             point_ids = np.arange(N_total, dtype=np.int32)
-        
         logger.info(f"   Points: {N_total:,} | Cameras: {len(camera_params_list)}")
-
         if not HAS_TORCH:
-            # Fallback to numpy (omitted for brevity, keep your existing numpy fallback)
-            pass 
-
+            pass
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
         logger.info(f"   Using {device.upper()} backend")
-        
         M = len(camera_params_list)
         results = []
-
-        # Stream 100 million points (~1.2 GB) to the GPU at a time. 
-        # Change this based on your hardware, but 100M is a very safe sweet spot.
-        CHUNK_SIZE = 100_000_000 
+        CHUNK_SIZE = 100_000_000
 
         for i in range(M):
             cam_start = perf_counter()
             K_np, R_np, t_np, width, height = camera_params_list[i]
-            
-            # Load camera matrices to GPU
             K = torch.as_tensor(K_np, dtype=torch.float32, device=device)
             R = torch.as_tensor(R_np, dtype=torch.float32, device=device)
             t = torch.as_tensor(t_np, dtype=torch.float32, device=device)
-            
-            # Initialize the MASTER Z-buffer and Index Map for this camera
-            # This takes very little memory (O(width * height))
-            global_z_buffer = torch.full((height * width,), float('inf'), device=device, dtype=torch.float32)
-            global_index_map = torch.full((height * width,), -1, device=device, dtype=torch.int32)
-
-            # Local buffers reused each chunk (pre-allocated once per camera)
-            local_z_buffer  = torch.empty((height * width,), device=device, dtype=torch.float32)
-            local_index_map = torch.empty((height * width,), device=device, dtype=torch.int32)
-
-            logger.info(f'   -> Processing {cam_label(i + 1)}/{M} in chunks...')
+            global_z_buffer  = torch.full((height*width,), float('inf'), device=device, dtype=torch.float32)
+            global_index_map = torch.full((height*width,), -1, device=device, dtype=torch.int32)
+            local_z_buffer   = torch.empty((height*width,), device=device, dtype=torch.float32)
+            local_index_map  = torch.empty((height*width,), device=device, dtype=torch.int32)
+            logger.info(f'   -> Processing {cam_label(i+1)}/{M} in chunks...')
 
             for start_idx in range(0, N_total, CHUNK_SIZE):
-                end_idx = min(start_idx + CHUNK_SIZE, N_total)
-
+                end_idx   = min(start_idx + CHUNK_SIZE, N_total)
                 chunk_pts = torch.as_tensor(points_world[start_idx:end_idx], dtype=torch.float32, device=device)
                 chunk_ids = torch.as_tensor(point_ids[start_idx:end_idx], dtype=torch.int32, device=device)
-
-                # Project: camera space
                 points_cam = chunk_pts @ R.T + t
-                x, y, z = points_cam[:, 0], points_cam[:, 1], points_cam[:, 2]
-
-                # Project to pixel coords
-                u = K[0, 0] * x / z + K[0, 2]
-                v = K[1, 1] * y / z + K[1, 2]
-
+                x, y, z = points_cam[:,0], points_cam[:,1], points_cam[:,2]
+                u = K[0,0]*x/z + K[0,2]; v = K[1,1]*y/z + K[1,2]
                 u_idx, v_idx = u.round().long(), v.round().long()
-
-                valid_mask = (u_idx >= 0) & (u_idx < width) & (v_idx >= 0) & (v_idx < height) & (z > 0)
-
-                valid_u, valid_v, valid_z = u_idx[valid_mask], v_idx[valid_mask], z[valid_mask]
-                valid_ids = chunk_ids[valid_mask]
-
+                valid_mask = (u_idx>=0)&(u_idx<width)&(v_idx>=0)&(v_idx<height)&(z>0)
+                valid_u, valid_v, valid_z, valid_ids = u_idx[valid_mask], v_idx[valid_mask], z[valid_mask], chunk_ids[valid_mask]
                 if valid_ids.numel() == 0:
-                    del chunk_pts, chunk_ids, points_cam, x, y, z, u, v, u_idx, v_idx, valid_mask
                     continue
-
                 flat_indices = valid_v * width + valid_u
-
-                # Z-buffer: keep minimum depth per pixel within this chunk
                 local_z_buffer.fill_(float('inf'))
-                try:
-                    local_z_buffer.scatter_reduce_(0, flat_indices, valid_z, reduce='amin', include_self=True)
-                except AttributeError:
-                    raise RuntimeError('PyTorch version too old for scatter_reduce_.')
-
+                local_z_buffer.scatter_reduce_(0, flat_indices, valid_z, reduce='amin', include_self=True)
                 is_closest = torch.abs(valid_z - local_z_buffer[flat_indices]) < 0.0001
-
                 local_index_map.fill_(-1)
                 local_index_map[flat_indices[is_closest]] = valid_ids[is_closest]
-
-                # Merge chunk result into master buffers
                 won_mask = local_z_buffer < global_z_buffer
-                global_z_buffer[won_mask] = local_z_buffer[won_mask]
+                global_z_buffer[won_mask]  = local_z_buffer[won_mask]
                 global_index_map[won_mask] = local_index_map[won_mask]
-
-                del chunk_pts, chunk_ids, points_cam, x, y, z, u, v, u_idx, v_idx, valid_mask
-                del valid_u, valid_v, valid_z, valid_ids, flat_indices, is_closest, won_mask
+                del chunk_pts, chunk_ids, points_cam, x, y, z, u, v, u_idx, v_idx
+                del valid_mask, valid_u, valid_v, valid_z, valid_ids, flat_indices, is_closest, won_mask
 
             visible_indices = torch.unique(global_index_map[global_index_map != -1], sorted=True)
-
             if compute_depth_map:
                 try:
                     global_z_buffer[global_z_buffer == float('inf')] = float('nan')
@@ -2162,79 +1865,35 @@ class VisibilityManager:
                     depth_map_np = np.full((height, width), np.nan, dtype=np.float32)
             else:
                 depth_map_np = None
-
             index_map_np = global_index_map.view(height, width).cpu().numpy()
-
-            results.append({
-                'index_map':       index_map_np,
-                'visible_indices': visible_indices.cpu().numpy(),
-                'depth_map':       depth_map_np,
-                'inverted_index':  VisibilityManager._build_inverted_index(index_map_np),
-            })
-
-            log_cam_complete(cam_label(i + 1), perf_counter() - cam_start, logger)
-
-            del K, R, t, global_z_buffer, global_index_map, visible_indices
-            del local_z_buffer, local_index_map
+            results.append({'index_map': index_map_np, 'visible_indices': visible_indices.cpu().numpy(),
+                             'depth_map': depth_map_np,
+                             'inverted_index': VisibilityManager._build_inverted_index(index_map_np)})
+            log_cam_complete(cam_label(i+1), perf_counter() - cam_start, logger)
+            del K, R, t, global_z_buffer, global_index_map, visible_indices, local_z_buffer, local_index_map
 
         if device == 'cuda':
             torch.cuda.empty_cache()
-
         logger.info(f'\n   - Total Time: {perf_counter() - start_time:.4f}s')
-
         return results
 
     @staticmethod
     def _compute_torch(points_np, ids_np, K_np, R_np, t_np, width, height,
                        device='cpu', compute_depth_map=False):
-        """
-        PyTorch-based visibility computation.
-        Uses scatter_reduce_ for efficient Z-buffering.
-        Works on 'cuda' (fastest) and 'cpu' (via PyTorch tensors).
-        """
-        stage_times = {}
-        overall_start = time.time()
-
-        # --- Transfer ---
-        xfer_start = time.time()
+        """PyTorch-based visibility via scatter_reduce_ Z-buffering."""
         points = torch.as_tensor(points_np, dtype=torch.float32, device=device)
         p_ids  = torch.as_tensor(ids_np,    dtype=torch.int32,   device=device)
         K = torch.as_tensor(K_np, dtype=torch.float32, device=device)
         R = torch.as_tensor(R_np, dtype=torch.float32, device=device)
         t = torch.as_tensor(t_np, dtype=torch.float32, device=device)
-        stage_times['transfer'] = time.time() - xfer_start
 
-        # --- Transform ---
-        transform_start = time.time()
         points_cam = points @ R.T + t
-        stage_times['transform'] = time.time() - transform_start
-
-        x_cam = points_cam[:, 0]
-        y_cam = points_cam[:, 1]
-        z_cam = points_cam[:, 2]
-
-        # --- Projection ---
-        proj_start = time.time()
-        u = K[0, 0] * x_cam / z_cam + K[0, 2]
-        v = K[1, 1] * y_cam / z_cam + K[1, 2]
-        stage_times['projection'] = time.time() - proj_start
-
-        # --- Bounds filter ---
-        bounds_start = time.time()
-        u_idx = u.round().long()
-        v_idx = v.round().long()
-
-        valid_mask = (
-            (u_idx >= 0) & (u_idx < width) &
-            (v_idx >= 0) & (v_idx < height) &
-            (z_cam > 0)
-        )
-
-        valid_u   = u_idx[valid_mask]
-        valid_v   = v_idx[valid_mask]
-        valid_z   = z_cam[valid_mask]
-        valid_ids = p_ids[valid_mask]
-        stage_times['bounds'] = time.time() - bounds_start
+        x_cam, y_cam, z_cam = points_cam[:,0], points_cam[:,1], points_cam[:,2]
+        u = K[0,0]*x_cam/z_cam + K[0,2]
+        v = K[1,1]*y_cam/z_cam + K[1,2]
+        u_idx, v_idx = u.round().long(), v.round().long()
+        valid_mask = (u_idx>=0)&(u_idx<width)&(v_idx>=0)&(v_idx<height)&(z_cam>0)
+        valid_u, valid_v, valid_z, valid_ids = u_idx[valid_mask], v_idx[valid_mask], z_cam[valid_mask], p_ids[valid_mask]
 
         if valid_ids.numel() == 0:
             return VisibilityManager._normalize_result_dict({
@@ -2244,44 +1903,31 @@ class VisibilityManager:
                 'inverted_index': None,
             }, compute_depth_map)
 
-        # --- Z-buffer ---
-        zbuf_start = time.time()
         flat_indices = valid_v * width + valid_u
-
-        z_buffer = torch.full((height * width,), float('inf'), device=device, dtype=torch.float32)
+        z_buffer = torch.full((height*width,), float('inf'), device=device, dtype=torch.float32)
         try:
             z_buffer.scatter_reduce_(0, flat_indices, valid_z, reduce='amin', include_self=True)
         except AttributeError:
-            warnings.warn('PyTorch version too old for scatter_reduce_. Falling back to NumPy implementation.')
+            warnings.warn('PyTorch version too old for scatter_reduce_. Falling back to NumPy.')
             return VisibilityManager._compute_numpy(points_np, ids_np, K_np, R_np, t_np, width, height)
 
-        min_z_at_pixel = z_buffer[flat_indices]
-        is_closest = torch.abs(valid_z - min_z_at_pixel) < 0.0001
-
+        is_closest = torch.abs(valid_z - z_buffer[flat_indices]) < 0.0001
         final_pixel_indices = flat_indices[is_closest]
         final_ids           = valid_ids[is_closest]
-        stage_times['zbuffer'] = time.time() - zbuf_start
 
-        # --- Output ---
-        output_start = time.time()
-        index_map_tensor = torch.full((height * width,), -1, device=device, dtype=torch.int32)
+        index_map_tensor = torch.full((height*width,), -1, device=device, dtype=torch.int32)
         index_map_tensor[final_pixel_indices] = final_ids
-
-        index_map_2d    = index_map_tensor.view(height, width)
+        index_map_np    = index_map_tensor.view(height, width).cpu().numpy()
         visible_indices = torch.unique(final_ids, sorted=True)
 
         if compute_depth_map:
             try:
                 z_buffer[z_buffer == float('inf')] = float('nan')
-                depth_map_2d = z_buffer.view(height, width)
-                depth_map_np = depth_map_2d.cpu().numpy()
+                depth_map_np = z_buffer.view(height, width).cpu().numpy()
             except Exception:
                 depth_map_np = np.full((height, width), np.nan, dtype=np.float32)
         else:
             depth_map_np = None
-
-        index_map_np = index_map_2d.cpu().numpy()
-        stage_times['output'] = time.time() - output_start
 
         if str(device) == 'cuda':
             torch.cuda.empty_cache()
@@ -2295,45 +1941,16 @@ class VisibilityManager:
 
     @staticmethod
     def _compute_numpy(points, ids, K, R, t, width, height, compute_depth_map=False):
-        """
-        CPU-based visibility computation (Legacy / Fallback).
-        Uses 'Sort by Depth' optimization to handle occlusion efficiently without loops.
-        """
-        stage_times = {}
-        overall_start = time.time()
-
-        # --- Transform ---
-        transform_start = time.time()
+        """CPU-based visibility via sort-by-depth Z-buffering (fallback)."""
         points_cam = points @ R.T + t
-        stage_times['transform'] = time.time() - transform_start
-
-        x_cam = points_cam[:, 0]
-        y_cam = points_cam[:, 1]
-        z_cam = points_cam[:, 2]
-
-        # --- Projection ---
-        proj_start = time.time()
+        x_cam, y_cam, z_cam = points_cam[:,0], points_cam[:,1], points_cam[:,2]
         with np.errstate(divide='ignore', invalid='ignore'):
-            u = K[0, 0] * x_cam / z_cam + K[0, 2]
-            v = K[1, 1] * y_cam / z_cam + K[1, 2]
-        stage_times['projection'] = time.time() - proj_start
-
-        # --- Bounds filter ---
-        bounds_start = time.time()
+            u = K[0,0]*x_cam/z_cam + K[0,2]
+            v = K[1,1]*y_cam/z_cam + K[1,2]
         u_idx = np.rint(u).astype(np.int32)
         v_idx = np.rint(v).astype(np.int32)
-
-        valid_mask = (
-            (u_idx >= 0) & (u_idx < width) &
-            (v_idx >= 0) & (v_idx < height) &
-            (z_cam > 0)
-        )
-
-        u_valid  = u_idx[valid_mask]
-        v_valid  = v_idx[valid_mask]
-        z_valid  = z_cam[valid_mask]
-        id_valid = ids[valid_mask]
-        stage_times['bounds'] = time.time() - bounds_start
+        valid_mask = (u_idx>=0)&(u_idx<width)&(v_idx>=0)&(v_idx<height)&(z_cam>0)
+        u_valid, v_valid, z_valid, id_valid = u_idx[valid_mask], v_idx[valid_mask], z_cam[valid_mask], ids[valid_mask]
 
         if len(id_valid) == 0:
             return VisibilityManager._normalize_result_dict({
@@ -2343,23 +1960,13 @@ class VisibilityManager:
                 'inverted_index': None,
             }, compute_depth_map)
 
-        # --- Z-buffer (sort-by-depth) ---
-        sort_order = np.argsort(z_valid)[::-1]   # farthest first so closer overwrites
-
-        u_sorted  = u_valid[sort_order]
-        v_sorted  = v_valid[sort_order]
-        id_sorted = id_valid[sort_order]
-        z_sorted  = z_valid[sort_order]
-
+        sort_order = np.argsort(z_valid)[::-1]
         index_map = np.full((height, width), -1, dtype=np.int32)
         depth_map = np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None
-
-        index_map[v_sorted, u_sorted] = id_sorted
+        index_map[v_valid[sort_order], u_valid[sort_order]] = id_valid[sort_order]
         if compute_depth_map:
-            depth_map[v_sorted, u_sorted] = z_sorted.astype(np.float32)
-
+            depth_map[v_valid[sort_order], u_valid[sort_order]] = z_valid[sort_order].astype(np.float32)
         visible_indices = np.unique(index_map[index_map != -1])
-
         return VisibilityManager._normalize_result_dict({
             'index_map':      index_map,
             'visible_indices': visible_indices,

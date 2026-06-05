@@ -4172,7 +4172,7 @@ class MVATManager(QObject):
                       [0.0, fy, h / 2.0],
                       [0.0, 0.0, 1.0]], dtype=np.float64)
 
-        # 3. Build index map on the fly
+        # 3. Build index map via moderngl — stays on GPU when CUDA is available.
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             result = VisibilityManager.compute_visibility_from_scene(
@@ -4184,10 +4184,23 @@ class MVATManager(QObject):
         finally:
             QApplication.restoreOverrideCursor()
 
-        index_map    = result.get('index_map',    np.full((h, w), -1, dtype=np.int32))
-        depth_map    = result.get('depth_map',    None)
-        element_type = result.get('element_type', 'point')
-        return rgb, index_map, depth_map, element_type
+        index_map     = result.get('index_map',     np.full((h, w), -1, dtype=np.int32))
+        index_map_gpu = result.get('index_map_gpu', None)   # CUDA int32 tensor or None
+        depth_map     = result.get('depth_map',     None)
+        element_type  = result.get('element_type',  'point')
+
+        # 4. Upload the VTK RGB snapshot to the GPU immediately so SAM's image
+        #    encoder can run without a separate PCIe transfer.
+        rgb_gpu = None
+        try:
+            import torch
+            if torch.cuda.is_available():
+                rgb_gpu = torch.from_numpy(rgb).cuda()   # (H, W, 3) uint8 on CUDA
+                logger.info("🖼️  [SAM] RGB snapshot on GPU: %s", tuple(rgb_gpu.shape))
+        except Exception as _e:
+            logger.warning("⚠️  [SAM] Could not upload RGB to GPU: %s", _e)
+
+        return rgb, index_map, index_map_gpu, rgb_gpu, depth_map, element_type
 
     def launch_viewer_sam(self):
         """Launch the MVAT-SAM dialog for the current 3D view (called on Space)."""
@@ -4211,30 +4224,51 @@ class MVATManager(QObject):
             return
 
         self.main_window.status_bar.showMessage(
-            'MVAT-SAM: building index map for current view...', 0)
+            'MVAT-SAM: building index map (moderngl)...', 0)
         QApplication.processEvents()
         try:
-            rgb, index_map, depth_map, element_type = self._capture_viewer_sam_context(scale=1)
+            rgb, index_map, index_map_gpu, rgb_gpu, depth_map, element_type = (
+                self._capture_viewer_sam_context(scale=1)
+            )
         except Exception as e:
             self.main_window.status_bar.showMessage(
                 f'MVAT-SAM: capture failed - {e}', 5000)
             return
 
-        sam_dialog.set_image(rgb, image_path=None)
+        # Feed SAM the GPU tensor directly when available — skips a PCIe upload
+        # inside the predictor.  Fall back to numpy if CUDA isn't active.
+        try:
+            if rgb_gpu is not None and hasattr(sam_dialog, 'set_image'):
+                sam_dialog.set_image(rgb_gpu, image_path=None)
+            else:
+                sam_dialog.set_image(rgb, image_path=None)
+        except Exception:
+            # Some SAM backends don't accept tensors — retry with numpy
+            sam_dialog.set_image(rgb, image_path=None)
+
+        logger.info(
+            "🎯 [MVAT-SAM] Index map: %s | GPU tensor: %s | element_type: %s",
+            index_map.shape,
+            "yes" if index_map_gpu is not None else "no",
+            element_type,
+        )
 
         dlg = SAMTool3D(
             viewer=self.viewer,
             rgb_image=rgb,
             index_map=index_map,
+            index_map_gpu=index_map_gpu,
             element_type=element_type,
             sam_dialog=sam_dialog,
             label=selected_label,
         )
+
         def _on_accepted(mask):
-            # Re-read the current label at accept time (user may have changed it)
             live_label = (getattr(self.annotation_window, 'selected_label', None)
                           or selected_label)
-            self._on_viewer_sam_accepted(mask, index_map, depth_map, element_type, live_label)
+            self._on_viewer_sam_accepted(
+                mask, index_map, index_map_gpu, depth_map, element_type, live_label
+            )
 
         dlg.maskAccepted.connect(_on_accepted)
         dlg.exec_()
@@ -4242,10 +4276,9 @@ class MVATManager(QObject):
 
     def cleanup(self):
         """Clean up resources before closing."""
-        self._on_multi_annotate_toggled(False)  # Disconnect all propagation hooks
+        self._on_multi_annotate_toggled(False)
         self.mouse_bridge.cleanup()
 
-        # Stop label painter thread if running
         try:
             if self._label_painter_thread is not None:
                 try:
@@ -4257,7 +4290,6 @@ class MVATManager(QObject):
         except Exception:
             pass
 
-        # Stop any active visibility worker threads cleanly
         for thread, worker in list(self._active_workers):
             try:
                 thread.quit()
