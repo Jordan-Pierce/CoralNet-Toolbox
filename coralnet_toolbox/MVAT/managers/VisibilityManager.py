@@ -903,14 +903,27 @@ class VisibilityManager:
             if isinstance(primary_target, PointCloudProduct):
                 points = primary_target.get_points_array()
                 if points is not None:
-                    result = cls.compute_visibility(points, K, R, t, width, height,
-                                                    compute_depth_map=compute_depth_map)
+                    result = cls.compute_point_cloud_visibility(points, K, R, t, width, height,
+                                                                compute_depth_map=compute_depth_map)
                     result['element_type'] = 'point'
                     return result
 
         elif element_type == 'face':
-            result = cls._compute_mesh_visibility(primary_target, K, R, t, width, height,
-                                                  compute_depth_map=compute_depth_map)
+            # Mesh visibility with ModernGL primary, VTK fallback
+            try:
+                results = cls.compute_batch_mesh_visibility_moderngl(
+                    primary_target, [(K, R, t, width, height)],
+                    compute_depth_map=compute_depth_map,
+                    pixel_budget=None,
+                )
+                result = results[0]
+            except Exception as _mgl_err:
+                logger.warning("⚠️  moderngl single-camera rasterization failed (%s); falling back to VTK", _mgl_err)
+                result = cls._compute_mesh_visibility_vtk(
+                    primary_target, K, R, t, width, height,
+                    compute_depth_map=compute_depth_map,
+                    pixel_budget=None,
+                )
             result['element_type'] = 'face'
             return result
 
@@ -924,30 +937,6 @@ class VisibilityManager:
         }, compute_depth_map)
 
     @classmethod
-    def _compute_mesh_visibility(cls,
-                                 mesh_product,
-                                 K: np.ndarray,
-                                 R: np.ndarray,
-                                 t: np.ndarray,
-                                 width: int,
-                                 height: int,
-                                 compute_depth_map: bool = True,
-                                 pixel_budget: Optional[int] = None) -> dict:
-        """Single-camera mesh visibility — moderngl primary, VTK fallback."""
-        try:
-            results = cls.compute_batch_mesh_visibility_moderngl(
-                mesh_product, [(K, R, t, width, height)],
-                compute_depth_map=compute_depth_map,
-                pixel_budget=pixel_budget,
-            )
-            return results[0]
-        except Exception as _mgl_err:
-            logger.warning("⚠️  moderngl single-camera rasterization failed (%s); falling back to VTK", _mgl_err)
-            return cls._compute_mesh_visibility_vtk(
-                mesh_product, K, R, t, width, height,
-                compute_depth_map=compute_depth_map,
-                pixel_budget=pixel_budget,
-            )
 
     @classmethod
     def _compute_mesh_visibility_vtk(cls,
@@ -1878,9 +1867,9 @@ class VisibilityManager:
         try:
             face_centers = mesh_product.get_face_centers()
             face_ids = np.arange(len(face_centers), dtype=np.int32)
-            result = cls.compute_visibility(face_centers, K, R, t, width, height,
-                                            point_ids=face_ids,
-                                            compute_depth_map=compute_depth_map)
+            result = cls.compute_point_cloud_visibility(face_centers, K, R, t, width, height,
+                                                        point_ids=face_ids,
+                                                        compute_depth_map=compute_depth_map)
             return result
         except Exception as e:
             logger.warning(f"⚠️ Mesh visibility fallback failed: {e}")
@@ -1890,9 +1879,9 @@ class VisibilityManager:
                     'inverted_index': None}
 
     @classmethod
-    def compute_visibility(cls, points_world, K, R, t, width, height,
-                           point_ids=None, compute_depth_map=True):
-        """Compute visibility for a cloud of points given camera parameters."""
+    def compute_point_cloud_visibility(cls, points_world, K, R, t, width, height,
+                                       point_ids=None, compute_depth_map=True):
+        """Compute visibility for a cloud of points given single camera parameters."""
         perf_counter = time.perf_counter
         start_time = perf_counter()
         log_section("👁️  POINT CLOUD VISIBILITY COMPUTATION", logger)
@@ -1926,8 +1915,8 @@ class VisibilityManager:
         return result
 
     @classmethod
-    def compute_batch_visibility(cls, points_world, camera_params_list,
-                                 point_ids=None, compute_depth_map=True):
+    def compute_batch_point_cloud_visibility(cls, points_world, camera_params_list,
+                                             point_ids=None, compute_depth_map=True):
         perf_counter = time.perf_counter
         start_time = perf_counter()
         log_section("👁️  BATCH POINT CLOUD VISIBILITY COMPUTATION (STREAMING MODE)", logger)

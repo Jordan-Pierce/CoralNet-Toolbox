@@ -9,7 +9,12 @@
       "Bash(Select-Object -ExpandProperty FullName)",
       "Bash(cat)",
       "Read(//tmp/**)",
-      "Bash(git checkout *)"
+      "Bash(git checkout *)",
+      "PowerShell(python -c \"import ast; ast.parse\\(open\\('coralnet_toolbox/MVAT/managers/PropagationEngine.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(cat > *)"
+    ],
+    "additionalDirectories": [
+      "\\tmp"
     ]
   }
 }

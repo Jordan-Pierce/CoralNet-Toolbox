@@ -452,7 +452,7 @@ class VisibilityWorker(QObject):
                         paths = list(perspective_params.keys())
                         params_list = list(perspective_params.values())
 
-                        batch_results = VisibilityManager.compute_batch_visibility(
+                        batch_results = VisibilityManager.compute_batch_point_cloud_visibility(
                             points_world=points_world,
                             camera_params_list=params_list,
                             point_ids=element_ids,
