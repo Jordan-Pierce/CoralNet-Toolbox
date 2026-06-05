@@ -64,7 +64,6 @@ class SAMTool3D(QDialog):
     viewer        : MVATViewer
     rgb_image     : np.ndarray (H, W, 3) uint8
     index_map     : np.ndarray (H, W) int32
-    index_map_gpu : torch.Tensor (H, W) int32 on CUDA, or None
     element_type  : str
     sam_dialog    : DeployPredictorDialog
     label         : Label  (initial; re-read live from annotation_window each prediction)
@@ -73,15 +72,13 @@ class SAMTool3D(QDialog):
     maskAccepted = pyqtSignal(object)   # np.ndarray bool (H x W)
 
     def __init__(self, viewer, rgb_image: np.ndarray, index_map: np.ndarray,
-                 element_type: str, sam_dialog, label,
-                 index_map_gpu=None, parent=None):
+                 element_type: str, sam_dialog, label, parent=None):
         super().__init__(parent, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setModal(False)
 
         self._viewer         = viewer
         self._rgb            = rgb_image
         self._index_map      = index_map
-        self._index_map_gpu  = index_map_gpu   # CUDA tensor or None
         self._elem_type      = element_type
         self._sam            = sam_dialog
         self._label          = label

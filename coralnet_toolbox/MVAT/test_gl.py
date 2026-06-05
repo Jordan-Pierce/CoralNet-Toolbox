@@ -57,7 +57,6 @@ def test_single_camera_moderngl():
     print(f"Face pixels: {face_px:,} | Background: {bg_px:,}")
     print(f"Visible faces: {len(r['visible_indices']):,}")
     print(f"Depth map: {r['depth_map'].shape if r['depth_map'] is not None else 'None'}")
-    print(f"GPU tensor (index_map_gpu): {r['index_map_gpu'] is not None}")
     print(f"Render time: {elapsed*1000:.1f}ms")
 
     assert face_px > 10000, f"❌ Too few face pixels: {face_px}"

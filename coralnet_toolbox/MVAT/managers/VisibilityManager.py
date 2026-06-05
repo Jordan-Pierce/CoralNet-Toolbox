@@ -506,9 +506,7 @@ class VisibilityManager:
     ) -> list:
         """GPU rasterization via moderngl with zero-PCIe CUDA-GL framebuffer readback.
 
-        Each result dict includes 'index_map_gpu' — a CUDA int32 tensor that stays
-        on the GPU so callers (e.g. SAM) can do mask→face-ID lookups without a
-        PCIe upload.
+        Returns a list of result dicts with 'index_map', 'visible_indices', 'depth_map', etc.
         """
         import time
         perf_counter = time.perf_counter
@@ -583,7 +581,6 @@ class VisibilityManager:
                 if crop_status == "OFF_SCREEN":
                     results.append(cls._normalize_result_dict({
                         'index_map':      np.full((render_h, render_w), -1, dtype=np.int32),
-                        'index_map_gpu':  None,
                         'visible_indices': np.array([], dtype=np.int32),
                         'depth_map':      np.full((render_h, render_w), np.nan, dtype=np.float32) if compute_depth_map else None,
                         'inverted_index': None,
@@ -634,7 +631,6 @@ class VisibilityManager:
             t_decode = perf_counter() - t0
 
             crop_depth_map = None
-            crop_index_tensor_gpu = None
             if compute_depth_map:
                 logger.info(f"      → Computing depth map for camera {camera_index_offset + i + 1}")
                 # Read depth texture directly from FBO depth attachment
@@ -659,22 +655,9 @@ class VisibilityManager:
                     logger.warning(f"      ⚠️ Depth map extraction failed ({depth_err}); skipping depth")
                     crop_depth_map = None
 
-                if HAS_TORCH and torch.cuda.is_available():
-                    crop_index_tensor_gpu = torch.from_numpy(crop_index_map).int().cuda()
-
             # Paste crop back into full canvas
             full_index_map = np.full((render_h, render_w), -1, dtype=np.int32)
             full_index_map[v_min:v_min + crop_h, u_min:u_min + crop_w] = crop_index_map
-
-            # GPU tensor — stays on CUDA for downstream consumers (e.g. SAM lookup)
-            full_index_map_gpu = None
-            if HAS_TORCH and torch.cuda.is_available():
-                full_index_map_gpu = torch.full(
-                    (render_h, render_w), -1, dtype=torch.int32, device='cuda'
-                )
-                if crop_index_tensor_gpu is None:
-                    crop_index_tensor_gpu = torch.from_numpy(crop_index_map).int().cuda()
-                full_index_map_gpu[v_min:v_min + crop_h, u_min:u_min + crop_w] = crop_index_tensor_gpu
 
             full_depth_map = None
             if compute_depth_map:
@@ -688,16 +671,10 @@ class VisibilityManager:
                 full_index_map = _cv2.resize(full_index_map, (width, height), interpolation=_cv2.INTER_NEAREST)
                 if full_depth_map is not None:
                     full_depth_map = _cv2.resize(full_depth_map, (width, height), interpolation=_cv2.INTER_NEAREST)
-                if full_index_map_gpu is not None:
-                    full_index_map_gpu = full_index_map_gpu.unsqueeze(0).unsqueeze(0).float()
-                    full_index_map_gpu = torch.nn.functional.interpolate(
-                        full_index_map_gpu, size=(height, width), mode='nearest'
-                    ).squeeze().to(torch.int32)
                 result_scale = 1.0
 
             results.append(cls._normalize_result_dict({
                 'index_map':       full_index_map,
-                'index_map_gpu':   full_index_map_gpu,
                 'visible_indices': visible_indices,
                 'depth_map':       full_depth_map,
                 'inverted_index':  None,

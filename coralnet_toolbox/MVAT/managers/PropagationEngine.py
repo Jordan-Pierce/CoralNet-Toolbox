@@ -2408,7 +2408,7 @@ class PropagationEngine(QObject):
                 except Exception:
                     pass
 
-    def _on_viewer_sam_accepted(self, binary_mask, index_map, index_map_gpu, depth_map, element_type, label):
+    def _on_viewer_sam_accepted(self, binary_mask, index_map, depth_map, element_type, label):
         """Convert mask pixels to element IDs and propagate to target cameras.
 
         When multi_annotate_enabled is True: paints the primary annotation-window

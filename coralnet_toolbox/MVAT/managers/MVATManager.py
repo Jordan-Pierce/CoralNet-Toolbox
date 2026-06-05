@@ -4163,11 +4163,10 @@ class MVATManager(QObject):
             QApplication.restoreOverrideCursor()
 
         index_map     = result.get('index_map',     np.full((h, w), -1, dtype=np.int32))
-        index_map_gpu = result.get('index_map_gpu', None)   # CUDA int32 tensor or None
         depth_map     = result.get('depth_map',     None)
         element_type  = result.get('element_type',  'point')
 
-        return rgb, index_map, index_map_gpu, depth_map, element_type
+        return rgb, index_map, depth_map, element_type
 
     def launch_viewer_sam(self):
         """Launch the MVAT-SAM dialog for the current 3D view (called on Space)."""
@@ -4194,7 +4193,7 @@ class MVATManager(QObject):
             'MVAT-SAM: building index map (moderngl)...', 0)
         QApplication.processEvents()
         try:
-            rgb, index_map, index_map_gpu, depth_map, element_type = (
+            rgb, index_map, depth_map, element_type = (
                 self._capture_viewer_sam_context(scale=1)
             )
         except Exception as e:
@@ -4204,14 +4203,11 @@ class MVATManager(QObject):
 
         # SAM's set_image expects numpy HWC uint8 — it handles its own GPU upload
         # and preprocessing (resize, normalise, BCHW conversion) internally.
-        # We get GPU benefit from index_map_gpu staying on CUDA for the face-ID
-        # lookup after the mask is accepted, not from this encoding step.
         sam_dialog.set_image(rgb, image_path=None)
 
         logger.info(
-            "🎯 [MVAT-SAM] Index map: %s | GPU tensor: %s | element_type: %s",
+            "🎯 [MVAT-SAM] Index map: %s | element_type: %s",
             index_map.shape,
-            "yes" if index_map_gpu is not None else "no",
             element_type,
         )
 
@@ -4219,7 +4215,6 @@ class MVATManager(QObject):
             viewer=self.viewer,
             rgb_image=rgb,
             index_map=index_map,
-            index_map_gpu=index_map_gpu,
             element_type=element_type,
             sam_dialog=sam_dialog,
             label=selected_label,
@@ -4229,7 +4224,7 @@ class MVATManager(QObject):
             live_label = (getattr(self.annotation_window, 'selected_label', None)
                           or selected_label)
             self._on_viewer_sam_accepted(
-                mask, index_map, index_map_gpu, depth_map, element_type, live_label
+                mask, index_map, depth_map, element_type, live_label
             )
 
         dlg.maskAccepted.connect(_on_accepted)
