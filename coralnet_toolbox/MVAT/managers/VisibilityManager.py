@@ -609,16 +609,40 @@ class VisibilityManager:
             # This saves ~3.2ms per camera by avoiding redundant GPU stall.
             t_render = perf_counter() - t0
 
-            t0 = perf_counter()
-            raw = fbo.read(components=1, dtype='i4')
-            shot_int32 = np.frombuffer(raw, dtype=np.int32).reshape(crop_h, crop_w)[::-1].copy()
-            t_readback = perf_counter() - t0
+            # ================================================================
+            # READBACK PHASE: GPU sync + texture transfer + data processing
+            # ================================================================
+            t0_readback_total = perf_counter()
 
-            t0 = perf_counter()
+            # GPU sync: ensure render is complete before readback
+            t0_sync = perf_counter()
+            ctx.finish()
+            t_gpu_sync = perf_counter() - t0_sync
+
+            # Texture readback from GPU to CPU
+            t0_read = perf_counter()
+            raw = fbo.read(components=1, dtype='i4')
+            t_fbo_read = perf_counter() - t0_read
+
+            # Data processing: convert, reshape, flip, copy
+            t0_proc = perf_counter()
+            shot_int32 = np.frombuffer(raw, dtype=np.int32).reshape(crop_h, crop_w)[::-1].copy()
+            t_data_proc = perf_counter() - t0_proc
+
+            t_readback = perf_counter() - t0_readback_total
+
+            # ================================================================
+            # DECODE PHASE: Offset adjustment + visible indices computation
+            # ================================================================
+            t0_decode_total = perf_counter()
+
+            t0_offset = perf_counter()
             crop_index_tensor = shot_int32 - 1
             crop_index_map = crop_index_tensor.cpu().numpy() if hasattr(crop_index_tensor, 'cpu') else crop_index_tensor
+            t_offset_adj = perf_counter() - t0_offset
 
             # Compute visible indices only if requested (skip for ~47ms savings in batch mode)
+            t0_indices = perf_counter()
             if compute_visible_indices:
                 valid_indices = crop_index_map[crop_index_map >= 0]
                 if valid_indices.size > 0:
@@ -627,8 +651,16 @@ class VisibilityManager:
                     visible_indices = np.array([], dtype=np.int32)
             else:
                 visible_indices = np.array([], dtype=np.int32)
+            t_indices_compute = perf_counter() - t0_indices
 
-            t_decode = perf_counter() - t0
+            t_decode = perf_counter() - t0_decode_total
+
+            # Log detailed decode breakdown
+            logger.info(
+                f"      Decode breakdown: Offset={t_offset_adj*1000:.2f}ms | "
+                f"Indices={t_indices_compute*1000:.2f}ms | "
+                f"Total={t_decode*1000:.2f}ms"
+            )
 
             crop_depth_map = None
             if compute_depth_map:
@@ -688,6 +720,13 @@ class VisibilityManager:
             _t_readback_total += t_readback
             _t_decode_total   += t_decode
             # Note: depth and assembly times included in decode/other measurements
+
+            # Log detailed readback breakdown for diagnosis
+            logger.info(
+                f"      Readback breakdown: GPU-sync={t_gpu_sync*1000:.2f}ms | "
+                f"FBO-read={t_fbo_read*1000:.2f}ms | Data-proc={t_data_proc*1000:.2f}ms | "
+                f"Total={t_readback*1000:.2f}ms"
+            )
 
             log_cam_breakdown(
                 cam_label(camera_index_offset + i + 1),
