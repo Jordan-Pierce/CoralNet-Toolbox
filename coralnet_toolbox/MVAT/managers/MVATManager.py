@@ -1770,6 +1770,7 @@ class MVATManager(QObject):
                 batch = VisibilityManager.compute_batch_mesh_visibility_moderngl(
                     mesh_product, camera_params,
                     compute_depth_map=False,
+                    compute_visible_indices=False,
                     pixel_budget=self.pixel_budget,
                     mgl_context=mgl_ctx,
                 )
