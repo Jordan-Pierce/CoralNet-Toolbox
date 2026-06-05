@@ -611,7 +611,7 @@ class VisibilityManager:
 
             t0 = perf_counter()
             raw = fbo.read(components=1, dtype='i4')
-            shot_int32 = np.frombuffer(raw, dtype=np.int32).copy().reshape(crop_h, crop_w)[::-1]
+            shot_int32 = np.frombuffer(raw, dtype=np.int32).reshape(crop_h, crop_w)[::-1].copy()
             t_readback = perf_counter() - t0
 
             t0 = perf_counter()
