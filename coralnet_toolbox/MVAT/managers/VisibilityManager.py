@@ -772,10 +772,13 @@ class VisibilityManager:
             ctx.finish()
             t_gpu_sync = perf_counter() - t0_sync
 
+            # Use FBO directly (no GPU-side flip)
+            fbo_to_read = fbo
+
             # Texture readback from GPU to CPU (tiered encoding)
             t0_read = perf_counter()
             read_dtype = 'i4' if encoding_name == 'int32' else 'u1'
-            raw = fbo.read(components=num_components, dtype=read_dtype)
+            raw = fbo_to_read.read(components=num_components, dtype=read_dtype)
             t_fbo_read = perf_counter() - t0_read
 
             # Data processing: decode, reshape, flip, copy (detailed breakdown)
@@ -785,6 +788,7 @@ class VisibilityManager:
             decoded = decoder(raw, (crop_h, crop_w))
             t_decode_data = perf_counter() - t0_decode_data
 
+            # CPU flip + copy
             t0_flip = perf_counter()
             shot_int32 = decoded[::-1]
             t_flip = perf_counter() - t0_flip

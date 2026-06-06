@@ -16,7 +16,7 @@ from coralnet_toolbox.MVAT.utils.IndexMapCodec import (
     save_index_map_archive,
 )
 
-DISABLE_CACHE = True
+DISABLE_CACHE = False
 
 
 # ---------------------------------------------------------------------------
