@@ -545,7 +545,7 @@ class VisibilityManager:
             ).cuda()
 
         encoding_display = {"r8": "8-bit", "rg16": "16-bit", "rgb24": "24-bit", "int32": "32-bit"}
-        logger.info(
+        logger.debug(
             f"   ✅ moderngl context ready: {n_cells:,} faces ({encoding_display.get(encoding_name, 'unknown')} encoding)"
         )
 
@@ -582,7 +582,21 @@ class VisibilityManager:
         Returns a list of result dicts with 'index_map', 'visible_indices', 'depth_map', etc.
         """
         import time
+        import logging
         perf_counter = time.perf_counter
+
+        # Set up file logging for detailed debug output (disabled by default)
+        # To enable: set environment variable VISIBILITY_DEBUG=1
+        debug_handler = logging.FileHandler('visibility_timing_debug.log', mode='w', encoding='utf-8')
+        debug_handler.setLevel(logging.DEBUG)
+        debug_formatter = logging.Formatter('%(message)s')
+        debug_handler.setFormatter(debug_formatter)
+        logger.addHandler(debug_handler)
+        # Only enable debug logging if explicitly requested
+        import os
+        os.environ.setdefault('VISIBILITY_DEBUG', '1')
+        if os.environ.get('VISIBILITY_DEBUG', '0') == '1':
+            logger.setLevel(logging.DEBUG)
 
         def _scale_for(w, h):
             native = w * h
@@ -628,13 +642,39 @@ class VisibilityManager:
             return fbo_cache[key]
 
         results = []
+        # Accumulators for totals
         _t_render_total     = 0.0
         _t_readback_total   = 0.0
         _t_decode_total     = 0.0
-        _t_setup_total      = 0.0
-        _t_depth_total      = 0.0
         _t_assembly_total   = 0.0
+        _t_setup_total      = 0.0
+        _t_crop_total       = 0.0
+        _t_fbo_total        = 0.0
+        _t_mvp_total        = 0.0
+        _t_python_overhead  = 0.0
         camera_total_sum    = 0.0
+
+        # Min/max trackers for statistics
+        _stats = {
+            'crop': {'min': float('inf'), 'max': 0.0},
+            'fbo': {'min': float('inf'), 'max': 0.0},
+            'mvp': {'min': float('inf'), 'max': 0.0},
+            'render': {'min': float('inf'), 'max': 0.0},
+            'readback': {'min': float('inf'), 'max': 0.0},
+            'gpu_sync': {'min': float('inf'), 'max': 0.0},
+            'fbo_read': {'min': float('inf'), 'max': 0.0},
+            'data_proc': {'min': float('inf'), 'max': 0.0},
+            'decode_data': {'min': float('inf'), 'max': 0.0},
+            'copy': {'min': float('inf'), 'max': 0.0},
+            'decode': {'min': float('inf'), 'max': 0.0},
+            'assembly': {'min': float('inf'), 'max': 0.0},
+            'paste': {'min': float('inf'), 'max': 0.0},
+            'paste_alloc': {'min': float('inf'), 'max': 0.0},
+            'paste_assign': {'min': float('inf'), 'max': 0.0},
+            'dict_build': {'min': float('inf'), 'max': 0.0},
+            'normalize': {'min': float('inf'), 'max': 0.0},
+            'append': {'min': float('inf'), 'max': 0.0},
+        }
 
         for i, (K, R, t, width, height) in enumerate(camera_params_list):
             cam_start = perf_counter()
@@ -651,6 +691,8 @@ class VisibilityManager:
             K_scaled[0, :3] *= dynamic_scale
             K_scaled[1, :3] *= dynamic_scale
 
+            # Viewport cropping calculation
+            t0_crop = perf_counter()
             u_min = v_min = 0
             crop_w, crop_h = render_w, render_h
             if use_viewport_cropping:
@@ -672,21 +714,29 @@ class VisibilityManager:
                     crop_h = v_max - v_min
                     K_scaled[0, 2] -= u_min
                     K_scaled[1, 2] -= v_min
+            t_crop = perf_counter() - t0_crop
 
-            t0_setup = perf_counter()
+            # FBO setup (retrieval/creation + binding)
+            t0_fbo = perf_counter()
             fbo = _get_fbo(crop_w, crop_h)
             fbo.use()
             ctx.viewport = (0, 0, crop_w, crop_h)
             ctx.clear(0.0, 0.0, 0.0, 0.0, depth=1.0)
-            t_setup = perf_counter() - t0_setup
+            t_fbo = perf_counter() - t0_fbo
 
-            t0 = perf_counter()
+            # MVP build + render
+            t0_mvp = perf_counter()
             mvp = _build_mvp(K_scaled, R, t, crop_w, crop_h)
+            t_mvp_build = perf_counter() - t0_mvp
+
+            t0_render = perf_counter()
             prog_int['mvp'].write(mvp.tobytes())
             vao_int.render()
             # NOTE: Removed ctx.finish() — fbo.read() synchronizes implicitly.
             # This saves ~3.2ms per camera by avoiding redundant GPU stall.
-            t_render = perf_counter() - t0
+            t_render = perf_counter() - t0_render
+
+            t_setup = t_crop + t_fbo  # Total setup time
 
             # ================================================================
             # READBACK PHASE: GPU sync + texture transfer + data processing
@@ -704,10 +754,22 @@ class VisibilityManager:
             raw = fbo.read(components=num_components, dtype=read_dtype)
             t_fbo_read = perf_counter() - t0_read
 
-            # Data processing: decode, reshape, flip, copy
-            t0_proc = perf_counter()
-            shot_int32 = decoder(raw, (crop_h, crop_w))[::-1].copy()
-            t_data_proc = perf_counter() - t0_proc
+            # Data processing: decode, reshape, flip, copy (detailed breakdown)
+            t0_proc_total = perf_counter()
+
+            t0_decode_data = perf_counter()
+            decoded = decoder(raw, (crop_h, crop_w))
+            t_decode_data = perf_counter() - t0_decode_data
+
+            t0_flip = perf_counter()
+            shot_int32 = decoded[::-1]
+            t_flip = perf_counter() - t0_flip
+
+            t0_copy = perf_counter()
+            shot_int32 = shot_int32.copy()  # .copy() is fastest way to make flipped view contiguous
+            t_copy = perf_counter() - t0_copy
+
+            t_data_proc = perf_counter() - t0_proc_total
 
             t_readback = perf_counter() - t0_readback_total
 
@@ -735,16 +797,25 @@ class VisibilityManager:
 
             t_decode = perf_counter() - t0_decode_total
 
-            # Log detailed decode breakdown
-            logger.info(
-                f"      Decode breakdown: Offset={t_offset_adj*1000:.2f}ms | "
-                f"Indices={t_indices_compute*1000:.2f}ms | "
-                f"Total={t_decode*1000:.2f}ms"
-            )
+            # Log detailed data-proc breakdown (DEBUG level) — only if debug is enabled
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    f"      Data-proc breakdown: Decode={t_decode_data*1000:.2f}ms | "
+                    f"Flip={t_flip*1000:.2f}ms | Copy={t_copy*1000:.2f}ms | "
+                    f"Total={t_data_proc*1000:.2f}ms"
+                )
+
+                # Log detailed decode breakdown (DEBUG level)
+                logger.debug(
+                    f"      Decode breakdown: Offset={t_offset_adj*1000:.2f}ms | "
+                    f"Indices={t_indices_compute*1000:.2f}ms | "
+                    f"Total={t_decode*1000:.2f}ms"
+                )
 
             crop_depth_map = None
             if compute_depth_map:
-                logger.info(f"      → Computing depth map for camera {camera_index_offset + i + 1}")
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"      → Computing depth map for camera {camera_index_offset + i + 1}")
                 # Read depth texture directly from FBO depth attachment
                 try:
                     # ModernGL depth texture is read without components parameter
@@ -762,21 +833,54 @@ class VisibilityManager:
                     # Mask out the background (where the camera sees nothing)
                     linear_depth[crop_index_map == -1] = np.nan
                     crop_depth_map = linear_depth.astype(np.float32)
-                    logger.info(f"      ✓ Depth map extracted: shape={crop_depth_map.shape}, range=[{np.nanmin(crop_depth_map):.2f}, {np.nanmax(crop_depth_map):.2f}]")
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"      ✓ Depth map extracted: shape={crop_depth_map.shape}, range=[{np.nanmin(crop_depth_map):.2f}, {np.nanmax(crop_depth_map):.2f}]")
                 except Exception as depth_err:
                     logger.warning(f"      ⚠️ Depth map extraction failed ({depth_err}); skipping depth")
                     crop_depth_map = None
 
-            # Paste crop back into full canvas
-            full_index_map = np.full((render_h, render_w), -1, dtype=np.int32)
-            full_index_map[v_min:v_min + crop_h, u_min:u_min + crop_w] = crop_index_map
+            # ================================================================
+            # ASSEMBLY PHASE: Paste, upsample, normalize (overhead timing)
+            # ================================================================
+            t0_assembly = perf_counter()
 
+            # Paste crop back into full canvas (with detailed breakdown)
+            t0_paste = perf_counter()
+
+            t0_alloc = perf_counter()
+            t_alloc = 0.0
+            t0_assign = perf_counter()
+            t_assign = 0.0
+
+            # Fast path: if rendering full-screen, skip allocation and assignment overhead
+            if u_min == 0 and v_min == 0 and crop_w == render_w and crop_h == render_h:
+                full_index_map = crop_index_map
+            else:
+                t0_alloc = perf_counter()
+                full_index_map = np.full((render_h, render_w), -1, dtype=np.int32)
+                t_alloc = perf_counter() - t0_alloc
+
+                t0_assign = perf_counter()
+                full_index_map[v_min:v_min + crop_h, u_min:u_min + crop_w] = crop_index_map
+                t_assign = perf_counter() - t0_assign
+
+            t_paste = perf_counter() - t0_paste
+
+            # Depth assembly
+            t0_depth_assemble = perf_counter()
             full_depth_map = None
             if compute_depth_map:
-                full_depth_map = np.full((render_h, render_w), np.nan, dtype=np.float32)
-                if crop_depth_map is not None:
-                    full_depth_map[v_min:v_min + crop_h, u_min:u_min + crop_w] = crop_depth_map
+                # Fast path: if rendering full-screen, use crop directly
+                if u_min == 0 and v_min == 0 and crop_w == render_w and crop_h == render_h:
+                    full_depth_map = crop_depth_map
+                else:
+                    full_depth_map = np.full((render_h, render_w), np.nan, dtype=np.float32)
+                    if crop_depth_map is not None:
+                        full_depth_map[v_min:v_min + crop_h, u_min:u_min + crop_w] = crop_depth_map
+            t_depth_assemble = perf_counter() - t0_depth_assemble
 
+            # Upsampling
+            t0_upsample = perf_counter()
             result_scale = dynamic_scale
             if upsample_to_native and dynamic_scale < 1.0:
                 import cv2 as _cv2
@@ -784,29 +888,111 @@ class VisibilityManager:
                 if full_depth_map is not None:
                     full_depth_map = _cv2.resize(full_depth_map, (width, height), interpolation=_cv2.INTER_NEAREST)
                 result_scale = 1.0
+            t_upsample = perf_counter() - t0_upsample
 
-            results.append(cls._normalize_result_dict({
+            # Result dict building and normalization (detailed timing)
+            t0_result_dict = perf_counter()
+            result_dict = {
                 'index_map':       full_index_map,
                 'visible_indices': visible_indices,
                 'depth_map':       full_depth_map,
                 'inverted_index':  None,
                 'scale_factor':    result_scale,
-            }, compute_depth_map))
+            }
+            t_dict_build = perf_counter() - t0_result_dict
+
+            t0_normalize = perf_counter()
+            normalized_result = cls._normalize_result_dict(result_dict, compute_depth_map)
+            t_normalize = perf_counter() - t0_normalize
+
+            t0_append = perf_counter()
+            results.append(normalized_result)
+            t_append = perf_counter() - t0_append
+
+            t_result_dict = t_dict_build + t_normalize + t_append
+
+            t_assembly = perf_counter() - t0_assembly
+
+            # Log detailed assembly breakdown (DEBUG level) — only if debug is enabled
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    f"      Assembly breakdown: Paste={t_paste*1000:.2f}ms | "
+                    f"Depth-assemble={t_depth_assemble*1000:.2f}ms | Upsample={t_upsample*1000:.2f}ms | "
+                    f"Result-dict={t_result_dict*1000:.2f}ms | Total={t_assembly*1000:.2f}ms"
+                )
 
             cam_time = perf_counter() - cam_start
+            # Calculate unaccounted time properly: total - all explicit timers
+            t_accounted = t_setup + t_render + t_readback + t_decode + t_assembly
+            t_unaccounted = cam_time - t_accounted
+
+            # Accumulate timers and track min/max
             camera_total_sum  += cam_time
             _t_setup_total    += t_setup
+            _t_crop_total     += t_crop
+            _t_fbo_total      += t_fbo
+            _t_mvp_total      += t_mvp_build
             _t_render_total   += t_render
             _t_readback_total += t_readback
             _t_decode_total   += t_decode
-            # Note: depth and assembly times included in decode/other measurements
+            _t_assembly_total += t_assembly
+            _t_python_overhead += t_unaccounted
 
-            # Log detailed readback breakdown for diagnosis
-            logger.info(
-                f"      Readback breakdown: GPU-sync={t_gpu_sync*1000:.2f}ms | "
-                f"FBO-read={t_fbo_read*1000:.2f}ms | Data-proc={t_data_proc*1000:.2f}ms | "
-                f"Total={t_readback*1000:.2f}ms"
-            )
+            # Update min/max statistics
+            _stats['crop']['min'] = min(_stats['crop']['min'], t_crop)
+            _stats['crop']['max'] = max(_stats['crop']['max'], t_crop)
+            _stats['fbo']['min'] = min(_stats['fbo']['min'], t_fbo)
+            _stats['fbo']['max'] = max(_stats['fbo']['max'], t_fbo)
+            _stats['mvp']['min'] = min(_stats['mvp']['min'], t_mvp_build)
+            _stats['mvp']['max'] = max(_stats['mvp']['max'], t_mvp_build)
+            _stats['render']['min'] = min(_stats['render']['min'], t_render)
+            _stats['render']['max'] = max(_stats['render']['max'], t_render)
+            _stats['readback']['min'] = min(_stats['readback']['min'], t_readback)
+            _stats['readback']['max'] = max(_stats['readback']['max'], t_readback)
+            _stats['gpu_sync']['min'] = min(_stats['gpu_sync']['min'], t_gpu_sync)
+            _stats['gpu_sync']['max'] = max(_stats['gpu_sync']['max'], t_gpu_sync)
+            _stats['fbo_read']['min'] = min(_stats['fbo_read']['min'], t_fbo_read)
+            _stats['fbo_read']['max'] = max(_stats['fbo_read']['max'], t_fbo_read)
+            _stats['data_proc']['min'] = min(_stats['data_proc']['min'], t_data_proc)
+            _stats['data_proc']['max'] = max(_stats['data_proc']['max'], t_data_proc)
+            _stats['decode_data']['min'] = min(_stats['decode_data']['min'], t_decode_data)
+            _stats['decode_data']['max'] = max(_stats['decode_data']['max'], t_decode_data)
+            _stats['copy']['min'] = min(_stats['copy']['min'], t_copy)
+            _stats['copy']['max'] = max(_stats['copy']['max'], t_copy)
+            _stats['decode']['min'] = min(_stats['decode']['min'], t_decode)
+            _stats['decode']['max'] = max(_stats['decode']['max'], t_decode)
+            _stats['assembly']['min'] = min(_stats['assembly']['min'], t_assembly)
+            _stats['assembly']['max'] = max(_stats['assembly']['max'], t_assembly)
+            _stats['paste']['min'] = min(_stats['paste']['min'], t_paste)
+            _stats['paste']['max'] = max(_stats['paste']['max'], t_paste)
+            _stats['paste_alloc']['min'] = min(_stats['paste_alloc']['min'], t_alloc)
+            _stats['paste_alloc']['max'] = max(_stats['paste_alloc']['max'], t_alloc)
+            _stats['paste_assign']['min'] = min(_stats['paste_assign']['min'], t_assign)
+            _stats['paste_assign']['max'] = max(_stats['paste_assign']['max'], t_assign)
+            _stats['dict_build']['min'] = min(_stats['dict_build']['min'], t_dict_build)
+            _stats['dict_build']['max'] = max(_stats['dict_build']['max'], t_dict_build)
+            _stats['normalize']['min'] = min(_stats['normalize']['min'], t_normalize)
+            _stats['normalize']['max'] = max(_stats['normalize']['max'], t_normalize)
+            _stats['append']['min'] = min(_stats['append']['min'], t_append)
+            _stats['append']['max'] = max(_stats['append']['max'], t_append)
+
+            # Log comprehensive per-camera breakdown (DEBUG level) — only if debug is enabled
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    f"      Camera {camera_index_offset + i + 1} timing breakdown:"
+                )
+                logger.debug(
+                    f"        Setup: Crop={t_crop*1000:.2f}ms | FBO={t_fbo*1000:.2f}ms | "
+                    f"MVP={t_mvp_build*1000:.2f}ms | Total={t_setup*1000:.2f}ms"
+                )
+                logger.debug(
+                    f"        Render: {t_render*1000:.2f}ms"
+                )
+                logger.debug(
+                    f"        Readback breakdown: GPU-sync={t_gpu_sync*1000:.2f}ms | "
+                    f"FBO-read={t_fbo_read*1000:.2f}ms | Data-proc={t_data_proc*1000:.2f}ms | "
+                    f"Total={t_readback*1000:.2f}ms"
+                )
 
             log_cam_breakdown(
                 cam_label(camera_index_offset + i + 1),
@@ -818,15 +1004,49 @@ class VisibilityManager:
         accounted_time = _t_setup_total + _t_render_total + _t_readback_total + _t_decode_total
         unaccounted_time = total_time - accounted_time
         readback_mode = "CPU readback"
+
+        # Format statistics with min/max/avg
+        def fmt_stat(name, total, stat_dict):
+            avg = total / n_cams * 1000
+            min_ms = stat_dict['min'] * 1000 if stat_dict['min'] != float('inf') else 0
+            max_ms = stat_dict['max'] * 1000
+            return f"   - {name:16} : avg={avg:5.1f}ms  (min={min_ms:5.1f}ms, max={max_ms:5.1f}ms)"
+
         log_summary(
-            f"moderngl Batch Rasterization ({readback_mode})",
+            f"moderngl Batch Rasterization ({readback_mode}) — Statistics (min/max/avg)",
             [
-                f"   - Setup (FBO)    : {_t_setup_total:.3f}s total  ({_t_setup_total/n_cams*1000:.1f}ms/cam)",
-                f"   - GPU Rasterize  : {_t_render_total:.3f}s total  ({_t_render_total/n_cams*1000:.1f}ms/cam)",
-                f"   - Readback       : {_t_readback_total:.3f}s total  ({_t_readback_total/n_cams*1000:.1f}ms/cam)",
-                f"   - Decode         : {_t_decode_total:.3f}s total  ({_t_decode_total/n_cams*1000:.1f}ms/cam)",
-                f"   - Overhead       : {unaccounted_time:.3f}s total  ({unaccounted_time/n_cams*1000:.1f}ms/cam)",
-                f"   - Total Time     : {total_time:.3f}s  (Avg: {total_time/n_cams*1000:.1f}ms/cam)",
+                f"🔧 SETUP PHASE:",
+                fmt_stat("Crop calc", _t_crop_total, _stats['crop']),
+                fmt_stat("FBO setup", _t_fbo_total, _stats['fbo']),
+                fmt_stat("MVP calc", _t_mvp_total, _stats['mvp']),
+                f"",
+                f"🎨 RENDER PHASE:",
+                fmt_stat("GPU Rasterize", _t_render_total, _stats['render']),
+                f"",
+                f"📥 READBACK + PROCESSING:",
+                fmt_stat("GPU sync", _t_setup_total*0, _stats['gpu_sync']),
+                fmt_stat("FBO read", _t_setup_total*0, _stats['fbo_read']),
+                fmt_stat("Data-proc (total)", _t_setup_total*0, _stats['data_proc']),
+                f"   └─ Decode data  : {_stats['decode_data']['min']*1000:.1f}ms–{_stats['decode_data']['max']*1000:.1f}ms",
+                f"   └─ Copy array   : {_stats['copy']['min']*1000:.1f}ms–{_stats['copy']['max']*1000:.1f}ms",
+                fmt_stat("Decode phase", _t_decode_total, _stats['decode']),
+                fmt_stat("Assembly", _t_assembly_total, _stats['assembly']),
+                f"   └─ Paste (total): {_stats['paste']['min']*1000:.1f}ms–{_stats['paste']['max']*1000:.1f}ms",
+                f"      ├─ Alloc     : {_stats['paste_alloc']['min']*1000:.1f}ms–{_stats['paste_alloc']['max']*1000:.1f}ms",
+                f"      └─ Assign    : {_stats['paste_assign']['min']*1000:.1f}ms–{_stats['paste_assign']['max']*1000:.1f}ms",
+                f"",
+                f"🔨 RESULT BUILDING & FINALIZATION:",
+                f"   - Dict build    : {_stats['dict_build']['min']*1000:.1f}ms–{_stats['dict_build']['max']*1000:.1f}ms",
+                f"   - Normalize     : {_stats['normalize']['min']*1000:.1f}ms–{_stats['normalize']['max']*1000:.1f}ms",
+                f"   - List append   : {_stats['append']['min']*1000:.1f}ms–{_stats['append']['max']*1000:.1f}ms",
+                f"",
+                f"⚙️  OVERHEAD & OTHER:",
+                f"   - Python/loops   : {_t_python_overhead/n_cams*1000:.1f}ms/cam (total)",
+                f"   - Unaccounted    : {unaccounted_time/n_cams*1000:.1f}ms/cam (total)",
+                f"",
+                f"📊 TOTALS:",
+                f"   - Total Time     : {total_time:.3f}s  ({n_cams} cameras)",
+                f"   - Avg per cam    : {total_time/n_cams*1000:.1f}ms/cam",
             ],
             logger,
         )
@@ -842,12 +1062,12 @@ class VisibilityManager:
         log_section("🗺️  MODERNGL ORTHO INDEX MAP RASTERIZATION", logger)
 
         if not ortho_camera.is_valid:
-            logger.info("   ⚠️ OrthoCamera has no valid geo metadata — aborting.")
+            logger.debug("   ⚠️ OrthoCamera has no valid geo metadata — aborting.")
             return {'index_map': None, 'visible_indices': np.array([], dtype=np.int32), 'scale_factor': 1.0}
 
         mesh = mesh_product.get_mesh()
         if mesh is None or mesh.n_cells == 0:
-            logger.info("   ⚠️ Mesh has no cells — aborting.")
+            logger.debug("   ⚠️ Mesh has no cells — aborting.")
             return {'index_map': None, 'visible_indices': np.array([], dtype=np.int32), 'scale_factor': 1.0}
 
         n_cells = mesh.n_cells
@@ -856,8 +1076,8 @@ class VisibilityManager:
         scale = 1.0 if (pixel_budget is None or pixel_budget <= 0 or native_pixels <= pixel_budget) else float(np.sqrt(pixel_budget / native_pixels))
         render_w = max(1, int(round(ortho_w * scale)))
         render_h = max(1, int(round(ortho_h * scale)))
-        logger.info(f"   Ortho: {ortho_w}×{ortho_h}  →  render: {render_w}×{render_h}  (scale={scale:.4f})")
-        logger.info(f"   Mesh: {n_cells:,} cells")
+        logger.debug(f"   Ortho: {ortho_w}×{ortho_h}  →  render: {render_w}×{render_h}  (scale={scale:.4f})")
+        logger.debug(f"   Mesh: {n_cells:,} cells")
 
         # Extract ortho camera geometry
         W, H = ortho_camera.width, ortho_camera.height
@@ -942,8 +1162,8 @@ class VisibilityManager:
 
             total = perf_counter() - start
             cov = np.sum(index_map >= 0) / (render_w * render_h) * 100
-            logger.info(f"   ✅ Done in {total:.2f}s — {len(visible_indices):,} visible faces, {cov:.1f}% coverage")
-            logger.info(f"{'='*50}\n")
+            logger.debug(f"   ✅ Done in {total:.2f}s — {len(visible_indices):,} visible faces, {cov:.1f}% coverage")
+            logger.debug(f"{'='*50}\n")
 
             return cls._normalize_result_dict({
                 'index_map': index_map,
@@ -965,17 +1185,17 @@ class VisibilityManager:
         log_section("👁️  POINT CLOUD VISIBILITY COMPUTATION", logger)
         if point_ids is None:
             point_ids = np.arange(len(points_world), dtype=np.int32)
-        logger.info(f"   Points: {len(points_world):,} | Render: {width}x{height} pixels")
+        logger.debug(f"   Points: {len(points_world):,} | Render: {width}x{height} pixels")
 
         if HAS_TORCH:
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
-            logger.info(f"   Using {device.upper()} backend")
+            logger.debug(f"   Using {device.upper()} backend")
             compute_start = perf_counter()
             result = cls._compute_torch(points_world, point_ids, K, R, t,
                                         width, height, device, compute_depth_map=compute_depth_map)
             compute_time = perf_counter() - compute_start
         else:
-            logger.info("   Using NUMPY backend (PyTorch not available)")
+            logger.debug("   Using NUMPY backend (PyTorch not available)")
             compute_start = perf_counter()
             result = cls._compute_numpy(points_world, point_ids, K, R, t,
                                         width, height, compute_depth_map=compute_depth_map)
@@ -1001,11 +1221,11 @@ class VisibilityManager:
         N_total = len(points_world)
         if point_ids is None:
             point_ids = np.arange(N_total, dtype=np.int32)
-        logger.info(f"   Points: {N_total:,} | Cameras: {len(camera_params_list)}")
+        logger.debug(f"   Points: {N_total:,} | Cameras: {len(camera_params_list)}")
         if not HAS_TORCH:
             pass
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        logger.info(f"   Using {device.upper()} backend")
+        logger.debug(f"   Using {device.upper()} backend")
         M = len(camera_params_list)
         results = []
         CHUNK_SIZE = 100_000_000
@@ -1020,7 +1240,7 @@ class VisibilityManager:
             global_index_map = torch.full((height*width,), -1, device=device, dtype=torch.int32)
             local_z_buffer   = torch.empty((height*width,), device=device, dtype=torch.float32)
             local_index_map  = torch.empty((height*width,), device=device, dtype=torch.int32)
-            logger.info(f'   -> Processing {cam_label(i+1)}/{M} in chunks...')
+            logger.debug(f'   -> Processing {cam_label(i+1)}/{M} in chunks...')
 
             for start_idx in range(0, N_total, CHUNK_SIZE):
                 end_idx   = min(start_idx + CHUNK_SIZE, N_total)
@@ -1064,7 +1284,7 @@ class VisibilityManager:
 
         if device == 'cuda':
             torch.cuda.empty_cache()
-        logger.info(f'\n   - Total Time: {perf_counter() - start_time:.4f}s')
+        logger.debug(f'\n   - Total Time: {perf_counter() - start_time:.4f}s')
         return results
 
     @staticmethod

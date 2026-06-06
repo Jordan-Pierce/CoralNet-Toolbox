@@ -215,7 +215,7 @@ class LightlyPretrainingCallback(Callback):
             total_epochs = trainer.max_epochs
             msg = f"Pre-training started: {total_epochs} epochs"
             self.signal_emitter.training_status.emit(msg)
-            logger.info("Lightly pre-training started.")
+            logger.debug("Lightly pre-training started.")
         except Exception as e:
             logger.error(f"Error in Lightly on_train_start: {e}", exc_info=True)
             self.signal_emitter.training_status.emit(f"Error starting pre-training: {e}")
@@ -267,7 +267,7 @@ class LightlyPretrainingCallback(Callback):
         try:
             msg = "Pre-training completed successfully"
             self.signal_emitter.training_status.emit(msg)
-            logger.info("Lightly pre-training completed.")
+            logger.debug("Lightly pre-training completed.")
         except Exception as e:
             logger.error(f"Error in Lightly on_train_end: {e}", exc_info=True)
             self.signal_emitter.training_status.emit(f"Error ending pre-training: {e}")
@@ -313,7 +313,7 @@ def create_training_callbacks(signal_emitter):
             signal_emitter.training_status.emit(msg)
             
             # Debug: Log available attributes in trainer
-            logger.info(f"Trainer type: {type(trainer).__name__}")
+            logger.debug(f"Trainer type: {type(trainer).__name__}")
             loss_attrs = [attr for attr in dir(trainer) if 'loss' in attr.lower()]
             logger.debug(f"Loss-related attributes available: {loss_attrs}")
         except Exception as e:
@@ -384,7 +384,7 @@ def create_evaluation_callbacks(signal_emitter):
         try:
             signal_emitter.eval_status.emit("Evaluation started...")
             # Debug: Log available attributes in validator
-            logger.info(f"Validator type: {type(validator).__name__}")
+            logger.debug(f"Validator type: {type(validator).__name__}")
             metric_attrs = [attr for attr in dir(validator) if 'metric' in attr.lower() or 'result' in attr.lower()]
             logger.debug(f"Metric-related attributes available: {metric_attrs}")
         except Exception as e:

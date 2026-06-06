@@ -116,12 +116,12 @@ class VisibilityWorker(QObject):
             raw_chunk_size = int(safe_ram / camera_footprint)
             calculated_chunk = max(8, min(raw_chunk_size, 256))
 
-            logger.info(
+            logger.debug(
                 "🧠 [RAM SCALING] Available RAM: %.1f GB | Safe Budget: %.1f GB",
                 available_ram / (1024 ** 3),
                 safe_ram / (1024 ** 3),
             )
-            logger.info(
+            logger.debug(
                 "🧠 [RAM SCALING] Est. Camera Footprint: %.1f MB | Selected Chunk Size: %s",
                 camera_footprint / (1024 ** 2),
                 calculated_chunk,
@@ -174,7 +174,7 @@ class VisibilityWorker(QObject):
                     debug_dir = os.path.join(debug_root, "DEBUG_INDEX_MAPS")
                     proof_path = self.primary_target.export_sort_proof(debug_dir)
                     if proof_path:
-                        logger.info(f"🧪 Wrote mesh sort proof: {proof_path}")
+                        logger.debug(f"🧪 Wrote mesh sort proof: {proof_path}")
                 except Exception as exc:
                     logger.warning(f"⚠️ Mesh sort proof export failed: {exc}")
 
@@ -252,7 +252,7 @@ class VisibilityWorker(QObject):
                         mgl_context = VisibilityManager.setup_batch_moderngl_context(
                             self.primary_target, self.pixel_budget, sample_w, sample_h,
                         )
-                        logger.info("✅ Using moderngl rasterizer (zero-PCIe CUDA-GL path)")
+                        logger.debug("✅ Using moderngl rasterizer (zero-PCIe CUDA-GL path)")
                     except Exception as _mgl_err:
                         logger.error("❌ ModernGL unavailable (%s); cannot proceed (VTK removed in Phase 3)", _mgl_err)
                         raise
@@ -418,7 +418,7 @@ class VisibilityWorker(QObject):
                     # elapsed is pure disk-write wall time and excludes VTK cleanup.
                     if _cache_total_count > 0 and _cache_wall_end > 0:
                         total_elapsed = _cache_wall_end - _cache_total_start
-                        logger.info(
+                        logger.debug(
                             f"✅ Cached {_cache_saved_count}/{_cache_total_count} maps to disk in {total_elapsed:.2f}s"
                         )
 

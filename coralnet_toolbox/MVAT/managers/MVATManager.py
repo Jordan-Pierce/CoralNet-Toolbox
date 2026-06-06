@@ -155,7 +155,9 @@ class MVATManager(QObject):
 
         # Internal Managers
         self.selection_model = SelectionManager(self)
-        self.cache_manager = CacheManager("")
+        # Check environment variable to disable caching for debugging
+        disable_cache = os.environ.get('MVAT_DISABLE_CACHE', '0').lower() in ('1', 'true', 'yes')
+        self.cache_manager = CacheManager("", disable_cache=disable_cache)
         self.mouse_bridge = MousePositionBridge(self)
 
         # Lazy flush debounce timer: 3D GPU uploads happen only after the user pauses.
@@ -4205,7 +4207,7 @@ class MVATManager(QObject):
         # and preprocessing (resize, normalise, BCHW conversion) internally.
         sam_dialog.set_image(rgb, image_path=None)
 
-        logger.info(
+        logger.debug(
             "🎯 [MVAT-SAM] Index map: %s | element_type: %s",
             index_map.shape,
             element_type,

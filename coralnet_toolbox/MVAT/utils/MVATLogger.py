@@ -54,15 +54,15 @@ def label_for_path(path: Any, camera_labels: Mapping[Any, str] | None, fallback:
 
 def log_section(title: str, logger: logging.Logger | None = None) -> None:
     logger = logger or get_visibility_logger()
-    logger.info("")
-    logger.info("=" * SECTION_WIDTH)
-    logger.info(title)
-    logger.info("=" * SECTION_WIDTH)
+    logger.debug("")
+    logger.debug("=" * SECTION_WIDTH)
+    logger.debug(title)
+    logger.debug("=" * SECTION_WIDTH)
 
 
 def log_cam_stage(cam: str, stage: str, elapsed: float, logger: logging.Logger | None = None) -> None:
     logger = logger or get_visibility_logger()
-    logger.info(f"   {cam}: {_fmt_seconds(elapsed)} | {stage}: {_fmt_seconds(elapsed)}")
+    logger.debug(f"   {cam}: {_fmt_seconds(elapsed)} | {stage}: {_fmt_seconds(elapsed)}")
 
 
 def log_cam_breakdown(
@@ -78,7 +78,7 @@ def log_cam_breakdown(
     logger: logging.Logger | None = None,
 ) -> None:
     logger = logger or get_visibility_logger()
-    logger.info(
+    logger.debug(
         f"      {cam}: {_fmt_seconds(cam_time)} | Prep: {_fmt_seconds(prep)} | Render: {_fmt_seconds(render)} | "
         f"Snap: {_fmt_seconds(screenshot)} | Decode: {_fmt_seconds(decode)} | Depth: {_fmt_seconds(depth)} | "
         f"Finalize: {_fmt_seconds(finalize)} | Residual: {_fmt_seconds(residual)}"
@@ -87,16 +87,16 @@ def log_cam_breakdown(
 
 def log_cam_complete(cam: str, elapsed: float, logger: logging.Logger | None = None) -> None:
     logger = logger or get_visibility_logger()
-    logger.info(f"   ✅ {cam} completed in {_fmt_seconds(elapsed)}")
+    logger.debug(f"   ✅ {cam} completed in {_fmt_seconds(elapsed)}")
 
 
 def log_summary(title: str, lines: Sequence[str], logger: logging.Logger | None = None) -> None:
     logger = logger or get_visibility_logger()
-    logger.info("")
-    logger.info(f"SUMMARY: {title}")
+    logger.debug("")
+    logger.debug(f"SUMMARY: {title}")
     for line in lines:
-        logger.info(line)
-    logger.info("=" * SECTION_WIDTH)
+        logger.debug(line)
+    logger.debug("=" * SECTION_WIDTH)
 
 
 _visibility_logger = configure_visibility_logging()
