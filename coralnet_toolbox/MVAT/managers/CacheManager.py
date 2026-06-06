@@ -16,6 +16,8 @@ from coralnet_toolbox.MVAT.utils.IndexMapCodec import (
     save_index_map_archive,
 )
 
+DISABLE_CACHE = True
+
 
 # ---------------------------------------------------------------------------
 # Module-level LRU-cached MD5 helper — avoid recomputing hashes on every
@@ -73,7 +75,7 @@ class CacheManager:
     Each cache file is named using an MD5 hash of the camera extrinsics and point cloud path.
     """
     
-    def __init__(self, project_root: str, disable_cache: bool = True):
+    def __init__(self, project_root: str, disable_cache: bool = False):
         """
         Initialize the CacheManager.
 
@@ -83,7 +85,7 @@ class CacheManager:
         """
         self.project_root = project_root
         self.cache_dir = os.path.join(project_root, '.cache', 'mvat')
-        self.disable_cache = disable_cache
+        self.disable_cache = disable_cache or DISABLE_CACHE
 
         # Create cache directory if it doesn't exist
         os.makedirs(self.cache_dir, exist_ok=True)

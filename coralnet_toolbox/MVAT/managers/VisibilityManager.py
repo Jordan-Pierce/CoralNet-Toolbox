@@ -217,9 +217,30 @@ class VisibilityManager:
     @staticmethod
     def _decode_int32(raw_bytes: bytes, shape: tuple) -> np.ndarray:
         """Decode int32 back to int32 index map (fast path, just subtract offset)."""
+        from time import perf_counter
+        import logging
+        logger = logging.getLogger(__name__)
+
+        t0 = perf_counter()
         data = np.frombuffer(raw_bytes, dtype=np.int32).reshape(shape)
+        t_frombuffer = perf_counter() - t0
+
+        t0 = perf_counter()
         result = np.empty(shape, dtype=np.int32)
+        t_empty = perf_counter() - t0
+
+        t0 = perf_counter()
         np.subtract(data, 1, out=result)
+        t_subtract = perf_counter() - t0
+
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                f"      _decode_int32 breakdown (shape={shape}): "
+                f"frombuffer={t_frombuffer*1000:.2f}ms | "
+                f"empty={t_empty*1000:.2f}ms | subtract={t_subtract*1000:.2f}ms | "
+                f"total={((t_frombuffer + t_empty + t_subtract)*1000):.2f}ms"
+            )
+
         return result
 
     @staticmethod
@@ -665,8 +686,11 @@ class VisibilityManager:
             'fbo_read': {'min': float('inf'), 'max': 0.0},
             'data_proc': {'min': float('inf'), 'max': 0.0},
             'decode_data': {'min': float('inf'), 'max': 0.0},
+            'flip': {'min': float('inf'), 'max': 0.0},
             'copy': {'min': float('inf'), 'max': 0.0},
             'decode': {'min': float('inf'), 'max': 0.0},
+            'cpu_convert': {'min': float('inf'), 'max': 0.0},
+            'indices_compute': {'min': float('inf'), 'max': 0.0},
             'assembly': {'min': float('inf'), 'max': 0.0},
             'paste': {'min': float('inf'), 'max': 0.0},
             'paste_alloc': {'min': float('inf'), 'max': 0.0},
@@ -766,10 +790,17 @@ class VisibilityManager:
             t_flip = perf_counter() - t0_flip
 
             t0_copy = perf_counter()
-            shot_int32 = shot_int32.copy()  # .copy() is fastest way to make flipped view contiguous
+            # ascontiguousarray is faster than pre-allocate + assign
+            shot_int32 = np.ascontiguousarray(shot_int32)
             t_copy = perf_counter() - t0_copy
 
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"      Copy: {t_copy*1000:.2f}ms (ascontiguousarray)")
+
             t_data_proc = perf_counter() - t0_proc_total
+
+            # Store encoding info for later breakdown logging
+            _decode_encoding = encoding_name
 
             t_readback = perf_counter() - t0_readback_total
 
@@ -779,8 +810,10 @@ class VisibilityManager:
             t0_decode_total = perf_counter()
 
             t0_offset = perf_counter()
+            t0_cpu_convert = perf_counter()
             # Decoder already applied the -1 offset, so shot_int32 is 0-indexed with -1 for invalid
             crop_index_map = shot_int32.cpu().numpy() if hasattr(shot_int32, 'cpu') else shot_int32
+            t_cpu_convert = perf_counter() - t0_cpu_convert
             t_offset_adj = perf_counter() - t0_offset
 
             # Compute visible indices only if requested (skip for ~47ms savings in batch mode)
@@ -800,14 +833,15 @@ class VisibilityManager:
             # Log detailed data-proc breakdown (DEBUG level) — only if debug is enabled
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(
-                    f"      Data-proc breakdown: Decode={t_decode_data*1000:.2f}ms | "
+                    f"      Data-proc breakdown ({_decode_encoding} enc): Decode={t_decode_data*1000:.2f}ms | "
                     f"Flip={t_flip*1000:.2f}ms | Copy={t_copy*1000:.2f}ms | "
                     f"Total={t_data_proc*1000:.2f}ms"
                 )
 
                 # Log detailed decode breakdown (DEBUG level)
                 logger.debug(
-                    f"      Decode breakdown: Offset={t_offset_adj*1000:.2f}ms | "
+                    f"      Decode breakdown: CPU-convert={t_cpu_convert*1000:.2f}ms | "
+                    f"Offset-adj={t_offset_adj*1000:.2f}ms | "
                     f"Indices={t_indices_compute*1000:.2f}ms | "
                     f"Total={t_decode*1000:.2f}ms"
                 )
@@ -957,8 +991,14 @@ class VisibilityManager:
             _stats['data_proc']['max'] = max(_stats['data_proc']['max'], t_data_proc)
             _stats['decode_data']['min'] = min(_stats['decode_data']['min'], t_decode_data)
             _stats['decode_data']['max'] = max(_stats['decode_data']['max'], t_decode_data)
+            _stats['flip']['min'] = min(_stats['flip']['min'], t_flip)
+            _stats['flip']['max'] = max(_stats['flip']['max'], t_flip)
             _stats['copy']['min'] = min(_stats['copy']['min'], t_copy)
             _stats['copy']['max'] = max(_stats['copy']['max'], t_copy)
+            _stats['cpu_convert']['min'] = min(_stats['cpu_convert']['min'], t_cpu_convert)
+            _stats['cpu_convert']['max'] = max(_stats['cpu_convert']['max'], t_cpu_convert)
+            _stats['indices_compute']['min'] = min(_stats['indices_compute']['min'], t_indices_compute)
+            _stats['indices_compute']['max'] = max(_stats['indices_compute']['max'], t_indices_compute)
             _stats['decode']['min'] = min(_stats['decode']['min'], t_decode)
             _stats['decode']['max'] = max(_stats['decode']['max'], t_decode)
             _stats['assembly']['min'] = min(_stats['assembly']['min'], t_assembly)
@@ -1027,9 +1067,12 @@ class VisibilityManager:
                 fmt_stat("GPU sync", _t_setup_total*0, _stats['gpu_sync']),
                 fmt_stat("FBO read", _t_setup_total*0, _stats['fbo_read']),
                 fmt_stat("Data-proc (total)", _t_setup_total*0, _stats['data_proc']),
-                f"   └─ Decode data  : {_stats['decode_data']['min']*1000:.1f}ms–{_stats['decode_data']['max']*1000:.1f}ms",
+                f"   ├─ Decode data  : {_stats['decode_data']['min']*1000:.1f}ms–{_stats['decode_data']['max']*1000:.1f}ms",
+                f"   ├─ Flip array   : {_stats['flip']['min']*1000:.1f}ms–{_stats['flip']['max']*1000:.1f}ms",
                 f"   └─ Copy array   : {_stats['copy']['min']*1000:.1f}ms–{_stats['copy']['max']*1000:.1f}ms",
                 fmt_stat("Decode phase", _t_decode_total, _stats['decode']),
+                f"   ├─ CPU convert  : {_stats['cpu_convert']['min']*1000:.1f}ms–{_stats['cpu_convert']['max']*1000:.1f}ms",
+                f"   └─ Indices compute: {_stats['indices_compute']['min']*1000:.1f}ms–{_stats['indices_compute']['max']*1000:.1f}ms",
                 fmt_stat("Assembly", _t_assembly_total, _stats['assembly']),
                 f"   └─ Paste (total): {_stats['paste']['min']*1000:.1f}ms–{_stats['paste']['max']*1000:.1f}ms",
                 f"      ├─ Alloc     : {_stats['paste_alloc']['min']*1000:.1f}ms–{_stats['paste_alloc']['max']*1000:.1f}ms",
