@@ -45,7 +45,12 @@ except ImportError:
 
 # Shader sources and GPU utilities
 from coralnet_toolbox.MVAT.shaders import VERT as _MGL_VERT
-from coralnet_toolbox.MVAT.shaders import FRAG_FACE_ID_INT as _MGL_FRAG_INT
+from coralnet_toolbox.MVAT.shaders import (
+    FRAG_FACE_ID_R8 as _MGL_FRAG_R8,
+    FRAG_FACE_ID_RG16 as _MGL_FRAG_RG16,
+    FRAG_FACE_ID_RGB24 as _MGL_FRAG_RGB24,
+    FRAG_FACE_ID_INT as _MGL_FRAG_INT,
+)
 from coralnet_toolbox.MVAT.shaders.gpu_interop import (
     _resolve_gl_fns,
     _build_mvp,
@@ -154,6 +159,68 @@ class VisibilityManager:
             'inv_offsets': offsets,
             'inv_pixels':  sorted_pixels,
         }
+
+    @staticmethod
+    def _select_encoding_scheme(n_elements: int) -> tuple:
+        """
+        Choose optimal encoding scheme based on element count.
+
+        Returns:
+            (shader_source, encoding_name, num_components, decoder_fn)
+            encoding_name: 'r8', 'rg16', 'rgb24', or 'int32'
+
+        Note: Tiered encoding trades bandwidth savings for decode overhead.
+              For large meshes (> 100K faces), int32 is often faster due to zero-cost decode.
+        """
+        if n_elements <= 255:
+            return _MGL_FRAG_R8, 'r8', 1, VisibilityManager._decode_r8
+        elif n_elements <= 65535:
+            return _MGL_FRAG_RG16, 'rg16', 2, VisibilityManager._decode_rg16
+        elif n_elements <= 1000000:
+            # RGB24 for medium meshes where decode overhead (~10-20ms) is acceptable
+            return _MGL_FRAG_RGB24, 'rgb24', 3, VisibilityManager._decode_rgb24
+        else:
+            # Fall back to int32 for very large meshes: decode overhead exceeds bandwidth savings
+            # e.g., 3.4M faces: RGB24 decode ~80ms vs int32 decode ~0ms
+            return _MGL_FRAG_INT, 'int32', 1, VisibilityManager._decode_int32
+
+    @staticmethod
+    def _decode_r8(raw_bytes: bytes, shape: tuple) -> np.ndarray:
+        """Decode R8 (1 byte/pixel) back to int32 index map."""
+        data = np.frombuffer(raw_bytes, dtype=np.uint8).reshape(shape)
+        result = np.empty(shape, dtype=np.int32)
+        np.subtract(data.astype(np.int32, copy=False), 1, out=result)
+        return result
+
+    @staticmethod
+    def _decode_rg16(raw_bytes: bytes, shape: tuple) -> np.ndarray:
+        """Decode RG16 (2 bytes/pixel) back to int32 index map (optimized)."""
+        data = np.frombuffer(raw_bytes, dtype=np.uint8).reshape((*shape, 2))
+        h, w = shape
+        decoded = np.empty((h, w), dtype=np.int32)
+        # Vectorized decode: (high << 8) | low
+        decoded[:] = (data[..., 0].astype(np.int32) << 8) | data[..., 1].astype(np.int32)
+        decoded -= 1
+        return decoded
+
+    @staticmethod
+    def _decode_rgb24(raw_bytes: bytes, shape: tuple) -> np.ndarray:
+        """Decode RGB24 (3 bytes/pixel) back to int32 index map (optimized)."""
+        data = np.frombuffer(raw_bytes, dtype=np.uint8).reshape((*shape, 3))
+        h, w = shape
+        decoded = np.empty((h, w), dtype=np.int32)
+        # Vectorized decode: (R << 16) | (G << 8) | B
+        decoded[:] = (data[..., 0].astype(np.int32) << 16) | (data[..., 1].astype(np.int32) << 8) | data[..., 2].astype(np.int32)
+        decoded -= 1
+        return decoded
+
+    @staticmethod
+    def _decode_int32(raw_bytes: bytes, shape: tuple) -> np.ndarray:
+        """Decode int32 back to int32 index map (fast path, just subtract offset)."""
+        data = np.frombuffer(raw_bytes, dtype=np.int32).reshape(shape)
+        result = np.empty(shape, dtype=np.int32)
+        np.subtract(data, 1, out=result)
+        return result
 
     @staticmethod
     def _normalize_result_dict(result: dict, compute_depth_map: bool = True) -> dict:
@@ -464,7 +531,9 @@ class VisibilityManager:
         vbo = ctx.buffer(vertices.tobytes())
         ibo = ctx.buffer(faces.tobytes())
 
-        prog_int = ctx.program(vertex_shader=_MGL_VERT, fragment_shader=_MGL_FRAG_INT)
+        # Choose encoding scheme based on mesh size
+        frag_shader, encoding_name, num_components, decoder = cls._select_encoding_scheme(n_cells)
+        prog_int = ctx.program(vertex_shader=_MGL_VERT, fragment_shader=frag_shader)
         vao_int  = ctx.vertex_array(prog_int, [(vbo, '3f', 'position')], ibo)
 
         gl_fns = _resolve_gl_fns()
@@ -475,8 +544,9 @@ class VisibilityManager:
                 mesh.cell_centers().points.astype(np.float32)
             ).cuda()
 
+        encoding_display = {"r8": "8-bit", "rg16": "16-bit", "rgb24": "24-bit", "int32": "32-bit"}
         logger.info(
-            f"   ✅ moderngl context ready: {n_cells:,} faces (32-bit int rendering)"
+            f"   ✅ moderngl context ready: {n_cells:,} faces ({encoding_display.get(encoding_name, 'unknown')} encoding)"
         )
 
         return {
@@ -487,6 +557,9 @@ class VisibilityManager:
             'gl_fns':          gl_fns,
             'pixel_budget':    pixel_budget,
             'face_centers_pt': face_centers_pt,
+            'encoding_name':   encoding_name,
+            'num_components':  num_components,
+            'decoder':         decoder,
             '_fbo_cache':      {},
         }
 
@@ -535,6 +608,9 @@ class VisibilityManager:
         vao_int      = mgl_context['vao_int']
         gl_fns       = mgl_context['gl_fns']
         fbo_cache    = mgl_context['_fbo_cache']
+        encoding_name = mgl_context['encoding_name']
+        num_components = mgl_context['num_components']
+        decoder      = mgl_context['decoder']
 
         mesh        = mesh_product.get_mesh()
         mesh_bounds = mesh.bounds
@@ -542,8 +618,11 @@ class VisibilityManager:
         def _get_fbo(w, h):
             key = (w, h)
             if key not in fbo_cache:
+                # Use compact format for tiered encoding (R8/RG8/RGB8 instead of I32)
+                dtype = 'i4' if encoding_name == 'int32' else 'u1'
+
                 fbo_cache[key] = ctx.framebuffer(
-                    color_attachments=[ctx.texture((w, h), 1, dtype='i4')],
+                    color_attachments=[ctx.texture((w, h), num_components, dtype=dtype)],
                     depth_attachment=ctx.depth_texture((w, h)),
                 )
             return fbo_cache[key]
@@ -619,14 +698,15 @@ class VisibilityManager:
             ctx.finish()
             t_gpu_sync = perf_counter() - t0_sync
 
-            # Texture readback from GPU to CPU
+            # Texture readback from GPU to CPU (tiered encoding)
             t0_read = perf_counter()
-            raw = fbo.read(components=1, dtype='i4')
+            read_dtype = 'i4' if encoding_name == 'int32' else 'u1'
+            raw = fbo.read(components=num_components, dtype=read_dtype)
             t_fbo_read = perf_counter() - t0_read
 
-            # Data processing: convert, reshape, flip, copy
+            # Data processing: decode, reshape, flip, copy
             t0_proc = perf_counter()
-            shot_int32 = np.frombuffer(raw, dtype=np.int32).reshape(crop_h, crop_w)[::-1].copy()
+            shot_int32 = decoder(raw, (crop_h, crop_w))[::-1].copy()
             t_data_proc = perf_counter() - t0_proc
 
             t_readback = perf_counter() - t0_readback_total
@@ -637,8 +717,8 @@ class VisibilityManager:
             t0_decode_total = perf_counter()
 
             t0_offset = perf_counter()
-            crop_index_tensor = shot_int32 - 1
-            crop_index_map = crop_index_tensor.cpu().numpy() if hasattr(crop_index_tensor, 'cpu') else crop_index_tensor
+            # Decoder already applied the -1 offset, so shot_int32 is 0-indexed with -1 for invalid
+            crop_index_map = shot_int32.cpu().numpy() if hasattr(shot_int32, 'cpu') else shot_int32
             t_offset_adj = perf_counter() - t0_offset
 
             # Compute visible indices only if requested (skip for ~47ms savings in batch mode)
