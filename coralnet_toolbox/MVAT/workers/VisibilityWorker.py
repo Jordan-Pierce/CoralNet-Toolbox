@@ -313,6 +313,7 @@ class VisibilityWorker(QObject):
             # ==========================================
             # STRATEGY A: MESH PROCESSING (CHUNKED)
             # ==========================================
+            mesh_processing_start = time.perf_counter()
             if isinstance(self.primary_target, MeshProduct):
                 _export_mesh_sort_proof()
 
@@ -562,7 +563,7 @@ class VisibilityWorker(QObject):
 
                                 # Execute synchronous save for this chunk
                                 save_to_disk_task(
-                                    chunk_results, self.cache_manager, self.target_file_path, 
+                                    chunk_results, self.cache_manager, self.target_file_path,
                                     self.cache_keys_dict, self.dist_coeffs_bytes_dict, self.pixel_budget
                                 )
 
@@ -633,8 +634,15 @@ class VisibilityWorker(QObject):
                             }
 
             # =================================================================
-            # FINAL: Emit ONLY the lightweight results to the main thread
+            # FINAL: Log wall-clock time and emit results
             # =================================================================
+            mesh_processing_elapsed = time.perf_counter() - mesh_processing_start
+            logger.info(
+                f"⏱️  [MESH PROCESSING WALL TIME] {mesh_processing_elapsed:.2f}s "
+                f"({total_cameras} cameras, {mesh_processing_elapsed/max(1, total_cameras):.3f}s per camera avg)"
+            )
+
+            # Emit ONLY the lightweight results to the main thread
             self.signals.finished.emit(lightweight_final_results)
 
         except Exception as e:
