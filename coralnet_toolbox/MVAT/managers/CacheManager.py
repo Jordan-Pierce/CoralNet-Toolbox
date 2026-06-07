@@ -16,8 +16,6 @@ from coralnet_toolbox.MVAT.utils.IndexMapCodec import (
     save_index_map_archive,
 )
 
-DISABLE_CACHE = False
-
 
 # ---------------------------------------------------------------------------
 # Module-level LRU-cached MD5 helper — avoid recomputing hashes on every
@@ -75,17 +73,18 @@ class CacheManager:
     Each cache file is named using an MD5 hash of the camera extrinsics and point cloud path.
     """
     
-    def __init__(self, project_root: str, disable_cache: bool = False):
+    def __init__(self, project_root: str):
         """
         Initialize the CacheManager.
 
         Args:
             project_root (str): Root directory of the project where cache will be stored.
-            disable_cache (bool): If True, skip all caching operations (useful for debugging).
+
+        Note: Caching is controlled at the VisibilityWorker level via the dialog,
+              not at the CacheManager level.
         """
         self.project_root = project_root
         self.cache_dir = os.path.join(project_root, '.cache', 'mvat')
-        self.disable_cache = disable_cache or DISABLE_CACHE
 
         # Create cache directory if it doesn't exist
         os.makedirs(self.cache_dir, exist_ok=True)
@@ -221,9 +220,6 @@ class CacheManager:
                              native_size: Tuple[int, int],
                              element_type: str = 'face') -> Optional[Dict]:
         """Load a cached orthomosaic index map if present."""
-        if self.disable_cache:
-            return None
-
         cache_path = self.get_ortho_index_map_cache_path(
             ortho_image_path,
             mesh_path,
@@ -258,9 +254,6 @@ class CacheManager:
                              element_type: str = 'face',
                              compressed: bool = False) -> Optional[str]:
         """Save an orthomosaic index map to cache."""
-        if self.disable_cache:
-            return None
-
         cache_path = self.get_ortho_index_map_cache_path(
             ortho_image_path,
             mesh_path,
@@ -317,9 +310,6 @@ class CacheManager:
             dict or None: Dictionary with 'index_map', 'visible_indices', 'depth_map',
                          and 'element_type' if cache exists, None otherwise
         """
-        if self.disable_cache:
-            return None
-
         # Resolve the actual on-disk cache file using the quality-agnostic key.
         cache_path = self._resolve_existing_cache_path(
             extrinsics, point_cloud_path, element_type, extra_hash_data, pixel_budget,
@@ -365,9 +355,6 @@ class CacheManager:
         Returns:
             str: Path to the saved cache file
         """
-        if self.disable_cache:
-            return None
-
         cache_path = self.get_cache_path(
             extrinsics, point_cloud_path, element_type, extra_hash_data, pixel_budget,
         )

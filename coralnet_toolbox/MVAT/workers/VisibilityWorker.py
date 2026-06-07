@@ -40,7 +40,7 @@ class VisibilityWorker(QObject):
     def __init__(self, primary_target, camera_params_dict, compute_depth_maps=True,
                  cache_manager=None, cache_keys_dict=None, target_file_path="", pixel_budget=None,
                  warp_callables_dict=None, dist_coeffs_bytes_dict=None, n_workers=4,
-                 distortion_vram_safety_factor=0.95):
+                 distortion_vram_safety_factor=0.95, frag_face_id_dtype="rgb24", enable_cache=True):
         super().__init__()
         self.primary_target = primary_target
         self.camera_params_dict = camera_params_dict
@@ -52,6 +52,10 @@ class VisibilityWorker(QObject):
         self.dist_coeffs_bytes_dict = dist_coeffs_bytes_dict or {}
         self.n_workers = n_workers
         self.distortion_vram_safety_factor = distortion_vram_safety_factor
+
+        # Debug: dtype and cache settings for experimentation
+        self.frag_face_id_dtype = frag_face_id_dtype or "rgb24"
+        self.enable_cache = enable_cache
 
         # Store cache dependencies
         self.cache_manager = cache_manager
@@ -95,6 +99,7 @@ class VisibilityWorker(QObject):
                 compute_visible_indices=False,
                 pixel_budget=self.pixel_budget,
                 mgl_context=mgl_context,
+                dtype_override=self.frag_face_id_dtype,
             )
 
             if result and len(result) > 0:
@@ -330,6 +335,7 @@ class VisibilityWorker(QObject):
                     try:
                         mgl_context = VisibilityManager.setup_batch_moderngl_context(
                             self.primary_target, self.pixel_budget, sample_w, sample_h,
+                            dtype_override=self.frag_face_id_dtype,
                         )
                         logger.debug("✅ Using moderngl rasterizer (zero-PCIe CUDA-GL path)")
                     except Exception as _mgl_err:
@@ -375,8 +381,8 @@ class VisibilityWorker(QObject):
                             else:
                                 VisibilityManager._normalize_result_dict(res, False)
 
-                            # Caching step
-                            if self.cache_manager is not None and self.target_file_path:
+                            # Caching step (can be disabled for debugging)
+                            if self.enable_cache and self.cache_manager is not None and self.target_file_path:
                                 cache_key = self.cache_keys_dict.get(p)
                                 if cache_key is not None:
                                     res['cache_path'] = self.cache_manager.get_cache_path(
@@ -437,6 +443,7 @@ class VisibilityWorker(QObject):
                                 progress_callback=update_status,
                                 mgl_context=mgl_context,
                                 camera_index_offset=i,
+                                dtype_override=self.frag_face_id_dtype,
                             )
                             
                             for p, r in zip(chunk_paths, batch_results):
