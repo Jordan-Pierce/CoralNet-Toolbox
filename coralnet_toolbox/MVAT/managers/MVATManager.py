@@ -135,6 +135,15 @@ class MVATManager(QObject):
         self.compute_index_maps_enabled = True
         # Maximum pixel budget for background index map computation
         self.pixel_budget = 4_000_000  # Default to ~4 Megapixels
+        # Number of parallel workers for cache disk I/O
+        self._cache_n_workers = 4  # Default to 4 workers
+        # Safety factor for distortion VRAM allocation (0.8 = 80% of free VRAM)
+        # Can be overridden via env var: MVAT_DISTORTION_VRAM_SAFETY=0.9
+        try:
+            env_vram_safety = os.environ.get('MVAT_DISTORTION_VRAM_SAFETY', None)
+            self._distortion_vram_safety_factor = float(env_vram_safety) if env_vram_safety else 0.8
+        except (ValueError, TypeError):
+            self._distortion_vram_safety_factor = 0.8
         # Safety flag to prevent concurrent visibility computations
         self._is_computing_visibility = False
         # Track active worker threads to prevent GC
@@ -155,7 +164,9 @@ class MVATManager(QObject):
 
         # Internal Managers
         self.selection_model = SelectionManager(self)
-        self.cache_manager = CacheManager("")
+        # Check environment variable to disable caching for debugging
+        disable_cache = os.environ.get('MVAT_DISABLE_CACHE', '0').lower() in ('1', 'true', 'yes')
+        self.cache_manager = CacheManager("", disable_cache=disable_cache)
         self.mouse_bridge = MousePositionBridge(self)
 
         # Lazy flush debounce timer: 3D GPU uploads happen only after the user pauses.
@@ -382,7 +393,7 @@ class MVATManager(QObject):
                     uncached_cameras.append(cam)
 
             if uncached_cameras:
-                choice_mode, new_budget = self._prompt_visibility_quality_dialog(
+                choice_mode, new_budget, n_workers = self._prompt_visibility_quality_dialog(
                     len(uncached_cameras)
                 )
 
@@ -391,6 +402,7 @@ class MVATManager(QObject):
 
                 previous_budget = getattr(self, 'pixel_budget', None)
                 self.pixel_budget = new_budget
+                self._cache_n_workers = n_workers  # Store for use in _compute_visibility_async
 
                 # If the budget actually changed, the previously cached
                 # visibility maps (in RAM) were produced at a different
@@ -566,15 +578,19 @@ class MVATManager(QObject):
         )
 
     def _prompt_visibility_quality_dialog(self, camera_count: int):
-        """Prompt for visibility quality and whether to compute now or defer."""
+        """Prompt for visibility quality, cache workers, and whether to compute now or defer."""
         from PyQt5.QtWidgets import (
             QComboBox,
             QDialog,
             QDialogButtonBox,
             QFormLayout,
+            QHBoxLayout,
             QLabel,
+            QSlider,
             QVBoxLayout,
         )
+        from PyQt5.QtCore import Qt
+        import os
 
         qualities = [
             "Native (Full Resolution)",
@@ -593,10 +609,17 @@ class MVATManager(QObject):
             "Lowest (~0.5 Megapixel)": 500_000,
         }
 
+        # Determine max workers (CPU count - 1, so user can never select max)
+        try:
+            import psutil
+            max_workers = max(1, psutil.cpu_count() - 1)
+        except Exception:
+            max_workers = max(1, (os.cpu_count() or 4) - 1)
+
         dialog = QDialog(self.main_window)
         dialog.setWindowTitle("Pre-compute Visibility")
         dialog.setModal(True)
-        dialog.resize(520, 180)
+        dialog.resize(520, 260)
 
         selected_mode = {'mode': None}
 
@@ -629,6 +652,51 @@ class MVATManager(QObject):
                 break
         quality_combo.setCurrentIndex(current_idx)
         form_layout.addRow("Visibility Quality:", quality_combo)
+
+        # Add n_workers slider with tick labels
+        workers_slider = QSlider(Qt.Horizontal)
+        workers_slider.setMinimum(1)
+        workers_slider.setMaximum(max_workers)
+        workers_slider.setValue(4)  # Default to 4 workers
+        workers_slider.setTickPosition(QSlider.TicksBelow)
+
+        # Set tick interval and add labels at key positions
+        tick_interval = max(1, max_workers // 4)
+        workers_slider.setTickInterval(tick_interval)
+
+        workers_slider.setToolTip(
+            "Controls parallel disk writes during cache phase. "
+            "Higher = faster caching but more I/O concurrency."
+        )
+
+        # Create tick mark labels below slider
+        workers_labels_layout = QHBoxLayout()
+        workers_labels_layout.setContentsMargins(0, 5, 0, 0)  # Small top margin
+
+        # Generate tick labels at intervals
+        tick_positions = []
+        for i in range(1, max_workers + 1, tick_interval):
+            tick_positions.append(i)
+        # Always include max if not already there
+        if tick_positions[-1] != max_workers:
+            tick_positions.append(max_workers)
+
+        # Distribute labels evenly across the slider width
+        for i, tick_val in enumerate(tick_positions):
+            label = QLabel(str(tick_val))
+            label.setStyleSheet("font-size: 10px; color: gray;")
+            if i == 0:
+                workers_labels_layout.addWidget(label, 0, Qt.AlignLeft)
+            elif i == len(tick_positions) - 1:
+                workers_labels_layout.addWidget(label, 0, Qt.AlignRight)
+            else:
+                workers_labels_layout.addWidget(label, 1, Qt.AlignCenter)
+
+        workers_container = QVBoxLayout()
+        workers_container.addWidget(workers_slider)
+        workers_container.addLayout(workers_labels_layout)
+
+        form_layout.addRow("Cache Workers:", workers_container)
         layout.addLayout(form_layout)
 
         button_box = QDialogButtonBox(dialog)
@@ -642,10 +710,11 @@ class MVATManager(QObject):
 
         mode = selected_mode['mode']
         if mode is None:
-            return None, None
+            return None, None, None
 
         chosen_quality = quality_combo.currentText()
-        return mode, quality_map[chosen_quality]
+        n_workers = workers_slider.value()
+        return mode, quality_map[chosen_quality], n_workers
 
     # --- Signal Handlers ---
 
@@ -1830,10 +1899,12 @@ class MVATManager(QObject):
             )
             QApplication.setOverrideCursor(Qt.WaitCursor)
 
-            # Pass the cache data and scale factor to the worker
+            # Pass the cache data and scale factors to the worker
+            n_workers = getattr(self, '_cache_n_workers', 4)  # Default to 4 if not set
+            distortion_vram_safety = getattr(self, '_distortion_vram_safety_factor', 0.8)  # Default to 0.8
             worker = VisibilityWorker(
-                primary_target=primary_target, 
-                camera_params_dict=camera_params_dict, 
+                primary_target=primary_target,
+                camera_params_dict=camera_params_dict,
                 compute_depth_maps=False,
                 cache_manager=self.cache_manager,
                 cache_keys_dict=cache_keys_dict,
@@ -1841,6 +1912,8 @@ class MVATManager(QObject):
                 pixel_budget=self.pixel_budget,
                 warp_callables_dict=warp_callables_dict,
                 dist_coeffs_bytes_dict=dist_coeffs_bytes_dict,
+                n_workers=n_workers,
+                distortion_vram_safety_factor=distortion_vram_safety,
             )
             
             thread = QThread()
@@ -4163,11 +4236,10 @@ class MVATManager(QObject):
             QApplication.restoreOverrideCursor()
 
         index_map     = result.get('index_map',     np.full((h, w), -1, dtype=np.int32))
-        index_map_gpu = result.get('index_map_gpu', None)   # CUDA int32 tensor or None
         depth_map     = result.get('depth_map',     None)
         element_type  = result.get('element_type',  'point')
 
-        return rgb, index_map, index_map_gpu, depth_map, element_type
+        return rgb, index_map, depth_map, element_type
 
     def launch_viewer_sam(self):
         """Launch the MVAT-SAM dialog for the current 3D view (called on Space)."""
@@ -4194,7 +4266,7 @@ class MVATManager(QObject):
             'MVAT-SAM: building index map (moderngl)...', 0)
         QApplication.processEvents()
         try:
-            rgb, index_map, index_map_gpu, depth_map, element_type = (
+            rgb, index_map, depth_map, element_type = (
                 self._capture_viewer_sam_context(scale=1)
             )
         except Exception as e:
@@ -4204,14 +4276,11 @@ class MVATManager(QObject):
 
         # SAM's set_image expects numpy HWC uint8 — it handles its own GPU upload
         # and preprocessing (resize, normalise, BCHW conversion) internally.
-        # We get GPU benefit from index_map_gpu staying on CUDA for the face-ID
-        # lookup after the mask is accepted, not from this encoding step.
         sam_dialog.set_image(rgb, image_path=None)
 
-        logger.info(
-            "🎯 [MVAT-SAM] Index map: %s | GPU tensor: %s | element_type: %s",
+        logger.debug(
+            "🎯 [MVAT-SAM] Index map: %s | element_type: %s",
             index_map.shape,
-            "yes" if index_map_gpu is not None else "no",
             element_type,
         )
 
@@ -4219,7 +4288,6 @@ class MVATManager(QObject):
             viewer=self.viewer,
             rgb_image=rgb,
             index_map=index_map,
-            index_map_gpu=index_map_gpu,
             element_type=element_type,
             sam_dialog=sam_dialog,
             label=selected_label,
@@ -4229,7 +4297,7 @@ class MVATManager(QObject):
             live_label = (getattr(self.annotation_window, 'selected_label', None)
                           or selected_label)
             self._on_viewer_sam_accepted(
-                mask, index_map, index_map_gpu, depth_map, element_type, live_label
+                mask, index_map, depth_map, element_type, live_label
             )
 
         dlg.maskAccepted.connect(_on_accepted)

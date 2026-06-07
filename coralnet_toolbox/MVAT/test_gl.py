@@ -57,7 +57,6 @@ def test_single_camera_moderngl():
     print(f"Face pixels: {face_px:,} | Background: {bg_px:,}")
     print(f"Visible faces: {len(r['visible_indices']):,}")
     print(f"Depth map: {r['depth_map'].shape if r['depth_map'] is not None else 'None'}")
-    print(f"GPU tensor (index_map_gpu): {r['index_map_gpu'] is not None}")
     print(f"Render time: {elapsed*1000:.1f}ms")
 
     assert face_px > 10000, f"❌ Too few face pixels: {face_px}"
@@ -497,10 +496,294 @@ def test_raycast_crosscheck():
     prog.release(); ctx.release()
 
 
+def test_gpu_tensor_readback():
+    """Benchmark: CPU readback vs GPU tensor transfer for downstream operations.
+
+    This test compares:
+    1. Current: Read to CPU, process on CPU, pass to downstream
+    2. GPU tensor: Read to CPU, transfer to GPU, process on GPU, keep on GPU
+
+    The GPU tensor approach saves time if downstream operations (SAM, etc.) also run on GPU.
+    """
+    print("\n" + "="*70)
+    print("TEST 10: GPU Tensor Readback Benchmark")
+    print("="*70)
+
+    try:
+        import torch
+        from coralnet_toolbox.MVAT.shaders.cuda_gl_interop import (
+            read_texture_to_gpu_simple, process_index_map_gpu, index_map_gpu_to_cpu
+        )
+    except ImportError:
+        print("⚠️  PyTorch not available; skipping GPU tensor test")
+        return
+
+    W, H = 512, 512
+    K = np.array([[400, 0, 256], [0, 400, 256], [0, 0, 1]], dtype=np.float64)
+    R = np.eye(3, dtype=np.float64)
+    t = np.array([0., 0., 3.])
+
+    mesh = FakeMesh(n_cells=4096)
+    mgl_ctx = vm.VisibilityManager.setup_batch_moderngl_context(mesh, None, W, H)
+
+    print(f"\nMesh: {mesh.get_mesh().n_cells:,} faces")
+    print(f"Resolution: {W}×{H} pixels")
+    print(f"Cameras: 5 (for averaging)\n")
+
+    # Render once to get an FBO
+    results = vm.VisibilityManager.compute_batch_mesh_visibility_moderngl(
+        mesh, [(K, R, t, W, H)],
+        compute_depth_map=False, pixel_budget=None, mgl_context=mgl_ctx
+    )
+
+    # Now benchmark the readback approaches on the rendered FBO
+    fbo = list(mgl_ctx['_fbo_cache'].values())[0]  # Get the first FBO
+    fbo_w, fbo_h = fbo.size  # Get actual FBO dimensions (returns (width, height))
+
+    print(f"Note: FBO rendered at {fbo_w}×{fbo_h} (viewport cropping applied)")
+    print(f"Readback data size: {fbo_w * fbo_h:,} pixels\n")
+
+    print("Approach 1: Current (CPU Readback)")
+    print("-" * 70)
+    cpu_times = []
+    for i in range(5):
+        t0 = time.perf_counter()
+        raw = fbo.read(components=1, dtype='i4')
+        shot_int32 = np.frombuffer(raw, dtype=np.int32).reshape(fbo_h, fbo_w)[::-1].copy()
+        shot_int32 -= 1  # Convert from 1-based to 0-based
+        cpu_times.append(time.perf_counter() - t0)
+
+    cpu_avg = np.mean(cpu_times)
+    cpu_std = np.std(cpu_times)
+    print(f"  Average: {cpu_avg*1000:.2f}ms ± {cpu_std*1000:.2f}ms")
+    print(f"  Timings: {[f'{t*1000:.2f}ms' for t in cpu_times]}\n")
+
+    print("Approach 2: GPU Tensor (CPU→GPU Transfer + GPU Processing)")
+    print("-" * 70)
+    gpu_times = []
+    for i in range(5):
+        t0 = time.perf_counter()
+        # Read to CPU
+        raw = fbo.read(components=1, dtype='i4')
+        shot_int32_cpu = np.frombuffer(raw, dtype=np.int32).reshape(fbo_h, fbo_w)[::-1].copy()
+        # Transfer to GPU
+        shot_int32_gpu = torch.from_numpy(shot_int32_cpu).to(device='cuda', dtype=torch.int32)
+        # Process on GPU
+        shot_int32_gpu = process_index_map_gpu(shot_int32_gpu, offset=1)
+        gpu_times.append(time.perf_counter() - t0)
+
+    gpu_avg = np.mean(gpu_times)
+    gpu_std = np.std(gpu_times)
+    print(f"  Average: {gpu_avg*1000:.2f}ms ± {gpu_std*1000:.2f}ms")
+    print(f"  Timings: {[f'{t*1000:.2f}ms' for t in gpu_times]}\n")
+
+    # Verify correctness
+    raw = fbo.read(components=1, dtype='i4')
+    shot_int32_cpu = np.frombuffer(raw, dtype=np.int32).reshape(fbo_h, fbo_w)[::-1].copy() - 1
+    raw2 = fbo.read(components=1, dtype='i4')
+    shot_int32_gpu = torch.from_numpy(np.frombuffer(raw2, dtype=np.int32).reshape(fbo_h, fbo_w)[::-1].copy()).to(device='cuda', dtype=torch.int32) - 1
+    shot_int32_gpu_cpu = shot_int32_gpu.cpu().numpy()
+
+    if np.allclose(shot_int32_cpu, shot_int32_gpu_cpu):
+        print("✅ GPU tensor produces identical results\n")
+    else:
+        print("❌ GPU tensor results differ!\n")
+
+    # Summary
+    print("="*70)
+    print("SUMMARY")
+    print("="*70)
+    overhead = (gpu_avg - cpu_avg) * 1000
+    if overhead > 0:
+        print(f"GPU tensor approach: +{overhead:.2f}ms overhead (CPU→GPU transfer)")
+        print(f"Benefit if downstream ops on GPU: Keep data on VRAM, avoid GPU←CPU transfers")
+    else:
+        print(f"GPU tensor approach: -{abs(overhead):.2f}ms improvement")
+
+    print("\nConclusion:")
+    if overhead > 2.0:
+        print(f"⚠️  GPU transfer overhead ({overhead:.2f}ms) may not be worth it")
+        print("   unless downstream operations heavily use GPU.")
+    else:
+        print(f"✅ GPU transfer overhead is modest ({overhead:.2f}ms)")
+        print("   Worthwhile if SAM or other GPU ops will use the data.")
+
+    # Cleanup
+    for fbo in mgl_ctx['_fbo_cache'].values():
+        fbo.release()
+    mgl_ctx['ctx'].release()
+
+    print("✅ GPU Tensor Readback test PASSED\n")
+
+
+def test_gpu_tensor_scaling(width=4000, height=3000, num_cameras=100):
+    """Realistic scaling test: CUDA init once, process N high-res images.
+
+    Simulates the real workflow:
+    - Initialize CUDA context once at app startup
+    - Process many cameras with full-resolution textures
+    - Compare cumulative cost of CPU vs GPU tensor approaches
+
+    Args:
+        width, height: Image resolution (default 4000×3000 = 12MP)
+        num_cameras: Number of cameras to process
+    """
+    print("\n" + "="*70)
+    print(f"TEST 11: GPU Tensor Scaling ({width}×{height} = {width*height/1e6:.0f}MP, {num_cameras} cameras)")
+    print("="*70)
+
+    try:
+        import torch
+        from coralnet_toolbox.MVAT.shaders.cuda_gl_interop import process_index_map_gpu
+    except ImportError:
+        print("⚠️  PyTorch not available; skipping scaling test")
+        return
+
+    W, H = width, height
+    K = np.array([[W*0.8, 0, W/2], [0, H*0.8, H/2], [0, 0, 1]], dtype=np.float64)
+    R = np.eye(3, dtype=np.float64)
+    t = np.array([0., 0., 5.])
+
+    mesh = FakeMesh(n_cells=16384)  # Large mesh
+    mgl_ctx = vm.VisibilityManager.setup_batch_moderngl_context(mesh, None, W, H)
+
+    print(f"\nMesh: {mesh.get_mesh().n_cells:,} faces")
+    print(f"Resolution: {W}×{H} pixels ({W*H:,} pixels per camera = {W*H/1e6:.1f}MP)")
+    print(f"Cameras: {num_cameras}")
+    print(f"Total data: {W*H*num_cameras/1e9:.2f}GB\n")
+
+    # Render once to get a realistic FBO
+    results = vm.VisibilityManager.compute_batch_mesh_visibility_moderngl(
+        mesh, [(K, R, t, W, H)],
+        compute_depth_map=False, pixel_budget=None, mgl_context=mgl_ctx
+    )
+
+    fbo = list(mgl_ctx['_fbo_cache'].values())[0]
+    fbo_w, fbo_h = fbo.size
+    pixels_per_cam = fbo_w * fbo_h
+
+    print(f"Actual FBO size: {fbo_w}×{fbo_h} = {pixels_per_cam:,} pixels/cam\n")
+
+    # ========================================================================
+    # Approach 1: CPU Readback (current)
+    # ========================================================================
+    print("="*70)
+    print("APPROACH 1: CPU Readback (Current)")
+    print("="*70)
+
+    cpu_times_per_cam = []
+    cpu_start = time.perf_counter()
+
+    for cam_idx in range(num_cameras):
+        t0 = time.perf_counter()
+        raw = fbo.read(components=1, dtype='i4')
+        shot_int32 = np.frombuffer(raw, dtype=np.int32).reshape(fbo_h, fbo_w)[::-1].copy()
+        shot_int32 -= 1
+        cam_time = time.perf_counter() - t0
+        cpu_times_per_cam.append(cam_time)
+
+    cpu_avg_per_cam = np.mean(cpu_times_per_cam)
+    cpu_total_100 = time.perf_counter() - cpu_start
+    cpu_init_cost = 0  # No initialization cost
+
+    print(f"Per-camera time: {cpu_avg_per_cam*1000:.2f}ms")
+    print(f"Total for {num_cameras} cameras: {cpu_total_100:.2f}s ({cpu_total_100/60:.2f}min)")
+    print(f"Init cost (amortized): {cpu_init_cost:.2f}ms\n")
+
+    # ========================================================================
+    # Approach 2: GPU Tensor (initialize once, then stream)
+    # ========================================================================
+    print("="*70)
+    print("APPROACH 2: GPU Tensor (CUDA-GL Streaming)")
+    print("="*70)
+
+    gpu_init_start = time.perf_counter()
+    # Pre-allocate GPU tensor to avoid repeated allocation
+    dummy = torch.zeros((fbo_h, fbo_w), dtype=torch.int32, device='cuda')
+    torch.cuda.synchronize()
+    gpu_init_cost = (time.perf_counter() - gpu_init_start) * 1000
+
+    print(f"CUDA init cost (one-time): {gpu_init_cost:.2f}ms\n")
+
+    gpu_times_per_cam = []
+    gpu_start = time.perf_counter()
+
+    for cam_idx in range(num_cameras):
+        t0 = time.perf_counter()
+        raw = fbo.read(components=1, dtype='i4')
+        shot_int32_cpu = np.frombuffer(raw, dtype=np.int32).reshape(fbo_h, fbo_w)[::-1].copy()
+        shot_int32_gpu = torch.from_numpy(shot_int32_cpu).to(device='cuda', dtype=torch.int32)
+        shot_int32_gpu = process_index_map_gpu(shot_int32_gpu, offset=1)
+        # Keep on GPU (don't transfer back to CPU)
+        cam_time = time.perf_counter() - t0
+        gpu_times_per_cam.append(cam_time)
+
+    gpu_avg_per_cam = np.mean(gpu_times_per_cam)
+    gpu_total = time.perf_counter() - gpu_start
+
+    # Total with amortized init cost
+    gpu_total_with_init = gpu_init_cost/1000 + gpu_avg_per_cam * num_cameras  # Amortize over 1000 cameras
+
+    print(f"Per-camera time: {gpu_avg_per_cam*1000:.2f}ms")
+    print(f"Total for {num_cameras} cameras: {gpu_total:.2f}s ({gpu_total/60:.2f}min)")
+    print(f"Init cost (amortized over 1000): {gpu_init_cost/1000:.3f}ms/cam\n")
+
+    # ========================================================================
+    # SCALING COMPARISON
+    # ========================================================================
+    print("="*70)
+    print(f"SCALING COMPARISON ({num_cameras} Cameras)")
+    print("="*70)
+
+    speedup = cpu_total_100 / gpu_total if gpu_total > 0 else 1.0
+    difference = cpu_total_100 - gpu_total
+    overhead_per_cam = (gpu_avg_per_cam - cpu_avg_per_cam) * 1000
+
+    print(f"\nCPU Readback:")
+    print(f"  Total time: {cpu_total_100:8.2f}s ({cpu_total_100/60:6.2f}min)")
+    print(f"  Per-camera: {cpu_avg_per_cam*1000:8.2f}ms")
+
+    print(f"\nGPU Tensor:")
+    print(f"  Total time: {gpu_total:8.2f}s ({gpu_total/60:6.2f}min)")
+    print(f"  Per-camera: {gpu_avg_per_cam*1000:8.2f}ms")
+    print(f"  Init cost: {gpu_init_cost:8.2f}ms (one-time)")
+
+    print(f"\n{'='*70}")
+    print(f"Speedup: {speedup:.2f}x")
+    print(f"Time saved: {abs(difference):.2f}s ({abs(difference)/60:.2f}min)")
+    print(f"Per-camera overhead: {overhead_per_cam:.2f}ms")
+    print(f"{'='*70}\n")
+
+    # ========================================================================
+    # VERDICT
+    # ========================================================================
+    print("VERDICT:")
+    if speedup > 1.1:
+        print(f"✅ GPU tensors are {(speedup-1)*100:.1f}% FASTER")
+        print("   Worth integrating GPU tensor pipeline!")
+    elif speedup < 0.9:
+        print(f"❌ GPU tensors are {(1-speedup)*100:.1f}% SLOWER")
+        print("   CPU readback is better; don't pursue GPU streaming.")
+    else:
+        print(f"⚠️  Roughly equivalent ({(speedup-1)*100:+.1f}%)")
+        print("   Benefit depends on downstream GPU operations (SAM, etc.)")
+
+    if overhead_per_cam > 2.0:
+        print(f"\n   Per-camera overhead ({overhead_per_cam:.2f}ms) is significant")
+        print("   unless GPU operations will dominate processing time.")
+
+    # Cleanup
+    for fbo in mgl_ctx['_fbo_cache'].values():
+        fbo.release()
+    mgl_ctx['ctx'].release()
+
+    print("\n✅ GPU Tensor Scaling test PASSED\n")
+
+
 def test_decode_bottleneck_diagnostic():
     """Isolate the decode bottleneck: GPU→CPU transfer vs NumPy math."""
     print("\n" + "="*70)
-    print("TEST 10: Decode Bottleneck Diagnostic (Transfer vs Math)")
+    print("TEST 11: Decode Bottleneck Diagnostic (Transfer vs Math)")
     print("="*70)
 
     W, H = 512, 512
@@ -634,6 +917,8 @@ if __name__ == "__main__":
         test_ortho_camera,
         test_integer_fbo_rendering,
         test_raycast_crosscheck,
+        test_gpu_tensor_readback,
+        test_gpu_tensor_scaling,
         test_moderngl_vs_vtk_speed,
     ]
     

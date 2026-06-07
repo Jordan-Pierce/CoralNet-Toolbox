@@ -637,8 +637,7 @@ class Raster(QObject):
         is_int = [m.dtype in (np.int32, np.int64) for m in maps]
         n = len(maps)
 
-        total_input_mb = sum(m.nbytes for m in maps) / (1024 * 1024)
-        print(f"\n🚨 [RAM DEBUG - WARP] Preparing to stream {n} maps to VRAM. Input CPU size: {total_input_mb:.1f} MB")
+        total_size_mb = sum(m.nbytes for m in maps) / (1024 * 1024)
         import time
         stream_start = time.perf_counter()
 
@@ -646,14 +645,13 @@ class Raster(QObject):
         h, w = maps[0].shape
         tensor = torch.empty((n, 1, h, w), dtype=torch.float32, device=grid_gpu.device)
 
-        # 2. Stream the numpy arrays directly into VRAM (zero CPU float copies)
+        # 2. Stream the numpy arrays directly into VRAM
         for i, m in enumerate(maps):
             # torch.from_numpy shares memory with the numpy array (no CPU copy).
             # Assigning it to the GPU tensor handles the transfer and float32 cast on the fly.
             tensor[i, 0] = torch.from_numpy(m)
 
         stream_time = time.perf_counter() - stream_start
-        print(f"🚨 [RAM DEBUG - WARP] Direct-to-VRAM stream complete in {stream_time:.4f}s. CPU intermediate RAM cost: 0.0 MB")
 
         # Expand grid: (1, H, W, 2) → (N, H, W, 2)
         grid_n = grid_gpu.expand(n, -1, -1, -1)
