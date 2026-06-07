@@ -39,7 +39,8 @@ class VisibilityWorker(QObject):
     """
     def __init__(self, primary_target, camera_params_dict, compute_depth_maps=True,
                  cache_manager=None, cache_keys_dict=None, target_file_path="", pixel_budget=None,
-                 warp_callables_dict=None, dist_coeffs_bytes_dict=None):
+                 warp_callables_dict=None, dist_coeffs_bytes_dict=None, n_workers=4,
+                 distortion_vram_safety_factor=0.95):
         super().__init__()
         self.primary_target = primary_target
         self.camera_params_dict = camera_params_dict
@@ -49,6 +50,8 @@ class VisibilityWorker(QObject):
         self.warp_callables_dict = warp_callables_dict or {}
         # path -> dist_coeffs.tobytes() for distorted cameras; used for cache-key disambiguation
         self.dist_coeffs_bytes_dict = dist_coeffs_bytes_dict or {}
+        self.n_workers = n_workers
+        self.distortion_vram_safety_factor = distortion_vram_safety_factor
 
         # Store cache dependencies
         self.cache_manager = cache_manager
@@ -76,8 +79,48 @@ class VisibilityWorker(QObject):
     def _cam_label(path: str, camera_labels=None, fallback: str = "cam") -> str:
         return label_for_path(path, camera_labels, fallback)
 
-    def _calculate_dynamic_chunk_size(self, params_list, safety_factor=0.90):
-        """Calculates a safe chunk size from available RAM and camera dimensions."""
+    def _measure_actual_camera_footprint(self, primary_target, first_params, mgl_context):
+        """Render the first camera and measure its actual memory footprint.
+
+        Returns tuple: (footprint_bytes, result_dict) so we can reuse the render.
+        """
+        import sys
+        import gc
+        try:
+            gc.collect()
+
+            result = VisibilityManager.compute_batch_mesh_visibility_moderngl(
+                primary_target, [first_params],
+                compute_depth_map=self.compute_depth_maps,
+                compute_visible_indices=False,
+                pixel_budget=self.pixel_budget,
+                mgl_context=mgl_context,
+            )
+
+            if result and len(result) > 0:
+                res = result[0]
+                index_map = res.get('index_map')
+                depth_map = res.get('depth_map')
+
+                footprint = 0
+                if index_map is not None:
+                    footprint += sys.getsizeof(index_map) + (index_map.nbytes if hasattr(index_map, 'nbytes') else 0)
+                if depth_map is not None:
+                    footprint += sys.getsizeof(depth_map) + (depth_map.nbytes if hasattr(depth_map, 'nbytes') else 0)
+
+                logger.debug(f"📊 [ACTUAL FOOTPRINT] Measured first camera: {footprint / (1024**2):.1f} MB")
+                return footprint, res
+
+        except Exception as e:
+            logger.warning(f"Could not measure actual footprint: {e}")
+
+        return None, None
+
+    def _calculate_dynamic_chunk_size(self, params_list, measured_footprint=None, safety_factor=0.90):
+        """Calculates a safe chunk size from available RAM.
+
+        If measured_footprint is provided, use actual data. Otherwise fall back to estimation.
+        """
         try:
             import psutil
         except Exception:
@@ -90,6 +133,23 @@ class VisibilityWorker(QObject):
             available_ram = psutil.virtual_memory().available
             safe_ram = available_ram * safety_factor
 
+            if measured_footprint is not None and measured_footprint > 0:
+                raw_chunk_size = int(safe_ram / measured_footprint)
+                calculated_chunk = max(8, min(raw_chunk_size, 512))
+
+                logger.debug(
+                    "🧠 [RAM SCALING] Available RAM: %.1f GB | Safe Budget: %.1f GB",
+                    available_ram / (1024 ** 3),
+                    safe_ram / (1024 ** 3),
+                )
+                logger.debug(
+                    "🧠 [RAM SCALING] MEASURED Camera Footprint: %.1f MB | Selected Chunk Size: %s",
+                    measured_footprint / (1024 ** 2),
+                    calculated_chunk,
+                )
+                return calculated_chunk
+
+            # Fallback: estimate based on image dimensions
             first_params = params_list[0]
             if len(first_params) < 5:
                 return 32
@@ -108,13 +168,20 @@ class VisibilityWorker(QObject):
                     width = max(1, int(round(width * scale)))
                     height = max(1, int(round(height * scale)))
 
-            bytes_per_pixel = 24
+            # Estimate based on what we actually compute
+            bytes_per_pixel = 4  # index map
+            if self.compute_depth_maps:
+                bytes_per_pixel += 4  # depth map
+            # Small object overhead (~200 bytes total, amortized per pixel for large images)
+            overhead_per_pixel = max(0.001, 200.0 / (width * height))
+            bytes_per_pixel += overhead_per_pixel
+
             camera_footprint = width * height * bytes_per_pixel
             if camera_footprint <= 0:
                 return 32
 
             raw_chunk_size = int(safe_ram / camera_footprint)
-            calculated_chunk = max(8, min(raw_chunk_size, 256))
+            calculated_chunk = max(8, min(raw_chunk_size, 512))
 
             logger.debug(
                 "🧠 [RAM SCALING] Available RAM: %.1f GB | Safe Budget: %.1f GB",
@@ -122,13 +189,14 @@ class VisibilityWorker(QObject):
                 safe_ram / (1024 ** 3),
             )
             logger.debug(
-                "🧠 [RAM SCALING] Est. Camera Footprint: %.1f MB | Selected Chunk Size: %s",
+                "🧠 [RAM SCALING] ESTIMATED Camera Footprint: %.1f MB | Selected Chunk Size: %s",
                 camera_footprint / (1024 ** 2),
                 calculated_chunk,
             )
 
             return calculated_chunk
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Chunk size calculation failed: {e}")
             return 32
 
     def run(self):
@@ -194,10 +262,17 @@ class VisibilityWorker(QObject):
                     _cache_total_start = time.perf_counter()
                 _cache_total_count += len(save_results)
 
+                # Create path list and index mapping for progress tracking
+                paths_list = list(save_results.keys())
+                path_to_idx = {p: i for i, p in enumerate(paths_list)}
+                total_paths = len(paths_list)
+                actual_workers = min(self.n_workers, max(1, total_paths))
+                total_batches = (total_paths + actual_workers - 1) // actual_workers
+
                 def _save_one(p, result_dict):
                     cache_key = keys_dict.get(p)
                     if cache_key is None:
-                        return False
+                        return False, 0.0
                     extra = extra_bytes_dict.get(p)
                     save_start = time.perf_counter()
                     cache_mgr.save_visibility(
@@ -212,20 +287,24 @@ class VisibilityWorker(QObject):
                         pixel_budget=pixel_budget,
                     )
                     elapsed = time.perf_counter() - save_start
-                    log_cam_stage(self._cam_label(p, camera_labels), "Cache", elapsed, logger)
-                    return True
+                    return True, elapsed
 
-                n_workers = min(4, max(1, len(save_results)))
-                with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                with ThreadPoolExecutor(max_workers=actual_workers) as pool:
                     futs = {
-                        pool.submit(_save_one, p, res): p
-                        for p, res in save_results.items()
+                        pool.submit(_save_one, p, save_results[p]): p
+                        for p in paths_list
                     }
                     for fut in as_completed(futs):
                         p = futs[fut]
                         try:
-                            if fut.result():
+                            success, elapsed = fut.result()
+                            if success:
                                 _cache_saved_count += 1
+                                path_idx = path_to_idx[p]
+                                batch_num = (path_idx // actual_workers) + 1
+                                # Log: cam name (count/total, +time) | batch N/total
+                                log_msg = f"({_cache_saved_count}/{_cache_total_count}, +{elapsed:.3f}s) batch {batch_num}/{total_batches}"
+                                log_cam_stage(self._cam_label(p, camera_labels), log_msg, 0, logger)
                         except Exception as exc:
                             logger.warning(f"⚠️ Cache save failed for {self._cam_label(p, camera_labels)}: {exc}")
                 # Snapshot the end-of-saves wall time before any post-save work
@@ -241,7 +320,6 @@ class VisibilityWorker(QObject):
                     paths = list(perspective_params.keys())
                     params_list = list(perspective_params.values())
 
-                    CHUNK_SIZE = self._calculate_dynamic_chunk_size(params_list)
                     total_cameras = len(paths)
                     vtk_context = None
                     sample_w = params_list[0][3]
@@ -257,8 +335,89 @@ class VisibilityWorker(QObject):
                         logger.error("❌ ModernGL unavailable (%s); cannot proceed (VTK removed in Phase 3)", _mgl_err)
                         raise
 
+                    # Measure actual footprint from first camera to inform chunk size
+                    measured_footprint = None
+                    first_camera_result = None
                     try:
-                        for i in range(0, total_cameras, CHUNK_SIZE):
+                        self._status("Measuring camera footprint...")
+                        measured_footprint, first_camera_result = self._measure_actual_camera_footprint(
+                            self.primary_target, params_list[0], mgl_context
+                        )
+                    except Exception as e:
+                        logger.warning(f"⚠️ Could not measure actual footprint, using estimation: {e}")
+
+                    CHUNK_SIZE = self._calculate_dynamic_chunk_size(params_list, measured_footprint=measured_footprint)
+                    logger.info(f"📦 Using CHUNK_SIZE={CHUNK_SIZE} based on {'measured' if measured_footprint else 'estimated'} footprint")
+
+                    try:
+                        # Helper: process a result dict through distortion, normalization, and optional caching
+                        def _process_result_pipeline(p, res, is_measured=False):
+                            """Apply distortion, normalization, and caching to a single result."""
+                            element_type_val = element_type
+                            res['element_type'] = element_type_val
+
+                            # Distortion step
+                            if p in self.warp_callables_dict:
+                                try:
+                                    if torch.cuda.is_available():
+                                        # CUDA batch warp would need to be adapted for single result
+                                        # For now, use CPU path
+                                        warp_fn = self.warp_callables_dict[p]
+                                        if res.get('index_map') is not None:
+                                            warped = warp_fn(res['index_map'], border_value=-1)
+                                            res['index_map'] = warped
+                                            valid_mask = warped >= 0
+                                            res['visible_indices'] = np.unique(warped[valid_mask]).astype(np.int32)
+                                            VisibilityManager._normalize_result_dict(res, False)
+                                except Exception as e:
+                                    logger.warning(f"Distortion failed for {self._cam_label(p, camera_labels)}: {e}")
+                            else:
+                                VisibilityManager._normalize_result_dict(res, False)
+
+                            # Caching step
+                            if self.cache_manager is not None and self.target_file_path:
+                                cache_key = self.cache_keys_dict.get(p)
+                                if cache_key is not None:
+                                    res['cache_path'] = self.cache_manager.get_cache_path(
+                                        cache_key, self.target_file_path, res.get('element_type', 'point'),
+                                        self.dist_coeffs_bytes_dict.get(p), pixel_budget=self.pixel_budget
+                                    )
+                                    try:
+                                        save_start = time.perf_counter()
+                                        self.cache_manager.save_visibility(
+                                            cache_key, self.target_file_path,
+                                            res.get('index_map'),
+                                            res.get('visible_indices'),
+                                            None,
+                                            element_type=res.get('element_type', 'point'),
+                                            inverted_index=None,
+                                            extra_hash_data=self.dist_coeffs_bytes_dict.get(p),
+                                            pixel_budget=self.pixel_budget,
+                                        )
+                                        elapsed = time.perf_counter() - save_start
+                                        log_cam_stage(self._cam_label(p, camera_labels), "Cache", elapsed, logger)
+                                    except Exception as e:
+                                        logger.warning(f"Cache save failed for {self._cam_label(p, camera_labels)}: {e}")
+
+                            # Add to lightweight results
+                            lightweight_final_results[p] = {
+                                'cache_path': res.get('cache_path'),
+                                'element_type': res.get('element_type', 'point'),
+                                'visible_indices': res.get('visible_indices')
+                            }
+
+                            if is_measured:
+                                logger.debug(f"✅ Processed measured first camera: {self._cam_label(p, camera_labels)}")
+
+                        # Process the measured first camera if available
+                        if first_camera_result is not None:
+                            self._status("Processing measured first camera...")
+                            _process_result_pipeline(paths[0], first_camera_result, is_measured=True)
+
+                        # Process remaining cameras in chunks
+                        start_idx = 1 if first_camera_result is not None else 0
+
+                        for i in range(start_idx, total_cameras, CHUNK_SIZE):
                             chunk_paths = paths[i : i + CHUNK_SIZE]
                             chunk_params = params_list[i : i + CHUNK_SIZE]
                             chunk_results = {}
@@ -307,12 +466,37 @@ class VisibilityWorker(QObject):
                                             grid_gpu  = rep_raster._torch_grid_gpu
                                             oob_mask  = rep_raster._torch_oob_mask
 
+                                            # Measure actual VRAM cost using a small test batch
+                                            # This captures both fixed overhead (grid, masks) and per-map cost
+                                            test_paths = group_paths[:min(4, len(group_paths))]
+                                            test_maps = [chunk_results[p]['index_map'] for p in test_paths]
+
+                                            torch.cuda.synchronize()
+                                            torch.cuda.empty_cache()
+                                            vram_before, _ = torch.cuda.mem_get_info()
+
+                                            # Warp small batch to measure realistic VRAM cost
+                                            warped_test, _ = Raster.warp_batch_cuda(
+                                                test_maps, [-1] * len(test_maps), grid_gpu, oob_mask
+                                            )
+
+                                            torch.cuda.synchronize()
+                                            vram_after, _ = torch.cuda.mem_get_info()
+                                            total_vram_used = vram_before - vram_after
+                                            actual_vram_per_map = total_vram_used / len(test_maps)
+
+                                            # Calculate safe batch size based on actual measurement
                                             free_vram, _ = torch.cuda.mem_get_info()
-                                            safe_vram = free_vram * 0.8
-                                            
-                                            test_map = chunk_results[group_paths[0]]['index_map']
-                                            bytes_per_img = Raster._estimate_batch_warp_bytes([test_map], grid_gpu)
-                                            vram_batch_size = max(1, int(safe_vram / max(1, bytes_per_img)))
+                                            safe_vram = free_vram * self.distortion_vram_safety_factor
+                                            vram_batch_size = max(1, int(safe_vram / max(1, actual_vram_per_map)))
+
+                                            logger.debug(
+                                                f"🎯 [VRAM SCALING] Free VRAM: {free_vram / (1024**3):.1f} GB | "
+                                                f"Safe budget (×{self.distortion_vram_safety_factor}): {safe_vram / (1024**3):.1f} GB | "
+                                                f"Test batch: {len(test_maps)} maps = {total_vram_used / (1024**3):.2f} GB | "
+                                                f"Per-map avg: {actual_vram_per_map / (1024**2):.1f} MB | "
+                                                f"VRAM batch size: {vram_batch_size}"
+                                            )
                                             
                                             idx_paths = [p for p in group_paths if chunk_results[p].get('index_map') is not None]
 
