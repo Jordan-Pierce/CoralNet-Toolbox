@@ -2929,6 +2929,13 @@ class PropagationEngine(QObject):
                 skipped_no_votes += 1
                 continue
 
+            # Densify each camera's votes in its own view before canonical
+            # translation — fills the holes a low-res index map leaves between
+            # sampled faces, matching the live-paint and primary→cameras paths.
+            element_ids, local_class_ids = self._densify_source_votes(
+                camera, element_ids, local_class_ids
+            )
+
             # Translate local class IDs → canonical IDs so votes from cameras
             # with different label orderings count toward the same label.
             canonical_ids = np.zeros_like(local_class_ids)
