@@ -282,7 +282,6 @@ class CacheManager:
                 index_map,
                 visible_indices,
                 element_type=element_type,
-                depth_map=None,
                 scale_factor=float(scale_factor),
             )
             return cache_path
@@ -379,7 +378,6 @@ class CacheManager:
                 index_map,
                 visible_indices,
                 element_type=element_type,
-                depth_map=depth_map,
             )
             return cache_path
         except Exception as e:
