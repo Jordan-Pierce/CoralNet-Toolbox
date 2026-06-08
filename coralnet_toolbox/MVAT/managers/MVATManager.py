@@ -646,9 +646,9 @@ class MVATManager(QObject):
         quality_combo = QComboBox(dialog)
         quality_combo.addItems(qualities)
 
-        current_idx = 2  # Default to "High (~4 Megapixels)"
+        current_idx = 0  # Default to "Native (Full Resolution)"
         for i, budget in enumerate(quality_map.values()):
-            if getattr(self, 'pixel_budget', 4_000_000) == budget:
+            if getattr(self, 'pixel_budget', None) == budget:
                 current_idx = i
                 break
         quality_combo.setCurrentIndex(current_idx)
@@ -658,7 +658,7 @@ class MVATManager(QObject):
         workers_slider = QSlider(Qt.Horizontal)
         workers_slider.setMinimum(1)
         workers_slider.setMaximum(max_workers)
-        workers_slider.setValue(4)  # Default to 4 workers
+        workers_slider.setValue(max_workers)  # Default to max workers
         workers_slider.setTickPosition(QSlider.TicksBelow)
 
         # Set tick interval and add labels at key positions
