@@ -399,8 +399,7 @@ class MVATManager(QObject):
                     uncached_cameras.append(cam)
 
             if uncached_cameras:
-                # dtype slot is unused: face IDs are always int32 (tiered encoding removed)
-                choice_mode, new_budget, n_workers, _dtype, enable_cache = self._prompt_visibility_quality_dialog(
+                choice_mode, new_budget, n_workers, enable_cache = self._prompt_visibility_quality_dialog(
                     len(uncached_cameras)
                 )
 
@@ -709,19 +708,6 @@ class MVATManager(QObject):
 
         debug_layout = QFormLayout(debug_groupbox)
 
-        dtype_combo = QComboBox(dialog)
-        dtype_options = ["r8", "rg16", "rgb24", "int32"]
-        dtype_combo.addItems(dtype_options)
-        dtype_combo.setCurrentIndex(3)  # Default to int32 (most reliable, fastest)
-        dtype_combo.setToolTip(
-            "Fragment face ID dtype for index map generation.\n"
-            "r8: 1 byte per pixel (256 max faces)\n"
-            "rg16: 2 bytes per pixel (65K max faces)\n"
-            "rgb24: 3 bytes per pixel (16M max faces)\n"
-            "int32: 4 bytes per pixel (4B max faces)"
-        )
-        debug_layout.addRow("Index Map Dtype:", dtype_combo)
-
         cache_combo = QComboBox(dialog)
         cache_combo.addItems(["Enabled", "Disabled"])
         cache_combo.setCurrentIndex(0)
@@ -744,13 +730,12 @@ class MVATManager(QObject):
 
         mode = selected_mode['mode']
         if mode is None:
-            return None, None, None, None, None
+            return None, None, None, None
 
         chosen_quality = quality_combo.currentText()
         n_workers = workers_slider.value()
-        dtype = dtype_combo.currentText()
         enable_cache = cache_combo.currentIndex() == 0
-        return mode, quality_map[chosen_quality], n_workers, dtype, enable_cache
+        return mode, quality_map[chosen_quality], n_workers, enable_cache
 
     # --- Signal Handlers ---
 
