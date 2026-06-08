@@ -45,12 +45,7 @@ except ImportError:
 
 # Shader sources and GPU utilities
 from coralnet_toolbox.MVAT.shaders import VERT as _MGL_VERT
-from coralnet_toolbox.MVAT.shaders import (
-    FRAG_FACE_ID_R8 as _MGL_FRAG_R8,
-    FRAG_FACE_ID_RG16 as _MGL_FRAG_RG16,
-    FRAG_FACE_ID_RGB24 as _MGL_FRAG_RGB24,
-    FRAG_FACE_ID_INT as _MGL_FRAG_INT,
-)
+from coralnet_toolbox.MVAT.shaders import FRAG_FACE_ID_INT as _MGL_FRAG_INT
 from coralnet_toolbox.MVAT.shaders.gpu_interop import (
     _resolve_gl_fns,
     _build_mvp,
@@ -159,103 +154,6 @@ class VisibilityManager:
             'inv_offsets': offsets,
             'inv_pixels':  sorted_pixels,
         }
-
-    @staticmethod
-    def _select_encoding_scheme(n_elements: int, dtype_override: str = None) -> tuple:
-        """
-        Choose optimal encoding scheme based on element count.
-
-        Args:
-            n_elements: Number of mesh elements (faces/cells)
-            dtype_override: Optional override ('r8', 'rg16', 'rgb24', or 'int32') for debugging
-
-        Returns:
-            (shader_source, encoding_name, num_components, decoder_fn)
-            encoding_name: 'r8', 'rg16', 'rgb24', or 'int32'
-
-        Note: Tiered encoding trades bandwidth savings for decode overhead.
-              For large meshes (> 100K faces), int32 is often faster due to zero-cost decode.
-        """
-        dtype_map = {
-            'r8': (_MGL_FRAG_R8, 'r8', 1, VisibilityManager._decode_r8),
-            'rg16': (_MGL_FRAG_RG16, 'rg16', 2, VisibilityManager._decode_rg16),
-            'rgb24': (_MGL_FRAG_RGB24, 'rgb24', 3, VisibilityManager._decode_rgb24),
-            'int32': (_MGL_FRAG_INT, 'int32', 1, VisibilityManager._decode_int32),
-        }
-
-        if dtype_override and dtype_override in dtype_map:
-            return dtype_map[dtype_override]
-
-        if n_elements <= 255:
-            return _MGL_FRAG_R8, 'r8', 1, VisibilityManager._decode_r8
-        elif n_elements <= 65535:
-            return _MGL_FRAG_RG16, 'rg16', 2, VisibilityManager._decode_rg16
-        elif n_elements <= 1000000:
-            # RGB24 for medium meshes where decode overhead (~10-20ms) is acceptable
-            return _MGL_FRAG_RGB24, 'rgb24', 3, VisibilityManager._decode_rgb24
-        else:
-            # Fall back to int32 for very large meshes: decode overhead exceeds bandwidth savings
-            # e.g., 3.4M faces: RGB24 decode ~80ms vs int32 decode ~0ms
-            return _MGL_FRAG_INT, 'int32', 1, VisibilityManager._decode_int32
-
-    @staticmethod
-    def _decode_r8(raw_bytes: bytes, shape: tuple) -> np.ndarray:
-        """Decode R8 (1 byte/pixel) back to int32 index map."""
-        data = np.frombuffer(raw_bytes, dtype=np.uint8).reshape(shape)
-        result = np.empty(shape, dtype=np.int32)
-        np.subtract(data.astype(np.int32, copy=False), 1, out=result)
-        return result
-
-    @staticmethod
-    def _decode_rg16(raw_bytes: bytes, shape: tuple) -> np.ndarray:
-        """Decode RG16 (2 bytes/pixel) back to int32 index map (optimized)."""
-        data = np.frombuffer(raw_bytes, dtype=np.uint8).reshape((*shape, 2))
-        h, w = shape
-        decoded = np.empty((h, w), dtype=np.int32)
-        # Vectorized decode: (high << 8) | low
-        decoded[:] = (data[..., 0].astype(np.int32) << 8) | data[..., 1].astype(np.int32)
-        decoded -= 1
-        return decoded
-
-    @staticmethod
-    def _decode_rgb24(raw_bytes: bytes, shape: tuple) -> np.ndarray:
-        """Decode RGB24 (3 bytes/pixel) back to int32 index map (optimized)."""
-        data = np.frombuffer(raw_bytes, dtype=np.uint8).reshape((*shape, 3))
-        h, w = shape
-        decoded = np.empty((h, w), dtype=np.int32)
-        # Vectorized decode: (R << 16) | (G << 8) | B
-        decoded[:] = (data[..., 0].astype(np.int32) << 16) | (data[..., 1].astype(np.int32) << 8) | data[..., 2].astype(np.int32)
-        decoded -= 1
-        return decoded
-
-    @staticmethod
-    def _decode_int32(raw_bytes: bytes, shape: tuple) -> np.ndarray:
-        """Decode int32 back to int32 index map (fast path, just subtract offset)."""
-        from time import perf_counter
-        import logging
-        logger = logging.getLogger(__name__)
-
-        t0 = perf_counter()
-        data = np.frombuffer(raw_bytes, dtype=np.int32).reshape(shape)
-        t_frombuffer = perf_counter() - t0
-
-        t0 = perf_counter()
-        result = np.empty(shape, dtype=np.int32)
-        t_empty = perf_counter() - t0
-
-        t0 = perf_counter()
-        np.subtract(data, 1, out=result)
-        t_subtract = perf_counter() - t0
-
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                f"      _decode_int32 breakdown (shape={shape}): "
-                f"frombuffer={t_frombuffer*1000:.2f}ms | "
-                f"empty={t_empty*1000:.2f}ms | subtract={t_subtract*1000:.2f}ms | "
-                f"total={((t_frombuffer + t_empty + t_subtract)*1000):.2f}ms"
-            )
-
-        return result
 
     @staticmethod
     def _normalize_result_dict(result: dict, compute_depth_map: bool = True) -> dict:
@@ -548,12 +446,8 @@ class VisibilityManager:
 
     @classmethod
     def setup_batch_moderngl_context(cls, mesh_product, pixel_budget,
-                                     sample_width, sample_height, dtype_override: str = None):
-        """Create a moderngl offscreen context and upload mesh geometry once.
-
-        Args:
-            dtype_override: Optional dtype override ('r8', 'rg16', 'rgb24', 'int32') for debugging.
-        """
+                                     sample_width, sample_height):
+        """Create a moderngl offscreen context and upload mesh geometry once."""
         import moderngl
 
         ctx = moderngl.create_context(standalone=True)
@@ -570,9 +464,8 @@ class VisibilityManager:
         vbo = ctx.buffer(vertices.tobytes())
         ibo = ctx.buffer(faces.tobytes())
 
-        # Choose encoding scheme based on mesh size (with optional override for debugging)
-        frag_shader, encoding_name, num_components, decoder = cls._select_encoding_scheme(n_cells, dtype_override)
-        prog_int = ctx.program(vertex_shader=_MGL_VERT, fragment_shader=frag_shader)
+        # Single-channel R32I face-ID target (always int32; tiered encoding removed)
+        prog_int = ctx.program(vertex_shader=_MGL_VERT, fragment_shader=_MGL_FRAG_INT)
         vao_int  = ctx.vertex_array(prog_int, [(vbo, '3f', 'position')], ibo)
 
         gl_fns = _resolve_gl_fns()
@@ -583,10 +476,7 @@ class VisibilityManager:
                 mesh.cell_centers().points.astype(np.float32)
             ).cuda()
 
-        encoding_display = {"r8": "8-bit", "rg16": "16-bit", "rgb24": "24-bit", "int32": "32-bit"}
-        logger.debug(
-            f"   ✅ moderngl context ready: {n_cells:,} faces ({encoding_display.get(encoding_name, 'unknown')} encoding)"
-        )
+        logger.debug(f"   ✅ moderngl context ready: {n_cells:,} faces (32-bit int encoding)")
 
         return {
             'ctx':             ctx,
@@ -596,9 +486,6 @@ class VisibilityManager:
             'gl_fns':          gl_fns,
             'pixel_budget':    pixel_budget,
             'face_centers_pt': face_centers_pt,
-            'encoding_name':   encoding_name,
-            'num_components':  num_components,
-            'decoder':         decoder,
             '_fbo_cache':      {},
         }
 
@@ -615,12 +502,8 @@ class VisibilityManager:
         mgl_context: dict = None,
         camera_index_offset: int = 0,
         use_viewport_cropping: bool = True,
-        dtype_override: str = None,
     ) -> list:
-        """GPU rasterization via moderngl with zero-PCIe CUDA-GL framebuffer readback.
-
-        Args:
-            dtype_override: Optional dtype override ('r8', 'rg16', 'rgb24', 'int32') for debugging.
+        """GPU rasterization via moderngl with CPU framebuffer readback.
 
         Returns a list of result dicts with 'index_map', 'visible_indices', 'depth_map', etc.
         """
@@ -658,7 +541,6 @@ class VisibilityManager:
             mgl_context = cls.setup_batch_moderngl_context(
                 mesh_product, pixel_budget,
                 camera_params_list[0][3], camera_params_list[0][4],
-                dtype_override=dtype_override,
             )
 
         ctx          = mgl_context['ctx']
@@ -666,9 +548,6 @@ class VisibilityManager:
         vao_int      = mgl_context['vao_int']
         gl_fns       = mgl_context['gl_fns']
         fbo_cache    = mgl_context['_fbo_cache']
-        encoding_name = mgl_context['encoding_name']
-        num_components = mgl_context['num_components']
-        decoder      = mgl_context['decoder']
 
         mesh        = mesh_product.get_mesh()
         mesh_bounds = mesh.bounds
@@ -676,11 +555,9 @@ class VisibilityManager:
         def _get_fbo(w, h):
             key = (w, h)
             if key not in fbo_cache:
-                # Use compact format for tiered encoding (R8/RG8/RGB8 instead of I32)
-                dtype = 'i4' if encoding_name == 'int32' else 'u1'
-
+                # Single-channel R32I face-ID target (always int32).
                 fbo_cache[key] = ctx.framebuffer(
-                    color_attachments=[ctx.texture((w, h), num_components, dtype=dtype)],
+                    color_attachments=[ctx.texture((w, h), 1, dtype='i4')],
                     depth_attachment=ctx.depth_texture((w, h)),
                 )
             return fbo_cache[key]
@@ -795,53 +672,41 @@ class VisibilityManager:
             ctx.finish()
             t_gpu_sync = perf_counter() - t0_sync
 
-            # Use FBO directly (no GPU-side flip)
+            # The vertex shader bakes the vertical flip into clip space, so the
+            # readback is already in top-to-bottom image order (no CPU [::-1]).
             fbo_to_read = fbo
 
-            # Texture readback from GPU to CPU (tiered encoding)
+            # Texture readback: single-channel R32I → int32 (no bit-unpack decode)
             t0_read = perf_counter()
-            read_dtype = 'i4' if encoding_name == 'int32' else 'u1'
-            raw = fbo_to_read.read(components=num_components, dtype=read_dtype)
+            raw = fbo_to_read.read(components=1, dtype='i4')
             t_fbo_read = perf_counter() - t0_read
 
-            # Data processing: decode, reshape, flip, copy (detailed breakdown)
+            # Data processing: reverse the +1 ID offset (0 = background → -1).
+            # frombuffer is read-only; the subtract yields a fresh writable
+            # contiguous int32 array — no flip and no ascontiguousarray needed.
             t0_proc_total = perf_counter()
 
             t0_decode_data = perf_counter()
-            decoded = decoder(raw, (crop_h, crop_w))
+            crop_index_map = np.frombuffer(raw, dtype=np.int32).reshape(crop_h, crop_w) - 1
             t_decode_data = perf_counter() - t0_decode_data
 
-            # CPU flip + copy
-            t0_flip = perf_counter()
-            shot_int32 = decoded[::-1]
-            t_flip = perf_counter() - t0_flip
-
-            t0_copy = perf_counter()
-            # ascontiguousarray is faster than pre-allocate + assign
-            shot_int32 = np.ascontiguousarray(shot_int32)
-            t_copy = perf_counter() - t0_copy
-
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"      Copy: {t_copy*1000:.2f}ms (ascontiguousarray)")
+            # Flip + copy now happen on the GPU (MVP Y-flip), so these are no-ops.
+            t_flip = 0.0
+            t_copy = 0.0
 
             t_data_proc = perf_counter() - t0_proc_total
 
             # Store encoding info for later breakdown logging
-            _decode_encoding = encoding_name
+            _decode_encoding = 'int32'
 
             t_readback = perf_counter() - t0_readback_total
 
             # ================================================================
-            # DECODE PHASE: Offset adjustment + visible indices computation
+            # DECODE PHASE: visible indices computation
             # ================================================================
             t0_decode_total = perf_counter()
-
-            t0_offset = perf_counter()
-            t0_cpu_convert = perf_counter()
-            # Decoder already applied the -1 offset, so shot_int32 is 0-indexed with -1 for invalid
-            crop_index_map = shot_int32.cpu().numpy() if hasattr(shot_int32, 'cpu') else shot_int32
-            t_cpu_convert = perf_counter() - t0_cpu_convert
-            t_offset_adj = perf_counter() - t0_offset
+            t_cpu_convert = 0.0
+            t_offset_adj = 0.0
 
             # Compute visible indices only if requested (skip for ~47ms savings in batch mode)
             t0_indices = perf_counter()
@@ -881,7 +746,9 @@ class VisibilityManager:
                 try:
                     # ModernGL depth texture is read without components parameter
                     depth_raw = fbo.depth_attachment.read()
-                    depth_buffer = np.frombuffer(depth_raw, dtype=np.float32).reshape(crop_h, crop_w)[::-1]
+                    # No [::-1]: the vertex shader's Y-flip already orients the
+                    # depth attachment top-to-bottom, matching the index map.
+                    depth_buffer = np.frombuffer(depth_raw, dtype=np.float32).reshape(crop_h, crop_w)
 
                     # Linearize OpenGL depth [0, 1] to CV depth (meters)
                     # Using the exact near/far clipping planes defined in _build_mvp

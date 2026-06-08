@@ -399,7 +399,8 @@ class MVATManager(QObject):
                     uncached_cameras.append(cam)
 
             if uncached_cameras:
-                choice_mode, new_budget, n_workers, dtype, enable_cache = self._prompt_visibility_quality_dialog(
+                # dtype slot is unused: face IDs are always int32 (tiered encoding removed)
+                choice_mode, new_budget, n_workers, _dtype, enable_cache = self._prompt_visibility_quality_dialog(
                     len(uncached_cameras)
                 )
 
@@ -409,7 +410,6 @@ class MVATManager(QObject):
                 previous_budget = getattr(self, 'pixel_budget', None)
                 self.pixel_budget = new_budget
                 self._cache_n_workers = n_workers  # Store for use in _compute_visibility_async
-                self.debug_frag_face_id_dtype = dtype  # Debug: frag face ID dtype
                 self.debug_enable_cache = enable_cache  # Debug: enable/disable caching
 
                 # If the budget actually changed, the previously cached
@@ -1947,7 +1947,6 @@ class MVATManager(QObject):
             # Pass the cache data and scale factors to the worker
             n_workers = getattr(self, '_cache_n_workers', 4)  # Default to 4 if not set
             distortion_vram_safety = getattr(self, '_distortion_vram_safety_factor', 0.8)  # Default to 0.8
-            dtype = getattr(self, 'debug_frag_face_id_dtype', 'rgb24')
             enable_cache = getattr(self, 'debug_enable_cache', True)
             worker = VisibilityWorker(
                 primary_target=primary_target,
@@ -1961,7 +1960,6 @@ class MVATManager(QObject):
                 dist_coeffs_bytes_dict=dist_coeffs_bytes_dict,
                 n_workers=n_workers,
                 distortion_vram_safety_factor=distortion_vram_safety,
-                frag_face_id_dtype=dtype,
                 enable_cache=enable_cache,
             )
             
