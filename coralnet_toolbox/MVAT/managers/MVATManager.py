@@ -709,25 +709,7 @@ class MVATManager(QObject):
         dtype_combo = QComboBox(dialog)
         dtype_options = ["r8", "rg16", "rgb24", "int32"]
         dtype_combo.addItems(dtype_options)
-
-        # Determine default dtype based on actual mesh element count
-        default_dtype_idx = 2  # Default to rgb24 if no mesh is loaded
-        try:
-            primary_target = self.viewer.scene_context.get_primary_target()
-            if primary_target is not None:
-                element_count = primary_target.get_element_count()
-                if element_count <= 256:
-                    default_dtype_idx = 0  # r8
-                elif element_count <= 65536:
-                    default_dtype_idx = 1  # rg16
-                elif element_count <= 16777216:
-                    default_dtype_idx = 2  # rgb24
-                else:
-                    default_dtype_idx = 3  # int32
-        except Exception:
-            pass
-
-        dtype_combo.setCurrentIndex(default_dtype_idx)
+        dtype_combo.setCurrentIndex(3)  # Default to int32 (most reliable, fastest)
         dtype_combo.setToolTip(
             "Fragment face ID dtype for index map generation.\n"
             "r8: 1 byte per pixel (256 max faces)\n"
