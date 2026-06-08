@@ -646,12 +646,7 @@ class MVATManager(QObject):
         quality_combo = QComboBox(dialog)
         quality_combo.addItems(qualities)
 
-        current_idx = 0  # Default to "Native (Full Resolution)"
-        for i, budget in enumerate(quality_map.values()):
-            if getattr(self, 'pixel_budget', None) == budget:
-                current_idx = i
-                break
-        quality_combo.setCurrentIndex(current_idx)
+        quality_combo.setCurrentIndex(0)  # Always default to "Native (Full Resolution)"
         form_layout.addRow("Visibility Quality:", quality_combo)
 
         # Add n_workers slider with tick labels
