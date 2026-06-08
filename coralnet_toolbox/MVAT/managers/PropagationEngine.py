@@ -587,6 +587,50 @@ class PropagationEngine(QObject):
         dense = np.asarray(dense, dtype=np.int64)
         return dense if dense.size else seed_ids
 
+    def _densify_source_votes(self, source_camera, element_ids, class_ids):
+        """Densify multi-class element/class vote arrays, one class at a time.
+
+        Semantic propagation produces parallel ``element_ids`` / ``class_ids``
+        vote arrays (many classes at once, with duplicate votes per face), so the
+        single-class ``_densify_source_ids`` path doesn't apply directly.  This
+        gathers the dense surface patch per class and appends the *newly* reached
+        faces as one vote each, leaving the original votes (and their
+        multiplicity) intact so confirmed seeds keep their weight.
+
+        Where two classes' gathers overlap at a boundary, both contribute a vote
+        for the shared face; the downstream ``resolve_class_conflicts_vectorized``
+        picks the winner, so no conflict handling is needed here.
+
+        No-op (returns the inputs unchanged) when densification is disabled, the
+        arrays are empty/mismatched, or the target is not a KD-tree-backed mesh.
+        """
+        element_ids = np.asarray(element_ids, dtype=np.int64).ravel()
+        class_ids = np.asarray(class_ids, dtype=np.int64).ravel()
+        if (element_ids.size == 0 or element_ids.size != class_ids.size
+                or not getattr(self, 'densify_enabled', False)):
+            return element_ids, class_ids
+
+        primary_target = self.viewer.scene_context.get_primary_target()
+        if primary_target is None or not hasattr(primary_target, 'gather_dense_face_ids'):
+            return element_ids, class_ids
+
+        # Preserve the original votes (with multiplicity) as the first chunk.
+        out_elements = [element_ids]
+        out_classes = [class_ids]
+
+        for cls in np.unique(class_ids):
+            seed = element_ids[class_ids == cls]
+            unique_seed = np.unique(seed)
+            dense = self._densify_source_ids(source_camera, unique_seed)
+            # Append only faces the gather newly reached for this class; the
+            # originals are already represented (with their vote weight) above.
+            new_faces = np.setdiff1d(dense, unique_seed, assume_unique=True)
+            if new_faces.size:
+                out_elements.append(new_faces)
+                out_classes.append(np.full(new_faces.size, int(cls), dtype=np.int64))
+
+        return np.concatenate(out_elements), np.concatenate(out_classes)
+
     def _extract_source_ids_from_full_mask(self,
                                            source_camera,
                                            source_mask: np.ndarray) -> Optional[np.ndarray]:
@@ -2409,6 +2453,11 @@ class PropagationEngine(QObject):
                 4000,
             )
             return
+
+        # Densify per class so low-res prediction votes fill the dense surface.
+        element_ids, class_ids = self._densify_source_votes(
+            source_camera, element_ids, class_ids
+        )
 
         _status(
             f"Multi-annotate: painting {element_ids.size:,} element(s) "
