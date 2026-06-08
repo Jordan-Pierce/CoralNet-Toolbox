@@ -164,9 +164,7 @@ class MVATManager(QObject):
 
         # Internal Managers
         self.selection_model = SelectionManager(self)
-        # Check environment variable to disable caching for debugging
-        disable_cache = os.environ.get('MVAT_DISABLE_CACHE', '0').lower() in ('1', 'true', 'yes')
-        self.cache_manager = CacheManager("", disable_cache=disable_cache)
+        self.cache_manager = CacheManager("")
         self.mouse_bridge = MousePositionBridge(self)
 
         # Lazy flush debounce timer: 3D GPU uploads happen only after the user pauses.
@@ -393,7 +391,7 @@ class MVATManager(QObject):
                     uncached_cameras.append(cam)
 
             if uncached_cameras:
-                choice_mode, new_budget, n_workers = self._prompt_visibility_quality_dialog(
+                choice_mode, new_budget, n_workers, dtype, enable_cache = self._prompt_visibility_quality_dialog(
                     len(uncached_cameras)
                 )
 
@@ -403,6 +401,8 @@ class MVATManager(QObject):
                 previous_budget = getattr(self, 'pixel_budget', None)
                 self.pixel_budget = new_budget
                 self._cache_n_workers = n_workers  # Store for use in _compute_visibility_async
+                self.debug_frag_face_id_dtype = dtype  # Debug: frag face ID dtype
+                self.debug_enable_cache = enable_cache  # Debug: enable/disable caching
 
                 # If the budget actually changed, the previously cached
                 # visibility maps (in RAM) were produced at a different
@@ -584,6 +584,7 @@ class MVATManager(QObject):
             QDialog,
             QDialogButtonBox,
             QFormLayout,
+            QGroupBox,
             QHBoxLayout,
             QLabel,
             QSlider,
@@ -619,7 +620,7 @@ class MVATManager(QObject):
         dialog = QDialog(self.main_window)
         dialog.setWindowTitle("Pre-compute Visibility")
         dialog.setModal(True)
-        dialog.resize(520, 260)
+        dialog.resize(520, 320)
 
         selected_mode = {'mode': None}
 
@@ -645,19 +646,14 @@ class MVATManager(QObject):
         quality_combo = QComboBox(dialog)
         quality_combo.addItems(qualities)
 
-        current_idx = 2  # Default to "High (~4 Megapixels)"
-        for i, budget in enumerate(quality_map.values()):
-            if getattr(self, 'pixel_budget', 4_000_000) == budget:
-                current_idx = i
-                break
-        quality_combo.setCurrentIndex(current_idx)
+        quality_combo.setCurrentIndex(0)  # Always default to "Native (Full Resolution)"
         form_layout.addRow("Visibility Quality:", quality_combo)
 
         # Add n_workers slider with tick labels
         workers_slider = QSlider(Qt.Horizontal)
         workers_slider.setMinimum(1)
         workers_slider.setMaximum(max_workers)
-        workers_slider.setValue(4)  # Default to 4 workers
+        workers_slider.setValue(max_workers)  # Default to max workers
         workers_slider.setTickPosition(QSlider.TicksBelow)
 
         # Set tick interval and add labels at key positions
@@ -699,6 +695,36 @@ class MVATManager(QObject):
         form_layout.addRow("Cache Workers:", workers_container)
         layout.addLayout(form_layout)
 
+        # Debugging section (editable controls for experimentation)
+        debug_groupbox = QGroupBox("Debugging")
+        debug_groupbox.setCheckable(False)
+
+        debug_layout = QFormLayout(debug_groupbox)
+
+        dtype_combo = QComboBox(dialog)
+        dtype_options = ["r8", "rg16", "rgb24", "int32"]
+        dtype_combo.addItems(dtype_options)
+        dtype_combo.setCurrentIndex(3)  # Default to int32 (most reliable, fastest)
+        dtype_combo.setToolTip(
+            "Fragment face ID dtype for index map generation.\n"
+            "r8: 1 byte per pixel (256 max faces)\n"
+            "rg16: 2 bytes per pixel (65K max faces)\n"
+            "rgb24: 3 bytes per pixel (16M max faces)\n"
+            "int32: 4 bytes per pixel (4B max faces)"
+        )
+        debug_layout.addRow("Index Map Dtype:", dtype_combo)
+
+        cache_combo = QComboBox(dialog)
+        cache_combo.addItems(["Enabled", "Disabled"])
+        cache_combo.setCurrentIndex(0)
+        cache_combo.setToolTip(
+            "Enable or disable caching during visibility computation.\n"
+            "Disabled: Measures pure generation time without I/O overhead"
+        )
+        debug_layout.addRow("Caching:", cache_combo)
+
+        layout.addWidget(debug_groupbox)
+
         button_box = QDialogButtonBox(dialog)
         compute_button = button_box.addButton("Compute Now", QDialogButtonBox.AcceptRole)
         background_button = button_box.addButton("Background", QDialogButtonBox.RejectRole)
@@ -710,11 +736,13 @@ class MVATManager(QObject):
 
         mode = selected_mode['mode']
         if mode is None:
-            return None, None, None
+            return None, None, None, None, None
 
         chosen_quality = quality_combo.currentText()
         n_workers = workers_slider.value()
-        return mode, quality_map[chosen_quality], n_workers
+        dtype = dtype_combo.currentText()
+        enable_cache = cache_combo.currentIndex() == 0
+        return mode, quality_map[chosen_quality], n_workers, dtype, enable_cache
 
     # --- Signal Handlers ---
 
@@ -1902,6 +1930,8 @@ class MVATManager(QObject):
             # Pass the cache data and scale factors to the worker
             n_workers = getattr(self, '_cache_n_workers', 4)  # Default to 4 if not set
             distortion_vram_safety = getattr(self, '_distortion_vram_safety_factor', 0.8)  # Default to 0.8
+            dtype = getattr(self, 'debug_frag_face_id_dtype', 'rgb24')
+            enable_cache = getattr(self, 'debug_enable_cache', True)
             worker = VisibilityWorker(
                 primary_target=primary_target,
                 camera_params_dict=camera_params_dict,
@@ -1914,6 +1944,8 @@ class MVATManager(QObject):
                 dist_coeffs_bytes_dict=dist_coeffs_bytes_dict,
                 n_workers=n_workers,
                 distortion_vram_safety_factor=distortion_vram_safety,
+                frag_face_id_dtype=dtype,
+                enable_cache=enable_cache,
             )
             
             thread = QThread()

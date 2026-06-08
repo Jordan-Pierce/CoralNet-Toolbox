@@ -83,6 +83,59 @@ def _coerce_visible_indices(visible_indices: Optional[np.ndarray]) -> np.ndarray
     return np.asarray(visible_indices, dtype=np.int32).reshape(-1)
 
 
+def _palette_encode_rle_values(values: np.ndarray, visible_indices: np.ndarray) -> np.ndarray:
+    """Re-encode RLE run values as 1-based palette indices into `visible_indices`,
+    when that fits a smaller dtype than int32.
+
+    A camera typically only sees a few thousand of a mesh's elements, so the
+    palette (`visible_indices`, already stored alongside the map) is usually far
+    smaller than the global element-ID range — letting per-run values shrink from
+    int32 to uint8/uint16 regardless of total mesh size. The convention mirrors
+    the GPU face-ID encoding already used elsewhere in MVAT: 0 = no content
+    (-1), N = visible_indices[N-1].
+
+    Falls back to returning `values` unchanged (raw int32 global IDs) whenever
+    the palette doesn't fit uint8/uint16, or any non-background run value isn't
+    present in it — keeping the format self-correcting rather than risking
+    corruption if some future producer ever violates that invariant.
+    """
+    n_palette = visible_indices.size
+    if n_palette == 0 or n_palette > 65535:
+        return values
+
+    dtype = np.uint8 if n_palette <= 255 else np.uint16
+
+    mask = values >= 0
+    if not np.any(mask):
+        return np.zeros(values.shape, dtype=dtype)
+
+    positions = np.clip(np.searchsorted(visible_indices, values), 0, n_palette - 1)
+    if not np.array_equal(visible_indices[positions[mask]], values[mask]):
+        return values
+
+    encoded = np.zeros(values.shape, dtype=dtype)
+    encoded[mask] = (positions[mask] + 1).astype(dtype)
+    return encoded
+
+
+def _palette_decode_rle_values(values: np.ndarray, visible_indices: np.ndarray) -> np.ndarray:
+    """Inverse of `_palette_encode_rle_values`.
+
+    Archives saved before palette encoding (or where it wasn't beneficial)
+    store raw int32 global IDs and pass through unchanged — palette indices are
+    only ever written as uint8/uint16, so the dtype alone identifies the format.
+    """
+    values = np.asarray(values)
+    if values.dtype.kind != 'u' or values.dtype.itemsize > 2:
+        return np.asarray(values, dtype=np.int32)
+
+    decoded = np.full(values.shape, -1, dtype=np.int32)
+    mask = values > 0
+    if np.any(mask):
+        decoded[mask] = visible_indices[values[mask].astype(np.int64) - 1]
+    return decoded
+
+
 def save_index_map_archive(
     archive_path: str,
     index_map: np.ndarray,
@@ -97,12 +150,13 @@ def save_index_map_archive(
     temp_path = _npz_temp_path(archive_path)
 
     values, lengths, shape = encode_index_map_rle(index_map)
+    visible_indices_arr = _coerce_visible_indices(visible_indices)
     payload: Dict[str, Any] = {
         "cache_format": np.asarray(INDEX_MAP_RLE_FORMAT),
-        "index_map_rle_values": values,
+        "index_map_rle_values": _palette_encode_rle_values(values, visible_indices_arr),
         "index_map_rle_lengths": lengths,
         "index_map_rle_shape": shape,
-        "visible_indices": _coerce_visible_indices(visible_indices),
+        "visible_indices": visible_indices_arr,
         "element_type": np.asarray(element_type),
     }
 
@@ -134,13 +188,13 @@ def load_index_map_archive(archive_path: str) -> Dict[str, Any]:
         if cache_format != INDEX_MAP_RLE_FORMAT:
             raise ValueError(f"Unsupported cache format: {cache_format!r}")
 
+        visible_indices = _coerce_visible_indices(data["visible_indices"]) if "visible_indices" in data else np.empty(0, dtype=np.int32)
+
         index_map = decode_index_map_rle(
-            data["index_map_rle_values"],
+            _palette_decode_rle_values(data["index_map_rle_values"], visible_indices),
             data["index_map_rle_lengths"],
             data["index_map_rle_shape"],
         )
-
-        visible_indices = _coerce_visible_indices(data["visible_indices"]) if "visible_indices" in data else np.empty(0, dtype=np.int32)
 
         depth_map = None
         if "depth_map" in data:

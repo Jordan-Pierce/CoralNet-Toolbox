@@ -161,9 +161,13 @@ class VisibilityManager:
         }
 
     @staticmethod
-    def _select_encoding_scheme(n_elements: int) -> tuple:
+    def _select_encoding_scheme(n_elements: int, dtype_override: str = None) -> tuple:
         """
         Choose optimal encoding scheme based on element count.
+
+        Args:
+            n_elements: Number of mesh elements (faces/cells)
+            dtype_override: Optional override ('r8', 'rg16', 'rgb24', or 'int32') for debugging
 
         Returns:
             (shader_source, encoding_name, num_components, decoder_fn)
@@ -172,6 +176,16 @@ class VisibilityManager:
         Note: Tiered encoding trades bandwidth savings for decode overhead.
               For large meshes (> 100K faces), int32 is often faster due to zero-cost decode.
         """
+        dtype_map = {
+            'r8': (_MGL_FRAG_R8, 'r8', 1, VisibilityManager._decode_r8),
+            'rg16': (_MGL_FRAG_RG16, 'rg16', 2, VisibilityManager._decode_rg16),
+            'rgb24': (_MGL_FRAG_RGB24, 'rgb24', 3, VisibilityManager._decode_rgb24),
+            'int32': (_MGL_FRAG_INT, 'int32', 1, VisibilityManager._decode_int32),
+        }
+
+        if dtype_override and dtype_override in dtype_map:
+            return dtype_map[dtype_override]
+
         if n_elements <= 255:
             return _MGL_FRAG_R8, 'r8', 1, VisibilityManager._decode_r8
         elif n_elements <= 65535:
@@ -534,8 +548,12 @@ class VisibilityManager:
 
     @classmethod
     def setup_batch_moderngl_context(cls, mesh_product, pixel_budget,
-                                     sample_width, sample_height):
-        """Create a moderngl offscreen context and upload mesh geometry once."""
+                                     sample_width, sample_height, dtype_override: str = None):
+        """Create a moderngl offscreen context and upload mesh geometry once.
+
+        Args:
+            dtype_override: Optional dtype override ('r8', 'rg16', 'rgb24', 'int32') for debugging.
+        """
         import moderngl
 
         ctx = moderngl.create_context(standalone=True)
@@ -552,8 +570,8 @@ class VisibilityManager:
         vbo = ctx.buffer(vertices.tobytes())
         ibo = ctx.buffer(faces.tobytes())
 
-        # Choose encoding scheme based on mesh size
-        frag_shader, encoding_name, num_components, decoder = cls._select_encoding_scheme(n_cells)
+        # Choose encoding scheme based on mesh size (with optional override for debugging)
+        frag_shader, encoding_name, num_components, decoder = cls._select_encoding_scheme(n_cells, dtype_override)
         prog_int = ctx.program(vertex_shader=_MGL_VERT, fragment_shader=frag_shader)
         vao_int  = ctx.vertex_array(prog_int, [(vbo, '3f', 'position')], ibo)
 
@@ -597,8 +615,12 @@ class VisibilityManager:
         mgl_context: dict = None,
         camera_index_offset: int = 0,
         use_viewport_cropping: bool = True,
+        dtype_override: str = None,
     ) -> list:
         """GPU rasterization via moderngl with zero-PCIe CUDA-GL framebuffer readback.
+
+        Args:
+            dtype_override: Optional dtype override ('r8', 'rg16', 'rgb24', 'int32') for debugging.
 
         Returns a list of result dicts with 'index_map', 'visible_indices', 'depth_map', etc.
         """
@@ -636,6 +658,7 @@ class VisibilityManager:
             mgl_context = cls.setup_batch_moderngl_context(
                 mesh_product, pixel_budget,
                 camera_params_list[0][3], camera_params_list[0][4],
+                dtype_override=dtype_override,
             )
 
         ctx          = mgl_context['ctx']
