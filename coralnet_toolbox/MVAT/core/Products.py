@@ -915,6 +915,157 @@ class MeshProduct(AbstractSceneProduct):
         self.mesh.compute_normals(cell_normals=True, point_normals=False, inplace=True)
         return self.mesh.cell_data['Normals']
 
+    def _get_cached_face_normals(self) -> Optional[np.ndarray]:
+        """Return cached per-face normals, computing them once per product.
+
+        ``get_face_normals`` recomputes normals on every call; the densify
+        gather needs them per stroke, so cache the result and invalidate only
+        when the product identity changes (mirrors the KD-tree caching).
+        """
+        cached = getattr(self, '_face_normals_np', None)
+        cached_pid = getattr(self, '_face_normals_product_id', None)
+        if cached is not None and cached_pid == getattr(self, 'product_id', None):
+            return cached
+        try:
+            normals = np.asarray(self.get_face_normals(), dtype=np.float32)
+        except Exception:
+            return None
+        self._face_normals_np = normals
+        self._face_normals_product_id = getattr(self, 'product_id', None)
+        return normals
+
+    def gather_dense_face_ids(self, seed_ids, *, camera_position=None,
+                              radius_mult: float = 1.5, normal_dot_min: float = 0.3,
+                              max_expansion: float = 40.0) -> np.ndarray:
+        """Expand sparse seed face IDs into the dense set covering the same patch.
+
+        Faces sampled from a low-resolution index map are sparse — many faces
+        between samples never get a pixel.  This uses the prewarmed face-center
+        KD-tree (``_hover_face_kdtree``) to gather every face whose centroid lies
+        within a self-calibrating radius of any seed, then filters out occluded
+        / back-facing candidates so the result tracks the visible surface rather
+        than geometry behind it.
+
+        Args:
+            seed_ids: Sparse face IDs sampled from a (low-res) index map.
+            camera_position: Source camera world position.  Enables the
+                camera-facing cull (Stage 1); skipped when None (e.g. ortho).
+            radius_mult: Gather radius as a multiple of the median
+                nearest-neighbor spacing among the seed centroids.
+            normal_dot_min: Minimum dot product between a candidate's normal and
+                its nearest seed's normal to keep the candidate (Stage 2).  Set
+                to None to disable.
+            max_expansion: Circuit breaker — if the gathered set exceeds this
+                multiple of the seed count, the seeds are returned unchanged.
+
+        Returns:
+            np.ndarray[int64] dense face IDs (always a superset of the surviving
+            seeds), or the original seeds on any failure / no-op.
+        """
+        seeds = np.asarray(seed_ids, dtype=np.int64).ravel()
+        seeds = np.unique(seeds[seeds >= 0])
+        if seeds.size == 0:
+            return seeds
+
+        tree = getattr(self, '_hover_face_kdtree', None)
+        centers = getattr(self, '_element_centers_np', None)
+        if tree is None or centers is None:
+            return seeds
+
+        centers = np.asarray(centers, dtype=np.float32)
+        n_faces = len(centers)
+        seeds = seeds[seeds < n_faces]
+        if seeds.size == 0:
+            return np.asarray(seed_ids, dtype=np.int64)
+
+        pts = centers[seeds]
+
+        # --- Self-calibrating gather radius from seed spacing ---
+        radius = 0.0
+        if seeds.size >= 2:
+            try:
+                nn_dist, _ = tree.query(pts, k=2, workers=-1)
+                nn_dist = nn_dist[:, 1]
+                nn_dist = nn_dist[np.isfinite(nn_dist) & (nn_dist > 0)]
+                if nn_dist.size:
+                    radius = float(np.median(nn_dist)) * float(radius_mult)
+            except Exception:
+                radius = 0.0
+        if radius <= 0.0:
+            diag = float(np.linalg.norm(centers.max(axis=0) - centers.min(axis=0)))
+            radius = diag * 1e-3
+        if radius <= 0.0:
+            return seeds
+
+        # --- Thin query centers to ~half the gather radius -------------------
+        # query_ball_point cost (and the volume of duplicate output we then
+        # dedupe) scales with the number of ball centers.  Seeds sampled from a
+        # dense mesh heavily overlap, so collapse them to one representative per
+        # voxel; the union of the (unchanged-radius) balls is virtually identical
+        # but far cheaper.  On sparse low-res seeds this is a no-op.
+        query_pts = pts
+        if pts.shape[0] > 1:
+            voxel = radius * 0.5
+            if voxel > 0.0:
+                cell_keys = np.floor(pts / voxel).astype(np.int64)
+                _, rep_idx = np.unique(cell_keys, axis=0, return_index=True)
+                query_pts = pts[rep_idx]
+
+        # --- Radius-union gather (conforms to the stroke shape) --------------
+        try:
+            neighbor_lists = tree.query_ball_point(query_pts, radius, workers=-1)
+        except TypeError:
+            neighbor_lists = tree.query_ball_point(query_pts, radius)
+        # C-level concat of per-center arrays, not a Python generator flatten.
+        sub_arrays = [np.asarray(sub, dtype=np.int64) for sub in neighbor_lists if len(sub)]
+        if not sub_arrays:
+            return seeds
+        candidates = np.unique(np.concatenate(sub_arrays))
+        if candidates.size == 0:
+            return seeds
+
+        # --- Back-face / occlusion filtering ---
+        normals = self._get_cached_face_normals()
+        if normals is not None and normals.shape[0] == n_faces:
+            cand_centers = centers[candidates]
+            cand_normals = normals[candidates]
+            keep = np.ones(candidates.size, dtype=bool)
+
+            # Stage 1: camera-facing cull. A front face points back toward the
+            # camera, so dot(normal, view_dir) <= 0.
+            if camera_position is not None:
+                cam = np.asarray(camera_position, dtype=np.float32).reshape(3)
+                view = cand_centers - cam
+                vn = np.linalg.norm(view, axis=1, keepdims=True)
+                vn[vn < 1e-8] = 1.0
+                view = view / vn
+                facing = np.einsum('ij,ij->i', cand_normals, view)
+                keep &= facing <= 0.0
+
+            # Stage 2: normal consistency vs the nearest seed.
+            if normal_dot_min is not None:
+                try:
+                    from scipy.spatial import cKDTree
+                    seed_tree = cKDTree(pts)
+                    _, nearest_local = seed_tree.query(cand_centers, k=1, workers=-1)
+                    ref_normals = normals[seeds][nearest_local]
+                    consistency = np.einsum('ij,ij->i', cand_normals, ref_normals)
+                    keep &= consistency >= float(normal_dot_min)
+                except Exception:
+                    pass
+
+            candidates = candidates[keep]
+
+        # Always retain the original (visible, confirmed) seeds.
+        dense = np.union1d(candidates, seeds)
+
+        # Circuit breaker: a stroke straddling a discontinuity can balloon the
+        # gather — fall back to the seeds rather than mislabel distant geometry.
+        if dense.size > max_expansion * seeds.size:
+            return seeds
+
+        return dense.astype(np.int64, copy=False)
+
     def get_element_coordinate(self, element_id: int):
         """Return the 3D center coordinate of a mesh face by its ID."""
         if not hasattr(self, '_element_centers_np') or self._element_centers_np is None:

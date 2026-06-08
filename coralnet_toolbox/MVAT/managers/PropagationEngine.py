@@ -548,6 +548,45 @@ class PropagationEngine(QObject):
         unique_ids = np.unique(raw_ids)
         return unique_ids[unique_ids > -1].astype(np.int64, copy=False)
 
+    def _densify_source_ids(self, source_camera, seed_ids) -> np.ndarray:
+        """Expand sparse index-map-sampled face IDs into a dense surface patch.
+
+        Low-resolution index maps sample only a fraction of the faces in a
+        painted region.  When densification is enabled and the primary target is
+        a mesh with a prewarmed KD-tree, this gathers the surrounding faces on
+        the same visible surface (see MeshProduct.gather_dense_face_ids) so the
+        propagated labels are dense rather than sparse.
+
+        No-op (returns the seeds unchanged) when disabled, when there are no
+        seeds, or when the target is not a KD-tree-backed mesh.
+        """
+        seed_ids = np.asarray(seed_ids if seed_ids is not None else [], dtype=np.int64)
+        if seed_ids.size == 0 or not getattr(self, 'densify_enabled', False):
+            return seed_ids
+
+        primary_target = self.viewer.scene_context.get_primary_target()
+        if primary_target is None or not hasattr(primary_target, 'gather_dense_face_ids'):
+            return seed_ids
+
+        camera_position = None
+        if source_camera is not None and source_camera is not self.ortho_camera:
+            camera_position = getattr(source_camera, 'position', None)
+
+        try:
+            dense = primary_target.gather_dense_face_ids(
+                seed_ids,
+                camera_position=camera_position,
+                radius_mult=getattr(self, 'densify_radius_mult', 1.5),
+                normal_dot_min=getattr(self, 'densify_normal_dot_min', 0.3),
+                max_expansion=getattr(self, 'densify_max_expansion', 40.0),
+            )
+        except Exception as exc:
+            print(f"⚠️ Face densification failed: {exc}")
+            return seed_ids
+
+        dense = np.asarray(dense, dtype=np.int64)
+        return dense if dense.size else seed_ids
+
     def _extract_source_ids_from_full_mask(self,
                                            source_camera,
                                            source_mask: np.ndarray) -> Optional[np.ndarray]:
@@ -1433,6 +1472,7 @@ class PropagationEngine(QObject):
             py,
         )
         painted_ids = np.asarray(painted_ids if painted_ids is not None else [], dtype=np.int64)
+        painted_ids = self._densify_source_ids(self.selected_camera, painted_ids)
         class_ids = np.full(painted_ids.size, int(source_class_id), dtype=np.int64)
 
         self._execute_mask_propagation(
@@ -1484,6 +1524,7 @@ class PropagationEngine(QObject):
             painted_ids = self._extract_source_ids_from_full_mask(self.selected_camera, fill_mask)
 
         painted_ids = np.asarray(painted_ids if painted_ids is not None else [], dtype=np.int64)
+        painted_ids = self._densify_source_ids(self.selected_camera, painted_ids)
         class_ids = (
             np.full(painted_ids.size, int(source_class_id), dtype=np.int64)
             if source_class_id is not None
@@ -1520,6 +1561,9 @@ class PropagationEngine(QObject):
         px, py = int(scene_pos.x()), int(scene_pos.y())
         painted_ids = self._extract_source_ids_from_crop_mask(self.selected_camera, brush_mask, px, py)
         painted_ids = np.asarray(painted_ids if painted_ids is not None else [], dtype=np.int64)
+        # Densify to match the brush: an erase must cover the same dense face set
+        # the brush paints, or sparse remnants survive.
+        painted_ids = self._densify_source_ids(self.selected_camera, painted_ids)
 
         self._execute_mask_propagation(
             source_camera=self.selected_camera,
@@ -1644,6 +1688,7 @@ class PropagationEngine(QObject):
             py,
         )
         painted_ids = np.asarray(painted_ids if painted_ids is not None else [], dtype=np.int64)
+        painted_ids = self._densify_source_ids(selected_camera, painted_ids)
         class_ids = np.full(painted_ids.size, int(source_class_id), dtype=np.int64)
 
         self._execute_mask_propagation(

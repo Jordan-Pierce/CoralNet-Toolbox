@@ -133,6 +133,14 @@ class MVATManager(QObject):
         self.compute_depth_maps_enabled = True
         # New toggle: whether to compute index maps in background
         self.compute_index_maps_enabled = True
+        # Stage 1 densification: expand sparse index-map-sampled face IDs into a
+        # dense surface patch via the face-center KD-tree before propagation.
+        # See MeshProduct.gather_dense_face_ids / PropagationEngine._densify_source_ids.
+        # Tunable from the Propagation Hub dropdown (Settings → Densify).
+        self.densify_enabled = True
+        self.densify_radius_mult = 1.5      # gather radius vs. median seed spacing
+        self.densify_normal_dot_min = 0.3   # lower = include more curved surface
+        self.densify_max_expansion = 40.0   # circuit-breaker ceiling (× seed count)
         # Maximum pixel budget for background index map computation
         self.pixel_budget = 4_000_000  # Default to ~4 Megapixels
         # Number of parallel workers for cache disk I/O
@@ -1095,6 +1103,15 @@ class MVATManager(QObject):
                 tree = cKDTree(np.asarray(centers, dtype=np.float32))
                 primary_target._hover_face_kdtree = tree
                 primary_target._hover_face_kdtree_product_id = getattr(primary_target, 'product_id', None)
+
+                # Prewarm per-face normals too — the densify gather needs them,
+                # and computing them lazily on the first stroke causes a hitch on
+                # large meshes.
+                if hasattr(primary_target, '_get_cached_face_normals'):
+                    try:
+                        primary_target._get_cached_face_normals()
+                    except Exception:
+                        pass
 
             try:
                 self.main_window.status_bar.showMessage("KD-Tree built.", 3000)

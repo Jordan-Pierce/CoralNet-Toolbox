@@ -21,7 +21,7 @@ from PyQt5.QtWidgets import (
     QLabel, QToolBar, QToolButton, QSizePolicy, QFrame,
     QScrollArea, QLayout, QLayoutItem, QGraphicsOpacityEffect,
     QSpinBox, QAbstractSpinBox,
-    QMenu, QAction,
+    QMenu, QAction, QSlider, QWidgetAction,
 )
 
 from coralnet_toolbox.Icons import get_icon
@@ -221,6 +221,13 @@ class ContextMatrixWidget(QWidget):
         # Multi-camera annotation state
         self.multi_annotate_enabled = False
         self._skip_unlabeled_mesh_faces = False
+        # Densify settings (mirrored onto the MVATManager when it attaches).
+        # Defaults must match MVATManager.densify_* so the UI reads true initial state.
+        self._densify_enabled = True
+        self._densify_radius_mult = 1.5
+        self._densify_normal_dot_min = 0.3
+        self._densify_max_expansion = 40.0
+        
         self._pending_sync = None
         self._active_camera_path = None
 
@@ -1275,6 +1282,7 @@ class ContextMatrixWidget(QWidget):
 
         # Create the main menu
         hub_menu = QMenu(hub_btn)
+        hub_menu.setToolTipsVisible(True)  # QMenu hides action tooltips by default
 
         # ===== LIVE SECTION (Top Priority) =====
         # Section header (non-clickable, just a visual label)
@@ -1384,6 +1392,49 @@ class ContextMatrixWidget(QWidget):
         self._skip_unlabeled_action = act_skip_unlabeled
         hub_menu.addAction(act_skip_unlabeled)
 
+        # ===== DENSIFY SUB-SECTION =====
+        # Controls how many faces a low-res index-map sample expands to before
+        # it is propagated to the mesh and secondary cameras.
+        hub_menu.addSeparator()
+        densify_header = QAction("Densify (low-res fill)", hub_btn)
+        densify_header.setEnabled(False)
+        densify_header.setToolTip(
+            "Expand the sparse faces sampled from a low-resolution index map into\n"
+            "the dense surface patch around them before labels are propagated to\n"
+            "the mesh and secondary cameras — dense results at low-res cost."
+        )
+        hub_menu.addAction(densify_header)
+
+        act_densify_enabled = QAction("Densify labels", hub_btn)
+        act_densify_enabled.setCheckable(True)
+        act_densify_enabled.setChecked(bool(self._densify_enabled))
+        act_densify_enabled.setToolTip(
+            "Turn densification on or off.\n"
+            "Off = only the faces directly sampled by the index map are labeled\n"
+            "(sparse at low resolution). On = neighboring faces on the same\n"
+            "visible surface are filled in too. Takes effect on the next stroke."
+        )
+        act_densify_enabled.triggered.connect(
+            lambda checked: self._set_densify_param('densify_enabled', bool(checked))
+        )
+        self._densify_enabled_action = act_densify_enabled
+        hub_menu.addAction(act_densify_enabled)
+
+        # Gather radius (× median seed spacing): higher = denser / more bleed.
+        # The primary density dial — the only densify parameter exposed for now.
+        # Normal-tolerance and max-expansion stay at their MVATManager defaults.
+        hub_menu.addAction(self._make_densify_slider_action(
+            "Radius", 10, 50, int(round(self._densify_radius_mult * 10)),
+            to_value=lambda p: p / 10.0, fmt=lambda v: f"{v:.1f}×",
+            attr='densify_radius_mult',
+            tooltip=(
+                "Gather radius, as a multiple of the spacing between sampled faces.\n"
+                "The primary density dial: higher pulls in more surrounding faces\n"
+                "(denser fill) but can bleed past the painted region's edges.\n"
+                "Typical: 1.5×. Raise for sparser low-res maps."
+            ),
+        ))
+
         hub_btn.setMenu(hub_menu)
         hub_btn.clicked.connect(self._on_hub_btn_face_clicked)
 
@@ -1436,6 +1487,75 @@ class ContextMatrixWidget(QWidget):
         """Called when Skip Unlabeled Mesh Faces checkbox is toggled."""
         # Store the setting; it can be read when propagation operations run
         self._skip_unlabeled_mesh_faces = checked
+
+    # ==================== Densify settings ====================
+
+    def _apply_densify_settings_to_manager(self):
+        """Mirror the current densify settings onto the MVATManager.
+
+        The manager is the source of truth read during propagation; this widget
+        only edits the values, so push them whenever one changes (and once when
+        the manager attaches, since the menu is built before that).
+        """
+        mgr = getattr(self, '_mvat_manager', None)
+        if mgr is None:
+            return
+        mgr.densify_enabled = bool(self._densify_enabled)
+        mgr.densify_radius_mult = float(self._densify_radius_mult)
+        mgr.densify_normal_dot_min = float(self._densify_normal_dot_min)
+        mgr.densify_max_expansion = float(self._densify_max_expansion)
+
+    def _set_densify_param(self, attr: str, value):
+        """Update a single densify setting and push it to the manager."""
+        setattr(self, '_' + attr, value)
+        self._apply_densify_settings_to_manager()
+
+    def _make_densify_slider_action(self, title, slider_min, slider_max,
+                                    slider_init, to_value, fmt, attr, tooltip=None):
+        """Build a QWidgetAction holding a labeled slider for a densify param.
+
+        Args:
+            title: Row label.
+            slider_min/slider_max/slider_init: Integer slider geometry (QSlider
+                is integer-only; floats are mapped via ``to_value``).
+            to_value: callable(int) -> float mapping slider position to the value.
+            fmt: callable(float) -> str for the live readout.
+            attr: MVATManager attribute name to update (without the leading '_').
+            tooltip: Optional hover text, applied to the whole row.
+        """
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(20, 2, 12, 2)
+        layout.setSpacing(8)
+
+        name_lbl = QLabel(title)
+        name_lbl.setMinimumWidth(78)
+        layout.addWidget(name_lbl)
+
+        slider = QSlider(Qt.Horizontal, container)
+        slider.setMinimumWidth(120)
+        slider.setRange(slider_min, slider_max)
+        slider.setValue(slider_init)
+        layout.addWidget(slider)
+
+        val_lbl = QLabel(fmt(to_value(slider_init)))
+        val_lbl.setMinimumWidth(40)
+        layout.addWidget(val_lbl)
+
+        if tooltip:
+            for widget in (container, name_lbl, slider, val_lbl):
+                widget.setToolTip(tooltip)
+
+        def _changed(pos):
+            v = to_value(pos)
+            val_lbl.setText(fmt(v))
+            self._set_densify_param(attr, v)
+
+        slider.valueChanged.connect(_changed)
+
+        action = QWidgetAction(self)
+        action.setDefaultWidget(container)
+        return action
 
     def _on_multi_annotate_button_clicked(self, _checked=False):
         """Called when the Multi-Annotate button (not arrow) is clicked to toggle the state."""
@@ -1750,6 +1870,7 @@ class ContextMatrixWidget(QWidget):
     def set_mvat_manager(self, manager):
         self._mvat_manager = manager
         self._roll_cache.clear()  # camera set changed; invalidate cached roll angles
+        self._apply_densify_settings_to_manager()
 
     def request_sync(self, targets: dict, zoom_factor: float, reference_path: str = None, base_rotation: float = 0.0):
         self.sync_to_targets(targets, zoom_factor, reference_path, base_rotation)
