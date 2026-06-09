@@ -399,7 +399,7 @@ class MVATManager(QObject):
                     uncached_cameras.append(cam)
 
             if uncached_cameras:
-                choice_mode, new_budget, n_workers, enable_cache = self._prompt_visibility_quality_dialog(
+                choice_mode, new_budget, n_workers, enable_cache, enable_compression = self._prompt_visibility_quality_dialog(
                     len(uncached_cameras)
                 )
 
@@ -410,6 +410,7 @@ class MVATManager(QObject):
                 self.pixel_budget = new_budget
                 self._cache_n_workers = n_workers  # Store for use in _compute_visibility_async
                 self.debug_enable_cache = enable_cache  # Debug: enable/disable caching
+                self.debug_enable_compression = enable_compression  # Debug: compress cache or not
 
                 # If the budget actually changed, the previously cached
                 # visibility maps (in RAM) were produced at a different
@@ -717,6 +718,16 @@ class MVATManager(QObject):
         )
         debug_layout.addRow("Caching:", cache_combo)
 
+        compression_combo = QComboBox(dialog)
+        compression_combo.addItems(["True", "False"])
+        compression_combo.setCurrentIndex(0)  # Default to True (compressed .npz)
+        compression_combo.setToolTip(
+            "Compress cached index maps (DEFLATE .npz).\n"
+            "True: reduces the amount of disk space used, but takes more time to write.\n"
+            "False: faster writes, but larger files on disk."
+        )
+        debug_layout.addRow("Cache Compression:", compression_combo)
+
         layout.addWidget(debug_groupbox)
 
         button_box = QDialogButtonBox(dialog)
@@ -730,12 +741,13 @@ class MVATManager(QObject):
 
         mode = selected_mode['mode']
         if mode is None:
-            return None, None, None, None
+            return None, None, None, None, None
 
         chosen_quality = quality_combo.currentText()
         n_workers = workers_slider.value()
         enable_cache = cache_combo.currentIndex() == 0
-        return mode, quality_map[chosen_quality], n_workers, enable_cache
+        enable_compression = compression_combo.currentIndex() == 0
+        return mode, quality_map[chosen_quality], n_workers, enable_cache, enable_compression
 
     # --- Signal Handlers ---
 
@@ -1451,6 +1463,7 @@ class MVATManager(QObject):
                         result.get('visible_indices'),
                         result.get('depth_map') if self.compute_depth_maps_enabled else None,
                         element_type=element_type, extra_hash_data=extra,
+                        compressed=getattr(self, 'debug_enable_compression', True),
                         pixel_budget=self.pixel_budget,
                     )
                 except Exception:
@@ -1933,6 +1946,7 @@ class MVATManager(QObject):
             n_workers = getattr(self, '_cache_n_workers', 4)  # Default to 4 if not set
             distortion_vram_safety = getattr(self, '_distortion_vram_safety_factor', 0.8)  # Default to 0.8
             enable_cache = getattr(self, 'debug_enable_cache', True)
+            enable_compression = getattr(self, 'debug_enable_compression', True)
             worker = VisibilityWorker(
                 primary_target=primary_target,
                 camera_params_dict=camera_params_dict,
@@ -1946,6 +1960,7 @@ class MVATManager(QObject):
                 n_workers=n_workers,
                 distortion_vram_safety_factor=distortion_vram_safety,
                 enable_cache=enable_cache,
+                enable_compression=enable_compression,
             )
             
             thread = QThread()

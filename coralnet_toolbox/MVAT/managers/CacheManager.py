@@ -329,7 +329,7 @@ class CacheManager:
                         depth_map: Optional[np.ndarray] = None,
                         element_type: str = 'point',
                         inverted_index: Optional[Dict] = None,
-                        compressed: bool = False,
+                        compressed: bool = True,
                         extra_hash_data: Optional[bytes] = None,
                         pixel_budget: Optional[int] = None) -> str:
         """
@@ -378,6 +378,7 @@ class CacheManager:
                 index_map,
                 visible_indices,
                 element_type=element_type,
+                compress=compressed,
             )
             return cache_path
         except Exception as e:

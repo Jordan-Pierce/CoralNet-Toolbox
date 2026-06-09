@@ -1013,6 +1013,13 @@ class VisibilityManager:
         unaccounted_time = total_time - accounted_time
         readback_mode = "CPU readback"
 
+        # Cameras that took the zero-PCIe GPU readback path skip the CPU-path
+        # timers entirely, leaving their 'min' at the initial +inf. Reset those
+        # to 0 so the summary doesn't print "infms".
+        for _s in _stats.values():
+            if _s['min'] == float('inf'):
+                _s['min'] = 0.0
+
         # Format statistics with min/max/avg
         def fmt_stat(name, total, stat_dict):
             avg = total / n_cams * 1000

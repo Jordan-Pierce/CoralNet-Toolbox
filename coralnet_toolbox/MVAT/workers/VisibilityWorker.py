@@ -40,7 +40,7 @@ class VisibilityWorker(QObject):
     def __init__(self, primary_target, camera_params_dict, compute_depth_maps=True,
                  cache_manager=None, cache_keys_dict=None, target_file_path="", pixel_budget=None,
                  warp_callables_dict=None, dist_coeffs_bytes_dict=None, n_workers=4,
-                 distortion_vram_safety_factor=0.95, enable_cache=True):
+                 distortion_vram_safety_factor=0.95, enable_cache=True, enable_compression=True):
         super().__init__()
         self.primary_target = primary_target
         self.camera_params_dict = camera_params_dict
@@ -53,8 +53,9 @@ class VisibilityWorker(QObject):
         self.n_workers = n_workers
         self.distortion_vram_safety_factor = distortion_vram_safety_factor
 
-        # Debug: cache setting for experimentation
+        # Debug: cache settings for experimentation
         self.enable_cache = enable_cache
+        self.enable_compression = enable_compression
 
         # Store cache dependencies
         self.cache_manager = cache_manager
@@ -286,6 +287,7 @@ class VisibilityWorker(QObject):
                         None,  # Depth maps are now handled lazily on the main thread
                         element_type=result_dict.get('element_type', 'point'),
                         inverted_index=None,
+                        compressed=self.enable_compression,
                         extra_hash_data=extra,
                         pixel_budget=pixel_budget,
                     )
@@ -395,6 +397,7 @@ class VisibilityWorker(QObject):
                                             None,
                                             element_type=res.get('element_type', 'point'),
                                             inverted_index=None,
+                                            compressed=self.enable_compression,
                                             extra_hash_data=self.dist_coeffs_bytes_dict.get(p),
                                             pixel_budget=self.pixel_budget,
                                         )

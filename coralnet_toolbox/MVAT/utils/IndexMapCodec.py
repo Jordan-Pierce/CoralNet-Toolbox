@@ -43,9 +43,15 @@ def save_index_map_archive(
     visible_indices: Optional[np.ndarray],
     *,
     element_type: str = "point",
+    compress: bool = True,
     **extra_metadata,
 ) -> str:
-    """Save a dense 2-D index map as a DEFLATE-compressed ``.npz`` archive.
+    """Save a dense 2-D index map as a ``.npz`` archive.
+
+    When ``compress`` is True (default) the archive is DEFLATE-compressed
+    (``np.savez_compressed``); when False it is stored uncompressed
+    (``np.savez``) — faster to write at the cost of disk size. ``load_index_map_archive``
+    reads either transparently.
 
     Extra keyword metadata (e.g. ``scale_factor``) is stored verbatim and
     returned by :func:`load_index_map_archive`; ``None`` values are skipped.
@@ -69,7 +75,8 @@ def save_index_map_archive(
             payload[key] = np.asarray(value)
 
     try:
-        np.savez_compressed(temp_path, **payload)
+        saver = np.savez_compressed if compress else np.savez
+        saver(temp_path, **payload)
         os.replace(temp_path, archive_path)
         return archive_path
     except Exception:
