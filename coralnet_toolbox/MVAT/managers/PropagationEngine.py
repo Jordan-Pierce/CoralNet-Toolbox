@@ -2549,11 +2549,48 @@ class PropagationEngine(QObject):
         color_rgb = (label.color.red(), label.color.green(), label.color.blue())
 
         # --- 3D-only path (multi-annotate OFF) ---------------------------------
+        # No 2D camera corresponds to the VTK view, so paint the 3D product
+        # directly (mirrors how the brush paints in 3D-only mode). The painter is
+        # selected by element_type: points vs faces.
         if not self.multi_annotate_enabled:
             primary_target = self.viewer.scene_context.get_primary_target()
             if primary_target is None or not hasattr(primary_target, 'apply_labels'):
                 self.main_window.status_bar.showMessage(
                     'MVAT-SAM: no 3D product to paint.', 4000)
+                return
+
+            color_rgb = (label.color.red(), label.color.green(), label.color.blue())
+
+            # Canonical class ID (label position in the project), matching the
+            # scheme used by the propagation worker so a later Mesh→Cameras
+            # projection resolves the class back to this label.
+            real_labels = [lbl for lbl in self.main_window.label_window.labels
+                           if getattr(lbl, 'id', None) and lbl.id != '-1']
+            canonical_id_for = {lbl.id: (idx + 1) for idx, lbl in enumerate(real_labels)}
+            class_id = canonical_id_for.get(label.id)
+            if class_id is None:
+                self.main_window.status_bar.showMessage(
+                    'MVAT-SAM: could not resolve class ID for selected label.', 4000)
+                return
+
+            if element_type == 'point' and hasattr(self, 'submit_3d_point_paint'):
+                self.submit_3d_point_paint(
+                    element_ids, color_rgb, int(class_id),
+                    primary_target=primary_target, label_id=label.id,
+                )
+            else:
+                self.submit_3d_face_paint(
+                    element_ids, color_rgb, int(class_id),
+                    primary_target=primary_target, label_id=label.id,
+                )
+
+            # Commit to the product (persists labels for export/projection).
+            request_flush = getattr(self, 'request_lazy_flush', None)
+            if callable(request_flush):
+                request_flush()
+
+            self.main_window.status_bar.showMessage(
+                f"MVAT-SAM: applied '{label.short_label_code}' to {n:,} {element_type}(s).", 4000)
             return
 
         # --- multi-annotate ON: propagate to 3D + all visible 2D cameras ------
@@ -3100,7 +3137,7 @@ class PropagationEngine(QObject):
 
         if not self._mesh_class_label_ids:
             self._warn_semantic_propagation(
-                "The mesh has no label data to project.  Paint the mesh first."
+                "The 3D model has no label data to project.  Paint the 3D model first."
             )
             return
 

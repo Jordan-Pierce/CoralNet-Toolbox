@@ -1333,8 +1333,8 @@ class ContextMatrixWidget(QWidget):
         all_cams_header.setEnabled(False)
         hub_menu.addAction(all_cams_header)
 
-        # All camera masks → aggregate onto mesh
-        act_all_to_mesh = QAction("Aggregate to Mesh", hub_btn)
+        # All camera masks → aggregate onto the 3D model (mesh or point cloud)
+        act_all_to_mesh = QAction("Aggregate to 3D Model", hub_btn)
         act_all_to_mesh.setData(PROPAGATE_CAMERAS_TO_MESH)
         act_all_to_mesh.triggered.connect(
             lambda: self._on_propagate_mode_selected(PROPAGATE_CAMERAS_TO_MESH)
@@ -1343,12 +1343,12 @@ class ContextMatrixWidget(QWidget):
 
         hub_menu.addSeparator()
 
-        # ===== MESH SECTION =====
-        mesh_header = QAction("Mesh", hub_btn)
+        # ===== 3D MODEL SECTION =====
+        mesh_header = QAction("3D Model", hub_btn)
         mesh_header.setEnabled(False)
         hub_menu.addAction(mesh_header)
 
-        # Mesh face labels → primary camera
+        # 3D model labels → primary camera
         act_mesh_to_primary = QAction("Project to Primary Camera", hub_btn)
         act_mesh_to_primary.setData(PROPAGATE_MESH_TO_ACTIVE_CAMERA)
         act_mesh_to_primary.triggered.connect(
@@ -1384,8 +1384,8 @@ class ContextMatrixWidget(QWidget):
         settings_header.setEnabled(False)
         hub_menu.addAction(settings_header)
 
-        # Skip unlabeled mesh faces checkbox
-        act_skip_unlabeled = QAction("Skip unlabeled mesh faces", hub_btn)
+        # Skip unlabeled 3D elements (faces for meshes, points for clouds)
+        act_skip_unlabeled = QAction("Skip unlabeled 3D elements", hub_btn)
         act_skip_unlabeled.setCheckable(True)
         act_skip_unlabeled.setChecked(False)
         act_skip_unlabeled.triggered.connect(lambda checked: self._on_skip_unlabeled_toggled(checked))

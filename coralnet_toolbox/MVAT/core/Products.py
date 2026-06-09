@@ -256,30 +256,50 @@ class PointCloudProduct(AbstractSceneProduct):
         selected_array (str): Currently selected array for visualization
     """
     
-    def __init__(self, file_path: str, point_size: int = 1, product_id: Optional[str] = None):
+    def __init__(self, file_path: str, point_size: int = 1, product_id: Optional[str] = None,
+                 sort_data: bool = True, simplification_ratio: float = 0.0):
         """
         Initialize PointCloudProduct from file.
-        
+
         Args:
             file_path: Path to 3D file (.ply, .stl, .obj, .vtk, .pcd)
             point_size: Size of points when rendered
             product_id: Optional unique ID (defaults to filename)
+            sort_data: When True, spatially sort points via Morton Z-order after
+                       loading so point IDs are spatially coherent (lower index-map
+                       entropy → better cache compression). Mirrors MeshProduct.
+            simplification_ratio: Fraction of points to *remove* at load via
+                       uniform random decimation (0.0 = keep all, 0.9 = keep 10%).
+                       Produces a lighter "proxy" cloud used for all visualization
+                       and index-map creation, mirroring MeshProduct decimation.
         """
         # Generate product_id from filename if not provided
         if product_id is None:
             product_id = os.path.basename(file_path)
-        
+
         super().__init__(product_id=product_id, file_path=file_path)
-        
+
         self.point_size = point_size
         self.mesh: Optional[pv.PolyData] = None
         self.array_names = []
         self.available_arrays = []  # Will be built after loading
         self.selected_array = "RGB"  # Default to RGB
-        
+
         # Load from file with timing
         start_time = time.time()
         self.mesh = pv.read(file_path, progress_bar=True)
+
+        # Step 1: optional decimation (fraction of points removed). Mirrors the
+        # mesh proxy: a single lighter cloud used for everything downstream.
+        if simplification_ratio and simplification_ratio > 0.0 and self.mesh is not None:
+            self.mesh = self._simplify_point_cloud(self.mesh, float(simplification_ratio))
+
+        # Step 2: optional spatial sort (before scalar synthesis so every per-point
+        # array, including the ones we are about to create, ends up in sorted order).
+        if sort_data and self.mesh is not None and self.mesh.n_points > 1:
+            self.mesh = self._spatially_sort_point_cloud(self.mesh)
+            print(f"⏱️ Spatially sorted point cloud for {self.label} in {time.time() - start_time:.3f}s")
+
         self.array_names = self.mesh.array_names
         
         # Synthesize missing scalar arrays for consistent visualization
@@ -296,18 +316,101 @@ class PointCloudProduct(AbstractSceneProduct):
         print(f"   Available arrays for visualization: {self.available_arrays}")
     
     @classmethod
-    def from_file(cls, file_path: str, point_size: int = 1) -> 'PointCloudProduct':
+    def from_file(cls, file_path: str, point_size: int = 1,
+                  sort_data: bool = True, simplification_ratio: float = 0.0) -> 'PointCloudProduct':
         """
         Load a point cloud from a file.
-        
+
         Args:
             file_path: Path to 3D file (.ply, .stl, .obj, .vtk, .pcd)
             point_size: Size of points when rendered
-            
+            sort_data: When True, Morton-sort the points at load (see __init__).
+            simplification_ratio: Fraction of points to remove at load (see __init__).
+
         Returns:
             PointCloudProduct instance
         """
-        return cls(file_path=file_path, point_size=point_size)
+        return cls(file_path=file_path, point_size=point_size,
+                   sort_data=sort_data, simplification_ratio=simplification_ratio)
+
+    def _simplify_point_cloud(self, mesh: 'pv.PolyData', ratio: float) -> 'pv.PolyData':
+        """Uniformly decimate the cloud by removing a fraction of points.
+
+        Point-cloud analogue of mesh face decimation: keeps ``1 - ratio`` of the
+        points (chosen uniformly at random with a fixed seed for reproducibility)
+        and carries every per-point array across so RGB / Normals stay aligned.
+        Random sampling preserves the cloud's overall density distribution; a
+        voxel-grid downsample could be swapped in later for uniform spacing.
+        """
+        ratio = float(np.clip(ratio, 0.0, 0.999))
+        if ratio <= 0.0:
+            return mesh
+
+        pts = np.asarray(mesh.points)
+        n = pts.shape[0]
+        keep = max(1, int(round(n * (1.0 - ratio))))
+        if keep >= n:
+            return mesh
+
+        start_time = time.time()
+        rng = np.random.default_rng(0)
+        # Sorted indices keep the relative point order stable (the Morton sort
+        # reorders afterwards anyway, but this keeps un-sorted clouds tidy).
+        idx = np.sort(rng.choice(n, size=keep, replace=False))
+
+        out = pv.PolyData(pts[idx])
+        for name in list(mesh.point_data.keys()):
+            out.point_data[name] = np.asarray(mesh.point_data[name])[idx]
+
+        print(f"⏱️ Decimated point cloud {n:,} → {keep:,} points "
+              f"({ratio:.0%} removed) in {time.time() - start_time:.3f}s")
+        return out
+
+    def _spatially_sort_point_cloud(self, mesh: 'pv.PolyData') -> 'pv.PolyData':
+        """Spatially sort points along a Morton (Z-order) curve.
+
+        Point-cloud analogue of MeshProduct._spatially_sort_mesh. Reorders the
+        point coordinates AND every per-point data array by the same permutation
+        so a point's sequential ID (gl_VertexID) becomes spatially coherent.
+
+        Benefit: adjacent pixels in a rendered index map then reference points
+        with numerically close IDs, which lowers the index map's local entropy
+        and markedly improves DEFLATE (.npz) compression of the cached visibility
+        maps and visible-index arrays. Unlike meshes there is no shared-vertex
+        cache to exploit (GL_POINTS draws each point once), so this is a storage/
+        I-O optimization rather than a rasterization-speed one.
+        """
+        pts = np.asarray(mesh.points)
+        if pts.ndim != 2 or pts.shape[0] < 2:
+            return mesh
+
+        # Normalize XYZ into a 10-bit integer grid (0..1023).
+        c_min = pts.min(axis=0)
+        c_max = pts.max(axis=0)
+        extent = np.maximum(c_max - c_min, 1e-8)
+        normalized = ((pts - c_min) / extent * 1023).astype(np.uint32)
+        x, y, z = normalized[:, 0], normalized[:, 1], normalized[:, 2]
+
+        # Interleave X, Y, Z bits into a 30-bit Morton code (same as the mesh path).
+        def expand_bits(v):
+            v = (v | (v << 16)) & 0x030000FF
+            v = (v | (v << 8)) & 0x0300F00F
+            v = (v | (v << 4)) & 0x030C30C3
+            v = (v | (v << 2)) & 0x09249249
+            return v
+
+        morton_codes = (expand_bits(x) | (expand_bits(y) << 1) | (expand_bits(z) << 2))
+        sort_idx = np.argsort(morton_codes)
+
+        # Rebuild a points-only PolyData and carry every per-point array across in
+        # the SAME order — otherwise RGB / Normals / Labels would be scrambled.
+        sorted_cloud = pv.PolyData(pts[sort_idx])
+        for name in list(mesh.point_data.keys()):
+            sorted_cloud.point_data[name] = np.asarray(mesh.point_data[name])[sort_idx]
+
+        # Keep the permutation for any future proof/debug visualization.
+        self._sort_idx = sort_idx
+        return sorted_cloud
     
     # --------------------------------------------------------------------------
     # AbstractSceneProduct Implementation
@@ -529,12 +632,12 @@ class MeshProduct(AbstractSceneProduct):
     """
     
     def __init__(self, file_path: str, opacity: float = 1.0, product_id: Optional[str] = None,
-                 sort_mesh: bool = True, simplification_ratio: float = 0.0):
+                 sort_data: bool = True, simplification_ratio: float = 0.0):
         """
         Initialize MeshProduct from file.
 
         Args:
-            sort_mesh: When True, spatially sort faces via Morton Z-order after
+            sort_data: When True, spatially sort faces via Morton Z-order after
                        loading for better GPU cache coherence.
             simplification_ratio: Fraction of faces to *remove* via
                 fast-simplification (0.0 = no simplification, 1.0 = remove all
@@ -600,7 +703,7 @@ class MeshProduct(AbstractSceneProduct):
                       f"{faces_before:,} → {working_mesh.n_cells:,} faces in {time.time() - start_time:.3f}s")
 
         # Step 2: optional spatial sort for GPU cache coherence.
-        if sort_mesh:
+        if sort_data:
             self.mesh = self._spatially_sort_mesh(working_mesh)
             print(f"⏱️ Spatially sorted mesh for {self.label} in {time.time() - start_time:.3f}s")
         else:
@@ -807,10 +910,10 @@ class MeshProduct(AbstractSceneProduct):
     
     @classmethod
     def from_file(cls, file_path: str, opacity: float = 1.0,
-                  sort_mesh: bool = True, simplification_ratio: float = 0.0) -> 'MeshProduct':
+                  sort_data: bool = True, simplification_ratio: float = 0.0) -> 'MeshProduct':
         """Load a mesh from file."""
         return cls(file_path=file_path, opacity=opacity,
-                   sort_mesh=sort_mesh, simplification_ratio=simplification_ratio)
+                   sort_data=sort_data, simplification_ratio=simplification_ratio)
     
     # Custom method to build and cache Open3D RaycastingScene for this mesh
     def prepare_geometry(self):
