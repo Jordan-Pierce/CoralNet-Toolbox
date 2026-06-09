@@ -37,7 +37,7 @@ from coralnet_toolbox.MVAT.core.constants import (
     MARKER_COLOR_INVALID,
 )
 
-from coralnet_toolbox.MVAT.core.Products import MeshProduct
+from coralnet_toolbox.MVAT.core.Products import MeshProduct, PointCloudProduct
 from coralnet_toolbox.MVAT.managers.MousePositionBridge import MousePositionBridge
 from coralnet_toolbox.MVAT.managers.PropagationEngine import PropagationEngine
 
@@ -190,6 +190,9 @@ class MVATManager(QObject):
 
         # Overlay actor handle (tiny actor swapped during painting)
         self._label_overlay_actor = None
+        # Point-cloud label overlay actor (painted points rendered on top of the cloud).
+        self._point_label_overlay_actor = None
+        self._point_overlay_last_render_time = None
         self._hover_overlay_actor = None
         self._hover_overlay_context = None
         self._hover_overlay_face_ids = None
@@ -399,7 +402,8 @@ class MVATManager(QObject):
                     uncached_cameras.append(cam)
 
             if uncached_cameras:
-                choice_mode, new_budget, n_workers, enable_cache, enable_compression = self._prompt_visibility_quality_dialog(
+                (choice_mode, new_budget, n_workers, enable_cache,
+                 enable_compression, splat_radius, splat_round) = self._prompt_visibility_quality_dialog(
                     len(uncached_cameras)
                 )
 
@@ -411,6 +415,8 @@ class MVATManager(QObject):
                 self._cache_n_workers = n_workers  # Store for use in _compute_visibility_async
                 self.debug_enable_cache = enable_cache  # Debug: enable/disable caching
                 self.debug_enable_compression = enable_compression  # Debug: compress cache or not
+                self.debug_splat_radius = splat_radius  # Debug: point-cloud splat sprite radius (px)
+                self.debug_splat_round = splat_round  # Debug: point-cloud splat shape (round vs square)
 
                 # If the budget actually changed, the previously cached
                 # visibility maps (in RAM) were produced at a different
@@ -596,6 +602,7 @@ class MVATManager(QObject):
             QHBoxLayout,
             QLabel,
             QSlider,
+            QSpinBox,
             QVBoxLayout,
         )
         from PyQt5.QtCore import Qt
@@ -728,6 +735,27 @@ class MVATManager(QObject):
         )
         debug_layout.addRow("Cache Compression:", compression_combo)
 
+        # Point-cloud splatting controls (no effect on meshes). Each point is
+        # rasterized as a sprite of this radius so a foreground cloud occludes the
+        # background; radius is in render-resolution pixels (after the quality downscale).
+        splat_radius_spin = QSpinBox(dialog)
+        splat_radius_spin.setRange(1, 20)
+        splat_radius_spin.setValue(1)
+        splat_radius_spin.setToolTip(
+            "Point clouds only: GL_POINTS sprite radius in render-resolution pixels.\n"
+            "1 = single-pixel points (holey, no occlusion). Larger = more volume/occlusion."
+        )
+        debug_layout.addRow("Splat Radius (px):", splat_radius_spin)
+
+        splat_shape_combo = QComboBox(dialog)
+        splat_shape_combo.addItems(["Square", "Round"])
+        splat_shape_combo.setCurrentIndex(0)
+        splat_shape_combo.setToolTip(
+            "Point clouds only: shape of each splat sprite.\n"
+            "Square: fast point sprite. Round: discard corners for a filled disc."
+        )
+        debug_layout.addRow("Splat Shape:", splat_shape_combo)
+
         layout.addWidget(debug_groupbox)
 
         button_box = QDialogButtonBox(dialog)
@@ -741,13 +769,16 @@ class MVATManager(QObject):
 
         mode = selected_mode['mode']
         if mode is None:
-            return None, None, None, None, None
+            return None, None, None, None, None, None, None
 
         chosen_quality = quality_combo.currentText()
         n_workers = workers_slider.value()
         enable_cache = cache_combo.currentIndex() == 0
         enable_compression = compression_combo.currentIndex() == 0
-        return mode, quality_map[chosen_quality], n_workers, enable_cache, enable_compression
+        splat_radius = splat_radius_spin.value()
+        splat_round = splat_shape_combo.currentIndex() == 1  # 0=Square, 1=Round
+        return (mode, quality_map[chosen_quality], n_workers, enable_cache,
+                enable_compression, splat_radius, splat_round)
 
     # --- Signal Handlers ---
 
@@ -1872,11 +1903,11 @@ class MVATManager(QObject):
 
             mgl_ctx = None
             try:
-                mgl_ctx = VisibilityManager.setup_batch_moderngl_context(
+                mgl_ctx = VisibilityManager.setup_batch_mesh_moderngl_context(
                     mesh_product, self.pixel_budget,
                     cameras[0].width, cameras[0].height,
                 )
-                batch = VisibilityManager.compute_batch_mesh_visibility_moderngl(
+                batch = VisibilityManager.compute_batch_visibility_moderngl(
                     mesh_product, camera_params,
                     compute_depth_map=self.compute_depth_maps_enabled,
                     compute_visible_indices=False,
@@ -1947,6 +1978,8 @@ class MVATManager(QObject):
             distortion_vram_safety = getattr(self, '_distortion_vram_safety_factor', 0.8)  # Default to 0.8
             enable_cache = getattr(self, 'debug_enable_cache', True)
             enable_compression = getattr(self, 'debug_enable_compression', True)
+            splat_radius = getattr(self, 'debug_splat_radius', 1)
+            splat_round = getattr(self, 'debug_splat_round', False)
             worker = VisibilityWorker(
                 primary_target=primary_target,
                 camera_params_dict=camera_params_dict,
@@ -1961,6 +1994,8 @@ class MVATManager(QObject):
                 distortion_vram_safety_factor=distortion_vram_safety,
                 enable_cache=enable_cache,
                 enable_compression=enable_compression,
+                splat_radius=splat_radius,
+                splat_round=splat_round,
             )
             
             thread = QThread()
@@ -2144,10 +2179,14 @@ class MVATManager(QObject):
             else:
                 self._on_overlay_ready(None)
 
-            # 2. Do the heavy VBO rebuild.
-            primary_target = self._get_primary_mesh_target()
+            # 2. Commit labels into the product. Works for meshes and point clouds.
+            primary_target = self._get_primary_mesh_target() or self._get_primary_point_target()
             if primary_target and hasattr(primary_target, 'flush_labels_to_gpu'):
                 primary_target.flush_labels_to_gpu()
+            # Point clouds: the overlay actor is the authoritative visual, so make
+            # sure it reflects the final painted state after the stroke.
+            if self._get_primary_point_target() is not None:
+                self.refresh_primary_point_overlay(render=False)
 
             # 3. Force the screen to update.
             try:
@@ -2365,6 +2404,172 @@ class MVATManager(QObject):
         if primary_target is None or not isinstance(primary_target, MeshProduct):
             return None
         return primary_target
+
+    # --- Point-cloud label painting ----------------------------------------------
+    def _get_primary_point_target(self):
+        """Return the primary target if it is a paintable point cloud, else None."""
+        try:
+            primary_target = self.viewer.scene_context.get_primary_target()
+        except Exception:
+            primary_target = None
+
+        if primary_target is None or not isinstance(primary_target, PointCloudProduct):
+            return None
+        return primary_target
+
+    def submit_3d_point_paint(self, point_ids, color_rgb, class_id: int, primary_target=None, label_id=None):
+        """Paint point-cloud points by ID.
+
+        The point-cloud analogue of ``submit_3d_face_paint``: it commits the labels
+        into the product (class IDs + label-color cache) and refreshes the live
+        point overlay actor. Unlike the mesh path there is no background LabelWorker
+        thread — building a points-only overlay is cheap enough to do inline.
+        """
+        try:
+            point_ids = np.asarray(point_ids, dtype=np.int32).ravel()
+        except Exception:
+            return
+
+        if point_ids.size == 0:
+            return
+
+        if primary_target is None:
+            primary_target = self._get_primary_point_target()
+
+        if primary_target is None:
+            return
+
+        if int(class_id) == 0:
+            color_rgb = (255, 255, 255)
+
+        # Keep the propagation registry in sync so a directly-painted cloud can be
+        # projected back out to the cameras (mirrors submit_3d_face_paint).
+        if int(class_id) != 0:
+            try:
+                engine = getattr(self, 'propagation_engine', None)
+                if engine is not None:
+                    if label_id is not None:
+                        engine._mesh_class_label_ids[int(class_id)] = label_id
+                    else:
+                        active_label = self._get_active_label_widget()
+                        fallback_label_id = getattr(active_label, 'id', None)
+                        if fallback_label_id is not None:
+                            engine._mesh_class_label_ids[int(class_id)] = fallback_label_id
+            except Exception:
+                pass
+
+        # Commit into the product's Python-owned caches (cheap numpy, no GPU work).
+        try:
+            primary_target.apply_labels(point_ids, int(class_id), color_rgb)
+        except Exception as e:
+            print(f"⚠️ submit_3d_point_paint apply_labels failed: {e}")
+            return
+
+        # Refresh the live overlay (throttled to ~30 Hz to stay responsive on big paints).
+        self.refresh_primary_point_overlay(render=True)
+
+    def _build_primary_point_overlay(self):
+        """Snapshot all currently painted points into an overlay payload.
+
+        Returns (points_xyz, colors) for every point with a non-zero class ID, or
+        None when nothing is painted.
+        """
+        primary_target = self._get_primary_point_target()
+        if primary_target is None or primary_target.mesh is None:
+            return None
+
+        class_ids = getattr(primary_target, 'class_ids', None)
+        labels_cache = getattr(primary_target, '_labels_cache', None)
+        if class_ids is None or labels_cache is None:
+            return None
+
+        painted = np.flatnonzero(np.asarray(class_ids) != 0)
+        if painted.size == 0:
+            return None
+
+        try:
+            points = np.asarray(primary_target.mesh.points, dtype=np.float32)[painted]
+            colors = np.asarray(labels_cache, dtype=np.uint8)[painted, :3]
+            return points, colors
+        except Exception:
+            return None
+
+    def refresh_primary_point_overlay(self, force_recreate: bool = False, render: bool = True):
+        """Rebuild the point-label overlay actor from the current painted state."""
+        overlay = self._build_primary_point_overlay()
+        if overlay is None:
+            if self._point_label_overlay_actor is not None:
+                self._on_point_overlay_ready(None, render=render)
+            return
+        self._on_point_overlay_ready(overlay, force_recreate=force_recreate, render=render)
+
+    def _on_point_overlay_ready(self, overlay, force_recreate: bool = False, render: bool = True):
+        """Main thread: create/update the point overlay actor in place."""
+        try:
+            if overlay is None:
+                if self._point_label_overlay_actor is not None:
+                    try:
+                        self.viewer.plotter.remove_actor(self._point_label_overlay_actor, render=False)
+                    except Exception:
+                        pass
+                    self._point_label_overlay_actor = None
+                    if render:
+                        try:
+                            self.viewer.plotter.render()
+                        except Exception:
+                            pass
+                return
+
+            import pyvista as pv
+            pts, colors = overlay
+            pts_arr = np.asarray(pts, dtype=np.float32)
+            colors_arr = np.asarray(colors, dtype=np.uint8)
+
+            tiny = pv.PolyData(pts_arr)
+            tiny.point_data['OverlayColors'] = colors_arr
+
+            # Render painted points a touch larger than the base cloud so they read
+            # as a highlight on top of it.
+            point_size = float(getattr(self.viewer, 'point_size', 3) or 3) + 2.0
+
+            def _add_overlay_actor(mesh_to_add):
+                return self.viewer.plotter.add_mesh(
+                    mesh_to_add,
+                    scalars='OverlayColors',
+                    rgb=True,
+                    style='points',
+                    point_size=point_size,
+                    render_points_as_spheres=True,
+                    copy_mesh=False,
+                    lighting=False,
+                    show_scalar_bar=False,
+                )
+
+            # Points-only overlays change vertex count every stroke, so the in-place
+            # mapper-swap used for meshes doesn't help; recreate the actor each time.
+            if self._point_label_overlay_actor is not None:
+                try:
+                    self.viewer.plotter.remove_actor(self._point_label_overlay_actor, render=False)
+                except Exception:
+                    pass
+                self._point_label_overlay_actor = None
+
+            self._point_label_overlay_actor = _add_overlay_actor(tiny)
+            try:
+                self._point_label_overlay_actor.SetVisibility(True)
+            except Exception:
+                pass
+
+            if render:
+                try:
+                    last = self._point_overlay_last_render_time
+                    if last is None or (perf_counter() - last) > 0.033:
+                        self.viewer.plotter.render()
+                        self._point_overlay_last_render_time = perf_counter()
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"⚠️ Point overlay swap failed: {e}")
 
     def _get_sphere_hover_radius(self):
         active_tool = getattr(self.viewer, '_active_3d_tool', None)

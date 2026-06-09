@@ -378,13 +378,26 @@ class PointCloudProduct(AbstractSceneProduct):
     def get_points_array(self) -> Optional[np.ndarray]:
         """
         Get the raw point coordinates as a numpy array for efficient processing.
-        
+
         Returns:
             np.ndarray: (N, 3) array of point coordinates, or None if no mesh
         """
         if self.mesh is None:
             return None
         return self.mesh.points
+
+    def prepare_geometry(self):
+        """Populate the element-center cache used by the spatial (KD-tree) query stack.
+
+        For a point cloud the "elements" are the points themselves, so the element
+        centers are simply the point coordinates. This mirrors MeshProduct.prepare_geometry
+        so the shared brush-volume / hover-overlay machinery (which only consumes
+        ``_element_centers_np``) works for point clouds without any special-casing.
+        """
+        if self.mesh is None:
+            self._element_centers_np = None
+            return
+        self._element_centers_np = np.asarray(self.mesh.points, dtype=np.float32)
     
     def has_rgb(self) -> bool:
         """Check if point cloud has RGB color data."""

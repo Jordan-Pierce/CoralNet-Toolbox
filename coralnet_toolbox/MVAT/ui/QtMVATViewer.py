@@ -2462,7 +2462,15 @@ class MVATViewer(QFrame):
                     refresh_overlay(force_recreate=True, render=False)
                 except Exception:
                     pass
-            
+
+            # Point clouds keep their painted labels in a separate point overlay actor.
+            refresh_point_overlay = getattr(self.mvat_manager, 'refresh_primary_point_overlay', None)
+            if callable(refresh_point_overlay):
+                try:
+                    refresh_point_overlay(force_recreate=True, render=False)
+                except Exception:
+                    pass
+
             self.plotter.render()
             print(f"Rendered {len(self.scene_context)} scene products")
             

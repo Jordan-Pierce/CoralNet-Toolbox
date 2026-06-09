@@ -2276,13 +2276,31 @@ class PropagationEngine(QObject):
                     # IMPORTANT: Pass label_id to avoid relying on active UI label
                     # which could overwrite the wrong mesh_class_label_ids entry
                     label_id = task.get('label_id')
-                    self.submit_3d_face_paint(
-                        task['painted_ids'],
-                        task['target_color'],
-                        task['source_class_id'],
-                        primary_target=task.get('primary_target'),
-                        label_id=label_id,
-                    )
+                    tgt = task.get('primary_target')
+                    # Route to the matching painter: point clouds paint points,
+                    # meshes paint faces. Dispatch on element type to avoid importing
+                    # the product classes here.
+                    is_point = False
+                    try:
+                        is_point = tgt is not None and tgt.get_element_type() == 'point'
+                    except Exception:
+                        is_point = False
+                    if is_point and hasattr(self, 'submit_3d_point_paint'):
+                        self.submit_3d_point_paint(
+                            task['painted_ids'],
+                            task['target_color'],
+                            task['source_class_id'],
+                            primary_target=tgt,
+                            label_id=label_id,
+                        )
+                    else:
+                        self.submit_3d_face_paint(
+                            task['painted_ids'],
+                            task['target_color'],
+                            task['source_class_id'],
+                            primary_target=tgt,
+                            label_id=label_id,
+                        )
                     needs_3d_flush = True
                     continue
 

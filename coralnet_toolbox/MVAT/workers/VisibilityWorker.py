@@ -40,13 +40,18 @@ class VisibilityWorker(QObject):
     def __init__(self, primary_target, camera_params_dict, compute_depth_maps=True,
                  cache_manager=None, cache_keys_dict=None, target_file_path="", pixel_budget=None,
                  warp_callables_dict=None, dist_coeffs_bytes_dict=None, n_workers=4,
-                 distortion_vram_safety_factor=0.95, enable_cache=True, enable_compression=True):
+                 distortion_vram_safety_factor=0.95, enable_cache=True, enable_compression=True,
+                 splat_radius=1, splat_round=False):
         super().__init__()
         self.primary_target = primary_target
         self.camera_params_dict = camera_params_dict
         self.compute_depth_maps = compute_depth_maps
         self.pixel_budget = pixel_budget
         self.upsample_to_native = True
+        # Point-cloud splatting (GL_POINTS sprite size, render-resolution pixels) and
+        # shape (square vs round disc). Ignored for meshes. Exposed via the visibility dialog.
+        self.splat_radius = splat_radius
+        self.splat_round = splat_round
         self.warp_callables_dict = warp_callables_dict or {}
         # path -> dist_coeffs.tobytes() for distorted cameras; used for cache-key disambiguation
         self.dist_coeffs_bytes_dict = dist_coeffs_bytes_dict or {}
@@ -93,7 +98,7 @@ class VisibilityWorker(QObject):
         try:
             gc.collect()
 
-            result = VisibilityManager.compute_batch_mesh_visibility_moderngl(
+            result = VisibilityManager.compute_batch_visibility_moderngl(
                 primary_target, [first_params],
                 compute_depth_map=self.compute_depth_maps,
                 compute_visible_indices=False,
@@ -316,11 +321,15 @@ class VisibilityWorker(QObject):
                 _cache_wall_end = time.perf_counter()
 
             # ==========================================
-            # STRATEGY A: MESH PROCESSING (CHUNKED)
+            # PERSPECTIVE PIPELINE (meshes + point clouds, CHUNKED)
             # ==========================================
+            # Meshes (TRIANGLES) and point clouds (GL_POINTS) share the SAME chunked
+            # render → distortion → cache → payload loop below; only the moderngl
+            # context differs. Point clouds therefore inherit viewport cropping, the
+            # distortion warp, zero-PCIe CUDA-GL readback and disk caching for free.
             mesh_processing_start = time.perf_counter()
-            if isinstance(self.primary_target, MeshProduct):
-                _export_mesh_sort_proof()
+            if isinstance(self.primary_target, (MeshProduct, PointCloudProduct)):
+                _export_mesh_sort_proof()  # no-op for point clouds
 
                 if perspective_params:
                     paths = list(perspective_params.keys())
@@ -331,11 +340,17 @@ class VisibilityWorker(QObject):
                     sample_w = params_list[0][3]
                     sample_h = params_list[0][4]
 
-                    # Setup ModernGL context for batch rasterization
+                    # Setup the moderngl context for this geometry type.
                     try:
-                        mgl_context = VisibilityManager.setup_batch_moderngl_context(
-                            self.primary_target, self.pixel_budget, sample_w, sample_h,
-                        )
+                        if isinstance(self.primary_target, MeshProduct):
+                            mgl_context = VisibilityManager.setup_batch_mesh_moderngl_context(
+                                self.primary_target, self.pixel_budget, sample_w, sample_h,
+                            )
+                        else:
+                            mgl_context = VisibilityManager.setup_batch_point_moderngl_context(
+                                self.primary_target, self.pixel_budget, sample_w, sample_h,
+                                splat_radius=self.splat_radius, splat_round=self.splat_round,
+                            )
                         logger.debug("✅ Using moderngl rasterizer (zero-PCIe CUDA-GL path)")
                     except Exception as _mgl_err:
                         logger.error("❌ ModernGL unavailable (%s); cannot proceed (VTK removed in Phase 3)", _mgl_err)
@@ -442,7 +457,7 @@ class VisibilityWorker(QObject):
                             )
 
                             # --- A. RENDER THE CHUNK (ModernGL only) ---
-                            batch_results = VisibilityManager.compute_batch_mesh_visibility_moderngl(
+                            batch_results = VisibilityManager.compute_batch_visibility_moderngl(
                                 self.primary_target, chunk_params,
                                 compute_depth_map=self.compute_depth_maps,
                                 compute_visible_indices=False,
@@ -623,7 +638,7 @@ class VisibilityWorker(QObject):
                             gc.collect()
 
                     except Exception as err:
-                        logger.warning(f"Mesh processing failed: {err}")
+                        logger.warning(f"Perspective visibility processing failed: {err}")
                         raise err
                     finally:
                         if vtk_context is not None:
@@ -649,37 +664,24 @@ class VisibilityWorker(QObject):
                         )
 
             # ==========================================
-            # STRATEGY B: POINT CLOUD (NOT YET CHUNKED)
+            # UNSUPPORTED PRODUCTS (e.g. Gaussian splats)
             # ==========================================
+            # GaussianSplattingProduct reports supports_index_mapping()==False, so
+            # SceneContext never makes it the primary target and it should not reach
+            # this worker. If a future product type does, it simply produces no maps
+            # here. A dedicated splat-ID pass may be added later.
             else:
-                points_world, element_ids = self._extract_points(self.primary_target)
-
-                if points_world is not None and len(points_world) > 0:
-                    if perspective_params:
-                        paths = list(perspective_params.keys())
-                        params_list = list(perspective_params.values())
-
-                        batch_results = VisibilityManager.compute_batch_point_cloud_visibility(
-                            points_world=points_world,
-                            camera_params_list=params_list,
-                            point_ids=element_ids,
-                            compute_depth_map=False
-                        )
-                        
-                        # Populate lightweight results (Cache logic skipped here for brevity, 
-                        # but follows the same pattern as above)
-                        for p, r in zip(paths, batch_results):
-                            lightweight_final_results[p] = {
-                                'element_type': element_type,
-                                'visible_indices': r.get('visible_indices')
-                            }
+                logger.debug(
+                    f"⚠️ Index mapping not supported for product type "
+                    f"{type(self.primary_target).__name__}; skipping."
+                )
 
             # =================================================================
             # FINAL: Log wall-clock time and emit results
             # =================================================================
             mesh_processing_elapsed = time.perf_counter() - mesh_processing_start
             logger.info(
-                f"⏱️  [MESH PROCESSING WALL TIME] {mesh_processing_elapsed:.2f}s "
+                f"⏱️  [VISIBILITY PROCESSING WALL TIME] {mesh_processing_elapsed:.2f}s "
                 f"({total_cameras} cameras, {mesh_processing_elapsed/max(1, total_cameras):.3f}s per camera avg)"
             )
 
@@ -692,27 +694,3 @@ class VisibilityWorker(QObject):
             # Ensure VRAM is cleared if a failure occurred mid-loop
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-
-    def _extract_points(self, target):
-        """Helper to extract point arrays for targets."""
-        if isinstance(target, PointCloudProduct):
-            return target.get_points_array(), None
-
-        # Treat mesh products as solid surfaces for face extraction
-        if isinstance(target, MeshProduct):
-            try:
-                mesh = target.get_render_mesh()
-
-                if mesh is None:
-                    logger.warning(f"Warning: Geometry not loaded for {target.product_id}")
-                    return None, None
-
-                face_centers = mesh.cell_centers().points
-                face_ids = np.arange(len(face_centers), dtype=np.int32)
-                return face_centers, face_ids
-
-            except Exception as e:
-                logger.warning(f"Warning: Could not extract face centers from {target.product_id}: {e}")
-                return None, None
-
-        return None, None

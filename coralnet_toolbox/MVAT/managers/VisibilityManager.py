@@ -46,6 +46,8 @@ except ImportError:
 # Shader sources and GPU utilities
 from coralnet_toolbox.MVAT.shaders import VERT as _MGL_VERT
 from coralnet_toolbox.MVAT.shaders import FRAG_FACE_ID_INT as _MGL_FRAG_INT
+from coralnet_toolbox.MVAT.shaders import VERT_POINT as _MGL_VERT_POINT
+from coralnet_toolbox.MVAT.shaders import FRAG_POINT_ID_INT as _MGL_FRAG_POINT_INT
 from coralnet_toolbox.MVAT.shaders.gpu_interop import (
     _resolve_gl_fns,
     _build_mvp,
@@ -409,20 +411,44 @@ class VisibilityManager:
 
         # Strategy dispatch based on element type
         if element_type == 'point':
+            # Point clouds rasterize through the SAME moderngl GL_POINTS path as
+            # meshes (see setup_batch_point_moderngl_context). GaussianSplattingProduct
+            # also reports element_type 'point' but is intentionally NOT routed here:
+            # its supports_index_mapping() is False, so SceneContext never makes it the
+            # primary target. A dedicated splat path may be added later.
             from coralnet_toolbox.MVAT.core.Products import PointCloudProduct
             if isinstance(primary_target, PointCloudProduct):
-                points = primary_target.get_points_array()
-                if points is not None:
-                    result = cls.compute_point_cloud_visibility(points, K, R, t, width, height,
-                                                                compute_depth_map=compute_depth_map)
+                # Interactive default: splat radius follows the product's display
+                # point_size, square sprites. Batch caching overrides these via the dialog.
+                splat_radius = float(getattr(primary_target, 'point_size', 1) or 1)
+                mgl_ctx = cls.setup_batch_point_moderngl_context(
+                    primary_target, None, width, height,
+                    splat_radius=splat_radius, splat_round=False,
+                )
+                try:
+                    results = cls.compute_batch_visibility_moderngl(
+                        primary_target, [(K, R, t, width, height)],
+                        compute_depth_map=compute_depth_map,
+                        compute_visible_indices=True,
+                        pixel_budget=None,
+                        mgl_context=mgl_ctx,
+                    )
+                    result = results[0]
                     result['element_type'] = 'point'
-                    return result
+                    return cls._normalize_result_dict(result, compute_depth_map)
+                finally:
+                    try:
+                        for fbo in mgl_ctx.get('_fbo_cache', {}).values():
+                            fbo.release()
+                        mgl_ctx['ctx'].release()
+                    except Exception:
+                        pass
 
         elif element_type == 'face':
             # Mesh visibility with ModernGL (VTK removed in Phase 3)
             # Keep visible_indices=False to skip expensive computation in batch paths.
             # compute_depth_map is controlled by caller (True for interactive SAM, False for batch).
-            results = cls.compute_batch_mesh_visibility_moderngl(
+            results = cls.compute_batch_visibility_moderngl(
                 primary_target, [(K, R, t, width, height)],
                 compute_depth_map=compute_depth_map,
                 compute_visible_indices=False,
@@ -447,7 +473,7 @@ class VisibilityManager:
     # =========================================================================
 
     @classmethod
-    def setup_batch_moderngl_context(cls, mesh_product, pixel_budget,
+    def setup_batch_mesh_moderngl_context(cls, mesh_product, pixel_budget,
                                      sample_width, sample_height):
         """Create a moderngl offscreen context and upload mesh geometry once."""
         import moderngl
@@ -507,12 +533,90 @@ class VisibilityManager:
             'cudart':          cudart,
             'interop_ok':      interop_ok,
             '_fbo_cache':      {},
+            # Geometry source descriptors consumed by the generic render loop so
+            # the same loop drives both the mesh (TRIANGLES) and point (POINTS) paths.
+            'bounds':          mesh.bounds,
+            'render_mode':     moderngl.TRIANGLES,
         }
 
     @classmethod
-    def compute_batch_mesh_visibility_moderngl(
+    def setup_batch_point_moderngl_context(cls, point_product, pixel_budget,
+                                           sample_width, sample_height,
+                                           splat_radius: float = 1.0,
+                                           splat_round: bool = False):
+        """Create a moderngl offscreen context and upload point-cloud geometry once.
+
+        Mirrors ``setup_batch_mesh_moderngl_context`` but for a GL_POINTS draw: point
+        IDs are ``gl_VertexID`` and each point is rasterized as a sprite of
+        ``splat_radius`` render-resolution pixels (square, or a disc when
+        ``splat_round``). The returned context is consumed by the SAME
+        ``compute_batch_visibility_moderngl`` render loop as meshes.
+        """
+        import moderngl
+
+        ctx = moderngl.create_context(standalone=True)
+        ctx.enable(moderngl.DEPTH_TEST)
+        # gl_PointSize in the vertex shader is only honored when this is enabled.
+        ctx.enable(moderngl.PROGRAM_POINT_SIZE)
+
+        points = np.asarray(point_product.get_points_array(), dtype=np.float32)
+        n_points = int(points.shape[0])
+
+        vbo = ctx.buffer(points.tobytes())
+
+        # Single-channel R32I point-ID target (same encoding as the mesh path).
+        prog_int = ctx.program(vertex_shader=_MGL_VERT_POINT,
+                               fragment_shader=_MGL_FRAG_POINT_INT)
+        vao_int  = ctx.vertex_array(prog_int, [(vbo, '3f', 'position')])
+
+        # Splat uniforms are constant across cameras (radius is in render pixels),
+        # so set them once here rather than per-frame in the render loop.
+        prog_int['point_size'].value = float(max(1.0, splat_radius))
+        prog_int['splat_round'].value = 1 if splat_round else 0
+
+        gl_fns = _resolve_gl_fns()
+
+        # Points are their own element centers (used by depth reconstruction).
+        face_centers_pt = None
+        if HAS_TORCH and torch.cuda.is_available():
+            face_centers_pt = torch.from_numpy(points).cuda()
+
+        import os  # noqa: F401  (kept parallel to the mesh setup)
+        cudart = None
+        interop_ok = False
+        if HAS_TORCH and torch.cuda.is_available():
+            try:
+                cudart = _load_cudart()
+                interop_ok = True
+            except Exception as exc:
+                logger.debug(f"   CUDA-GL interop unavailable ({exc}); using CPU readback")
+                cudart = None
+                interop_ok = False
+
+        logger.debug(
+            f"   ✅ moderngl point context ready: {n_points:,} points "
+            f"(splat={splat_radius}px {'round' if splat_round else 'square'})"
+        )
+
+        return {
+            'ctx':             ctx,
+            'prog_int':        prog_int,
+            'vao_int':         vao_int,
+            'n_cells':         n_points,
+            'gl_fns':          gl_fns,
+            'pixel_budget':    pixel_budget,
+            'face_centers_pt': face_centers_pt,
+            'cudart':          cudart,
+            'interop_ok':      interop_ok,
+            '_fbo_cache':      {},
+            'bounds':          point_product.get_bounds(),
+            'render_mode':     moderngl.POINTS,
+        }
+
+    @classmethod
+    def compute_batch_visibility_moderngl(
         cls,
-        mesh_product,
+        geometry_product,
         camera_params_list: list,
         compute_depth_map: bool = True,
         compute_visible_indices: bool = True,
@@ -525,6 +629,12 @@ class VisibilityManager:
         gpu_index_positions: Optional[set] = None,
     ) -> list:
         """GPU rasterization via moderngl with CPU framebuffer readback.
+
+        Despite the name, this drives BOTH meshes and point clouds: the geometry
+        source (VAO, bounds, draw primitive) is read from ``mgl_context``, which is
+        built by ``setup_batch_mesh_moderngl_context`` (mesh, TRIANGLES) or
+        ``setup_batch_point_moderngl_context`` (point cloud, POINTS). ``geometry_product``
+        is only used when ``mgl_context`` is None to auto-build a mesh context.
 
         Returns a list of result dicts with 'index_map', 'visible_indices', 'depth_map', etc.
 
@@ -566,8 +676,8 @@ class VisibilityManager:
         start_time = perf_counter()
 
         if mgl_context is None:
-            mgl_context = cls.setup_batch_moderngl_context(
-                mesh_product, pixel_budget,
+            mgl_context = cls.setup_batch_mesh_moderngl_context(
+                geometry_product, pixel_budget,
                 camera_params_list[0][3], camera_params_list[0][4],
             )
 
@@ -580,8 +690,10 @@ class VisibilityManager:
 
         gpu_index_positions = gpu_index_positions or set()
 
-        mesh        = mesh_product.get_mesh()
-        mesh_bounds = mesh.bounds
+        # Geometry bounds + draw primitive come from the context so this loop is
+        # geometry-agnostic: meshes supply TRIANGLES, point clouds supply POINTS.
+        mesh_bounds = mgl_context['bounds']
+        render_mode = mgl_context.get('render_mode')
 
         def _get_fbo(w, h):
             key = (w, h)
@@ -686,7 +798,7 @@ class VisibilityManager:
 
             t0_render = perf_counter()
             prog_int['mvp'].write(mvp.tobytes())
-            vao_int.render()
+            vao_int.render(mode=render_mode) if render_mode is not None else vao_int.render()
             # NOTE: Removed ctx.finish() — fbo.read() synchronizes implicitly.
             # This saves ~3.2ms per camera by avoiding redundant GPU stall.
             t_render = perf_counter() - t0_render
@@ -1165,7 +1277,7 @@ class VisibilityManager:
 
         # Call batch moderngl with single ortho camera
         try:
-            results = cls.compute_batch_mesh_visibility_moderngl(
+            results = cls.compute_batch_visibility_moderngl(
                 mesh_product,
                 [(K, R, t, render_w, render_h)],
                 compute_depth_map=False,
@@ -1193,211 +1305,3 @@ class VisibilityManager:
         except Exception as e:
             logger.warning(f"   ⚠️ ModernGL ortho rasterization failed ({e})")
             return None
-
-    @classmethod
-    def compute_point_cloud_visibility(cls, points_world, K, R, t, width, height,
-                                       point_ids=None, compute_depth_map=True):
-        """Compute visibility for a cloud of points given single camera parameters."""
-        perf_counter = time.perf_counter
-        start_time = perf_counter()
-        log_section("👁️  POINT CLOUD VISIBILITY COMPUTATION", logger)
-        if point_ids is None:
-            point_ids = np.arange(len(points_world), dtype=np.int32)
-        logger.debug(f"   Points: {len(points_world):,} | Render: {width}x{height} pixels")
-
-        if HAS_TORCH:
-            device = 'cuda' if torch.cuda.is_available() else 'cpu'
-            logger.debug(f"   Using {device.upper()} backend")
-            compute_start = perf_counter()
-            result = cls._compute_torch(points_world, point_ids, K, R, t,
-                                        width, height, device, compute_depth_map=compute_depth_map)
-            compute_time = perf_counter() - compute_start
-        else:
-            logger.debug("   Using NUMPY backend (PyTorch not available)")
-            compute_start = perf_counter()
-            result = cls._compute_numpy(points_world, point_ids, K, R, t,
-                                        width, height, compute_depth_map=compute_depth_map)
-            compute_time = perf_counter() - compute_start
-
-        result = cls._normalize_result_dict(result, compute_depth_map)
-        total_time = perf_counter() - start_time
-        visible_count = len(result['visible_indices'])
-        coverage = np.sum(result['index_map'] >= 0) / (width * height) * 100
-        log_summary("Point Cloud Visibility",
-                    [f"   - Computation (Z-buffer): {compute_time:.4f}s",
-                     f"   - Total Time            : {total_time:.4f}s",
-                     f"   - Result: {visible_count:,} visible points, {coverage:.1f}% pixel coverage"],
-                    logger)
-        return result
-
-    @classmethod
-    def compute_batch_point_cloud_visibility(cls, points_world, camera_params_list,
-                                             point_ids=None, compute_depth_map=True):
-        perf_counter = time.perf_counter
-        start_time = perf_counter()
-        log_section("👁️  BATCH POINT CLOUD VISIBILITY COMPUTATION (STREAMING MODE)", logger)
-        N_total = len(points_world)
-        if point_ids is None:
-            point_ids = np.arange(N_total, dtype=np.int32)
-        logger.debug(f"   Points: {N_total:,} | Cameras: {len(camera_params_list)}")
-        if not HAS_TORCH:
-            pass
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        logger.debug(f"   Using {device.upper()} backend")
-        M = len(camera_params_list)
-        results = []
-        CHUNK_SIZE = 100_000_000
-
-        for i in range(M):
-            cam_start = perf_counter()
-            K_np, R_np, t_np, width, height = camera_params_list[i]
-            K = torch.as_tensor(K_np, dtype=torch.float32, device=device)
-            R = torch.as_tensor(R_np, dtype=torch.float32, device=device)
-            t = torch.as_tensor(t_np, dtype=torch.float32, device=device)
-            global_z_buffer  = torch.full((height*width,), float('inf'), device=device, dtype=torch.float32)
-            global_index_map = torch.full((height*width,), -1, device=device, dtype=torch.int32)
-            local_z_buffer   = torch.empty((height*width,), device=device, dtype=torch.float32)
-            local_index_map  = torch.empty((height*width,), device=device, dtype=torch.int32)
-            logger.debug(f'   -> Processing {cam_label(i+1)}/{M} in chunks...')
-
-            for start_idx in range(0, N_total, CHUNK_SIZE):
-                end_idx   = min(start_idx + CHUNK_SIZE, N_total)
-                chunk_pts = torch.as_tensor(points_world[start_idx:end_idx], dtype=torch.float32, device=device)
-                chunk_ids = torch.as_tensor(point_ids[start_idx:end_idx], dtype=torch.int32, device=device)
-                points_cam = chunk_pts @ R.T + t
-                x, y, z = points_cam[:,0], points_cam[:,1], points_cam[:,2]
-                u = K[0,0]*x/z + K[0,2]; v = K[1,1]*y/z + K[1,2]
-                u_idx, v_idx = u.round().long(), v.round().long()
-                valid_mask = (u_idx>=0)&(u_idx<width)&(v_idx>=0)&(v_idx<height)&(z>0)
-                valid_u, valid_v, valid_z, valid_ids = u_idx[valid_mask], v_idx[valid_mask], z[valid_mask], chunk_ids[valid_mask]
-                if valid_ids.numel() == 0:
-                    continue
-                flat_indices = valid_v * width + valid_u
-                local_z_buffer.fill_(float('inf'))
-                local_z_buffer.scatter_reduce_(0, flat_indices, valid_z, reduce='amin', include_self=True)
-                is_closest = torch.abs(valid_z - local_z_buffer[flat_indices]) < 0.0001
-                local_index_map.fill_(-1)
-                local_index_map[flat_indices[is_closest]] = valid_ids[is_closest]
-                won_mask = local_z_buffer < global_z_buffer
-                global_z_buffer[won_mask]  = local_z_buffer[won_mask]
-                global_index_map[won_mask] = local_index_map[won_mask]
-                del chunk_pts, chunk_ids, points_cam, x, y, z, u, v, u_idx, v_idx
-                del valid_mask, valid_u, valid_v, valid_z, valid_ids, flat_indices, is_closest, won_mask
-
-            visible_indices = torch.unique(global_index_map[global_index_map != -1], sorted=True)
-            if compute_depth_map:
-                try:
-                    global_z_buffer[global_z_buffer == float('inf')] = float('nan')
-                    depth_map_np = global_z_buffer.view(height, width).cpu().numpy()
-                except Exception:
-                    depth_map_np = np.full((height, width), np.nan, dtype=np.float32)
-            else:
-                depth_map_np = None
-            index_map_np = global_index_map.view(height, width).cpu().numpy()
-            results.append({'index_map': index_map_np, 'visible_indices': visible_indices.cpu().numpy(),
-                             'depth_map': depth_map_np,
-                             'inverted_index': VisibilityManager._build_inverted_index(index_map_np)})
-            log_cam_complete(cam_label(i+1), perf_counter() - cam_start, logger)
-            del K, R, t, global_z_buffer, global_index_map, visible_indices, local_z_buffer, local_index_map
-
-        if device == 'cuda':
-            torch.cuda.empty_cache()
-        logger.debug(f'\n   - Total Time: {perf_counter() - start_time:.4f}s')
-        return results
-
-    @staticmethod
-    def _compute_torch(points_np, ids_np, K_np, R_np, t_np, width, height,
-                       device='cpu', compute_depth_map=False):
-        """PyTorch-based visibility via scatter_reduce_ Z-buffering."""
-        points = torch.as_tensor(points_np, dtype=torch.float32, device=device)
-        p_ids  = torch.as_tensor(ids_np,    dtype=torch.int32,   device=device)
-        K = torch.as_tensor(K_np, dtype=torch.float32, device=device)
-        R = torch.as_tensor(R_np, dtype=torch.float32, device=device)
-        t = torch.as_tensor(t_np, dtype=torch.float32, device=device)
-
-        points_cam = points @ R.T + t
-        x_cam, y_cam, z_cam = points_cam[:,0], points_cam[:,1], points_cam[:,2]
-        u = K[0,0]*x_cam/z_cam + K[0,2]
-        v = K[1,1]*y_cam/z_cam + K[1,2]
-        u_idx, v_idx = u.round().long(), v.round().long()
-        valid_mask = (u_idx>=0)&(u_idx<width)&(v_idx>=0)&(v_idx<height)&(z_cam>0)
-        valid_u, valid_v, valid_z, valid_ids = u_idx[valid_mask], v_idx[valid_mask], z_cam[valid_mask], p_ids[valid_mask]
-
-        if valid_ids.numel() == 0:
-            return VisibilityManager._normalize_result_dict({
-                'index_map':      np.full((height, width), -1, dtype=np.int32),
-                'visible_indices': np.array([], dtype=np.int32),
-                'depth_map':      np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
-                'inverted_index': None,
-            }, compute_depth_map)
-
-        flat_indices = valid_v * width + valid_u
-        z_buffer = torch.full((height*width,), float('inf'), device=device, dtype=torch.float32)
-        try:
-            z_buffer.scatter_reduce_(0, flat_indices, valid_z, reduce='amin', include_self=True)
-        except AttributeError:
-            warnings.warn('PyTorch version too old for scatter_reduce_. Falling back to NumPy.')
-            return VisibilityManager._compute_numpy(points_np, ids_np, K_np, R_np, t_np, width, height)
-
-        is_closest = torch.abs(valid_z - z_buffer[flat_indices]) < 0.0001
-        final_pixel_indices = flat_indices[is_closest]
-        final_ids           = valid_ids[is_closest]
-
-        index_map_tensor = torch.full((height*width,), -1, device=device, dtype=torch.int32)
-        index_map_tensor[final_pixel_indices] = final_ids
-        index_map_np    = index_map_tensor.view(height, width).cpu().numpy()
-        visible_indices = torch.unique(final_ids, sorted=True)
-
-        if compute_depth_map:
-            try:
-                z_buffer[z_buffer == float('inf')] = float('nan')
-                depth_map_np = z_buffer.view(height, width).cpu().numpy()
-            except Exception:
-                depth_map_np = np.full((height, width), np.nan, dtype=np.float32)
-        else:
-            depth_map_np = None
-
-        if str(device) == 'cuda':
-            torch.cuda.empty_cache()
-
-        return VisibilityManager._normalize_result_dict({
-            'index_map':      index_map_np,
-            'visible_indices': visible_indices.cpu().numpy(),
-            'depth_map':      depth_map_np,
-            'inverted_index': None,
-        }, compute_depth_map)
-
-    @staticmethod
-    def _compute_numpy(points, ids, K, R, t, width, height, compute_depth_map=False):
-        """CPU-based visibility via sort-by-depth Z-buffering (fallback)."""
-        points_cam = points @ R.T + t
-        x_cam, y_cam, z_cam = points_cam[:,0], points_cam[:,1], points_cam[:,2]
-        with np.errstate(divide='ignore', invalid='ignore'):
-            u = K[0,0]*x_cam/z_cam + K[0,2]
-            v = K[1,1]*y_cam/z_cam + K[1,2]
-        u_idx = np.rint(u).astype(np.int32)
-        v_idx = np.rint(v).astype(np.int32)
-        valid_mask = (u_idx>=0)&(u_idx<width)&(v_idx>=0)&(v_idx<height)&(z_cam>0)
-        u_valid, v_valid, z_valid, id_valid = u_idx[valid_mask], v_idx[valid_mask], z_cam[valid_mask], ids[valid_mask]
-
-        if len(id_valid) == 0:
-            return VisibilityManager._normalize_result_dict({
-                'index_map':      np.full((height, width), -1, dtype=np.int32),
-                'visible_indices': np.array([], dtype=np.int32),
-                'depth_map':      np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
-                'inverted_index': None,
-            }, compute_depth_map)
-
-        sort_order = np.argsort(z_valid)[::-1]
-        index_map = np.full((height, width), -1, dtype=np.int32)
-        depth_map = np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None
-        index_map[v_valid[sort_order], u_valid[sort_order]] = id_valid[sort_order]
-        if compute_depth_map:
-            depth_map[v_valid[sort_order], u_valid[sort_order]] = z_valid[sort_order].astype(np.float32)
-        visible_indices = np.unique(index_map[index_map != -1])
-        return VisibilityManager._normalize_result_dict({
-            'index_map':      index_map,
-            'visible_indices': visible_indices,
-            'depth_map':      depth_map,
-            'inverted_index': None,
-        }, compute_depth_map)

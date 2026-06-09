@@ -200,9 +200,16 @@ class BrushTool3D(Tool3D):
 
             self._stroke_face_ids = np.union1d(self._stroke_face_ids, new_face_ids).astype(np.int32, copy=False)
 
-            submit_3d_face_paint = getattr(self.mvat_manager, 'submit_3d_face_paint', None)
-            if callable(submit_3d_face_paint):
-                submit_3d_face_paint(
+            # Route to the matching paint path: meshes paint faces, point clouds
+            # paint points. The IDs returned by the brush volume are element IDs
+            # for whichever product type is primary.
+            from coralnet_toolbox.MVAT.core.Products import PointCloudProduct
+            if isinstance(primary, PointCloudProduct):
+                submit_paint = getattr(self.mvat_manager, 'submit_3d_point_paint', None)
+            else:
+                submit_paint = getattr(self.mvat_manager, 'submit_3d_face_paint', None)
+            if callable(submit_paint):
+                submit_paint(
                     new_face_ids,
                     color_rgb,
                     class_id,
@@ -330,10 +337,16 @@ class BrushTool3D(Tool3D):
     # ------------------------------------------------------------------
 
     def _get_primary_mesh(self):
+        """Return the primary paintable target (mesh OR point cloud), else None.
+
+        The brush-volume query, KD-tree, and hover overlay all operate on the
+        product's generic ``_element_centers_np`` (face centers for meshes, point
+        coordinates for clouds), so both product types are paintable here.
+        """
         try:
-            from coralnet_toolbox.MVAT.core.Products import MeshProduct
+            from coralnet_toolbox.MVAT.core.Products import MeshProduct, PointCloudProduct
             product = self.mvat_viewer.scene_context.get_primary_target()
-            if isinstance(product, MeshProduct):
+            if isinstance(product, (MeshProduct, PointCloudProduct)):
                 return product
         except Exception:
             pass
