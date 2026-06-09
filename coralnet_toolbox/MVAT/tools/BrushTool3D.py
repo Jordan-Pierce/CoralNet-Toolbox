@@ -54,8 +54,11 @@ class BrushTool3D(Tool3D):
         self.painting:   bool  = False
         self._stroke_label = None
 
-        # Face IDs painted in the current stroke.
-        self._stroke_face_ids = np.empty(0, dtype=np.int32)
+        # Stroke membership mask + per-move chunks. The mask makes per-move
+        # dedupe O(brush chunk); the old setdiff1d/union1d pair re-sorted the
+        # whole accumulated stroke on the main thread every mouse move.
+        self._stroke_mask = None
+        self._stroke_chunks: list = []
         self._last_brush_volume_state = None
 
     # ------------------------------------------------------------------
@@ -104,7 +107,7 @@ class BrushTool3D(Tool3D):
             primary = self._get_primary_mesh()
             self.painting = True
             self._stroke_label = self._get_selected_label()
-            self._stroke_face_ids = np.empty(0, dtype=np.int32)
+            self._begin_stroke_tracking(primary)
             self._last_brush_volume_state = None
             if primary is not None:
                 self.mvat_manager._ensure_label_painter(primary)
@@ -187,7 +190,11 @@ class BrushTool3D(Tool3D):
                 return
 
             face_ids_arr = np.asarray(face_ids, dtype=np.int32)
-            new_face_ids = np.setdiff1d(face_ids_arr, self._stroke_face_ids, assume_unique=False)
+            mask = self._stroke_mask
+            if mask is not None and face_ids_arr.size and face_ids_arr.max() < mask.size:
+                new_face_ids = face_ids_arr[~mask[face_ids_arr]]
+            else:
+                new_face_ids = face_ids_arr
             if new_face_ids.size == 0:
                 self._last_brush_volume_state = (
                     product_id,
@@ -198,7 +205,9 @@ class BrushTool3D(Tool3D):
                 )
                 return
 
-            self._stroke_face_ids = np.union1d(self._stroke_face_ids, new_face_ids).astype(np.int32, copy=False)
+            if mask is not None and new_face_ids.size and new_face_ids.max() < mask.size:
+                mask[new_face_ids] = True
+            self._stroke_chunks.append(new_face_ids)
 
             # Route to the matching paint path: meshes paint faces, point clouds
             # paint points. The IDs returned by the brush volume are element IDs
@@ -257,6 +266,34 @@ class BrushTool3D(Tool3D):
             return None
         return np.asarray(face_ids, dtype=np.int32)
 
+    def _begin_stroke_tracking(self, primary):
+        """Reset stroke accumulation; (re)allocate the membership mask lazily."""
+        # Safety: clear bits left by an abandoned stroke before reusing the mask.
+        if self._stroke_mask is not None and self._stroke_chunks:
+            for chunk in self._stroke_chunks:
+                valid = chunk[chunk < self._stroke_mask.size]
+                self._stroke_mask[valid] = False
+        self._stroke_chunks = []
+        n_elements = 0
+        try:
+            if primary is not None:
+                n_elements = int(primary.get_element_count())
+        except Exception:
+            n_elements = 0
+
+        if n_elements <= 0:
+            self._stroke_mask = None
+        elif self._stroke_mask is None or self._stroke_mask.size != n_elements:
+            self._stroke_mask = np.zeros(n_elements, dtype=bool)
+        # else: reuse the existing mask — _finish_stroke cleared its set bits.
+
+    def _collect_stroke_face_ids(self) -> np.ndarray:
+        if not self._stroke_chunks:
+            return np.empty(0, dtype=np.int32)
+        if len(self._stroke_chunks) == 1:
+            return self._stroke_chunks[0]
+        return np.concatenate(self._stroke_chunks)
+
     def _finish_stroke(self):
         """
         Finalise the current stroke.  If multi-annotate is on, delegates to
@@ -266,9 +303,10 @@ class BrushTool3D(Tool3D):
         start_time = perf_counter()
         self.painting = False
         self._last_brush_volume_state = None
+        stroke_face_ids = self._collect_stroke_face_ids()
 
         try:
-            if self._stroke_face_ids.size > 0:
+            if stroke_face_ids.size > 0:
                 # 1. Reset the debounce timer instead of flushing instantly.
                 request_flush = getattr(self.mvat_manager, 'request_lazy_flush', None)
                 if callable(request_flush):
@@ -285,11 +323,16 @@ class BrushTool3D(Tool3D):
                     handler = getattr(self.mvat_manager, handler_name, None)
                     if callable(handler):
                         try:
-                            handler(self._stroke_face_ids, selected_label)
+                            handler(stroke_face_ids, selected_label)
                         except Exception as e:
                             pass
         finally:
-            self._stroke_face_ids = np.empty(0, dtype=np.int32)
+            # Clear only the touched mask bits (O(stroke), not O(N)) so the
+            # allocated mask can be reused by the next stroke.
+            if self._stroke_mask is not None and stroke_face_ids.size:
+                valid = stroke_face_ids[stroke_face_ids < self._stroke_mask.size]
+                self._stroke_mask[valid] = False
+            self._stroke_chunks = []
             self._stroke_label = None
             self._refresh_hover_overlay_after_stroke()
 

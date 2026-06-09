@@ -559,13 +559,19 @@ class PointCloudProduct(AbstractSceneProduct):
             return
         
         n_points = self.mesh.n_points
-        
-        if "Labels" not in self.mesh.array_names:
+
+        labels_preexisting = "Labels" in self.mesh.array_names
+        if not labels_preexisting:
             labels_array = np.ones((n_points, 3), dtype=np.uint8) * 255  # White
             self.mesh.point_data["Labels"] = labels_array
         # Create a Python-owned cache detached from the VTK array for background painting
         # This avoids writing into VTK memory from worker threads.
         self._labels_cache = np.asarray(self.mesh.point_data["Labels"]).copy()
+        # Deferred-flush bookkeeping: dirty = cache diverged from the VTK array;
+        # have_paint = the VTK array may contain non-white labels (so erasing
+        # later requires a real flush to avoid stale colors under the overlay).
+        self._labels_dirty = False
+        self._vtk_labels_have_paint = labels_preexisting
 
         # Keep a readonly reference to the PyVista view for eventual flush, but
         # do NOT write to it directly during painting.
@@ -601,13 +607,18 @@ class PointCloudProduct(AbstractSceneProduct):
             # Fallback: materialize cache if missing
             self._labels_cache = np.asarray(self.mesh.point_data["Labels"]).copy()
         self._labels_cache[element_ids] = color_rgb
+        self._labels_dirty = True
 
         # NOTE: Do NOT call Modified() here. The expensive GPU upload is deferred
         # and performed once by `flush_labels_to_gpu()` on the main thread.
 
     def flush_labels_to_gpu(self) -> None:
-        """One full GPU upload. Call only on the GUI/main thread when painting pauses."""
+        """One full GPU upload. Call only on the GUI/main thread, and only at
+        rare barriers (scene rebuild, array switch, erase-after-flush) — this
+        triggers a full VTK mapper rebuild on the next render."""
         if self.mesh is None or not hasattr(self, '_labels_cache'):
+            return
+        if not getattr(self, '_labels_dirty', True):
             return
         try:
             # Overwrite the PyVista/VTK array from our python cache, then mark modified
@@ -615,6 +626,8 @@ class PointCloudProduct(AbstractSceneProduct):
             v_arr = self.mesh.GetPointData().GetArray("Labels")
             if v_arr:
                 v_arr.Modified()
+            self._labels_dirty = False
+            self._vtk_labels_have_paint = True
         except Exception as e:
             print(f"⚠️ flush_labels_to_gpu (PointCloud) failed: {e}")
 
@@ -1228,14 +1241,18 @@ class MeshProduct(AbstractSceneProduct):
             return
         
         n_faces = self.mesh.n_cells
-        
+
         # 1. Create "Labels" array if it doesn't exist - uniform white
-        if "Labels" not in self.mesh.array_names:
+        labels_preexisting = "Labels" in self.mesh.array_names
+        if not labels_preexisting:
             labels_array = np.ones((n_faces, 3), dtype=np.uint8) * 255  # White
             self.mesh.cell_data["Labels"] = labels_array
 
         # Create a Python-owned labels cache detached from VTK for background painting
         self._labels_cache = np.asarray(self.mesh.cell_data["Labels"]).copy()
+        # Deferred-flush bookkeeping (see PointCloudProduct._ensure_scalar_arrays)
+        self._labels_dirty = False
+        self._vtk_labels_have_paint = labels_preexisting
 
         # Keep a readonly reference to the PyVista view for flush operations only
         self._labels_view = self.mesh.cell_data["Labels"]
@@ -1272,19 +1289,26 @@ class MeshProduct(AbstractSceneProduct):
         if not hasattr(self, '_labels_cache'):
             self._labels_cache = np.asarray(self.mesh.cell_data["Labels"]).copy()
         self._labels_cache[element_ids] = color_rgb
+        self._labels_dirty = True
 
         # NOTE: No immediate VTK Modified() here. The GUI thread should call
         # `flush_labels_to_gpu()` once painting activity settles.
 
     def flush_labels_to_gpu(self) -> None:
-        """One full GPU upload. Call only when painting pauses (main thread)."""
+        """One full GPU upload. Call only on the GUI/main thread, and only at
+        rare barriers (scene rebuild, array switch, erase-after-flush) — this
+        triggers a full VTK mapper rebuild on the next render."""
         if self.mesh is None or not hasattr(self, '_labels_cache'):
+            return
+        if not getattr(self, '_labels_dirty', True):
             return
         try:
             self.mesh.cell_data["Labels"] = self._labels_cache
             labels_array = self.mesh.GetCellData().GetArray("Labels")
             if labels_array:
                 labels_array.Modified()
+            self._labels_dirty = False
+            self._vtk_labels_have_paint = True
         except Exception as e:
             print(f"⚠️ flush_labels_to_gpu (Mesh) failed: {e}")
 

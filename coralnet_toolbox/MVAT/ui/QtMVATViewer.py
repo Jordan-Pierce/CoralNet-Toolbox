@@ -2408,6 +2408,16 @@ class MVATViewer(QFrame):
                 if mesh is None:
                     continue
 
+                # Deferred-paint barrier: sync the VTK Labels array from the
+                # Python cache before (re)building the actor. No-op unless the
+                # product's labels are dirty, so this is free in the common case.
+                flush_labels = getattr(product, 'flush_labels_to_gpu', None)
+                if callable(flush_labels):
+                    try:
+                        flush_labels()
+                    except Exception:
+                        pass
+
                 should_be_visible = self._get_visibility_for_product(product)
 
                 # ------------------------------------------------------------------

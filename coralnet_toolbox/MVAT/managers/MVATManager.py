@@ -190,9 +190,19 @@ class MVATManager(QObject):
 
         # Overlay actor handle (tiny actor swapped during painting)
         self._label_overlay_actor = None
+        # Persistent "committed paint" overlay: all painted faces, kept on top of
+        # the base mesh so the heavy Labels GPU flush can be deferred (Tier 2).
+        self._committed_overlay_actor = None
         # Point-cloud label overlay actor (painted points rendered on top of the cloud).
         self._point_label_overlay_actor = None
         self._point_overlay_last_render_time = None
+        # Point-cloud stroke-only overlay (current drag), swapped in place per move.
+        self._point_stroke_overlay_actor = None
+        self._point_stroke_chunks = []
+        self._point_stroke_mask = None
+        # True when any erase (class 0) was submitted since the last stroke commit;
+        # erasing over a previously-flushed VTK array requires a real flush.
+        self._active_stroke_had_erase = False
         self._hover_overlay_actor = None
         self._hover_overlay_context = None
         self._hover_overlay_face_ids = None
@@ -2076,6 +2086,14 @@ class MVATManager(QObject):
 
         if int(class_id) == 0:
             color_rgb = (255, 255, 255)
+            self._active_stroke_had_erase = True
+
+        # The LabelWorker writes the product's _labels_cache directly, bypassing
+        # apply_labels — mark the cache as diverged from the VTK array here.
+        try:
+            primary_target._labels_dirty = True
+        except Exception:
+            pass
 
         # Keep the mesh class-label registry in sync so a mesh painted
         # directly (without a prior camera -> mesh projection) can still be
@@ -2153,6 +2171,8 @@ class MVATManager(QObject):
                 class_ids=class_ids,
             )
             self._label_painter_thread.overlay_ready.connect(self._on_overlay_ready, Qt.QueuedConnection)
+            self._label_painter_thread.committed_overlay_ready.connect(
+                self._on_committed_overlay_ready, Qt.QueuedConnection)
             self._label_painter_thread.start()
         except Exception as e:
             print(f"⚠️ _ensure_label_painter failed: {e}")
@@ -2165,38 +2185,68 @@ class MVATManager(QObject):
             status_bar.showMessage("Waiting for pause to commit 3D paint...", 1500)
 
     def _execute_lazy_flush(self):
-        """Commit painted labels to the GPU and refresh the 3D view. Runs when the user pauses."""
+        """Commit the finished stroke into the persistent overlay. Runs when the user pauses.
+
+        Tier 2: the expensive Labels GPU flush (full VTK mapper rebuild) is NOT
+        performed here anymore. Painted state stays visible through the committed
+        overlay actor; `flush_labels_to_gpu` runs only at rare barriers (scene
+        rebuild / array switch in render_scene) or when an erase stroke touched a
+        previously-flushed VTK array (which would otherwise show stale colors).
+        """
         status_bar = getattr(self.main_window, 'status_bar', None)
-        if status_bar is not None:
-            status_bar.showMessage("Saving paint to 3D model...", 0)
+        had_erase = self._active_stroke_had_erase
+        self._active_stroke_had_erase = False
 
-        QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            # 1. Tell LabelWorker to clear its temporary overlay.
-            painter = self._label_painter_thread
-            if painter is not None and painter.isRunning():
-                painter.finish_stroke()
-            else:
-                self._on_overlay_ready(None)
+            primary_mesh = self._get_primary_mesh_target()
+            if primary_mesh is not None:
+                painter = self._label_painter_thread
+                painter_alive = painter is not None and painter.isRunning()
+                hard_flush = had_erase and getattr(primary_mesh, '_vtk_labels_have_paint', False)
 
-            # 2. Commit labels into the product. Works for meshes and point clouds.
-            primary_target = self._get_primary_mesh_target() or self._get_primary_point_target()
-            if primary_target and hasattr(primary_target, 'flush_labels_to_gpu'):
-                primary_target.flush_labels_to_gpu()
-            # Point clouds: the overlay actor is the authoritative visual, so make
-            # sure it reflects the final painted state after the stroke.
-            if self._get_primary_point_target() is not None:
+                if hard_flush:
+                    # Erase over a flushed array: the base actor holds stale
+                    # colors that the committed overlay no longer covers.
+                    if status_bar is not None:
+                        status_bar.showMessage("Saving paint to 3D model...", 0)
+                    QApplication.setOverrideCursor(Qt.WaitCursor)
+                    try:
+                        if painter_alive:
+                            painter.finish_stroke(discard=True)
+                        else:
+                            self._on_overlay_ready(None, render=False)
+                        primary_mesh.flush_labels_to_gpu()
+                        if getattr(primary_mesh, 'selected_array', None) == 'Labels':
+                            # Base actor now shows current labels itself.
+                            self._on_committed_overlay_ready(None, render=False)
+                        else:
+                            self.refresh_primary_mesh_overlay(render=False)
+                    finally:
+                        QApplication.restoreOverrideCursor()
+                elif painter_alive:
+                    # Worker builds the committed overlay off the main thread and
+                    # clears the live stroke overlay after it (no flicker, no
+                    # base-mesh rebuild).
+                    painter.finish_stroke()
+                else:
+                    self._on_overlay_ready(None, render=False)
+                    self.refresh_primary_mesh_overlay(render=False)
+
+            primary_point = self._get_primary_point_target()
+            if primary_point is not None:
+                # Fold the stroke into the persistent painted-points overlay.
+                self._clear_point_stroke_overlay(render=False)
+                if had_erase and getattr(primary_point, '_vtk_labels_have_paint', False):
+                    primary_point.flush_labels_to_gpu()
                 self.refresh_primary_point_overlay(render=False)
 
-            # 3. Force the screen to update.
             try:
                 self.viewer.plotter.render()
             except Exception:
                 pass
         finally:
-            QApplication.restoreOverrideCursor()
             if status_bar is not None:
-                status_bar.showMessage("3D model updated.", 3000)
+                status_bar.showMessage("3D paint committed.", 2000)
 
     def _build_primary_mesh_overlay(self):
         """Snapshot the current painted mesh faces into a tiny overlay payload."""
@@ -2253,25 +2303,49 @@ class MVATManager(QObject):
             return None
 
     def refresh_primary_mesh_overlay(self, force_recreate: bool = False, render: bool = True):
-        """Rebuild the visible mesh-label overlay from the current mesh state."""
+        """Rebuild the persistent painted-faces overlay from the current mesh state.
+
+        Main-thread fallback/barrier path (scene rebuilds, hard flushes); during
+        interactive painting the LabelWorker builds this payload off-thread and
+        delivers it via committed_overlay_ready.
+        """
         overlay = self._build_primary_mesh_overlay()
         if overlay is None:
-            if self._label_overlay_actor is not None:
-                self._on_overlay_ready(None, render=render)
+            if self._committed_overlay_actor is not None:
+                self._on_committed_overlay_ready(None, render=render)
             return
 
-        self._on_overlay_ready(overlay, force_recreate=force_recreate, render=render)
+        self._on_committed_overlay_ready(overlay, force_recreate=force_recreate, render=render)
 
     def _on_overlay_ready(self, overlay, force_recreate: bool = False, render: bool = True):
-        """Main thread: update the overlay actor in place when possible."""
+        """Main thread: update the live stroke overlay actor in place when possible."""
+        self._update_face_overlay_actor('_label_overlay_actor', overlay,
+                                        force_recreate=force_recreate, render=render)
+
+    def _on_committed_overlay_ready(self, overlay, force_recreate: bool = False, render: bool = True):
+        """Main thread: update the persistent committed-paint overlay actor.
+
+        Draw-order invariant: this actor must be added to the plotter before the
+        stroke overlay actor so the in-progress stroke wins on equal depth
+        (GL_LEQUAL). The stroke actor is destroyed at every stroke end and
+        recreated on the next stroke, which preserves the order naturally.
+        """
+        self._update_face_overlay_actor('_committed_overlay_actor', overlay,
+                                        force_recreate=force_recreate, render=render)
+
+    def _update_face_overlay_actor(self, actor_attr: str, overlay,
+                                   force_recreate: bool = False, render: bool = True):
+        """Create/update/remove a face-overlay actor stored at `actor_attr`."""
         try:
+            actor = getattr(self, actor_attr)
+
             if overlay is None:
-                if self._label_overlay_actor is not None:
+                if actor is not None:
                     try:
-                        self.viewer.plotter.remove_actor(self._label_overlay_actor, render=False)
+                        self.viewer.plotter.remove_actor(actor, render=False)
                     except Exception:
                         pass
-                    self._label_overlay_actor = None
+                    setattr(self, actor_attr, None)
                     if render:
                         try:
                             self.viewer.plotter.render()
@@ -2304,47 +2378,28 @@ class MVATManager(QObject):
                 # Backwards-compat: already a pv.PolyData.
                 mesh_to_add = overlay
 
-            if force_recreate and self._label_overlay_actor is not None:
+            if force_recreate and actor is not None:
                 try:
-                    self.viewer.plotter.remove_actor(self._label_overlay_actor, render=False)
+                    self.viewer.plotter.remove_actor(actor, render=False)
                 except Exception:
                     pass
-                self._label_overlay_actor = None
+                actor = None
+                setattr(self, actor_attr, None)
 
-            if self._label_overlay_actor is None:
-                self._label_overlay_actor = _add_overlay_actor(mesh_to_add)
+            if actor is None:
+                actor = _add_overlay_actor(mesh_to_add)
+                setattr(self, actor_attr, actor)
             else:
-                mapper = None
-                try:
-                    mapper = self._label_overlay_actor.GetMapper()
-                except Exception:
-                    mapper = None
-
-                updated = False
-                if mapper is not None:
-                    for method_name in ('SetInputDataObject', 'SetInputData'):
-                        method = getattr(mapper, method_name, None)
-                        if callable(method):
-                            try:
-                                method(mesh_to_add)
-                                try:
-                                    mapper.Update()
-                                except Exception:
-                                    pass
-                                updated = True
-                                break
-                            except Exception:
-                                continue
-
-                if not updated:
+                if not self._swap_mapper_input(actor, mesh_to_add):
                     try:
-                        self.viewer.plotter.remove_actor(self._label_overlay_actor, render=False)
+                        self.viewer.plotter.remove_actor(actor, render=False)
                     except Exception:
                         pass
-                    self._label_overlay_actor = _add_overlay_actor(mesh_to_add)
+                    actor = _add_overlay_actor(mesh_to_add)
+                    setattr(self, actor_attr, actor)
 
             try:
-                self._label_overlay_actor.SetVisibility(True)
+                actor.SetVisibility(True)
             except Exception:
                 pass
             if render:
@@ -2357,6 +2412,30 @@ class MVATManager(QObject):
                     pass
         except Exception as e:
             print(f"⚠️ Overlay swap failed: {e}")
+
+    @staticmethod
+    def _swap_mapper_input(actor, mesh_to_add) -> bool:
+        """Replace an actor's mapper input in place. Returns False on failure."""
+        try:
+            mapper = actor.GetMapper()
+        except Exception:
+            return False
+        if mapper is None:
+            return False
+
+        for method_name in ('SetInputDataObject', 'SetInputData'):
+            method = getattr(mapper, method_name, None)
+            if callable(method):
+                try:
+                    method(mesh_to_add)
+                    try:
+                        mapper.Update()
+                    except Exception:
+                        pass
+                    return True
+                except Exception:
+                    continue
+        return False
 
     def _on_label_window_selected(self, *_args):
         """Refresh the hover overlay when the active label changes."""
@@ -2421,9 +2500,9 @@ class MVATManager(QObject):
         """Paint point-cloud points by ID.
 
         The point-cloud analogue of ``submit_3d_face_paint``: it commits the labels
-        into the product (class IDs + label-color cache) and refreshes the live
-        point overlay actor. Unlike the mesh path there is no background LabelWorker
-        thread — building a points-only overlay is cheap enough to do inline.
+        into the product (class IDs + label-color cache) and updates a stroke-only
+        overlay actor inline. The full painted-set overlay is rebuilt once per
+        stroke end (lazy flush), never per mouse move.
         """
         try:
             point_ids = np.asarray(point_ids, dtype=np.int32).ravel()
@@ -2441,6 +2520,7 @@ class MVATManager(QObject):
 
         if int(class_id) == 0:
             color_rgb = (255, 255, 255)
+            self._active_stroke_had_erase = True
 
         # Keep the propagation registry in sync so a directly-painted cloud can be
         # projected back out to the cameras (mirrors submit_3d_face_paint).
@@ -2465,8 +2545,109 @@ class MVATManager(QObject):
             print(f"⚠️ submit_3d_point_paint apply_labels failed: {e}")
             return
 
-        # Refresh the live overlay (throttled to ~30 Hz to stay responsive on big paints).
-        self.refresh_primary_point_overlay(render=True)
+        # Update only the stroke-sized overlay (throttled render). The previous
+        # implementation scanned all class_ids (O(N)) and recreated the full
+        # painted overlay actor on every brush move.
+        self._accumulate_point_stroke(primary_target, point_ids)
+        self._update_point_stroke_overlay(primary_target, render=True)
+
+    # --- Point-cloud stroke overlay (current drag only) ---------------------------
+    def _accumulate_point_stroke(self, primary_target, point_ids: np.ndarray):
+        """Track stroke membership with an O(chunk) boolean-mask dedupe."""
+        try:
+            n_points = int(primary_target.mesh.n_points)
+        except Exception:
+            n_points = 0
+
+        mask = self._point_stroke_mask
+        if n_points > 0 and (mask is None or mask.size != n_points):
+            # First stroke on this product (or product switched): fresh mask.
+            mask = np.zeros(n_points, dtype=bool)
+            self._point_stroke_mask = mask
+            self._point_stroke_chunks = []
+
+        if mask is not None and point_ids.size and point_ids.max() < mask.size:
+            new_ids = point_ids[~mask[point_ids]]
+            if new_ids.size == 0:
+                return
+            mask[new_ids] = True
+            self._point_stroke_chunks.append(new_ids)
+        else:
+            self._point_stroke_chunks.append(point_ids)
+
+    def _collect_point_stroke_ids(self) -> np.ndarray:
+        if not self._point_stroke_chunks:
+            return np.empty(0, dtype=np.int32)
+        if len(self._point_stroke_chunks) == 1:
+            return self._point_stroke_chunks[0]
+        return np.concatenate(self._point_stroke_chunks)
+
+    def _update_point_stroke_overlay(self, primary_target, render: bool = True):
+        """Swap the stroke-only points overlay in place (cheap, O(stroke))."""
+        stroke_ids = self._collect_point_stroke_ids()
+        if stroke_ids.size == 0:
+            return
+
+        try:
+            points = np.asarray(primary_target.mesh.points, dtype=np.float32)[stroke_ids]
+            colors = np.asarray(primary_target._labels_cache, dtype=np.uint8)[stroke_ids, :3]
+        except Exception:
+            return
+
+        try:
+            import pyvista as pv
+            tiny = pv.PolyData(points)
+            tiny.point_data['OverlayColors'] = colors
+
+            actor = self._point_stroke_overlay_actor
+            if actor is None or not self._swap_mapper_input(actor, tiny):
+                if actor is not None:
+                    try:
+                        self.viewer.plotter.remove_actor(actor, render=False)
+                    except Exception:
+                        pass
+                point_size = float(getattr(self.viewer, 'point_size', 3) or 3) + 2.0
+                self._point_stroke_overlay_actor = self.viewer.plotter.add_mesh(
+                    tiny,
+                    scalars='OverlayColors',
+                    rgb=True,
+                    style='points',
+                    point_size=point_size,
+                    render_points_as_spheres=True,
+                    copy_mesh=False,
+                    lighting=False,
+                    show_scalar_bar=False,
+                )
+
+            if render:
+                last = self._point_overlay_last_render_time
+                if last is None or (perf_counter() - last) > 0.033:
+                    self.viewer.plotter.render()
+                    self._point_overlay_last_render_time = perf_counter()
+        except Exception as e:
+            print(f"⚠️ Point stroke overlay update failed: {e}")
+
+    def _clear_point_stroke_overlay(self, render: bool = False):
+        """Reset stroke tracking and remove the stroke overlay actor."""
+        mask = self._point_stroke_mask
+        if mask is not None:
+            for chunk in self._point_stroke_chunks:
+                valid = chunk[chunk < mask.size]
+                mask[valid] = False
+        self._point_stroke_chunks = []
+
+        actor = self._point_stroke_overlay_actor
+        if actor is not None:
+            try:
+                self.viewer.plotter.remove_actor(actor, render=False)
+            except Exception:
+                pass
+            self._point_stroke_overlay_actor = None
+            if render:
+                try:
+                    self.viewer.plotter.render()
+                except Exception:
+                    pass
 
     def _build_primary_point_overlay(self):
         """Snapshot all currently painted points into an overlay payload.
