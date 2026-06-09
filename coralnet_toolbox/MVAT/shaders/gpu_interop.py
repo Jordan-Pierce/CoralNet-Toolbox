@@ -118,11 +118,16 @@ def _resolve_gl_fns():
     return ns
 
 
-def _pbo_cuda_readback(gl: 'types.SimpleNamespace', cudart, width: int, height: int) -> Optional['torch.Tensor']:
+def _pbo_cuda_readback(gl: 'types.SimpleNamespace', cudart, width: int, height: int,
+                       flip: bool = True) -> Optional['torch.Tensor']:
     """Read the current GL read framebuffer into a CUDA int32 tensor via PBO.
 
     VRAM → PBO (GPU-side) → CUDA map → D2D copy → torch tensor.  No PCIe.
     Returns None on any error (caller should fall back to CPU screenshot).
+
+    ``flip`` controls the GL bottom-to-top → top-to-bottom correction. Pass
+    ``flip=False`` when the vertex shader already bakes the vertical flip into
+    clip space (the MVAT rasterizer does), otherwise the image is double-flipped.
     """
     import ctypes
     import torch
@@ -158,7 +163,8 @@ def _pbo_cuda_readback(gl: 'types.SimpleNamespace', cudart, width: int, height: 
         gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, 0)
         gl.glDeleteBuffers(1, ctypes.byref(pbo)); pbo.value = 0
 
-        return torch.flip(out, [0])  # GL bottom-to-top → top-to-bottom
+        # GL bottom-to-top → top-to-bottom. Skipped when the shader already flips.
+        return torch.flip(out, [0]) if flip else out
 
     except Exception:
         try:

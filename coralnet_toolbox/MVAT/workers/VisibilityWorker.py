@@ -430,6 +430,14 @@ class VisibilityWorker(QObject):
                                 budget_str = "Native" if not self.pixel_budget else f"{self.pixel_budget / 1_000_000:.1f}MP"
                                 self._status(f"Computing 3D maps... (Chunk {i+current}/{total_cameras} at {budget_str})")
 
+                            # Distorted cameras (on a CUDA GPU) get their index map back
+                            # as a GPU tensor so the warp consumes it without a CPU round
+                            # trip. Positions are batch-relative to this chunk.
+                            gpu_positions = (
+                                {j for j, p in enumerate(chunk_paths) if p in self.warp_callables_dict}
+                                if torch.cuda.is_available() else None
+                            )
+
                             # --- A. RENDER THE CHUNK (ModernGL only) ---
                             batch_results = VisibilityManager.compute_batch_mesh_visibility_moderngl(
                                 self.primary_target, chunk_params,
@@ -440,6 +448,7 @@ class VisibilityWorker(QObject):
                                 progress_callback=update_status,
                                 mgl_context=mgl_context,
                                 camera_index_offset=i,
+                                gpu_index_positions=gpu_positions,
                             )
                             
                             for p, r in zip(chunk_paths, batch_results):
@@ -454,6 +463,14 @@ class VisibilityWorker(QObject):
                                 if torch.cuda.is_available():
                                     try:
                                         from coralnet_toolbox.Rasters.QtRaster import Raster
+
+                                        # Warp input is the GPU tensor when interop produced
+                                        # one, else the CPU numpy map. warp_batch_cuda accepts
+                                        # either; tensors avoid the CPU→GPU re-upload.
+                                        def _warp_input(p):
+                                            r = chunk_results[p]
+                                            g = r.get('index_map_gpu')
+                                            return g if g is not None else r.get('index_map')
 
                                         groups = defaultdict(list)
                                         for path in distorted_paths:
@@ -470,26 +487,33 @@ class VisibilityWorker(QObject):
                                             grid_gpu  = rep_raster._torch_grid_gpu
                                             oob_mask  = rep_raster._torch_oob_mask
 
-                                            # Measure actual VRAM cost using a small test batch
-                                            # This captures both fixed overhead (grid, masks) and per-map cost
+                                            # Measure per-map cost from a small test batch. Use the
+                                            # peak *live* allocation (memory_allocated) rather than the
+                                            # mem_get_info free-memory delta: the latter reflects the
+                                            # caching allocator's reserved pool (incl. freed grid_sample
+                                            # transients), which over-estimates the true marginal cost
+                                            # by ~2x and left the GPU sitting at half the budget.
                                             test_paths = group_paths[:min(4, len(group_paths))]
-                                            test_maps = [chunk_results[p]['index_map'] for p in test_paths]
+                                            test_maps = [_warp_input(p) for p in test_paths]
 
                                             torch.cuda.synchronize()
                                             torch.cuda.empty_cache()
-                                            vram_before, _ = torch.cuda.mem_get_info()
+                                            torch.cuda.reset_peak_memory_stats()
+                                            alloc_before = torch.cuda.memory_allocated()
 
-                                            # Warp small batch to measure realistic VRAM cost
+                                            # Warp small batch to measure realistic per-map live cost
                                             warped_test, _ = Raster.warp_batch_cuda(
                                                 test_maps, [-1] * len(test_maps), grid_gpu, oob_mask
                                             )
 
                                             torch.cuda.synchronize()
-                                            vram_after, _ = torch.cuda.mem_get_info()
-                                            total_vram_used = vram_before - vram_after
-                                            actual_vram_per_map = total_vram_used / len(test_maps)
+                                            peak_alloc = torch.cuda.max_memory_allocated()
+                                            total_vram_used = max(0, peak_alloc - alloc_before)
+                                            actual_vram_per_map = total_vram_used / max(1, len(test_maps))
 
-                                            # Calculate safe batch size based on actual measurement
+                                            # Size the batch against currently-free VRAM (reserved-aware)
+                                            # with the safety factor; warp_batch_cuda also re-checks its
+                                            # own estimate against free VRAM as a backstop.
                                             free_vram, _ = torch.cuda.mem_get_info()
                                             safe_vram = free_vram * self.distortion_vram_safety_factor
                                             vram_batch_size = max(1, int(safe_vram / max(1, actual_vram_per_map)))
@@ -502,11 +526,11 @@ class VisibilityWorker(QObject):
                                                 f"VRAM batch size: {vram_batch_size}"
                                             )
                                             
-                                            idx_paths = [p for p in group_paths if chunk_results[p].get('index_map') is not None]
+                                            idx_paths = [p for p in group_paths if _warp_input(p) is not None]
 
                                             for j in range(0, len(idx_paths), vram_batch_size):
                                                 vram_chunk = idx_paths[j:j + vram_batch_size]
-                                                maps = [chunk_results[p]['index_map'] for p in vram_chunk]
+                                                maps = [_warp_input(p) for p in vram_chunk]
 
                                                 chunk_start = time.perf_counter()
                                                 # New API: returns maps AND unique visible indices directly from GPU
@@ -519,6 +543,10 @@ class VisibilityWorker(QObject):
                                                 for idx, p in enumerate(vram_chunk):
                                                     chunk_results[p]['index_map'] = warped_maps[idx]
                                                     chunk_results[p]['visible_indices'] = visible_indices_list[idx]
+                                                    # Warp output is native numpy: release the
+                                                    # GPU tensor and reset scale to native (1.0).
+                                                    chunk_results[p]['index_map_gpu'] = None
+                                                    chunk_results[p]['scale_factor'] = 1.0
                                                     # Enforce canonical dtypes
                                                     VisibilityManager._normalize_result_dict(chunk_results[p], False)
                                                     
@@ -535,9 +563,16 @@ class VisibilityWorker(QObject):
                                         stage_start = time.perf_counter()
                                         warp_fn = self.warp_callables_dict[p]
                                         r = chunk_results[p]
-                                        if r.get('index_map') is not None:
-                                            warped = warp_fn(r['index_map'], border_value=-1)
+                                        # If interop produced a GPU tensor, materialize it to
+                                        # CPU numpy so cv2.remap can consume it.
+                                        src = r.get('index_map')
+                                        if src is None and r.get('index_map_gpu') is not None:
+                                            src = r['index_map_gpu'].cpu().numpy()
+                                            r['index_map_gpu'] = None
+                                        if src is not None:
+                                            warped = warp_fn(src, border_value=-1)
                                             r['index_map'] = warped
+                                            r['scale_factor'] = 1.0
                                             valid_mask = warped >= 0
                                             r['visible_indices'] = np.unique(warped[valid_mask]).astype(np.int32)
                                             VisibilityManager._normalize_result_dict(r, False)

@@ -49,6 +49,8 @@ from coralnet_toolbox.MVAT.shaders import FRAG_FACE_ID_INT as _MGL_FRAG_INT
 from coralnet_toolbox.MVAT.shaders.gpu_interop import (
     _resolve_gl_fns,
     _build_mvp,
+    _pbo_cuda_readback,
+    _load_cudart,
 )
 
 logger = get_visibility_logger()
@@ -476,6 +478,22 @@ class VisibilityManager:
                 mesh.cell_centers().points.astype(np.float32)
             ).cuda()
 
+        # Zero-PCIe CUDA-GL readback capability (for the distorted-camera path).
+        # cudart is loaded eagerly; interop_ok is tentative and self-disables on the
+        # first failed readback in the render loop.
+        import os
+        cudart = None
+        interop_ok = False
+
+        if HAS_TORCH and torch.cuda.is_available():
+            try:
+                cudart = _load_cudart()
+                interop_ok = True
+            except Exception as exc:
+                logger.debug(f"   CUDA-GL interop unavailable ({exc}); using CPU readback")
+                cudart = None
+                interop_ok = False
+
         logger.debug(f"   ✅ moderngl context ready: {n_cells:,} faces (32-bit int encoding)")
 
         return {
@@ -486,6 +504,8 @@ class VisibilityManager:
             'gl_fns':          gl_fns,
             'pixel_budget':    pixel_budget,
             'face_centers_pt': face_centers_pt,
+            'cudart':          cudart,
+            'interop_ok':      interop_ok,
             '_fbo_cache':      {},
         }
 
@@ -502,10 +522,18 @@ class VisibilityManager:
         mgl_context: dict = None,
         camera_index_offset: int = 0,
         use_viewport_cropping: bool = True,
+        gpu_index_positions: Optional[set] = None,
     ) -> list:
         """GPU rasterization via moderngl with CPU framebuffer readback.
 
         Returns a list of result dicts with 'index_map', 'visible_indices', 'depth_map', etc.
+
+        ``gpu_index_positions`` is an optional set of batch-relative camera indices
+        (0..len-1) whose index map should be returned as a CUDA int32 tensor in
+        ``result['index_map_gpu']`` (with ``index_map=None``) via zero-PCIe CUDA-GL
+        readback, instead of a CPU numpy ``index_map``. Used by the distorted-camera
+        path to feed the warp directly. Requires ``mgl_context['interop_ok']``; any
+        failure silently falls back to the CPU numpy path for that camera.
         """
         import time
         import logging
@@ -548,6 +576,9 @@ class VisibilityManager:
         vao_int      = mgl_context['vao_int']
         gl_fns       = mgl_context['gl_fns']
         fbo_cache    = mgl_context['_fbo_cache']
+        cudart       = mgl_context.get('cudart')
+
+        gpu_index_positions = gpu_index_positions or set()
 
         mesh        = mesh_product.get_mesh()
         mesh_bounds = mesh.bounds
@@ -671,6 +702,49 @@ class VisibilityManager:
             t0_sync = perf_counter()
             ctx.finish()
             t_gpu_sync = perf_counter() - t0_sync
+
+            # ----------------------------------------------------------------
+            # GPU PATH: zero-PCIe CUDA-GL readback for distorted cameras.
+            # Keep the index map on the GPU as a CUDA int32 tensor so the
+            # distortion warp consumes it directly (no CPU round trip). Any
+            # failure self-disables interop and falls through to the CPU path.
+            # ----------------------------------------------------------------
+            if i in gpu_index_positions and mgl_context.get('interop_ok') and cudart is not None:
+                import torch
+                gpu_crop = None
+                try:
+                    # flip=False: the vertex shader already orients top-to-bottom.
+                    gpu_crop = _pbo_cuda_readback(gl_fns, cudart, crop_w, crop_h, flip=False)
+                except Exception as exc:
+                    logger.debug(f"      CUDA-GL readback raised ({exc}); disabling interop")
+                    gpu_crop = None
+
+                if gpu_crop is None:
+                    mgl_context['interop_ok'] = False
+                    logger.debug("      CUDA-GL readback unavailable; falling back to CPU readback")
+                else:
+                    # Reverse the +1 ID offset (background 0 → -1) on the GPU.
+                    gpu_crop = gpu_crop - 1
+                    # Paste the crop into the full (low-res) render canvas on the GPU.
+                    # Upsampling is intentionally deferred: F.grid_sample fuses it into
+                    # the warp using the native-resolution lens grid.
+                    if u_min == 0 and v_min == 0 and crop_w == render_w and crop_h == render_h:
+                        full_index_map_gpu = gpu_crop
+                    else:
+                        full_index_map_gpu = torch.full(
+                            (render_h, render_w), -1, dtype=torch.int32, device=gpu_crop.device
+                        )
+                        full_index_map_gpu[v_min:v_min + crop_h, u_min:u_min + crop_w] = gpu_crop
+                    results.append({
+                        'index_map':       None,
+                        'index_map_gpu':   full_index_map_gpu,
+                        'visible_indices': np.array([], dtype=np.int32),
+                        'depth_map':       None,
+                        'inverted_index':  None,
+                        'scale_factor':    dynamic_scale,
+                    })
+                    camera_total_sum += perf_counter() - cam_start
+                    continue
 
             # The vertex shader bakes the vertical flip into clip space, so the
             # readback is already in top-to-bottom image order (no CPU [::-1]).

@@ -41,7 +41,14 @@ def _query_pixels_from_csr_inverted_index(raster, element_ids: np.ndarray, width
     inv_pixels = getattr(raster, 'inv_pixels', None)
 
     if not isinstance(inv_ids, np.ndarray) or not isinstance(inv_offsets, np.ndarray) or not isinstance(inv_pixels, np.ndarray):
-        return None
+        # Build it lazily on first query for this camera (deferred from load time
+        # to bound RAM across large camera sets), then re-read.
+        if getattr(raster, 'ensure_inverted_index', None) and raster.ensure_inverted_index():
+            inv_ids = getattr(raster, 'inv_ids', None)
+            inv_offsets = getattr(raster, 'inv_offsets', None)
+            inv_pixels = getattr(raster, 'inv_pixels', None)
+        if not isinstance(inv_ids, np.ndarray) or not isinstance(inv_offsets, np.ndarray) or not isinstance(inv_pixels, np.ndarray):
+            return None
 
     inv_ids_arr = np.asarray(inv_ids)
     inv_offsets_arr = np.asarray(inv_offsets)

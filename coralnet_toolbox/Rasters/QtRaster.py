@@ -565,19 +565,25 @@ class Raster(QObject):
 
     @staticmethod
     def _estimate_batch_warp_bytes(maps, grid_gpu=None):
-        """Estimate temporary memory required to warp a batch of 2D maps."""
+        """Estimate temporary memory required to warp a batch of 2D maps.
+
+        ``maps`` elements may be numpy arrays (CPU) or CUDA tensors (already in VRAM).
+        """
         if not maps:
             return 0
 
-        first_shape = np.asarray(maps[0]).shape
+        import torch
+        m0 = maps[0]
+        first_shape = tuple(m0.shape) if torch.is_tensor(m0) else np.asarray(m0).shape
         if len(first_shape) != 2:
             raise ValueError("warp_batch_cuda expects 2D maps")
 
         height, width = first_shape
         batch_size = len(maps)
 
-        # CPU staging: np.stack(...)->float32 with singleton channel axis.
-        cpu_bytes = batch_size * height * width * 4
+        # CPU staging only applies to numpy inputs; CUDA tensors already live in VRAM.
+        any_cpu = any(not torch.is_tensor(m) for m in maps)
+        cpu_bytes = batch_size * height * width * 4 if any_cpu else 0
 
         # GPU tensor staging plus expanded sampling grid.
         gpu_bytes = batch_size * height * width * 4
@@ -599,7 +605,9 @@ class Raster(QObject):
         All maps must share the same (H, W) and the same lens model (same grid).
 
         Args:
-            maps          : list of np.ndarray, each shape (H, W)
+            maps          : list of np.ndarray (CPU) or CUDA int32 tensors, each shape (H, W).
+                            Tensor inputs are consumed in-place from VRAM (no PCIe upload).
+                            Maps may be lower resolution than the grid; grid_sample upsamples.
             border_values : list of scalars — border fill per map (-1 for index, nan for depth)
             grid_gpu      : torch.Tensor shape (1, H, W, 2) already on CUDA
             oob_mask      : bool torch.Tensor shape (H, W) — out-of-bounds pixels
@@ -615,7 +623,15 @@ class Raster(QObject):
         if not maps:
             return [], []
 
-        shapes = {np.asarray(m).shape for m in maps}
+        def _shape(m):
+            return tuple(m.shape) if torch.is_tensor(m) else np.asarray(m).shape
+
+        def _is_int_map(m):
+            if torch.is_tensor(m):
+                return m.dtype in (torch.int32, torch.int64)
+            return m.dtype in (np.int32, np.int64)
+
+        shapes = {_shape(m) for m in maps}
         if len(shapes) != 1:
             raise ValueError("All maps passed to warp_batch_cuda must have the same shape")
 
@@ -634,22 +650,23 @@ class Raster(QObject):
             # and let the actual CUDA call decide.
             pass
 
-        is_int = [m.dtype in (np.int32, np.int64) for m in maps]
+        is_int = [_is_int_map(m) for m in maps]
         n = len(maps)
 
-        total_size_mb = sum(m.nbytes for m in maps) / (1024 * 1024)
+        def _nbytes(m):
+            return m.element_size() * m.nelement() if torch.is_tensor(m) else m.nbytes
+        total_size_mb = sum(_nbytes(m) for m in maps) / (1024 * 1024)
         import time
         stream_start = time.perf_counter()
 
         # 1. Pre-allocate the final, empty tensor directly on the GPU
-        h, w = maps[0].shape
+        h, w = _shape(maps[0])
         tensor = torch.empty((n, 1, h, w), dtype=torch.float32, device=grid_gpu.device)
 
-        # 2. Stream the numpy arrays directly into VRAM
+        # 2. Stream each map into VRAM. CUDA tensors are a GPU→GPU copy + cast (no
+        #    PCIe); numpy arrays transfer from the CPU. Both cast to float32 on assign.
         for i, m in enumerate(maps):
-            # torch.from_numpy shares memory with the numpy array (no CPU copy).
-            # Assigning it to the GPU tensor handles the transfer and float32 cast on the fly.
-            tensor[i, 0] = torch.from_numpy(m)
+            tensor[i, 0] = m if torch.is_tensor(m) else torch.from_numpy(m)
 
         stream_time = time.perf_counter() - stream_start
 
@@ -729,11 +746,12 @@ class Raster(QObject):
             self.inv_offsets = inverted_index['inv_offsets']
             self.inv_pixels  = inverted_index['inv_pixels']
         else:
-            # No prebuilt index supplied (common on cache-hit loads).
-            # Build it in a daemon thread so it's ready for the first query
-            # without blocking the UI during cache loading.
+            # No prebuilt index supplied (common on cache-hit loads). Defer the
+            # build to the first pixel query (ensure_inverted_index) instead of
+            # eagerly building one per camera — at thousands of cameras that
+            # retained an inverted index in RAM for every map and spawned a
+            # daemon-thread burst.
             self.inv_ids = self.inv_offsets = self.inv_pixels = None
-            self._schedule_inverted_index_build(index_map)
 
         # Set visible_indices if provided
         if visible_indices is not None:
@@ -776,31 +794,28 @@ class Raster(QObject):
             'inv_pixels':  sorted_pixels,
         }
 
-    def _schedule_inverted_index_build(self, index_map_reference: np.ndarray) -> None:
+    def ensure_inverted_index(self) -> bool:
+        """Build the CSR inverted index on demand (first pixel query).
+
+        Bounded to this raster: only cameras that are actually queried pay the
+        build cost and retain the index in RAM, rather than eagerly building one
+        for every loaded camera. Idempotent; returns True if a usable index is
+        present afterward.
         """
-        Kick off a daemon thread to build the CSR inverted index.
-
-        The index map is treated as read-only geometric reference data, so the
-        thread can work on the original array without duplicating it in RAM.
-        """
-        raster_ref = self  # capture for closure
-        cls = type(self)   # capture class explicitly — 'QtRaster' is not in thread scope
-
-        def _build_and_store():
-            inv = cls._build_inverted_index(index_map_reference)
-            if inv is None:
-                return
-            # Guard: only store if the raster still holds the same index_map
-            # object.
-            if raster_ref.index_map is not None and raster_ref.index_map is not index_map_reference:
-                # The raster has been updated in the meantime; discard stale result.
-                return
-            raster_ref.inv_ids     = inv['inv_ids']
-            raster_ref.inv_offsets = inv['inv_offsets']
-            raster_ref.inv_pixels  = inv['inv_pixels']
-
-        t = threading.Thread(target=_build_and_store, daemon=True)
-        t.start()
+        if (isinstance(self.inv_ids, np.ndarray)
+                and isinstance(self.inv_offsets, np.ndarray)
+                and isinstance(self.inv_pixels, np.ndarray)):
+            return True
+        index_map = self.index_map
+        if index_map is None:
+            return False
+        inv = self._build_inverted_index(index_map)
+        if inv is None:
+            return False
+        self.inv_ids     = inv['inv_ids']
+        self.inv_offsets = inv['inv_offsets']
+        self.inv_pixels  = inv['inv_pixels']
+        return True
 
     def update_index_map(self, index_map: np.ndarray, index_map_path: Optional[str] = None,
                          visible_indices: Optional[np.ndarray] = None,
@@ -876,9 +891,8 @@ class Raster(QObject):
             self.inv_offsets = inverted_index.get('inv_offsets')
             self.inv_pixels = inverted_index.get('inv_pixels')
         else:
+            # Deferred: built lazily on the first pixel query via ensure_inverted_index.
             self.inv_ids = self.inv_offsets = self.inv_pixels = None
-            if self.index_map is not None:
-                self._schedule_inverted_index_build(self.index_map)
 
         return self.index_map
         
