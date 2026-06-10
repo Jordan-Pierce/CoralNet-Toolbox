@@ -1697,6 +1697,7 @@ class BatchInferenceDialog(QDialog):
                                             rasterio_src=None,
                                         )
                                         # Make a deep copy of the QImage so we can drop tmp_mask safely
+                                        tmp_mask._ensure_canvas()
                                         qimg_copy = tmp_mask.qimage.copy() if tmp_mask.qimage is not None else None
                                         opacity = tmp_mask.get_current_transparency() / 255.0 if tmp_mask.qimage is not None else 1.0
                                     else:

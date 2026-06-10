@@ -30,6 +30,11 @@ class MaskGraphicsItem(QGraphicsItem):
     def __init__(self, mask_annotation):
         super().__init__()
         self.mask_annotation = mask_annotation
+        # Displaying a mask requires its canvas; build it now if it was lazy.
+        try:
+            mask_annotation._ensure_canvas()
+        except Exception:
+            pass
         self.setFlag(QGraphicsItem.ItemUsesExtendedStyleOption, True)
 
     def boundingRect(self):
@@ -89,9 +94,12 @@ class MaskAnnotation(Annotation):
         self.offset = QPointF(0, 0)
         self.rasterio_src = rasterio_src
         
+        # Lazy canvas: colored_mask/qimage are allocated on first display via
+        # _ensure_canvas(). Masks that exist only as background propagation
+        # targets never pay the RGBA cost; _initialize_canvas builds colors
+        # from mask_data, which already reflects every silent write.
         self.colored_mask = None
         self.qimage = None
-        self._initialize_canvas()
         
         self.set_centroid()
         self.set_cropped_bbox()
@@ -181,20 +189,31 @@ class MaskAnnotation(Annotation):
         # Modifying the numpy array will now automatically update the QImage.
         self.qimage = QImage(self.colored_mask.data, width, height, QImage.Format_RGBA8888)
 
+    def _ensure_canvas(self):
+        """Allocate colored_mask/qimage on first display (no-op when present)."""
+        if self.colored_mask is None:
+            self._initialize_canvas()
+
     def _update_full_canvas(self):
         """Regenerates the entire color canvas."""
+        if self.colored_mask is None:
+            self._initialize_canvas()
+            return
         # Use the cached map instead of building a new one
         color_map = self._get_color_map()
         np.copyto(self.colored_mask, color_map[self.mask_data])
 
     def _update_canvas_slice(self, update_rect):
         """Efficiently updates only a small rectangular slice of the color canvas."""
+        if self.colored_mask is None:
+            self._initialize_canvas()
+            return
         x1, y1, x2, y2 = update_rect
         data_slice = self.mask_data[y1:y2, x1:x2]
-        
+
         # Use the cached map instead of building a new one
         color_map = self._get_color_map()
-        
+
         color_slice = color_map[data_slice]
         self.colored_mask[y1:y2, x1:x2] = color_slice
 
@@ -252,6 +271,7 @@ class MaskAnnotation(Annotation):
                 return
         except RuntimeError:
             return
+        self._ensure_canvas()
         height, width = self.mask_data.shape
         self.qimage = QImage(self.colored_mask.data, width, height, QImage.Format_RGBA8888)
         self.graphics_item.update()
@@ -269,6 +289,13 @@ class MaskAnnotation(Annotation):
         labels until the camera was activated as the primary view.  Only the
         ``graphics_item.update()`` call is gated on graphics_item existing.
         """
+        if self.colored_mask is None:
+            # First display request: build the full canvas from mask_data (it
+            # already includes every silent write made before now).
+            self._initialize_canvas()
+            if self.graphics_item is not None:
+                self.graphics_item.update()
+            return
         height, width = self.mask_data.shape
 
         if update_rect:
@@ -334,9 +361,10 @@ class MaskAnnotation(Annotation):
 
         flat_view[target_indices] = new_values
 
-        color_map = self._get_color_map()
-        colored_flat = self.colored_mask.reshape(-1, 4)
-        colored_flat[target_indices] = color_map[new_values]
+        if self.colored_mask is not None:
+            color_map = self._get_color_map()
+            colored_flat = self.colored_mask.reshape(-1, 4)
+            colored_flat[target_indices] = color_map[new_values]
 
         if update_rect is None:
             y_coords, x_coords = np.divmod(target_indices, width)
@@ -419,9 +447,10 @@ class MaskAnnotation(Annotation):
             target_slice[pixels_to_change] = new_class_id
             
             # 2. Update visual canvas directly (bypassing _update_canvas_slice memory allocation)
-            color_map = self._get_color_map()
-            target_colored_slice = self.colored_mask[clipped_y_start:y_end, clipped_x_start:x_end]
-            target_colored_slice[pixels_to_change] = color_map[new_class_id]
+            if self.colored_mask is not None:
+                color_map = self._get_color_map()
+                target_colored_slice = self.colored_mask[clipped_y_start:y_end, clipped_x_start:x_end]
+                target_colored_slice[pixels_to_change] = color_map[new_class_id]
             
             # 3. Trigger localized Qt repaint (respect `silent`)
             if self.graphics_item is not None and not silent:
@@ -512,9 +541,10 @@ class MaskAnnotation(Annotation):
         # 2. Update the visual canvas — always write colors flat (O(changed
         # pixels), never a rectangular slice recompute). The bbox is computed
         # only to limit the Qt repaint region when the touch count is small.
-        color_map = self._get_color_map()
-        colored_flat = self.colored_mask.reshape(-1, 4)
-        colored_flat[target_indices] = color_map[class_id]
+        if self.colored_mask is not None:
+            color_map = self._get_color_map()
+            colored_flat = self.colored_mask.reshape(-1, 4)
+            colored_flat[target_indices] = color_map[class_id]
 
         if self.graphics_item is not None and not silent:
             if pixels_updated < 250000:
@@ -592,10 +622,11 @@ class MaskAnnotation(Annotation):
             target_slice[pixels_to_change] = subset_slice[pixels_to_change]
             
             # 2. Update visual canvas directly
-            color_map = self._get_color_map()
-            target_colored_slice = self.colored_mask[y_start:y_end, x_start:x_end]
-            new_class_ids = subset_slice[pixels_to_change]
-            target_colored_slice[pixels_to_change] = color_map[new_class_ids]
+            if self.colored_mask is not None:
+                color_map = self._get_color_map()
+                target_colored_slice = self.colored_mask[y_start:y_end, x_start:x_end]
+                new_class_ids = subset_slice[pixels_to_change]
+                target_colored_slice[pixels_to_change] = color_map[new_class_ids]
             
             # 3. Trigger localized Qt repaint (respect `silent`)
             if self.graphics_item is not None and not silent:
@@ -1580,6 +1611,7 @@ class MaskAnnotation(Annotation):
         """Saves the mask to a PNG file."""
         if use_label_colors:
             # Use current colored image for export
+            self._ensure_canvas()
             self.qimage.save(path)
         else:
             # Save the raw class IDs as a grayscale image
