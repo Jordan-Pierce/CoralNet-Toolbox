@@ -758,22 +758,34 @@ class MeshProduct(AbstractSceneProduct):
         # Check and bind UV coordinates — they may have been lost during simplification/sorting
         has_uvs = False
         if self.mesh is not None:
-            # Check if PyVista already mapped the texture coordinates
-            if getattr(self.mesh, 't_coords', None) is not None:
-                has_uvs = True
-            else:
+            # Check if PyVista already has texture coordinates
+            try:
+                if self.mesh.active_t_coords is not None:
+                    has_uvs = True
+            except (AttributeError, ValueError):
+                pass
+
+            if not has_uvs:
                 pd = self.mesh.point_data
                 # TCoords is PyVista's default name; it may have survived simplification as a normal array
                 if "TCoords" in pd:
-                    self.mesh.t_coords = pd["TCoords"]
-                    has_uvs = True
-                else:
-                    # Check common PLY UV array names
+                    try:
+                        self.mesh["Texture Coordinates"] = pd["TCoords"]
+                        has_uvs = True
+                    except Exception:
+                        pass
+
+                if not has_uvs:
+                    # Check common PLY UV array names and assign to "Texture Coordinates"
                     for u_name, v_name in [("texture_u", "texture_v"), ("u", "v"), ("s", "t")]:
                         if u_name in pd and v_name in pd:
-                            self.mesh.t_coords = np.column_stack((pd[u_name], pd[v_name]))
-                            has_uvs = True
-                            break
+                            try:
+                                uv_coords = np.column_stack((pd[u_name], pd[v_name]))
+                                self.mesh["Texture Coordinates"] = uv_coords
+                                has_uvs = True
+                                break
+                            except Exception:
+                                pass
 
         # If we loaded an image but the mesh has no UVs, discard the texture to prevent rendering crashes
         if self.texture is not None and not has_uvs:
