@@ -509,46 +509,23 @@ class MaskAnnotation(Annotation):
         # 1. Update the semantic mask data
         flat_view[target_indices] = class_id
 
-        # Determine the actual rendering path for the hybrid method
-        render_path = method
-        if render_path == "hybrid_diff":
+        # 2. Update the visual canvas — always write colors flat (O(changed
+        # pixels), never a rectangular slice recompute). The bbox is computed
+        # only to limit the Qt repaint region when the touch count is small.
+        color_map = self._get_color_map()
+        colored_flat = self.colored_mask.reshape(-1, 4)
+        colored_flat[target_indices] = color_map[class_id]
+
+        if self.graphics_item is not None and not silent:
             if pixels_updated < 250000:
-                render_path = "bbox_diff"
-            else:
-                render_path = "flat_diff"
-
-        # 2. Update the visual canvas
-        if "flat" in render_path:
-            # --- Direct 1D Canvas Repaint ---
-            color_map = self._get_color_map()
-            colored_flat = self.colored_mask.reshape(-1, 4)
-            colored_flat[target_indices] = color_map[class_id]
-
-            if self.graphics_item is not None and not silent:
-                self.graphics_item.update()
-                
-        elif "bbox" in render_path:
-            # --- Localized Canvas Repaint ---
-            y_coords, x_coords = np.divmod(target_indices, width)
-            
-            x_min, x_max = int(x_coords.min()), int(x_coords.max())
-            y_min, y_max = int(y_coords.min()), int(y_coords.max())
-            
-            update_rect = (
-                max(0, x_min - 1), 
-                max(0, y_min - 1), 
-                min(width, x_max + 2), 
-                min(height, y_max + 2)
-            )
-            
-            self._update_canvas_slice(update_rect)
-            
-            if self.graphics_item is not None and not silent:
-                qt_rect = QRectF(update_rect[0], 
-                                 update_rect[1], 
-                                 update_rect[2] - update_rect[0], 
-                                 update_rect[3] - update_rect[1])
+                y_coords, x_coords = np.divmod(target_indices, width)
+                qt_rect = QRectF(max(0, int(x_coords.min()) - 1),
+                                 max(0, int(y_coords.min()) - 1),
+                                 int(x_coords.max()) - int(x_coords.min()) + 3,
+                                 int(y_coords.max()) - int(y_coords.min()) + 3)
                 self.graphics_item.update(qt_rect)
+            else:
+                self.graphics_item.update()
 
         # 3. Post-update cleanup
         self._invalidate_stats_cache()
