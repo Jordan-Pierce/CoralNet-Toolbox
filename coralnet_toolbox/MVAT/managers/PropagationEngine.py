@@ -1154,178 +1154,6 @@ class PropagationEngine(QObject):
         finally:
             self._propagating_annotation = False
 
-    def _dense_mesh_hit_test(self, source_camera, pixel_mask: np.ndarray, px: int, py: int, mesh_product) -> np.ndarray:
-        """Cast rays through every True pixel in pixel_mask against the mesh surface.
-
-        Unlike the index_map approach (which captures face IDs from a downsampled
-        rasterization pass), this method casts a ray through every individual painted
-        pixel at full resolution, intersecting the actual triangle surface.  This
-        guarantees that every triangle touched by the brush or SAM mask contributes
-        its face ID to the output set, regardless of its projected pixel size.
-
-        Uses PyVista / VTK multi_ray_trace with a per-product cached triangulated
-        surface so the geometry is only prepared once per session.
-
-        Args:
-            source_camera: Perspective Camera for the selected image.
-            pixel_mask: (H, W) bool/uint8 array; True pixels are ray-cast targets.
-            px: X coordinate of the mask centre in source image space.
-            py: Y coordinate of the mask centre in source image space.
-            mesh_product: MeshProduct whose cached geometry is used.
-
-        Returns:
-            np.ndarray[int32]: Unique face IDs that were hit, or empty array on
-            failure or orthographic source camera.
-        """
-        try:
-            # 1. Obtain (or build) the cached triangulated surface for VTK ray-casting.
-            #    Mesh topology never changes during annotation, so the cached surface
-            #    stays valid for the entire session.
-            mesh_surf = getattr(mesh_product, '_vtk_raycasting_mesh', None)
-            if mesh_surf is None:
-                mesh_product.prepare_geometry()
-                mesh_pv = mesh_product.get_mesh()
-                if mesh_pv is None or mesh_pv.n_cells == 0:
-                    return np.array([], dtype=np.int32)
-                mesh_surf = mesh_pv.triangulate() if not mesh_pv.is_all_triangles else mesh_pv
-                mesh_product._vtk_raycasting_mesh = mesh_surf
-
-            # 2. Map True pixels to source-image coordinates.
-            mask_h, mask_w = pixel_mask.shape
-            x0 = px - mask_w // 2
-            y0 = py - mask_h // 2
-
-            ys, xs = np.where(pixel_mask.astype(bool))
-            if len(xs) == 0:
-                return np.array([], dtype=np.int32)
-
-            u_img = (xs + x0).astype(np.float32)
-            v_img = (ys + y0).astype(np.float32)
-
-            # Discard pixels outside the image frame.
-            valid = (
-                (u_img >= 0) & (u_img < source_camera.width) &
-                (v_img >= 0) & (v_img < source_camera.height)
-            )
-            u_img = u_img[valid]
-            v_img = v_img[valid]
-            if len(u_img) == 0:
-                return np.array([], dtype=np.int32)
-
-            # 3. Unproject pixels to world-space ray directions.
-            #    Pinhole camera model (row-vector convention):
-            #      d_cam   = K_inv @ [u, v, 1]^T   →   d_cam_row = [u,v,1] @ K_inv.T
-            #      d_world = R.T   @ d_cam          →   d_world_row = d_cam_row @ R
-            ones        = np.ones(len(u_img), dtype=np.float32)
-            pixel_homog = np.stack([u_img, v_img, ones], axis=1)     # (N, 3)
-            K_inv       = source_camera.K_inv.astype(np.float32)     # (3, 3)
-            R           = source_camera.R.astype(np.float32)         # (3, 3)
-
-            dirs_cam   = pixel_homog @ K_inv.T    # (N, 3) camera-space directions
-            dirs_world = dirs_cam   @ R            # (N, 3) world-space directions
-
-            norms = np.linalg.norm(dirs_world, axis=1, keepdims=True)
-            norms[norms < 1e-8] = 1.0
-            dirs_world /= norms
-
-            # 4. Build origins (all from the camera position) and cast rays.
-            cam_origin = source_camera.position.astype(np.float32)   # (3,)
-            origins    = np.tile(cam_origin, (len(u_img), 1))        # (N, 3)
-
-            # PyVista multi_ray_trace returns (points, ray_indices, cell_ids).
-            # We only need cell_ids (the hit triangle IDs in the triangulated mesh).
-            _, _, intersection_cells = mesh_surf.multi_ray_trace(
-                origins, dirs_world, first_point=True, retry=False
-            )
-
-            if len(intersection_cells) == 0:
-                return np.array([], dtype=np.int32)
-
-            hit_prim_ids = np.asarray(intersection_cells, dtype=np.int64)
-
-            # 5. Remap triangulated-face IDs to original PyVista cell IDs when the
-            #    mesh was triangulated from non-triangular faces during prepare_geometry().
-            original_cell_ids = getattr(mesh_product, '_original_cell_ids', None)
-            if original_cell_ids is not None:
-                in_range     = hit_prim_ids < len(original_cell_ids)
-                hit_prim_ids = hit_prim_ids[in_range]
-                face_ids     = original_cell_ids[hit_prim_ids].astype(np.int32)
-            else:
-                face_ids = hit_prim_ids.astype(np.int32)
-
-            return np.unique(face_ids)
-
-        except Exception as e:
-            print(f"⚠️ Dense mesh hit test failed: {e}")
-            return np.array([], dtype=np.int32)
-
-    def _propagate_to_camera(self, target_path, painted_ids, target_class_id_map,
-                              projections, brush_w, brush_h, brush_mask, use_3d):
-        """Single-camera propagation — runs in thread pool, no Qt calls."""
-        target_camera = self._get_camera_for_path(target_path)
-        if target_camera is None:
-            return target_path, False, None
-
-        target_raster = self.raster_manager.get_raster(target_path)
-        if target_raster is None:
-            return target_path, False, None
-
-        target_mask = target_raster.mask_annotation
-        if target_mask is None:
-            return target_path, False, None
-
-        target_class_id = target_class_id_map.get(target_path)
-        if target_class_id is None:
-            return target_path, False, None
-
-        target_has_index = target_camera._raster.index_map is not None
-
-        if use_3d and target_has_index and target_camera is not self.ortho_camera:
-            proj = projections.get(target_path)
-            bbox = None
-            if proj is not None and proj[2]:
-                target_u, target_v = proj[0], proj[1]
-                search_radius = max(brush_w, brush_h) * 2.5
-                bbox = (target_u - search_radius, target_u + search_radius,
-                        target_v - search_radius, target_v + search_radius)
-
-            flat_indices = target_camera.get_pixels_for_elements(painted_ids, bbox=bbox)
-            if len(flat_indices) == 0:
-                return target_path, False, None
-
-            if hasattr(target_mask, 'mask_data'):
-                current_vals = target_mask.mask_data.ravel()[flat_indices]
-                flat_indices = flat_indices[(current_vals < target_mask.LOCK_BIT) &
-                                            (current_vals != target_class_id)]
-            if len(flat_indices) == 0:
-                return target_path, False, None
-
-            target_mask.update_mask_at_indices(flat_indices, target_class_id, silent=True)
-            update_rect = self._compute_dirty_rect_from_flat_indices(
-                flat_indices,
-                target_camera.width,
-                target_camera.height,
-            )
-        else:
-            proj = projections.get(target_path)
-            if proj is None:
-                return target_path, False, None
-            u, v, is_valid = proj
-            if not is_valid or not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
-                return target_path, False, None
-            brush_location = QPointF(u - brush_w / 2.0, v - brush_h / 2.0)
-            target_mask.update_mask(brush_location, brush_mask, target_class_id, silent=True)
-            x_start = max(0, int(u - brush_w / 2.0))
-            y_start = max(0, int(v - brush_h / 2.0))
-            update_rect = (
-                x_start,
-                y_start,
-                min(target_camera.width, x_start + brush_w),
-                min(target_camera.height, y_start + brush_h),
-            )
-
-        return target_path, True, update_rect
-
     def _resolve_source_mask_class_context(self, source_camera, label_id: str, project_labels: list):
         """Resolve the source label, mask, and internal class ID for propagation."""
         if source_camera is None:
@@ -2341,10 +2169,12 @@ class PropagationEngine(QObject):
             traceback.print_exc()
         finally:
             self._universal_repaint_signal.emit(repaint_tasks)
-            print(
-                f"DEBUG [Sync Worker]: {len(target_paths)} Cams | Total: {(perf_counter() - t0) * 1000:.2f}ms | "
-                f"Mask Gen: {mask_time * 1000:.2f}ms"
-            )
+            if os.environ.get('MVAT_DEBUG_TIMING'):
+                print(
+                    f"DEBUG [Sync Worker]: {len(target_paths)} Cams | "
+                    f"Total: {(perf_counter() - t0) * 1000:.2f}ms | "
+                    f"Mask Gen: {mask_time * 1000:.2f}ms"
+                )
             return repaint_tasks
 
     def _on_universal_repaint(self, repaint_tasks: list):
