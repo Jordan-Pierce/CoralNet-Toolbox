@@ -1,8 +1,9 @@
 import traceback
 import threading
 import os
+import time
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
 
 import numpy as np
 
@@ -256,40 +257,34 @@ class VisibilityWorker(QObject):
                     logger.warning(f"⚠️ Mesh sort proof export failed: {exc}")
 
             # =================================================================
-            # Helper: Synchronous Disk Saver
+            # Helper: Asynchronous Disk Saver (persistent pool)
             # =================================================================
             # Accumulators for the end-of-run cache summary
             _cache_total_start: float = 0.0
-            _cache_wall_end:    float = 0.0   # updated inside save_to_disk_task, excludes VTK cleanup
+            _cache_wall_end:    float = 0.0   # updated when all futures complete
             _cache_saved_count: int = 0
             _cache_total_count: int = 0
 
-            def save_to_disk_task(save_results, cache_mgr, target_path, keys_dict, extra_bytes_dict, pixel_budget):
-                nonlocal _cache_total_start, _cache_wall_end, _cache_saved_count, _cache_total_count
-                # Start the global timer on the first chunk
-                if _cache_total_count == 0:
-                    _cache_total_start = time.perf_counter()
-                _cache_total_count += len(save_results)
+            # Persistent thread pool for cache writes
+            persistent_pool = ThreadPoolExecutor(max_workers=self.n_workers)
+            all_futures = []
+            path_to_result_info = {}  # Map path -> (result_dict, camera_labels for logging)
 
-                # Create path list and index mapping for progress tracking
-                paths_list = list(save_results.keys())
-                path_to_idx = {p: i for i, p in enumerate(paths_list)}
-                total_paths = len(paths_list)
-                actual_workers = min(self.n_workers, max(1, total_paths))
-                total_batches = (total_paths + actual_workers - 1) // actual_workers
+            def _submit_save(p, result_dict, cache_mgr, target_path, keys_dict, extra_bytes_dict, pixel_budget, cam_labels):
+                """Submit a save task to the persistent pool and return the future."""
+                cache_key = keys_dict.get(p)
+                if cache_key is None:
+                    return None
+                extra = extra_bytes_dict.get(p)
 
-                def _save_one(p, result_dict):
-                    cache_key = keys_dict.get(p)
-                    if cache_key is None:
-                        return False, 0.0
-                    extra = extra_bytes_dict.get(p)
+                def _save_one_impl():
                     save_start = time.perf_counter()
                     cache_mgr.save_visibility(
                         cache_key,
                         target_path,
                         result_dict.get('index_map'),
                         result_dict.get('visible_indices'),
-                        None,  # Depth maps are now handled lazily on the main thread
+                        None,
                         element_type=result_dict.get('element_type', 'point'),
                         inverted_index=None,
                         compressed=self.enable_compression,
@@ -297,28 +292,29 @@ class VisibilityWorker(QObject):
                         pixel_budget=pixel_budget,
                     )
                     elapsed = time.perf_counter() - save_start
-                    return True, elapsed
+                    return True, elapsed, p
 
-                with ThreadPoolExecutor(max_workers=actual_workers) as pool:
-                    futs = {
-                        pool.submit(_save_one, p, save_results[p]): p
-                        for p in paths_list
-                    }
-                    for fut in as_completed(futs):
-                        p = futs[fut]
-                        try:
-                            success, elapsed = fut.result()
-                            if success:
-                                _cache_saved_count += 1
-                                path_idx = path_to_idx[p]
-                                batch_num = (path_idx // actual_workers) + 1
-                                # Log: cam name (count/total, +time) | batch N/total
-                                log_msg = f"({_cache_saved_count}/{_cache_total_count}, +{elapsed:.3f}s) batch {batch_num}/{total_batches}"
-                                log_cam_stage(self._cam_label(p, camera_labels), log_msg, 0, logger)
-                        except Exception as exc:
-                            logger.warning(f"⚠️ Cache save failed for {self._cam_label(p, camera_labels)}: {exc}")
-                # Snapshot the end-of-saves wall time before any post-save work
-                _cache_wall_end = time.perf_counter()
+                fut = persistent_pool.submit(_save_one_impl)
+                return fut
+
+            def save_to_disk_task(save_results, cache_mgr, target_path, keys_dict, extra_bytes_dict, pixel_budget, cam_labels, all_futs, path_info):
+                """Submit all saves for a chunk to the pool (non-blocking)."""
+                nonlocal _cache_total_count
+                # Start the global timer on the first chunk
+                if _cache_total_count == 0:
+                    _cache_total_start = time.perf_counter()
+                _cache_total_count += len(save_results)
+
+                for p in save_results:
+                    fut = _submit_save(p, save_results[p], cache_mgr, target_path, keys_dict, extra_bytes_dict, pixel_budget, cam_labels)
+                    if fut is not None:
+                        all_futs.append(fut)
+                        path_info[p] = cam_labels
+
+                # Bound in-flight futures: if we have > 4*n_workers, wait for some to complete
+                max_inflight = 4 * self.n_workers
+                if len([f for f in all_futs if not f.done()]) > max_inflight:
+                    wait(all_futs, return_when=FIRST_COMPLETED)
 
             # ==========================================
             # PERSPECTIVE PIPELINE (meshes + point clouds, CHUNKED)
@@ -403,23 +399,13 @@ class VisibilityWorker(QObject):
                                         cache_key, self.target_file_path, res.get('element_type', 'point'),
                                         self.dist_coeffs_bytes_dict.get(p), pixel_budget=self.pixel_budget
                                     )
-                                    try:
-                                        save_start = time.perf_counter()
-                                        self.cache_manager.save_visibility(
-                                            cache_key, self.target_file_path,
-                                            res.get('index_map'),
-                                            res.get('visible_indices'),
-                                            None,
-                                            element_type=res.get('element_type', 'point'),
-                                            inverted_index=None,
-                                            compressed=self.enable_compression,
-                                            extra_hash_data=self.dist_coeffs_bytes_dict.get(p),
-                                            pixel_budget=self.pixel_budget,
-                                        )
-                                        elapsed = time.perf_counter() - save_start
-                                        log_cam_stage(self._cam_label(p, camera_labels), "Cache", elapsed, logger)
-                                    except Exception as e:
-                                        logger.warning(f"Cache save failed for {self._cam_label(p, camera_labels)}: {e}")
+                                    # Submit to pool instead of saving inline
+                                    fut = _submit_save(p, res, self.cache_manager, self.target_file_path,
+                                                      self.cache_keys_dict, self.dist_coeffs_bytes_dict,
+                                                      self.pixel_budget, camera_labels)
+                                    if fut is not None:
+                                        all_futures.append(fut)
+                                        path_to_result_info[p] = camera_labels
 
                             # Add to lightweight results
                             lightweight_final_results[p] = {
@@ -608,7 +594,6 @@ class VisibilityWorker(QObject):
 
                             # --- C. CACHE THE CHUNK ---
                             if self.cache_manager is not None and self.target_file_path:
-                                self._status(f"Caching chunk to disk...")
                                 for path, res in chunk_results.items():
                                     cache_key = self.cache_keys_dict.get(path)
                                     if cache_key is not None:
@@ -617,10 +602,11 @@ class VisibilityWorker(QObject):
                                             self.dist_coeffs_bytes_dict.get(path), pixel_budget=self.pixel_budget
                                         )
 
-                                # Execute synchronous save for this chunk
+                                # Submit chunk saves to persistent pool (non-blocking)
                                 save_to_disk_task(
                                     chunk_results, self.cache_manager, self.target_file_path,
-                                    self.cache_keys_dict, self.dist_coeffs_bytes_dict, self.pixel_budget
+                                    self.cache_keys_dict, self.dist_coeffs_bytes_dict, self.pixel_budget,
+                                    camera_labels, all_futures, path_to_result_info
                                 )
 
                             # --- D. SAVE LIGHTWEIGHT PAYLOAD ---
@@ -633,14 +619,33 @@ class VisibilityWorker(QObject):
 
                             # --- E. FLUSH SYSTEM RAM ---
                             # Wipe the heavy dictionaries to keep RAM usage flat
+                            # (saves hold references until written, so peak RAM ≈ chunk + in-flight saves)
                             del chunk_results
                             del batch_results
-                            gc.collect()
 
                     except Exception as err:
                         logger.warning(f"Perspective visibility processing failed: {err}")
                         raise err
                     finally:
+                        # Wait for all in-flight cache writes to complete
+                        if all_futures:
+                            wait(all_futures)
+                            # Process completion events and log
+                            for fut in as_completed(all_futures):
+                                try:
+                                    success, elapsed, p = fut.result()
+                                    if success:
+                                        _cache_saved_count += 1
+                                        cam_labels = path_to_result_info.get(p, camera_labels)
+                                        log_msg = f"({_cache_saved_count}/{_cache_total_count}, +{elapsed:.3f}s)"
+                                        log_cam_stage(self._cam_label(p, cam_labels), log_msg, 0, logger)
+                                except Exception as exc:
+                                    logger.warning(f"⚠️ Cache save completion failed: {exc}")
+                            _cache_wall_end = time.perf_counter()
+
+                        # Shutdown the persistent pool
+                        persistent_pool.shutdown(wait=False)
+
                         if vtk_context is not None:
                             try:
                                 vtk_context['plotter'].close()
@@ -655,10 +660,9 @@ class VisibilityWorker(QObject):
                                 pass
 
                     # Log the true total cache time after ALL chunks are saved.
-                    # Use _cache_wall_end (set inside save_to_disk_task) so the
-                    # elapsed is pure disk-write wall time and excludes VTK cleanup.
-                    if _cache_total_count > 0 and _cache_wall_end > 0:
-                        total_elapsed = _cache_wall_end - _cache_total_start
+                    # _cache_wall_end is set when the last future completes.
+                    if _cache_total_count > 0:
+                        total_elapsed = _cache_wall_end - _cache_total_start if _cache_wall_end > 0 else 0
                         logger.debug(
                             f"✅ Cached {_cache_saved_count}/{_cache_total_count} maps to disk in {total_elapsed:.2f}s"
                         )
