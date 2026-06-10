@@ -28,8 +28,12 @@ from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 # -------------------------------------------------------------------------------------
 
 
-def resolve_class_conflicts_vectorized(element_ids: np.ndarray, class_ids: np.ndarray):
-    """Resolve per-element class conflicts using vectorized vote counts."""
+def resolve_class_conflicts_vectorized(element_ids: np.ndarray, class_ids: np.ndarray, weights=None):
+    """Resolve per-element class conflicts using vectorized vote counts.
+
+    ``weights`` (optional) carries pre-aggregated vote counts per row, so callers
+    can pool reduced (element, class, count) triples instead of per-pixel votes.
+    """
     try:
         element_ids = np.asarray(element_ids, dtype=np.int64).ravel()
         class_ids = np.asarray(class_ids, dtype=np.int64).ravel()
@@ -42,7 +46,14 @@ def resolve_class_conflicts_vectorized(element_ids: np.ndarray, class_ids: np.nd
     max_classes = max(100000, int(np.max(class_ids)) + 1)
     compound_ids = (element_ids * max_classes) + class_ids
 
-    unique_compounds, vote_counts = np.unique(compound_ids, return_counts=True)
+    if weights is None:
+        unique_compounds, vote_counts = np.unique(compound_ids, return_counts=True)
+    else:
+        weights = np.asarray(weights, dtype=np.float64).ravel()
+        if weights.size != compound_ids.size:
+            return np.array([], dtype=np.int64), np.array([], dtype=np.int64)
+        unique_compounds, inverse = np.unique(compound_ids, return_inverse=True)
+        vote_counts = np.bincount(inverse, weights=weights)
     unique_elements = unique_compounds // max_classes
     unique_classes = unique_compounds % max_classes
 
@@ -56,6 +67,19 @@ def resolve_class_conflicts_vectorized(element_ids: np.ndarray, class_ids: np.nd
     winner_indices = (len(sorted_elements) - 1) - winner_indices
 
     return sorted_elements[winner_indices], sorted_classes[winner_indices]
+
+
+def reduce_vote_arrays(element_ids: np.ndarray, class_ids: np.ndarray):
+    """Collapse duplicate (element, class) votes into unique pairs + counts."""
+    element_ids = np.asarray(element_ids, dtype=np.int64).ravel()
+    class_ids = np.asarray(class_ids, dtype=np.int64).ravel()
+    if element_ids.size == 0 or element_ids.size != class_ids.size:
+        empty = np.array([], dtype=np.int64)
+        return empty, empty, empty
+    max_classes = max(100000, int(class_ids.max()) + 1)
+    compound = (element_ids * max_classes) + class_ids
+    uniq, counts = np.unique(compound, return_counts=True)
+    return uniq // max_classes, uniq % max_classes, counts
 
 
 def _merge_update_rects(existing_rect, new_rect):
@@ -2988,6 +3012,7 @@ class PropagationEngine(QObject):
 
         all_element_ids = []
         all_class_ids = []
+        all_vote_counts = []
         skipped_no_index = 0
         skipped_no_mask = 0
         skipped_no_votes = 0
@@ -3037,9 +3062,14 @@ class PropagationEngine(QObject):
                 skipped_no_votes += 1
                 continue
 
-            all_element_ids.append(element_ids[valid])
-            all_class_ids.append(canonical_ids[valid])
-            contributing += 1
+            elem_reduced, class_reduced, counts = reduce_vote_arrays(
+                element_ids[valid], canonical_ids[valid]
+            )
+            if elem_reduced.size > 0:
+                all_element_ids.append(elem_reduced)
+                all_class_ids.append(class_reduced)
+                all_vote_counts.append(counts.astype(np.float64))
+                contributing += 1
 
         total = len(source_cameras)
         print(
@@ -3063,9 +3093,10 @@ class PropagationEngine(QObject):
 
         element_ids = np.concatenate(all_element_ids).astype(np.int64, copy=False)
         class_ids = np.concatenate(all_class_ids).astype(np.int64, copy=False)
+        weights = np.concatenate(all_vote_counts).astype(np.float64, copy=False)
 
         unique_elements, winning_classes = resolve_class_conflicts_vectorized(
-            element_ids, class_ids
+            element_ids, class_ids, weights=weights
         )
 
         if unique_elements.size == 0:
