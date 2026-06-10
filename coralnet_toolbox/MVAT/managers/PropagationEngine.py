@@ -3348,23 +3348,29 @@ class PropagationEngine(QObject):
                 im_h, im_w = index_map.shape
                 mask_h, mask_w = mask_data.shape
 
-                # Upscale index_map to full mask resolution if it was downscaled
+                # Vectorised LUT at the index map's NATIVE resolution
+                # (pixel → face_id → mesh class_id), then upscale the small
+                # class layer. Far cheaper than upscaling the int32 index map.
+                valid_small = (index_map >= 0) & (index_map < len(mesh_class_ids))
+                class_layer_small = np.zeros(index_map.shape, dtype=mask_data.dtype)
+                class_layer_small[valid_small] = mesh_class_ids[
+                    index_map[valid_small].astype(np.int64)
+                ].astype(mask_data.dtype)
+
                 if im_h != mask_h or im_w != mask_w:
-                    index_map_full = cv2.resize(
-                        index_map.astype(np.float32),
+                    new_class_layer = cv2.resize(
+                        class_layer_small,
                         (mask_w, mask_h),
                         interpolation=cv2.INTER_NEAREST,
-                    ).astype(np.int32)
+                    )
+                    valid = cv2.resize(
+                        valid_small.astype(np.uint8),
+                        (mask_w, mask_h),
+                        interpolation=cv2.INTER_NEAREST,
+                    ).astype(bool)
                 else:
-                    index_map_full = index_map
-
-                # Vectorised LUT: pixel → face_id → mesh class_id
-                valid = (index_map_full >= 0) & (index_map_full < len(mesh_class_ids))
-                face_ids_at_pixels = index_map_full[valid].astype(np.int64)
-                pixel_mesh_classes = mesh_class_ids[face_ids_at_pixels].astype(np.int32)
-
-                new_class_layer = np.zeros(mask_data.shape, dtype=mask_data.dtype)
-                new_class_layer.flat[np.flatnonzero(valid)] = pixel_mesh_classes
+                    new_class_layer = class_layer_small
+                    valid = valid_small
 
                 lock_bit = getattr(mask_annotation, 'LOCK_BIT', 128)
                 not_locked = mask_data < lock_bit
@@ -3406,14 +3412,18 @@ class PropagationEngine(QObject):
                     canon_to_target_lut[int(canon_id)] = int(target_class_id)
                     written_label_ids.add(label_id)
 
-                # Apply ALL remappings atomically using a clean copy
+                # Apply ALL remappings atomically with an integer LUT — one
+                # gather instead of a full-frame copy + per-class equality scans.
+                written_values = new_class_layer[write_mask]
                 if canon_to_target_lut:
-                    final_class_layer = new_class_layer.copy()
+                    lut_size = max(256, int(written_values.max()) + 1)
+                    remap = np.arange(lut_size, dtype=np.int64)
                     for canon_id, target_id in canon_to_target_lut.items():
-                        final_class_layer[new_class_layer == canon_id] = target_id
-                    mask_data[write_mask] = final_class_layer[write_mask]
+                        if 0 <= canon_id < lut_size:
+                            remap[canon_id] = target_id
+                    mask_data[write_mask] = remap[written_values].astype(mask_data.dtype)
                 else:
-                    mask_data[write_mask] = new_class_layer[write_mask]
+                    mask_data[write_mask] = written_values
 
                 ys, xs = np.where(write_mask)
                 update_rect = (
