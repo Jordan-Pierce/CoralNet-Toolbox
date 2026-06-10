@@ -220,6 +220,15 @@ class PropagationEngine(QObject):
                     if raster and raster.mask_annotation is None:
                         raster.get_mask_annotation(project_labels)
 
+                # Prewarm CSR inverted indexes off the main thread so the FIRST
+                # stroke doesn't pay the per-camera build cost. ensure_inverted_index
+                # is idempotent; concurrent duplicate builds produce identical
+                # arrays, so a race is wasteful but harmless.
+                for path in target_paths:
+                    raster = self.raster_manager.get_raster(path)
+                    if raster is not None and getattr(raster, 'ensure_inverted_index', None):
+                        self._propagation_executor.submit(raster.ensure_inverted_index)
+
             except Exception:
                 pass
         else:
