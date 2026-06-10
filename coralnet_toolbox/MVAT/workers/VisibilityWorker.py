@@ -366,6 +366,10 @@ class VisibilityWorker(QObject):
                     CHUNK_SIZE = self._calculate_dynamic_chunk_size(params_list, measured_footprint=measured_footprint)
                     logger.info(f"📦 Using CHUNK_SIZE={CHUNK_SIZE} based on {'measured' if measured_footprint else 'estimated'} footprint")
 
+                    # Cache for per-group VRAM measurements (distorted camera path)
+                    # Keyed by distortion group key; values are actual_vram_per_map
+                    vram_per_map_cache = {}
+
                     try:
                         # Helper: process a result dict through distortion, normalization, and optional caching
                         def _process_result_pipeline(p, res, is_measured=False):
@@ -481,7 +485,7 @@ class VisibilityWorker(QObject):
                                             key = self.dist_coeffs_bytes_dict.get(path, id(self.warp_callables_dict[path]))
                                             groups[key].append(path)
 
-                                        for group_paths in groups.values():
+                                        for group_key, group_paths in groups.items():
                                             rep_raster = self.warp_callables_dict[group_paths[0]].__self__
                                             rep_raster._ensure_warp_maps()
                                             if not hasattr(rep_raster, '_torch_grid_gpu'):
@@ -491,29 +495,35 @@ class VisibilityWorker(QObject):
                                             grid_gpu  = rep_raster._torch_grid_gpu
                                             oob_mask  = rep_raster._torch_oob_mask
 
-                                            # Measure per-map cost from a small test batch. Use the
-                                            # peak *live* allocation (memory_allocated) rather than the
-                                            # mem_get_info free-memory delta: the latter reflects the
-                                            # caching allocator's reserved pool (incl. freed grid_sample
-                                            # transients), which over-estimates the true marginal cost
-                                            # by ~2x and left the GPU sitting at half the budget.
-                                            test_paths = group_paths[:min(4, len(group_paths))]
-                                            test_maps = [_warp_input(p) for p in test_paths]
+                                            # Check if we've already measured VRAM cost for this group
+                                            if group_key in vram_per_map_cache:
+                                                actual_vram_per_map = vram_per_map_cache[group_key]
+                                            else:
+                                                # Measure per-map cost from a small test batch. Use the
+                                                # peak *live* allocation (memory_allocated) rather than the
+                                                # mem_get_info free-memory delta: the latter reflects the
+                                                # caching allocator's reserved pool (incl. freed grid_sample
+                                                # transients), which over-estimates the true marginal cost
+                                                # by ~2x and left the GPU sitting at half the budget.
+                                                test_paths = group_paths[:min(4, len(group_paths))]
+                                                test_maps = [_warp_input(p) for p in test_paths]
 
-                                            torch.cuda.synchronize()
-                                            torch.cuda.empty_cache()
-                                            torch.cuda.reset_peak_memory_stats()
-                                            alloc_before = torch.cuda.memory_allocated()
+                                                torch.cuda.synchronize()
+                                                torch.cuda.empty_cache()
+                                                torch.cuda.reset_peak_memory_stats()
+                                                alloc_before = torch.cuda.memory_allocated()
 
-                                            # Warp small batch to measure realistic per-map live cost
-                                            warped_test, _ = Raster.warp_batch_cuda(
-                                                test_maps, [-1] * len(test_maps), grid_gpu, oob_mask
-                                            )
+                                                # Warp small batch to measure realistic per-map live cost
+                                                warped_test, _ = Raster.warp_batch_cuda(
+                                                    test_maps, [-1] * len(test_maps), grid_gpu, oob_mask
+                                                )
 
-                                            torch.cuda.synchronize()
-                                            peak_alloc = torch.cuda.max_memory_allocated()
-                                            total_vram_used = max(0, peak_alloc - alloc_before)
-                                            actual_vram_per_map = total_vram_used / max(1, len(test_maps))
+                                                torch.cuda.synchronize()
+                                                peak_alloc = torch.cuda.max_memory_allocated()
+                                                total_vram_used = max(0, peak_alloc - alloc_before)
+                                                actual_vram_per_map = total_vram_used / max(1, len(test_maps))
+                                                # Cache for future chunks
+                                                vram_per_map_cache[group_key] = actual_vram_per_map
 
                                             # Size the batch against currently-free VRAM (reserved-aware)
                                             # with the safety factor; warp_batch_cuda also re-checks its

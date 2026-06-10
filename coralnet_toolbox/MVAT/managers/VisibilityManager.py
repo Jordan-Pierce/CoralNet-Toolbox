@@ -52,6 +52,7 @@ from coralnet_toolbox.MVAT.shaders.gpu_interop import (
     _resolve_gl_fns,
     _build_mvp,
     _pbo_cuda_readback,
+    release_pbo_cache,
     _load_cudart,
 )
 
@@ -717,6 +718,10 @@ class VisibilityManager:
         max_bytes = 4 * max_pixels  # int32 = 4 bytes per pixel
         pbos = [ctx.buffer(reserve=max_bytes) for _ in range(2)]
 
+        # Cache for CUDA-GL PBO registration (distorted-camera path)
+        # Keyed by buffer size; values are (pbo_handle, registered_resource)
+        pbo_cuda_cache = {}
+
         results = [None] * len(camera_params_list)  # Pre-sized list for result ordering
         # Accumulators for totals
         _t_render_total     = 0.0
@@ -838,7 +843,8 @@ class VisibilityManager:
                 gpu_crop = None
                 try:
                     # flip=False: the vertex shader already orients top-to-bottom.
-                    gpu_crop = _pbo_cuda_readback(gl_fns, cudart, crop_w, crop_h, flip=False)
+                    # Use pbo_cuda_cache to avoid re-registering PBOs for each camera
+                    gpu_crop = _pbo_cuda_readback(gl_fns, cudart, crop_w, crop_h, flip=False, cache=pbo_cuda_cache)
                 except Exception as exc:
                     logger.debug(f"      CUDA-GL readback raised ({exc}); disabling interop")
                     gpu_crop = None
@@ -1132,6 +1138,13 @@ class VisibilityManager:
                 cam_label(camera_index_offset + i + 1),
                 cam_time, 0.0, t_render, t_readback, t_decode, 0.0, 0.0, 0.0, logger
             )
+
+        # Clean up cached CUDA-GL PBO registrations
+        if pbo_cuda_cache and gl_fns is not None and cudart is not None:
+            try:
+                release_pbo_cache(gl_fns, cudart, pbo_cuda_cache)
+            except Exception as e:
+                logger.debug(f"   ⚠️ PBO cache release failed: {e}")
 
         n_cams = max(1, len(camera_params_list))
         total_time = perf_counter() - start_time

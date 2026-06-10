@@ -119,7 +119,7 @@ def _resolve_gl_fns():
 
 
 def _pbo_cuda_readback(gl: 'types.SimpleNamespace', cudart, width: int, height: int,
-                       flip: bool = True) -> Optional['torch.Tensor']:
+                       flip: bool = True, cache: Optional[dict] = None) -> Optional['torch.Tensor']:
     """Read the current GL read framebuffer into a CUDA int32 tensor via PBO.
 
     VRAM → PBO (GPU-side) → CUDA map → D2D copy → torch tensor.  No PCIe.
@@ -128,23 +128,47 @@ def _pbo_cuda_readback(gl: 'types.SimpleNamespace', cudart, width: int, height: 
     ``flip`` controls the GL bottom-to-top → top-to-bottom correction. Pass
     ``flip=False`` when the vertex shader already bakes the vertical flip into
     clip space (the MVAT rasterizer does), otherwise the image is double-flipped.
+
+    ``cache`` is an optional dict to reuse PBO allocations across calls. Key by
+    buffer size; values are tuples (pbo_handle, registered_resource). Map/unmap
+    per call; only register on first use per size. Call release_pbo_cache() to
+    clean up all cached resources when done.
     """
     import ctypes
     import torch
 
     n_bytes = width * height * 4
-    pbo      = ctypes.c_uint(0)
     resource = ctypes.c_void_p(0)
     mapped   = False
+    pbo_handle = None
+    pbo_from_cache = False
+
     try:
-        gl.glGenBuffers(1, ctypes.byref(pbo))
-        gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, pbo.value)
-        gl.glBufferData(gl.GL_PIXEL_PACK_BUFFER, n_bytes, None, gl.GL_STREAM_READ)
+        # Check cache for pre-allocated and registered PBO
+        if cache is not None and n_bytes in cache:
+            pbo_handle, cached_resource = cache[n_bytes]
+            resource = cached_resource
+            pbo_from_cache = True
+        else:
+            # Allocate and register a new PBO
+            pbo_handle = ctypes.c_uint(0)
+            gl.glGenBuffers(1, ctypes.byref(pbo_handle))
+            gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, pbo_handle.value)
+            gl.glBufferData(gl.GL_PIXEL_PACK_BUFFER, n_bytes, None, gl.GL_STREAM_READ)
+
+            err = cudart.cudaGraphicsGLRegisterBuffer(ctypes.byref(resource), pbo_handle.value, 1)
+            if err: raise RuntimeError(f"cudaGraphicsGLRegisterBuffer err={err}")
+
+            # Cache the registered resource for future calls
+            if cache is not None:
+                cache[n_bytes] = (pbo_handle, resource)
+
+        # Read framebuffer into PBO
+        gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, pbo_handle.value)
         gl.glReadPixels(0, 0, width, height, gl.GL_RED_INTEGER, gl.GL_INT, ctypes.c_void_p(0))
         gl.glFinish()
 
-        err = cudart.cudaGraphicsGLRegisterBuffer(ctypes.byref(resource), pbo.value, 1)
-        if err: raise RuntimeError(f"cudaGraphicsGLRegisterBuffer err={err}")
+        # Map, copy, unmap (per-call overhead is cheap)
         err = cudart.cudaGraphicsMapResources(1, ctypes.byref(resource), ctypes.c_void_p(0))
         if err: raise RuntimeError(f"cudaGraphicsMapResources err={err}")
         mapped = True
@@ -159,9 +183,10 @@ def _pbo_cuda_readback(gl: 'types.SimpleNamespace', cudart, width: int, height: 
 
         cudart.cudaGraphicsUnmapResources(1, ctypes.byref(resource), ctypes.c_void_p(0))
         mapped = False
-        cudart.cudaGraphicsUnregisterResource(resource); resource = ctypes.c_void_p(0)
         gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, 0)
-        gl.glDeleteBuffers(1, ctypes.byref(pbo)); pbo.value = 0
+
+        # If not from cache, this is a new allocation (caller should cache it)
+        # If from cache, leave the registered resource alive for next call
 
         # GL bottom-to-top → top-to-bottom. Skipped when the shader already flips.
         return torch.flip(out, [0]) if flip else out
@@ -170,14 +195,34 @@ def _pbo_cuda_readback(gl: 'types.SimpleNamespace', cudart, width: int, height: 
         try:
             if mapped:
                 cudart.cudaGraphicsUnmapResources(1, ctypes.byref(resource), ctypes.c_void_p(0))
-            if resource.value:
+            if resource.value and not pbo_from_cache:
                 cudart.cudaGraphicsUnregisterResource(resource)
             gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, 0)
-            if pbo.value:
-                gl.glDeleteBuffers(1, ctypes.byref(pbo))
+            if pbo_handle and not pbo_from_cache:
+                gl.glDeleteBuffers(1, ctypes.byref(pbo_handle))
         except Exception:
             pass
         return None
+
+
+def release_pbo_cache(gl: 'types.SimpleNamespace', cudart, cache: dict) -> None:
+    """Release all cached PBO allocations and registrations.
+
+    Call this in the cleanup phase (finally block) to unregister and delete
+    all PBOs that were cached during the run.
+    """
+    import ctypes
+    for n_bytes, (pbo_handle, resource) in cache.items():
+        try:
+            if resource.value:
+                cudart.cudaGraphicsUnregisterResource(resource)
+            if pbo_handle.value:
+                gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, pbo_handle.value)
+                gl.glDeleteBuffers(1, ctypes.byref(pbo_handle))
+        except Exception:
+            pass
+    gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, 0)
+    cache.clear()
 
 
 def _build_mvp(K: np.ndarray, R: np.ndarray, t: np.ndarray,
