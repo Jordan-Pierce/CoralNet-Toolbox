@@ -391,15 +391,20 @@ class BatchedRayManager:
 
         self._ray_colors: Optional[np.ndarray] = None
         self._num_rays = 0
+        self._allocated_rays = 0  # Total pre-allocated slots (>= _num_rays)
 
     def build_ray_batch(self,
-                        rays_with_colors: List[Tuple['CameraRay', tuple]]) -> Optional[pv.PolyData]:
+                        rays_with_colors: List[Tuple['CameraRay', tuple]],
+                        pre_allocate_factor: float = 1.5) -> Optional[pv.PolyData]:
         """
-        Build merged mesh for multiple rays.
+        Build merged mesh for multiple rays with optional pre-allocation.
 
         Args:
             rays_with_colors: List of (CameraRay, color_rgb) tuples.
                               Colors should be RGB tuples (0-255).
+            pre_allocate_factor: Factor to pre-allocate beyond the active count
+                                 (e.g., 1.5 means allocate 50% more slots).
+                                 This reduces actor churn when ray count varies.
 
         Returns:
             ray_lines_mesh
@@ -407,14 +412,17 @@ class BatchedRayManager:
         if not rays_with_colors:
             self.ray_mesh = None
             self._num_rays = 0
+            self._allocated_rays = 0
             return None
 
         self._num_rays = len(rays_with_colors)
+        self._allocated_rays = max(self._num_rays, int(self._num_rays * pre_allocate_factor))
 
         points = []
         lines = []
         colors = []
 
+        # Add points and lines for actual rays
         for i, (ray, color) in enumerate(rays_with_colors):
             if ray is None:
                 continue
@@ -430,6 +438,16 @@ class BatchedRayManager:
                 norm_color = color[:3] if len(color) >= 3 else color
             colors.append(norm_color)
             colors.append(norm_color)
+
+        # Pad with degenerate rays (zero-length at origin) for pre-allocated slots
+        origin = np.array([0, 0, 0], dtype=np.float64)
+        for _ in range(self._allocated_rays - self._num_rays):
+            pt_idx = len(points)
+            points.append(origin.tolist())
+            points.append(origin.tolist())
+            lines.extend([2, pt_idx, pt_idx + 1])
+            colors.append((0, 0, 0))
+            colors.append((0, 0, 0))
 
         if not points:
             self.ray_mesh = None
@@ -476,23 +494,31 @@ class BatchedRayManager:
         """
         Update ray endpoints in-place (more efficient than rebuilding).
 
-        Only works if the number of rays hasn't changed.
+        If the new ray count fits within the pre-allocated capacity, updates
+        points in-place and pads unused slots with degenerate rays.
+        Only rebuilds if the new count exceeds the allocated capacity.
 
         Args:
             rays_with_colors: List of (CameraRay, color_rgb) tuples
         """
-        if self.ray_mesh is None or len(rays_with_colors) != self._num_rays:
+        if self.ray_mesh is None or len(rays_with_colors) > self._allocated_rays:
             self.build_ray_batch(rays_with_colors)
             return
 
+        self._num_rays = len(rays_with_colors)
         points = self.ray_mesh.points
         colors = []
+        origin = np.array([0, 0, 0], dtype=np.float64)
 
+        # Update active rays
         for i, (ray, color) in enumerate(rays_with_colors):
+            pt_idx = i * 2
             if ray is not None:
-                pt_idx = i * 2
                 points[pt_idx] = ray.get_visual_start()
                 points[pt_idx + 1] = ray.get_visual_end()
+            else:
+                points[pt_idx] = origin
+                points[pt_idx + 1] = origin
 
             if isinstance(color, tuple) and any(c > 1 for c in color[:3]):
                 norm_color = tuple(c / 255 for c in color[:3])
@@ -500,6 +526,14 @@ class BatchedRayManager:
                 norm_color = color[:3] if len(color) >= 3 else color
             colors.append(norm_color)
             colors.append(norm_color)
+
+        # Degenerate rays for unused pre-allocated slots
+        for i in range(self._allocated_rays - self._num_rays):
+            pt_idx = (self._num_rays + i) * 2
+            points[pt_idx] = origin
+            points[pt_idx + 1] = origin
+            colors.append((0, 0, 0))
+            colors.append((0, 0, 0))
 
         try:
             self._ray_colors = np.array(colors)
@@ -529,3 +563,4 @@ class BatchedRayManager:
         self.ray_actor = None
         self._ray_colors = None
         self._num_rays = 0
+        self._allocated_rays = 0

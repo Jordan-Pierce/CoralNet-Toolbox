@@ -6,7 +6,7 @@ import time
 
 import numpy as np
 
-from PyQt5.QtCore import QObject
+from PyQt5.QtCore import QObject, QTimer
 
 from coralnet_toolbox.MVAT.core.Ray import CameraRay
 from coralnet_toolbox.MVAT.core.constants import (
@@ -43,24 +43,33 @@ class MousePositionBridge(QObject):
         super().__init__()
         self.manager = manager
         self.enabled = True
-        self._last_update_time = 0
-        self._last_mouse_x = -1
-        self._last_mouse_y = -1
+        self._pending_x = -1
+        self._pending_y = -1
+        self._pending_timer = QTimer(self)
+        self._pending_timer.setSingleShot(True)
+        self._pending_timer.setInterval(16)
+        self._pending_timer.timeout.connect(self._process_pending_update)
 
     def on_mouse_moved(self, x: int, y: int):
         if not self.enabled:
             return
-        # Skip duplicate pixels (Qt can fire multiple events for the same position)
-        if x == self._last_mouse_x and y == self._last_mouse_y:
+        # Check if the 3D viewer window and rays are available
+        viewer = getattr(self.manager, 'viewer', None)
+        if viewer is None or not getattr(viewer, '_show_rays_enabled', False):
             return
-        # Time-gate: cap at ~60 fps to avoid flooding the ortho ray-trace / perspective
-        # projection loop on every raw mouse event.
-        now = time.monotonic()
-        if now - self._last_update_time < 0.016:
+        # Store the latest position and arm the timer for coalesced processing
+        self._pending_x = x
+        self._pending_y = y
+        if not self._pending_timer.isActive():
+            self._pending_timer.start()
+
+    def _process_pending_update(self):
+        """Process the most recent queued mouse position on the coalescing timer."""
+        if self._pending_x < 0 or self._pending_y < 0:
             return
-        self._last_update_time = now
-        self._last_mouse_x = x
-        self._last_mouse_y = y
+        x, y = self._pending_x, self._pending_y
+        self._pending_x = -1
+        self._pending_y = -1
         self._process_pending_position(x, y)
             
     def _process_pending_position(self, x: int, y: int):
@@ -340,4 +349,8 @@ class MousePositionBridge(QObject):
                 pass
 
     def cleanup(self):
+        try:
+            self._pending_timer.stop()
+        except Exception:
+            pass
         self.clear_all_markers()

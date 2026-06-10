@@ -2723,34 +2723,35 @@ class MVATViewer(QFrame):
     def show_rays(self, rays_with_colors: list):
         """
         Display multiple rays in the 3D viewer with distinct colors.
-        
+
         Uses BatchedRayManager for efficient rendering - all rays are merged
         into a single PolyData mesh with one draw call instead of 2*N calls.
-        
+        Pre-allocates ray slots to minimize actor churn when ray count varies.
+
         Args:
             rays_with_colors: List of (CameraRay, color_tuple) tuples.
                               Colors should be RGB tuples (0-255 or 0-1).
         """
         if not self._show_rays_enabled:
             return
-        
+
         if not rays_with_colors:
             self.clear_ray()
             return
-        
-        # Build or update batched ray geometry
-        if self._ray_manager.ray_actor is not None and self._ray_manager._num_rays == len(rays_with_colors):
-            # Update existing rays in-place for better performance
+
+        # Update or rebuild ray batch based on pre-allocated capacity
+        if self._ray_manager.ray_actor is not None and len(rays_with_colors) <= self._ray_manager._allocated_rays:
+            # Update existing rays in-place if they fit in allocated capacity
             self._ray_manager.update_ray_endpoints(rays_with_colors)
         else:
-            # Build new batched ray geometry
+            # Build new batched ray geometry with pre-allocation
             self._ray_manager.build_ray_batch(rays_with_colors)
             # Add to plotter (removes old actors first)
             self._ray_manager.add_to_plotter(self.plotter, line_width=3)
-        
+
         # Apply visibility state
         self._ray_manager.set_visibility(self._ray_visible)
-        
+
         # Update display
         self.plotter.render()
 
