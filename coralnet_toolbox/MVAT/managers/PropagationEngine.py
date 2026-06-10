@@ -15,8 +15,9 @@ import threading
 from time import perf_counter
 from typing import Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import deque
 
-from PyQt5.QtCore import QObject, pyqtSignal, Qt, QPointF
+from PyQt5.QtCore import QObject, pyqtSignal, Qt, QPointF, QTimer
 from PyQt5.QtWidgets import QApplication, QMessageBox
 
 from coralnet_toolbox.MVAT.core.Ray import CameraRay
@@ -129,6 +130,12 @@ class PropagationEngine(QObject):
         self._semantic_propagation_done_msg = None
         self._propagation_buffer_pool = {}
         self._propagation_buffer_pool_lock = threading.Lock()
+
+        # Chunked repaint queue: tasks drain in time-budgeted slices so a huge
+        # propagation never freezes the UI inside a single callback.
+        self._repaint_task_queue = deque()
+        self._repaint_drain_scheduled = False
+        self._repaint_needs_3d_flush = False
 
         # Thread pools for parallel propagation
         self._propagation_executor = ThreadPoolExecutor(
@@ -2341,167 +2348,161 @@ class PropagationEngine(QObject):
             return repaint_tasks
 
     def _on_universal_repaint(self, repaint_tasks: list):
-        """Apply localized UI updates produced by the unified propagation worker."""
-        t0 = perf_counter()
-        needs_3d_flush = False
-        try:
-            for task in repaint_tasks:
-                task_type = task.get('type')
+        """Queue UI updates from a propagation worker; drain in budgeted slices."""
+        self._repaint_task_queue.extend(repaint_tasks)
+        # Sentinel marks the end of one worker job — completion bookkeeping
+        # (pending counter, busy cursor) runs when the sentinel drains.
+        self._repaint_task_queue.append({'type': '_job_done'})
+        self._schedule_repaint_drain()
 
-                if task_type == 'status_message':
-                    # Post a status-bar message from a background worker.
-                    msg = task.get('message', '')
-                    timeout = task.get('timeout', 5000)
-                    if msg:
-                        status_bar = getattr(self.main_window, 'status_bar', None)
-                        if status_bar is not None:
-                            try:
-                                status_bar.showMessage(msg, timeout)
-                            except Exception:
-                                pass
-                    continue
+    def _schedule_repaint_drain(self):
+        """Schedule a repaint drain if one isn't already pending."""
+        if self._repaint_drain_scheduled:
+            return
+        self._repaint_drain_scheduled = True
+        QTimer.singleShot(0, self._drain_repaint_queue)
 
-                if task_type == 'reload_annotation_window':
-                    # Refresh the annotation window's mask display after a bulk write.
-                    # This ensures the currently-open image shows the new labels
-                    # without requiring the user to navigate away and back.
+    def _drain_repaint_queue(self):
+        """Drain queued repaint tasks in time-budgeted slices."""
+        self._repaint_drain_scheduled = False
+        budget_s = 0.012  # stay under one frame
+        start = perf_counter()
+        while self._repaint_task_queue:
+            task = self._repaint_task_queue.popleft()
+            try:
+                if task.get('type') == '_job_done':
+                    self._finish_repaint_job()
+                else:
+                    self._apply_repaint_task(task)
+            except Exception as e:
+                print(f"Error in _drain_repaint_queue: {e}")
+                traceback.print_exc()
+            if self._repaint_task_queue and (perf_counter() - start) > budget_s:
+                self._schedule_repaint_drain()
+                return
+
+    def _finish_repaint_job(self):
+        """Completion bookkeeping for one drained propagation job."""
+        self._pending_unified_propagation_jobs = max(
+            0,
+            self._pending_unified_propagation_jobs - 1,
+        )
+        self._propagating_annotation = self._pending_unified_propagation_jobs > 0
+        if self._repaint_needs_3d_flush:
+            self._repaint_needs_3d_flush = False
+            request_flush = getattr(self, 'request_lazy_flush', None)
+            if callable(request_flush):
+                request_flush()
+        # Clear the matrix busy state (cursor + propagate button) once the
+        # last queued unified-repaint job has been applied.
+        if self._pending_unified_propagation_jobs <= 0:
+            if self.context_matrix is not None:
+                set_busy = getattr(self.context_matrix, 'set_propagation_busy', None)
+                if callable(set_busy):
                     try:
-                        aw = getattr(self.main_window, 'annotation_window', None)
-                        if aw is not None and hasattr(aw, 'load_mask_annotation'):
-                            aw.load_mask_annotation()
+                        set_busy(False)
                     except Exception:
                         pass
-                    continue
+            self._end_semantic_propagation_busy()
 
-                if task_type == 'update_image_table':
-                    # Refresh the image-table annotation counts for all paths that
-                    # received new mask labels during a bulk projection.
-                    paths = task.get('paths', ())
-                    iw = getattr(self.main_window, 'image_window', None)
-                    if iw is not None:
-                        for _p in paths:
-                            try:
-                                iw.update_image_annotations(_p)
-                            except Exception:
-                                pass
-                    continue
+    def _apply_repaint_task(self, task: dict):
+        """Apply one repaint/3d_paint/status task. Main thread only."""
+        task_type = task.get('type')
 
-                if task_type == '3d_paint':
-                    # IMPORTANT: Pass label_id to avoid relying on active UI label
-                    # which could overwrite the wrong mesh_class_label_ids entry
-                    label_id = task.get('label_id')
-                    tgt = task.get('primary_target')
-                    # Route to the matching painter: point clouds paint points,
-                    # meshes paint faces. Dispatch on element type to avoid importing
-                    # the product classes here.
-                    is_point = False
+        if task_type == 'status_message':
+            msg = task.get('message', '')
+            timeout = task.get('timeout', 5000)
+            if msg:
+                status_bar = getattr(self.main_window, 'status_bar', None)
+                if status_bar is not None:
                     try:
-                        is_point = tgt is not None and tgt.get_element_type() == 'point'
+                        status_bar.showMessage(msg, timeout)
                     except Exception:
-                        is_point = False
-                    if is_point and hasattr(self, 'submit_3d_point_paint'):
-                        self.submit_3d_point_paint(
-                            task['painted_ids'],
-                            task['target_color'],
-                            task['source_class_id'],
-                            primary_target=tgt,
-                            label_id=label_id,
-                        )
-                    else:
-                        self.submit_3d_face_paint(
-                            task['painted_ids'],
-                            task['target_color'],
-                            task['source_class_id'],
-                            primary_target=tgt,
-                            label_id=label_id,
-                        )
-                    needs_3d_flush = True
-                    continue
+                        pass
+            return
 
-                if task_type != 'repaint':
-                    continue
+        if task_type == 'reload_annotation_window':
+            try:
+                aw = getattr(self.main_window, 'annotation_window', None)
+                if aw is not None and hasattr(aw, 'load_mask_annotation'):
+                    aw.load_mask_annotation()
+            except Exception:
+                pass
+            return
 
-                target_mask = task.get('mask')
-                if target_mask is None:
-                    continue
+        if task_type == 'update_image_table':
+            paths = task.get('paths', ())
+            iw = getattr(self.main_window, 'image_window', None)
+            if iw is not None:
+                for _p in paths:
+                    try:
+                        iw.update_image_annotations(_p)
+                    except Exception:
+                        pass
+            return
 
-                for label_id in task.get('label_ids', ()):
-                    if label_id is not None and label_id not in target_mask.visible_label_ids:
-                        target_mask.visible_label_ids.add(label_id)
-
-                target_path = task.get('path')
-                context_canvas = self._get_context_canvas_for_path(target_path)
-                # Default to deferring: when no on-screen canvas currently
-                # displays this path (canvas not materialized, or scrolled out
-                # of view) the task must be QUEUED, not dropped.  Previously
-                # this defaulted to True, so an absent canvas silently skipped
-                # both branches below and the matrix thumbnail never refreshed
-                # even though mask_data was written.
-                should_update_now = (
-                    context_canvas is not None
-                    and self.context_matrix is not None
-                    and self.context_matrix.is_canvas_on_screen(context_canvas)
+        if task_type == '3d_paint':
+            label_id = task.get('label_id')
+            tgt = task.get('primary_target')
+            is_point = False
+            try:
+                is_point = tgt is not None and tgt.get_element_type() == 'point'
+            except Exception:
+                is_point = False
+            if is_point and hasattr(self, 'submit_3d_point_paint'):
+                self.submit_3d_point_paint(
+                    task['painted_ids'],
+                    task['target_color'],
+                    task['source_class_id'],
+                    primary_target=tgt,
+                    label_id=label_id,
                 )
+            else:
+                self.submit_3d_face_paint(
+                    task['painted_ids'],
+                    task['target_color'],
+                    task['source_class_id'],
+                    primary_target=tgt,
+                    label_id=label_id,
+                )
+            self._repaint_needs_3d_flush = True
+            return
 
-                if should_update_now:
-                    # Wire overlay BEFORE updating so freshly-created masks
-                    # (e.g. pre-allocated for cache-loaded cameras) are visible.
-                    # Always (re)wire: set_mask_overlay is a no-op when the item
-                    # already points at this mask, but it guarantees the matrix
-                    # canvas has a live MaskGraphicsItem even for cameras that
-                    # were never opened in the AnnotationWindow.
-                    context_canvas.set_mask_overlay(target_mask)
-                    # Recompute colored_mask + qimage from mask_data.  This must
-                    # run even when the mask has no AnnotationWindow graphics_item
-                    # (cache-loaded context cameras), otherwise the matrix overlay
-                    # would paint a stale image and the thumbnail would not update
-                    # until the camera was activated as primary.
-                    target_mask.update_graphics_item(update_rect=task.get('update_rect'))
-                    # Force the matrix overlay item itself to repaint from the
-                    # freshly rebuilt qimage (the mask's update_graphics_item only
-                    # repaints its own AnnotationWindow item, not this overlay).
-                    overlay_item = getattr(context_canvas, '_mask_overlay_item', None)
-                    if overlay_item is not None:
-                        try:
-                            overlay_item.update()
-                        except Exception:
-                            pass
-                elif self.context_matrix is not None:
-                    self.context_matrix.queue_pending_repaint(
-                        target_path,
-                        target_mask,
-                        update_rect=task.get('update_rect'),
-                        label_ids=task.get('label_ids', ()),
-                    )
+        if task_type != 'repaint':
+            return
 
-        except Exception as e:
-            print(f"Error in _on_universal_repaint: {e}")
-        finally:
-            self._pending_unified_propagation_jobs = max(
-                0,
-                self._pending_unified_propagation_jobs - 1,
+        target_mask = task.get('mask')
+        if target_mask is None:
+            return
+
+        for label_id in task.get('label_ids', ()):
+            if label_id is not None and label_id not in target_mask.visible_label_ids:
+                target_mask.visible_label_ids.add(label_id)
+
+        target_path = task.get('path')
+        context_canvas = self._get_context_canvas_for_path(target_path)
+        should_update_now = (
+            context_canvas is not None
+            and self.context_matrix is not None
+            and self.context_matrix.is_canvas_on_screen(context_canvas)
+        )
+
+        if should_update_now:
+            context_canvas.set_mask_overlay(target_mask)
+            target_mask.update_graphics_item(update_rect=task.get('update_rect'))
+            overlay_item = getattr(context_canvas, '_mask_overlay_item', None)
+            if overlay_item is not None:
+                try:
+                    overlay_item.update()
+                except Exception:
+                    pass
+        elif self.context_matrix is not None:
+            self.context_matrix.queue_pending_repaint(
+                target_path,
+                target_mask,
+                update_rect=task.get('update_rect'),
+                label_ids=task.get('label_ids', ()),
             )
-            self._propagating_annotation = self._pending_unified_propagation_jobs > 0
-            if needs_3d_flush:
-                request_flush = getattr(self, 'request_lazy_flush', None)
-                if callable(request_flush):
-                    request_flush()
-            # Clear the matrix busy state (cursor + propagate button) once the
-            # last queued unified-repaint job has been applied.  This ties the
-            # UI indicators to actual completion instead of a fixed timer, so
-            # they stay active until every camera has really been updated.
-            if self._pending_unified_propagation_jobs <= 0:
-                if self.context_matrix is not None:
-                    set_busy = getattr(self.context_matrix, 'set_propagation_busy', None)
-                    if callable(set_busy):
-                        try:
-                            set_busy(False)
-                        except Exception:
-                            pass
-                # Restore the cursor / post the done message for a multi-annotate
-                # semantic-prediction propagation, which is async and therefore
-                # cannot restore these in its own call frame.
-                self._end_semantic_propagation_busy()
 
     def _on_semantic_prediction_applied(self, image_path: str, source_mask_annotation,
                                         prediction_regions=None, override_target_paths=None):
