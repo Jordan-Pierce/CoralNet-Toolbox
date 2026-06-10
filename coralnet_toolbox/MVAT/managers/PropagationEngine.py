@@ -1456,22 +1456,43 @@ class PropagationEngine(QObject):
             if semantic_mask.ndim != 2:
                 return np.array([], dtype=np.int64), np.array([], dtype=np.int64), {}
 
-            unique_real_ids = np.unique(semantic_mask % lock_bit)
-            unique_real_ids = unique_real_ids[unique_real_ids > 0]
-            for real_class_id in unique_real_ids:
-                label = source_mask_annotation.class_id_to_label_map.get(int(real_class_id))
-                if label is None:
-                    continue
-
-                binary_mask = (semantic_mask % lock_bit == real_class_id)
-                if not np.any(binary_mask):
-                    continue
-
-                raw_element_ids = self._extract_source_element_ids_from_full_mask(
-                    source_camera,
-                    binary_mask,
+            # Single pass for ALL classes: bring the class layer down to the
+            # index map's resolution once, then read element + class per pixel.
+            index_map = raster.index_map
+            sem = semantic_mask % lock_bit
+            if sem.shape != index_map.shape:
+                import cv2
+                sem = cv2.resize(
+                    np.ascontiguousarray(sem),
+                    (index_map.shape[1], index_map.shape[0]),
+                    interpolation=cv2.INTER_NEAREST,
                 )
-                _append_votes(real_class_id, label, raw_element_ids)
+
+            valid = (sem > 0) & (index_map > -1)
+            if np.any(valid):
+                elements = index_map[valid].astype(np.int64, copy=False)
+                classes = sem[valid].astype(np.int64, copy=False)
+
+                # Register labels; drop votes for classes with no live label.
+                unique_ids = np.unique(classes)
+                keep_ids = []
+                for real_class_id in unique_ids:
+                    label = source_mask_annotation.class_id_to_label_map.get(int(real_class_id))
+                    if label is not None:
+                        class_label_ids[int(real_class_id)] = label.id
+                        keep_ids.append(int(real_class_id))
+
+                if len(keep_ids) != len(unique_ids):
+                    keep_lut = np.zeros(int(unique_ids.max()) + 1, dtype=bool)
+                    if keep_ids:
+                        keep_lut[np.asarray(keep_ids, dtype=np.int64)] = True
+                    keep_mask = keep_lut[classes]
+                    elements = elements[keep_mask]
+                    classes = classes[keep_mask]
+
+                if elements.size:
+                    element_chunks.append(elements)
+                    class_chunks.append(classes)
 
         if not element_chunks or not class_chunks:
             return np.array([], dtype=np.int64), np.array([], dtype=np.int64), {}
