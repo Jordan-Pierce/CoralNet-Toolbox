@@ -1032,6 +1032,7 @@ class PropagationEngine(QObject):
             # IDs to work with — not just the single center pixel.  More IDs
             # dramatically reduces stride false-negatives in the target cameras.
             # ------------------------------------------------------------------
+            propagated_annotations = []
             source_raster = getattr(self.selected_camera, '_raster', None)
             source_index_map = source_raster.index_map if source_raster is not None else None
             source_element_ids = None   # list[int] — passed to get_pixels_for_elements
@@ -1102,11 +1103,8 @@ class PropagationEngine(QObject):
                                     image_path=target_path,
                                     transparency=annotation.transparency,
                                 )
-                                try:
-                                    self.annotation_window.add_annotation(new_annotation, record_action=True)
-                                    placed = True
-                                except Exception:
-                                    pass
+                                propagated_annotations.append(new_annotation)
+                                placed = True
 
                     # ----------------------------------------------------------
                     # 2D fallback: used when no index map is available OR when
@@ -1131,12 +1129,21 @@ class PropagationEngine(QObject):
                             image_path=target_path,
                             transparency=annotation.transparency,
                         )
-                        try:
-                            self.annotation_window.add_annotation(new_annotation, record_action=True)
-                        except Exception:
-                            pass
+                        propagated_annotations.append(new_annotation)
                 except Exception:
                     pass
+
+            # One batched commit: a single undo entry and a single UI refresh
+            # pass instead of one per target camera.
+            if propagated_annotations:
+                try:
+                    self.annotation_window.add_annotations(propagated_annotations, record_action=True)
+                except Exception:
+                    for ann in propagated_annotations:
+                        try:
+                            self.annotation_window.add_annotation(ann, record_action=True)
+                        except Exception:
+                            pass
         finally:
             self._propagating_annotation = False
 
