@@ -741,19 +741,20 @@ class MeshProduct(AbstractSceneProduct):
         # Check and bind UV coordinates — they may have been lost during simplification/sorting
         has_uvs = False
         if self.mesh is not None:
-            if getattr(self.mesh, 'active_t_coords', None) is not None:
+            # Check if PyVista already mapped the texture coordinates
+            if getattr(self.mesh, 't_coords', None) is not None:
                 has_uvs = True
             else:
                 pd = self.mesh.point_data
                 # TCoords is PyVista's default name; it may have survived simplification as a normal array
                 if "TCoords" in pd:
-                    self.mesh.active_t_coords = pd["TCoords"]
+                    self.mesh.t_coords = pd["TCoords"]
                     has_uvs = True
                 else:
                     # Check common PLY UV array names
                     for u_name, v_name in [("texture_u", "texture_v"), ("u", "v"), ("s", "t")]:
                         if u_name in pd and v_name in pd:
-                            self.mesh.active_t_coords = np.column_stack((pd[u_name], pd[v_name]))
+                            self.mesh.t_coords = np.column_stack((pd[u_name], pd[v_name]))
                             has_uvs = True
                             break
 
