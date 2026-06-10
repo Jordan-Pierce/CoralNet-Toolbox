@@ -9,17 +9,9 @@ encoding is layered on top of it.
 from __future__ import annotations
 
 import os
-import io
 from typing import Any, Dict, Optional
 
 import numpy as np
-
-# Try importing zstandard; fall back to legacy zlib if unavailable
-try:
-    import zstandard
-    HAS_ZSTD = True
-except ImportError:
-    HAS_ZSTD = False
 
 
 INDEX_MAP_DENSE_FORMAT = "index_map_dense_v1"
@@ -56,11 +48,10 @@ def save_index_map_archive(
 ) -> str:
     """Save a dense 2-D index map as a ``.npz`` archive.
 
-    When ``compress`` is True (default) the archive is zstd-compressed (level 3)
-    if zstandard is available; otherwise falls back to DEFLATE-compressed
-    (``np.savez_compressed``). When False it is stored uncompressed
+    When ``compress`` is True (default) the archive is DEFLATE-compressed
+    (``np.savez_compressed``); when False it is stored uncompressed
     (``np.savez``) — faster to write at the cost of disk size. ``load_index_map_archive``
-    reads all formats transparently.
+    reads either transparently.
 
     Extra keyword metadata (e.g. ``scale_factor``) is stored verbatim and
     returned by :func:`load_index_map_archive`; ``None`` values are skipped.
@@ -84,19 +75,8 @@ def save_index_map_archive(
             payload[key] = np.asarray(value)
 
     try:
-        if compress and HAS_ZSTD:
-            # Use zstd compression: serialize uncompressed npz into BytesIO,
-            # then compress with zstandard level 3
-            buf = io.BytesIO()
-            np.savez(buf, **payload)
-            uncompressed_bytes = buf.getvalue()
-            compressed_bytes = zstandard.ZstdCompressor(level=3).compress(uncompressed_bytes)
-            with open(temp_path, 'wb') as f:
-                f.write(compressed_bytes)
-        else:
-            # Use legacy path: either uncompressed np.savez or fallback to np.savez_compressed
-            saver = np.savez_compressed if compress else np.savez
-            saver(temp_path, **payload)
+        saver = np.savez_compressed if compress else np.savez
+        saver(temp_path, **payload)
         os.replace(temp_path, archive_path)
         return archive_path
     except Exception:
@@ -111,32 +91,11 @@ def save_index_map_archive(
 def load_index_map_archive(archive_path: str) -> Dict[str, Any]:
     """Load a dense index-map archive written by :func:`save_index_map_archive`.
 
-    Supports zstd-compressed, zlib-compressed, and uncompressed npz formats.
     Raises ``ValueError`` for archives in any other (e.g. legacy) format, which
     callers treat as a cache miss and recompute.
     """
     archive_path = os.fspath(archive_path)
-
-    # Sniff the first 4 bytes to detect zstd magic (0x28, 0xb5, 0x2f, 0xfd)
-    zstd_magic = b"\x28\xb5\x2f\xfd"
-    with open(archive_path, 'rb') as f:
-        header = f.read(4)
-
-    # Decompress if zstd; otherwise load as-is (handles both .npz and legacy zlib)
-    if header == zstd_magic:
-        with open(archive_path, 'rb') as f:
-            compressed_bytes = f.read()
-        try:
-            uncompressed_bytes = zstandard.ZstdDecompressor().decompress(compressed_bytes)
-            data_buf = io.BytesIO(uncompressed_bytes)
-            data_context = np.load(data_buf, allow_pickle=False)
-        except Exception as e:
-            raise ValueError(f"Failed to decompress zstd archive: {e}")
-    else:
-        # Legacy: load as-is (zlib npz or uncompressed npz)
-        data_context = np.load(archive_path, allow_pickle=False)
-
-    with data_context as data:
+    with np.load(archive_path, allow_pickle=False) as data:
         cache_format = _scalar_to_python(data["cache_format"]) if "cache_format" in data else None
         if cache_format != INDEX_MAP_DENSE_FORMAT:
             raise ValueError(f"Unsupported cache format: {cache_format!r}")
