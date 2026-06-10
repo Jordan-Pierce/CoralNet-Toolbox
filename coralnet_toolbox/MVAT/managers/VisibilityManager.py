@@ -722,7 +722,7 @@ class VisibilityManager:
         # Keyed by buffer size; values are (pbo_handle, registered_resource)
         pbo_cuda_cache = {}
 
-        results = [None] * len(camera_params_list)  # Pre-sized list for result ordering
+        results = []  # Results will be appended in camera order
         # Accumulators for totals
         _t_render_total     = 0.0
         _t_readback_total   = 0.0
