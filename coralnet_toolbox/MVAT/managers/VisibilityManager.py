@@ -58,8 +58,6 @@ from coralnet_toolbox.MVAT.shaders.gpu_interop import (
 
 logger = get_visibility_logger()
 
-# Module-level guard to prevent attaching the debug handler multiple times
-_VISIBILITY_DEBUG_HANDLER_ATTACHED = False
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -652,20 +650,17 @@ class VisibilityManager:
         import logging
         perf_counter = time.perf_counter
 
-        # Set up file logging for detailed debug output (disabled by default)
-        # To enable: set environment variable VISIBILITY_DEBUG=1
+        # Set up file logging for detailed debug output (enabled by default)
+        # To disable: set environment variable VISIBILITY_DEBUG=0
         import os
         import logging
-        global _VISIBILITY_DEBUG_HANDLER_ATTACHED
-        os.environ.setdefault('VISIBILITY_DEBUG', '0')
-        if os.environ.get('VISIBILITY_DEBUG', '0') == '1':
-            if not _VISIBILITY_DEBUG_HANDLER_ATTACHED:
-                debug_handler = logging.FileHandler('visibility_timing_debug.log', mode='w', encoding='utf-8')
-                debug_handler.setLevel(logging.DEBUG)
-                debug_formatter = logging.Formatter('%(message)s')
-                debug_handler.setFormatter(debug_formatter)
-                logger.addHandler(debug_handler)
-                _VISIBILITY_DEBUG_HANDLER_ATTACHED = True
+        os.environ.setdefault('VISIBILITY_DEBUG', '1')
+        if os.environ.get('VISIBILITY_DEBUG', '0') != '0':
+            debug_handler = logging.FileHandler('visibility_timing_debug.log', mode='w', encoding='utf-8')
+            debug_handler.setLevel(logging.DEBUG)
+            debug_formatter = logging.Formatter('%(message)s')
+            debug_handler.setFormatter(debug_formatter)
+            logger.addHandler(debug_handler)
             logger.setLevel(logging.DEBUG)
 
         def _scale_for(w, h):
