@@ -9,6 +9,8 @@ encoding is layered on top of it.
 from __future__ import annotations
 
 import os
+import threading
+from collections import OrderedDict
 from typing import Any, Dict, Optional
 
 import numpy as np
@@ -128,3 +130,58 @@ def load_index_map_archive(archive_path: str) -> Dict[str, Any]:
             result[key] = _scalar_to_python(data[key])
 
         return result
+
+
+class IndexMapLRU:
+    """Bounded, thread-safe cache of decompressed index_map arrays, keyed by cache path.
+
+    Evicts least-recently-used maps to stay under max_bytes budget. On access, hit maps
+    are moved to end (most recent). On put, eviction happens from front (least recent).
+    """
+
+    def __init__(self, max_bytes: int):
+        self._max_bytes = max_bytes
+        self._cache: OrderedDict[str, np.ndarray] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def get(self, path: str) -> Optional[np.ndarray]:
+        """Get a map from cache (or load from disk if not cached), returning it on hit.
+
+        Returns None if the path doesn't exist or can't be loaded.
+        """
+        with self._lock:
+            arr = self._cache.get(path)
+            if arr is not None:
+                self._cache.move_to_end(path)
+                return arr
+
+        try:
+            arr = load_index_map_archive(path)['index_map']
+        except Exception:
+            return None
+
+        self.put(path, arr)
+        return arr
+
+    def put(self, path: str, arr: np.ndarray) -> None:
+        """Insert a map into the cache and evict LRU entries if needed."""
+        with self._lock:
+            self._cache[path] = arr
+            self._cache.move_to_end(path)
+            total = sum(a.nbytes for a in self._cache.values())
+            while total > self._max_bytes and len(self._cache) > 1:
+                _, evicted = self._cache.popitem(last=False)
+                total -= evicted.nbytes
+
+    def discard(self, path: str) -> None:
+        """Remove a map from the cache (e.g. when index_map is explicitly cleared)."""
+        with self._lock:
+            self._cache.pop(path, None)
+
+    def clear(self) -> None:
+        """Clear the entire cache."""
+        with self._lock:
+            self._cache.clear()
+
+
+INDEX_MAP_LRU = IndexMapLRU(max_bytes=1 * 1024**3)

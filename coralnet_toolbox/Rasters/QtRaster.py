@@ -18,7 +18,7 @@ from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from coralnet_toolbox.Annotations import MaskAnnotation
-from coralnet_toolbox.MVAT.utils.IndexMapCodec import load_index_map_archive
+from coralnet_toolbox.MVAT.utils.IndexMapCodec import load_index_map_archive, INDEX_MAP_LRU
 
 from coralnet_toolbox.WorkArea import WorkArea
 
@@ -136,7 +136,7 @@ class Raster(QObject):
         self.dist_coeffs: Optional[np.ndarray] = None  # OpenCV layout [k1,k2,p1,p2,k3,k4,k5,k6] float64
         self.intrinsics_undistorted: Optional[np.ndarray] = None  # K_new: linear camera matrix (wider FOV)
         # Visibility/Index map information (for MultiView Annotation)
-        self.index_map: Optional[np.ndarray] = None  # 2D array mapping pixels to element IDs (H x W int32)
+        self._index_map: Optional[np.ndarray] = None  # 2D array mapping pixels to element IDs (H x W int32)
         self.index_map_path: Optional[str] = None  # Path to index_map file if saved separately
         self.visible_indices: Optional[np.ndarray] = None  # 1D array of visible element IDs
         self.index_element_type: Optional[str] = None  # Element type: 'point', 'face', or 'cell'
@@ -172,7 +172,7 @@ class Raster(QObject):
     def set_display_name(self, max_length=25):
         """
         Set a display name (truncated if necessary) for showing in table
-        
+
         Args:
             max_length (int): Maximum length for display name before truncation
         """
@@ -180,7 +180,35 @@ class Raster(QObject):
             self.display_name = self.basename[:max_length - 3] + "..."
         else:
             self.display_name = self.basename
-        
+
+    @property
+    def index_map(self) -> Optional[np.ndarray]:
+        """Lazy-load index_map from disk cache on first access via LRU.
+
+        If _index_map is in memory, return it. Otherwise, if index_map_path is set,
+        load from disk via the bounded LRU cache. Avoids keeping all maps resident.
+        """
+        if self._index_map is not None:
+            return self._index_map
+        if self.index_map_path:
+            return INDEX_MAP_LRU.get(self.index_map_path)
+        return None
+
+    @index_map.setter
+    def index_map(self, value: Optional[np.ndarray]) -> None:
+        """Set index_map, routing to LRU cache if disk-backed, else retaining in memory."""
+        if value is None:
+            self._index_map = None
+            if self.index_map_path:
+                INDEX_MAP_LRU.discard(self.index_map_path)
+            return
+
+        if self.index_map_path:
+            INDEX_MAP_LRU.put(self.index_map_path, value)
+            self._index_map = None
+        else:
+            self._index_map = value
+
     def load_rasterio(self) -> bool:
         """
         Load the image using rasterio and extract basic properties.
@@ -698,48 +726,55 @@ class Raster(QObject):
         
         return warped_maps, visible_indices_list
 
-    def add_index_map(self, index_map: np.ndarray, index_map_path: Optional[str] = None,
+    def add_index_map(self, index_map: Optional[np.ndarray], index_map_path: Optional[str] = None,
                       visible_indices: Optional[np.ndarray] = None,
                       element_type: Optional[str] = 'point',
                       inverted_index: Optional[dict] = None):
         """
         Add or update index map and visible indices data.
-        
+
+        When index_map is None but index_map_path is provided, registers a lazy disk-backed
+        map (data is loaded on first access via LRU). This avoids eager decompression and
+        keeps dense maps out of memory until needed.
+
         Args:
-            index_map (np.ndarray): 2D array mapping pixels to element IDs (H x W int32)
+            index_map (np.ndarray, optional): 2D array mapping pixels to element IDs (H x W int32),
+                or None for lazy (disk-backed) registration.
             index_map_path (str, optional): Path to the index_map file if saved separately
             visible_indices (np.ndarray, optional): 1D array of visible element IDs
             element_type (str, optional): Type of element IDs in the index map.
                 One of 'point' (point cloud), 'face' (mesh faces), or 'cell' (DEM grid).
                 Defaults to 'point' for backward compatibility.
             inverted_index (dict, optional): CSR inverted index with keys
+                'inv_ids', 'inv_offsets', 'inv_pixels'.
         """
-        if not isinstance(index_map, np.ndarray):
-            raise ValueError("Index map must be a numpy array")
-        if index_map.ndim != 2:
-            raise ValueError("Index map must be a 2D array")
-        if index_map.dtype != np.int32:
-            raise ValueError("Index map must be int32 dtype")
-        
         # Validate element_type
         valid_element_types = {'point', 'face', 'cell'}
         if element_type is not None and element_type not in valid_element_types:
             raise ValueError(f"element_type must be one of {valid_element_types}, got '{element_type}'")
-        
-        # Resize index_map if dimensions don't match
-        if index_map.shape != (self.height, self.width):
-            index_map = cv2.resize(
-                index_map,
-                (self.width, self.height),
-                interpolation=cv2.INTER_NEAREST
-            )
-        
-        # Keep the loaded array as-is so cache-backed memmaps and other large
-        # results do not get duplicated in RAM.
-        self.index_map = index_map
+
+        # Validate and prepare index_map if provided
+        if index_map is not None:
+            if not isinstance(index_map, np.ndarray):
+                raise ValueError("Index map must be a numpy array")
+            if index_map.ndim != 2:
+                raise ValueError("Index map must be a 2D array")
+            if index_map.dtype != np.int32:
+                raise ValueError("Index map must be int32 dtype")
+
+            # Resize index_map if dimensions don't match
+            if index_map.shape != (self.height, self.width):
+                index_map = cv2.resize(
+                    index_map,
+                    (self.width, self.height),
+                    interpolation=cv2.INTER_NEAREST
+                )
+
+        # Set path BEFORE index_map so the property setter can route correctly to LRU
         self.index_map_path = index_map_path
+        self.index_map = index_map
         self.index_element_type = element_type
-        
+
         # Store CSR inverted index
         if inverted_index is not None:
             self.inv_ids     = inverted_index['inv_ids']
@@ -863,6 +898,8 @@ class Raster(QObject):
     
     def remove_index_map(self):
         """Remove the index map and visible indices data."""
+        if self.index_map_path:
+            INDEX_MAP_LRU.discard(self.index_map_path)
         self.index_map = None
         self.index_map_path = None
         self.visible_indices = None

@@ -1474,25 +1474,9 @@ class MVATManager(QObject):
 
             element_type = result.get('element_type', 'point')
             cache_path = result.get('cache_path')
-            
-            # --- Reload arrays from disk if stripped by the worker ---
-            if result.get('index_map') is None and cache_path and self.cache_manager:
-                cache_key = camera._raster.extrinsics
-                extra = (camera._raster.dist_coeffs.tobytes()
-                         if camera.is_distorted
-                         and camera._raster.dist_coeffs is not None else None)
-                
-                # Loads using memory-mapping (mmap_mode='r') where possible
-                loaded_data = self.cache_manager.load_visibility(
-                    cache_key, target_file_path, element_type, extra,
-                    pixel_budget=self.pixel_budget,
-                )
-                
-                if loaded_data:
-                    result['index_map'] = loaded_data.get('index_map')
-                    result['depth_map'] = loaded_data.get('depth_map')
 
-            # 2. Fallback to check cache if result is not yet computed
+            # Fallback to save to cache if result is not yet cached.
+            # Worker results already have cache_path set; this handles other paths.
             if cache_path is None and self.cache_manager is not None and target_file_path:
                 try:
                     cache_key = camera._raster.extrinsics
@@ -1509,12 +1493,13 @@ class MVATManager(QObject):
                     )
                 except Exception:
                     cache_path = None
-                    
-            # 3. Apply the results to the camera
+
+            # Register the result with the camera. For worker results with index_map=None,
+            # this triggers lazy loading from cache_path on first access via the LRU.
             try:
                 camera._raster.add_index_map(
-                    result.get('index_map'), 
-                    cache_path, 
+                    result.get('index_map'),
+                    cache_path,
                     result.get('visible_indices'),
                     element_type=element_type,
                     inverted_index=result.get('inverted_index')
@@ -1815,10 +1800,11 @@ class MVATManager(QObject):
                          if camera.is_distorted
                          and camera._raster.dist_coeffs is not None else None)
                 try:
-                    return path, self.cache_manager.load_visibility(
+                    loaded_data = self.cache_manager.load_visibility(
                         cache_key, target_file_path, element_type, extra,
                         pixel_budget=self.pixel_budget,
                     )
+                    return path, loaded_data
                 except Exception as exc:
                     print(f"⚠️ Cache load error for {camera.label}: {exc}")
                     return path, None
