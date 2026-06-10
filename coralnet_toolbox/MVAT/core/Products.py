@@ -724,8 +724,33 @@ class MeshProduct(AbstractSceneProduct):
 
         self.array_names = self.mesh.array_names
         self._ensure_scalar_arrays()
+
+        # --- TEXTURE IMPORT LOGIC ---
+        self.texture = None
+        dir_name = os.path.dirname(self.file_path)
+        for ext in ['.png', '.jpg', '.jpeg', '.tif', '.tiff']:
+            tex_path = os.path.join(dir_name, f"texture{ext}")
+            if os.path.exists(tex_path):
+                try:
+                    self.texture = pv.Texture(tex_path)
+                    print(f"🖼️ Loaded texture from {tex_path}")
+                    break
+                except Exception as e:
+                    print(f"⚠️ Failed to load texture {tex_path}: {e}")
+
+        # Check and bind UV coordinates if not already assigned
+        if self.mesh is not None and getattr(self.mesh, 'active_t_coords', None) is None:
+            pd = self.mesh.point_data
+            if "texture_u" in pd and "texture_v" in pd:
+                self.mesh.active_t_coords = np.column_stack((pd["texture_u"], pd["texture_v"]))
+            elif "u" in pd and "v" in pd:
+                self.mesh.active_t_coords = np.column_stack((pd["u"], pd["v"]))
+        # --------------------------------
+
         other_arrays = [arr for arr in self.array_names if arr.lower() not in ('rgb', 'labels', 'normals', 'class_ids')]
         self.available_arrays = ["RGB", "Labels"]
+        if self.texture is not None:
+            self.available_arrays.append("Texture")
         self.available_arrays.extend(other_arrays)
 
         if self.mesh.n_cells == 0:
@@ -979,10 +1004,14 @@ class MeshProduct(AbstractSceneProduct):
             'show_edges': False,
             'lighting': True,
         }
-        
+
+        # If the user selected the Texture layer, apply the pyvista.Texture
+        if self.selected_array == "Texture" and getattr(self, 'texture', None) is not None:
+            style['texture'] = self.texture
+            style['color'] = 'white'
         # All arrays (RGB, Labels, and data arrays) are now real scalars in the mesh
         # Use them directly via the mapper
-        if self.selected_array in self.array_names:
+        elif self.selected_array in self.array_names:
             style['scalars'] = self.selected_array
             # RGB, Labels, and Normals_RGB are all Nx3 uint8, so they need direct RGB mode
             if self.selected_array in ("RGB", "Labels", "Normals_RGB"):
@@ -990,7 +1019,7 @@ class MeshProduct(AbstractSceneProduct):
         else:
             # Fallback: render as metashape purple
             style['color'] = '#8d8cc4'  # Metashape purple
-        
+
         return style
     
     def get_bounds(self) -> BoundsType:
