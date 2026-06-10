@@ -635,13 +635,30 @@ class PointCloudProduct(AbstractSceneProduct):
 class MeshProduct(AbstractSceneProduct):
     """
     Scene product for surface mesh data.
-    
+
     Wraps PyVista mesh with faces (triangles/polygons) for solid surface rendering
     and accurate occlusion testing. Meshes ARE solid (is_solid=True).
-    
+
+    Texture Support:
+        If a texture image (texture.png, texture.jpg, etc.) is present in the same
+        directory as the mesh file, it will be auto-loaded and added as a "Texture"
+        layer in the viewer's array dropdown. Texture rendering requires UV coordinates
+        to be present in the mesh (commonly texture_u/texture_v or u/v arrays from
+        Metashape and other photogrammetry software). If a texture image exists but
+        the mesh lacks UV coordinates, the texture will be disabled to prevent crashes.
+
+    Simplification Caveat:
+        When simplification_ratio > 0.0, UV coordinates may be corrupted due to
+        nearest-neighbor transfer to the decimated mesh. Textures will likely tear
+        or stretch. For textured meshes, keep simplification_ratio = 0.0.
+
+        Spatial sorting (sort_data=True) is safe for textures — it only reorders
+        faces, not vertex data or UV mappings.
+
     Attributes:
         mesh (pv.PolyData): The underlying PyVista surface mesh.
         opacity (float): Default rendering opacity.
+        texture (pv.Texture): Loaded image texture, or None.
     """
     
     def __init__(self, file_path: str, opacity: float = 1.0, product_id: Optional[str] = None,
