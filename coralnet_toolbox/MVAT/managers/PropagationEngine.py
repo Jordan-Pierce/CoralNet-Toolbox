@@ -306,6 +306,17 @@ class PropagationEngine(QObject):
         key = (tuple(buffer.shape), np.dtype(buffer.dtype).str)
         self._propagation_buffer_pool.setdefault(key, []).append(buffer)
 
+    def _get_index_map_max_id(self, raster) -> int:
+        """Return int(index_map.max()), cached on the raster per index-map object."""
+        index_map = raster.index_map
+        if (getattr(raster, '_index_map_max_id', None) is not None
+                and getattr(raster, '_index_map_max_id_src', None) == id(index_map)):
+            return raster._index_map_max_id
+        max_id = int(index_map.max())
+        raster._index_map_max_id = max_id
+        raster._index_map_max_id_src = id(index_map)
+        return max_id
+
     def _apply_mask_visual_update(self, target_path: str, target_mask, label_id: Optional[str] = None, update_rect=None):
         """Apply the minimal UI refresh needed after a silent mask write."""
         if target_mask is None:
@@ -2016,7 +2027,7 @@ class PropagationEngine(QObject):
                     t_mask_start = perf_counter()
                     target_index_map = target_camera._raster.index_map
                     target_mask_data = target_mask.mask_data
-                    max_idx = int(np.max(target_index_map))
+                    max_idx = self._get_index_map_max_id(target_camera._raster)
 
                     for source_class_id, subset_elements in class_to_elements.items():
                         if subset_elements.size == 0:

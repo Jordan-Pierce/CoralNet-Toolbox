@@ -13,7 +13,18 @@
       "PowerShell(python -c \"import ast; ast.parse\\(open\\('coralnet_toolbox/MVAT/managers/PropagationEngine.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
       "Bash(cat > *)",
       "Bash(python coralnet_toolbox\\\\MVAT\\\\test_gl.py)",
-      "Bash(python -m pytest coralnet_toolbox/MVAT/test_gl.py -v)"
+      "Bash(python -m pytest coralnet_toolbox/MVAT/test_gl.py -v)",
+      "Bash(python -c ' *)",
+      "PowerShell($py = @\\(\"$env:LOCALAPPDATA\\\\anaconda3\\\\python.exe\",\"$env:USERPROFILE\\\\anaconda3\\\\python.exe\",\"$env:USERPROFILE\\\\miniconda3\\\\python.exe\"\\) + \\(Get-ChildItem -Path . -Filter python.exe -Recurse -ErrorAction SilentlyContinue -Depth 3 | Select-Object -Expand FullName\\); $py | Where-Object { Test-Path $_ } | Select-Object -First 5)",
+      "Bash(/c/Users/jordan/miniconda3/python.exe -)",
+      "Bash(python -m py_compile coralnet_toolbox/MVAT/shaders/__init__.py coralnet_toolbox/MVAT/managers/VisibilityManager.py coralnet_toolbox/MVAT/workers/VisibilityWorker.py coralnet_toolbox/MVAT/managers/MVATManager.py)",
+      "PowerShell($py = \\(Get-Command python -ErrorAction SilentlyContinue\\); if \\(-not $py\\) { $py = \\(Get-Command py -ErrorAction SilentlyContinue\\) }; if \\(-not $py\\) { $py = \\(Get-Command python3 -ErrorAction SilentlyContinue\\) }; \"Using: $\\($py.Source\\)\"; & $py.Source -m py_compile coralnet_toolbox/MVAT/shaders/__init__.py coralnet_toolbox/MVAT/managers/VisibilityManager.py coralnet_toolbox/MVAT/workers/VisibilityWorker.py coralnet_toolbox/MVAT/managers/MVATManager.py; if \\($?\\) { \"COMPILE_OK\" })",
+      "PowerShell($cands = @\\(\\); Get-Command conda -ErrorAction SilentlyContinue | ForEach-Object { $cands += \"conda: $\\($_.Source\\)\" }; if \\(Test-Path \"$env:USERPROFILE\\\\anaconda3\\\\python.exe\"\\) { $cands += \"$env:USERPROFILE\\\\anaconda3\\\\python.exe\" }; if \\(Test-Path \"$env:USERPROFILE\\\\miniconda3\\\\python.exe\"\\) { $cands += \"$env:USERPROFILE\\\\miniconda3\\\\python.exe\" }; Get-ChildItem \"$env:USERPROFILE\\\\anaconda3\\\\envs\",\"$env:USERPROFILE\\\\miniconda3\\\\envs\" -ErrorAction SilentlyContinue | ForEach-Object { if \\(Test-Path \"$\\($_.FullName\\)\\\\python.exe\"\\) { $cands += \"$\\($_.FullName\\)\\\\python.exe\" } }; $cands)",
+      "PowerShell(& \"C:\\\\Users\\\\jordan\\\\miniconda3\\\\envs\\\\coralnet\\\\python.exe\" -m py_compile coralnet_toolbox/MVAT/shaders/__init__.py coralnet_toolbox/MVAT/managers/VisibilityManager.py coralnet_toolbox/MVAT/workers/VisibilityWorker.py coralnet_toolbox/MVAT/managers/MVATManager.py)",
+      "PowerShell(if \\($?\\) { \"COMPILE_OK\" })",
+      "PowerShell(& \"C:\\\\Users\\\\jordan\\\\miniconda3\\\\envs\\\\coralnet\\\\python.exe\" -m py_compile coralnet_toolbox/MVAT/managers/MVATManager.py)",
+      "PowerShell(& \"C:\\\\Users\\\\jordan\\\\miniconda3\\\\envs\\\\coralnet\\\\python.exe\" -m py_compile coralnet_toolbox/MVAT/shaders/gpu_interop.py coralnet_toolbox/MVAT/managers/VisibilityManager.py coralnet_toolbox/Rasters/QtRaster.py coralnet_toolbox/MVAT/workers/VisibilityWorker.py)",
+      "PowerShell(& \"C:\\\\Users\\\\jordan\\\\miniconda3\\\\envs\\\\coralnet\\\\python.exe\" -m py_compile coralnet_toolbox/MVAT/workers/VisibilityWorker.py coralnet_toolbox/Rasters/QtRaster.py coralnet_toolbox/MVAT/core/Cameras.py)"
     ],
     "additionalDirectories": [
       "\\tmp"
