@@ -2055,20 +2055,23 @@ class PropagationEngine(QObject):
                 except Exception:
                     return None
 
-            for target_path in target_paths:
+            def _process_target(target_path):
+                local_tasks = []
+                local_mask_time = 0.0
+
                 target_camera = self._get_camera_for_path(target_path)
                 if target_camera is None:
-                    continue
+                    return local_tasks, local_mask_time
 
                 target_raster = self.raster_manager.get_raster(target_path)
                 if target_raster is None:
-                    continue
+                    return local_tasks, local_mask_time
 
                 target_mask = target_raster.mask_annotation
                 if target_mask is None:
                     target_mask = target_raster.get_mask_annotation(project_labels)
                 if target_mask is None:
-                    continue
+                    return local_tasks, local_mask_time
 
                 target_has_index = (
                     getattr(target_camera, '_raster', None) is not None and
@@ -2180,7 +2183,7 @@ class PropagationEngine(QObject):
                         if label_id is not None:
                             target_label_ids.add(label_id)
 
-                    mask_time += perf_counter() - t_mask_start
+                    local_mask_time += perf_counter() - t_mask_start
 
                 if fallback_mask is not None and fallback_center is not None and (not use_index_lookup or target_rect is None):
                     t_mask_start = perf_counter()
@@ -2204,7 +2207,7 @@ class PropagationEngine(QObject):
                             if proj is not None and len(proj) >= 3 and proj[2]:
                                 target_center = (proj[0], proj[1])
                             else:
-                                continue
+                                return local_tasks, local_mask_time
 
                         if target_center is None:
                             target_center = (0, 0)
@@ -2276,16 +2279,40 @@ class PropagationEngine(QObject):
                                     target_label_ids.add(fallback_label_id)
                             finally:
                                 self._release_propagation_buffer(subset_mask)
-                    mask_time += perf_counter() - t_mask_start
+                    local_mask_time += perf_counter() - t_mask_start
 
                 if target_rect is not None:
-                    repaint_tasks.append({
+                    local_tasks.append({
                         'type': 'repaint',
                         'path': target_path,
                         'mask': target_mask,
                         'label_ids': tuple(sorted(target_label_ids)),
                         'update_rect': target_rect,
                     })
+
+                return local_tasks, local_mask_time
+
+            def _process_target_safe(target_path):
+                try:
+                    return _process_target(target_path)
+                except Exception:
+                    traceback.print_exc()
+                    return [], 0.0
+
+            if len(target_paths) > 1:
+                futures = [
+                    self._propagation_executor.submit(_process_target_safe, p)
+                    for p in target_paths
+                ]
+                for fut in as_completed(futures):
+                    local_tasks, local_mask_time = fut.result()
+                    repaint_tasks.extend(local_tasks)
+                    mask_time += local_mask_time
+            else:
+                for p in target_paths:
+                    local_tasks, local_mask_time = _process_target_safe(p)
+                    repaint_tasks.extend(local_tasks)
+                    mask_time += local_mask_time
 
         except Exception:
             traceback.print_exc()
