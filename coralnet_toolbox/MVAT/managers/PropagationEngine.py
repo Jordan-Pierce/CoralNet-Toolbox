@@ -1572,7 +1572,6 @@ class PropagationEngine(QObject):
             py,
         )
         painted_ids = np.asarray(painted_ids if painted_ids is not None else [], dtype=np.int64)
-        painted_ids = self._densify_source_ids(self.selected_camera, painted_ids)
         class_ids = np.full(painted_ids.size, int(source_class_id), dtype=np.int64)
 
         self._execute_mask_propagation(
@@ -1591,6 +1590,7 @@ class PropagationEngine(QObject):
                 'projections': self._build_projection(px, py),
                 'search_radius': float(max(brush_mask.shape) * 2.5),
             },
+            densify=True,
         )
 
     def _on_fill_stroke_applied(self, scene_pos, label_id: str, fill_mask=None):
@@ -1624,7 +1624,6 @@ class PropagationEngine(QObject):
             painted_ids = self._extract_source_ids_from_full_mask(self.selected_camera, fill_mask)
 
         painted_ids = np.asarray(painted_ids if painted_ids is not None else [], dtype=np.int64)
-        painted_ids = self._densify_source_ids(self.selected_camera, painted_ids)
         class_ids = (
             np.full(painted_ids.size, int(source_class_id), dtype=np.int64)
             if source_class_id is not None
@@ -1647,6 +1646,7 @@ class PropagationEngine(QObject):
                 'projections': self._build_projection(px, py),
                 'search_radius': float(max(fill_mask.shape) * 2.5) if fill_mask is not None else 0.0,
             },
+            densify=True,
         )
 
     def _on_erase_stroke_applied(self, scene_pos, label_id: str, brush_mask: np.ndarray):
@@ -1661,10 +1661,9 @@ class PropagationEngine(QObject):
         px, py = int(scene_pos.x()), int(scene_pos.y())
         painted_ids = self._extract_source_ids_from_crop_mask(self.selected_camera, brush_mask, px, py)
         painted_ids = np.asarray(painted_ids if painted_ids is not None else [], dtype=np.int64)
+
         # Densify to match the brush: an erase must cover the same dense face set
         # the brush paints, or sparse remnants survive.
-        painted_ids = self._densify_source_ids(self.selected_camera, painted_ids)
-
         self._execute_mask_propagation(
             source_camera=self.selected_camera,
             element_ids=painted_ids,
@@ -1680,6 +1679,7 @@ class PropagationEngine(QObject):
                 'projections': self._build_projection(px, py),
                 'search_radius': float(max(brush_mask.shape) * 2.5),
             },
+            densify=True,
         )
 
     def _propagate_3d_face_ids_to_context_cameras(self, face_ids, label, erase: bool = False):
@@ -1788,7 +1788,6 @@ class PropagationEngine(QObject):
             py,
         )
         painted_ids = np.asarray(painted_ids if painted_ids is not None else [], dtype=np.int64)
-        painted_ids = self._densify_source_ids(selected_camera, painted_ids)
         class_ids = np.full(painted_ids.size, int(source_class_id), dtype=np.int64)
 
         self._execute_mask_propagation(
@@ -1807,6 +1806,7 @@ class PropagationEngine(QObject):
                 'projections': self._build_projection(px, py),
                 'search_radius': float(max(binary_mask.shape) * 2.5),
             },
+            densify=True,
         )
 
     def _execute_mask_propagation(self,
@@ -1817,7 +1817,8 @@ class PropagationEngine(QObject):
                                   project_labels: list,
                                   class_label_ids: dict,
                                   fallback_payload=None,
-                                  skip_3d_paint: bool = False):
+                                  skip_3d_paint: bool = False,
+                                  densify: bool = False):
         """Queue a propagation job onto the single unified background worker."""
         t0 = perf_counter()
         if source_camera is None or not target_paths:
@@ -1866,6 +1867,7 @@ class PropagationEngine(QObject):
                 primary_target,
                 payload,
                 skip_3d_paint,
+                densify,
             )
         except Exception:
             self._pending_unified_propagation_jobs = max(
@@ -1884,7 +1886,8 @@ class PropagationEngine(QObject):
                                   class_label_ids,
                                   primary_target,
                                   fallback_payload=None,
-                                  skip_3d_paint: bool = False):
+                                  skip_3d_paint: bool = False,
+                                  densify: bool = False):
         """Background worker for brush, SAM, and semantic mask propagation."""
         from time import perf_counter
         t0 = perf_counter()
@@ -1904,6 +1907,14 @@ class PropagationEngine(QObject):
             # projecting the mesh back to cameras.
             real_labels = [lbl for lbl in project_labels if getattr(lbl, 'id', None) and lbl.id != '-1']
             canonical_id_for = {lbl.id: (idx + 1) for idx, lbl in enumerate(real_labels)}
+
+            # Densify here (background thread) so the paint cursor never waits
+            # on KD-tree gathers. _densify_source_votes is a no-op when
+            # densify_enabled is off or the target has no KD-tree.
+            if densify and element_ids is not None and element_ids.size:
+                element_ids, class_ids = self._densify_source_votes(
+                    source_camera, element_ids, class_ids
+                )
 
             winning_elements = np.array([], dtype=np.int64)
             winning_classes = np.array([], dtype=np.int64)
@@ -2528,11 +2539,8 @@ class PropagationEngine(QObject):
             )
             return
 
-        # Densify per class so low-res prediction votes fill the dense surface.
-        element_ids, class_ids = self._densify_source_votes(
-            source_camera, element_ids, class_ids
-        )
-
+        # Densification now happens inside the background worker (densify=True
+        # below), so the element count shown here is the pre-densify seed count.
         _status(
             f"Multi-annotate: painting {element_ids.size:,} element(s) "
             f"across {len(selected_paths)} camera(s)...",
@@ -2551,6 +2559,7 @@ class PropagationEngine(QObject):
             target_paths=selected_paths,
             project_labels=project_labels,
             class_label_ids=class_label_ids,
+            densify=True,
         )
 
     def _end_semantic_propagation_busy(self):
