@@ -816,9 +816,9 @@ class VisibilityManager:
             t0_readback_total = perf_counter()
 
             # GPU sync: ensure render is complete before readback
+            # NOTE: removed ctx.finish() — fbo.read_into() synchronizes implicitly
             t0_sync = perf_counter()
-            ctx.finish()
-            t_gpu_sync = perf_counter() - t0_sync
+            t_gpu_sync = 0.0
 
             # ----------------------------------------------------------------
             # GPU PATH: zero-PCIe CUDA-GL readback for distorted cameras.
@@ -868,18 +868,17 @@ class VisibilityManager:
             fbo_to_read = fbo
 
             # Texture readback: single-channel R32I → int32 (no bit-unpack decode)
+            # Direct zero-copy read into final array, decoded in place
             t0_read = perf_counter()
-            raw = fbo_to_read.read(components=1, dtype='i4')
+            crop_index_map = np.empty((crop_h, crop_w), dtype=np.int32)
+            fbo_to_read.read_into(crop_index_map, components=1, dtype='i4')
+            np.subtract(crop_index_map, 1, out=crop_index_map)
             t_fbo_read = perf_counter() - t0_read
 
-            # Data processing: reverse the +1 ID offset (0 = background → -1).
-            # frombuffer is read-only; the subtract yields a fresh writable
-            # contiguous int32 array — no flip and no ascontiguousarray needed.
+            # Data processing: timing attribution (read_into is now the only operation)
             t0_proc_total = perf_counter()
-
             t0_decode_data = perf_counter()
-            crop_index_map = np.frombuffer(raw, dtype=np.int32).reshape(crop_h, crop_w) - 1
-            t_decode_data = perf_counter() - t0_decode_data
+            t_decode_data = 0.0  # Decoding now happens in-place during read_into
 
             # Flip + copy now happen on the GPU (MVP Y-flip), so these are no-ops.
             t_flip = 0.0
