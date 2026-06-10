@@ -738,18 +738,39 @@ class MeshProduct(AbstractSceneProduct):
                 except Exception as e:
                     print(f"⚠️ Failed to load texture {tex_path}: {e}")
 
-        # Check and bind UV coordinates if not already assigned
-        if self.mesh is not None and getattr(self.mesh, 'active_t_coords', None) is None:
-            pd = self.mesh.point_data
-            if "texture_u" in pd and "texture_v" in pd:
-                self.mesh.active_t_coords = np.column_stack((pd["texture_u"], pd["texture_v"]))
-            elif "u" in pd and "v" in pd:
-                self.mesh.active_t_coords = np.column_stack((pd["u"], pd["v"]))
+        # Check and bind UV coordinates — they may have been lost during simplification/sorting
+        has_uvs = False
+        if self.mesh is not None:
+            if getattr(self.mesh, 'active_t_coords', None) is not None:
+                has_uvs = True
+            else:
+                pd = self.mesh.point_data
+                # TCoords is PyVista's default name; it may have survived simplification as a normal array
+                if "TCoords" in pd:
+                    self.mesh.active_t_coords = pd["TCoords"]
+                    has_uvs = True
+                else:
+                    # Check common PLY UV array names
+                    for u_name, v_name in [("texture_u", "texture_v"), ("u", "v"), ("s", "t")]:
+                        if u_name in pd and v_name in pd:
+                            self.mesh.active_t_coords = np.column_stack((pd[u_name], pd[v_name]))
+                            has_uvs = True
+                            break
+
+        # If we loaded an image but the mesh has no UVs, discard the texture to prevent rendering crashes
+        if self.texture is not None and not has_uvs:
+            print(f"⚠️ Texture image found, but mesh lacks UV coordinates. Disabling texture support.")
+            self.texture = None
+
+        # Update array names in case binding UVs added a new array
+        self.array_names = self.mesh.array_names
         # --------------------------------
 
-        other_arrays = [arr for arr in self.array_names if arr.lower() not in ('rgb', 'labels', 'normals', 'class_ids')]
+        other_arrays = [arr for arr in self.array_names if arr.lower() not in ('rgb', 'labels', 'normals', 'class_ids', 'texture coordinates', 'tcoords')]
+
+        # Register Texture as a valid dropdown array choice ONLY if we loaded one AND have UVs
         self.available_arrays = ["RGB", "Labels"]
-        if self.texture is not None:
+        if self.texture is not None and has_uvs:
             self.available_arrays.append("Texture")
         self.available_arrays.extend(other_arrays)
 
