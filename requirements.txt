@@ -3,6 +3,7 @@ PyQtADS
 pyqtgraph
 ujson
 blosc2
+zstandard
 rasterio
 pycocotools
 ultralytics
