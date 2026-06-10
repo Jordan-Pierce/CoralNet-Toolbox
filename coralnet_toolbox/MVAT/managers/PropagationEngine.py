@@ -11,6 +11,7 @@ verbatim without rewriting every self.xxx reference.
 import os
 import numpy as np
 import traceback
+import threading
 from time import perf_counter
 from typing import Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -127,6 +128,7 @@ class PropagationEngine(QObject):
         self._semantic_propagation_busy = False
         self._semantic_propagation_done_msg = None
         self._propagation_buffer_pool = {}
+        self._propagation_buffer_pool_lock = threading.Lock()
 
         # Thread pools for parallel propagation
         self._propagation_executor = ThreadPoolExecutor(
@@ -318,9 +320,10 @@ class PropagationEngine(QObject):
     def _acquire_propagation_buffer(self, shape, dtype=np.uint8):
         """Return a reusable NumPy buffer for background propagation work."""
         key = (tuple(shape), np.dtype(dtype).str)
-        pool = self._propagation_buffer_pool.get(key)
-        if pool:
-            return pool.pop()
+        with self._propagation_buffer_pool_lock:
+            pool = self._propagation_buffer_pool.get(key)
+            if pool:
+                return pool.pop()
         return np.empty(shape, dtype=dtype)
 
     def _release_propagation_buffer(self, buffer):
@@ -328,7 +331,8 @@ class PropagationEngine(QObject):
         if buffer is None:
             return
         key = (tuple(buffer.shape), np.dtype(buffer.dtype).str)
-        self._propagation_buffer_pool.setdefault(key, []).append(buffer)
+        with self._propagation_buffer_pool_lock:
+            self._propagation_buffer_pool.setdefault(key, []).append(buffer)
 
     def _get_index_map_max_id(self, raster) -> int:
         """Return int(index_map.max()), cached on the raster per index-map object."""
