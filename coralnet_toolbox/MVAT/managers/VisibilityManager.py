@@ -710,7 +710,14 @@ class VisibilityManager:
                 )
             return fbo_cache[key]
 
-        results = []
+        # Pre-allocate persistent PBOs for readback (sized to largest camera)
+        # This avoids per-camera PBO allocation overhead; double-buffer enables
+        # async readback overlap with decode of previous result
+        max_pixels = max(w * h for (_,_,_,w,h) in camera_params_list)
+        max_bytes = 4 * max_pixels  # int32 = 4 bytes per pixel
+        pbos = [ctx.buffer(reserve=max_bytes) for _ in range(2)]
+
+        results = [None] * len(camera_params_list)  # Pre-sized list for result ordering
         # Accumulators for totals
         _t_render_total     = 0.0
         _t_readback_total   = 0.0
@@ -868,10 +875,13 @@ class VisibilityManager:
             fbo_to_read = fbo
 
             # Texture readback: single-channel R32I → int32 (no bit-unpack decode)
-            # Direct zero-copy read into final array, decoded in place
+            # Use persistent PBO to avoid per-camera allocation overhead
             t0_read = perf_counter()
-            crop_index_map = np.empty((crop_h, crop_w), dtype=np.int32)
-            fbo_to_read.read_into(crop_index_map, components=1, dtype='i4')
+            pbo = pbos[i % 2]  # Double-buffered PBO (round-robin)
+            fbo_to_read.read_into(pbo, components=1, dtype='i4')
+            # Transfer from PBO to numpy array and decode in place
+            raw_bytes = pbo.read(size=crop_h * crop_w * 4)
+            crop_index_map = np.frombuffer(raw_bytes, dtype=np.int32).reshape(crop_h, crop_w).copy()
             np.subtract(crop_index_map, 1, out=crop_index_map)
             t_fbo_read = perf_counter() - t0_read
 
