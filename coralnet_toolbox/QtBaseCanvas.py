@@ -876,7 +876,69 @@ class BaseCanvas(QGraphicsView):
             except Exception:
                 pass
         self._readonly_annotation_items = {}
-    
+
+    def update_readonly_group(self, key, annotations):
+        """Rebuild ONE phantom group item in place.
+
+        Args:
+            key: (r, g, b, transparency, is_selected) group key.
+            annotations: the full current set of annotations belonging to that
+                group (may be empty, which removes the item).
+
+        Only valid once the layer has been built by _render_annotations_readonly;
+        callers must fall back to a full refresh otherwise.
+        """
+        from coralnet_toolbox.Annotations.QtAnnotation import create_pen
+
+        # Remove the existing item for this key
+        old_item = self._readonly_annotation_items.pop(key, None)
+        if old_item is not None:
+            try:
+                if old_item.scene() is not None:
+                    old_item.scene().removeItem(old_item)
+            except Exception:
+                pass
+
+        if not annotations:
+            self.viewport().update()
+            return
+
+        r, g, b, transparency, is_selected = key
+        merged_path = QPainterPath()
+        for annotation in annotations:
+            try:
+                path = annotation.get_cached_painter_path()
+            except (NotImplementedError, AttributeError):
+                continue
+            if path is None or path.isEmpty():
+                continue
+            merged_path.addPath(path)
+
+        if merged_path.isEmpty():
+            self.viewport().update()
+            return
+
+        color = QColor(r, g, b)
+        fill_color = QColor(color)
+        fill_color.setAlpha(transparency)
+        if is_selected:
+            pen = create_pen(color, is_selected=True)
+        else:
+            pen = QPen(color, 1)
+            pen.setCosmetic(True)
+
+        merged_path.setFillRule(Qt.WindingFill)
+        item = QGraphicsPathItem(merged_path)
+        item.setBrush(QBrush(fill_color))
+        item.setPen(pen)
+        item.setCacheMode(QGraphicsItem.DeviceCoordinateCache)
+        item.setFlag(QGraphicsItem.ItemIsSelectable, False)
+        item.setFlag(QGraphicsItem.ItemIsMovable, False)
+        item.setAcceptHoverEvents(False)
+        item.setZValue(10)
+        self.scene.addItem(item)
+        self._readonly_annotation_items[key] = item
+        self.viewport().update()
 
     def _highlight_readonly_annotation(self, annotation_id, highlighted):
         """Highlight or un-highlight a read-only annotation overlay.

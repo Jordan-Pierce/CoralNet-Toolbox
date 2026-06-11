@@ -3282,8 +3282,8 @@ class AnnotationWindow(BaseCanvas):
                 self.main_window.label_window.deselect_active_label()
                 self.main_window.confidence_window.clear_display()
             self.viewport().update()
-            # Rebuild phantom layer to exclude this now-selected annotation
-            self.refresh_phantom_annotations()
+            # Rebuild only this annotation's color group (it left the phantom layer)
+            self.refresh_phantom_annotations(only_annotation=annotation)
             self._emit_selection_changed()
 
     def select_annotations(self):
@@ -3427,7 +3427,7 @@ class AnnotationWindow(BaseCanvas):
                     self.main_window.confidence_window.clear_display()
                 self.viewport().update()
                 if not self._skip_phantom_refresh:
-                    self.refresh_phantom_annotations()
+                    self.refresh_phantom_annotations(only_annotation=annotation)
                 self._emit_selection_changed()
 
     def unselect_annotations(self):
@@ -3701,14 +3701,36 @@ class AnnotationWindow(BaseCanvas):
         except Exception:
             pass
 
-    def refresh_phantom_annotations(self):
+    def refresh_phantom_annotations(self, only_annotation=None):
         """Rebuild the read-only phantom layer from unselected annotations.
 
         Only PHANTOM-mode annotations are included; FULL-mode (selected)
         annotations own their own QGraphicsItemGroup and are excluded.
         Mask annotations and invisible-label annotations are skipped.
+
+        When ``only_annotation`` is given and the layer already exists, only the
+        single color group that annotation belongs to is rebuilt — O(group size)
+        instead of O(all annotations).
         """
         if self._skip_phantom_refresh or not self.active_image:
+            return
+
+        if (only_annotation is not None
+                and self._readonly_annotation_items
+                and not hasattr(only_annotation, 'mask_data')):
+            c = only_annotation.label.color
+            key = (c.red(), c.green(), c.blue(), only_annotation.transparency, False)
+            group = [
+                a for a in self.get_image_annotations()
+                if not hasattr(a, 'mask_data')
+                and getattr(a.label, 'is_visible', True)
+                and a.render_mode is RenderMode.PHANTOM
+                and a.transparency == key[3]
+                and a.label.color.red() == key[0]
+                and a.label.color.green() == key[1]
+                and a.label.color.blue() == key[2]
+            ]
+            self.update_readonly_group(key, group)
             return
 
         phantom = [
@@ -3717,12 +3739,7 @@ class AnnotationWindow(BaseCanvas):
             and getattr(a.label, 'is_visible', True)
             and a.render_mode is RenderMode.PHANTOM
         ]
-        if _PERF_LOG:
-            _t0 = time.perf_counter()
         self.render_readonly_annotations(phantom)
-        if _PERF_LOG:
-            print(f"[perf] phantom rebuild: {len(phantom)} annos "
-                  f"in {(time.perf_counter() - _t0) * 1000:.1f} ms")
 
     def get_image_annotations(self, image_path=None):
         """Get all annotations for the specified image path or current image."""
