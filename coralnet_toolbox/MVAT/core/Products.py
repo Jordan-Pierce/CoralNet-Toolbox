@@ -798,18 +798,13 @@ class MeshProduct(AbstractSceneProduct):
 
         other_arrays = [arr for arr in self.array_names if arr.lower() not in (
             'rgb', 'labels', 'normals', 'class_ids', 'texture coordinates', 'tcoords',
-            'tcoords_rgb', 'uv_segments_rgb')]
+            'uv_segments_rgb')]
 
         # Register Texture as a valid dropdown array choice ONLY if we loaded one AND have UVs
         self.available_arrays = ["RGB", "Labels"]
         self.texture_segment_ids = None
         if self.texture is not None and has_uvs:
             self.available_arrays.append("Texture")
-
-        # Raw UV gradient (u -> red, v -> green) — a direct view of the texture
-        # parameterization. Meaningful whenever UV coordinates are present.
-        if has_uvs and self._build_tcoords_rgb_array():
-            self.available_arrays.append("TCoords")
 
         # UV Segments — distinct color per connected UV island. These islands are
         # exactly the regions the 3D Fill tool floods on a single click.
@@ -835,34 +830,6 @@ class MeshProduct(AbstractSceneProduct):
             raise ValueError(f"File '{file_path}' has no cells/faces - use PointCloudProduct instead")
 
         print(f"⏱️ Loaded MeshProduct: {self.label} with {self.mesh.n_cells:,} faces in {time.time() - start_time:.3f}s")
-
-    def _build_tcoords_rgb_array(self) -> bool:
-        """Bake the active UV coordinates into a per-vertex RGB array for display.
-
-        Maps u -> red and v -> green (blue fixed at 0) so the raw texture
-        parameterization is directly visible as a color gradient. UVs are wrapped
-        into [0, 1) so tiled coordinates remain visible. The result is stored as
-        the point array ``TCoords_RGB``.
-
-        Returns:
-            True if the array was created, False otherwise.
-        """
-        try:
-            uv = self.mesh.active_texture_coordinates
-            if uv is None:
-                return False
-            uv = np.asarray(uv, dtype=np.float64)
-            if uv.ndim != 2 or uv.shape[1] < 2 or uv.shape[0] != self.mesh.n_points:
-                return False
-            frac = uv[:, :2] - np.floor(uv[:, :2])  # wrap into [0, 1)
-            rgb = np.zeros((uv.shape[0], 3), dtype=np.uint8)
-            rgb[:, 0] = np.clip(frac[:, 0] * 255.0, 0, 255).astype(np.uint8)
-            rgb[:, 1] = np.clip(frac[:, 1] * 255.0, 0, 255).astype(np.uint8)
-            self.mesh.point_data['TCoords_RGB'] = rgb
-            return True
-        except Exception as e:
-            print(f"⚠️ Failed to build TCoords RGB visualization: {e}")
-            return False
 
     def _build_uv_segments_rgb_array(self) -> bool:
         """Bake the UV segment ids into a per-face RGB array of distinct colors.
@@ -1144,11 +1111,6 @@ class MeshProduct(AbstractSceneProduct):
         if self.selected_array == "Texture" and getattr(self, 'texture', None) is not None:
             style['texture'] = self.texture
             style['color'] = 'white'
-        # Raw UV gradient — baked per-vertex RGB view of the texture coordinates.
-        elif self.selected_array == "TCoords" and "TCoords_RGB" in self.mesh.array_names:
-            style['scalars'] = "TCoords_RGB"
-            style['rgb'] = True
-            style['lighting'] = False
         # UV islands — baked per-face RGB view of the Fill-tool flood regions.
         elif self.selected_array == "UV Segments" and "UV_Segments_RGB" in self.mesh.array_names:
             style['scalars'] = "UV_Segments_RGB"

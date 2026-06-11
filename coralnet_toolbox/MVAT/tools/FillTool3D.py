@@ -131,6 +131,17 @@ class FillTool3D(Tool3D):
         # Trigger the visual update
         self.mvat_manager.request_lazy_flush()
 
+        # Multi-annotate sync: propagate the filled faces to all visible context
+        # cameras, mirroring the brush/erase 3D stroke handlers. A fill is purely
+        # additive, so it routes through the brush (paint) handler.
+        if getattr(self.mvat_manager, 'multi_annotate_enabled', False):
+            handler = getattr(self.mvat_manager, '_on_3d_brush_stroke_applied', None)
+            if callable(handler):
+                try:
+                    handler(faces_in_segment, selected_label)
+                except Exception:
+                    pass
+
         # Provide visual feedback
         status_bar = getattr(self.mvat_manager.main_window, 'status_bar', None)
         if status_bar is not None:
