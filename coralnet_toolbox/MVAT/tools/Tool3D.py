@@ -307,6 +307,34 @@ class Tool3D:
         except Exception:
             return None
 
+    def _resolve_label(self, label):
+        """Resolve a label widget to its (class_id, color_rgb) for mesh painting.
+
+        class_id is the small integer index used by the mesh's class_ids /
+        Labels arrays, looked up (and registered if missing) via the current
+        mask annotation's label_id_to_class_id_map.
+        """
+        try:
+            mask_annotation = (
+                self.mvat_manager.annotation_window.current_mask_annotation
+            )
+            if mask_annotation is None:
+                return None, None
+
+            class_id = mask_annotation.label_id_to_class_id_map.get(label.id)
+            if class_id is None:
+                mask_annotation.sync_label_map([label])
+                class_id = mask_annotation.label_id_to_class_id_map.get(label.id)
+
+            if class_id is None:
+                return None, None
+
+            c = QColor(label.color)
+            return class_id, (c.red(), c.green(), c.blue())
+
+        except Exception:
+            return None, None
+
     def _preview_color_rgb_float(self):
         """Return (r, g, b) in [0.0, 1.0] for the preview sphere."""
         if self._use_active_label_preview_color():

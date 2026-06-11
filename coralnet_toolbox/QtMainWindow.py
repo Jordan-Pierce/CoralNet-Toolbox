@@ -1890,7 +1890,7 @@ class MainWindow(QMainWindow):
                 tool_map = getattr(self.annotation_window, 'tools', None)
                 if isinstance(tool_map, dict):
                     selected_tool_object = tool_map.get(selected_tool)
-            self.mvat_viewer.set_selected_3d_tool(selected_tool if selected_tool in ('brush', 'erase') else None)
+            self.mvat_viewer.set_selected_3d_tool(selected_tool if selected_tool in ('brush', 'erase', 'fill') else None)
 
             if selected_tool in ('brush', 'erase') and selected_tool_object is not None:
                 manager = getattr(self, 'mvat_manager', None)
@@ -2068,8 +2068,18 @@ class MainWindow(QMainWindow):
                 self.work_area_tool_action.setChecked(False)
 
                 self.toolChanged.emit("fill")
+                if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
+                    try:
+                        self.mvat_viewer.set_selected_3d_tool("fill")
+                    except Exception:
+                        pass
             else:
                 self.toolChanged.emit(None)
+                if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
+                    try:
+                        self.mvat_viewer.set_selected_3d_tool(None)
+                    except Exception:
+                        pass
 
         elif action == self.sam_tool_action:
             if not self.sam_deploy_predictor_dialog.loaded_model:
@@ -2393,7 +2403,7 @@ class MainWindow(QMainWindow):
                 selected_tool = None
                 if hasattr(self, 'annotation_window') and self.annotation_window is not None:
                     selected_tool = self.annotation_window.get_selected_tool()
-                self.mvat_viewer.set_selected_3d_tool(selected_tool if selected_tool in ('brush', 'erase') else None)
+                self.mvat_viewer.set_selected_3d_tool(selected_tool if selected_tool in ('brush', 'erase', 'fill') else None)
 
                 if selected_tool in ('brush', 'erase'):
                     manager = getattr(self, 'mvat_manager', None)

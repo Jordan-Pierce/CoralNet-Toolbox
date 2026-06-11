@@ -15,7 +15,6 @@ from time import perf_counter
 import numpy as np
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import QMessageBox
 
 from coralnet_toolbox.MVAT.tools.Tool3D import Tool3D
@@ -403,29 +402,6 @@ class BrushTool3D(Tool3D):
             return self.mvat_manager.annotation_window.selected_label
         except Exception:
             return None
-
-    def _resolve_label(self, label):
-        try:
-            mask_annotation = (
-                self.mvat_manager.annotation_window.current_mask_annotation
-            )
-            if mask_annotation is None:
-                return None, None
-
-            class_id = mask_annotation.label_id_to_class_id_map.get(label.id)
-            if class_id is None:
-                mask_annotation.sync_label_map([label])
-                class_id = mask_annotation.label_id_to_class_id_map.get(label.id)
-
-            if class_id is None:
-                return None, None
-
-            from PyQt5.QtGui import QColor
-            c = QColor(label.color)
-            return class_id, (c.red(), c.green(), c.blue())
-
-        except Exception:
-            return None, None
 
     def _calibrate_brush_size(self):
         try:

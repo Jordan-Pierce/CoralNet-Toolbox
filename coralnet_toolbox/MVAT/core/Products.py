@@ -758,11 +758,11 @@ class MeshProduct(AbstractSceneProduct):
         # Check and bind UV coordinates — they may have been lost during simplification/sorting
         has_uvs = False
         if self.mesh is not None:
-            # Check if PyVista already has texture coordinates
+            # Check if PyVista already has active texture coordinates bound
             try:
-                if self.mesh.active_t_coords is not None:
+                if self.mesh.active_texture_coordinates is not None:
                     has_uvs = True
-            except (AttributeError, ValueError):
+            except Exception:
                 pass
 
             if not has_uvs:
@@ -770,18 +770,18 @@ class MeshProduct(AbstractSceneProduct):
                 # TCoords is PyVista's default name; it may have survived simplification as a normal array
                 if "TCoords" in pd:
                     try:
-                        self.mesh["Texture Coordinates"] = pd["TCoords"]
+                        self.mesh.active_texture_coordinates = np.asarray(pd["TCoords"], dtype=np.float64)
                         has_uvs = True
                     except Exception:
                         pass
 
                 if not has_uvs:
-                    # Check common PLY UV array names and assign to "Texture Coordinates"
+                    # Check common PLY UV array names and bind as the active texture coordinates
                     for u_name, v_name in [("texture_u", "texture_v"), ("u", "v"), ("s", "t")]:
                         if u_name in pd and v_name in pd:
                             try:
-                                uv_coords = np.column_stack((pd[u_name], pd[v_name]))
-                                self.mesh["Texture Coordinates"] = uv_coords
+                                uv_coords = np.column_stack((pd[u_name], pd[v_name])).astype(np.float64)
+                                self.mesh.active_texture_coordinates = uv_coords
                                 has_uvs = True
                                 break
                             except Exception:
@@ -796,18 +796,102 @@ class MeshProduct(AbstractSceneProduct):
         self.array_names = self.mesh.array_names
         # --------------------------------
 
-        other_arrays = [arr for arr in self.array_names if arr.lower() not in ('rgb', 'labels', 'normals', 'class_ids', 'texture coordinates', 'tcoords')]
+        other_arrays = [arr for arr in self.array_names if arr.lower() not in (
+            'rgb', 'labels', 'normals', 'class_ids', 'texture coordinates', 'tcoords',
+            'tcoords_rgb', 'uv_segments_rgb')]
 
         # Register Texture as a valid dropdown array choice ONLY if we loaded one AND have UVs
         self.available_arrays = ["RGB", "Labels"]
+        self.texture_segment_ids = None
         if self.texture is not None and has_uvs:
             self.available_arrays.append("Texture")
+
+        # Raw UV gradient (u -> red, v -> green) — a direct view of the texture
+        # parameterization. Meaningful whenever UV coordinates are present.
+        if has_uvs and self._build_tcoords_rgb_array():
+            self.available_arrays.append("TCoords")
+
+        # UV Segments — distinct color per connected UV island. These islands are
+        # exactly the regions the 3D Fill tool floods on a single click.
+        # Because vertices are duplicated at UV seams, connected components = UV islands.
+        if self.texture is not None and has_uvs:
+            try:
+                conn = self.mesh.connectivity(extraction_mode='all')
+                self.texture_segment_ids = np.asarray(conn.cell_data['RegionId'])
+                print(f"🧩 Computed {self.texture_segment_ids.max() + 1} texture segments.")
+            except Exception as e:
+                print(f"⚠️ Failed to compute texture segments: {e}")
+                self.texture_segment_ids = None
+
+            if self.texture_segment_ids is not None and self._build_uv_segments_rgb_array():
+                self.available_arrays.append("UV Segments")
+
+        # Keep array_names in sync so the baked visualization arrays are tracked.
+        self.array_names = self.mesh.array_names
+
         self.available_arrays.extend(other_arrays)
 
         if self.mesh.n_cells == 0:
             raise ValueError(f"File '{file_path}' has no cells/faces - use PointCloudProduct instead")
 
         print(f"⏱️ Loaded MeshProduct: {self.label} with {self.mesh.n_cells:,} faces in {time.time() - start_time:.3f}s")
+
+    def _build_tcoords_rgb_array(self) -> bool:
+        """Bake the active UV coordinates into a per-vertex RGB array for display.
+
+        Maps u -> red and v -> green (blue fixed at 0) so the raw texture
+        parameterization is directly visible as a color gradient. UVs are wrapped
+        into [0, 1) so tiled coordinates remain visible. The result is stored as
+        the point array ``TCoords_RGB``.
+
+        Returns:
+            True if the array was created, False otherwise.
+        """
+        try:
+            uv = self.mesh.active_texture_coordinates
+            if uv is None:
+                return False
+            uv = np.asarray(uv, dtype=np.float64)
+            if uv.ndim != 2 or uv.shape[1] < 2 or uv.shape[0] != self.mesh.n_points:
+                return False
+            frac = uv[:, :2] - np.floor(uv[:, :2])  # wrap into [0, 1)
+            rgb = np.zeros((uv.shape[0], 3), dtype=np.uint8)
+            rgb[:, 0] = np.clip(frac[:, 0] * 255.0, 0, 255).astype(np.uint8)
+            rgb[:, 1] = np.clip(frac[:, 1] * 255.0, 0, 255).astype(np.uint8)
+            self.mesh.point_data['TCoords_RGB'] = rgb
+            return True
+        except Exception as e:
+            print(f"⚠️ Failed to build TCoords RGB visualization: {e}")
+            return False
+
+    def _build_uv_segments_rgb_array(self) -> bool:
+        """Bake the UV segment ids into a per-face RGB array of distinct colors.
+
+        Each connected UV island (``texture_segment_ids``) receives a stable,
+        pseudo-random color so the Fill tool's flood regions are visible at a
+        glance. The result is stored as the cell array ``UV_Segments_RGB``.
+
+        Returns:
+            True if the array was created, False otherwise.
+        """
+        try:
+            seg = getattr(self, 'texture_segment_ids', None)
+            if seg is None:
+                return False
+            seg = np.asarray(seg)
+            if seg.shape[0] != self.mesh.n_cells or seg.size == 0:
+                return False
+            n_segments = int(seg.max()) + 1
+            if n_segments <= 0:
+                return False
+            # Deterministic palette; floor at 40 to avoid near-black segments.
+            rng = np.random.default_rng(42)
+            palette = rng.integers(40, 256, size=(n_segments, 3), dtype=np.uint8)
+            self.mesh.cell_data['UV_Segments_RGB'] = palette[seg]
+            return True
+        except Exception as e:
+            print(f"⚠️ Failed to build UV segments visualization: {e}")
+            return False
 
     def _spatially_sort_mesh(self, mesh: pv.PolyData) -> pv.PolyData:
         """
@@ -1060,6 +1144,16 @@ class MeshProduct(AbstractSceneProduct):
         if self.selected_array == "Texture" and getattr(self, 'texture', None) is not None:
             style['texture'] = self.texture
             style['color'] = 'white'
+        # Raw UV gradient — baked per-vertex RGB view of the texture coordinates.
+        elif self.selected_array == "TCoords" and "TCoords_RGB" in self.mesh.array_names:
+            style['scalars'] = "TCoords_RGB"
+            style['rgb'] = True
+            style['lighting'] = False
+        # UV islands — baked per-face RGB view of the Fill-tool flood regions.
+        elif self.selected_array == "UV Segments" and "UV_Segments_RGB" in self.mesh.array_names:
+            style['scalars'] = "UV_Segments_RGB"
+            style['rgb'] = True
+            style['lighting'] = False
         # All arrays (RGB, Labels, and data arrays) are now real scalars in the mesh
         # Use them directly via the mapper
         elif self.selected_array in self.array_names:

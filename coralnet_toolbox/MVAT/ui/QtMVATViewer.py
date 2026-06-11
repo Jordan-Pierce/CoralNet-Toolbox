@@ -33,7 +33,7 @@ from coralnet_toolbox.MVAT.core.Products import PointCloudProduct, MeshProduct, 
 from coralnet_toolbox.MVAT.core.SceneContext import SceneContext
 from coralnet_toolbox.MVAT.core.Products import AbstractSceneProduct
 from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED
-from coralnet_toolbox.MVAT.tools import BrushTool3D, EraseTool3D
+from coralnet_toolbox.MVAT.tools import BrushTool3D, EraseTool3D, FillTool3D
 from coralnet_toolbox.MVAT.ui.QtCameraAnimator import CameraAnimator
 
 from coralnet_toolbox.MVAT.utils.MVATLogger import get_visibility_logger
@@ -430,6 +430,7 @@ class MVATViewer(QFrame):
         self._sphere_visible = False
         self._brush_3d_tool = None
         self._erase_3d_tool = None
+        self._fill_3d_tool = None
         self._active_3d_tool = None
         self._mouse_sphere_observer_id = None
         self._sphere_hover_observer_bound = False
@@ -812,22 +813,24 @@ class MVATViewer(QFrame):
         return toolbar
 
     def initialize_3d_tools(self, mvat_manager):
-        """Create the preview-only 3D brush and erase tools once the manager exists."""
+        """Create the preview-only 3D brush, erase, and fill tools once the manager exists."""
         if self._brush_3d_tool is not None or self._erase_3d_tool is not None:
             return
 
         self._brush_3d_tool = BrushTool3D(self, mvat_manager)
         self._erase_3d_tool = EraseTool3D(self, mvat_manager)
+        self._fill_3d_tool = FillTool3D(self, mvat_manager)
         self._active_3d_tool = None
 
     def get_selected_3d_tool(self):
         return self._active_3d_tool
 
     def set_selected_3d_tool(self, tool_name):
-        """Activate the BrushTool3D or EraseTool3D preview, or clear it."""
+        """Activate the BrushTool3D, EraseTool3D, or FillTool3D preview, or clear it."""
         tool_map = {
             'brush': self._brush_3d_tool,
             'erase': self._erase_3d_tool,
+            'fill': getattr(self, '_fill_3d_tool', None),
         }
         next_tool = tool_map.get(tool_name)
         current_tool = self._active_3d_tool
