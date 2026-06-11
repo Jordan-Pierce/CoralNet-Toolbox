@@ -113,6 +113,13 @@ class MultiPolygonAnnotation(Annotation):
         """Return the first polygon (for compatibility)."""
         return QPolygonF(self.polygons[0].points) if self.polygons else QPolygonF()
 
+    def get_painter_path(self) -> QPainterPath:
+        """Composite path of all polygon islands (used by the phantom renderer)."""
+        path = QPainterPath()
+        for poly in self.polygons:
+            path.addPath(poly.get_painter_path())
+        return path
+
     def get_rasterization_geometry(self):
         """Return all polygon islands as a shapely geometry for rasterization."""
         geometries = []

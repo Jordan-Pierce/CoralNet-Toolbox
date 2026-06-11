@@ -1394,7 +1394,7 @@ class AnnotationWindow(BaseCanvas):
                 for a in frame_annotations:
                     if getattr(a.label, 'is_visible', True) and not hasattr(a, 'mask_data'):
                         try:
-                            paths_data.append((a.get_painter_path(), a.label.color, a.transparency))
+                            paths_data.append((a.get_cached_painter_path(), a.label.color, a.transparency))
                         except Exception:
                             pass
                 
@@ -1619,7 +1619,7 @@ class AnnotationWindow(BaseCanvas):
                 for a in frame_annotations:
                     if getattr(a.label, 'is_visible', True) and not hasattr(a, 'mask_data'):
                         try:
-                            paths_data.append((a.get_painter_path(), a.label.color, a.transparency))
+                            paths_data.append((a.get_cached_painter_path(), a.label.color, a.transparency))
                         except Exception:
                             pass
                 self._base_image_item.set_readonly_annotations(paths_data)

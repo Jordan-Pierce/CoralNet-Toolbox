@@ -818,7 +818,7 @@ class BaseCanvas(QGraphicsView):
             if isinstance(annotation, MaskAnnotation):
                 continue
             try:
-                path = annotation.get_painter_path()
+                path = annotation.get_cached_painter_path()
             except (NotImplementedError, AttributeError):
                 continue
             if path is None or path.isEmpty():
