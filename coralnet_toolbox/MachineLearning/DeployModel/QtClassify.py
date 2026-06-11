@@ -102,7 +102,11 @@ class Classify(Base):
                 imgsz = 256
 
             self.imgsz = imgsz
-            self.loaded_model(np.zeros((imgsz, imgsz, 3), dtype=np.uint8))
+            # Pass the device so the predictor is created on it now; ultralytics
+            # silently rebuilds the predictor (reload + fuse) on the first call
+            # whose device= differs from the one it was created with.
+            self.loaded_model(np.zeros((imgsz, imgsz, 3), dtype=np.uint8),
+                              device=self.main_window.device)
             self.class_names = list(self.loaded_model.names.values())
 
             # Check for unmapped classes

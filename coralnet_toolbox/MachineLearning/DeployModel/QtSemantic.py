@@ -241,8 +241,11 @@ class Semantic(Base):
                 imgsz = 640
 
             self.imgsz = imgsz
-            # Warm up the model
-            self.loaded_model(np.zeros((imgsz, imgsz, 3), dtype=np.uint8))
+            # Warm up the model.  Pass the device so the predictor is created
+            # on it now; ultralytics silently rebuilds the predictor (reload +
+            # fuse) on the first call whose device= differs from creation.
+            self.loaded_model(np.zeros((imgsz, imgsz, 3), dtype=np.uint8),
+                              device=self.main_window.device)
 
             if self.loaded_model.task != 'semantic':
                 # Force the task to semantic if the model was loaded with a different task (e.g., due to old YOLO version)

@@ -407,6 +407,10 @@ class BatchInferenceWorker(QThread):
                     conf=conf,
                     iou=iou,
                     max_det=max_det,
+                    # Ultralytics defaults to batch=1, which turns a list of N
+                    # images into N sequential inferences; pass the real batch
+                    # size so the GPU sees one batched forward pass.
+                    batch=len(batch),
                     device=self.device,
                     retina_masks=self._is_semantic,
                     half=True,
