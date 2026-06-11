@@ -179,6 +179,25 @@ class FastImageItem(QGraphicsItem):
                 painter.drawImage(0, 0, self._readonly_cache)
 
 
+class PhantomGroupItem(QGraphicsPathItem):
+    """Merged phantom-layer path with a level-of-detail short-cut.
+
+    Below LOD_PEN_CUTOFF (scene px -> screen px scale) the cosmetic outline is
+    invisible anyway, but stroking thousands of subpaths dominates paint time —
+    so skip the pen entirely and draw fill only.
+    """
+    LOD_PEN_CUTOFF = 0.25
+
+    def paint(self, painter, option, widget=None):
+        lod = option.levelOfDetailFromTransform(painter.worldTransform())
+        if lod < self.LOD_PEN_CUTOFF:
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(self.brush())
+            painter.drawPath(self.path())
+        else:
+            super().paint(painter, option, widget)
+
+
 class BaseCanvas(QGraphicsView):
     """
     Lightweight viewport for image display with native zoom/pan navigation.
@@ -292,7 +311,18 @@ class BaseCanvas(QGraphicsView):
             QPainter.TextAntialiasing |
             QPainter.SmoothPixmapTransform
         )
-    
+
+        # During pan/zoom/rotate, drop expensive render hints; restore shortly
+        # after the interaction goes idle.
+        self._quality_hints = (QPainter.Antialiasing |
+                               QPainter.TextAntialiasing |
+                               QPainter.SmoothPixmapTransform)
+        self._fast_hints_active = False
+        self._interaction_idle_timer = QTimer(self)
+        self._interaction_idle_timer.setSingleShot(True)
+        self._interaction_idle_timer.setInterval(150)
+        self._interaction_idle_timer.timeout.connect(self._restore_quality_hints)
+
     # ==================== Navigation Events ====================
     
     def wheelEvent(self, event: QMouseEvent):
@@ -302,6 +332,8 @@ class BaseCanvas(QGraphicsView):
     def _wheel_event_impl(self, event: QMouseEvent):
         if not self.active_image:
             return
+
+        self._enter_fast_paint_mode()
 
         # Determine zoom direction
         if event.angleDelta().y() > 0:
@@ -375,6 +407,7 @@ class BaseCanvas(QGraphicsView):
     def _mouse_move_event_impl(self, event: QMouseEvent):
         # Handle rotation
         if self._rotate_active and self.active_image:
+            self._enter_fast_paint_mode()
             center = self.viewport().rect().center()
             dx = event.pos().x() - center.x()
             dy = event.pos().y() - center.y()
@@ -395,7 +428,9 @@ class BaseCanvas(QGraphicsView):
             if not self.active_image:
                 self._pan_active = False
                 return
-            
+
+            self._enter_fast_paint_mode()
+
             delta = event.pos() - self._pan_start
             self._pan_start = event.pos()
             
@@ -781,7 +816,19 @@ class BaseCanvas(QGraphicsView):
         if self.active_image:
             center = self.mapToScene(self.viewport().rect().center())
             self.viewNavigated.emit(center.x(), center.y(), self.zoom_factor)
-    
+
+    def _enter_fast_paint_mode(self):
+        """Temporarily disable AA / smooth sampling for fluid interaction."""
+        if not self._fast_hints_active:
+            self._fast_hints_active = True
+            self.setRenderHints(QPainter.TextAntialiasing)
+        self._interaction_idle_timer.start()
+
+    def _restore_quality_hints(self):
+        self._fast_hints_active = False
+        self.setRenderHints(self._quality_hints)
+        self.viewport().update()
+
     # ==================== Read-Only Annotation Overlays (Phase 6) ====================
     
     def _render_annotations_readonly(self, annotations):
@@ -849,7 +896,7 @@ class BaseCanvas(QGraphicsView):
             # WindingFill prevents overlapping shapes from cancelling each other
             # (the default even-odd rule punches holes where annotations overlap)
             merged_path.setFillRule(Qt.WindingFill)
-            item = QGraphicsPathItem(merged_path)
+            item = PhantomGroupItem(merged_path)
             item.setBrush(QBrush(fill_color))
             item.setPen(pen)
             # Cache the rendered group at device resolution: panning then blits a
