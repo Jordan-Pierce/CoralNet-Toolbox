@@ -97,6 +97,13 @@ class BatchInferenceTask(ABC):
     def sam_enabled(self) -> bool:
         return False
 
+    def live_preview(self) -> bool:
+        checkbox = getattr(self.dialog, "live_preview_checkbox", None)
+        try:
+            return bool(checkbox is None or checkbox.isChecked())
+        except Exception:
+            return True
+
     def worker_kwargs(self, items: list[InferenceItem]) -> dict[str, Any]:
         return {
             "model": getattr(self.model_dialog, "loaded_model", None),
@@ -108,6 +115,7 @@ class BatchInferenceTask(ABC):
             "imgsz": getattr(self.model_dialog, "imgsz", None),
             "is_semantic": False,
             "sam_enabled": self.sam_enabled(),
+            "live_preview": self.live_preview(),
         }
 
     def create_worker(self, worker_cls: type, items: list[InferenceItem], parent: Any = None):

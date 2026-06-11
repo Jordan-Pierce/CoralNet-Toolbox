@@ -59,7 +59,8 @@ class BatchInferenceWorker(QThread):
 
     def __init__(self, model, items, initial_thresholds,
                  device=None, task='detect', batch_size=16, imgsz=None,
-                 is_semantic=False, sam_enabled=False, parent=None):
+                 is_semantic=False, sam_enabled=False, live_preview=True,
+                 parent=None):
         super().__init__(parent)
         self.model = model
         self.items = list(items)
@@ -72,6 +73,10 @@ class BatchInferenceWorker(QThread):
         # _apply_sam_to_cache can run SAM on the tile crop (tile-space boxes
         # + tile orig_img) and then remap boxes and masks together afterwards.
         self._sam_enabled = bool(sam_enabled)
+        # Live preview gates the worker on each painted video frame.  When
+        # off, video frames batch like images and previews are throttled.
+        self._live_preview = bool(live_preview)
+        self._last_preview_time = 0.0
         self._is_running = True
         self._waiting_for_ui = False
         self._mutex = QMutex()
@@ -147,11 +152,12 @@ class BatchInferenceWorker(QThread):
         Video items run one at a time (per-frame UI gate); consecutive
         non-video items batch up to _batch_size.
         """
-        if self.items[i].is_video:
+        if self.items[i].is_video and self._live_preview:
             return i + 1
         end = i
+        is_video = self.items[i].is_video
         while (end < min(i + self._batch_size, total)
-               and not self.items[end].is_video):
+               and self.items[end].is_video == is_video):
             end += 1
         return max(end, i + 1)
 
@@ -334,7 +340,7 @@ class BatchInferenceWorker(QThread):
                 inputs = []
                 video_q_images = []
                 decode_start = time.perf_counter()
-                if batch[0].is_video:
+                if batch[0].is_video and self._live_preview:
                     for item in batch:
                         try:
                             model_input, q_image = self._decode_video_source(item)
@@ -342,6 +348,28 @@ class BatchInferenceWorker(QThread):
                             video_q_images.append(q_image)
                         except Exception:
                             inputs.append(np.zeros((640, 640, 3), dtype=np.uint8))
+                            video_q_images.append(None)
+                elif batch[0].is_video:
+                    # Fast mode: sequential BGR decode on this thread (the
+                    # capture is not thread-safe), preview at most ~10 Hz.
+                    for item in batch:
+                        bgr = None
+                        try:
+                            bgr = item.raster.get_bgr_frame(item.source)
+                        except Exception:
+                            bgr = None
+                        if bgr is None:
+                            bgr = np.zeros((640, 640, 3), dtype=np.uint8)
+                        inputs.append(bgr)
+                        now = time.monotonic()
+                        if now - self._last_preview_time >= 0.1:
+                            self._last_preview_time = now
+                            try:
+                                from coralnet_toolbox.Rasters.VideoRaster import VideoRaster
+                                video_q_images.append(VideoRaster._bgr_to_qimage(bgr))
+                            except Exception:
+                                video_q_images.append(None)
+                        else:
                             video_q_images.append(None)
                 else:
                     futures = None
@@ -371,7 +399,11 @@ class BatchInferenceWorker(QThread):
                 decode_seconds = time.perf_counter() - decode_start
 
                 # Run YOLO on the mini-batch
-                model_source = self._prepare_video_input(inputs[0]) if len(batch) == 1 and batch[0].is_video else inputs
+                # The BCHW tensor path expects RGB from get_frame_for_inference;
+                # fast-mode video uses BGR ndarrays, which YOLO handles itself.
+                use_tensor_path = (len(batch) == 1 and batch[0].is_video
+                                   and self._live_preview)
+                model_source = self._prepare_video_input(inputs[0]) if use_tensor_path else inputs
                 inference_start = time.perf_counter()
                 _model_kwargs = dict(
                     conf=conf,
@@ -467,7 +499,7 @@ class BatchInferenceWorker(QThread):
                         ))
 
                         # Gate after video frames to prevent queue buildup
-                        if item.is_video:
+                        if item.is_video and self._live_preview:
                             self._waiting_for_ui = True
 
                     except Exception as e:
@@ -848,12 +880,18 @@ class BatchInferenceDialog(QDialog):
         self.video_stride_spin.setValue(1)
         stride_h.addWidget(self.video_stride_spin)
 
+        # Live preview toggle — unchecked trades the per-frame canvas
+        # preview for batched GPU inference (much faster on long ranges).
+        self.live_preview_checkbox = QCheckBox("Live preview (uncheck for max speed)")
+        self.live_preview_checkbox.setChecked(True)
+
         # Reset button
         self.reset_video_range_btn = QPushButton("Reset to Full Video")
 
         video_layout.addRow("Start Frame:", start_h)
         video_layout.addRow("End Frame:", end_h)
         video_layout.addRow("Every N Frames:", stride_h)
+        video_layout.addRow("", self.live_preview_checkbox)
         video_layout.addRow("", self.reset_video_range_btn)
 
         video_box.setLayout(video_layout)
@@ -1892,7 +1930,10 @@ class BatchInferenceDialog(QDialog):
                 # _prepare_scene_for_streaming cleared the scene.  They reload
                 # correctly via _display_video_frame when inference pauses/stops.
                 try:
-                    if getattr(aw, '_base_image_item', None) is not None:
+                    live = (getattr(self, 'live_preview_checkbox', None) is None
+                            or self.live_preview_checkbox.isChecked())
+                    if ((live or inf_result.q_image is not None)
+                            and getattr(aw, '_base_image_item', None) is not None):
                         paths_data = []
                         if inf_result.yolo_result is not None:
                             model_type = getattr(self._active_model_dialog, 'task', 'detect')
