@@ -359,6 +359,18 @@ class BatchInferenceWorker(QThread):
                                 boundary_tolerance=boundary_tolerance,
                             )
 
+                        # Release the full-resolution source pixels unless the
+                        # SAM post-pass needs them.  SAM skips video frames, so
+                        # those can always be freed.  Semantic results are
+                        # consumed immediately in on_item_processed and are
+                        # left untouched here out of caution.
+                        if (not self._is_semantic
+                                and (not self._sam_enabled or item.is_video)):
+                            try:
+                                result.orig_img = None
+                            except Exception:
+                                pass
+
                         # Build a QImage from the raw BGR frame (video items only)
                         q_img = None
                         if item.is_video:
