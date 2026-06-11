@@ -42,14 +42,30 @@ class MaskGraphicsItem(QGraphicsItem):
         return QRectF(0, 0, width, height)
 
     def paint(self, painter, option, widget):
-        if self.mask_annotation.qimage:
-            # Apply transparency at render time for instant updates
-            transparency = self.mask_annotation.get_current_transparency()
+        qimg = self.mask_annotation.qimage
+        if not qimg:
+            return
+        # Apply transparency at render time for instant updates
+        transparency = self.mask_annotation.get_current_transparency()
+        if transparency < 255:
+            painter.setOpacity(transparency / 255.0)
+        # Only draw the exposed region (ItemUsesExtendedStyleOption is set in
+        # __init__, so exposedRect is the real dirty rect, not the full bounds).
+        # 1px outset avoids seams from rect alignment.
+        exposed = option.exposedRect.toAlignedRect().adjusted(-1, -1, 1, 1)
+        exposed = exposed.intersected(qimg.rect())
+        if exposed.isEmpty():
             if transparency < 255:
-                painter.setOpacity(transparency / 255.0)
-            painter.drawImage(0, 0, self.mask_annotation.qimage)
-            if transparency < 255:
-                painter.setOpacity(1.0)  # Reset opacity for other drawing operations
+                painter.setOpacity(1.0)
+            return
+        # Class-ID masks must not be bilinearly blended: nearest-neighbor is both
+        # correct (no mixed colors at label boundaries) and much faster.
+        prev_smooth = painter.testRenderHint(QPainter.SmoothPixmapTransform)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, False)
+        painter.drawImage(exposed, qimg, exposed)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, prev_smooth)
+        if transparency < 255:
+            painter.setOpacity(1.0)  # Reset opacity for other drawing operations
 
 
 class MaskAnnotation(Annotation):

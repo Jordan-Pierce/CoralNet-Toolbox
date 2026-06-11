@@ -222,7 +222,14 @@ class AnnotationWindow(BaseCanvas):
         self.transparency_slider.setValue(128)
         # Let the annotation transparency slider naturally expand
         self.transparency_slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.transparency_slider.valueChanged.connect(self.update_label_transparency)
+        self.transparency_slider.valueChanged.connect(self._on_transparency_slider_changed)
+        # Debounce: applying transparency is O(N annotations) + full phantom rebuild,
+        # so coalesce rapid slider ticks into one apply ~75 ms after the last tick.
+        self._pending_transparency = self.transparency_slider.value()
+        self._transparency_debounce = QTimer(self)
+        self._transparency_debounce.setSingleShot(True)
+        self._transparency_debounce.setInterval(75)
+        self._transparency_debounce.timeout.connect(self._apply_pending_transparency)
 
         # --- Positional/Dimensional Labels ---
         self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
@@ -582,10 +589,18 @@ class AnnotationWindow(BaseCanvas):
     def on_z_dynamic_toggled(self, checked):
         """Handle z-dynamic scaling button toggle."""
         self.toggle_dynamic_z_scaling(checked)
-        
+
         # Sync to all context matrix canvases
         if hasattr(self.main_window, 'context_matrix') and self.main_window.context_matrix:
             self.main_window.context_matrix.sync_z_dynamic_scaling_to_all_canvases(checked)
+
+    def _on_transparency_slider_changed(self, value):
+        """Debounced slider handler; the heavy apply runs after the drag pauses."""
+        self._pending_transparency = value
+        self._transparency_debounce.start()
+
+    def _apply_pending_transparency(self):
+        self.update_label_transparency(self._pending_transparency)
 
     def update_label_transparency(self, value):
         """Update the transparency for all annotations in the current image."""

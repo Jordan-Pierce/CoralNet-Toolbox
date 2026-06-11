@@ -852,6 +852,10 @@ class BaseCanvas(QGraphicsView):
             item = QGraphicsPathItem(merged_path)
             item.setBrush(QBrush(fill_color))
             item.setPen(pen)
+            # Cache the rendered group at device resolution: panning then blits a
+            # pixmap instead of re-stroking/re-filling every subpath per frame.
+            # Qt invalidates the cache automatically on zoom/rotation.
+            item.setCacheMode(QGraphicsItem.DeviceCoordinateCache)
             item.setFlag(QGraphicsItem.ItemIsSelectable, False)
             item.setFlag(QGraphicsItem.ItemIsMovable, False)
             item.setAcceptHoverEvents(False)
