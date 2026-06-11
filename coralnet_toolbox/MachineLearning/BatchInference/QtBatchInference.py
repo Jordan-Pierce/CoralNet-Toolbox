@@ -1,7 +1,11 @@
 import time
+import threading
 import warnings
 
 import os
+from concurrent.futures import ThreadPoolExecutor
+
+import cv2
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QMutex, QMutexLocker
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QVBoxLayout,
@@ -71,6 +75,8 @@ class BatchInferenceWorker(QThread):
         self._is_running = True
         self._waiting_for_ui = False
         self._mutex = QMutex()
+        # Serialises rasterio work-area reads from the decode pool.
+        self._rasterio_lock = threading.Lock()
         self._thresholds = InferenceThresholds.from_mapping(initial_thresholds)
         self._timing = BatchInferenceTiming()
 
@@ -116,6 +122,38 @@ class BatchInferenceWorker(QThread):
             return item.raster.get_work_area_data(item.source, as_format='BGR')
         except Exception:
             return np.zeros((640, 640, 3), dtype=np.uint8)
+
+    def _decode_source_eager(self, item):
+        """Pool-side decode of one NON-VIDEO item to a BGR array.
+
+        Decoding file paths here (instead of inside YOLO's predictor) lets
+        several images decode in parallel and overlap the GPU call for the
+        previous batch.  rasterio handles are not thread-safe, so work-area
+        reads are serialised; they still overlap GPU work.
+        """
+        try:
+            if isinstance(item.source, str):
+                img = cv2.imread(item.source)
+                # Fallback: let YOLO try the path itself (e.g. exotic TIFFs).
+                return img if img is not None else item.source
+            with self._rasterio_lock:
+                return item.raster.get_work_area_data(item.source, as_format='BGR')
+        except Exception:
+            return np.zeros((640, 640, 3), dtype=np.uint8)
+
+    def _batch_bounds(self, i, total):
+        """Exclusive end index of the batch starting at items[i].
+
+        Video items run one at a time (per-frame UI gate); consecutive
+        non-video items batch up to _batch_size.
+        """
+        if self.items[i].is_video:
+            return i + 1
+        end = i
+        while (end < min(i + self._batch_size, total)
+               and not self.items[end].is_video):
+            end += 1
+        return max(end, i + 1)
 
     def _decode_video_source(self, item):
         """Decode a video frame into a model-ready tensor and preview QImage."""
@@ -257,6 +295,9 @@ class BatchInferenceWorker(QThread):
                 except Exception:
                     pass
             self._warmup_model()
+            decode_pool = ThreadPoolExecutor(
+                max_workers=min(8, (os.cpu_count() or 4)))
+            prefetch = None  # (start_idx, end_idx, [futures]) for the next batch
             total = len(self.items)
             processed = 0
             i = 0
@@ -284,37 +325,49 @@ class BatchInferenceWorker(QThread):
                 finally:
                     del locker
 
-                # Determine the batch boundary:
-                # - Video items process one at a time (gated) for smooth playback.
-                # - Consecutive non-video items are batched up to _batch_size for throughput.
-                if self.items[i].is_video:
-                    batch_end = i + 1
-                else:
-                    batch_end = i
-                    while (batch_end < min(i + self._batch_size, total)
-                           and not self.items[batch_end].is_video):
-                        batch_end += 1
-                    if batch_end == i:
-                        batch_end = i + 1
-
+                batch_end = self._batch_bounds(i, total)
                 batch = self.items[i:batch_end]
 
-                # Decode each source in the batch (file path, frame, or tile)
+                # Decode the batch.  Non-video batches may already be in
+                # flight from last iteration's prefetch; video frames decode
+                # synchronously here (the VideoCapture is not thread-safe).
                 inputs = []
                 video_q_images = []
                 decode_start = time.perf_counter()
-                for item in batch:
-                    try:
-                        if item.is_video:
+                if batch[0].is_video:
+                    for item in batch:
+                        try:
                             model_input, q_image = self._decode_video_source(item)
                             inputs.append(model_input)
                             video_q_images.append(q_image)
-                        else:
-                            inputs.append(self._decode_source(item))
+                        except Exception:
+                            inputs.append(np.zeros((640, 640, 3), dtype=np.uint8))
                             video_q_images.append(None)
-                    except Exception:
-                        inputs.append(np.zeros((640, 640, 3), dtype=np.uint8))
+                else:
+                    futures = None
+                    if (prefetch is not None
+                            and prefetch[0] == i and prefetch[1] == batch_end):
+                        futures = prefetch[2]
+                    if futures is None:
+                        futures = [decode_pool.submit(self._decode_source_eager, item)
+                                   for item in batch]
+                    for future in futures:
+                        try:
+                            inputs.append(future.result())
+                        except Exception:
+                            inputs.append(np.zeros((640, 640, 3), dtype=np.uint8))
                         video_q_images.append(None)
+                prefetch = None
+
+                # Kick off decode of the next batch so it overlaps this
+                # batch's GPU call.
+                if batch_end < total and not self.items[batch_end].is_video:
+                    next_end = self._batch_bounds(batch_end, total)
+                    prefetch = (
+                        batch_end, next_end,
+                        [decode_pool.submit(self._decode_source_eager, item)
+                         for item in self.items[batch_end:next_end]],
+                    )
                 decode_seconds = time.perf_counter() - decode_start
 
                 # Run YOLO on the mini-batch
@@ -439,6 +492,10 @@ class BatchInferenceWorker(QThread):
             import traceback
             traceback.print_exc()
         finally:
+            try:
+                decode_pool.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
             try:
                 self.timingSummary.emit(self._timing.summary())
             except Exception:
