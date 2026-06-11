@@ -293,13 +293,11 @@ class BatchInferenceWorker(QThread):
     def run(self):
         """Inference loop executed on the worker thread."""
         try:
-            if torch is not None:
-                try:
-                    # imgsz is fixed for the whole run, so autotuned conv
-                    # algorithms are a free 5-15% on CUDA.
-                    torch.backends.cudnn.benchmark = True
-                except Exception:
-                    pass
+            # NOTE: do NOT set torch.backends.cudnn.benchmark here.  Ultralytics
+            # predicts with rect=True, so the input tensor shape changes with
+            # every image aspect ratio and batch size; cuDNN then re-runs its
+            # exhaustive autotune per new shape (~10-17 s each on an RTX 5090),
+            # which made batch runs ~200x slower than single-image inference.
             self._warmup_model()
             decode_pool = ThreadPoolExecutor(
                 max_workers=min(8, (os.cpu_count() or 4)))
