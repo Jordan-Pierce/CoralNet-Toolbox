@@ -4,6 +4,8 @@ pyqtgraph
 ujson
 blosc2
 rasterio
+geopandas
+pyogrio
 pycocotools
 ultralytics
 lightly-train[ultralytics]

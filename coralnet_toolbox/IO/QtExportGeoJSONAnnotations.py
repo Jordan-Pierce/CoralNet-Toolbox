@@ -1,11 +1,14 @@
 import warnings
 
 import os
-import ujson as json
 from datetime import datetime
 
-from rasterio.warp import transform as warp_transform
-from rasterio.crs import CRS
+import numpy as np
+
+import geopandas as gpd
+import pandas as pd
+from shapely.geometry import Point, Polygon, MultiPolygon
+from shapely.ops import transform as shapely_transform
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor
@@ -22,9 +25,30 @@ from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotati
 from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
-from coralnet_toolbox.Icons import get_icon, get_window_icon
+from coralnet_toolbox.Icons import get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Format registry
+# ----------------------------------------------------------------------------------------------------------------------
+# Each entry: key -> (display label, file extension, GDAL/pyogrio driver or None for parquet)
+# "mixed_ok" formats can hold Points and Polygons in one file/layer; the others need
+# geometry-type splitting (separate GeoPackage layers, or suffixed files).
+
+GEO_FORMATS = {
+    "geojson": ("GeoJSON", ".geojson", "GeoJSON"),
+    "parquet": ("GeoParquet", ".parquet", None),
+    "gpkg":    ("GeoPackage", ".gpkg", "GPKG"),
+    "fgb":     ("FlatGeobuf", ".fgb", "FlatGeobuf"),
+    "shp":     ("Shapefile", ".shp", "ESRI Shapefile"),
+}
+
+# Formats that happily store mixed geometry types in a single file.
+MIXED_GEOMETRY_OK = {"geojson", "parquet"}
+
+WGS84_EPSG = 4326
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -33,6 +57,8 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 class ExportGeoJSONAnnotations(QDialog):
+    """Export annotations to geospatial vector formats (GeoJSON, GeoParquet, GeoPackage, etc.)."""
+
     def __init__(self, main_window):
         super().__init__(main_window)
         self.main_window = main_window
@@ -41,32 +67,29 @@ class ExportGeoJSONAnnotations(QDialog):
         self.annotation_window = main_window.annotation_window
 
         self.setWindowIcon(get_window_icon("coralnet.svg"))
-        self.setWindowTitle("Export Annotations to GeoJSON")
-        self.resize(400, 500)
+        self.setWindowTitle("Export Annotations to Geospatial Vector")
+        self.resize(420, 560)
 
         # Create the main layout
         self.layout = QVBoxLayout(self)
 
         # 1. Info Section
         self.setup_info_layout()
-        
-        # 2. Export Mode (Single vs Individual) & Output Path
+
+        # 2. Format + output mode (single vs individual) & output path
         self.setup_output_configuration_layout()
-        
-        # 3. Annotations Configuration
+
+        # 3. Annotations configuration
         self.setup_annotation_layout()
-        
-        # 4. Advanced Options (New: WGS84, Styles, Metadata)
+
+        # 4. Coordinate system + extra options
         self.setup_advanced_options_layout()
 
-        # 5. Label Selection
+        # 5. Label selection
         self.setup_label_layout()
-        
-        # 6. Action Buttons
-        self.setup_buttons_layout()
 
-        # Initialize UI state
-        # self.update_output_mode_ui()  # Not needed for tabs
+        # 6. Action buttons
+        self.setup_buttons_layout()
 
     def showEvent(self, event):
         """Handle the show event to refresh label list."""
@@ -80,24 +103,32 @@ class ExportGeoJSONAnnotations(QDialog):
     def setup_info_layout(self):
         """Simple information header."""
         info_label = QLabel(
-            "<b>Export Annotations to GeoJSON</b><br>"
-            "Export annotations for all rasterio-compatible images (e.g., .tif, .jpg, .png). "
-            "Non-georeferenced images can export in pixel coordinates if allowed. "
-            "Choose between a single merged file or individual files."
+            "<b>Export Annotations to Geospatial Vector</b><br>"
+            "Export annotations for rasterio-compatible images (e.g., .tif, .jpg, .png) to a GIS "
+            "vector format. Georeferenced images export in real-world coordinates; non-georeferenced "
+            "images can export in pixel coordinates. Choose a single merged file or one file per image."
         )
         info_label.setWordWrap(True)
         info_label.setStyleSheet("margin-bottom: 5px;")
-        info_label.setToolTip(
-            "Requires images with valid raster data. Use advanced options for non-georeferenced handling."
-        )
         self.layout.addWidget(info_label)
 
     def setup_output_configuration_layout(self):
-        """Setup the export mode and dynamic output file/folder selection."""
-        groupbox = QGroupBox("Export Configuration")
+        """Setup the format selector, export mode and output file/folder selection."""
+        groupbox = QGroupBox("Output Configuration")
         layout = QVBoxLayout()
 
-        # Tab Widget for modes
+        # Format selector
+        format_layout = QHBoxLayout()
+        format_layout.addWidget(QLabel("Output format:"))
+        self.format_combo = QComboBox()
+        for key, (label, ext, _driver) in GEO_FORMATS.items():
+            self.format_combo.addItem(f"{label} ({ext})", key)
+        self.format_combo.currentIndexChanged.connect(self.on_format_changed)
+        format_layout.addWidget(self.format_combo)
+        format_layout.addStretch()
+        layout.addLayout(format_layout)
+
+        # Tab Widget for single vs multiple
         self.tab_widget = QTabWidget()
 
         # Single File Tab
@@ -129,7 +160,7 @@ class ExportGeoJSONAnnotations(QDialog):
         self.layout.addWidget(groupbox)
 
     def setup_annotation_layout(self):
-        """Setup annotation types in a vertical layout in the requested order."""
+        """Setup annotation types in a vertical layout."""
         groupbox = QGroupBox("Annotations to Include")
         layout = QVBoxLayout()
 
@@ -166,43 +197,33 @@ class ExportGeoJSONAnnotations(QDialog):
         self.layout.addWidget(groupbox)
 
     def setup_advanced_options_layout(self):
-        """Setup advanced processing options."""
-        groupbox = QGroupBox("Advanced Options")
+        """Setup coordinate system selection and extra output options."""
+        groupbox = QGroupBox("Options")
         layout = QVBoxLayout()
 
-        # WGS84 Reprojection
-        self.wgs84_checkbox = QCheckBox("Output coordinates in WGS84 (lat/lon)")
-        self.wgs84_checkbox.setChecked(True)
-        self.wgs84_checkbox.setToolTip(
-            "If checked, coordinates will be transformed to EPSG:4326 (Latitude/Longitude).\n"
-            "This is required for compatibility with web maps (Leaflet, Mapbox, etc.)."
+        # Coordinate system: collapses the old WGS84 / allow-pixel / force-pixel checkboxes
+        # into a single, unambiguous choice.
+        coord_layout = QHBoxLayout()
+        coord_layout.addWidget(QLabel("Coordinate system:"))
+        self.coord_combo = QComboBox()
+        self.coord_combo.addItem("WGS84 (lat/lon)", "wgs84")
+        self.coord_combo.addItem("Native raster CRS", "native")
+        self.coord_combo.addItem("Pixel coordinates", "pixel")
+        self.coord_combo.setToolTip(
+            "WGS84 (lat/lon): reproject everything to EPSG:4326 for web maps (Leaflet/Mapbox).\n"
+            "Native raster CRS: keep each image's own coordinate reference system.\n"
+            "Pixel coordinates: ignore georeferencing and export raw image-space coordinates."
         )
-        layout.addWidget(self.wgs84_checkbox)
-
-        # Pixel Coordinates for Non-Georeferenced
-        self.pixel_checkbox = QCheckBox("Allow pixel coordinates for non-georeferenced images")
-        self.pixel_checkbox.setChecked(False)
-        self.pixel_checkbox.setToolTip(
-            "If checked, images without CRS will export coordinates in pixel space.\n"
-            "Otherwise, such images are skipped."
-        )
-        layout.addWidget(self.pixel_checkbox)
-
-        # Force Pixel Coordinates Even If CRS Exists
-        self.force_pixel_checkbox = QCheckBox("Force pixel coordinates (ignore CRS)")
-        self.force_pixel_checkbox.setChecked(False)
-        self.force_pixel_checkbox.setToolTip(
-            "If checked, exporter will use raw pixel coordinates for all images and ignore any image CRS.\n"
-            "This is useful when you need purely image-space coordinates rather than georeferenced coordinates."
-        )
-        layout.addWidget(self.force_pixel_checkbox)
+        coord_layout.addWidget(self.coord_combo)
+        coord_layout.addStretch()
+        layout.addLayout(coord_layout)
 
         # Styling
-        self.style_checkbox = QCheckBox("Include label color/style in output")
+        self.style_checkbox = QCheckBox("Include label color/style fields")
         self.style_checkbox.setChecked(True)
         self.style_checkbox.setToolTip(
-            "If checked, 'marker-color', 'stroke', and 'fill' properties will be added \n"
-            "based on the Label's color assignment."
+            "Adds 'marker-color', 'stroke', and 'fill' fields from the label color.\n"
+            "These render automatically in GeoJSON web maps; in other formats they are plain columns."
         )
         layout.addWidget(self.style_checkbox)
 
@@ -210,7 +231,7 @@ class ExportGeoJSONAnnotations(QDialog):
         self.metadata_checkbox = QCheckBox("Include extra metadata (area, export timestamp)")
         self.metadata_checkbox.setChecked(True)
         self.metadata_checkbox.setToolTip(
-            "If checked, calculates pixel area and adds timestamps/annotator info."
+            "Adds a pixel-area field and an export timestamp to each feature."
         )
         layout.addWidget(self.metadata_checkbox)
 
@@ -243,14 +264,14 @@ class ExportGeoJSONAnnotations(QDialog):
     def setup_buttons_layout(self):
         """Standard Export/Cancel buttons."""
         button_layout = QHBoxLayout()
-        button_layout.addStretch() 
+        button_layout.addStretch()
 
-        self.export_button = QPushButton("Export GeoJSON")
+        self.export_button = QPushButton("Export")
         self.export_button.setObjectName("primaryButton")
-        self.export_button.clicked.connect(self.export_geojson)
+        self.export_button.clicked.connect(self.export_data)
         self.export_button.setMinimumWidth(120)
         self.export_button.setMinimumHeight(30)
-        
+
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.reject)
 
@@ -263,9 +284,23 @@ class ExportGeoJSONAnnotations(QDialog):
     # UI Interaction Methods
     # ----------------------------------------------------------------------
 
-    def update_output_mode_ui(self):
-        """Not used with tabs."""
-        pass
+    def current_format(self):
+        """Return (key, label, ext, driver) for the selected output format."""
+        key = self.format_combo.currentData()
+        label, ext, driver = GEO_FORMATS[key]
+        return key, label, ext, driver
+
+    def current_coord_mode(self):
+        """Return the selected coordinate-system mode key: 'wgs84' | 'native' | 'pixel'."""
+        return self.coord_combo.currentData()
+
+    def on_format_changed(self):
+        """Keep the single-file output path's extension in sync with the chosen format."""
+        _key, _label, ext, _driver = self.current_format()
+        current = self.output_file_edit.text().strip()
+        if current:
+            base, _old_ext = os.path.splitext(current)
+            self.output_file_edit.setText(base + ext)
 
     def browse_output_dir(self):
         """Directory chooser for output."""
@@ -274,11 +309,15 @@ class ExportGeoJSONAnnotations(QDialog):
             self.output_dir_edit.setText(dir_path)
 
     def browse_output_file(self):
-        """File chooser for output."""
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Select Output File", "", "GeoJSON Files (*.geojson);;All Files (*)"
-        )
+        """File chooser for output, filtered to the selected format."""
+        _key, label, ext, _driver = self.current_format()
+        file_filter = f"{label} (*{ext});;All Files (*)"
+        file_path, _ = QFileDialog.getSaveFileName(self, "Select Output File", "", file_filter)
         if file_path:
+            # Ensure the chosen extension is present.
+            base, existing_ext = os.path.splitext(file_path)
+            if existing_ext.lower() != ext:
+                file_path = base + ext
             self.output_file_edit.setText(file_path)
 
     def update_label_selection_list(self):
@@ -288,7 +327,7 @@ class ExportGeoJSONAnnotations(QDialog):
             item = QListWidgetItem(f"{label.short_label_code} - {label.long_label_code}")
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Checked)
-            item.setData(Qt.UserRole, label) 
+            item.setData(Qt.UserRole, label)
             self.label_list_widget.addItem(item)
 
     def toggle_labels(self, select_all):
@@ -323,36 +362,13 @@ class ExportGeoJSONAnnotations(QDialog):
             pass
         return "#555555"  # Fallback gray
 
-    def get_polygon_area_pixels(self, rings):
-        """Calculate polygon area using shoelace formula, accounting for holes."""
-        if not rings or len(rings[0]) < 3:
-            return 0.0
-        # Exterior area
-        ext_area = self._shoelace_area(rings[0])
-        # Subtract hole areas
-        hole_area = sum(self._shoelace_area(hole) for hole in rings[1:])
-        return ext_area - hole_area
-
-    def _shoelace_area(self, coords):
-        """Helper to compute area of a single ring using shoelace formula."""
-        n = len(coords)
-        if n < 3:
-            return 0.0
-        area = 0.0
-        for i in range(n):
-            j = (i + 1) % n
-            area += coords[i][0] * coords[j][1]
-            area -= coords[j][0] * coords[i][1]
-        return abs(area) / 2.0
-
     def get_annotations_for_image(self, image_path, selected_label_codes):
         """Get filtered annotations for a specific image."""
-        annotations = []
         raw_annotations = self.annotation_window.get_image_annotations(image_path)
-        
         if not raw_annotations:
             return []
 
+        annotations = []
         for annotation in raw_annotations:
             if annotation.label.short_label_code not in selected_label_codes:
                 continue
@@ -369,17 +385,17 @@ class ExportGeoJSONAnnotations(QDialog):
         return annotations
 
     def convert_annotation_to_polygon(self, annotation):
-        """Convert any annotation type to a list of pixel-coordinate rings (for GeoJSON compatibility)."""
+        """Convert any annotation type to a list of pixel-coordinate rings."""
         if isinstance(annotation, PatchAnnotation):
             size = annotation.annotation_size / 2
             x, y = annotation.center_xy.x(), annotation.center_xy.y()
-            exterior = [(x - size, y - size), (x + size, y - size), 
+            exterior = [(x - size, y - size), (x + size, y - size),
                         (x + size, y + size), (x - size, y + size)]
             return [exterior]
 
         elif isinstance(annotation, RectangleAnnotation):
             tl, br = annotation.top_left, annotation.bottom_right
-            exterior = [(tl.x(), tl.y()), (br.x(), tl.y()), 
+            exterior = [(tl.x(), tl.y()), (br.x(), tl.y()),
                         (br.x(), br.y()), (tl.x(), br.y())]
             return [exterior]
 
@@ -391,124 +407,48 @@ class ExportGeoJSONAnnotations(QDialog):
 
         return []
 
-    def transform_coordinates(self, coords, src_transform, src_crs):
-        """Transform coordinates from pixel space to geographic coordinates."""
-        # If user requested forcing pixel coordinates, always return raw pixel coords
-        if getattr(self, 'force_pixel_checkbox', None) and self.force_pixel_checkbox.isChecked():
-            return coords
+    def annotation_to_pixel_geometry(self, annotation, as_point):
+        """Build a shapely geometry in pixel space for an annotation, or None if degenerate."""
+        if as_point and isinstance(annotation, PatchAnnotation):
+            return Point(annotation.center_xy.x(), annotation.center_xy.y())
 
-        # Allow pixel coordinates only when raster has no CRS and the user enabled that option
-        if not src_crs and self.pixel_checkbox.isChecked():
-            return coords
-
-        # 1. Pixels to Source CRS
-        projected_coords = []
-        for x, y in coords:
-            wx, wy = src_transform * (x, y)
-            projected_coords.append((wx, wy))
-
-        # 2. Source CRS to WGS84 (if requested)
-        export_wgs84 = getattr(self, '_export_use_wgs84', self.wgs84_checkbox.isChecked())
-        if export_wgs84:
-            if not src_crs:
-                # World-file JPGs can have an affine transform but no CRS.
-                # Keep the affine/world coordinates instead of failing export.
-                return projected_coords
-
-            # Unzip for batch processing
-            xs, ys = zip(*projected_coords)
-            
-            try:
-                # Perform the warp
-                wgs84_crs = CRS.from_epsg(4326)
-                txs, tys = warp_transform(src_crs, wgs84_crs, xs, ys)
-                return list(zip(txs, tys))
-            except Exception as e:
-                raise ValueError(f"Reprojection failed: {str(e)}")
-        
-        return projected_coords
-
-    def create_geojson_feature(self, annotation, image_path, transform, crs):
-        """Create a single GeoJSON Feature dictionary with styles and metadata."""
-        
-        # Determine geometry type
-        is_point = isinstance(annotation, PatchAnnotation) and self.patch_representation_combo.currentText() == "Point"
-        
-        # Prepare coordinates (Pixels)
-        pixel_coords_lists = []  # List of lists of rings (to handle Multipolygon)
-        
         if isinstance(annotation, MultiPolygonAnnotation):
+            polys = []
             for poly in annotation.polygons:
                 rings = self.convert_annotation_to_polygon(poly)
-                if rings:
-                    pixel_coords_lists.append(rings)
-        elif is_point:
-            # For points, we treat center as single coord in a ring
-            pixel_coords_lists.append([(annotation.center_xy.x(), annotation.center_xy.y())])
-        else:
-            # Polygon/Rect/Patch-as-Poly
-            rings = self.convert_annotation_to_polygon(annotation)
-            if rings:
-                pixel_coords_lists.append(rings)
+                if rings and len(rings[0]) >= 3:
+                    polys.append(Polygon(rings[0], rings[1:]))
+            return MultiPolygon(polys) if polys else None
 
-        if not pixel_coords_lists:
+        rings = self.convert_annotation_to_polygon(annotation)
+        if not rings or len(rings[0]) < 3:
             return None
+        return Polygon(rings[0], rings[1:])
 
-        # Transform to Geographic Coordinates
-        try:
-            geo_coords_lists = []
-            for plist in pixel_coords_lists:  # plist is [ring1, ring2, ...] or for point [[point]]
-                transformed_rings = []
-                for ring in plist:
-                    geo_ring = self.transform_coordinates(ring, transform, crs)
-                    
-                    if not is_point:
-                        # Close the loop for polygons
-                        if geo_ring and geo_ring[0] != geo_ring[-1]: 
-                            geo_ring.append(geo_ring[0])
-                    
-                    transformed_rings.append(geo_ring)
-                geo_coords_lists.append(transformed_rings)
-        except ValueError:
-            return None
+    @staticmethod
+    def _affine_func(transform):
+        """Return a vectorized pixel->world function for a rasterio Affine transform."""
+        a, b, c = transform.a, transform.b, transform.c
+        d, e, f = transform.d, transform.e, transform.f
 
-        # Build Geometry Object
-        if is_point:
-            # Point
-            geometry = {
-                "type": "Point",
-                "coordinates": geo_coords_lists[0][0][0]  # First list, first ring, first point (x,y)
-            }
-        elif isinstance(annotation, MultiPolygonAnnotation):
-            # MultiPolygon
-            geometry = {
-                "type": "MultiPolygon",
-                "coordinates": geo_coords_lists  # List of [rings] for each polygon
-            }
-        else:
-            # Polygon
-            geometry = {
-                "type": "Polygon",
-                "coordinates": geo_coords_lists[0]  # [rings]
-            }
+        def fn(xs, ys, zs=None):
+            xs = np.asarray(xs, dtype=float)
+            ys = np.asarray(ys, dtype=float)
+            wx = a * xs + b * ys + c
+            wy = d * xs + e * ys + f
+            if zs is not None:
+                return wx, wy, zs
+            return wx, wy
 
-        # Build Properties
+        return fn
+
+    def build_feature_record(self, annotation, image_path):
+        """Build the attribute dict for one annotation feature."""
         props = {
             "short_label_code": annotation.label.short_label_code,
             "long_label_code": annotation.label.long_label_code,
-            "source_image": os.path.basename(image_path)
+            "source_image": os.path.basename(image_path),
         }
-
-        # Add Metadata (Area, Date)
-        if self.metadata_checkbox.isChecked():
-            # Calculate pixel area (sum of all parts)
-            total_px_area = sum(self.get_polygon_area_pixels(plist) for plist in pixel_coords_lists)
-            props["area_pixels"] = round(total_px_area, 2)
-            props["exported_at"] = datetime.now().isoformat()
-            # If annotator info exists in your annotation object, add it here:
-            # props["annotator"] = getattr(annotation, "annotator", "Unknown")
-
-        # Add Styling (SimpleStyle)
         if self.style_checkbox.isChecked():
             color_hex = self.get_label_color_hex(annotation.label)
             props["marker-color"] = color_hex
@@ -516,12 +456,130 @@ class ExportGeoJSONAnnotations(QDialog):
             props["fill"] = color_hex
             props["fill-opacity"] = 0.5
             props["stroke-width"] = 2
+        return props
 
-        return {
-            "type": "Feature",
-            "geometry": geometry,
-            "properties": props
-        }
+    def build_image_gdf(self, image_path, annotations, transform, src_crs, coord_mode):
+        """
+        Build a GeoDataFrame for a single image's annotations.
+
+        Geometries are produced in the raster's native CRS (world coordinates) for the
+        'wgs84' and 'native' modes, or in raw pixel coordinates for 'pixel' mode.
+        Returns (gdf or None, has_no_crs) where has_no_crs flags a georeferenced request
+        on a raster that lacks a CRS.
+        """
+        geoms = []
+        records = []
+        include_metadata = self.metadata_checkbox.isChecked()
+        exported_at = datetime.now().isoformat() if include_metadata else None
+        affine_fn = self._affine_func(transform) if (coord_mode != "pixel" and transform is not None) else None
+
+        for ann in annotations:
+            as_point = (isinstance(ann, PatchAnnotation)
+                        and self.patch_representation_combo.currentText() == "Point")
+            pixel_geom = self.annotation_to_pixel_geometry(ann, as_point)
+            if pixel_geom is None or pixel_geom.is_empty:
+                continue
+
+            props = self.build_feature_record(ann, image_path)
+            if include_metadata:
+                props["area_pixels"] = round(float(pixel_geom.area), 2)
+                props["exported_at"] = exported_at
+
+            geom = pixel_geom if affine_fn is None else shapely_transform(affine_fn, pixel_geom)
+            geoms.append(geom)
+            records.append(props)
+
+        if not geoms:
+            return None, False
+
+        has_no_crs = False
+        crs = None
+        if coord_mode != "pixel":
+            if src_crs is not None:
+                crs = src_crs.to_wkt()
+            else:
+                # Georeferenced request but the raster has no CRS (e.g., world-file JPG):
+                # keep world/pixel coordinates uncrs'd and let the caller warn.
+                has_no_crs = True
+
+        gdf = gpd.GeoDataFrame(records, geometry=geoms, crs=crs)
+
+        # WGS84 mode: reproject as soon as we can (only possible when a CRS is known).
+        if coord_mode == "wgs84" and gdf.crs is not None:
+            gdf = gdf.to_crs(epsg=WGS84_EPSG)
+
+        return gdf, has_no_crs
+
+    def combine_gdfs(self, gdfs, coord_mode):
+        """Concatenate per-image GeoDataFrames into one, reprojecting to a common CRS."""
+        gdfs = [g for g in gdfs if g is not None and len(g) > 0]
+        if not gdfs:
+            return None
+
+        if coord_mode == "pixel":
+            combined = pd.concat(gdfs, ignore_index=True)
+            return gpd.GeoDataFrame(combined, geometry="geometry", crs=None)
+
+        # Target CRS: WGS84 mode is already reprojected to 4326; native mode adopts
+        # the first georeferenced raster's CRS so all parts share one frame.
+        known_crs = [g.crs for g in gdfs if g.crs is not None]
+        target = known_crs[0] if known_crs else None
+
+        reprojected = []
+        for g in gdfs:
+            if target is not None and g.crs is not None and g.crs != target:
+                g = g.to_crs(target)
+            reprojected.append(g)
+
+        combined = pd.concat(reprojected, ignore_index=True)
+        return gpd.GeoDataFrame(combined, geometry="geometry", crs=target)
+
+    @staticmethod
+    def _geometry_families(gdf):
+        """Split a GeoDataFrame into {'points': gdf, 'polygons': gdf} by geometry type."""
+        geom_types = gdf.geometry.geom_type
+        families = {}
+        point_mask = geom_types.isin(["Point", "MultiPoint"])
+        if point_mask.any():
+            families["points"] = gdf[point_mask]
+        poly_mask = ~point_mask
+        if poly_mask.any():
+            families["polygons"] = gdf[poly_mask]
+        return families
+
+    def write_gdf(self, gdf, final_path, fmt_key, driver):
+        """
+        Write a GeoDataFrame to disk in the chosen format.
+
+        GeoJSON/GeoParquet store mixed geometry types directly. GeoPackage writes one
+        layer per geometry family; Shapefile/FlatGeobuf write one suffixed file per family.
+        Returns the list of paths actually written.
+        """
+        if fmt_key == "parquet":
+            gdf.to_parquet(final_path)
+            return [final_path]
+
+        if fmt_key in MIXED_GEOMETRY_OK:
+            gdf.to_file(final_path, driver=driver)
+            return [final_path]
+
+        families = self._geometry_families(gdf)
+        if len(families) <= 1:
+            gdf.to_file(final_path, driver=driver)
+            return [final_path]
+
+        written = []
+        if fmt_key == "gpkg":
+            for family, sub in families.items():
+                sub.to_file(final_path, driver=driver, layer=family)
+                written.append(f"{final_path} [{family}]")
+        else:  # shp, fgb: split into separate files
+            base, ext = os.path.splitext(final_path)
+            for family, sub in families.items():
+                part_path = f"{base}_{family}{ext}"
+                sub.to_file(part_path, driver=driver)
+                written.append(part_path)
+        return written
 
     # ----------------------------------------------------------------------
     # Main Export Execution
@@ -530,8 +588,7 @@ class ExportGeoJSONAnnotations(QDialog):
     def validate_inputs(self):
         """Check if output paths and selections are valid."""
         mode = "single" if self.tab_widget.currentIndex() == 0 else "individual"
-        
-        # Output Path Validation
+
         if mode == "single":
             if not self.output_file_edit.text().strip():
                 QMessageBox.warning(self, "Output Error", "Please select an output file.")
@@ -541,7 +598,6 @@ class ExportGeoJSONAnnotations(QDialog):
                 QMessageBox.warning(self, "Output Error", "Please select an output directory.")
                 return False
 
-        # Annotation/Label Validation
         if not any([self.patch_checkbox.isChecked(), self.rectangle_checkbox.isChecked(),
                     self.polygon_checkbox.isChecked(), self.multipolygon_checkbox.isChecked()]):
             QMessageBox.warning(self, "Selection Error", "Select at least one annotation type.")
@@ -553,19 +609,24 @@ class ExportGeoJSONAnnotations(QDialog):
 
         return True
 
-    def export_geojson(self):
+    def export_data(self):
         """Main export execution method."""
         if not self.validate_inputs():
             return
 
-        # Prepare configuration
         mode = "single" if self.tab_widget.currentIndex() == 0 else "individual"
+        fmt_key, fmt_label, fmt_ext, fmt_driver = self.current_format()
+        coord_mode = self.current_coord_mode()
+
         selected_label_objects = self.get_selected_labels()
         selected_label_codes = [label.short_label_code for label in selected_label_objects]
-        
-        # Determine output paths
-        if mode == 'single':
+
+        # Resolve output target
+        if mode == "single":
             final_output_path = self.output_file_edit.text().strip()
+            base, ext = os.path.splitext(final_output_path)
+            if ext.lower() != fmt_ext:
+                final_output_path = base + fmt_ext
         else:
             final_output_dir = self.output_dir_edit.text().strip()
             if not os.path.exists(final_output_dir):
@@ -575,152 +636,102 @@ class ExportGeoJSONAnnotations(QDialog):
                     QMessageBox.critical(self, "Error", f"Could not create directory: {e}")
                     return
 
-        # Get all images in project
         all_images = self.image_window.raster_manager.image_paths
 
-        # GeoJSON is only WGS84 if every exported raster actually has a CRS.
-        # JPGs with world files often provide affine georeferencing without CRS,
-        # so those exports must stay in world coordinates instead of reprojection.
-        export_wgs84 = self.wgs84_checkbox.isChecked()
-        if export_wgs84:
-            for image_path in all_images:
-                annotations = self.get_annotations_for_image(image_path, selected_label_codes)
-                if not annotations:
-                    continue
-
-                raster = self.image_window.raster_manager.get_raster(image_path)
-                if raster and raster.rasterio_src and raster.rasterio_src.crs is None:
-                    export_wgs84 = False
-                    break
-
-        self._export_use_wgs84 = export_wgs84
-
-        if self.wgs84_checkbox.isChecked() and not export_wgs84:
-            QMessageBox.warning(
-                self,
-                "GeoJSON Export",
-                "One or more selected rasters has no CRS (common for JPGs with world files). "
-                "GeoJSON will be exported using the raster/world coordinate system instead of WGS84."
-            )
-        
-        # Start Progress
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        progress_bar = ProgressBar(self.annotation_window, "Exporting GeoJSON")
+        progress_bar = ProgressBar(self.annotation_window, "Exporting Geospatial Vector")
         progress_bar.show()
         progress_bar.start_progress(len(all_images))
 
-        # Data holder for Single Mode
-        combined_features = []
-        
-        # Counters for summary
+        combined_gdfs = []  # for single mode
         exported_count = 0
         skipped_no_annotations = 0
         skipped_no_raster = 0
-        skipped_invalid_crs_transform = 0
         skipped_no_features = 0
-        
-        # Determine final CRS name for GeoJSON header
-        final_crs_name = "urn:ogc:def:crs:OGC:1.3:CRS84" if export_wgs84 else None
-        # If forcing pixel coordinates, do not include any CRS in output
-        if getattr(self, 'force_pixel_checkbox', None) and self.force_pixel_checkbox.isChecked():
-            final_crs_name = None
+        no_crs_warning = False
 
         try:
             for image_path in all_images:
-                # 1. Check for annotations first
+                # 1. Filter annotations
                 annotations = self.get_annotations_for_image(image_path, selected_label_codes)
                 if not annotations:
                     skipped_no_annotations += 1
                     progress_bar.update_progress()
                     continue
 
-                # 2. Load Raster Data
+                # 2. Load raster
                 raster = self.image_window.raster_manager.get_raster(image_path)
                 if not raster or not raster.rasterio_src:
                     skipped_no_raster += 1
+                    progress_bar.update_progress()
                     continue
 
-                try:
-                    transform = raster.rasterio_src.transform
-                    src_crs = raster.rasterio_src.crs
-                    
-                    # Store original CRS if we aren't reprojecting and haven't set one yet
-                    if not self.wgs84_checkbox.isChecked() and final_crs_name is None:
-                        if src_crs: 
-                            final_crs_name = src_crs.to_string()
+                transform = raster.rasterio_src.transform
+                src_crs = raster.rasterio_src.crs
 
-                except Exception:
-                    skipped_invalid_crs_transform += 1
-                    print(f"Skipping {os.path.basename(image_path)}: Invalid CRS/Transform")
-                    continue
-
-                # 3. Create Features
-                image_features = []
-                for ann in annotations:
-                    feat = self.create_geojson_feature(ann, image_path, transform, src_crs)
-                    if feat: 
-                        image_features.append(feat)
-
-                if not image_features:
+                # 3. Build GeoDataFrame for this image
+                gdf, has_no_crs = self.build_image_gdf(
+                    image_path, annotations, transform, src_crs, coord_mode
+                )
+                if has_no_crs:
+                    no_crs_warning = True
+                if gdf is None or len(gdf) == 0:
                     skipped_no_features += 1
                     progress_bar.update_progress()
                     continue
 
-                # 4. Write Data (Depending on Mode)
-                if mode == 'single':
-                    combined_features.extend(image_features)
+                # 4. Write (individual) or accumulate (single)
+                if mode == "single":
+                    combined_gdfs.append(gdf)
                     exported_count += 1
                 else:
-                    # Individual Mode: Write immediately
-                    filename = os.path.splitext(os.path.basename(image_path))[0] + ".geojson"
+                    filename = os.path.splitext(os.path.basename(image_path))[0] + fmt_ext
                     out_file = os.path.join(final_output_dir, filename)
-                    
-                    feature_collection = {
-                        "type": "FeatureCollection",
-                        "features": image_features
-                    }
-                    
-                    # Add CRS block if not WGS84
-                    if final_crs_name and "CRS84" not in final_crs_name:
-                        feature_collection["crs"] = {
-                            "type": "name", "properties": {"name": final_crs_name}
-                        }
-
-                    with open(out_file, 'w') as f:
-                        json.dump(feature_collection, f, indent=2)
+                    self.write_gdf(gdf, out_file, fmt_key, fmt_driver)
                     exported_count += 1
 
                 progress_bar.update_progress()
 
-            # 5. Final Write for Single Mode
-            if mode == 'single':
-                feature_collection = {
-                    "type": "FeatureCollection",
-                    "features": combined_features
-                }
-                
-                # Add CRS block if not WGS84
-                if final_crs_name and "CRS84" not in final_crs_name:
-                    feature_collection["crs"] = {
-                        "type": "name", "properties": {"name": final_crs_name}
-                    }
-                
-                with open(final_output_path, 'w') as f:
-                    json.dump(feature_collection, f, indent=2)
+            # 5. Final write for single mode
+            feature_count = 0
+            if mode == "single":
+                combined = self.combine_gdfs(combined_gdfs, coord_mode)
+                if combined is None or len(combined) == 0:
+                    QApplication.restoreOverrideCursor()
+                    QMessageBox.warning(self, "Export", "No features to export.")
+                    return
+                feature_count = len(combined)
+                self.write_gdf(combined, final_output_path, fmt_key, fmt_driver)
 
-            if mode == 'single':
-                feature_count = len(combined_features)
-            else:
-                feature_count = "individual files"
+            # 6. Summary
+            QApplication.restoreOverrideCursor()
+
+            if no_crs_warning and coord_mode != "pixel":
+                QMessageBox.warning(
+                    self, "Coordinate System",
+                    "One or more rasters has no CRS (common for JPGs with world files). "
+                    "Those features were exported in raster/world coordinates instead of being "
+                    "reprojected. Use 'Pixel coordinates' if image-space output is intended."
+                )
+            if fmt_key == "shp":
+                QMessageBox.information(
+                    self, "Shapefile Note",
+                    "Shapefile field names are truncated to 10 characters and a single file holds "
+                    "only one geometry type. Mixed point/polygon exports were split into "
+                    "'_points' and '_polygons' files. Consider GeoPackage or GeoParquet to avoid this."
+                )
+
+            feature_summary = f"{feature_count} features" if mode == "single" else "individual files"
             QMessageBox.information(
                 self, "Export Completed",
-                f"Exported {exported_count} images ({feature_count} features).\n"
-                f"Skipped: {skipped_no_annotations} (no annotations), {skipped_no_raster} (no raster),\n"
-                f"{skipped_invalid_crs_transform} (invalid CRS/transform), {skipped_no_features} (no valid features)."
+                f"Exported {exported_count} images ({feature_summary}) as {fmt_label}.\n"
+                f"Skipped: {skipped_no_annotations} (no annotations), "
+                f"{skipped_no_raster} (no raster), {skipped_no_features} (no valid features)."
             )
             self.accept()
 
         except Exception as e:
+            QApplication.restoreOverrideCursor()
             QMessageBox.critical(self, "Error", f"An error occurred during export: {str(e)}")
             import traceback
             traceback.print_exc()
