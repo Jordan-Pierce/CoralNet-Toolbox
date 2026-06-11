@@ -234,9 +234,29 @@ class BatchInferenceWorker(QThread):
 
         return video_input
 
+    def _warmup_model(self):
+        """Run one tiny inference so fuse/compile/cudnn-autotune cost lands
+        before the progress bar starts instead of inside the first batch."""
+        try:
+            kwargs = dict(device=self.device, half=True, verbose=False)
+            if self._imgsz is not None:
+                kwargs["imgsz"] = self._imgsz
+            dummy = np.zeros((32, 32, 3), dtype=np.uint8)
+            list(self.model(dummy, **kwargs))
+        except Exception:
+            pass
+
     def run(self):
         """Inference loop executed on the worker thread."""
         try:
+            if torch is not None:
+                try:
+                    # imgsz is fixed for the whole run, so autotuned conv
+                    # algorithms are a free 5-15% on CUDA.
+                    torch.backends.cudnn.benchmark = True
+                except Exception:
+                    pass
+            self._warmup_model()
             total = len(self.items)
             processed = 0
             i = 0
