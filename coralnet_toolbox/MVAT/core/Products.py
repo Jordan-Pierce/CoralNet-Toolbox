@@ -831,6 +831,10 @@ class MeshProduct(AbstractSceneProduct):
 
         print(f"⏱️ Loaded MeshProduct: {self.label} with {self.mesh.n_cells:,} faces in {time.time() - start_time:.3f}s")
 
+    # Palette seed and per-notch multiplicative step for segment coarsening.
+    _SEGMENT_PALETTE_SEED = 42
+    _SEGMENT_COARSEN_STEP = 0.85
+
     def _build_uv_segments_rgb_array(self) -> bool:
         """Bake the UV segment ids into a per-face RGB array of distinct colors.
 
@@ -841,24 +845,185 @@ class MeshProduct(AbstractSceneProduct):
         Returns:
             True if the array was created, False otherwise.
         """
-        try:
-            seg = getattr(self, 'texture_segment_ids', None)
-            if seg is None:
-                return False
-            seg = np.asarray(seg)
-            if seg.shape[0] != self.mesh.n_cells or seg.size == 0:
-                return False
-            n_segments = int(seg.max()) + 1
-            if n_segments <= 0:
-                return False
-            # Deterministic palette; floor at 40 to avoid near-black segments.
-            rng = np.random.default_rng(42)
-            palette = rng.integers(40, 256, size=(n_segments, 3), dtype=np.uint8)
-            self.mesh.cell_data['UV_Segments_RGB'] = palette[seg]
-            return True
-        except Exception as e:
-            print(f"⚠️ Failed to build UV segments visualization: {e}")
+        seg = getattr(self, 'texture_segment_ids', None)
+        if seg is None:
             return False
+        seg = np.asarray(seg)
+        if seg.shape[0] != self.mesh.n_cells or seg.size == 0:
+            return False
+        if int(seg.max()) + 1 <= 0:
+            return False
+        self._recolor_uv_segments(seg)
+        return 'UV_Segments_RGB' in self.mesh.cell_data
+
+    def _recolor_uv_segments(self, seg_ids: np.ndarray) -> None:
+        """Rewrite the ``UV_Segments_RGB`` cell array in place from a palette.
+
+        Writing in place (and bumping the VTK array MTime) lets a live
+        granularity change refresh the rendered colors without rebuilding the
+        actor — the fast path the Fill-tool coarsening relies on.
+        """
+        try:
+            seg_ids = np.asarray(seg_ids)
+            n_segments = int(seg_ids.max()) + 1 if seg_ids.size else 0
+            if n_segments <= 0:
+                return
+            # Deterministic palette; floor at 40 to avoid near-black segments.
+            rng = np.random.default_rng(self._SEGMENT_PALETTE_SEED)
+            palette = rng.integers(40, 256, size=(n_segments, 3), dtype=np.uint8)
+            colors = palette[seg_ids]
+
+            existing = None
+            if 'UV_Segments_RGB' in self.mesh.cell_data:
+                existing = np.asarray(self.mesh.cell_data['UV_Segments_RGB'])
+            if existing is not None and existing.shape == colors.shape:
+                existing[:] = colors
+                vtk_arr = self.mesh.GetCellData().GetArray('UV_Segments_RGB')
+                if vtk_arr is not None:
+                    vtk_arr.Modified()
+            else:
+                self.mesh.cell_data['UV_Segments_RGB'] = colors
+            self.mesh.Modified()
+        except Exception as e:
+            print(f"⚠️ Failed to recolor UV segments: {e}")
+
+    # ------------------------------------------------------------------
+    # UV segment coarsening (Fill-tool granularity control)
+    # ------------------------------------------------------------------
+
+    def _ensure_segment_hierarchy(self) -> bool:
+        """Lazily build the merge order used to coarsen UV segments.
+
+        Builds a kNN graph over per-segment centroids and sorts the candidate
+        edges by distance, giving a single-linkage merge order that is cheap to
+        replay for any target cluster count. The finest segmentation (what was
+        computed at load) is snapshotted so refining can restore it exactly.
+
+        Returns:
+            True if a non-trivial hierarchy is available, False otherwise.
+        """
+        if getattr(self, '_segment_merge_edges', None) is not None:
+            return self._segment_merge_edges.size > 0
+
+        self._segment_merge_edges = np.empty((0, 2), dtype=np.int64)
+        seg = getattr(self, 'texture_segment_ids', None)
+        if seg is None:
+            return False
+        seg = np.asarray(seg)
+        if seg.size == 0:
+            return False
+
+        # Snapshot the finest segmentation; coarsening always derives from this.
+        self._segment_ids_fine = seg.copy()
+        n_seg = int(seg.max()) + 1
+        self._segment_n_fine = n_seg
+        self._segment_target_clusters = n_seg
+        if n_seg <= 1:
+            return False
+
+        try:
+            from scipy.spatial import cKDTree
+
+            centers = getattr(self, '_element_centers_np', None)
+            if centers is None or len(centers) != seg.shape[0]:
+                centers = np.asarray(self.mesh.cell_centers().points, dtype=np.float64)
+
+            # Per-segment centroid = mean of its face centers.
+            sums = np.zeros((n_seg, 3), dtype=np.float64)
+            counts = np.zeros(n_seg, dtype=np.int64)
+            np.add.at(sums, seg, centers)
+            np.add.at(counts, seg, 1)
+            centroids = sums / np.maximum(counts, 1)[:, None]
+
+            # kNN candidate edges between segment centroids (deduped, undirected).
+            k = int(min(9, n_seg))
+            tree = cKDTree(centroids)
+            _, nbr = tree.query(centroids, k=k)
+            nbr = np.atleast_2d(nbr)
+            src = np.repeat(np.arange(n_seg), nbr.shape[1])
+            dst = nbr.ravel()
+            keep = src != dst
+            src, dst = src[keep], dst[keep]
+            lo = np.minimum(src, dst)
+            hi = np.maximum(src, dst)
+            edges = np.unique(np.stack([lo, hi], axis=1), axis=0)
+            dists = np.linalg.norm(centroids[edges[:, 0]] - centroids[edges[:, 1]], axis=1)
+            self._segment_merge_edges = edges[np.argsort(dists, kind='stable')]
+            return self._segment_merge_edges.size > 0
+        except Exception as e:
+            print(f"⚠️ Failed to build segment hierarchy: {e}")
+            self._segment_merge_edges = np.empty((0, 2), dtype=np.int64)
+            return False
+
+    def _segment_labels_for_clusters(self, target_clusters: int) -> np.ndarray:
+        """Return per-fine-segment coarse cluster ids for a target cluster count.
+
+        Replays the precomputed single-linkage merge order with a union-find
+        until the desired number of clusters remains, then compacts the roots
+        into a dense 0..C-1 labeling.
+        """
+        edges = self._segment_merge_edges
+        n_seg = self._segment_n_fine
+        parent = np.arange(n_seg, dtype=np.int64)
+
+        def find(x):
+            root = x
+            while parent[root] != root:
+                root = parent[root]
+            while parent[x] != root:
+                parent[x], x = root, parent[x]
+            return root
+
+        n_clusters = n_seg
+        target = max(1, min(int(target_clusters), n_seg))
+        for a, b in edges:
+            if n_clusters <= target:
+                break
+            ra, rb = find(int(a)), find(int(b))
+            if ra != rb:
+                parent[rb] = ra
+                n_clusters -= 1
+
+        roots = np.fromiter((find(i) for i in range(n_seg)), dtype=np.int64, count=n_seg)
+        _, comp = np.unique(roots, return_inverse=True)
+        return comp.astype(np.int64)
+
+    def set_segment_granularity(self, direction: int) -> Optional[int]:
+        """Coarsen (``direction < 0``) or refine (``direction > 0``) UV segments.
+
+        Steps the active cluster count multiplicatively and rewrites both
+        ``texture_segment_ids`` (consumed by the Fill tool) and the
+        ``UV_Segments_RGB`` display array in place. The finest level equals the
+        original load-time segmentation.
+
+        Returns:
+            The new active segment count, or None when no hierarchy exists.
+        """
+        if not self._ensure_segment_hierarchy():
+            return None
+
+        n_seg = self._segment_n_fine
+        current = int(getattr(self, '_segment_target_clusters', n_seg))
+
+        if direction > 0:  # finer -> more clusters
+            target = max(current + 1, int(np.ceil(current / self._SEGMENT_COARSEN_STEP)))
+        else:              # coarser -> fewer clusters
+            target = min(current - 1, int(np.floor(current * self._SEGMENT_COARSEN_STEP)))
+        target = max(1, min(target, n_seg))
+
+        if target == current:
+            return current
+        self._segment_target_clusters = target
+
+        if target >= n_seg:
+            # Restore the finest segmentation exactly.
+            self.texture_segment_ids = self._segment_ids_fine.copy()
+        else:
+            cluster_of_fine = self._segment_labels_for_clusters(target)
+            self.texture_segment_ids = cluster_of_fine[self._segment_ids_fine]
+
+        self._recolor_uv_segments(self.texture_segment_ids)
+        return int(self.texture_segment_ids.max()) + 1
 
     def _spatially_sort_mesh(self, mesh: pv.PolyData) -> pv.PolyData:
         """

@@ -163,5 +163,45 @@ class FillTool3D(Tool3D):
             self._hide_preview_sphere()
 
     def wheelEvent(self, event, delta_y: int):
-        """Fill tool doesn't use wheel for resizing."""
-        pass
+        """Ctrl+wheel adjusts UV-segment granularity for filling.
+
+        Scrolling up refines toward the original (finest) UV islands; scrolling
+        down merges neighboring islands into coarser fill regions. The finest
+        level is exactly the segmentation computed at mesh load.
+        """
+        if delta_y == 0:
+            return
+
+        primary_target = self.mvat_manager._get_primary_mesh_target()
+        if primary_target is None:
+            return
+
+        status_bar = getattr(self.mvat_manager.main_window, 'status_bar', None)
+
+        if getattr(primary_target, 'texture_segment_ids', None) is None:
+            if status_bar is not None:
+                status_bar.showMessage(
+                    "Coarsening requires a mesh with textures/UV coordinates.", 2000
+                )
+            return
+
+        setter = getattr(primary_target, 'set_segment_granularity', None)
+        if not callable(setter):
+            return
+
+        direction = 1 if delta_y > 0 else -1
+        new_count = setter(direction)
+        if new_count is None:
+            if status_bar is not None:
+                status_bar.showMessage("This mesh has no mergeable UV segments.", 2000)
+            return
+
+        # The recolor was applied in place; just flush a frame.
+        try:
+            self.mvat_viewer.plotter.render()
+        except Exception:
+            pass
+
+        if status_bar is not None:
+            verb = "Refined" if direction > 0 else "Coarsened"
+            status_bar.showMessage(f"{verb} UV segments: {new_count:,} fill regions.", 2000)
