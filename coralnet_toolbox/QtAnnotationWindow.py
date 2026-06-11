@@ -73,6 +73,8 @@ from coralnet_toolbox.MachineLearning.ExportDataset.export_dataset_utils import 
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
+_PERF_LOG = bool(os.environ.get("CNT_PERF_LOG"))
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
@@ -3700,7 +3702,12 @@ class AnnotationWindow(BaseCanvas):
             and getattr(a.label, 'is_visible', True)
             and a.render_mode is RenderMode.PHANTOM
         ]
+        if _PERF_LOG:
+            _t0 = time.perf_counter()
         self.render_readonly_annotations(phantom)
+        if _PERF_LOG:
+            print(f"[perf] phantom rebuild: {len(phantom)} annos "
+                  f"in {(time.perf_counter() - _t0) * 1000:.1f} ms")
 
     def get_image_annotations(self, image_path=None):
         """Get all annotations for the specified image path or current image."""
