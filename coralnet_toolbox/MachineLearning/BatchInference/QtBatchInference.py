@@ -1955,6 +1955,7 @@ class BatchInferenceDialog(QDialog):
         sam_pb.start_progress(len(image_paths_for_sam))
         QApplication.processEvents()
 
+        images_since_cleanup = 0
         for path in image_paths_for_sam:
             cached = cache.get(path) or []
             if not cached:
@@ -2047,12 +2048,19 @@ class BatchInferenceDialog(QDialog):
                 # make a second attempt; do not lose data on a failure path.
                 cache[path] = updated
             finally:
-                _gc.collect()
-                _empty_cache()
+                # Full GC + CUDA allocator flush are expensive (each forces a
+                # device sync); amortise them instead of paying per image.
+                images_since_cleanup += 1
+                if images_since_cleanup >= 25:
+                    images_since_cleanup = 0
+                    _gc.collect()
+                    _empty_cache()
 
             sam_pb.update_progress()
             QApplication.processEvents()
 
+        _gc.collect()
+        _empty_cache()
         sam_pb.close()
 
     def _bake_cached_annotations(self):
