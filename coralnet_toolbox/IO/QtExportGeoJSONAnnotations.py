@@ -7,11 +7,12 @@ import numpy as np
 
 import geopandas as gpd
 import pandas as pd
+from pyproj import CRS as PyprojCRS
 from shapely.geometry import Point, Polygon, MultiPolygon
 from shapely.ops import transform as shapely_transform
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor
+from PyQt5.QtGui import QColor, QIntValidator
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QFormLayout,
     QCheckBox, QComboBox, QLineEdit, QPushButton, QFileDialog,
@@ -164,6 +165,14 @@ class ExportGeoJSONAnnotations(QDialog):
         groupbox = QGroupBox("Annotations to Include")
         layout = QVBoxLayout()
 
+        # Points (patch annotations) — always exported as the patch's center-most point
+        self.patch_checkbox = QCheckBox("Points")
+        self.patch_checkbox.setChecked(True)
+        self.patch_checkbox.setToolTip(
+            "Patch annotations, exported as the patch's center-most point."
+        )
+        layout.addWidget(self.patch_checkbox)
+
         # Rectangle
         self.rectangle_checkbox = QCheckBox("Rectangle")
         self.rectangle_checkbox.setChecked(True)
@@ -178,20 +187,6 @@ class ExportGeoJSONAnnotations(QDialog):
         self.multipolygon_checkbox = QCheckBox("MultiPolygon")
         self.multipolygon_checkbox.setChecked(True)
         layout.addWidget(self.multipolygon_checkbox)
-
-        # Patch Annotations
-        self.patch_checkbox = QCheckBox("Patch Annotations")
-        self.patch_checkbox.setChecked(True)
-        layout.addWidget(self.patch_checkbox)
-
-        # Patch representation combobox with explicit label
-        patch_rep_layout = QHBoxLayout()
-        patch_rep_layout.addWidget(QLabel("Patches should be represented as:"))
-        self.patch_representation_combo = QComboBox()
-        self.patch_representation_combo.addItems(["Polygon", "Point"])
-        patch_rep_layout.addWidget(self.patch_representation_combo)
-        patch_rep_layout.addStretch()
-        layout.addLayout(patch_rep_layout)
 
         groupbox.setLayout(layout)
         self.layout.addWidget(groupbox)
@@ -217,6 +212,22 @@ class ExportGeoJSONAnnotations(QDialog):
         coord_layout.addWidget(self.coord_combo)
         coord_layout.addStretch()
         layout.addLayout(coord_layout)
+
+        # EPSG override for images that are georeferenced (e.g. a .jgw world file) but
+        # carry no CRS. Supplying a code lets those images be reprojected.
+        epsg_layout = QHBoxLayout()
+        epsg_layout.addWidget(QLabel("Assume EPSG (no-CRS images):"))
+        self.epsg_edit = QLineEdit()
+        self.epsg_edit.setValidator(QIntValidator(1, 999999, self))
+        self.epsg_edit.setPlaceholderText("e.g. 32717  (optional)")
+        self.epsg_edit.setToolTip(
+            "For images that have georeferencing (e.g. a .jgw world file) but no CRS, assume this "
+            "EPSG code as their coordinate reference system so they can be reprojected.\n"
+            "Images that already have a CRS are unaffected. Leave blank to skip."
+        )
+        epsg_layout.addWidget(self.epsg_edit)
+        epsg_layout.addStretch()
+        layout.addLayout(epsg_layout)
 
         # Styling
         self.style_checkbox = QCheckBox("Include label color/style fields")
@@ -293,6 +304,23 @@ class ExportGeoJSONAnnotations(QDialog):
     def current_coord_mode(self):
         """Return the selected coordinate-system mode key: 'wgs84' | 'native' | 'pixel'."""
         return self.coord_combo.currentData()
+
+    def get_assumed_epsg(self):
+        """
+        Parse the EPSG override field.
+
+        Returns (epsg_int_or_None, error_message_or_None). An empty field is valid and
+        yields (None, None).
+        """
+        text = self.epsg_edit.text().strip()
+        if not text:
+            return None, None
+        try:
+            code = int(text)
+            PyprojCRS.from_epsg(code)  # raises if the code can't be resolved
+        except Exception:
+            return None, f"'{text}' is not a valid EPSG code."
+        return code, None
 
     def on_format_changed(self):
         """Keep the single-file output path's extension in sync with the chosen format."""
@@ -385,15 +413,8 @@ class ExportGeoJSONAnnotations(QDialog):
         return annotations
 
     def convert_annotation_to_polygon(self, annotation):
-        """Convert any annotation type to a list of pixel-coordinate rings."""
-        if isinstance(annotation, PatchAnnotation):
-            size = annotation.annotation_size / 2
-            x, y = annotation.center_xy.x(), annotation.center_xy.y()
-            exterior = [(x - size, y - size), (x + size, y - size),
-                        (x + size, y + size), (x - size, y + size)]
-            return [exterior]
-
-        elif isinstance(annotation, RectangleAnnotation):
+        """Convert a rectangle/polygon annotation to a list of pixel-coordinate rings."""
+        if isinstance(annotation, RectangleAnnotation):
             tl, br = annotation.top_left, annotation.bottom_right
             exterior = [(tl.x(), tl.y()), (br.x(), tl.y()),
                         (br.x(), br.y()), (tl.x(), br.y())]
@@ -407,9 +428,12 @@ class ExportGeoJSONAnnotations(QDialog):
 
         return []
 
-    def annotation_to_pixel_geometry(self, annotation, as_point):
-        """Build a shapely geometry in pixel space for an annotation, or None if degenerate."""
-        if as_point and isinstance(annotation, PatchAnnotation):
+    def annotation_to_pixel_geometry(self, annotation):
+        """Build a shapely geometry in pixel space for an annotation, or None if degenerate.
+
+        Patch annotations are always exported as their center-most point.
+        """
+        if isinstance(annotation, PatchAnnotation):
             return Point(annotation.center_xy.x(), annotation.center_xy.y())
 
         if isinstance(annotation, MultiPolygonAnnotation):
@@ -458,14 +482,15 @@ class ExportGeoJSONAnnotations(QDialog):
             props["stroke-width"] = 2
         return props
 
-    def build_image_gdf(self, image_path, annotations, transform, src_crs, coord_mode):
+    def build_image_gdf(self, image_path, annotations, transform, src_crs, coord_mode, assumed_epsg=None):
         """
-        Build a GeoDataFrame for a single image's annotations.
+        Build a GeoDataFrame for a single image's annotations, or None if there are none.
 
         Geometries are produced in the raster's native CRS (world coordinates) for the
-        'wgs84' and 'native' modes, or in raw pixel coordinates for 'pixel' mode.
-        Returns (gdf or None, has_no_crs) where has_no_crs flags a georeferenced request
-        on a raster that lacks a CRS.
+        'wgs84' and 'native' modes, or in raw pixel coordinates for 'pixel' mode. A
+        world-file image (affine transform but no CRS) still yields world coordinates;
+        when it has no CRS, ``assumed_epsg`` (if given) is used as its source CRS so it
+        can be reprojected.
         """
         geoms = []
         records = []
@@ -474,9 +499,7 @@ class ExportGeoJSONAnnotations(QDialog):
         affine_fn = self._affine_func(transform) if (coord_mode != "pixel" and transform is not None) else None
 
         for ann in annotations:
-            as_point = (isinstance(ann, PatchAnnotation)
-                        and self.patch_representation_combo.currentText() == "Point")
-            pixel_geom = self.annotation_to_pixel_geometry(ann, as_point)
+            pixel_geom = self.annotation_to_pixel_geometry(ann)
             if pixel_geom is None or pixel_geom.is_empty:
                 continue
 
@@ -490,25 +513,21 @@ class ExportGeoJSONAnnotations(QDialog):
             records.append(props)
 
         if not geoms:
-            return None, False
+            return None
 
-        has_no_crs = False
         crs = None
         if coord_mode != "pixel":
             if src_crs is not None:
                 crs = src_crs.to_wkt()
-            else:
-                # Georeferenced request but the raster has no CRS (e.g., world-file JPG):
-                # keep world/pixel coordinates uncrs'd and let the caller warn.
-                has_no_crs = True
-
+            elif assumed_epsg is not None:
+                crs = f"EPSG:{assumed_epsg}"
         gdf = gpd.GeoDataFrame(records, geometry=geoms, crs=crs)
 
         # WGS84 mode: reproject as soon as we can (only possible when a CRS is known).
         if coord_mode == "wgs84" and gdf.crs is not None:
             gdf = gdf.to_crs(epsg=WGS84_EPSG)
 
-        return gdf, has_no_crs
+        return gdf
 
     def combine_gdfs(self, gdfs, coord_mode):
         """Concatenate per-image GeoDataFrames into one, reprojecting to a common CRS."""
@@ -618,6 +637,11 @@ class ExportGeoJSONAnnotations(QDialog):
         fmt_key, fmt_label, fmt_ext, fmt_driver = self.current_format()
         coord_mode = self.current_coord_mode()
 
+        assumed_epsg, epsg_error = self.get_assumed_epsg()
+        if epsg_error:
+            QMessageBox.warning(self, "Invalid EPSG", epsg_error)
+            return
+
         selected_label_objects = self.get_selected_labels()
         selected_label_codes = [label.short_label_code for label in selected_label_objects]
 
@@ -638,6 +662,31 @@ class ExportGeoJSONAnnotations(QDialog):
 
         all_images = self.image_window.raster_manager.image_paths
 
+        # Pre-flight: WGS84 reprojection needs a source CRS. World-file images (e.g. .jgw)
+        # carry an affine transform but no CRS, so they cannot be reprojected. Surface this
+        # BEFORE writing anything and let the user decide, rather than warning after the fact.
+        # An assumed EPSG supplies the missing CRS, so the warning is unnecessary then.
+        if coord_mode == "wgs84" and assumed_epsg is None:
+            no_crs_count = 0
+            for image_path in all_images:
+                if not self.get_annotations_for_image(image_path, selected_label_codes):
+                    continue
+                raster = self.image_window.raster_manager.get_raster(image_path)
+                if raster and raster.rasterio_src and raster.rasterio_src.crs is None:
+                    no_crs_count += 1
+            if no_crs_count:
+                resp = QMessageBox.question(
+                    self, "Cannot Reproject to WGS84",
+                    f"{no_crs_count} image(s) have georeferencing (e.g., a world file) but no CRS, "
+                    "so their coordinates cannot be reprojected to WGS84. They will be exported in "
+                    "their native world/raster coordinates instead.\n\n"
+                    "Tip: add a .prj sidecar, or choose 'Native raster CRS', to avoid this.\n\n"
+                    "Continue with the export?",
+                    QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Yes
+                )
+                if resp != QMessageBox.Yes:
+                    return
+
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, "Exporting Geospatial Vector")
         progress_bar.show()
@@ -648,7 +697,6 @@ class ExportGeoJSONAnnotations(QDialog):
         skipped_no_annotations = 0
         skipped_no_raster = 0
         skipped_no_features = 0
-        no_crs_warning = False
 
         try:
             for image_path in all_images:
@@ -670,11 +718,9 @@ class ExportGeoJSONAnnotations(QDialog):
                 src_crs = raster.rasterio_src.crs
 
                 # 3. Build GeoDataFrame for this image
-                gdf, has_no_crs = self.build_image_gdf(
-                    image_path, annotations, transform, src_crs, coord_mode
+                gdf = self.build_image_gdf(
+                    image_path, annotations, transform, src_crs, coord_mode, assumed_epsg
                 )
-                if has_no_crs:
-                    no_crs_warning = True
                 if gdf is None or len(gdf) == 0:
                     skipped_no_features += 1
                     progress_bar.update_progress()
@@ -706,13 +752,6 @@ class ExportGeoJSONAnnotations(QDialog):
             # 6. Summary
             QApplication.restoreOverrideCursor()
 
-            if no_crs_warning and coord_mode != "pixel":
-                QMessageBox.warning(
-                    self, "Coordinate System",
-                    "One or more rasters has no CRS (common for JPGs with world files). "
-                    "Those features were exported in raster/world coordinates instead of being "
-                    "reprojected. Use 'Pixel coordinates' if image-space output is intended."
-                )
             if fmt_key == "shp":
                 QMessageBox.information(
                     self, "Shapefile Note",
