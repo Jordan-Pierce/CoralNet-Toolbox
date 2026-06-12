@@ -63,6 +63,21 @@ class MousePositionBridge(QObject):
         if not self._pending_timer.isActive():
             self._pending_timer.start()
 
+    @staticmethod
+    def _sample_index_map(index_map, x: int, y: int, cam_w: int, cam_h: int) -> int:
+        """Sample an index map using native pixel coordinates.
+
+        Index maps are normally stored at native resolution, but archives cached
+        before upsampling (e.g. low-quality runs) can come back sub-native from
+        the LRU. Scale the lookup by the actual map shape so those never go out
+        of bounds.
+        """
+        map_h, map_w = index_map.shape[:2]
+        if map_w != cam_w or map_h != cam_h:
+            x = min(map_w - 1, (x * map_w) // max(1, cam_w))
+            y = min(map_h - 1, (y * map_h) // max(1, cam_h))
+        return int(index_map[y, x])
+
     def _process_pending_update(self):
         """Process the most recent queued mouse position on the coalescing timer."""
         if self._pending_x < 0 or self._pending_y < 0:
@@ -104,7 +119,7 @@ class MousePositionBridge(QObject):
         candidate_id = -1
         index_map = camera._raster.index_map
         if index_map is not None:
-            candidate_id = int(index_map[y, x])
+            candidate_id = self._sample_index_map(index_map, x, y, camera.width, camera.height)
 
         if candidate_id > -1 and primary_target is not None:
             coord = primary_target.get_element_coordinate(candidate_id)
@@ -192,7 +207,10 @@ class MousePositionBridge(QObject):
             found_id = -1
 
             if getattr(target_cam, '_raster', None) is not None and target_cam._raster.index_map is not None and ray.element_id > -1:
-                found_id = int(target_cam._raster.index_map[v_proj, u_proj])
+                found_id = self._sample_index_map(
+                    target_cam._raster.index_map, u_proj, v_proj,
+                    target_cam.width, target_cam.height,
+                )
 
                 # Determine visibility with spatial tolerance.
                 # METHOD A: 3D Distance Threshold (ACTIVE)

@@ -779,12 +779,19 @@ class VisibilityManager:
                     mesh_bounds, K_scaled, R, t, render_w, render_h
                 )
                 if crop_status == "OFF_SCREEN":
+                    # Honor upsample_to_native here too — this early-out skips
+                    # the upsample step below, and a sub-native empty map would
+                    # otherwise be cached and indexed with native pixel coords.
+                    if upsample_to_native:
+                        empty_h, empty_w, empty_scale = height, width, 1.0
+                    else:
+                        empty_h, empty_w, empty_scale = render_h, render_w, dynamic_scale
                     results.append(cls._normalize_result_dict({
-                        'index_map':      np.full((render_h, render_w), -1, dtype=np.int32),
+                        'index_map':      np.full((empty_h, empty_w), -1, dtype=np.int32),
                         'visible_indices': np.array([], dtype=np.int32),
-                        'depth_map':      np.full((render_h, render_w), np.nan, dtype=np.float32) if compute_depth_map else None,
+                        'depth_map':      np.full((empty_h, empty_w), np.nan, dtype=np.float32) if compute_depth_map else None,
                         'inverted_index': None,
-                        'scale_factor':   dynamic_scale,
+                        'scale_factor':   empty_scale,
                     }, compute_depth_map))
                     camera_total_sum += perf_counter() - cam_start
                     continue

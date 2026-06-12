@@ -603,6 +603,34 @@ class PropagationEngine(QObject):
         unique_ids = np.unique(raw_ids)
         return unique_ids[unique_ids > -1].astype(np.int64, copy=False)
 
+    def _densify_is_useful(self, source_camera) -> bool:
+        """Return False when densification cannot add faces for this source.
+
+        A Native-quality index map already samples every face the camera can
+        see, so the KD-tree gather burns seconds for ~zero new faces.  The
+        render quality is recorded on the raster (``index_map_pixel_budget``,
+        0 = Native) when maps are computed or loaded from cache; ortho rasters
+        record ``index_map_scale_factor`` instead.  Unknown quality (legacy
+        cache archives) keeps densify on — the safe default.
+        """
+        raster = getattr(source_camera, '_raster', None) if source_camera else None
+        if raster is None:
+            return True
+
+        # Ortho maps derive their scale from the stored array shape.
+        scale = getattr(raster, 'index_map_scale_factor', None)
+        if scale is not None:
+            return float(scale) < 1.0
+
+        budget = getattr(raster, 'index_map_pixel_budget', None)
+        if budget is None:
+            return True
+        if budget == 0:
+            return False  # Native: seeds are already dense
+        # A budget at or above the sensor resolution renders at scale 1.0.
+        native_pixels = int(getattr(raster, 'width', 0)) * int(getattr(raster, 'height', 0))
+        return not (native_pixels and budget >= native_pixels)
+
     def _densify_source_ids(self, source_camera, seed_ids) -> np.ndarray:
         """Expand sparse index-map-sampled face IDs into a dense surface patch.
 
@@ -616,7 +644,8 @@ class PropagationEngine(QObject):
         seeds, or when the target is not a KD-tree-backed mesh.
         """
         seed_ids = np.asarray(seed_ids if seed_ids is not None else [], dtype=np.int64)
-        if seed_ids.size == 0 or not getattr(self, 'densify_enabled', False):
+        if (seed_ids.size == 0 or not getattr(self, 'densify_enabled', False)
+                or not self._densify_is_useful(source_camera)):
             return seed_ids
 
         primary_target = self.viewer.scene_context.get_primary_target()
@@ -661,7 +690,8 @@ class PropagationEngine(QObject):
         element_ids = np.asarray(element_ids, dtype=np.int64).ravel()
         class_ids = np.asarray(class_ids, dtype=np.int64).ravel()
         if (element_ids.size == 0 or element_ids.size != class_ids.size
-                or not getattr(self, 'densify_enabled', False)):
+                or not getattr(self, 'densify_enabled', False)
+                or not self._densify_is_useful(source_camera)):
             return element_ids, class_ids
 
         primary_target = self.viewer.scene_context.get_primary_target()
@@ -3017,7 +3047,25 @@ class PropagationEngine(QObject):
         # camera_position=None skips the per-camera facing cull (these faces
         # were all confirmed visible by some camera); the normal-consistency
         # cull still rejects geometry behind the labeled surface.
-        if getattr(self, 'densify_enabled', False) and hasattr(
+        # Skipped entirely when every source map is known Native quality —
+        # there are no sub-pixel faces to fill in.
+        def _has_registered_map(camera):
+            # Cheap "map registered" test — avoids the index_map property,
+            # which can trigger a disk load for lazily registered maps.
+            raster = getattr(camera, '_raster', None)
+            return raster is not None and (
+                getattr(raster, 'index_map_path', None) is not None
+                or getattr(raster, '_index_map', None) is not None
+            )
+
+        densify_useful = any(
+            self._densify_is_useful(camera)
+            for _, camera in source_cameras
+            if _has_registered_map(camera)
+        )
+        if not densify_useful and getattr(self, 'densify_enabled', False):
+            print("[Cameras→Mesh] densify skipped: all source index maps are Native quality")
+        if densify_useful and getattr(self, 'densify_enabled', False) and hasattr(
                 primary_target, 'gather_dense_face_ids_multiclass'):
             t_densify = perf_counter()
             try:

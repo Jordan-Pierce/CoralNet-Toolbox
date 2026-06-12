@@ -104,6 +104,10 @@ class VisibilityWorker(QObject):
                 compute_visible_indices=False,
                 pixel_budget=self.pixel_budget,
                 mgl_context=mgl_context,
+                # This render is reused as the first camera's real result, so it
+                # must match the main loop — a sub-native map would otherwise be
+                # cached and later indexed with native pixel coords.
+                upsample_to_native=self.upsample_to_native,
             )
 
             if result and len(result) > 0:

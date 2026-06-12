@@ -349,7 +349,9 @@ class CacheManager:
             extra_hash_data (bytes, optional): Additional bytes mixed into the hash
                 (see _generate_cache_key).
             pixel_budget (int, optional): Render pixel budget that produced this map.
-                See _generate_cache_key for backward-compatibility semantics.
+                Ignored by the cache key (see _generate_cache_key) but persisted in
+                the archive metadata (0 = Native) so later sessions can recover the
+                quality the map was rendered at.
 
         Returns:
             str: Path to the saved cache file
@@ -379,6 +381,9 @@ class CacheManager:
                 visible_indices,
                 element_type=element_type,
                 compress=compressed,
+                # Render quality that produced this map. 0 = Native (no budget);
+                # absent in legacy archives, which loaders treat as unknown.
+                pixel_budget=int(pixel_budget) if pixel_budget else 0,
             )
             return cache_path
         except Exception as e:

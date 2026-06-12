@@ -144,6 +144,9 @@ class MVATManager(QObject):
         self.densify_max_expansion = 40.0   # circuit-breaker ceiling (× seed count)
         # Maximum pixel budget for background index map computation
         self.pixel_budget = 4_000_000  # Default to ~4 Megapixels
+        # True once the user has explicitly picked a quality this session (via
+        # the visibility dialog); blocks cache-loaded archives from overriding it.
+        self._pixel_budget_user_set = False
         # Number of parallel workers for cache disk I/O
         self._cache_n_workers = 4  # Default to 4 workers
         # Safety factor for distortion VRAM allocation (0.8 = 80% of free VRAM)
@@ -427,6 +430,7 @@ class MVATManager(QObject):
 
                 previous_budget = getattr(self, 'pixel_budget', None)
                 self.pixel_budget = new_budget
+                self._pixel_budget_user_set = True
                 self._cache_n_workers = n_workers  # Store for use in _compute_visibility_async
                 self.debug_enable_cache = enable_cache  # Debug: enable/disable caching
                 self.debug_enable_compression = enable_compression  # Debug: compress cache or not
@@ -483,6 +487,23 @@ class MVATManager(QObject):
             elif self.cameras:
                 self.selection_model.set_active(next(iter(self.cameras)))
 
+    @staticmethod
+    def _stamp_index_map_budget(raster, data: dict) -> Optional[int]:
+        """Record the render quality a cached archive was produced at on the raster.
+
+        Returns the budget (0 = Native) when the archive carries the metadata
+        key, or None for legacy archives, leaving the raster untouched.
+        """
+        budget = data.get('pixel_budget') if data else None
+        if budget is None:
+            return None
+        try:
+            budget = int(budget)
+        except Exception:
+            return None
+        raster.index_map_pixel_budget = budget
+        return budget
+
     def load_index_maps(self):
         """Attempt to load pre-computed index maps from disk cache for all loaded cameras.
 
@@ -523,6 +544,7 @@ class MVATManager(QObject):
 
         loaded = 0
         skipped = 0
+        cached_budgets = set()
         try:
             from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -562,6 +584,9 @@ class MVATManager(QObject):
                             element_type=element_type,
                             inverted_index=data.get('inverted_index'),
                         )
+                        budget = self._stamp_index_map_budget(cam._raster, data)
+                        if budget is not None:
+                            cached_budgets.add(budget)
                         if self.compute_depth_maps_enabled:
                             depth_map = data.get('depth_map')
                             if depth_map is not None:
@@ -577,6 +602,26 @@ class MVATManager(QObject):
             self.main_window.status_bar.showMessage(
                 f"Index maps: {loaded} loaded from cache, {skipped} not cached.", 5000
             )
+
+        self._maybe_restore_pixel_budget(cached_budgets)
+
+    def _maybe_restore_pixel_budget(self, cached_budgets: set):
+        """Adopt the cached render quality as the session budget.
+
+        When every loaded archive agrees on the quality it was rendered at,
+        use it instead of the constructor default — otherwise densify gating
+        and overlap counting would treat Native-quality caches as budgeted
+        (or vice versa) after a restart. Never overrides a quality the user
+        explicitly picked in the visibility dialog this session.
+        """
+        if self._pixel_budget_user_set or len(cached_budgets) != 1:
+            return
+        budget = next(iter(cached_budgets))
+        restored = None if budget == 0 else budget
+        if restored != self.pixel_budget:
+            label = "Native" if restored is None else f"{restored / 1e6:.1f}MP"
+            print(f"💽 Restored index map quality from cache: {label}")
+            self.pixel_budget = restored
 
     def _render_frustums(self):
         """
@@ -1509,6 +1554,8 @@ class MVATManager(QObject):
                     element_type=element_type,
                     inverted_index=result.get('inverted_index')
                 )
+                # Fresh results were rendered at the session budget (0 = Native).
+                camera._raster.index_map_pixel_budget = int(self.pixel_budget or 0)
             except Exception:
                 pass
 
@@ -1878,6 +1925,7 @@ class MVATManager(QObject):
         self._inflight_cache_loads.difference_update(candidates.keys())
 
         cameras_needing_visibility = []
+        cached_budgets = set()
         for path, camera in candidates.items():
             cached_data = cache_results.get(path)
 
@@ -1905,6 +1953,9 @@ class MVATManager(QObject):
                     element_type=element_type,
                     inverted_index=cached_data.get('inverted_index')
                 )
+                budget = self._stamp_index_map_budget(camera._raster, cached_data)
+                if budget is not None:
+                    cached_budgets.add(budget)
 
                 if self.compute_depth_maps_enabled:
                     depth_map = cached_data.get('depth_map')
@@ -1918,6 +1969,8 @@ class MVATManager(QObject):
             else:
                 # Miss — must be computed
                 cameras_needing_visibility.append(camera)
+
+        self._maybe_restore_pixel_budget(cached_budgets)
 
         if not cameras_needing_visibility:
             return
@@ -1961,6 +2014,9 @@ class MVATManager(QObject):
                     compute_visible_indices=False,
                     pixel_budget=self.pixel_budget,
                     mgl_context=mgl_ctx,
+                    # Results are cached to disk by _process_visibility_results;
+                    # they must be native-sized like the async worker's output.
+                    upsample_to_native=True,
                 )
             except Exception as mgl_err:
                 print(f"⚠️ moderngl sync failed ({mgl_err})")
@@ -4417,6 +4473,8 @@ class MVATManager(QObject):
                     raster.index_map_path = None
                 if hasattr(raster, 'index_map_scale_factor'):
                     raster.index_map_scale_factor = None
+                if hasattr(raster, 'index_map_pixel_budget'):
+                    raster.index_map_pixel_budget = None
                 if hasattr(raster, 'inv_ids'):
                     raster.inv_ids = None
                 if hasattr(raster, 'inv_offsets'):
@@ -4436,6 +4494,8 @@ class MVATManager(QObject):
                         ortho_raster.index_map_path = None
                     if hasattr(ortho_raster, 'index_map_scale_factor'):
                         ortho_raster.index_map_scale_factor = None
+                    if hasattr(ortho_raster, 'index_map_pixel_budget'):
+                        ortho_raster.index_map_pixel_budget = None
                     if hasattr(ortho_raster, 'inv_ids'):
                         ortho_raster.inv_ids = None
                     if hasattr(ortho_raster, 'inv_offsets'):

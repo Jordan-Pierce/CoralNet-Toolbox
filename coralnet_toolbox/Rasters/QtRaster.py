@@ -140,6 +140,9 @@ class Raster(QObject):
         self.index_map_path: Optional[str] = None  # Path to index_map file if saved separately
         self.visible_indices: Optional[np.ndarray] = None  # 1D array of visible element IDs
         self.index_element_type: Optional[str] = None  # Element type: 'point', 'face', or 'cell'
+        # Render pixel budget that produced the index map: 0 = Native quality,
+        # None = unknown (e.g. legacy cache archives without the metadata key)
+        self.index_map_pixel_budget: Optional[int] = None
         # CSR inverted index (element_id -> flat pixel indices)
         self.inv_ids: Optional[np.ndarray] = None      # int32: sorted unique element IDs
         self.inv_offsets: Optional[np.ndarray] = None  # int64: offsets into inv_pixels
@@ -905,6 +908,7 @@ class Raster(QObject):
         self.visible_indices = None
         self.index_element_type = None
         self.inv_ids = self.inv_offsets = self.inv_pixels = None
+        self.index_map_pixel_budget = None
         if hasattr(self, 'index_map_scale_factor'):
             self.index_map_scale_factor = None
 
@@ -915,6 +919,12 @@ class Raster(QObject):
         self.index_map = data['index_map']
         self.visible_indices = data.get('visible_indices')
         self.index_element_type = data.get('element_type', self.index_element_type)
+
+        if 'pixel_budget' in data:
+            try:
+                self.index_map_pixel_budget = int(data['pixel_budget'])
+            except Exception:
+                pass
 
         if hasattr(self, 'index_map_scale_factor') and 'scale_factor' in data:
             try:
