@@ -53,6 +53,7 @@ class BatchInferenceWorker(QThread):
     # Signals
     itemProcessed = pyqtSignal(object)      # emits InferenceResult
     progressUpdated = pyqtSignal(int, int)  # current, total
+    stageChanged = pyqtSignal(str)          # emits a short human-readable status message
     timingSummary = pyqtSignal(object)      # emits aggregate timing dict
     finished = pyqtSignal()
     error = pyqtSignal(str)
@@ -331,6 +332,17 @@ class BatchInferenceWorker(QThread):
 
                 batch_end = self._batch_bounds(i, total)
                 batch = self.items[i:batch_end]
+
+                # Let the UI know what's about to happen, since progressUpdated
+                # only fires once this batch's decode+inference finishes — for
+                # the first batch (or a slow batch) that would otherwise leave
+                # the progress dialog looking stuck at 0.
+                try:
+                    start_name = os.path.basename(batch[0].image_path)
+                except Exception:
+                    start_name = ""
+                self.stageChanged.emit(
+                    f"Running inference {i + 1}-{batch_end} of {total}: {start_name}")
 
                 # Decode the batch.  Non-video batches may already be in
                 # flight from last iteration's prefetch; video frames decode
@@ -1579,6 +1591,7 @@ class BatchInferenceDialog(QDialog):
 
         self._batch_worker.itemProcessed.connect(self.on_item_processed)
         self._batch_worker.progressUpdated.connect(self._on_worker_progress)
+        self._batch_worker.stageChanged.connect(self._on_worker_stage)
         self._batch_worker.timingSummary.connect(self._on_worker_timing_summary)
         self._batch_worker.error.connect(
             lambda msg: print(f"BatchInferenceWorker error: {msg}"))
@@ -1741,6 +1754,16 @@ class BatchInferenceDialog(QDialog):
             if getattr(pb, 'max_value', None) != total:
                 pb.start_progress(total)
             pb.set_value(current)
+        except Exception:
+            pass
+
+    def _on_worker_stage(self, text):
+        """Update the progress dialog's message label with the current stage (main thread)."""
+        try:
+            pb = getattr(self, '_progress_bar', None)
+            if pb is not None and hasattr(pb, 'message_label'):
+                pb.message_label.setText(text)
+                QApplication.processEvents()
         except Exception:
             pass
 
@@ -2077,6 +2100,11 @@ class BatchInferenceDialog(QDialog):
 
         images_since_cleanup = 0
         for path in image_paths_for_sam:
+            try:
+                sam_pb.message_label.setText(f"Applying SAM: {os.path.basename(str(path))}")
+            except Exception:
+                pass
+
             cached = cache.get(path) or []
             if not cached:
                 sam_pb.update_progress()
@@ -2284,6 +2312,11 @@ class BatchInferenceDialog(QDialog):
             _last_pump = time.monotonic()
 
             for path, cached_results in cache.items():
+                try:
+                    bake_pb.message_label.setText(f"Saving annotations: {os.path.basename(str(path))}")
+                except Exception:
+                    pass
+
                 # Skip non-Results overlay entries (e.g., dict overlays for masks)
                 if not isinstance(cached_results, dict):
                     # Normalise: images store lists, video frames store single Results objects
