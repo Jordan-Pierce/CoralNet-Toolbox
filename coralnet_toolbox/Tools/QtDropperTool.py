@@ -60,3 +60,6 @@ class DropperTool(Tool):
         
         # Emit the signal to select the label in the label window
         self.annotation_window.labelSelected.emit(label.id)
+
+        label_name = label.short_label_code or label.id
+        self.annotation_window.main_window.status_bar.showMessage(f"Selected label: {label_name}", 2000)
