@@ -1280,23 +1280,13 @@ class PropagationEngine(QObject):
     def _extract_semantic_element_votes(self,
                                         source_camera,
                                         source_mask_annotation,
-                                        prediction_regions=None,
-                                        index_map_override=None):
-        """Build raw element/class vote arrays for semantic propagation.
-
-        ``index_map_override`` lets callers supply an index map loaded directly
-        from disk cache (full-mask path only) when the camera's raster doesn't
-        hold one in RAM yet — used by cameras→mesh aggregation so it never
-        silently skips cameras whose maps the lazy visibility loader hasn't
-        reached.
-        """
+                                        prediction_regions=None):
+        """Build raw element/class vote arrays for semantic propagation."""
         if source_camera is None or source_mask_annotation is None:
             return np.array([], dtype=np.int64), np.array([], dtype=np.int64), {}
 
         raster = getattr(source_camera, '_raster', None)
-        index_map = index_map_override
-        if index_map is None:
-            index_map = getattr(raster, 'index_map', None)
+        index_map = getattr(raster, 'index_map', None)
         if index_map is None:
             return np.array([], dtype=np.int64), np.array([], dtype=np.int64), {}
 
@@ -2287,26 +2277,6 @@ class PropagationEngine(QObject):
                         pass
             return
 
-        if task_type == 'register_index_map':
-            # Lazily register a disk-cached index map the aggregation worker
-            # loaded, so later flows (mesh→cameras, visibility filter) find it
-            # without another silent skip.  index_map=None keeps the dense map
-            # disk-backed (LRU) instead of pinning it in RAM here.
-            camera = task.get('camera')
-            raster = getattr(camera, '_raster', None)
-            if raster is not None and getattr(raster, 'index_map_path', None) is None:
-                try:
-                    raster.add_index_map(
-                        None,
-                        task.get('cache_path'),
-                        task.get('visible_indices'),
-                        element_type=task.get('element_type', 'face'),
-                        inverted_index=task.get('inverted_index'),
-                    )
-                except Exception as exc:
-                    print(f"⚠️ register_index_map failed: {exc}")
-            return
-
         if task_type == '3d_paint':
             label_id = task.get('label_id')
             tgt = task.get('primary_target')
@@ -2886,8 +2856,16 @@ class PropagationEngine(QObject):
                 if not any(p == ortho_path for p, _ in source_cameras):
                     source_cameras.append((ortho_path, self.ortho_camera))
 
+        # Only cameras that actually have a mask annotation participate — the
+        # status message and logs report that count, not every loaded camera.
+        source_cameras = [
+            (p, c) for p, c in source_cameras
+            if getattr(getattr(c, '_raster', None), 'mask_annotation', None) is not None
+        ]
         if not source_cameras:
-            self._warn_semantic_propagation("No cameras with index maps found.")
+            self._warn_semantic_propagation(
+                "No cameras have mask annotations to aggregate."
+            )
             return
 
         status_bar = getattr(self.main_window, 'status_bar', None)
@@ -2895,7 +2873,7 @@ class PropagationEngine(QObject):
             try:
                 status_bar.showMessage(
                     f"Cameras → Mesh: aggregating {len(source_cameras)} camera(s) "
-                    f"(missing index maps are loaded from disk cache automatically)…", 0
+                    f"with mask annotations (cameras without loaded index maps are skipped)…", 0
                 )
             except Exception:
                 pass
@@ -2938,7 +2916,7 @@ class PropagationEngine(QObject):
         all_vote_counts = []
         stats = {'no_index': 0, 'no_mask': 0, 'no_votes': 0, 'contributing': 0}
 
-        def _accumulate_camera_votes(path, camera, index_map_override=None):
+        def _accumulate_camera_votes(path, camera):
             """Extract, canonicalise, and reduce one camera's votes in place."""
             raster = getattr(camera, '_raster', None)
             mask_annotation = getattr(raster, 'mask_annotation', None) if raster else None
@@ -2948,10 +2926,7 @@ class PropagationEngine(QObject):
 
             try:
                 element_ids, local_class_ids, class_label_ids = (
-                    self._extract_semantic_element_votes(
-                        camera, mask_annotation,
-                        index_map_override=index_map_override,
-                    )
+                    self._extract_semantic_element_votes(camera, mask_annotation)
                 )
             except Exception as exc:
                 print(f"aggregate_camera_masks_to_mesh: vote extraction failed for {path}: {exc}")
@@ -2990,97 +2965,35 @@ class PropagationEngine(QObject):
                 all_vote_counts.append(counts.astype(np.float64))
                 stats['contributing'] += 1
 
-        # ── Split cameras: index map in RAM vs needs a disk-cache load ─────
-        # Cameras whose maps aren't loaded yet get a direct disk-cache load
-        # here, in parallel, instead of being silently skipped — previously
-        # the push raced the lazy visibility loader and dropped every camera
-        # it hadn't reached yet (the "12/91 contributed" failure).
-        register_tasks = []
-        cache_manager = getattr(self, 'cache_manager', None)
-        target_file_path = getattr(primary_target, 'file_path', '') or ''
-        try:
-            element_type = primary_target.get_element_type()
-        except Exception:
-            element_type = 'face'
-
-        ram_cameras = []
-        missing = []
+        # ── Vote accumulation ──────────────────────────────────────────────
+        # Only cameras whose index maps are ALREADY loaded contribute.  This
+        # push never loads maps itself — use the Load Index Maps action to
+        # pull them from disk cache first.  source_cameras was pre-filtered
+        # to cameras with mask annotations, so the counts reported below are
+        # out of the masked set, not every camera in the project.
         for path, camera in source_cameras:
             raster = getattr(camera, '_raster', None)
-            if raster is None:
+            if raster is None or getattr(raster, 'index_map', None) is None:
                 stats['no_index'] += 1
                 continue
-            if getattr(raster, 'mask_annotation', None) is None:
-                stats['no_mask'] += 1
-                continue
-            if getattr(raster, 'index_map', None) is None:
-                missing.append((path, camera))
-            else:
-                ram_cameras.append((path, camera))
-
-        for path, camera in ram_cameras:
             _accumulate_camera_votes(path, camera)
-
-        if missing and (cache_manager is None or not target_file_path):
-            stats['no_index'] += len(missing)
-        elif missing:
-            print(f"[Cameras→Mesh] Loading {len(missing)} missing index map(s) from disk cache…")
-
-            def _load_one(path, camera):
-                raster = camera._raster
-                extra = (raster.dist_coeffs.tobytes()
-                         if getattr(camera, 'is_distorted', False)
-                         and raster.dist_coeffs is not None else None)
-                try:
-                    return cache_manager.load_visibility(
-                        raster.extrinsics, target_file_path, element_type, extra,
-                        pixel_budget=self.pixel_budget,
-                    )
-                except Exception as exc:
-                    print(f"[Cameras→Mesh] index map cache load failed for {path}: {exc}")
-                    return None
-
-            # Consume each map as its load finishes so at most ~pool-width
-            # decompressed maps are in RAM at once (91 held at once would be
-            # gigabytes), then queue a lazy disk-backed registration so later
-            # flows (mesh→cameras, visibility filter) find the map too.
-            futs = {
-                self._propagation_executor.submit(_load_one, path, camera): (path, camera)
-                for path, camera in missing
-            }
-            for fut in as_completed(futs):
-                path, camera = futs[fut]
-                data = fut.result()
-                if data is None or data.get('index_map') is None:
-                    stats['no_index'] += 1
-                    continue
-                _accumulate_camera_votes(path, camera, index_map_override=data['index_map'])
-                cache_path = data.get('cache_path')
-                if cache_path and getattr(camera._raster, 'index_map_path', None) is None:
-                    register_tasks.append({
-                        'type': 'register_index_map',
-                        'camera': camera,
-                        'cache_path': cache_path,
-                        'element_type': element_type,
-                    })
 
         total = len(source_cameras)
         contributing = stats['contributing']
         print(
-            f"[Cameras→Mesh] {contributing}/{total} cameras contributed | "
-            f"{stats['no_index']} no index map | "
-            f"{stats['no_mask']} no mask | "
+            f"[Cameras→Mesh] {contributing}/{total} masked camera(s) contributed | "
+            f"{stats['no_index']} skipped (index map not loaded — use Load Index Maps) | "
             f"{stats['no_votes']} no labeled votes"
         )
 
         if not all_element_ids:
             msg = (
-                f"Cameras → Mesh: 0 of {total} camera(s) had both index maps and "
-                f"labeled masks. Enable Multi-Annotate so index maps are computed, "
-                f"then paint masks before aggregating."
+                f"Cameras → Mesh: none of the {total} camera(s) with mask "
+                f"annotations have loaded index maps. Use Load Index Maps "
+                f"(or enable Multi-Annotate) first, then aggregate."
             )
             print(f"WARNING: {msg}")
-            self._universal_repaint_signal.emit(register_tasks + [{
+            self._universal_repaint_signal.emit([{
                 'type': 'status_message', 'message': msg, 'timeout': 8000,
             }])
             return
@@ -3094,7 +3007,7 @@ class PropagationEngine(QObject):
         )
 
         if unique_elements.size == 0:
-            self._universal_repaint_signal.emit(register_tasks)
+            self._universal_repaint_signal.emit([])
             return
 
         # ── Global densify: ONE gather over the merged winners ─────────────
@@ -3128,7 +3041,7 @@ class PropagationEngine(QObject):
                     f"{(perf_counter() - t_densify) * 1000:.0f} ms"
                 )
 
-        repaint_tasks = list(register_tasks)
+        repaint_tasks = []
         new_mesh_class_label_ids = {}
 
         for canon_id in np.unique(winning_classes):
@@ -3163,7 +3076,7 @@ class PropagationEngine(QObject):
         )
         done_msg = (
             f"Cameras → Mesh: {unique_elements.size:,} face(s) from "
-            f"{contributing}/{total} camera(s) in {elapsed_ms:.0f} ms"
+            f"{contributing}/{total} masked camera(s) in {elapsed_ms:.0f} ms"
             + (f"  [{label_summary}]" if label_summary else "")
         )
         print(f"[Cameras→Mesh] {done_msg}")
