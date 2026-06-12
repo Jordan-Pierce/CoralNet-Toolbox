@@ -888,9 +888,10 @@ class MeshProduct(AbstractSceneProduct):
             n_segments = int(seg_ids.max()) + 1 if seg_ids.size else 0
             if n_segments <= 0:
                 return
-            # Deterministic palette; floor at 40 to avoid near-black segments.
+            # Deterministic greyscale palette; floor at 40 to avoid near-black segments.
             rng = np.random.default_rng(self._SEGMENT_PALETTE_SEED)
-            palette = rng.integers(40, 256, size=(n_segments, 3), dtype=np.uint8)
+            gray = rng.integers(40, 256, size=(n_segments, 1), dtype=np.uint8)
+            palette = np.repeat(gray, 3, axis=1)
             colors = palette[seg_ids]
 
             existing = None
