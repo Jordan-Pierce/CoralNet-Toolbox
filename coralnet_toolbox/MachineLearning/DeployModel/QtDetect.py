@@ -143,11 +143,12 @@ class Detect(Base):
                 imgsz = 640
 
             self.imgsz = imgsz
-            # Pass the device so the predictor is created on it now; ultralytics
-            # silently rebuilds the predictor (reload + fuse) on the first call
-            # whose device= differs from the one it was created with.
+            # Pass the same device/half the predict paths use: ultralytics
+            # fixes fp16 when the predictor is created and silently rebuilds
+            # the whole predictor on the first call whose device= differs, so
+            # the warmup must match or later half=True calls run in fp32.
             self.loaded_model(np.zeros((imgsz, imgsz, 3), dtype=np.uint8),
-                              device=self.main_window.device)
+                              device=self.main_window.device, half=True)
             self.class_names = list(self.loaded_model.names.values())
 
             # Check for unmapped classes
