@@ -59,6 +59,7 @@ class MVATManager(QObject):
     cameraSelectedInMVAT = pyqtSignal(str)
     contextStatsComputed = pyqtSignal(int, str, int, int)
     _orthoIndexMapReady  = pyqtSignal(object)  # internal: carries result dict from worker thread
+    _visibilityCacheLoaded = pyqtSignal(object)  # internal: disk-cache load results from worker thread
 
     def __getattr__(self, name):
         """Delegate unknown attributes to propagation_engine.
@@ -154,6 +155,9 @@ class MVATManager(QObject):
             self._distortion_vram_safety_factor = 0.8
         # Safety flag to prevent concurrent visibility computations
         self._is_computing_visibility = False
+        # Camera paths whose index maps are currently loading from disk cache
+        # in the background (guards duplicate loads across rapid UI events).
+        self._inflight_cache_loads = set()
         # Track active worker threads to prevent GC
         self._active_workers = []
         self._context_stats_request_id = 0
@@ -248,6 +252,7 @@ class MVATManager(QObject):
         self.viewer.computeDepthMapsToggled.connect(self._on_compute_depth_maps_toggled)
         self.viewer.primaryTargetChanged.connect(self._on_primary_target_changed)
         self._orthoIndexMapReady.connect(self._on_ortho_index_map_computed)
+        self._visibilityCacheLoaded.connect(self._on_visibility_cache_loaded)
         
         # 5. Main Window Sync
         if hasattr(self.annotation_window, 'mouseMoved'):
@@ -1770,8 +1775,6 @@ class MVATManager(QObject):
         target_file_path = primary_target.file_path
         element_type = primary_target.get_element_type()
 
-        cameras_needing_visibility = []
-
         # ------------------------------------------------------------------
         # Phase 1: Split cameras into RAM-hits and disk-cache candidates
         # ------------------------------------------------------------------
@@ -1783,54 +1786,99 @@ class MVATManager(QObject):
             # Already in active memory — nothing to do
             if camera.visible_indices is not None:
                 continue
+            # Already loading from disk in the background — don't double up
+            if path in self._inflight_cache_loads:
+                continue
             cache_candidates[path] = camera
 
-        # ------------------------------------------------------------------
-        # Phase 2: Parallel disk-cache load for all candidates
-        # ------------------------------------------------------------------
-        cache_results = {}  # path -> cached_data (or None)
-        if self.cache_manager is not None and target_file_path and cache_candidates:
-            self.main_window.status_bar.showMessage(
-                f"Checking cache for {len(cache_candidates)} camera(s)...", 1000
-            )
+        if not cache_candidates:
+            return
 
-            def _load_one(path, camera):
-                cache_key = camera._raster.extrinsics
-                extra = (camera._raster.dist_coeffs.tobytes()
-                         if camera.is_distorted
-                         and camera._raster.dist_coeffs is not None else None)
-                try:
-                    loaded_data = self.cache_manager.load_visibility(
-                        cache_key, target_file_path, element_type, extra,
-                        pixel_budget=self.pixel_budget,
-                    )
-                    return path, loaded_data
-                except Exception as exc:
-                    print(f"⚠️ Cache load error for {camera.label}: {exc}")
-                    return path, None
-
-            n_workers = min(8, max(1, len(cache_candidates)))
+        # ------------------------------------------------------------------
+        # Phase 2: Background disk-cache load for all candidates
+        # ------------------------------------------------------------------
+        # The loads run on a short-lived daemon thread (pooled internally) and
+        # results come back to the main thread via _visibilityCacheLoaded.
+        # The Qt main thread must never block here: dozens of map loads can
+        # take tens of seconds and previously froze the whole app.
+        if self.cache_manager is not None and target_file_path:
+            self._inflight_cache_loads.update(cache_candidates)
             self.main_window.status_bar.showMessage(
                 f"Loading index maps for {len(cache_candidates)} camera(s) from cache...", 0
             )
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            QApplication.processEvents()
-            try:
-                with ThreadPoolExecutor(max_workers=n_workers) as pool:
-                    futs = {
-                        pool.submit(_load_one, path, cam): path
-                        for path, cam in cache_candidates.items()
-                    }
-                    for fut in as_completed(futs):
-                        path, data = fut.result()
-                        cache_results[path] = data
-            finally:
-                QApplication.restoreOverrideCursor()
 
-        # ------------------------------------------------------------------
-        # Phase 3: Apply cache results on the main (Qt) thread, queue misses
-        # ------------------------------------------------------------------
-        for path, camera in cache_candidates.items():
+            cache_manager = self.cache_manager
+            pixel_budget = self.pixel_budget
+
+            def _load_all(candidates=dict(cache_candidates),
+                          tfp=target_file_path,
+                          etype=element_type,
+                          ptarget=primary_target):
+                def _load_one(path, camera):
+                    cache_key = camera._raster.extrinsics
+                    extra = (camera._raster.dist_coeffs.tobytes()
+                             if camera.is_distorted
+                             and camera._raster.dist_coeffs is not None else None)
+                    try:
+                        loaded_data = cache_manager.load_visibility(
+                            cache_key, tfp, etype, extra,
+                            pixel_budget=pixel_budget,
+                        )
+                        return path, loaded_data
+                    except Exception as exc:
+                        print(f"⚠️ Cache load error for {camera.label}: {exc}")
+                        return path, None
+
+                results = {}
+                try:
+                    n_workers = min(8, max(1, len(candidates)))
+                    with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                        futs = {
+                            pool.submit(_load_one, path, cam): path
+                            for path, cam in candidates.items()
+                        }
+                        for fut in as_completed(futs):
+                            path, data = fut.result()
+                            results[path] = data
+                finally:
+                    self._visibilityCacheLoaded.emit({
+                        'results': results,
+                        'candidates': candidates,
+                        'target_file_path': tfp,
+                        'element_type': etype,
+                        'primary_target': ptarget,
+                    })
+
+            threading.Thread(
+                target=_load_all, daemon=True, name='mvat_cache_load'
+            ).start()
+            return
+
+        # No cache manager / target — everything is a miss; compute directly.
+        self._on_visibility_cache_loaded({
+            'results': {},
+            'candidates': cache_candidates,
+            'target_file_path': target_file_path,
+            'element_type': element_type,
+            'primary_target': primary_target,
+        })
+
+    def _on_visibility_cache_loaded(self, payload: dict):
+        """Main thread: apply disk-cache results, then queue compute for misses.
+
+        Phase 3 of ``_update_visibility_filter`` — split out so the disk loads
+        can run on a background thread and deliver here via signal.
+        """
+        candidates = payload.get('candidates') or {}
+        cache_results = payload.get('results') or {}
+        target_file_path = payload.get('target_file_path', '')
+        element_type = payload.get('element_type', 'face')
+        primary_target = payload.get('primary_target')
+
+        self._inflight_cache_loads.difference_update(candidates.keys())
+
+        cameras_needing_visibility = []
+        for path, camera in candidates.items():
             cached_data = cache_results.get(path)
 
             if cached_data is not None:
@@ -1875,6 +1923,10 @@ class MVATManager(QObject):
             return
 
         if self._is_computing_visibility:
+            return
+
+        # Guard against the primary target changing while loads were in flight.
+        if primary_target is None or primary_target is not self.viewer.scene_context.get_primary_target():
             return
 
         # Proceed to async computation for only the remaining cameras

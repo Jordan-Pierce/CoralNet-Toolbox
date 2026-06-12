@@ -643,18 +643,17 @@ class PropagationEngine(QObject):
         return dense if dense.size else seed_ids
 
     def _densify_source_votes(self, source_camera, element_ids, class_ids):
-        """Densify multi-class element/class vote arrays, one class at a time.
+        """Densify multi-class element/class vote arrays in one batched gather.
 
         Semantic propagation produces parallel ``element_ids`` / ``class_ids``
-        vote arrays (many classes at once, with duplicate votes per face), so the
-        single-class ``_densify_source_ids`` path doesn't apply directly.  This
-        gathers the dense surface patch per class and appends the *newly* reached
-        faces as one vote each, leaving the original votes (and their
-        multiplicity) intact so confirmed seeds keep their weight.
-
-        Where two classes' gathers overlap at a boundary, both contribute a vote
-        for the shared face; the downstream ``resolve_class_conflicts_vectorized``
-        picks the winner, so no conflict handling is needed here.
+        vote arrays (many classes at once, with duplicate votes per face).  All
+        classes are expanded with a single multiclass gather — one set of
+        KD-tree queries per camera instead of one per class, which is what keeps
+        scipy's per-call thread spawning off the aggregation hot path.  Each
+        newly reached face gets one vote for the class of its nearest seed; the
+        original votes (and their multiplicity) are kept intact so confirmed
+        seeds keep their weight, and ``resolve_class_conflicts_vectorized``
+        still arbitrates downstream.
 
         No-op (returns the inputs unchanged) when densification is disabled, the
         arrays are empty/mismatched, or the target is not a KD-tree-backed mesh.
@@ -666,25 +665,32 @@ class PropagationEngine(QObject):
             return element_ids, class_ids
 
         primary_target = self.viewer.scene_context.get_primary_target()
-        if primary_target is None or not hasattr(primary_target, 'gather_dense_face_ids'):
+        if primary_target is None or not hasattr(primary_target, 'gather_dense_face_ids_multiclass'):
             return element_ids, class_ids
 
-        # Preserve the original votes (with multiplicity) as the first chunk.
-        out_elements = [element_ids]
-        out_classes = [class_ids]
+        camera_position = None
+        if source_camera is not None and source_camera is not self.ortho_camera:
+            camera_position = getattr(source_camera, 'position', None)
 
-        for cls in np.unique(class_ids):
-            seed = element_ids[class_ids == cls]
-            unique_seed = np.unique(seed)
-            dense = self._densify_source_ids(source_camera, unique_seed)
-            # Append only faces the gather newly reached for this class; the
-            # originals are already represented (with their vote weight) above.
-            new_faces = np.setdiff1d(dense, unique_seed, assume_unique=True)
-            if new_faces.size:
-                out_elements.append(new_faces)
-                out_classes.append(np.full(new_faces.size, int(cls), dtype=np.int64))
+        try:
+            new_faces, new_classes = primary_target.gather_dense_face_ids_multiclass(
+                element_ids,
+                class_ids,
+                camera_position=camera_position,
+                radius_mult=getattr(self, 'densify_radius_mult', 1.5),
+                normal_dot_min=getattr(self, 'densify_normal_dot_min', 0.3),
+                max_expansion=getattr(self, 'densify_max_expansion', 40.0),
+            )
+        except Exception as exc:
+            print(f"⚠️ Face densification failed: {exc}")
+            return element_ids, class_ids
 
-        return np.concatenate(out_elements), np.concatenate(out_classes)
+        if new_faces.size == 0:
+            return element_ids, class_ids
+
+        # Original votes (with multiplicity) first, then one vote per new face.
+        return (np.concatenate([element_ids, new_faces]),
+                np.concatenate([class_ids, new_classes]))
 
     def _extract_source_ids_from_full_mask(self,
                                            source_camera,
@@ -1274,13 +1280,24 @@ class PropagationEngine(QObject):
     def _extract_semantic_element_votes(self,
                                         source_camera,
                                         source_mask_annotation,
-                                        prediction_regions=None):
-        """Build raw element/class vote arrays for semantic propagation."""
+                                        prediction_regions=None,
+                                        index_map_override=None):
+        """Build raw element/class vote arrays for semantic propagation.
+
+        ``index_map_override`` lets callers supply an index map loaded directly
+        from disk cache (full-mask path only) when the camera's raster doesn't
+        hold one in RAM yet — used by cameras→mesh aggregation so it never
+        silently skips cameras whose maps the lazy visibility loader hasn't
+        reached.
+        """
         if source_camera is None or source_mask_annotation is None:
             return np.array([], dtype=np.int64), np.array([], dtype=np.int64), {}
 
         raster = getattr(source_camera, '_raster', None)
-        if getattr(raster, 'index_map', None) is None:
+        index_map = index_map_override
+        if index_map is None:
+            index_map = getattr(raster, 'index_map', None)
+        if index_map is None:
             return np.array([], dtype=np.int64), np.array([], dtype=np.int64), {}
 
         lock_bit = source_mask_annotation.LOCK_BIT
@@ -1337,7 +1354,6 @@ class PropagationEngine(QObject):
 
             # Single pass for ALL classes: bring the class layer down to the
             # index map's resolution once, then read element + class per pixel.
-            index_map = raster.index_map
             sem = semantic_mask % lock_bit
             if sem.shape != index_map.shape:
                 import cv2
@@ -2271,6 +2287,26 @@ class PropagationEngine(QObject):
                         pass
             return
 
+        if task_type == 'register_index_map':
+            # Lazily register a disk-cached index map the aggregation worker
+            # loaded, so later flows (mesh→cameras, visibility filter) find it
+            # without another silent skip.  index_map=None keeps the dense map
+            # disk-backed (LRU) instead of pinning it in RAM here.
+            camera = task.get('camera')
+            raster = getattr(camera, '_raster', None)
+            if raster is not None and getattr(raster, 'index_map_path', None) is None:
+                try:
+                    raster.add_index_map(
+                        None,
+                        task.get('cache_path'),
+                        task.get('visible_indices'),
+                        element_type=task.get('element_type', 'face'),
+                        inverted_index=task.get('inverted_index'),
+                    )
+                except Exception as exc:
+                    print(f"⚠️ register_index_map failed: {exc}")
+            return
+
         if task_type == '3d_paint':
             label_id = task.get('label_id')
             tgt = task.get('primary_target')
@@ -2858,8 +2894,8 @@ class PropagationEngine(QObject):
         if status_bar is not None:
             try:
                 status_bar.showMessage(
-                    f"Cameras → Mesh: scanning {len(source_cameras)} camera(s) "
-                    f"(only those with index maps + labeled masks will contribute)…", 0
+                    f"Cameras → Mesh: aggregating {len(source_cameras)} camera(s) "
+                    f"(missing index maps are loaded from disk cache automatically)…", 0
                 )
             except Exception:
                 pass
@@ -2900,40 +2936,36 @@ class PropagationEngine(QObject):
         all_element_ids = []
         all_class_ids = []
         all_vote_counts = []
-        skipped_no_index = 0
-        skipped_no_mask = 0
-        skipped_no_votes = 0
-        contributing = 0
+        stats = {'no_index': 0, 'no_mask': 0, 'no_votes': 0, 'contributing': 0}
 
-        for path, camera in source_cameras:
+        def _accumulate_camera_votes(path, camera, index_map_override=None):
+            """Extract, canonicalise, and reduce one camera's votes in place."""
             raster = getattr(camera, '_raster', None)
-            if raster is None or getattr(raster, 'index_map', None) is None:
-                skipped_no_index += 1
-                continue
-            mask_annotation = getattr(raster, 'mask_annotation', None)
+            mask_annotation = getattr(raster, 'mask_annotation', None) if raster else None
             if mask_annotation is None:
-                skipped_no_mask += 1
-                continue
+                stats['no_mask'] += 1
+                return
 
             try:
                 element_ids, local_class_ids, class_label_ids = (
-                    self._extract_semantic_element_votes(camera, mask_annotation)
+                    self._extract_semantic_element_votes(
+                        camera, mask_annotation,
+                        index_map_override=index_map_override,
+                    )
                 )
             except Exception as exc:
                 print(f"aggregate_camera_masks_to_mesh: vote extraction failed for {path}: {exc}")
-                skipped_no_votes += 1
-                continue
+                stats['no_votes'] += 1
+                return
 
             if element_ids.size == 0:
-                skipped_no_votes += 1
-                continue
+                stats['no_votes'] += 1
+                return
 
-            # Densify each camera's votes in its own view before canonical
-            # translation — fills the holes a low-res index map leaves between
-            # sampled faces, matching the live-paint and primary→cameras paths.
-            element_ids, local_class_ids = self._densify_source_votes(
-                camera, element_ids, local_class_ids
-            )
+            # NOTE: no per-camera densify here — it made aggregation scale
+            # linearly with camera count (≈1-4 s of KD-tree gathering per
+            # camera at full-mask seed densities).  One global densify runs on
+            # the merged winners after conflict resolution instead.
 
             # Translate local class IDs → canonical IDs so votes from cameras
             # with different label orderings count toward the same label.
@@ -2946,8 +2978,8 @@ class PropagationEngine(QObject):
 
             valid = canonical_ids > 0
             if not np.any(valid):
-                skipped_no_votes += 1
-                continue
+                stats['no_votes'] += 1
+                return
 
             elem_reduced, class_reduced, counts = reduce_vote_arrays(
                 element_ids[valid], canonical_ids[valid]
@@ -2956,14 +2988,89 @@ class PropagationEngine(QObject):
                 all_element_ids.append(elem_reduced)
                 all_class_ids.append(class_reduced)
                 all_vote_counts.append(counts.astype(np.float64))
-                contributing += 1
+                stats['contributing'] += 1
+
+        # ── Split cameras: index map in RAM vs needs a disk-cache load ─────
+        # Cameras whose maps aren't loaded yet get a direct disk-cache load
+        # here, in parallel, instead of being silently skipped — previously
+        # the push raced the lazy visibility loader and dropped every camera
+        # it hadn't reached yet (the "12/91 contributed" failure).
+        register_tasks = []
+        cache_manager = getattr(self, 'cache_manager', None)
+        target_file_path = getattr(primary_target, 'file_path', '') or ''
+        try:
+            element_type = primary_target.get_element_type()
+        except Exception:
+            element_type = 'face'
+
+        ram_cameras = []
+        missing = []
+        for path, camera in source_cameras:
+            raster = getattr(camera, '_raster', None)
+            if raster is None:
+                stats['no_index'] += 1
+                continue
+            if getattr(raster, 'mask_annotation', None) is None:
+                stats['no_mask'] += 1
+                continue
+            if getattr(raster, 'index_map', None) is None:
+                missing.append((path, camera))
+            else:
+                ram_cameras.append((path, camera))
+
+        for path, camera in ram_cameras:
+            _accumulate_camera_votes(path, camera)
+
+        if missing and (cache_manager is None or not target_file_path):
+            stats['no_index'] += len(missing)
+        elif missing:
+            print(f"[Cameras→Mesh] Loading {len(missing)} missing index map(s) from disk cache…")
+
+            def _load_one(path, camera):
+                raster = camera._raster
+                extra = (raster.dist_coeffs.tobytes()
+                         if getattr(camera, 'is_distorted', False)
+                         and raster.dist_coeffs is not None else None)
+                try:
+                    return cache_manager.load_visibility(
+                        raster.extrinsics, target_file_path, element_type, extra,
+                        pixel_budget=self.pixel_budget,
+                    )
+                except Exception as exc:
+                    print(f"[Cameras→Mesh] index map cache load failed for {path}: {exc}")
+                    return None
+
+            # Consume each map as its load finishes so at most ~pool-width
+            # decompressed maps are in RAM at once (91 held at once would be
+            # gigabytes), then queue a lazy disk-backed registration so later
+            # flows (mesh→cameras, visibility filter) find the map too.
+            futs = {
+                self._propagation_executor.submit(_load_one, path, camera): (path, camera)
+                for path, camera in missing
+            }
+            for fut in as_completed(futs):
+                path, camera = futs[fut]
+                data = fut.result()
+                if data is None or data.get('index_map') is None:
+                    stats['no_index'] += 1
+                    continue
+                _accumulate_camera_votes(path, camera, index_map_override=data['index_map'])
+                cache_path = data.get('cache_path')
+                if cache_path and getattr(camera._raster, 'index_map_path', None) is None:
+                    register_tasks.append({
+                        'type': 'register_index_map',
+                        'camera': camera,
+                        'cache_path': cache_path,
+                        'element_type': element_type,
+                    })
 
         total = len(source_cameras)
+        contributing = stats['contributing']
         print(
             f"[Cameras→Mesh] {contributing}/{total} cameras contributed | "
-            f"{skipped_no_index} no index map | "
-            f"{skipped_no_mask} no mask | "
-            f"{skipped_no_votes} no labeled votes"
+            f"{stats['no_index']} no index map | "
+            f"{stats['no_mask']} no mask | "
+            f"{stats['no_votes']} no labeled votes"
         )
 
         if not all_element_ids:
@@ -2973,7 +3080,7 @@ class PropagationEngine(QObject):
                 f"then paint masks before aggregating."
             )
             print(f"WARNING: {msg}")
-            self._universal_repaint_signal.emit([{
+            self._universal_repaint_signal.emit(register_tasks + [{
                 'type': 'status_message', 'message': msg, 'timeout': 8000,
             }])
             return
@@ -2987,10 +3094,41 @@ class PropagationEngine(QObject):
         )
 
         if unique_elements.size == 0:
-            self._universal_repaint_signal.emit([])
+            self._universal_repaint_signal.emit(register_tasks)
             return
 
-        repaint_tasks = []
+        # ── Global densify: ONE gather over the merged winners ─────────────
+        # Fills the sub-pixel faces every low-res index map skips, like the
+        # old per-camera densify did, but at O(1) gathers per push instead of
+        # O(cameras): with full-mask seeds each per-camera gather cost ~1-4 s.
+        # camera_position=None skips the per-camera facing cull (these faces
+        # were all confirmed visible by some camera); the normal-consistency
+        # cull still rejects geometry behind the labeled surface.
+        if getattr(self, 'densify_enabled', False) and hasattr(
+                primary_target, 'gather_dense_face_ids_multiclass'):
+            t_densify = perf_counter()
+            try:
+                new_faces, new_face_classes = primary_target.gather_dense_face_ids_multiclass(
+                    unique_elements,
+                    winning_classes,
+                    camera_position=None,
+                    radius_mult=getattr(self, 'densify_radius_mult', 1.5),
+                    normal_dot_min=getattr(self, 'densify_normal_dot_min', 0.3),
+                    max_expansion=getattr(self, 'densify_max_expansion', 40.0),
+                )
+            except Exception as exc:
+                print(f"[Cameras→Mesh] global densify failed: {exc}")
+                new_faces = np.array([], dtype=np.int64)
+                new_face_classes = new_faces
+            if new_faces.size:
+                unique_elements = np.concatenate([unique_elements, new_faces])
+                winning_classes = np.concatenate([winning_classes, new_face_classes])
+                print(
+                    f"[Cameras→Mesh] densify: +{new_faces.size:,} face(s) in "
+                    f"{(perf_counter() - t_densify) * 1000:.0f} ms"
+                )
+
+        repaint_tasks = list(register_tasks)
         new_mesh_class_label_ids = {}
 
         for canon_id in np.unique(winning_classes):

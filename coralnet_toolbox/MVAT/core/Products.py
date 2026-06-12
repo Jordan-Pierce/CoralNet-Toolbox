@@ -27,6 +27,26 @@ RenderStyle = Dict[str, Union[str, int, float, bool]]
 
 
 # ----------------------------------------------------------------------------------------------------------------------
+# KD-tree query helpers
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Minimum number of query points before a scipy KD-tree query is worth
+# parallelising.  Below this, single-threaded queries finish faster than the
+# thread team can even be spawned.
+_KDTREE_PARALLEL_MIN_QUERIES = 4096
+
+
+def _kdtree_workers(n_queries: int) -> int:
+    """Pick the scipy ``workers`` value for a KD-tree query of this size.
+
+    scipy spawns and joins a fresh thread per worker on every parallel query —
+    there is no persistent pool — so for small batches the spawn/join cost
+    dwarfs the query itself.  Stay single-threaded below the threshold.
+    """
+    return -1 if n_queries >= _KDTREE_PARALLEL_MIN_QUERIES else 1
+
+
+# ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
@@ -1397,16 +1417,74 @@ class MeshProduct(AbstractSceneProduct):
         if seeds.size == 0:
             return seeds
 
+        new_ids, _ = self.gather_dense_face_ids_multiclass(
+            seeds,
+            np.zeros(seeds.size, dtype=np.int64),
+            camera_position=camera_position,
+            radius_mult=radius_mult,
+            normal_dot_min=normal_dot_min,
+            max_expansion=max_expansion,
+        )
+        if new_ids.size == 0:
+            return seeds
+        return np.union1d(seeds, new_ids)
+
+    def gather_dense_face_ids_multiclass(self, seed_ids, seed_class_ids, *,
+                                         camera_position=None,
+                                         radius_mult: float = 1.5,
+                                         normal_dot_min: float = 0.3,
+                                         max_expansion: float = 40.0):
+        """Gather newly reached faces around multi-class seeds in one batched pass.
+
+        Batched core of the densify gather: all classes' seeds are expanded with
+        a single set of KD-tree queries (instead of one set per class), and each
+        newly reached face inherits the class of its nearest seed.  scipy spawns
+        and joins a fresh thread team on every parallel query, so collapsing the
+        per-class calls into one — and staying single-threaded for small batches
+        via ``_kdtree_workers`` — is what keeps thread churn off the semantic
+        propagation hot path.
+
+        Args:
+            seed_ids: Face IDs sampled from a (low-res) index map.  Duplicates
+                are allowed; a face seeded under several classes keeps the class
+                of its first occurrence for nearest-seed assignment.
+            seed_class_ids: Class ID per entry of ``seed_ids`` (same length).
+            camera_position, radius_mult, normal_dot_min, max_expansion: see
+                ``gather_dense_face_ids``.
+
+        Returns:
+            ``(new_face_ids, new_face_classes)`` — int64 arrays of faces *not*
+            in the seed set, each tagged with the class of its nearest surviving
+            seed.  Both empty on no-op, failure, or when the circuit breaker
+            trips (callers keep their original seeds/votes either way).
+        """
+        empty = (np.array([], dtype=np.int64), np.array([], dtype=np.int64))
+
+        seeds_raw = np.asarray(seed_ids, dtype=np.int64).ravel()
+        classes_raw = np.asarray(seed_class_ids, dtype=np.int64).ravel()
+        if seeds_raw.size == 0 or seeds_raw.size != classes_raw.size:
+            return empty
+
+        valid = seeds_raw >= 0
+        seeds_raw = seeds_raw[valid]
+        classes_raw = classes_raw[valid]
+        seeds, first_idx = np.unique(seeds_raw, return_index=True)
+        seed_classes = classes_raw[first_idx]
+        if seeds.size == 0:
+            return empty
+
         tree = getattr(self, '_hover_face_kdtree', None)
         centers = getattr(self, '_element_centers_np', None)
         if tree is None or centers is None:
-            return seeds
+            return empty
 
         centers = np.asarray(centers, dtype=np.float32)
         n_faces = len(centers)
-        seeds = seeds[seeds < n_faces]
+        in_range = seeds < n_faces
+        seeds = seeds[in_range]
+        seed_classes = seed_classes[in_range]
         if seeds.size == 0:
-            return np.asarray(seed_ids, dtype=np.int64)
+            return empty
 
         pts = centers[seeds]
 
@@ -1414,7 +1492,7 @@ class MeshProduct(AbstractSceneProduct):
         radius = 0.0
         if seeds.size >= 2:
             try:
-                nn_dist, _ = tree.query(pts, k=2, workers=-1)
+                nn_dist, _ = tree.query(pts, k=2, workers=_kdtree_workers(pts.shape[0]))
                 nn_dist = nn_dist[:, 1]
                 nn_dist = nn_dist[np.isfinite(nn_dist) & (nn_dist > 0)]
                 if nn_dist.size:
@@ -1425,7 +1503,7 @@ class MeshProduct(AbstractSceneProduct):
             diag = float(np.linalg.norm(centers.max(axis=0) - centers.min(axis=0)))
             radius = diag * 1e-3
         if radius <= 0.0:
-            return seeds
+            return empty
 
         # --- Thin query centers to ~half the gather radius -------------------
         # query_ball_point cost (and the volume of duplicate output we then
@@ -1443,21 +1521,38 @@ class MeshProduct(AbstractSceneProduct):
 
         # --- Radius-union gather (conforms to the stroke shape) --------------
         try:
-            neighbor_lists = tree.query_ball_point(query_pts, radius, workers=-1)
+            neighbor_lists = tree.query_ball_point(
+                query_pts, radius, workers=_kdtree_workers(query_pts.shape[0])
+            )
         except TypeError:
             neighbor_lists = tree.query_ball_point(query_pts, radius)
         # C-level concat of per-center arrays, not a Python generator flatten.
         sub_arrays = [np.asarray(sub, dtype=np.int64) for sub in neighbor_lists if len(sub)]
         if not sub_arrays:
-            return seeds
+            return empty
         candidates = np.unique(np.concatenate(sub_arrays))
         if candidates.size == 0:
-            return seeds
+            return empty
+
+        cand_centers = centers[candidates]
+
+        # Nearest surviving seed per candidate — shared by the Stage 2 normal
+        # consistency cull and by class assignment for newly reached faces.
+        nearest_local = None
+        multi_class = np.unique(seed_classes).size > 1
+        if multi_class or normal_dot_min is not None:
+            try:
+                from scipy.spatial import cKDTree
+                seed_tree = cKDTree(pts)
+                _, nearest_local = seed_tree.query(
+                    cand_centers, k=1, workers=_kdtree_workers(cand_centers.shape[0])
+                )
+            except Exception:
+                nearest_local = None
 
         # --- Back-face / occlusion filtering ---
         normals = self._get_cached_face_normals()
         if normals is not None and normals.shape[0] == n_faces:
-            cand_centers = centers[candidates]
             cand_normals = normals[candidates]
             keep = np.ones(candidates.size, dtype=bool)
 
@@ -1473,28 +1568,32 @@ class MeshProduct(AbstractSceneProduct):
                 keep &= facing <= 0.0
 
             # Stage 2: normal consistency vs the nearest seed.
-            if normal_dot_min is not None:
-                try:
-                    from scipy.spatial import cKDTree
-                    seed_tree = cKDTree(pts)
-                    _, nearest_local = seed_tree.query(cand_centers, k=1, workers=-1)
-                    ref_normals = normals[seeds][nearest_local]
-                    consistency = np.einsum('ij,ij->i', cand_normals, ref_normals)
-                    keep &= consistency >= float(normal_dot_min)
-                except Exception:
-                    pass
+            if normal_dot_min is not None and nearest_local is not None:
+                ref_normals = normals[seeds][nearest_local]
+                consistency = np.einsum('ij,ij->i', cand_normals, ref_normals)
+                keep &= consistency >= float(normal_dot_min)
 
             candidates = candidates[keep]
+            if nearest_local is not None:
+                nearest_local = nearest_local[keep]
 
-        # Always retain the original (visible, confirmed) seeds.
-        dense = np.union1d(candidates, seeds)
+        new_mask = ~np.isin(candidates, seeds, assume_unique=True)
+        new_ids = candidates[new_mask]
+        if new_ids.size == 0:
+            return empty
 
-        # Circuit breaker: a stroke straddling a discontinuity can balloon the
-        # gather — fall back to the seeds rather than mislabel distant geometry.
-        if dense.size > max_expansion * seeds.size:
-            return seeds
+        # Circuit breaker: a gather straddling a discontinuity can balloon —
+        # report no expansion rather than mislabel distant geometry.
+        if seeds.size + new_ids.size > max_expansion * seeds.size:
+            return empty
 
-        return dense.astype(np.int64, copy=False)
+        if nearest_local is not None:
+            new_classes = seed_classes[nearest_local[new_mask]]
+        else:
+            new_classes = np.full(new_ids.size, int(seed_classes[0]), dtype=np.int64)
+
+        return (new_ids.astype(np.int64, copy=False),
+                new_classes.astype(np.int64, copy=False))
 
     def get_element_coordinate(self, element_id: int):
         """Return the 3D center coordinate of a mesh face by its ID."""
