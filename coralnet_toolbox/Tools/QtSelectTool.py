@@ -2,7 +2,7 @@ import warnings
 
 from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtGui import QMouseEvent, QKeyEvent
-from PyQt5.QtWidgets import QGraphicsItemGroup, QMessageBox
+from PyQt5.QtWidgets import QGraphicsItemGroup
 
 from coralnet_toolbox.Tools.QtTool import Tool
 
@@ -422,23 +422,17 @@ class SelectTool(Tool):
         
         # Check if any annotations have machine confidence
         if any(not annotation.verified for annotation in selected_annotations):
-            QMessageBox.warning(
-                self.annotation_window,
-                "Cannot Combine",
-                "Cannot combine annotations that still have machine learning predictions until they are verified. "
-                "This prevents changes to machine-generated labels before user confirmation. To verify an "
-                "annotation, select it and press Ctrl+Space, click a label in the ConfidenceWindow, or update "
-                "the label manually."
+            self.annotation_window.main_window.status_bar.showMessage(
+                "Cannot combine: verify by selecting and pressing Ctrl+Space, "
+                "clicking a label in the ConfidenceWindow, or updating the label manually.",
+                5000,
             )
             return
-        
+
         # Check that all selected annotations have the same label
         if not all(annotation.label.id == selected_annotations[0].label.id for annotation in selected_annotations):
-            QMessageBox.warning(
-                self.annotation_window,
-                "Cannot Combine",
-                "Cannot combine annotations with different labels. Select annotations with the same label."
-            )
+            self.annotation_window.main_window.status_bar.showMessage(
+                "Cannot combine annotations with different labels. Select annotations with the same label.", 5000)
             return
         
         # Identify the types of annotations being combined
@@ -449,22 +443,16 @@ class SelectTool(Tool):
         
         # Handle cases where we can't combine different types
         if has_rectangles and (has_patches or has_polygons or has_multi_polygons):
-            QMessageBox.warning(
-                self.annotation_window,
-                "Cannot Combine",
-                "Rectangle annotations can only be combined with other rectangles."
-            )
+            self.annotation_window.main_window.status_bar.showMessage(
+                "Cannot combine: rectangle annotations can only be combined with other rectangles.", 5000)
             return
-        
+
         # Check if all rectangle annotations (if any) are the same type
         if has_rectangles:
             first_type = type(selected_annotations[0])
             if not all(isinstance(annotation, first_type) for annotation in selected_annotations):
-                QMessageBox.warning(
-                    self.annotation_window,
-                    "Cannot Combine",
-                    "Can only combine rectangles with other rectangles."
-                )
+                self.annotation_window.main_window.status_bar.showMessage(
+                    "Cannot combine: can only combine rectangles with other rectangles.", 5000)
                 return
         
         # Handle different annotation type combinations

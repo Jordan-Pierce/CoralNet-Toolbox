@@ -6,7 +6,7 @@ import numpy as np
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush
-from PyQt5.QtWidgets import QMessageBox, QGraphicsRectItem, QApplication
+from PyQt5.QtWidgets import QGraphicsRectItem, QApplication
 
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.Annotations.QtAnnotation import RenderMode
@@ -374,9 +374,8 @@ class SeeAnythingTool(Tool):
             event (QMouseEvent): The mouse press event.
         """
         if not self.annotation_window.selected_label:
-            QMessageBox.warning(self.annotation_window,
-                                "No Label Selected",
-                                "A label must be selected before adding an annotation.")
+            self.annotation_window.main_window.status_bar.showMessage(
+                "A label must be selected before adding an annotation.", 4000)
             return None
 
         # Get position in scene coordinates

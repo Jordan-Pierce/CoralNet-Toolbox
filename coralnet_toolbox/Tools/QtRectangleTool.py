@@ -2,8 +2,6 @@ import warnings
 
 from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtGui import QMouseEvent, QKeyEvent
-from PyQt5.QtWidgets import QMessageBox
-
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 
@@ -40,9 +38,8 @@ class RectangleTool(Tool):
     def mousePressEvent(self, event: QMouseEvent):
         
         if not self.annotation_window.selected_label:
-            QMessageBox.warning(self.annotation_window,
-                                "No Label Selected",
-                                "A label must be selected before adding an annotation.")
+            self.annotation_window.main_window.status_bar.showMessage(
+                "A label must be selected before adding an annotation.", 4000)
             return None
         
         # Add cursor bounds check
@@ -154,11 +151,9 @@ class RectangleTool(Tool):
             
             # Show a message if we had to adjust a very small rectangle
             if width < 1 or height < 1:
-                QMessageBox.information(
-                    self.annotation_window, 
-                    "Rectangle Adjusted",
+                self.annotation_window.main_window.status_bar.showMessage(
                     f"The rectangle was too small and has been adjusted to a minimum size of "
-                    f"{MIN_DIMENSION}x{MIN_DIMENSION} pixels."
+                    f"{MIN_DIMENSION}x{MIN_DIMENSION} pixels.", 4000
                 )
 
         # Create the rectangle annotation
