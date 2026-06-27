@@ -897,7 +897,6 @@ class BatchInferenceDialog(QDialog):
         self.all_combo.addItems(["True", "False"])
         self.all_combo.setCurrentText("False")
         self.all_combo.setToolTip("Generate predictions for ALL annotations.\nTrue: Classify model will predict labels for all annotations (including already-verified).")
-        self.all_combo.setToolTip("Run Classify on all annotations")
         layout.addRow("Predict All Annotations:", self.all_combo)
 
         # Keep the two options mutually exclusive, like the old radio checkboxes
