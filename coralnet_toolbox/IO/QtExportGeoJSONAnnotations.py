@@ -125,6 +125,7 @@ class ExportGeoJSONAnnotations(QDialog):
         for key, (label, ext, _driver) in GEO_FORMATS.items():
             self.format_combo.addItem(f"{label} ({ext})", key)
         self.format_combo.currentIndexChanged.connect(self.on_format_changed)
+        self.format_combo.setToolTip("Vector format for exporting annotations.\nGeoJSON: Web-friendly, compatible with GIS software.\nGeoPackage: Stores multiple layers efficiently.\nShapefile: Legacy GIS format.")
         format_layout.addWidget(self.format_combo)
         format_layout.addStretch()
         layout.addLayout(format_layout)
@@ -136,7 +137,9 @@ class ExportGeoJSONAnnotations(QDialog):
         single_tab = QWidget()
         single_layout = QFormLayout(single_tab)
         self.output_file_edit = QLineEdit()
+        self.output_file_edit.setToolTip("Path to the output GeoJSON/GeoPackage/Shapefile.\nAll annotations will be saved to this single file.")
         self.browse_output_file_button = QPushButton("Browse...")
+        self.browse_output_file_button.setToolTip("Browse for the output file location.")
         self.browse_output_file_button.clicked.connect(self.browse_output_file)
         file_field_layout = QHBoxLayout()
         file_field_layout.addWidget(self.output_file_edit)
@@ -148,7 +151,9 @@ class ExportGeoJSONAnnotations(QDialog):
         multi_tab = QWidget()
         multi_layout = QFormLayout(multi_tab)
         self.output_dir_edit = QLineEdit()
+        self.output_dir_edit.setToolTip("Directory where one output file per image will be created.\nEach image's annotations will be saved separately.")
         self.browse_output_dir_button = QPushButton("Browse...")
+        self.browse_output_dir_button.setToolTip("Browse for the output directory location.")
         self.browse_output_dir_button.clicked.connect(self.browse_output_dir)
         dir_field_layout = QHBoxLayout()
         dir_field_layout.addWidget(self.output_dir_edit)
@@ -176,16 +181,19 @@ class ExportGeoJSONAnnotations(QDialog):
         # Rectangle
         self.rectangle_checkbox = QCheckBox("Rectangle")
         self.rectangle_checkbox.setChecked(True)
+        self.rectangle_checkbox.setToolTip("Rectangle annotations (bounding boxes).")
         layout.addWidget(self.rectangle_checkbox)
 
         # Polygon
         self.polygon_checkbox = QCheckBox("Polygon")
         self.polygon_checkbox.setChecked(True)
+        self.polygon_checkbox.setToolTip("Polygon annotations (free-form shapes).")
         layout.addWidget(self.polygon_checkbox)
 
         # MultiPolygon
         self.multipolygon_checkbox = QCheckBox("MultiPolygon")
         self.multipolygon_checkbox.setChecked(True)
+        self.multipolygon_checkbox.setToolTip("MultiPolygon annotations (multiple connected polygons).")
         layout.addWidget(self.multipolygon_checkbox)
 
         groupbox.setLayout(layout)
@@ -257,7 +265,9 @@ class ExportGeoJSONAnnotations(QDialog):
         # Tools layout (Select All/None)
         tools_layout = QHBoxLayout()
         btn_all = QPushButton("Select All")
+        btn_all.setToolTip("Select all labels for export.")
         btn_none = QPushButton("Select None")
+        btn_none.setToolTip("Deselect all labels.")
         btn_all.clicked.connect(lambda: self.toggle_labels(True))
         btn_none.clicked.connect(lambda: self.toggle_labels(False))
         tools_layout.addWidget(btn_all)
@@ -282,9 +292,11 @@ class ExportGeoJSONAnnotations(QDialog):
         self.export_button.clicked.connect(self.export_data)
         self.export_button.setMinimumWidth(120)
         self.export_button.setMinimumHeight(30)
+        self.export_button.setToolTip("Export annotations to the selected vector format (GeoJSON, GeoPackage, or Shapefile).")
 
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.reject)
+        self.cancel_button.setToolTip("Close this dialog without exporting.")
 
         button_layout.addWidget(self.cancel_button)
         button_layout.addWidget(self.export_button)

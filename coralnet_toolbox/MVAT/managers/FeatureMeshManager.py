@@ -1073,6 +1073,7 @@ class BakeFeatureDialog(QDialog):
                "(trains on the main thread, see console log); may separate look-alike "
                "classes better than PCA at small dimensions.", Qt.ToolTipRole
         )
+        self.compressor_combo.setToolTip("Compression method: nn (autoencoder) or pca (dimensionality reduction)")
         comp_layout.addWidget(self.compressor_combo)
         config_layout.addLayout(comp_layout)
 
@@ -1192,10 +1193,12 @@ class BakeFeatureDialog(QDialog):
         button_layout = QHBoxLayout()
         bake_btn = QPushButton("Bake")
         bake_btn.clicked.connect(self._on_bake_clicked)
+        bake_btn.setToolTip("Compress and bake features onto the mesh with the specified parameters.")
         button_layout.addWidget(bake_btn)
 
         cancel_btn = QPushButton("Cancel")
         cancel_btn.clicked.connect(self.reject)
+        cancel_btn.setToolTip("Close without baking.")
         button_layout.addWidget(cancel_btn)
 
         layout.addLayout(button_layout)

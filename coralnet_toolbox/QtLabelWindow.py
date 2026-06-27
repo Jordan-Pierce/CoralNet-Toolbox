@@ -1790,23 +1790,28 @@ class AddLabelDialog(QDialog):
         self.short_label_input = QLineEdit(self)
         self.short_label_input.setPlaceholderText("Short Label (max 10 characters)")
         self.short_label_input.setMaxLength(10)
+        self.short_label_input.setToolTip("Short code for the label, used in displays and exports.\nMaximum 10 characters.")
         self.layout.addWidget(self.short_label_input)
 
         self.long_label_input = QLineEdit(self)
         self.long_label_input.setPlaceholderText("Long Label")
+        self.long_label_input.setToolTip("Descriptive long name for the label.\nUsed in reports and documentation.")
         self.layout.addWidget(self.long_label_input)
 
         self.color_button = QPushButton("Select Color", self)
         self.color_button.clicked.connect(self.select_color)
+        self.color_button.setToolTip("Choose a color for visualizing this label in the image viewport.")
         self.layout.addWidget(self.color_button)
 
         self.button_box = QHBoxLayout()
         self.ok_button = QPushButton("OK", self)
         self.ok_button.clicked.connect(self.validate_and_accept)
+        self.ok_button.setToolTip("Create the new label with the specified properties.")
         self.button_box.addWidget(self.ok_button)
 
         self.cancel_button = QPushButton("Cancel", self)
         self.cancel_button.clicked.connect(self.reject)
+        self.cancel_button.setToolTip("Close without creating a label.")
         self.button_box.addWidget(self.cancel_button)
 
         self.layout.addLayout(self.button_box)
@@ -1869,6 +1874,7 @@ class EditLabelDialog(QDialog):
 
         self.short_label_input = QLineEdit(self.label.short_label_code, self)
         self.short_label_input.setPlaceholderText("Short Label (max 10 characters)")
+        self.short_label_input.setToolTip("Short code for the label, used in displays and exports.\nMaximum 10 characters.")
         # Allow existing longer short codes
         if len(self.label.short_label_code) <= 10:
             self.short_label_input.setMaxLength(10)
@@ -1876,19 +1882,23 @@ class EditLabelDialog(QDialog):
 
         self.long_label_input = QLineEdit(self.label.long_label_code, self)
         self.long_label_input.setPlaceholderText("Long Label")
+        self.long_label_input.setToolTip("Descriptive long name for the label.\nUsed in reports and documentation.")
         self.layout.addWidget(self.long_label_input)
 
         self.color_button = QPushButton("Select Color", self)
         self.color_button.clicked.connect(self.select_color)
+        self.color_button.setToolTip("Choose a color for visualizing this label in the image viewport.")
         self.layout.addWidget(self.color_button)
 
         self.button_box = QHBoxLayout()
         self.ok_button = QPushButton("OK", self)
         self.ok_button.clicked.connect(self.validate_and_accept)
+        self.ok_button.setToolTip("Apply changes to the label.")
         self.button_box.addWidget(self.ok_button)
 
         self.cancel_button = QPushButton("Cancel", self)
         self.cancel_button.clicked.connect(self.reject)
+        self.cancel_button.setToolTip("Close without saving changes.")
         self.button_box.addWidget(self.cancel_button)
 
         self.layout.addLayout(self.button_box)
@@ -2000,19 +2010,23 @@ class BulkMapDialog(QDialog):
         select_btn_row = QHBoxLayout()
         self.select_all_button = QPushButton("Select All", self)
         self.select_all_button.clicked.connect(self.select_all)
+        self.select_all_button.setToolTip("Select all labels as source for mapping.")
         select_btn_row.addWidget(self.select_all_button)
 
         self.unselect_all_button = QPushButton("Unselect All", self)
         self.unselect_all_button.clicked.connect(self.unselect_all)
+        self.unselect_all_button.setToolTip("Deselect all labels.")
         select_btn_row.addWidget(self.unselect_all_button)
 
         self.layout.addLayout(select_btn_row)
 
         self.list_widget = QListWidget(self)
         self.list_widget.itemChanged.connect(self._on_item_changed)
+        self.list_widget.setToolTip("Check the labels you want to map (source labels).\nSelected labels cannot be the target.")
         self.layout.addWidget(self.list_widget)
 
         self.target_combo = QComboBox(self)
+        self.target_combo.setToolTip("Choose the target label to map all selected source labels into.")
         self.layout.addWidget(self.target_combo)
 
         # Buttons
@@ -2020,10 +2034,12 @@ class BulkMapDialog(QDialog):
         self.ok_button = QPushButton("OK", self)
         self.ok_button.clicked.connect(self._on_ok)
         self.ok_button.setEnabled(False)
+        self.ok_button.setToolTip("Apply the mapping: merge all selected source labels into the target label.")
         self.button_box.addWidget(self.ok_button)
 
         self.cancel_button = QPushButton("Cancel", self)
         self.cancel_button.clicked.connect(self.reject)
+        self.cancel_button.setToolTip("Close without mapping.")
         self.button_box.addWidget(self.cancel_button)
 
         self.layout.addLayout(self.button_box)

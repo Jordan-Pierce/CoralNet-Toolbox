@@ -315,12 +315,15 @@ class TrainModelDialog(QDialog):
         self.task_combo.addItems(["segment", "detect"])
         self.task_combo.setCurrentText("segment")
         self.task_combo.currentTextChanged.connect(self.on_task_changed)
+        self.task_combo.setToolTip("Segment: Instance segmentation with masks.\nDetect: Object detection with bounding boxes.")
         layout.addRow("Task:", self.task_combo)
 
         # Dataset YAML
         self.dataset_edit = QLineEdit()
+        self.dataset_edit.setToolTip("Path to the YOLO dataset.yaml file containing train/val/test splits.")
         self.dataset_button = QPushButton("Browse...")
         self.dataset_button.clicked.connect(self.browse_dataset_yaml)
+        self.dataset_button.setToolTip("Browse for a dataset.yaml file.")
 
         dataset_yaml_layout = QHBoxLayout()
         dataset_yaml_layout.addWidget(self.dataset_edit)
@@ -329,8 +332,10 @@ class TrainModelDialog(QDialog):
 
         # Class Mapping
         self.mapping_edit = QLineEdit()
+        self.mapping_edit.setToolTip("(Optional) JSON file mapping class names to label IDs for annotations.")
         self.mapping_button = QPushButton("Browse...")
         self.mapping_button.clicked.connect(self.browse_class_mapping_file)
+        self.mapping_button.setToolTip("Browse for a class mapping JSON file.")
 
         class_mapping_layout = QHBoxLayout()
         class_mapping_layout.addWidget(self.mapping_edit)
@@ -357,6 +362,7 @@ class TrainModelDialog(QDialog):
         # Model combo box
         self.model_combo = QComboBox()
         self.load_model_combobox()
+        self.model_combo.setToolTip("Choose a pretrained See Anything (YOLOE) model to fine-tune.\nSmall: Faster training, lower accuracy.\nLarge: Slower, higher accuracy.")
         model_select_layout.addRow("Model:", self.model_combo)
 
         tab_widget.addTab(model_select_tab, "Select Model")
@@ -367,8 +373,10 @@ class TrainModelDialog(QDialog):
 
         # Existing Model
         self.model_edit = QLineEdit()
+        self.model_edit.setToolTip("Path to a custom or previously trained YOLOE model file (.pt).")
         self.model_button = QPushButton("Browse...")
         self.model_button.clicked.connect(self.browse_model_file)
+        self.model_button.setToolTip("Browse for a model file.")
         model_layout = QHBoxLayout()
         model_layout.addWidget(self.model_edit)
         model_layout.addWidget(self.model_button)
@@ -389,8 +397,10 @@ class TrainModelDialog(QDialog):
 
         # Project
         self.project_edit = QLineEdit()
+        self.project_edit.setToolTip("Directory where training outputs (weights, logs, plots) will be saved.")
         self.project_button = QPushButton("Browse...")
         self.project_button.clicked.connect(self.browse_project_dir)
+        self.project_button.setToolTip("Browse for an output directory.")
         project_layout = QHBoxLayout()
         project_layout.addWidget(self.project_edit)
         project_layout.addWidget(self.project_button)
@@ -398,6 +408,7 @@ class TrainModelDialog(QDialog):
 
         # Name
         self.name_edit = QLineEdit()
+        self.name_edit.setToolTip("Run name for this training experiment. Creates a folder within the project directory.")
         layout.addRow("Name:", self.name_edit)
 
         group_box.setLayout(layout)
@@ -422,10 +433,12 @@ class TrainModelDialog(QDialog):
         
         self.import_button = QPushButton("Import YAML")
         self.import_button.clicked.connect(self.import_parameters)
+        self.import_button.setToolTip("Load training parameters from a previously saved YAML file.\nUseful for reproducing training runs or applying settings across multiple experiments.")
         import_export_layout.addWidget(self.import_button)
 
         self.export_button = QPushButton("Export YAML")
         self.export_button.clicked.connect(self.export_parameters)
+        self.export_button.setToolTip("Save current training parameters to a YAML file.\nUse this to document your training configuration or reuse it later.")
         import_export_layout.addWidget(self.export_button)
         
         # Add stretch to push buttons to the left
@@ -450,6 +463,7 @@ class TrainModelDialog(QDialog):
         self.training_mode.addItems(["linear-probe", "fine-tune"])
         self.training_mode.setCurrentText("linear-probe")
         self.training_mode.currentTextChanged.connect(self.update_by_training_mode)
+        self.training_mode.setToolTip("Linear-probe: Quick training on last layer only (2 epochs).\nFine-tune: Full training with all layers (80 epochs).")
         form_layout.addRow("Training Mode:", self.training_mode)
 
         # Epochs
@@ -457,6 +471,7 @@ class TrainModelDialog(QDialog):
         self.epochs_spinbox.setMinimum(1)
         self.epochs_spinbox.setMaximum(1000)
         self.epochs_spinbox.setValue(2)
+        self.epochs_spinbox.setToolTip("Total number of training iterations over the dataset.\nLinear-probe: 2 epochs. Fine-tune: 80 epochs.\nHigher values improve accuracy but increase training time.")
         form_layout.addRow("Epochs:", self.epochs_spinbox)
 
         # Patience
@@ -464,6 +479,7 @@ class TrainModelDialog(QDialog):
         self.patience_spinbox.setMinimum(0)  # Changed minimum to 0 to allow for 0 patience
         self.patience_spinbox.setMaximum(1000)
         self.patience_spinbox.setValue(0)  # Default for linear-probing
+        self.patience_spinbox.setToolTip("Number of epochs with no improvement after which training stops (early stopping).\nLinear-probe: 0 (disabled). Fine-tune: 10.\nPrevents overfitting and saves training time.")
         form_layout.addRow("Patience:", self.patience_spinbox)
 
         # Close Mosaic
@@ -471,12 +487,14 @@ class TrainModelDialog(QDialog):
         self.close_mosaic_spinbox.setMinimum(0)
         self.close_mosaic_spinbox.setMaximum(1000)
         self.close_mosaic_spinbox.setValue(0)  # Default for linear-probing
+        self.close_mosaic_spinbox.setToolTip("Epoch to disable mosaic augmentation in training.\nLinear-probe: 0 (disabled). Fine-tune: 10.\nDisabling mosaic increases training diversity in later epochs.")
         form_layout.addRow("Close Mosaic:", self.close_mosaic_spinbox)
         
         # Optimizer
         self.optimizer_combo = QComboBox()
         self.optimizer_combo.addItems(["auto", "SGD", "Adam", "AdamW", "NAdam", "RAdam", "RMSProp"])
         self.optimizer_combo.setCurrentText("AdamW")
+        self.optimizer_combo.setToolTip("Optimization algorithm for gradient descent.\n'auto' selects best for model. AdamW (adaptive) is robust and recommended.")
         form_layout.addRow("Optimizer:", self.optimizer_combo)
 
         # Learning Rate (lr0)
@@ -486,6 +504,7 @@ class TrainModelDialog(QDialog):
         self.lr0_spinbox.setMaximum(1.0)
         self.lr0_spinbox.setSingleStep(0.0001)
         self.lr0_spinbox.setValue(self._lr0)
+        self.lr0_spinbox.setToolTip("Initial learning rate for optimizer.\nDefault: 0.001. Typical range: 0.0001-0.01.\nHigher = faster learning but may diverge; lower = slower but more stable.")
         form_layout.addRow("Learning Rate:", self.lr0_spinbox)
 
         # Warmup Bias Learning Rate
@@ -495,6 +514,7 @@ class TrainModelDialog(QDialog):
         self.warmup_bias_lr_spinbox.setMaximum(1.0)
         self.warmup_bias_lr_spinbox.setSingleStep(0.0001)
         self.warmup_bias_lr_spinbox.setValue(self._warmup_bias_lr)
+        self.warmup_bias_lr_spinbox.setToolTip("Learning rate for bias during warmup phase.\nDefault: 0.0 (disabled).\nUsed to stabilize training in early epochs.")
         form_layout.addRow("Warmup Bias LR:", self.warmup_bias_lr_spinbox)
 
         # Weight Decay
@@ -504,6 +524,7 @@ class TrainModelDialog(QDialog):
         self.weight_decay_spinbox.setMaximum(1.0)
         self.weight_decay_spinbox.setSingleStep(0.001)
         self.weight_decay_spinbox.setValue(self._weight_decay)
+        self.weight_decay_spinbox.setToolTip("L2 regularization penalty to reduce overfitting.\nDefault: 0.025. Higher values = more regularization.\nPrevents weights from growing too large.")
         form_layout.addRow("Weight Decay:", self.weight_decay_spinbox)
 
         # Momentum
@@ -513,6 +534,7 @@ class TrainModelDialog(QDialog):
         self.momentum_spinbox.setMaximum(1.0)
         self.momentum_spinbox.setSingleStep(0.01)
         self.momentum_spinbox.setValue(self._momentum)
+        self.momentum_spinbox.setToolTip("Momentum for SGD optimizer (0.0 to 1.0).\nDefault: 0.9. Higher = smoother gradient descent with less noise.\nImproves convergence speed and stability.")
         form_layout.addRow("Momentum:", self.momentum_spinbox)
 
         # Imgsz
@@ -520,6 +542,7 @@ class TrainModelDialog(QDialog):
         self.imgsz_spinbox.setMinimum(16)
         self.imgsz_spinbox.setMaximum(4096)
         self.imgsz_spinbox.setValue(self.imgsz)
+        self.imgsz_spinbox.setToolTip("Input image size for the neural network (in pixels).\nDefault: 640. Must be a multiple of 32.\nLarger sizes improve accuracy but use more GPU memory and training time.")
         form_layout.addRow("Image Size:", self.imgsz_spinbox)
 
         # Batch
@@ -527,11 +550,13 @@ class TrainModelDialog(QDialog):
         self.batch_spinbox.setMinimum(1)
         self.batch_spinbox.setMaximum(1024)
         self.batch_spinbox.setValue(self.batch)
+        self.batch_spinbox.setToolTip("Number of images to process in each training batch.\nDefault: 4. Larger batches train faster but require more GPU memory.\nRecommended: 4-16 for most systems.")
         form_layout.addRow("Batch Size:", self.batch_spinbox)
 
         # Single Class (cls)
         self.single_class_combo = create_bool_combo()
         self.single_class_combo.setCurrentText("False")
+        self.single_class_combo.setToolTip("If True, treat all objects as a single class.\nUseful for simple presence/absence detection.\nDefault: False (multi-class detection).")
         form_layout.addRow("Single Class:", self.single_class_combo)
 
         # Dropout
@@ -540,6 +565,7 @@ class TrainModelDialog(QDialog):
         self.dropout_spinbox.setMaximum(1.0)
         self.dropout_spinbox.setSingleStep(0.01)
         self.dropout_spinbox.setValue(0.0)
+        self.dropout_spinbox.setToolTip("Dropout rate for regularization (0.0 to 1.0).\nDefault: 0.0 (disabled).\nHigher values reduce overfitting but may underfit on small datasets. Try 0.2-0.5 if overfitting occurs.")
         form_layout.addRow("Dropout:", self.dropout_spinbox)
 
         # Workers
@@ -547,10 +573,12 @@ class TrainModelDialog(QDialog):
         self.workers_spinbox.setMinimum(1)
         self.workers_spinbox.setMaximum(64)
         self.workers_spinbox.setValue(8)
+        self.workers_spinbox.setToolTip("Number of worker threads for parallel data loading.\nDefault: 8. Higher values speed up training on multi-core systems.\nRecommended: Number of CPU cores / 2.")
         form_layout.addRow("Workers:", self.workers_spinbox)
 
         # Save
         self.save_combo = create_bool_combo()
+        self.save_combo.setToolTip("Save model checkpoints during training.\nTrue = save model weights at each improvement.\nFalse = save only final model.\nEnable to preserve intermediate models for later evaluation.")
         form_layout.addRow("Save:", self.save_combo)
 
         # Save Period
@@ -558,13 +586,16 @@ class TrainModelDialog(QDialog):
         self.save_period_spinbox.setMinimum(-1)
         self.save_period_spinbox.setMaximum(1000)
         self.save_period_spinbox.setValue(-1)
+        self.save_period_spinbox.setToolTip("Save a checkpoint every N epochs (-1 = save only best and last).\nUseful for creating snapshots of training progress.\nDefault: -1 (only save best and final model).")
         form_layout.addRow("Save Period:", self.save_period_spinbox)
         # Val
         self.val_combo = create_bool_combo()
+        self.val_combo.setToolTip("Run validation on a separate validation set after each epoch.\nRecommended: True. Disabling speeds up training but loses progress monitoring.")
         form_layout.addRow("Validation:", self.val_combo)
 
         # Verbose
         self.verbose_combo = create_bool_combo()
+        self.verbose_combo.setToolTip("Enable detailed training logs and console output.\nTrue = print detailed progress info. False = minimal output.\nEnable for debugging; disable for cleaner console output.")
         form_layout.addRow("Verbose:", self.verbose_combo)
 
         # Add horizontal separator line
@@ -649,15 +680,17 @@ class TrainModelDialog(QDialog):
 
     def setup_buttons_layout(self):
         """
-
+        Set up the layout and widgets for the OK and Cancel buttons.
         """
         # Add OK and Cancel buttons
         self.buttons = QPushButton("OK")
         self.buttons.clicked.connect(self.accept)
+        self.buttons.setToolTip("Start training with the configured parameters.\nTraining will run in the background.")
         self.layout.addWidget(self.buttons)
 
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.reject)
+        self.cancel_button.setToolTip("Close this dialog without starting training.")
         self.layout.addWidget(self.cancel_button)
 
     def on_task_changed(self):

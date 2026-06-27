@@ -376,27 +376,32 @@ class ZImportDialog(QDialog):
         
         # Left side buttons (Clear All operations)
         btn_clear_mapping = QPushButton("Clear All Mappings")
+        btn_clear_mapping.setToolTip("Clear all Z-channel file mappings.")
         btn_clear_mapping.clicked.connect(self.clear_all_mappings)
         btn_layout.addWidget(btn_clear_mapping)
-        
+
         btn_clear_units = QPushButton("Clear All Units")
         btn_clear_units.clicked.connect(self.clear_all_units)
+        btn_clear_units.setToolTip("Clear all Z-channel units.")
         btn_layout.addWidget(btn_clear_units)
-        
+
         btn_clear_data_types = QPushButton("Clear All Data Types")
         btn_clear_data_types.clicked.connect(self.clear_all_data_types)
+        btn_clear_data_types.setToolTip("Clear all Z-channel data type specifications.")
         btn_layout.addWidget(btn_clear_data_types)
-        
+
         # Add stretch to push right-side buttons to the right
         btn_layout.addStretch()
-        
+
         # Right side buttons (Cancel and Confirm)
         btn_cancel = QPushButton("Cancel")
         btn_cancel.clicked.connect(self.close)
+        btn_cancel.setToolTip("Close this dialog without importing Z-channel files.")
         btn_layout.addWidget(btn_cancel)
-        
+
         btn_confirm = QPushButton("Confirm Mapping")
         btn_confirm.clicked.connect(self.finalize_mapping)
+        btn_confirm.setToolTip("Confirm and import the Z-channel file mappings.")
         btn_layout.addWidget(btn_confirm)
         
         self.main_layout.addLayout(btn_layout)

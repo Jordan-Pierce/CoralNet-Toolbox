@@ -103,10 +103,11 @@ class Base(QDialog):
         layout = QVBoxLayout()
 
         # Create a QLabel with explanatory text and hyperlink
-        info_label = QLabel("Deploy an Ultralytics model to use.")
+        info_label = QLabel("Deploy a trained Ultralytics model for inference.\nSelect a model file and optional class mapping to begin.")
 
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
+        info_label.setToolTip("Load a model to enable automatic annotation predictions on selected images.\nRequires a .pt or .engine model file.")
         layout.addWidget(info_label)
 
         group_box.setLayout(layout)
@@ -131,6 +132,7 @@ class Base(QDialog):
 
         # Add status label
         self.labels_status_label = QLabel("No model file selected")
+        self.labels_status_label.setToolTip("Status of model loading and class mapping.\nShows whether a model is selected and if classes are mapped.")
         layout.addWidget(self.labels_status_label)
 
         group_box.setLayout(layout)
@@ -159,15 +161,19 @@ class Base(QDialog):
         # Model control buttons
         self.browse_button = QPushButton("Browse Model")
         self.browse_button.clicked.connect(self.browse_file)
+        self.browse_button.setToolTip("Select a trained model file (.pt or .engine).\nAutomatically looks for a class_mapping.json in the parent directory.")
 
         self.mapping_button = QPushButton("Browse Class Mapping")
         self.mapping_button.clicked.connect(self.browse_class_mapping_file)
+        self.mapping_button.setToolTip("Select a class_mapping.json file to map model classes to project labels.\nUsed to resolve which model classes correspond to which project labels.")
 
         self.load_button = QPushButton("Load Model")
         self.load_button.clicked.connect(self.load_model)
+        self.load_button.setToolTip("Load the selected model and prepare it for inference.\nMapped classes will be added to the project if not already present.")
 
         self.deactivate_button = QPushButton("Deactivate Model")
         self.deactivate_button.clicked.connect(self.deactivate_model)
+        self.deactivate_button.setToolTip("Unload the current model and disable inference.\nUse this to switch to a different model.")
 
         # Add buttons to rows
         top_row.addWidget(self.browse_button)
@@ -190,6 +196,7 @@ class Base(QDialog):
 
         # Status bar for model status
         self.status_bar = QLabel("No model loaded")
+        self.status_bar.setToolTip("Shows whether a model is currently loaded and ready for inference.\nLoaded models can generate predictions on selected images.")
         layout.addWidget(self.status_bar)
 
         group_box.setLayout(layout)

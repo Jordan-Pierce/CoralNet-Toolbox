@@ -138,8 +138,10 @@ class ImportMaskAnnotations(QDialog):
         masks_label = QLabel("Masks:")
         self.input_path_edit = QLineEdit()
         self.input_path_edit.setPlaceholderText("Select PNG mask files...")
+        self.input_path_edit.setToolTip("Path(s) to PNG mask files.\nMultiple files can be selected, separated by semicolons.")
         self.browse_button = QPushButton("Browse...")
         self.browse_button.clicked.connect(self.browse_input)
+        self.browse_button.setToolTip("Browse for PNG mask files to import.")
         input_layout.addWidget(masks_label)
         input_layout.addWidget(self.input_path_edit)
         input_layout.addWidget(self.browse_button)
@@ -151,6 +153,7 @@ class ImportMaskAnnotations(QDialog):
         # Scan button (outside groupbox)
         self.scan_button = QPushButton("Scan Masks")
         self.scan_button.clicked.connect(self.scan_masks)
+        self.scan_button.setToolTip("Scan the selected mask files to detect unique values and match them to project images.")
         parent_layout.addWidget(self.scan_button)
 
     def setup_mapping_table_layout(self, parent_layout=None):
@@ -171,6 +174,7 @@ class ImportMaskAnnotations(QDialog):
         self.mapping_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.mapping_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.mapping_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.mapping_table.setToolTip("Select which project label each detected mask value should be mapped to.")
         
         header = self.mapping_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -186,13 +190,15 @@ class ImportMaskAnnotations(QDialog):
         """Set up the bottom action buttons."""
         button_layout = QHBoxLayout()
         button_layout.addStretch(1)
-        
+
         self.import_button = QPushButton("Import")
         self.import_button.clicked.connect(self.run_import_process)
-        
+        self.import_button.setToolTip("Import the mask annotations using the specified value-to-label mappings.")
+
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.reject)
-        
+        self.cancel_button.setToolTip("Close this dialog without importing.")
+
         button_layout.addWidget(self.import_button)
         button_layout.addWidget(self.cancel_button)
         parent_layout.addLayout(button_layout)

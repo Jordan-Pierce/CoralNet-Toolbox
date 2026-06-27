@@ -191,11 +191,13 @@ class WorkAreaManager(QDialog):
         # Preview button
         self.preview_button = QPushButton("Update Preview")
         self.preview_button.clicked.connect(self.preview_tiles)
+        self.preview_button.setToolTip("Generate a preview of the tiles with current settings.")
         buttons_layout.addWidget(self.preview_button)
-        
+
         # Clear button
         self.clear_button = QPushButton("Clear Preview")
         self.clear_button.clicked.connect(self.clear_tiles)
+        self.clear_button.setToolTip("Remove the preview from the viewport.")
         buttons_layout.addWidget(self.clear_button)
         
         # Add button layout first
@@ -207,13 +209,15 @@ class WorkAreaManager(QDialog):
         # Delete tiles for current image button
         self.delete_current_button = QPushButton("Delete Tiles (Current Image)")
         self.delete_current_button.clicked.connect(self.delete_tiles_current_image)
+        self.delete_current_button.setToolTip("Permanently delete all tiles created for the current image.")
         # Red text to indicate destructive action
         self.delete_current_button.setStyleSheet("QPushButton { color: #d32f2f; }")
         delete_buttons_layout.addWidget(self.delete_current_button)
-        
+
         # Delete tiles for all images button
         self.delete_all_button = QPushButton("Delete Tiles (All Images)")
         self.delete_all_button.clicked.connect(self.delete_tiles_all_images)
+        self.delete_all_button.setToolTip("Permanently delete all tiles created from all images.")
         # Red text to indicate destructive action
         self.delete_all_button.setStyleSheet("QPushButton { color: #d32f2f; }")
         delete_buttons_layout.addWidget(self.delete_all_button)
@@ -228,7 +232,9 @@ class WorkAreaManager(QDialog):
         # Create a button box with custom buttons
         button_box = QDialogButtonBox()
         apply_button = QPushButton("Apply")
+        apply_button.setToolTip("Create tiles with the current settings for all highlighted images.")
         cancel_button = QPushButton("Cancel")
+        cancel_button.setToolTip("Close the work area manager without creating tiles.")
 
         button_box.addButton(apply_button, QDialogButtonBox.AcceptRole)
         button_box.addButton(cancel_button, QDialogButtonBox.RejectRole)

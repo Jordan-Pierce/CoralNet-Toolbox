@@ -115,9 +115,11 @@ class ImportModelDialog(QDialog):
         path_row = QHBoxLayout()
         self._path_edit = QLineEdit()
         self._path_edit.setReadOnly(True)
+        self._path_edit.setToolTip("Path to the 3D model file (PLY, OBJ, STL, VTK, or PCD format).")
         path_row.addWidget(self._path_edit)
         self._browse_btn = QPushButton("Browse")
         self._browse_btn.clicked.connect(self._browse_file)
+        self._browse_btn.setToolTip("Browse for a 3D model file to import.")
         path_row.addWidget(self._browse_btn)
         browse_form.addRow("File:", path_row)
         layout.addWidget(self._browse_group)
@@ -131,6 +133,7 @@ class ImportModelDialog(QDialog):
 
         self._type_combo = QComboBox()
         self._type_combo.addItems(["Mesh", "Point Cloud", "3D Gaussian Splatting"])
+        self._type_combo.setToolTip("Type of 3D product being imported.\nMesh: Surface geometry with faces.\nPoint Cloud: Set of 3D points.\n3D Gaussian Splatting: Neural radiance representation.")
         form.addRow("Product type:", self._type_combo)
 
         self._sort_combo = QComboBox()
@@ -155,6 +158,7 @@ class ImportModelDialog(QDialog):
 
         self._kd_combo = QComboBox()
         self._kd_combo.addItems(["True", "False"])
+        self._kd_combo.setToolTip("Build a spatial KD-tree for faster point queries.\nEnable for interactive measurements and picking.\nDisable to save memory for very large point clouds.")
         form.addRow("Calculate KD-Tree:", self._kd_combo)
 
         slider_row = QHBoxLayout()

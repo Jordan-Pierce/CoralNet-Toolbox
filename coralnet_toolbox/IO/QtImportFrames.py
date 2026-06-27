@@ -220,6 +220,8 @@ class ImportFrames(QDialog):
         self.video_file_edit = QLineEdit()
         self.video_file_button = QPushButton("Browse...")
         self.video_file_button.clicked.connect(self.browse_video_file)
+        self.video_file_edit.setToolTip("Path to the video file to extract frames from.\nSupported formats: MP4, AVI, MOV, MKV, WMV.")
+        self.video_file_button.setToolTip("Browse for a video file.")
         video_layout = QHBoxLayout()
         video_layout.addWidget(self.video_file_edit)
         video_layout.addWidget(self.video_file_button)
@@ -235,6 +237,8 @@ class ImportFrames(QDialog):
         self.output_dir_edit = QLineEdit()
         self.output_dir_button = QPushButton("Browse...")
         self.output_dir_button.clicked.connect(self.browse_output_dir)
+        self.output_dir_edit.setToolTip("Directory where extracted frames will be saved.\nCreates new files in the format: prefix_frame_index.ext")
+        self.output_dir_button.setToolTip("Browse for an output directory.")
         output_dir_layout = QHBoxLayout()
         output_dir_layout.addWidget(self.output_dir_edit)
         output_dir_layout.addWidget(self.output_dir_button)
@@ -243,6 +247,7 @@ class ImportFrames(QDialog):
         prefix_layout = QHBoxLayout()
         self.frame_prefix_edit = QLineEdit()
         self.frame_prefix_edit.setPlaceholderText("frame_prefix_(idx).ext")
+        self.frame_prefix_edit.setToolTip("Prefix for output filenames.\nExample: 'my_video' → 'my_video_0.jpg', 'my_video_1.jpg', etc.")
         prefix_layout.addWidget(self.frame_prefix_edit)
         layout.addRow("Frame Prefix:", prefix_layout)
 
@@ -250,6 +255,7 @@ class ImportFrames(QDialog):
         self.frame_ext_combo = QComboBox()
         self.frame_ext_combo.setEditable(True)
         self.frame_ext_combo.addItems(['jpg', 'jpeg', 'png', 'bmp', 'tiff'])
+        self.frame_ext_combo.setToolTip("File format for extracted frames.\nJPG: smaller files, lossy compression.\nPNG: larger files, lossless compression.\nTIFF: best quality, largest files.")
         ext_layout.addWidget(self.frame_ext_combo)
         layout.addRow("Frame Extension:", ext_layout)
 
@@ -275,6 +281,7 @@ class ImportFrames(QDialog):
         self.range_start_slider.setTickInterval(10)
         self.range_start_slider.valueChanged.connect(self.update_range_slider_label)
         self.range_start_slider.valueChanged.connect(self.update_calculated_frames)
+        self.range_start_slider.setToolTip("Drag to set the start frame for extraction.\nFrames before this point will be skipped.")
 
         self.range_end_slider = QSlider(Qt.Horizontal)
         self.range_end_slider.setEnabled(False)
@@ -282,17 +289,20 @@ class ImportFrames(QDialog):
         self.range_end_slider.setTickInterval(10)
         self.range_end_slider.valueChanged.connect(self.update_range_slider_label)
         self.range_end_slider.valueChanged.connect(self.update_calculated_frames)
+        self.range_end_slider.setToolTip("Drag to set the end frame for extraction.\nFrames after this point will be skipped.")
 
         range_input_layout = QHBoxLayout()
         self.range_start_spinbox = QSpinBox()
         self.range_start_spinbox.setFixedWidth(80)
         self.range_start_spinbox.setAlignment(Qt.AlignCenter)
         self.range_start_spinbox.valueChanged.connect(self.range_spinbox_changed)
+        self.range_start_spinbox.setToolTip("First frame to extract (frame number).\nFrames are numbered starting from 0.")
 
         self.range_end_spinbox = QSpinBox()
         self.range_end_spinbox.setFixedWidth(80)
         self.range_end_spinbox.setAlignment(Qt.AlignCenter)
         self.range_end_spinbox.valueChanged.connect(self.range_spinbox_changed)
+        self.range_end_spinbox.setToolTip("Last frame to extract (frame number, inclusive).\nSet this to the final frame you want included.")
 
         range_input_layout.addWidget(QLabel("Frame Range:"))
         range_input_layout.addWidget(self.range_start_spinbox)
@@ -304,6 +314,7 @@ class ImportFrames(QDialog):
         self.every_n_frames_spinbox.setRange(1, 10_000_000)
         self.every_n_frames_spinbox.setValue(24)
         self.every_n_frames_spinbox.valueChanged.connect(self.update_calculated_frames)
+        self.every_n_frames_spinbox.setToolTip("Extract every Nth frame from the video.\n1 = extract all frames, 24 = extract every 24th frame.\nHigher values create fewer, more spaced-out frames.")
 
         range_layout.addRow("Sample Every N Frames:", self.every_n_frames_spinbox)
         range_layout.addRow("Select Start Frame:", self.range_start_slider)
@@ -318,9 +329,11 @@ class ImportFrames(QDialog):
 
         self.specific_frames_edit = QLineEdit()
         self.specific_frames_edit.setPlaceholderText("e.g., 1, 2, 3, 5-10, 15")
+        self.specific_frames_edit.setToolTip("Extract specific frames by number (comma-separated).\nSupports ranges: '1-5' extracts frames 1 through 5.\nExample: '0, 5-10, 20, 25-30' extracts those exact frames.")
         self.specif_frames_button = QPushButton()
         self.specif_frames_button.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
         self.specif_frames_button.clicked.connect(self.update_calculated_frames)
+        self.specif_frames_button.setToolTip("Refresh frame calculation based on the entered frame numbers.")
         specific_frames_layout = QHBoxLayout()
         specific_frames_layout.addWidget(self.specific_frames_edit)
         specific_frames_layout.addWidget(self.specif_frames_button)
@@ -401,6 +414,7 @@ class ImportFrames(QDialog):
         in_video_mode = self.video_raster is not None
         self.include_annotations_checkbox.setChecked(in_video_mode)
         self.include_annotations_checkbox.setEnabled(in_video_mode)
+        self.include_annotations_checkbox.setToolTip("If checked, annotations from the source video will be copied to the extracted frames.\nAvailable only when extracting from an existing video with annotations.")
         buttons_layout.addWidget(self.include_annotations_checkbox)
 
         action_buttons_layout = QHBoxLayout()
@@ -410,8 +424,13 @@ class ImportFrames(QDialog):
         self.cancel_button = QPushButton("Cancel")
 
         self.extract_button.clicked.connect(lambda: self.import_frames(import_after=False))
+        self.extract_button.setToolTip("Extract frames to the output directory.\nFrames will be saved as image files but not imported into the project.")
+
         self.extract_import_button.clicked.connect(lambda: self.import_frames(import_after=True))
+        self.extract_import_button.setToolTip("Extract frames and immediately add them to the current project.\nIncludes extracted frames in your image collection.")
+
         self.cancel_button.clicked.connect(self.reject)
+        self.cancel_button.setToolTip("Close this dialog without extracting any frames.")
 
         action_buttons_layout.addWidget(self.extract_button)
         action_buttons_layout.addWidget(self.extract_import_button)

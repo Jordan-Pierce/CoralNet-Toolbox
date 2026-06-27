@@ -798,9 +798,10 @@ class BatchInferenceDialog(QDialog):
         """
         Set up a single-line intro label (no group box) to keep the dialog compact.
         """
-        info_label = QLabel("Perform batch inferencing on the selected rasters.")
+        info_label = QLabel("Perform batch inferencing on the selected rasters.\nSelect images via right-click in the Image window.")
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
+        info_label.setToolTip("Run a deployed model on multiple selected images to generate automatic predictions.\nResults can be saved directly to the project.")
         self.layout.addWidget(info_label)
 
     def setup_options_layout(self):
@@ -813,6 +814,7 @@ class BatchInferenceDialog(QDialog):
         # Model selection
         self.model_combo = QComboBox()
         self.model_combo.currentIndexChanged.connect(self.on_model_changed)
+        self.model_combo.setToolTip("Select which deployed model to use for inference.\nEnsure the model is loaded in the respective deployment dialog.")
         form_layout.addRow("Model:", self.model_combo)
 
         # Inference type selection
@@ -820,6 +822,7 @@ class BatchInferenceDialog(QDialog):
         self.inference_type_combo.addItem("Standard")
         self.inference_type_combo.addItem("Tiled")
         self.inference_type_combo.currentTextChanged.connect(self.on_inference_type_changed)
+        self.inference_type_combo.setToolTip("Standard: Run inference on full images.\nTiled: Split images into tiles for better handling of large images or GPU memory constraints.")
         form_layout.addRow("Type:", self.inference_type_combo)
 
         # Save annotations (moved out of Video Options so editable for non-video runs)
@@ -831,6 +834,7 @@ class BatchInferenceDialog(QDialog):
             self.save_annotations_combo.currentTextChanged.connect(self._on_save_annotations_changed)
         except Exception:
             pass
+        self.save_annotations_combo.setToolTip("Save generated annotations to the project.\nTrue: automatically save predictions. False: preview only.")
         form_layout.addRow("Save Annotations:", self.save_annotations_combo)
 
         # Batch size — controls the mini-batch sent to the GPU per inference call.
@@ -886,13 +890,13 @@ class BatchInferenceDialog(QDialog):
         self.review_combo = QComboBox()
         self.review_combo.addItems(["True", "False"])
         self.review_combo.setCurrentText("True")
-        self.review_combo.setToolTip("Run Classify on Review annotations")
+        self.review_combo.setToolTip("Generate predictions for Review annotations.\nTrue: Classify model will predict labels for annotations marked as Review.")
         layout.addRow("Predict Review Annotations:", self.review_combo)
 
         self.all_combo = QComboBox()
         self.all_combo.addItems(["True", "False"])
         self.all_combo.setCurrentText("False")
-        self.all_combo.setToolTip("Run Classify on all annotations")
+        self.all_combo.setToolTip("Generate predictions for ALL annotations.\nTrue: Classify model will predict labels for all annotations (including already-verified).")
         layout.addRow("Predict All Annotations:", self.all_combo)
 
         # Keep the two options mutually exclusive, like the old radio checkboxes

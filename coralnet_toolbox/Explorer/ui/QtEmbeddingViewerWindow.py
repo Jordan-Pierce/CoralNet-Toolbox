@@ -262,11 +262,13 @@ class EmbeddingViewerWindow(QWidget):
         self.category_combo.addItems(["Color Features", "YOLO", "Transformer", "TIMM", "OpenCLIP", "Live Models"])
         self.category_combo.currentTextChanged.connect(self._on_category_changed)
         self.category_combo.setMinimumWidth(120)
+        self.category_combo.setToolTip("Select feature extraction model category:\nColor Features, YOLO (detection), Transformer, TIMM, OpenCLIP, or Live Models")
         toolbar.addWidget(self.category_combo)
 
         # Model Selection (dynamically populated)
         self.model_combo = QComboBox()
         self.model_combo.setMinimumWidth(150)
+        self.model_combo.setToolTip("Select specific model from the chosen category to extract features")
         toolbar.addWidget(self.model_combo)
 
         # Embedding Technique
@@ -286,6 +288,7 @@ class EmbeddingViewerWindow(QWidget):
         self.technique_combo = QComboBox()
         self.technique_combo.addItems(available_techniques)
         self.technique_combo.currentTextChanged.connect(self._on_technique_changed)
+        self.technique_combo.setToolTip("Dimensionality reduction technique:\nPCA (fast, linear), LDA (class-aware), TSNE (nonlinear), UMAP (fast nonlinear)")
         toolbar.addWidget(self.technique_combo)
 
         # Dimensions
@@ -294,6 +297,7 @@ class EmbeddingViewerWindow(QWidget):
 
         self.dimensions_combo = QComboBox()
         self.dimensions_combo.addItems(["2D", "3D"])
+        self.dimensions_combo.setToolTip("Visualization dimensionality: 2D (faster) or 3D (interactive rotation)")
         toolbar.addWidget(self.dimensions_combo)
 
         # Advanced settings popup (opens downward from the top toolbar)

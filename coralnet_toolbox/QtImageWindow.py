@@ -275,9 +275,10 @@ class ImageWindow(QWidget):
         self.filter_combo.addItem("Has Predictions")
         self.filter_combo.addItem("Has Annotations")
         self.filter_combo.addItem("No Annotations")
-        self.filter_combo.setCurrentIndex(-1)  
+        self.filter_combo.setCurrentIndex(-1)
         self.filter_combo.filterChanged.connect(self.schedule_filter)
         self.filter_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.filter_combo.setToolTip("Filter images by type (Image, Ortho, Video), Z-channel presence, predictions, annotation status, and highlight state.\nSelect multiple filters to apply all criteria.")
 
         # Setup filter/search controls
         self.search_layout.addRow("Filters:", self.filter_combo)
@@ -289,6 +290,7 @@ class ImageWindow(QWidget):
         self.search_bar_images.setInsertPolicy(QComboBox.NoInsert)
         self.search_bar_images.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.search_bar_images.editTextChanged.connect(self.schedule_filter)
+        self.search_bar_images.setToolTip("Search for images by filename or file path.\nMatches any image basename containing the search text.")
         self.search_layout.addRow("Search Images:", self.search_bar_images)
 
         # Setup label search
@@ -298,6 +300,7 @@ class ImageWindow(QWidget):
         self.search_bar_labels.setInsertPolicy(QComboBox.NoInsert)
         self.search_bar_labels.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.search_bar_labels.editTextChanged.connect(self.schedule_filter)
+        self.search_bar_labels.setToolTip("Search for images by annotation label name.\nShows only images containing annotations with labels matching the search text.")
         self.search_layout.addRow("Search Labels:", self.search_bar_labels)
 
     def _init_info_widgets(self):

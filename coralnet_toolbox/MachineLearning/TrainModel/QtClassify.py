@@ -33,6 +33,8 @@ class Classify(Base):
         self.dataset_edit = QLineEdit()
         self.dataset_button = QPushButton("Browse...")
         self.dataset_button.clicked.connect(self.browse_dataset_dir)
+        self.dataset_edit.setToolTip("Path to classification dataset with train/val/test splits.\nEach split should contain subdirectories named after class labels.")
+        self.dataset_button.setToolTip("Browse for a classification dataset directory.")
 
         dataset_dir_layout = QHBoxLayout()
         dataset_dir_layout.addWidget(self.dataset_edit)
@@ -43,6 +45,8 @@ class Classify(Base):
         self.mapping_edit = QLineEdit()
         self.mapping_button = QPushButton("Browse...")
         self.mapping_button.clicked.connect(self.browse_class_mapping_file)
+        self.mapping_edit.setToolTip("Optional YAML file mapping class IDs to class names.\nUsed during inference to label predictions.")
+        self.mapping_button.setToolTip("Browse for a class mapping YAML file.")
 
         class_mapping_layout = QHBoxLayout()
         class_mapping_layout.addWidget(self.mapping_edit)

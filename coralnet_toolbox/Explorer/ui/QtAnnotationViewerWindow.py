@@ -166,6 +166,7 @@ class AnnotationViewerWindow(QWidget):
         self.sort_combo.insertSeparator(self.sort_combo.findText("Cluster"))
         self.sort_combo.currentTextChanged.connect(self._on_sort_changed)
         self.sort_combo.setMinimumWidth(100)
+        self.sort_combo.setToolTip("Sort annotations by: None (no sort), Label, Image, Confidence score, Area size, or Cluster group")
         toolbar.addWidget(self.sort_combo)
 
         # "Cluster" is disabled until cluster data arrives from the EmbeddingViewer.

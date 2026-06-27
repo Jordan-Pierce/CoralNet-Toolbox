@@ -42,14 +42,18 @@ class Classify(Base):
         self.model_edit = QLineEdit()
         self.model_button = QPushButton("Browse...")
         self.model_button.clicked.connect(self.browse_model_file)
+        self.model_edit.setToolTip("Path to a trained classification model (.pt file).")
+        self.model_button.setToolTip("Browse for a model file.")
         model_layout = QHBoxLayout()
         model_layout.addWidget(self.model_edit)
         model_layout.addWidget(self.model_button)
         layout.addRow("Existing Model:", model_layout)
-        
+
         self.dataset_edit = QLineEdit()
         self.dataset_button = QPushButton("Browse...")
         self.dataset_button.clicked.connect(self.browse_dataset_dir)
+        self.dataset_edit.setToolTip("Path to classification dataset for evaluation.\nDirectory should contain class subdirectories with test images.")
+        self.dataset_button.setToolTip("Browse for a dataset directory.")
         dataset_layout = QHBoxLayout()
         dataset_layout.addWidget(self.dataset_edit)
         dataset_layout.addWidget(self.dataset_button)
@@ -68,15 +72,17 @@ class Classify(Base):
         self.imgsz_spinbox.setMinimum(16)
         self.imgsz_spinbox.setMaximum(4096)
         self.imgsz_spinbox.setValue(self.imgsz)
+        self.imgsz_spinbox.setToolTip("Input image size for evaluation.\nMust match the training image size (default: 256 for classification).")
         layout.addRow("Image Size:", self.imgsz_spinbox)
-        
+
         # Batch size
         self.batch_spinbox = QSpinBox()
         self.batch_spinbox.setMinimum(1)
         self.batch_spinbox.setMaximum(1024)
         self.batch_spinbox.setValue(16)
+        self.batch_spinbox.setToolTip("Number of images per batch during evaluation.\nLarger batches are faster but use more GPU memory.")
         layout.addRow("Batch:", self.batch_spinbox)
-        
+
         # Confidence threshold
         self.conf_spinbox = QDoubleSpinBox()
         self.conf_spinbox.setMinimum(0.0)
@@ -84,12 +90,14 @@ class Classify(Base):
         self.conf_spinbox.setSingleStep(0.001)
         self.conf_spinbox.setDecimals(3)
         self.conf_spinbox.setValue(0.001)
+        self.conf_spinbox.setToolTip("Minimum confidence threshold (0.0 to 1.0).\nPredictions below this threshold are discarded.\nDefault: 0.001 (very permissive).")
         layout.addRow("Confidence:", self.conf_spinbox)
-        
+
         # Augment
         self.augment_combo = QComboBox()
         self.augment_combo.addItems(["True", "False"])
         self.augment_combo.setCurrentText("False")
+        self.augment_combo.setToolTip("Apply data augmentation during evaluation.\nTrue: helps with robustness assessment. False: standard evaluation.")
         layout.addRow("Augment:", self.augment_combo)
 
         # Workers
@@ -97,6 +105,7 @@ class Classify(Base):
         self.workers_spinbox.setMinimum(0)
         self.workers_spinbox.setMaximum(64)
         self.workers_spinbox.setValue(8)
+        self.workers_spinbox.setToolTip("Number of parallel workers for data loading.\n0 = main thread. Higher = faster loading if CPU is available.")
         layout.addRow("Workers:", self.workers_spinbox)        
         
         group_box.setLayout(layout)

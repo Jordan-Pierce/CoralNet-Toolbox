@@ -30,9 +30,11 @@ class MarginInput(QGroupBox):
         self.type_combo = QComboBox()
         self.type_combo.addItems(["Single Value", "Multiple Values"])
         self.type_combo.setCurrentIndex(1)  # Set Multiple Values as default
+        self.type_combo.setToolTip("Single Value: Apply same margin to all sides.\nMultiple Values: Set each side (Top, Right, Bottom, Left) separately.")
         self.value_type = QComboBox()
         self.value_type.addItems(["Pixels", "Percentage"])
         self.value_type.setCurrentIndex(0)  # Set Pixels as default
+        self.value_type.setToolTip("Pixels: Fixed pixel distances.\nPercentage: Margins as fraction of image dimensions (0.0-1.0).")
 
         type_layout.addWidget(QLabel("Type:"))
         type_layout.addWidget(self.type_combo)

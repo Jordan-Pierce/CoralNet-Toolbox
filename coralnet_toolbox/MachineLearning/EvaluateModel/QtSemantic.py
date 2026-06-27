@@ -35,17 +35,21 @@ class Semantic(Base):
         """Setup the dataset layout."""
         group_box = QGroupBox("Dataset")
         layout = QFormLayout()
-        
+
         self.model_edit = QLineEdit()
+        self.model_edit.setToolTip("Path to the pre-trained semantic segmentation model (.pt file)")
         self.model_button = QPushButton("Browse...")
+        self.model_button.setToolTip("Select a semantic segmentation model file")
         self.model_button.clicked.connect(self.browse_model_file)
         model_layout = QHBoxLayout()
         model_layout.addWidget(self.model_edit)
         model_layout.addWidget(self.model_button)
         layout.addRow("Existing Model:", model_layout)
-            
+
         self.dataset_edit = QLineEdit()
+        self.dataset_edit.setToolTip("Path to the dataset YAML file defining validation/test splits and class definitions")
         self.dataset_button = QPushButton("Browse...")
+        self.dataset_button.setToolTip("Select a dataset YAML file")
         self.dataset_button.clicked.connect(self.browse_dataset_yaml)
         dataset_layout = QHBoxLayout()
         dataset_layout.addWidget(self.dataset_edit)

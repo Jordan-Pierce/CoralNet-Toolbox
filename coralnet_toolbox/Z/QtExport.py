@@ -111,10 +111,12 @@ class ZExportDialog(QDialog):
         self.output_dir_edit = QLineEdit()
         self.output_dir_edit.setPlaceholderText("Select output directory...")
         self.output_dir_edit.setReadOnly(True)
+        self.output_dir_edit.setToolTip("Path to the directory where z-channel files will be saved.")
         dir_layout.addWidget(self.output_dir_edit)
-        
+
         browse_btn = QPushButton("Browse...")
         browse_btn.clicked.connect(self.browse_output_directory)
+        browse_btn.setToolTip("Browse for the output directory.")
         dir_layout.addWidget(browse_btn)
         
         settings_layout.addRow("Output Directory:", dir_layout)
@@ -162,13 +164,15 @@ class ZExportDialog(QDialog):
         btn_layout.addWidget(self.status_label)
         
         btn_layout.addStretch()
-        
+
         cancel_btn = QPushButton("Cancel")
         cancel_btn.clicked.connect(self.close)
+        cancel_btn.setToolTip("Close without exporting.")
         btn_layout.addWidget(cancel_btn)
-        
+
         export_btn = QPushButton("Export")
         export_btn.clicked.connect(self.start_export)
+        export_btn.setToolTip("Export selected images' z-channels as TIFF files.")
         btn_layout.addWidget(export_btn)
         
         self.main_layout.addLayout(btn_layout)

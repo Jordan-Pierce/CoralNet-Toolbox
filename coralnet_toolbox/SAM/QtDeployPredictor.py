@@ -129,6 +129,7 @@ class DeployPredictorDialog(QDialog):
 
         models = list(self.models.keys())
         self.model_combo.setCurrentIndex(models.index("SAM 2.1 Tiny"))
+        self.model_combo.setToolTip("Choose a SAM variant for interactive segmentation.\nTiny/Small: Faster, less memory.\nBase/Large: Higher accuracy, more resources.")
 
         layout.addWidget(QLabel("Select Model:"))
         layout.addWidget(self.model_combo)
@@ -147,12 +148,14 @@ class DeployPredictorDialog(QDialog):
         self.output_type_dropdown = QComboBox()
         self.output_type_dropdown.addItems(["Polygon", "Rectangle", "Mask"])
         self.output_type_dropdown.setCurrentIndex(0)  # Default to Polygon
+        self.output_type_dropdown.setToolTip("Format for SAM output annotations.\nPolygon: Free-form shapes.\nRectangle: Bounding boxes.\nMask: Binary segmentation masks.")
         layout.addRow("Output Type:", self.output_type_dropdown)
-        
+
         # Allow holes dropdown
         self.allow_holes_dropdown = QComboBox()
         self.allow_holes_dropdown.addItems(["True", "False"])
         self.allow_holes_dropdown.setCurrentIndex(1)  # Default to False
+        self.allow_holes_dropdown.setToolTip("Allow segmentation masks with holes (interior regions).\nEnable for complex shapes, disable for simpler contours.")
         layout.addRow("Allow Holes:", self.allow_holes_dropdown)
 
         # Resize image dropdown
@@ -160,6 +163,7 @@ class DeployPredictorDialog(QDialog):
         self.resize_image_dropdown.addItems(["True", "False"])
         self.resize_image_dropdown.setCurrentIndex(0)
         self.resize_image_dropdown.setEnabled(False)  # Grey out the dropdown
+        self.resize_image_dropdown.setToolTip("(Automatic) Resize image to match model input requirements.")
         layout.addRow("Resize Image:", self.resize_image_dropdown)
 
         # Image size control
@@ -167,6 +171,7 @@ class DeployPredictorDialog(QDialog):
         self.imgsz_spinbox.setRange(640, 2048)
         self.imgsz_spinbox.setSingleStep(24)
         self.imgsz_spinbox.setValue(self.imgsz)
+        self.imgsz_spinbox.setToolTip("Input image size for SAM model.\nLarger sizes improve accuracy but use more GPU memory.")
         layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
 
         group_box.setLayout(layout)
@@ -195,10 +200,12 @@ class DeployPredictorDialog(QDialog):
 
         load_button = QPushButton("Load Model")
         load_button.clicked.connect(self.load_model)
+        load_button.setToolTip("Load the selected SAM model for interactive segmentation.")
         layout.addWidget(load_button)
 
         deactivate_button = QPushButton("Deactivate Model")
         deactivate_button.clicked.connect(self.deactivate_model)
+        deactivate_button.setToolTip("Unload the current SAM model and free GPU memory.")
         layout.addWidget(deactivate_button)
 
         group_box.setLayout(layout)

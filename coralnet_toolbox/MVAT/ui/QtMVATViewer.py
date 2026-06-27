@@ -676,6 +676,7 @@ class MVATViewer(QFrame):
         self.array_selector_combo = QComboBox()
         self.array_selector_combo.addItem("Labels")
         self.array_selector_combo.setMinimumWidth(150)
+        self.array_selector_combo.setToolTip("Select which data array to display in the 3D view.\nDisplays labels, features, or other available data channels.")
         self.array_selector_combo.currentTextChanged.connect(self._on_array_selected)
         toolbar.addWidget(self.array_selector_combo)
 

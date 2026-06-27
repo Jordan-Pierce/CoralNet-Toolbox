@@ -167,6 +167,7 @@ class PatchSamplingDialog(QDialog):
         self.method_combo = QComboBox()
         self.method_combo.addItems(["Random", "Stratified Random", "Uniform"])
         self.method_combo.currentIndexChanged.connect(self.preview_annotations)
+        self.method_combo.setToolTip("Random: Unbiased sampling.\nStratified Random: Equal distribution across categories.\nUniform: Grid-based even spacing.")
         layout.addRow("Sampling Method:", self.method_combo)
 
         # Number of Annotations
@@ -175,6 +176,7 @@ class PatchSamplingDialog(QDialog):
         self.num_annotations_spinbox.setMaximum(10000)
         self.num_annotations_spinbox.setValue(10)
         self.num_annotations_spinbox.valueChanged.connect(self.preview_annotations)
+        self.num_annotations_spinbox.setToolTip("Number of annotations to generate in the selected region(s).")
         layout.addRow("Number of Annotations:", self.num_annotations_spinbox)
 
         # Annotation Size
@@ -183,6 +185,7 @@ class PatchSamplingDialog(QDialog):
         self.annotation_size_spinbox.setMaximum(10000)
         self.annotation_size_spinbox.setValue(self.annotation_window.annotation_size)
         self.annotation_size_spinbox.valueChanged.connect(self.preview_annotations)
+        self.annotation_size_spinbox.setToolTip("Patch size in pixels (width/height). Larger patches capture more context.")
         layout.addRow("Annotation Size:", self.annotation_size_spinbox)
 
         group_box.setLayout(layout)
@@ -199,6 +202,7 @@ class PatchSamplingDialog(QDialog):
             self.label_combo.addItem(label.short_label_code, label.id)
         self.label_combo.setCurrentIndex(0)
         self.label_combo.currentIndexChanged.connect(self.preview_annotations)
+        self.label_combo.setToolTip("Label to assign to all sampled patches.")
         layout.addRow("Sample As:", self.label_combo)
 
         # Propagate Labels
@@ -207,6 +211,7 @@ class PatchSamplingDialog(QDialog):
         self.propagate_labels_combo.setCurrentIndex(0)
         self.propagate_labels_combo.currentIndexChanged.connect(self.preview_annotations)
         self.propagate_labels_combo.currentIndexChanged.connect(self.on_propagate_labels_changed)
+        self.propagate_labels_combo.setToolTip("Copy the label to all highlighted rows.")
         layout.addRow("Propagate Labels:", self.propagate_labels_combo)
 
         # Exclude Regions
@@ -215,6 +220,7 @@ class PatchSamplingDialog(QDialog):
         self.exclude_regions_combo.setCurrentIndex(0)
         self.exclude_regions_combo.currentIndexChanged.connect(self.preview_annotations)
         self.exclude_regions_combo.currentIndexChanged.connect(self.on_exclude_regions_changed)
+        self.exclude_regions_combo.setToolTip("Avoid sampling over existing annotations.\nPrevents overlap with already-labeled regions.")
         layout.addRow("Avoid Annotations:", self.exclude_regions_combo)
 
         group_box.setLayout(layout)
@@ -241,11 +247,13 @@ class PatchSamplingDialog(QDialog):
         # Preview Button
         self.preview_button = QPushButton("Preview")
         self.preview_button.clicked.connect(self.preview_annotations)
+        self.preview_button.setToolTip("Show a preview of annotations using current parameters.")
         button_layout.addWidget(self.preview_button)
 
         # Accept Button
         self.accept_button = QPushButton("Accept")
         self.accept_button.clicked.connect(self.accept_annotations)
+        self.accept_button.setToolTip("Create and apply all sampled annotations.")
         button_layout.addWidget(self.accept_button)
 
         # Cancel Button

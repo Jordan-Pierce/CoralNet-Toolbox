@@ -26,6 +26,7 @@ class Segment(Base):
         import_as_label = QLabel("Import as:")
         self.import_as_combo = QComboBox()
         self.import_as_combo.addItems(["Polygons (Default)", "Rectangles"])
+        self.import_as_combo.setToolTip("Format for imported annotations.\nPolygons (Default): Use precise polygon shapes from segmentation data.\nRectangles: Simplify to bounding boxes (faster, less precise).")
         layout.addRow(import_as_label, self.import_as_combo)
 
         self.layout.insertWidget(0, group_box)

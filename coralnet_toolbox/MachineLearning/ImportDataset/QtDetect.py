@@ -25,6 +25,7 @@ class Detect(Base):
         import_as_label = QLabel("Import as:")
         self.import_as_combo = QComboBox()
         self.import_as_combo.addItems(["Rectangles (Default)", "Polygons"])
+        self.import_as_combo.setToolTip("Format for imported annotations.\nRectangles (Default): Bounding boxes from detection data.\nPolygons: Convert bboxes to polygon corners (rectangular regions).")
         layout.addRow(import_as_label, self.import_as_combo)
 
         self.layout.insertWidget(0, group_box)

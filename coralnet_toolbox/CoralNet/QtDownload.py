@@ -94,6 +94,7 @@ class DownloadDialog(QDialog):
             "Download data from a CoralNet source. Specify the Source ID and select which items to download. To download data from multiple Sources, list them comma-separated in the Source ID field. The download will be saved to the specified Output Directory."
         )
         info_label.setWordWrap(True)
+        info_label.setToolTip("Download images, annotations, metadata, and labelsets from CoralNet sources.\nMultiple sources can be specified (comma-separated).")
         layout.addWidget(info_label)
 
         group_box.setLayout(layout)
@@ -106,6 +107,7 @@ class DownloadDialog(QDialog):
 
         # Source ID input
         self.source_id_input = QLineEdit()
+        self.source_id_input.setToolTip("CoralNet source ID(s) to download from.\nFor multiple sources: 1,2,3 (comma-separated, no spaces).")
         form_layout.addRow("Source ID:", self.source_id_input)
 
         # Output directory with browse button
@@ -113,6 +115,8 @@ class DownloadDialog(QDialog):
         self.output_dir_input = QLineEdit()
         self.browse_button = QPushButton("Browse...")
         self.browse_button.clicked.connect(self.select_output_dir)
+        self.output_dir_input.setToolTip("Directory where downloaded data will be saved.\nSubdirectories will be created per source.")
+        self.browse_button.setToolTip("Browse for an output directory.")
         output_dir_layout.addWidget(self.output_dir_input)
         output_dir_layout.addWidget(self.browse_button)
         form_layout.addRow("Output Directory:", output_dir_layout)
@@ -144,21 +148,25 @@ class DownloadDialog(QDialog):
         # Dropdown for metadata
         self.metadata_dropdown = QComboBox()
         self.metadata_dropdown.addItems(["True", "False"])
+        self.metadata_dropdown.setToolTip("Download source metadata (title, description, etc.).\nRequires less bandwidth than images.")
         form_layout.addRow("Download Metadata:", self.metadata_dropdown)
 
         # Dropdown for labelset
         self.labelset_dropdown = QComboBox()
         self.labelset_dropdown.addItems(["True", "False"])
+        self.labelset_dropdown.setToolTip("Download labelset definitions and class mappings.\nNeeded to interpret annotation labels.")
         form_layout.addRow("Download Labelset:", self.labelset_dropdown)
 
         # Dropdown for annotations
         self.annotations_dropdown = QComboBox()
         self.annotations_dropdown.addItems(["True", "False"])
+        self.annotations_dropdown.setToolTip("Download annotation data (labels, coordinates).\nRequired for training machine learning models.")
         form_layout.addRow("Download Annotations:", self.annotations_dropdown)
 
         # Dropdown for images
         self.images_dropdown = QComboBox()
         self.images_dropdown.addItems(["True", "False"])
+        self.images_dropdown.setToolTip("Download actual image files from the source.\nLarge downloads can take significant time and disk space.")
         form_layout.addRow("Download Images:", self.images_dropdown)
 
         # Set the form layout to the group box
@@ -176,12 +184,14 @@ class DownloadDialog(QDialog):
         self.image_fetch_rate_input = QSpinBox()
         self.image_fetch_rate_input.setMinimum(3)
         self.image_fetch_rate_input.setValue(5)
+        self.image_fetch_rate_input.setToolTip("Delay between image downloads in seconds.\nIncrease to reduce server load and avoid rate limiting.")
         form_layout.addRow("Image Fetch Rate (sec):", self.image_fetch_rate_input)
 
         # Image break time input
         self.fetch_break_time_input = QSpinBox()
         self.fetch_break_time_input.setMinimum(3)
         self.fetch_break_time_input.setValue(5)
+        self.fetch_break_time_input.setToolTip("Break duration between download batches in seconds.\nAllows server recovery during large downloads.")
         form_layout.addRow("Image Fetch Break Time (sec):", self.fetch_break_time_input)
 
         # Set the form layout to the group box

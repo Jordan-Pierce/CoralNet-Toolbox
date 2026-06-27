@@ -153,17 +153,21 @@ class Base(QDialog):
         self.save_dir_edit = QLineEdit()
         self.save_dir_button = QPushButton("Browse...")
         self.save_dir_button.clicked.connect(self.browse_save_dir)
+        self.save_dir_edit.setToolTip("Directory where evaluation results and metrics will be saved.\nResults are organized in subdirectories by evaluation name.")
+        self.save_dir_button.setToolTip("Browse for a save directory.")
         save_dir_layout = QHBoxLayout()
         save_dir_layout.addWidget(self.save_dir_edit)
         save_dir_layout.addWidget(self.save_dir_button)
         layout.addRow("Save Directory:", save_dir_layout)
-        
+
         self.name_edit = QLineEdit()
+        self.name_edit.setToolTip("Name for this evaluation run (creates subdirectory in Save Directory).\nDefault: Timestamp (YYYY-MM-DD_HH-MM-SS).")
         layout.addRow("Name:", self.name_edit)
-        
+
         self.split_combo = QComboBox()
         self.split_combo.addItems(["train", "val", "test"])
         self.split_combo.setCurrentText("test")
+        self.split_combo.setToolTip("Which dataset split to evaluate on.\ntest: separate test set (most reliable).\nval: validation set.\ntrain: training set (may overfit).")
         layout.addRow("Split:", self.split_combo)
         
         group_box.setLayout(layout)
@@ -179,15 +183,17 @@ class Base(QDialog):
         self.imgsz_spinbox.setMinimum(16)
         self.imgsz_spinbox.setMaximum(4096)
         self.imgsz_spinbox.setValue(self.imgsz)
+        self.imgsz_spinbox.setToolTip("Input image size for evaluation (in pixels).\nMust match the size used during training for accurate results.\nDefault: 640 pixels.")
         layout.addRow("Image Size:", self.imgsz_spinbox)
-        
+
         # Batch size
         self.batch_spinbox = QSpinBox()
         self.batch_spinbox.setMinimum(1)
         self.batch_spinbox.setMaximum(1024)
         self.batch_spinbox.setValue(16)
+        self.batch_spinbox.setToolTip("Number of images to process in each batch during evaluation.\nLarger batches are faster but require more GPU memory.")
         layout.addRow("Batch:", self.batch_spinbox)
-        
+
         # Confidence threshold
         self.conf_spinbox = QDoubleSpinBox()
         self.conf_spinbox.setMinimum(0.0)
@@ -195,8 +201,9 @@ class Base(QDialog):
         self.conf_spinbox.setSingleStep(0.001)
         self.conf_spinbox.setDecimals(3)
         self.conf_spinbox.setValue(0.001)
+        self.conf_spinbox.setToolTip("Minimum confidence score for a detection to be kept (0.0 to 1.0).\nLower values include more detections but may increase false positives.\nHigher values are stricter, catching only confident predictions.")
         layout.addRow("Confidence:", self.conf_spinbox)
-        
+
         # IoU threshold
         self.iou_spinbox = QDoubleSpinBox()
         self.iou_spinbox.setMinimum(0.0)
@@ -204,31 +211,36 @@ class Base(QDialog):
         self.iou_spinbox.setSingleStep(0.01)
         self.iou_spinbox.setDecimals(2)
         self.iou_spinbox.setValue(0.7)
+        self.iou_spinbox.setToolTip("Intersection over Union (IoU) threshold for matching predictions to ground truth (0.0 to 1.0).\nUsed to determine if a prediction is correct. Standard value: 0.5-0.7.\nHigher values are stricter (predictions must overlap more).")
         layout.addRow("IoU:", self.iou_spinbox)
-        
+
         # Max detections
         self.max_det_spinbox = QSpinBox()
         self.max_det_spinbox.setMinimum(1)
         self.max_det_spinbox.setMaximum(10000)
         self.max_det_spinbox.setValue(300)
+        self.max_det_spinbox.setToolTip("Maximum number of detections to keep per image.\nDetections above this limit are discarded (by confidence score).\nHigher values keep more detections.")
         layout.addRow("Max Det:", self.max_det_spinbox)
 
         # Augment
         self.augment_combo = QComboBox()
         self.augment_combo.addItems(["True", "False"])
         self.augment_combo.setCurrentText("False")
+        self.augment_combo.setToolTip("Apply test-time augmentation (TTA) during evaluation.\nTrue: uses multiple augmented views, slower but often more accurate.\nFalse: standard evaluation, faster.")
         layout.addRow("Augment:", self.augment_combo)
-        
+
         # Agnostic NMS
         self.agnostic_nms_combo = QComboBox()
         self.agnostic_nms_combo.addItems(["True", "False"])
         self.agnostic_nms_combo.setCurrentText("False")
+        self.agnostic_nms_combo.setToolTip("Class-agnostic NMS (Non-Maximum Suppression).\nTrue: suppress overlapping boxes regardless of class.\nFalse: only suppress boxes within the same class.")
         layout.addRow("Agnostic NMS:", self.agnostic_nms_combo)
-        
+
         # Single class
         self.single_cls_combo = QComboBox()
         self.single_cls_combo.addItems(["True", "False"])
         self.single_cls_combo.setCurrentText("False")
+        self.single_cls_combo.setToolTip("Treat all objects as a single class during evaluation.\nTrue: evaluates presence/absence only.\nFalse: evaluates per-class predictions.")
         layout.addRow("Single Cls:", self.single_cls_combo)
 
         # Workers
@@ -236,18 +248,21 @@ class Base(QDialog):
         self.workers_spinbox.setMinimum(0)
         self.workers_spinbox.setMaximum(64)
         self.workers_spinbox.setValue(0)
+        self.workers_spinbox.setToolTip("Number of worker threads for parallel data loading.\n0 = load data in the main thread. Higher values speed up data loading.")
         layout.addRow("Workers:", self.workers_spinbox)        
         
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
         
     def setup_buttons_layout(self):
-        """Setup the buttons layout."""        
+        """Setup the buttons layout."""
         self.buttons = QPushButton("OK")
         self.buttons.clicked.connect(self.accept)
+        self.buttons.setToolTip("Start model evaluation with the configured parameters.\nEvaluation will run in the background.")
         self.layout.addWidget(self.buttons)
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.reject)
+        self.cancel_button.setToolTip("Close this dialog without starting evaluation.")
         self.layout.addWidget(self.cancel_button)
 
     def browse_model_file(self):

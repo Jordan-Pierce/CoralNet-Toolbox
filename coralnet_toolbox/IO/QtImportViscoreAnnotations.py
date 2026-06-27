@@ -70,8 +70,10 @@ class ImportViscoreAnnotations(QDialog):
 
         # CSV file selection
         self.csv_file_edit = QLineEdit()
+        self.csv_file_edit.setToolTip("Path to the Viscore CSV file to import.")
         self.csv_file_button = QPushButton("Browse...")
         self.csv_file_button.clicked.connect(self.browse_csv_file)
+        self.csv_file_button.setToolTip("Browse for a Viscore CSV file.")
         file_layout = QHBoxLayout()
         file_layout.addWidget(self.csv_file_edit)
         file_layout.addWidget(self.csv_file_button)
@@ -90,7 +92,7 @@ class ImportViscoreAnnotations(QDialog):
         self.views_spinbox.setMinimum(-1)
         self.views_spinbox.setMaximum(1000)
         self.views_spinbox.setValue(3)
-        self.views_spinbox.setToolTip("Number of best views to keep per dot")
+        self.views_spinbox.setToolTip("Maximum number of best views to keep per annotation point.\nSet to -1 to keep all views.")
         layout.addRow("Views per Dot:", self.views_spinbox)
 
         # Annotation size
@@ -98,7 +100,7 @@ class ImportViscoreAnnotations(QDialog):
         self.size_spinbox.setMinimum(1)
         self.size_spinbox.setMaximum(10000)
         self.size_spinbox.setValue(224)
-        self.size_spinbox.setToolTip("Size of annotation patches in pixels")
+        self.size_spinbox.setToolTip("Size of annotation patches in pixels.\nEach annotation is created as a square patch of this size.")
         layout.addRow("Annotation Size:", self.size_spinbox)
 
         group_box.setLayout(layout)
@@ -109,7 +111,9 @@ class ImportViscoreAnnotations(QDialog):
         buttons_layout = QHBoxLayout()
 
         self.import_button = QPushButton("Import")
+        self.import_button.setToolTip("Import annotations from the selected Viscore CSV file.")
         self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.setToolTip("Close this dialog without importing.")
 
         self.import_button.clicked.connect(self.import_annotations)
         self.cancel_button.clicked.connect(self.reject)

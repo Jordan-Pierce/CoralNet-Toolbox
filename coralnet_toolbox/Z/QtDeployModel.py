@@ -67,24 +67,26 @@ class DeployModelDialog(CollapsibleSection):
         # Model dropdown
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
-        
+
         # Define available models
         self.models = {
             "DA3-Large": "depth-anything/DA3NESTED-GIANT-LARGE-1.1",
         }
-        
+
         # Add models to combo box
         for model_name in self.models.keys():
             self.model_combo.addItem(model_name)
-            
+
         self.model_combo.setCurrentIndex(0)
+        self.model_combo.setToolTip("Depth estimation model to load.\nDA3-Large is the recommended model for high-quality depth prediction.")
         layout.addRow("Model:", self.model_combo)
-        
+
         # Image size spinbox
         self.imgsz_spinbox = QSpinBox()
         self.imgsz_spinbox.setRange(126, 2016)
         self.imgsz_spinbox.setSingleStep(14)
         self.imgsz_spinbox.setValue(self.imgsz)
+        self.imgsz_spinbox.setToolTip("Input image size for depth estimation.\nDefault: 504. Larger sizes give more detail but use more GPU memory.")
         layout.addRow("Image Size:", self.imgsz_spinbox)
         
         # Output type dropdown
@@ -110,12 +112,14 @@ class DeployModelDialog(CollapsibleSection):
         # Load button
         self.load_button = QPushButton("Load Model")
         self.load_button.clicked.connect(self.load_model)
+        self.load_button.setToolTip("Load the selected Z-Inference depth estimation model.\nModel will be downloaded on first use.")
         layout.addWidget(self.load_button)
-        
+
         # Deactivate button
         self.deactivate_button = QPushButton("Deactivate Model")
         self.deactivate_button.clicked.connect(self.deactivate_model)
         self.deactivate_button.setEnabled(False)
+        self.deactivate_button.setToolTip("Unload the current model and free GPU memory.")
         layout.addWidget(self.deactivate_button)
         
         # Create widget and add to popup

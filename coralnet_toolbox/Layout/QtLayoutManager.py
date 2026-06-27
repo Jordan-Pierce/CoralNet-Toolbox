@@ -35,26 +35,30 @@ class SaveLayoutDialog(QDialog):
     def setup_ui(self):
         """Create the dialog UI."""
         layout = QVBoxLayout()
-        
+
         # Label
         label = QLabel("Enter a name for this layout:")
+        label.setToolTip("Saved layout names must be alphanumeric with hyphens or underscores.")
         layout.addWidget(label)
-        
+
         # Input field
         self.name_input = QLineEdit()
         self.name_input.setPlaceholderText("e.g., 'annotation-focus' or 'analysis'")
         self.name_input.returnPressed.connect(self.on_save)
+        self.name_input.setToolTip("Unique name for this window layout configuration.\nUsed to save and restore dock positions.")
         layout.addWidget(self.name_input)
-        
+
         # Buttons
         button_layout = QHBoxLayout()
-        
+
         save_button = QPushButton("Save")
         save_button.clicked.connect(self.on_save)
+        save_button.setToolTip("Save this window layout configuration with the specified name.")
         button_layout.addWidget(save_button)
-        
+
         cancel_button = QPushButton("Cancel")
         cancel_button.clicked.connect(self.reject)
+        cancel_button.setToolTip("Close this dialog without saving the layout.")
         button_layout.addWidget(cancel_button)
         
         layout.addLayout(button_layout)

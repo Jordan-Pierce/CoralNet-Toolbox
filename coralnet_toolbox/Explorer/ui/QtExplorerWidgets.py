@@ -70,6 +70,7 @@ class MultiSelectCombo(QtWidgets.QWidget):
         self.button = QtWidgets.QToolButton(self)
         self.button.setText('All')
         self.button.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        self.button.setToolTip("Click to select or filter items from the list.\nMultiple selections can be made using checkboxes.")
         self.menu = _PersistentMenu(self)
         self.button.setMenu(self.menu)
 

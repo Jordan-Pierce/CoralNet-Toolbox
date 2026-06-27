@@ -146,15 +146,18 @@ class Base(QDialog):
         self.model_path_edit = QLineEdit()
         self.model_browse_button = QPushButton("Browse...")
         self.model_browse_button.clicked.connect(self.browse_model_file)
+        self.model_path_edit.setToolTip("Path to the trained model file (.pt) to export.\nMust be a valid YOLO model file.")
+        self.model_browse_button.setToolTip("Browse for a model file.")
         model_layout.addWidget(self.model_path_edit)
         model_layout.addWidget(self.model_browse_button)
         layout.addRow("Model Path:", model_layout)
-        
+
         # Export Format Dropdown
         self.export_format_combo = QComboBox()
         # Common formats from export.md
         self.export_format_combo.addItems(["engine"])
         self.export_format_combo.setEditable(True)
+        self.export_format_combo.setToolTip("Output format for the exported model.\n'engine' = TensorRT engine (optimized for NVIDIA GPUs).\nOther formats: 'onnx', 'torchscript', 'pb', 'tflite', etc.")
         layout.addRow("Export Format:", self.export_format_combo)
 
         group_box.setLayout(layout)
@@ -176,6 +179,7 @@ class Base(QDialog):
         self.imgsz_spinbox.setMaximum(8192)
         self.imgsz_spinbox.setValue(640)
         self.imgsz_spinbox.setSingleStep(32)
+        self.imgsz_spinbox.setToolTip("Input image size for the exported model.\nMust match the training image size for best accuracy.")
         general_layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
 
         self.batch_spinbox = QSpinBox()
@@ -184,33 +188,35 @@ class Base(QDialog):
         self.batch_spinbox.setValue(1)
         # Disable to make it stay as 1
         self.batch_spinbox.setEnabled(False)
+        self.batch_spinbox.setToolTip("Batch size for export (typically 1 for inference).")
         general_layout.addRow("Batch Size (batch):", self.batch_spinbox)
-        
+
         self.device_edit = QLineEdit()
         self.device_edit.setPlaceholderText("e.g., 0 or cpu or dla:0")
         self.device_edit.setText("0")
+        self.device_edit.setToolTip("Device for export: '0' (GPU 0), 'cpu', or 'dla:0' (DLA).\nMust have the device available during export.")
         general_layout.addRow("Device (device):", self.device_edit)
 
         # --- Replaced Checkboxes with ComboBoxes ---
-        
+
         self.half_combo = QComboBox()
         self.half_combo.addItems(["False", "True"])
-        self.half_combo.setToolTip("Enable FP16 (half-precision) quantization")
+        self.half_combo.setToolTip("Enable FP16 (half-precision) quantization for smaller, faster model.\nReduces model size by ~50%, slight accuracy tradeoff.\nRequires GPU support.")
         general_layout.addRow("FP16 (half):", self.half_combo)
-        
+
         self.dynamic_combo = QComboBox()
         self.dynamic_combo.addItems(["False", "True"])
-        self.dynamic_combo.setToolTip("Allow dynamic input sizes")
+        self.dynamic_combo.setToolTip("Allow dynamic input sizes (variable image dimensions).\nFalse: fixed size (faster). True: flexible size (more versatile).")
         general_layout.addRow("Dynamic Axes (dynamic):", self.dynamic_combo)
-        
+
         self.simplify_combo = QComboBox()
         self.simplify_combo.addItems(["True", "False"])  # Default is True
-        self.simplify_combo.setToolTip("Simplify the ONNX model graph")
+        self.simplify_combo.setToolTip("Simplify the ONNX model graph for better compatibility.\nRemoves redundant operations. Recommended for ONNX export.")
         general_layout.addRow("Simplify (simplify):", self.simplify_combo)
-        
+
         self.nms_combo = QComboBox()
         self.nms_combo.addItems(["False", "True"])
-        self.nms_combo.setToolTip("Add Non-Maximum Suppression (NMS) to the model")
+        self.nms_combo.setToolTip("Include Non-Maximum Suppression (NMS) in the model.\nTrue: NMS is baked into the model (faster inference).\nFalse: Apply NMS separately (more flexible).")
         general_layout.addRow("Add NMS (nms):", self.nms_combo)
         
         general_groupbox.setLayout(general_layout)
@@ -251,10 +257,12 @@ class Base(QDialog):
         self.data_edit.setPlaceholderText("Path to dataset.yaml")
         self.data_browse_button = QPushButton("Browse...")
         self.data_browse_button.clicked.connect(self.browse_data_yaml)
+        self.data_edit.setToolTip("Path to dataset.yaml for INT8 calibration.\nUsed to calibrate quantization scale factors.")
+        self.data_browse_button.setToolTip("Browse for a dataset.yaml file.")
         data_layout.addWidget(self.data_edit)
         data_layout.addWidget(self.data_browse_button)
         int8_form_layout.addRow("Data (data):", data_layout)
-        
+
         # Fraction
         self.fraction_spinbox = QDoubleSpinBox()
         self.fraction_spinbox.setDecimals(2)
@@ -262,7 +270,7 @@ class Base(QDialog):
         self.fraction_spinbox.setMaximum(1.0)
         self.fraction_spinbox.setValue(1.0)
         self.fraction_spinbox.setSingleStep(0.1)
-        self.fraction_spinbox.setToolTip("Fraction of dataset to use for calibration")
+        self.fraction_spinbox.setToolTip("Fraction of calibration dataset to use (0.01 to 1.0).\nUse smaller fractions (e.g., 0.1) for faster calibration with acceptable accuracy.")
         int8_form_layout.addRow("Fraction (fraction):", self.fraction_spinbox)
 
         self.int8_groupbox.setLayout(int8_form_layout)
@@ -279,17 +287,19 @@ class Base(QDialog):
     def setup_buttons_layout(self):
         """Setup buttons layout (like eval.py)."""
         self.button_layout = QHBoxLayout()
-        
+
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.reject)
-        
+        self.cancel_button.setToolTip("Close this dialog without exporting.")
+
         self.export_button = QPushButton("Export")
         self.export_button.clicked.connect(self.accept)
-        
+        self.export_button.setToolTip("Export the model with the configured parameters and optimization settings.\nExport will run in the background.")
+
         self.button_layout.addStretch()
         self.button_layout.addWidget(self.cancel_button)
         self.button_layout.addWidget(self.export_button)
-        
+
         self.layout.addLayout(self.button_layout)
 
     def on_int8_changed(self, text):

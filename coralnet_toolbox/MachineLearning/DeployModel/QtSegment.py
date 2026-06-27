@@ -60,6 +60,7 @@ class Segment(Base):
         # SAM dropdown
         self.use_sam_dropdown = QComboBox()
         self.use_sam_dropdown.addItems(["False", "True"])
+        self.use_sam_dropdown.setToolTip("Enable SAM (Segment Anything Model) to generate polygon annotations from segmentation masks.\nRequires SAM model to be loaded first.")
         self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
         layout.addRow("Use SAM Polygons:", self.use_sam_dropdown)
 
