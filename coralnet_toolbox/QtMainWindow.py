@@ -1183,8 +1183,8 @@ class MainWindow(QMainWindow):
         device_action = ClickableAction(device_icon, "", self)  # Empty string for the text
         self.device_tool_action = device_action
         self.device_tool_action.setCheckable(False)
-        # Set the tooltip to show the value of self.device
-        self.device_tool_action.setToolTip(device_tooltip)
+        # Set the tooltip to show the value of self.device and explain functionality
+        self.device_tool_action.setToolTip(f"Current device: {device_tooltip}\nClick to change compute device (CPU, GPU, or Metal)")
         self.device_tool_action.triggered.connect(self.toggle_device)
         self.toolbar.addAction(self.device_tool_action)
 
@@ -3683,9 +3683,11 @@ class DeviceSelectionDialog(QDialog):
         self.device_list = QListWidget()
         self.device_list.addItems(self.devices)
         self.device_list.setSelectionMode(QListWidget.SingleSelection)  # Allow only single selection
+        self.device_list.setToolTip("Select the compute device for ML operations.\nCPU: Slower but works everywhere. GPU: Fast with NVIDIA CUDA. MPS: Apple Metal for M-series Macs.")
         layout.addWidget(self.device_list)
 
         self.ok_button = QPushButton("OK")
+        self.ok_button.setToolTip("Confirm device selection and close this dialog")
         self.ok_button.clicked.connect(self.accept)
         layout.addWidget(self.ok_button)
 

@@ -219,6 +219,7 @@ class ProgressBar(QDialog):
         self.cancel_button.setCursor(Qt.PointingHandCursor)
         self.cancel_button.setIcon(get_icon("remove.svg"))
         self.cancel_button.setIconSize(app_theme.scale_size(12))
+        self.cancel_button.setToolTip("Stop the current operation")
         self.cancel_button.clicked.connect(self.cancel)
 
         self.message_label = QLabel(title, self)

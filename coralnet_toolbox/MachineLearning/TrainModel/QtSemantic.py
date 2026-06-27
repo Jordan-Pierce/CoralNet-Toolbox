@@ -26,17 +26,19 @@ class Semantic(Base):
 
     def setup_dataset_layout(self):
         """Setup the dataset layout."""
-        
+
         self.task = "semantic"
         self.imgsz = 640
         self.batch = 4
-        
+
         group_box = QGroupBox("Dataset")
         layout = QFormLayout()
 
         # Dataset YAML
         self.dataset_edit = QLineEdit()
+        self.dataset_edit.setToolTip("Path to the dataset YAML file defining training/val/test splits and class definitions")
         self.dataset_button = QPushButton("Browse...")
+        self.dataset_button.setToolTip("Select a dataset YAML file")
         self.dataset_button.clicked.connect(self.browse_dataset_yaml)
 
         dataset_yaml_layout = QHBoxLayout()
@@ -46,7 +48,9 @@ class Semantic(Base):
 
         # Class Mapping
         self.mapping_edit = QLineEdit()
+        self.mapping_edit.setToolTip("Path to JSON file mapping model class indices to annotation label codes")
         self.mapping_button = QPushButton("Browse...")
+        self.mapping_button.setToolTip("Select a class mapping JSON file")
         self.mapping_button.clicked.connect(self.browse_class_mapping_file)
 
         class_mapping_layout = QHBoxLayout()
