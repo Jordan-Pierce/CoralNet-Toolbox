@@ -285,6 +285,19 @@ class WorkAreaManager(QDialog):
         # Get highlighted image paths from the table model
         return self.image_window.table_model.get_highlighted_paths()
 
+    def _is_video_path(self, image_path):
+        """Return True if the raster for image_path is a VideoRaster.
+
+        Tiling is not supported for video: the tile grid would be defined against
+        a single displayed frame and applied to every frame. Per-frame work areas
+        should be drawn manually with the WorkAreaTool instead.
+        """
+        try:
+            raster = self.main_window.image_window.raster_manager.get_raster(image_path)
+            return raster is not None and getattr(raster, "raster_type", "") == "VideoRaster"
+        except Exception:
+            return False
+
     def validate_parameters(self, image_path):
         """
         Validate current tile, overlap, and margin parameters for the given image.
@@ -350,6 +363,14 @@ class WorkAreaManager(QDialog):
         """
         self.update_tile_size_limits()
         self.clear_tiles()
+
+        # Tiling is image-only. If the current raster is a video, a preview would
+        # be drawn against a single frame and is misleading, so skip it.
+        if self._is_video_path(self.annotation_window.current_image_path):
+            self.tiles_status_label.setText(
+                "Tiling is not supported for video — use the Work Area tool to draw per-frame areas."
+            )
+            return
 
         # Validate and extract parameters
         is_valid, error_message, params = self.validate_parameters(self.annotation_window.current_image_path)
@@ -890,7 +911,13 @@ class WorkAreaManager(QDialog):
         for image_path in image_paths:
             # Update progress bar first
             progress_bar.update_progress()
-            
+
+            # Skip videos: tiling is image-only. Per-frame work areas on video
+            # are created manually with the WorkAreaTool, not generated here.
+            if self._is_video_path(image_path):
+                errors.append(f"{image_path}: Tiling is not supported for video rasters (skipped).")
+                continue
+
             # For the current image, use the annotation window for validation
             if image_path == self.annotation_window.current_image_path:
                 is_valid, error_message, params = self.validate_parameters(image_path)

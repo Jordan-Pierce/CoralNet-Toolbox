@@ -401,6 +401,7 @@ class Label(QWidget):
 class LabelWindow(QWidget):
     labelSelected = pyqtSignal(object)
     transparencyChanged = pyqtSignal(int)
+    labelVisibilityChanged = pyqtSignal(object, bool)  # (label, is_visible)
 
     def __init__(self, main_window):
         """Initialize the LabelWindow widget."""
@@ -926,17 +927,25 @@ class LabelWindow(QWidget):
             if mask:
                 # Get current visible label IDs from the mask
                 current_visible_ids = mask.visible_label_ids.copy()
-                
+
                 if is_visible:
                     # Add this label to visible set
                     current_visible_ids.add(label.id)
                 else:
                     # Remove this label from visible set
                     current_visible_ids.discard(label.id)
-                
+
                 # Update the mask
                 mask.update_visible_labels(current_visible_ids)
-        
+
+            # Sync to context matrix canvases
+            context_matrix = getattr(self.main_window, 'context_matrix', None)
+            if context_matrix is not None:
+                try:
+                    context_matrix.sync_label_visibility_to_all_canvases(label, is_visible)
+                except Exception:
+                    pass
+
         finally:
             # Restore cursor and unblock signals
             QApplication.restoreOverrideCursor()
@@ -956,7 +965,10 @@ class LabelWindow(QWidget):
         
         # Update annotation count in case visibility changes affect displayed count
         self.update_annotation_count()
-    
+
+        # Notify 3D viewer of per-label visibility change
+        self.labelVisibilityChanged.emit(label, is_visible)
+
     def get_visible_labels(self):
         """Get a list of all labels whose visibility checkbox is checked."""
         return [label for label in self.labels if label.is_visible]
@@ -1662,12 +1674,21 @@ class LabelWindow(QWidget):
                 # Hiding all labels - hide all annotations
                 for annotation in self.annotation_window.annotations_dict.values():
                     self.annotation_window.set_annotation_visibility(annotation, force_visibility=False)
-                
+
                 # Update mask to hide all labels
                 mask = self.annotation_window.current_mask_annotation
                 if mask:
                     mask.update_visible_labels(set())
-            
+
+            # Sync to context matrix canvases
+            context_matrix = getattr(self.main_window, 'context_matrix', None)
+            if context_matrix is not None:
+                try:
+                    for label in self.labels:
+                        context_matrix.sync_label_visibility_to_all_canvases(label, new_state)
+                except Exception:
+                    pass
+
             # Update the scene once
             self.annotation_window.update_scene()
 
@@ -1695,7 +1716,11 @@ class LabelWindow(QWidget):
                 self.update_annotation_count()
             except Exception:
                 pass
-            
+
+            # Notify 3D viewer of bulk visibility change
+            for label in self.labels:
+                self.labelVisibilityChanged.emit(label, new_state)
+
         finally:
             # Restore cursor
             QApplication.restoreOverrideCursor()

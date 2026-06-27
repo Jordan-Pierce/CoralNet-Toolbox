@@ -11,11 +11,18 @@ verbatim without rewriting every self.xxx reference.
 import os
 import numpy as np
 import traceback
+
+try:
+    import torch as _torch
+except ImportError:
+    _torch = None
+import threading
 from time import perf_counter
 from typing import Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import deque
 
-from PyQt5.QtCore import QObject, pyqtSignal, Qt, QPointF
+from PyQt5.QtCore import QObject, pyqtSignal, Qt, QPointF, QTimer
 from PyQt5.QtWidgets import QApplication, QMessageBox
 
 from coralnet_toolbox.MVAT.core.Ray import CameraRay
@@ -28,8 +35,12 @@ from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 # -------------------------------------------------------------------------------------
 
 
-def resolve_class_conflicts_vectorized(element_ids: np.ndarray, class_ids: np.ndarray):
-    """Resolve per-element class conflicts using vectorized vote counts."""
+def resolve_class_conflicts_vectorized(element_ids: np.ndarray, class_ids: np.ndarray, weights=None):
+    """Resolve per-element class conflicts using vectorized vote counts.
+
+    ``weights`` (optional) carries pre-aggregated vote counts per row, so callers
+    can pool reduced (element, class, count) triples instead of per-pixel votes.
+    """
     try:
         element_ids = np.asarray(element_ids, dtype=np.int64).ravel()
         class_ids = np.asarray(class_ids, dtype=np.int64).ravel()
@@ -42,7 +53,14 @@ def resolve_class_conflicts_vectorized(element_ids: np.ndarray, class_ids: np.nd
     max_classes = max(100000, int(np.max(class_ids)) + 1)
     compound_ids = (element_ids * max_classes) + class_ids
 
-    unique_compounds, vote_counts = np.unique(compound_ids, return_counts=True)
+    if weights is None:
+        unique_compounds, vote_counts = np.unique(compound_ids, return_counts=True)
+    else:
+        weights = np.asarray(weights, dtype=np.float64).ravel()
+        if weights.size != compound_ids.size:
+            return np.array([], dtype=np.int64), np.array([], dtype=np.int64)
+        unique_compounds, inverse = np.unique(compound_ids, return_inverse=True)
+        vote_counts = np.bincount(inverse, weights=weights)
     unique_elements = unique_compounds // max_classes
     unique_classes = unique_compounds % max_classes
 
@@ -56,6 +74,71 @@ def resolve_class_conflicts_vectorized(element_ids: np.ndarray, class_ids: np.nd
     winner_indices = (len(sorted_elements) - 1) - winner_indices
 
     return sorted_elements[winner_indices], sorted_classes[winner_indices]
+
+
+def reduce_vote_arrays(element_ids: np.ndarray, class_ids: np.ndarray):
+    """Collapse duplicate (element, class) votes into unique pairs + counts."""
+    element_ids = np.asarray(element_ids, dtype=np.int64).ravel()
+    class_ids = np.asarray(class_ids, dtype=np.int64).ravel()
+    if element_ids.size == 0 or element_ids.size != class_ids.size:
+        empty = np.array([], dtype=np.int64)
+        return empty, empty, empty
+    max_classes = max(100000, int(class_ids.max()) + 1)
+    compound = (element_ids * max_classes) + class_ids
+    uniq, counts = np.unique(compound, return_counts=True)
+    return uniq // max_classes, uniq % max_classes, counts
+
+
+def _resolve_class_conflicts_gpu(element_ids, class_ids, weights, device):
+    """GPU-accelerated version of resolve_class_conflicts_vectorized.
+
+    Aggregates weighted votes per (element, class) pair via torch.unique +
+    scatter_add_, then selects the winning class per element (highest vote
+    count; tie-break: smallest class_id) using two stable sort passes.
+
+    Returns (winning_elements, winning_classes) as int64 numpy arrays.
+    """
+    t = _torch
+    element_ids = t.as_tensor(element_ids, dtype=t.int64, device=device)
+    class_ids   = t.as_tensor(class_ids,   dtype=t.int64, device=device)
+    weights     = t.as_tensor(weights,      dtype=t.float64, device=device)
+
+    if element_ids.numel() == 0:
+        return np.array([], dtype=np.int64), np.array([], dtype=np.int64)
+
+    max_classes     = max(100000, int(class_ids.max().item()) + 1)
+    compound        = element_ids * max_classes + class_ids
+    unique_compound, inverse = t.unique(compound, return_inverse=True)
+
+    vote_counts = t.zeros(unique_compound.shape[0], dtype=t.float64, device=device)
+    vote_counts.scatter_add_(0, inverse, weights)
+
+    unique_elements = unique_compound // max_classes
+    unique_classes  = unique_compound % max_classes
+
+    # Sort by (element ASC, vote_count DESC, class ASC) via two stable passes.
+    # t.unique already sorted unique_compound, so within each element group
+    # unique_classes is already ascending — no extra pass needed for class order.
+    #
+    # Pass 1: stable sort by -vote_count (secondary key processed first).
+    ord1 = t.argsort(-vote_counts, stable=True)
+    # Pass 2: stable sort by element_id (primary key), preserving vote order.
+    ord2 = t.argsort(unique_elements[ord1], stable=True)
+    final_ord = ord1[ord2]
+
+    sorted_elements = unique_elements[final_ord]
+    sorted_classes  = unique_classes[final_ord]
+
+    # First occurrence of each element = highest vote count; smallest class for ties.
+    first = t.cat([
+        t.ones(1, dtype=t.bool, device=device),
+        sorted_elements[1:] != sorted_elements[:-1],
+    ])
+
+    return (
+        sorted_elements[first].cpu().numpy().astype(np.int64),
+        sorted_classes[first].cpu().numpy().astype(np.int64),
+    )
 
 
 def _merge_update_rects(existing_rect, new_rect):
@@ -103,6 +186,13 @@ class PropagationEngine(QObject):
         self._semantic_propagation_busy = False
         self._semantic_propagation_done_msg = None
         self._propagation_buffer_pool = {}
+        self._propagation_buffer_pool_lock = threading.Lock()
+
+        # Chunked repaint queue: tasks drain in time-budgeted slices so a huge
+        # propagation never freezes the UI inside a single callback.
+        self._repaint_task_queue = deque()
+        self._repaint_drain_scheduled = False
+        self._repaint_needs_3d_flush = False
 
         # Thread pools for parallel propagation
         self._propagation_executor = ThreadPoolExecutor(
@@ -147,6 +237,7 @@ class PropagationEngine(QObject):
         brush_tool = self.annotation_window.tools.get('brush')
         patch_tool = self.annotation_window.tools.get('patch')
         sam_tool = self.annotation_window.tools.get('sam')
+        feature_tool = self.annotation_window.tools.get('feature_select')
         fill_tool = self.annotation_window.tools.get('fill')
         erase_tool = self.annotation_window.tools.get('erase')
 
@@ -173,6 +264,10 @@ class PropagationEngine(QObject):
             if sam_tool is not None:
                 # Final-mask propagation callback (no live-hover propagation for now)
                 sam_tool.post_prediction_callback = self._on_sam_prediction_applied
+            if feature_tool is not None:
+                # FeatureSelectTool emits the same (anchor, label_id, binary crop)
+                # contract as SAM, so it reuses the identical mask-propagation path.
+                feature_tool.post_prediction_callback = self._on_sam_prediction_applied
             # Proactively compute visibility/index maps for visible context cameras
             # so True 3D mapping will be available when the user paints or applies SAM.
             try:
@@ -193,6 +288,15 @@ class PropagationEngine(QObject):
                     raster = self.raster_manager.get_raster(path)
                     if raster and raster.mask_annotation is None:
                         raster.get_mask_annotation(project_labels)
+
+                # Prewarm CSR inverted indexes off the main thread so the FIRST
+                # stroke doesn't pay the per-camera build cost. ensure_inverted_index
+                # is idempotent; concurrent duplicate builds produce identical
+                # arrays, so a race is wasteful but harmless.
+                for path in target_paths:
+                    raster = self.raster_manager.get_raster(path)
+                    if raster is not None and getattr(raster, 'ensure_inverted_index', None):
+                        self._propagation_executor.submit(raster.ensure_inverted_index)
 
             except Exception:
                 pass
@@ -219,6 +323,8 @@ class PropagationEngine(QObject):
                 erase_tool.cursor_clear_callback = None
             if sam_tool is not None:
                 sam_tool.post_prediction_callback = None
+            if feature_tool is not None:
+                feature_tool.post_prediction_callback = None
             self._on_cursor_preview_cleared()
 
         # Restore cursor
@@ -294,9 +400,10 @@ class PropagationEngine(QObject):
     def _acquire_propagation_buffer(self, shape, dtype=np.uint8):
         """Return a reusable NumPy buffer for background propagation work."""
         key = (tuple(shape), np.dtype(dtype).str)
-        pool = self._propagation_buffer_pool.get(key)
-        if pool:
-            return pool.pop()
+        with self._propagation_buffer_pool_lock:
+            pool = self._propagation_buffer_pool.get(key)
+            if pool:
+                return pool.pop()
         return np.empty(shape, dtype=dtype)
 
     def _release_propagation_buffer(self, buffer):
@@ -304,7 +411,19 @@ class PropagationEngine(QObject):
         if buffer is None:
             return
         key = (tuple(buffer.shape), np.dtype(buffer.dtype).str)
-        self._propagation_buffer_pool.setdefault(key, []).append(buffer)
+        with self._propagation_buffer_pool_lock:
+            self._propagation_buffer_pool.setdefault(key, []).append(buffer)
+
+    def _get_index_map_max_id(self, raster) -> int:
+        """Return int(index_map.max()), cached on the raster per index-map object."""
+        index_map = raster.index_map
+        if (getattr(raster, '_index_map_max_id', None) is not None
+                and getattr(raster, '_index_map_max_id_src', None) == id(index_map)):
+            return raster._index_map_max_id
+        max_id = int(index_map.max())
+        raster._index_map_max_id = max_id
+        raster._index_map_max_id_src = id(index_map)
+        return max_id
 
     def _apply_mask_visual_update(self, target_path: str, target_mask, label_id: Optional[str] = None, update_rect=None):
         """Apply the minimal UI refresh needed after a silent mask write."""
@@ -547,6 +666,123 @@ class PropagationEngine(QObject):
 
         unique_ids = np.unique(raw_ids)
         return unique_ids[unique_ids > -1].astype(np.int64, copy=False)
+
+    def _densify_is_useful(self, source_camera) -> bool:
+        """Return False when densification cannot add faces for this source.
+
+        A Native-quality index map already samples every face the camera can
+        see, so the KD-tree gather burns seconds for ~zero new faces.  The
+        render quality is recorded on the raster (``index_map_pixel_budget``,
+        0 = Native) when maps are computed or loaded from cache; ortho rasters
+        record ``index_map_scale_factor`` instead.  Unknown quality (legacy
+        cache archives) keeps densify on — the safe default.
+        """
+        raster = getattr(source_camera, '_raster', None) if source_camera else None
+        if raster is None:
+            return True
+
+        # Ortho maps derive their scale from the stored array shape.
+        scale = getattr(raster, 'index_map_scale_factor', None)
+        if scale is not None:
+            return float(scale) < 1.0
+
+        budget = getattr(raster, 'index_map_pixel_budget', None)
+        if budget is None:
+            return True
+        if budget == 0:
+            return False  # Native: seeds are already dense
+        # A budget at or above the sensor resolution renders at scale 1.0.
+        native_pixels = int(getattr(raster, 'width', 0)) * int(getattr(raster, 'height', 0))
+        return not (native_pixels and budget >= native_pixels)
+
+    def _densify_source_ids(self, source_camera, seed_ids) -> np.ndarray:
+        """Expand sparse index-map-sampled face IDs into a dense surface patch.
+
+        Low-resolution index maps sample only a fraction of the faces in a
+        painted region.  When densification is enabled and the primary target is
+        a mesh with a prewarmed KD-tree, this gathers the surrounding faces on
+        the same visible surface (see MeshProduct.gather_dense_face_ids) so the
+        propagated labels are dense rather than sparse.
+
+        No-op (returns the seeds unchanged) when disabled, when there are no
+        seeds, or when the target is not a KD-tree-backed mesh.
+        """
+        seed_ids = np.asarray(seed_ids if seed_ids is not None else [], dtype=np.int64)
+        if seed_ids.size == 0 or not getattr(self, 'densify_enabled', False):
+            return seed_ids
+
+        primary_target = self.viewer.scene_context.get_primary_target()
+        if primary_target is None or not hasattr(primary_target, 'gather_dense_face_ids'):
+            return seed_ids
+
+        camera_position = None
+        if source_camera is not None and source_camera is not self.ortho_camera:
+            camera_position = getattr(source_camera, 'position', None)
+
+        try:
+            dense = primary_target.gather_dense_face_ids(
+                seed_ids,
+                camera_position=camera_position,
+                radius_mult=getattr(self, 'densify_radius_mult', 1.5),
+                normal_dot_min=getattr(self, 'densify_normal_dot_min', 0.3),
+                max_expansion=getattr(self, 'densify_max_expansion', 40.0),
+            )
+        except Exception as exc:
+            print(f"⚠️ Face densification failed: {exc}")
+            return seed_ids
+
+        dense = np.asarray(dense, dtype=np.int64)
+        return dense if dense.size else seed_ids
+
+    def _densify_source_votes(self, source_camera, element_ids, class_ids):
+        """Densify multi-class element/class vote arrays in one batched gather.
+
+        Semantic propagation produces parallel ``element_ids`` / ``class_ids``
+        vote arrays (many classes at once, with duplicate votes per face).  All
+        classes are expanded with a single multiclass gather — one set of
+        KD-tree queries per camera instead of one per class, which is what keeps
+        scipy's per-call thread spawning off the aggregation hot path.  Each
+        newly reached face gets one vote for the class of its nearest seed; the
+        original votes (and their multiplicity) are kept intact so confirmed
+        seeds keep their weight, and ``resolve_class_conflicts_vectorized``
+        still arbitrates downstream.
+
+        No-op (returns the inputs unchanged) when densification is disabled, the
+        arrays are empty/mismatched, or the target is not a KD-tree-backed mesh.
+        """
+        element_ids = np.asarray(element_ids, dtype=np.int64).ravel()
+        class_ids = np.asarray(class_ids, dtype=np.int64).ravel()
+        if (element_ids.size == 0 or element_ids.size != class_ids.size
+                or not getattr(self, 'densify_enabled', False)):
+            return element_ids, class_ids
+
+        primary_target = self.viewer.scene_context.get_primary_target()
+        if primary_target is None or not hasattr(primary_target, 'gather_dense_face_ids_multiclass'):
+            return element_ids, class_ids
+
+        camera_position = None
+        if source_camera is not None and source_camera is not self.ortho_camera:
+            camera_position = getattr(source_camera, 'position', None)
+
+        try:
+            new_faces, new_classes = primary_target.gather_dense_face_ids_multiclass(
+                element_ids,
+                class_ids,
+                camera_position=camera_position,
+                radius_mult=getattr(self, 'densify_radius_mult', 1.5),
+                normal_dot_min=getattr(self, 'densify_normal_dot_min', 0.3),
+                max_expansion=getattr(self, 'densify_max_expansion', 40.0),
+            )
+        except Exception as exc:
+            print(f"⚠️ Face densification failed: {exc}")
+            return element_ids, class_ids
+
+        if new_faces.size == 0:
+            return element_ids, class_ids
+
+        # Original votes (with multiplicity) first, then one vote per new face.
+        return (np.concatenate([element_ids, new_faces]),
+                np.concatenate([class_ids, new_classes]))
 
     def _extract_source_ids_from_full_mask(self,
                                            source_camera,
@@ -901,6 +1137,7 @@ class PropagationEngine(QObject):
             # IDs to work with — not just the single center pixel.  More IDs
             # dramatically reduces stride false-negatives in the target cameras.
             # ------------------------------------------------------------------
+            propagated_annotations = []
             source_raster = getattr(self.selected_camera, '_raster', None)
             source_index_map = source_raster.index_map if source_raster is not None else None
             source_element_ids = None   # list[int] — passed to get_pixels_for_elements
@@ -971,11 +1208,8 @@ class PropagationEngine(QObject):
                                     image_path=target_path,
                                     transparency=annotation.transparency,
                                 )
-                                try:
-                                    self.annotation_window.add_annotation(new_annotation, record_action=True)
-                                    placed = True
-                                except Exception:
-                                    pass
+                                propagated_annotations.append(new_annotation)
+                                placed = True
 
                     # ----------------------------------------------------------
                     # 2D fallback: used when no index map is available OR when
@@ -1000,186 +1234,23 @@ class PropagationEngine(QObject):
                             image_path=target_path,
                             transparency=annotation.transparency,
                         )
-                        try:
-                            self.annotation_window.add_annotation(new_annotation, record_action=True)
-                        except Exception:
-                            pass
+                        propagated_annotations.append(new_annotation)
                 except Exception:
                     pass
+
+            # One batched commit: a single undo entry and a single UI refresh
+            # pass instead of one per target camera.
+            if propagated_annotations:
+                try:
+                    self.annotation_window.add_annotations(propagated_annotations, record_action=True)
+                except Exception:
+                    for ann in propagated_annotations:
+                        try:
+                            self.annotation_window.add_annotation(ann, record_action=True)
+                        except Exception:
+                            pass
         finally:
             self._propagating_annotation = False
-
-    def _dense_mesh_hit_test(self, source_camera, pixel_mask: np.ndarray, px: int, py: int, mesh_product) -> np.ndarray:
-        """Cast rays through every True pixel in pixel_mask against the mesh surface.
-
-        Unlike the index_map approach (which captures face IDs from a downsampled
-        rasterization pass), this method casts a ray through every individual painted
-        pixel at full resolution, intersecting the actual triangle surface.  This
-        guarantees that every triangle touched by the brush or SAM mask contributes
-        its face ID to the output set, regardless of its projected pixel size.
-
-        Uses PyVista / VTK multi_ray_trace with a per-product cached triangulated
-        surface so the geometry is only prepared once per session.
-
-        Args:
-            source_camera: Perspective Camera for the selected image.
-            pixel_mask: (H, W) bool/uint8 array; True pixels are ray-cast targets.
-            px: X coordinate of the mask centre in source image space.
-            py: Y coordinate of the mask centre in source image space.
-            mesh_product: MeshProduct whose cached geometry is used.
-
-        Returns:
-            np.ndarray[int32]: Unique face IDs that were hit, or empty array on
-            failure or orthographic source camera.
-        """
-        try:
-            # 1. Obtain (or build) the cached triangulated surface for VTK ray-casting.
-            #    Mesh topology never changes during annotation, so the cached surface
-            #    stays valid for the entire session.
-            mesh_surf = getattr(mesh_product, '_vtk_raycasting_mesh', None)
-            if mesh_surf is None:
-                mesh_product.prepare_geometry()
-                mesh_pv = mesh_product.get_mesh()
-                if mesh_pv is None or mesh_pv.n_cells == 0:
-                    return np.array([], dtype=np.int32)
-                mesh_surf = mesh_pv.triangulate() if not mesh_pv.is_all_triangles else mesh_pv
-                mesh_product._vtk_raycasting_mesh = mesh_surf
-
-            # 2. Map True pixels to source-image coordinates.
-            mask_h, mask_w = pixel_mask.shape
-            x0 = px - mask_w // 2
-            y0 = py - mask_h // 2
-
-            ys, xs = np.where(pixel_mask.astype(bool))
-            if len(xs) == 0:
-                return np.array([], dtype=np.int32)
-
-            u_img = (xs + x0).astype(np.float32)
-            v_img = (ys + y0).astype(np.float32)
-
-            # Discard pixels outside the image frame.
-            valid = (
-                (u_img >= 0) & (u_img < source_camera.width) &
-                (v_img >= 0) & (v_img < source_camera.height)
-            )
-            u_img = u_img[valid]
-            v_img = v_img[valid]
-            if len(u_img) == 0:
-                return np.array([], dtype=np.int32)
-
-            # 3. Unproject pixels to world-space ray directions.
-            #    Pinhole camera model (row-vector convention):
-            #      d_cam   = K_inv @ [u, v, 1]^T   →   d_cam_row = [u,v,1] @ K_inv.T
-            #      d_world = R.T   @ d_cam          →   d_world_row = d_cam_row @ R
-            ones        = np.ones(len(u_img), dtype=np.float32)
-            pixel_homog = np.stack([u_img, v_img, ones], axis=1)     # (N, 3)
-            K_inv       = source_camera.K_inv.astype(np.float32)     # (3, 3)
-            R           = source_camera.R.astype(np.float32)         # (3, 3)
-
-            dirs_cam   = pixel_homog @ K_inv.T    # (N, 3) camera-space directions
-            dirs_world = dirs_cam   @ R            # (N, 3) world-space directions
-
-            norms = np.linalg.norm(dirs_world, axis=1, keepdims=True)
-            norms[norms < 1e-8] = 1.0
-            dirs_world /= norms
-
-            # 4. Build origins (all from the camera position) and cast rays.
-            cam_origin = source_camera.position.astype(np.float32)   # (3,)
-            origins    = np.tile(cam_origin, (len(u_img), 1))        # (N, 3)
-
-            # PyVista multi_ray_trace returns (points, ray_indices, cell_ids).
-            # We only need cell_ids (the hit triangle IDs in the triangulated mesh).
-            _, _, intersection_cells = mesh_surf.multi_ray_trace(
-                origins, dirs_world, first_point=True, retry=False
-            )
-
-            if len(intersection_cells) == 0:
-                return np.array([], dtype=np.int32)
-
-            hit_prim_ids = np.asarray(intersection_cells, dtype=np.int64)
-
-            # 5. Remap triangulated-face IDs to original PyVista cell IDs when the
-            #    mesh was triangulated from non-triangular faces during prepare_geometry().
-            original_cell_ids = getattr(mesh_product, '_original_cell_ids', None)
-            if original_cell_ids is not None:
-                in_range     = hit_prim_ids < len(original_cell_ids)
-                hit_prim_ids = hit_prim_ids[in_range]
-                face_ids     = original_cell_ids[hit_prim_ids].astype(np.int32)
-            else:
-                face_ids = hit_prim_ids.astype(np.int32)
-
-            return np.unique(face_ids)
-
-        except Exception as e:
-            print(f"⚠️ Dense mesh hit test failed: {e}")
-            return np.array([], dtype=np.int32)
-
-    def _propagate_to_camera(self, target_path, painted_ids, target_class_id_map,
-                              projections, brush_w, brush_h, brush_mask, use_3d):
-        """Single-camera propagation — runs in thread pool, no Qt calls."""
-        target_camera = self._get_camera_for_path(target_path)
-        if target_camera is None:
-            return target_path, False, None
-
-        target_raster = self.raster_manager.get_raster(target_path)
-        if target_raster is None:
-            return target_path, False, None
-
-        target_mask = target_raster.mask_annotation
-        if target_mask is None:
-            return target_path, False, None
-
-        target_class_id = target_class_id_map.get(target_path)
-        if target_class_id is None:
-            return target_path, False, None
-
-        target_has_index = target_camera._raster.index_map is not None
-
-        if use_3d and target_has_index and target_camera is not self.ortho_camera:
-            proj = projections.get(target_path)
-            bbox = None
-            if proj is not None and proj[2]:
-                target_u, target_v = proj[0], proj[1]
-                search_radius = max(brush_w, brush_h) * 2.5
-                bbox = (target_u - search_radius, target_u + search_radius,
-                        target_v - search_radius, target_v + search_radius)
-
-            flat_indices = target_camera.get_pixels_for_elements(painted_ids, bbox=bbox)
-            if len(flat_indices) == 0:
-                return target_path, False, None
-
-            if hasattr(target_mask, 'mask_data'):
-                current_vals = target_mask.mask_data.ravel()[flat_indices]
-                flat_indices = flat_indices[(current_vals < target_mask.LOCK_BIT) &
-                                            (current_vals != target_class_id)]
-            if len(flat_indices) == 0:
-                return target_path, False, None
-
-            target_mask.update_mask_at_indices(flat_indices, target_class_id, silent=True)
-            update_rect = self._compute_dirty_rect_from_flat_indices(
-                flat_indices,
-                target_camera.width,
-                target_camera.height,
-            )
-        else:
-            proj = projections.get(target_path)
-            if proj is None:
-                return target_path, False, None
-            u, v, is_valid = proj
-            if not is_valid or not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
-                return target_path, False, None
-            brush_location = QPointF(u - brush_w / 2.0, v - brush_h / 2.0)
-            target_mask.update_mask(brush_location, brush_mask, target_class_id, silent=True)
-            x_start = max(0, int(u - brush_w / 2.0))
-            y_start = max(0, int(v - brush_h / 2.0))
-            update_rect = (
-                x_start,
-                y_start,
-                min(target_camera.width, x_start + brush_w),
-                min(target_camera.height, y_start + brush_h),
-            )
-
-        return target_path, True, update_rect
 
     def _resolve_source_mask_class_context(self, source_camera, label_id: str, project_labels: list):
         """Resolve the source label, mask, and internal class ID for propagation."""
@@ -1307,7 +1378,8 @@ class PropagationEngine(QObject):
             return np.array([], dtype=np.int64), np.array([], dtype=np.int64), {}
 
         raster = getattr(source_camera, '_raster', None)
-        if getattr(raster, 'index_map', None) is None:
+        index_map = getattr(raster, 'index_map', None)
+        if index_map is None:
             return np.array([], dtype=np.int64), np.array([], dtype=np.int64), {}
 
         lock_bit = source_mask_annotation.LOCK_BIT
@@ -1362,22 +1434,42 @@ class PropagationEngine(QObject):
             if semantic_mask.ndim != 2:
                 return np.array([], dtype=np.int64), np.array([], dtype=np.int64), {}
 
-            unique_real_ids = np.unique(semantic_mask % lock_bit)
-            unique_real_ids = unique_real_ids[unique_real_ids > 0]
-            for real_class_id in unique_real_ids:
-                label = source_mask_annotation.class_id_to_label_map.get(int(real_class_id))
-                if label is None:
-                    continue
-
-                binary_mask = (semantic_mask % lock_bit == real_class_id)
-                if not np.any(binary_mask):
-                    continue
-
-                raw_element_ids = self._extract_source_element_ids_from_full_mask(
-                    source_camera,
-                    binary_mask,
+            # Single pass for ALL classes: bring the class layer down to the
+            # index map's resolution once, then read element + class per pixel.
+            sem = semantic_mask % lock_bit
+            if sem.shape != index_map.shape:
+                import cv2
+                sem = cv2.resize(
+                    np.ascontiguousarray(sem),
+                    (index_map.shape[1], index_map.shape[0]),
+                    interpolation=cv2.INTER_NEAREST,
                 )
-                _append_votes(real_class_id, label, raw_element_ids)
+
+            valid = (sem > 0) & (index_map > -1)
+            if np.any(valid):
+                elements = index_map[valid].astype(np.int64, copy=False)
+                classes = sem[valid].astype(np.int64, copy=False)
+
+                # Register labels; drop votes for classes with no live label.
+                unique_ids = np.unique(classes)
+                keep_ids = []
+                for real_class_id in unique_ids:
+                    label = source_mask_annotation.class_id_to_label_map.get(int(real_class_id))
+                    if label is not None:
+                        class_label_ids[int(real_class_id)] = label.id
+                        keep_ids.append(int(real_class_id))
+
+                if len(keep_ids) != len(unique_ids):
+                    keep_lut = np.zeros(int(unique_ids.max()) + 1, dtype=bool)
+                    if keep_ids:
+                        keep_lut[np.asarray(keep_ids, dtype=np.int64)] = True
+                    keep_mask = keep_lut[classes]
+                    elements = elements[keep_mask]
+                    classes = classes[keep_mask]
+
+                if elements.size:
+                    element_chunks.append(elements)
+                    class_chunks.append(classes)
 
         if not element_chunks or not class_chunks:
             return np.array([], dtype=np.int64), np.array([], dtype=np.int64), {}
@@ -1451,6 +1543,7 @@ class PropagationEngine(QObject):
                 'projections': self._build_projection(px, py),
                 'search_radius': float(max(brush_mask.shape) * 2.5),
             },
+            densify=True,
         )
 
     def _on_fill_stroke_applied(self, scene_pos, label_id: str, fill_mask=None):
@@ -1506,6 +1599,7 @@ class PropagationEngine(QObject):
                 'projections': self._build_projection(px, py),
                 'search_radius': float(max(fill_mask.shape) * 2.5) if fill_mask is not None else 0.0,
             },
+            densify=True,
         )
 
     def _on_erase_stroke_applied(self, scene_pos, label_id: str, brush_mask: np.ndarray):
@@ -1521,6 +1615,8 @@ class PropagationEngine(QObject):
         painted_ids = self._extract_source_ids_from_crop_mask(self.selected_camera, brush_mask, px, py)
         painted_ids = np.asarray(painted_ids if painted_ids is not None else [], dtype=np.int64)
 
+        # Densify to match the brush: an erase must cover the same dense face set
+        # the brush paints, or sparse remnants survive.
         self._execute_mask_propagation(
             source_camera=self.selected_camera,
             element_ids=painted_ids,
@@ -1536,6 +1632,7 @@ class PropagationEngine(QObject):
                 'projections': self._build_projection(px, py),
                 'search_radius': float(max(brush_mask.shape) * 2.5),
             },
+            densify=True,
         )
 
     def _propagate_3d_face_ids_to_context_cameras(self, face_ids, label, erase: bool = False):
@@ -1662,6 +1759,7 @@ class PropagationEngine(QObject):
                 'projections': self._build_projection(px, py),
                 'search_radius': float(max(binary_mask.shape) * 2.5),
             },
+            densify=True,
         )
 
     def _execute_mask_propagation(self,
@@ -1672,7 +1770,8 @@ class PropagationEngine(QObject):
                                   project_labels: list,
                                   class_label_ids: dict,
                                   fallback_payload=None,
-                                  skip_3d_paint: bool = False):
+                                  skip_3d_paint: bool = False,
+                                  densify: bool = False):
         """Queue a propagation job onto the single unified background worker."""
         t0 = perf_counter()
         if source_camera is None or not target_paths:
@@ -1721,6 +1820,7 @@ class PropagationEngine(QObject):
                 primary_target,
                 payload,
                 skip_3d_paint,
+                densify,
             )
         except Exception:
             self._pending_unified_propagation_jobs = max(
@@ -1739,7 +1839,8 @@ class PropagationEngine(QObject):
                                   class_label_ids,
                                   primary_target,
                                   fallback_payload=None,
-                                  skip_3d_paint: bool = False):
+                                  skip_3d_paint: bool = False,
+                                  densify: bool = False):
         """Background worker for brush, SAM, and semantic mask propagation."""
         from time import perf_counter
         t0 = perf_counter()
@@ -1759,6 +1860,14 @@ class PropagationEngine(QObject):
             # projecting the mesh back to cameras.
             real_labels = [lbl for lbl in project_labels if getattr(lbl, 'id', None) and lbl.id != '-1']
             canonical_id_for = {lbl.id: (idx + 1) for idx, lbl in enumerate(real_labels)}
+
+            # Densify here (background thread) so the paint cursor never waits
+            # on KD-tree gathers. _densify_source_votes is a no-op when
+            # densify_enabled is off or the target has no KD-tree.
+            if densify and element_ids is not None and element_ids.size:
+                element_ids, class_ids = self._densify_source_votes(
+                    source_camera, element_ids, class_ids
+                )
 
             winning_elements = np.array([], dtype=np.int64)
             winning_classes = np.array([], dtype=np.int64)
@@ -1895,20 +2004,23 @@ class PropagationEngine(QObject):
                 except Exception:
                     return None
 
-            for target_path in target_paths:
+            def _process_target(target_path):
+                local_tasks = []
+                local_mask_time = 0.0
+
                 target_camera = self._get_camera_for_path(target_path)
                 if target_camera is None:
-                    continue
+                    return local_tasks, local_mask_time
 
                 target_raster = self.raster_manager.get_raster(target_path)
                 if target_raster is None:
-                    continue
+                    return local_tasks, local_mask_time
 
                 target_mask = target_raster.mask_annotation
                 if target_mask is None:
                     target_mask = target_raster.get_mask_annotation(project_labels)
                 if target_mask is None:
-                    continue
+                    return local_tasks, local_mask_time
 
                 target_has_index = (
                     getattr(target_camera, '_raster', None) is not None and
@@ -1927,7 +2039,7 @@ class PropagationEngine(QObject):
                     t_mask_start = perf_counter()
                     target_index_map = target_camera._raster.index_map
                     target_mask_data = target_mask.mask_data
-                    max_idx = int(np.max(target_index_map))
+                    max_idx = self._get_index_map_max_id(target_camera._raster)
 
                     for source_class_id, subset_elements in class_to_elements.items():
                         if subset_elements.size == 0:
@@ -2020,7 +2132,7 @@ class PropagationEngine(QObject):
                         if label_id is not None:
                             target_label_ids.add(label_id)
 
-                    mask_time += perf_counter() - t_mask_start
+                    local_mask_time += perf_counter() - t_mask_start
 
                 if fallback_mask is not None and fallback_center is not None and (not use_index_lookup or target_rect is None):
                     t_mask_start = perf_counter()
@@ -2044,7 +2156,7 @@ class PropagationEngine(QObject):
                             if proj is not None and len(proj) >= 3 and proj[2]:
                                 target_center = (proj[0], proj[1])
                             else:
-                                continue
+                                return local_tasks, local_mask_time
 
                         if target_center is None:
                             target_center = (0, 0)
@@ -2116,10 +2228,10 @@ class PropagationEngine(QObject):
                                     target_label_ids.add(fallback_label_id)
                             finally:
                                 self._release_propagation_buffer(subset_mask)
-                    mask_time += perf_counter() - t_mask_start
+                    local_mask_time += perf_counter() - t_mask_start
 
                 if target_rect is not None:
-                    repaint_tasks.append({
+                    local_tasks.append({
                         'type': 'repaint',
                         'path': target_path,
                         'mask': target_mask,
@@ -2127,160 +2239,260 @@ class PropagationEngine(QObject):
                         'update_rect': target_rect,
                     })
 
+                return local_tasks, local_mask_time
+
+            def _process_target_safe(target_path):
+                try:
+                    return _process_target(target_path)
+                except Exception:
+                    traceback.print_exc()
+                    return [], 0.0
+
+            if len(target_paths) > 1:
+                futures = [
+                    self._propagation_executor.submit(_process_target_safe, p)
+                    for p in target_paths
+                ]
+                for fut in as_completed(futures):
+                    local_tasks, local_mask_time = fut.result()
+                    repaint_tasks.extend(local_tasks)
+                    mask_time += local_mask_time
+            else:
+                for p in target_paths:
+                    local_tasks, local_mask_time = _process_target_safe(p)
+                    repaint_tasks.extend(local_tasks)
+                    mask_time += local_mask_time
+
         except Exception:
             traceback.print_exc()
         finally:
             self._universal_repaint_signal.emit(repaint_tasks)
-            print(
-                f"DEBUG [Sync Worker]: {len(target_paths)} Cams | Total: {(perf_counter() - t0) * 1000:.2f}ms | "
-                f"Mask Gen: {mask_time * 1000:.2f}ms"
-            )
+            if os.environ.get('MVAT_DEBUG_TIMING'):
+                print(
+                    f"DEBUG [Sync Worker]: {len(target_paths)} Cams | "
+                    f"Total: {(perf_counter() - t0) * 1000:.2f}ms | "
+                    f"Mask Gen: {mask_time * 1000:.2f}ms"
+                )
             return repaint_tasks
 
     def _on_universal_repaint(self, repaint_tasks: list):
-        """Apply localized UI updates produced by the unified propagation worker."""
-        t0 = perf_counter()
-        needs_3d_flush = False
-        try:
-            for task in repaint_tasks:
-                task_type = task.get('type')
+        """Queue UI updates from a propagation worker; drain in budgeted slices."""
+        self._repaint_task_queue.extend(repaint_tasks)
+        # Sentinel marks the end of one worker job — completion bookkeeping
+        # (pending counter, busy cursor) runs when the sentinel drains.
+        self._repaint_task_queue.append({'type': '_job_done'})
+        self._schedule_repaint_drain()
 
-                if task_type == 'status_message':
-                    # Post a status-bar message from a background worker.
-                    msg = task.get('message', '')
-                    timeout = task.get('timeout', 5000)
-                    if msg:
-                        status_bar = getattr(self.main_window, 'status_bar', None)
-                        if status_bar is not None:
-                            try:
-                                status_bar.showMessage(msg, timeout)
-                            except Exception:
-                                pass
-                    continue
+    def _schedule_repaint_drain(self):
+        """Schedule a repaint drain if one isn't already pending."""
+        if self._repaint_drain_scheduled:
+            return
+        self._repaint_drain_scheduled = True
+        QTimer.singleShot(0, self._drain_repaint_queue)
 
-                if task_type == 'reload_annotation_window':
-                    # Refresh the annotation window's mask display after a bulk write.
-                    # This ensures the currently-open image shows the new labels
-                    # without requiring the user to navigate away and back.
+    def _drain_repaint_queue(self):
+        """Drain queued repaint tasks in time-budgeted slices."""
+        self._repaint_drain_scheduled = False
+        budget_s = 0.012  # stay under one frame
+        start = perf_counter()
+        while self._repaint_task_queue:
+            task = self._repaint_task_queue.popleft()
+            try:
+                if task.get('type') == '_job_done':
+                    self._finish_repaint_job()
+                else:
+                    self._apply_repaint_task(task)
+            except Exception as e:
+                print(f"Error in _drain_repaint_queue: {e}")
+                traceback.print_exc()
+            if self._repaint_task_queue and (perf_counter() - start) > budget_s:
+                self._schedule_repaint_drain()
+                return
+
+    def _finish_repaint_job(self):
+        """Completion bookkeeping for one drained propagation job."""
+        self._pending_unified_propagation_jobs = max(
+            0,
+            self._pending_unified_propagation_jobs - 1,
+        )
+        self._propagating_annotation = self._pending_unified_propagation_jobs > 0
+        if self._repaint_needs_3d_flush:
+            self._repaint_needs_3d_flush = False
+            request_flush = getattr(self, 'request_lazy_flush', None)
+            if callable(request_flush):
+                request_flush()
+        # Clear the matrix busy state (cursor + propagate button) once the
+        # last queued unified-repaint job has been applied.
+        if self._pending_unified_propagation_jobs <= 0:
+            if self.context_matrix is not None:
+                set_busy = getattr(self.context_matrix, 'set_propagation_busy', None)
+                if callable(set_busy):
                     try:
-                        aw = getattr(self.main_window, 'annotation_window', None)
-                        if aw is not None and hasattr(aw, 'load_mask_annotation'):
-                            aw.load_mask_annotation()
+                        set_busy(False)
                     except Exception:
                         pass
-                    continue
+            self._end_semantic_propagation_busy()
 
-                if task_type == 'update_image_table':
-                    # Refresh the image-table annotation counts for all paths that
-                    # received new mask labels during a bulk projection.
-                    paths = task.get('paths', ())
-                    iw = getattr(self.main_window, 'image_window', None)
-                    if iw is not None:
-                        for _p in paths:
-                            try:
-                                iw.update_image_annotations(_p)
-                            except Exception:
-                                pass
-                    continue
+    # ------------------------------------------------------------------
+    # Canonical mesh class-id space (single source of truth)
+    # ------------------------------------------------------------------
+    # The mesh's per-element class_ids, the paint shader's cid texture, and its
+    # color LUT are all keyed by ONE integer per label: the label's position in
+    # the project (LabelWindow order), 1-based, with the 'Review' label (id='-1')
+    # excluded so it never shifts the real labels. Every paint path — direct 3D
+    # brush/fill AND multi-annotate camera->mesh projection — must resolve ids
+    # through here so the same label always maps to the same cid (otherwise two
+    # labels can collide on one integer and overwrite each other's color).
 
-                if task_type == '3d_paint':
-                    # IMPORTANT: Pass label_id to avoid relying on active UI label
-                    # which could overwrite the wrong mesh_class_label_ids entry
-                    label_id = task.get('label_id')
-                    self.submit_3d_face_paint(
-                        task['painted_ids'],
-                        task['target_color'],
-                        task['source_class_id'],
-                        primary_target=task.get('primary_target'),
-                        label_id=label_id,
-                    )
-                    needs_3d_flush = True
-                    continue
+    def _canonical_real_labels(self):
+        """Project labels excluding 'Review' (id='-1'), in LabelWindow order."""
+        try:
+            labels = list(self.main_window.label_window.labels)
+        except Exception:
+            return []
+        return [lbl for lbl in labels
+                if getattr(lbl, 'id', None) and lbl.id != '-1']
 
-                if task_type != 'repaint':
-                    continue
+    def canonical_class_id_for_label_id(self, label_id):
+        """Canonical mesh class-id for a label UUID, or None if unknown/Review."""
+        if label_id is None or label_id == '-1':
+            return None
+        for idx, lbl in enumerate(self._canonical_real_labels()):
+            if lbl.id == label_id:
+                return idx + 1
+        return None
 
-                target_mask = task.get('mask')
-                if target_mask is None:
-                    continue
+    def canonical_label_palette(self):
+        """(M, 4) uint8 RGBA palette indexed by canonical class-id (row 0 unused).
 
-                for label_id in task.get('label_ids', ()):
-                    if label_id is not None and label_id not in target_mask.visible_label_ids:
-                        target_mask.visible_label_ids.add(label_id)
+        Mirrors the canonical id assignment so the paint LUT is consistent with
+        the cid texture under a full re-upload — no per-paint pin required.
+        """
+        real = self._canonical_real_labels()
+        size = max(256, len(real) + 1)
+        palette = np.zeros((size, 4), dtype=np.uint8)
+        for idx, lbl in enumerate(real):
+            try:
+                c = lbl.color
+                palette[idx + 1] = (c.red(), c.green(), c.blue(), 255)
+            except Exception:
+                pass
+        return palette
 
-                target_path = task.get('path')
-                context_canvas = self._get_context_canvas_for_path(target_path)
-                # Default to deferring: when no on-screen canvas currently
-                # displays this path (canvas not materialized, or scrolled out
-                # of view) the task must be QUEUED, not dropped.  Previously
-                # this defaulted to True, so an absent canvas silently skipped
-                # both branches below and the matrix thumbnail never refreshed
-                # even though mask_data was written.
-                should_update_now = (
-                    context_canvas is not None
-                    and self.context_matrix is not None
-                    and self.context_matrix.is_canvas_on_screen(context_canvas)
-                )
+    def _dispatch_3d_paint(self, tgt, painted_ids, color_rgb, class_id, label_id):
+        """Route a 3D paint to the submit method matching the target product type.
 
-                if should_update_now:
-                    # Wire overlay BEFORE updating so freshly-created masks
-                    # (e.g. pre-allocated for cache-loaded cameras) are visible.
-                    # Always (re)wire: set_mask_overlay is a no-op when the item
-                    # already points at this mask, but it guarantees the matrix
-                    # canvas has a live MaskGraphicsItem even for cameras that
-                    # were never opened in the AnnotationWindow.
-                    context_canvas.set_mask_overlay(target_mask)
-                    # Recompute colored_mask + qimage from mask_data.  This must
-                    # run even when the mask has no AnnotationWindow graphics_item
-                    # (cache-loaded context cameras), otherwise the matrix overlay
-                    # would paint a stale image and the thumbnail would not update
-                    # until the camera was activated as primary.
-                    target_mask.update_graphics_item(update_rect=task.get('update_rect'))
-                    # Force the matrix overlay item itself to repaint from the
-                    # freshly rebuilt qimage (the mask's update_graphics_item only
-                    # repaints its own AnnotationWindow item, not this overlay).
-                    overlay_item = getattr(context_canvas, '_mask_overlay_item', None)
-                    if overlay_item is not None:
-                        try:
-                            overlay_item.update()
-                        except Exception:
-                            pass
-                elif self.context_matrix is not None:
-                    self.context_matrix.queue_pending_repaint(
-                        target_path,
-                        target_mask,
-                        update_rect=task.get('update_rect'),
-                        label_ids=task.get('label_ids', ()),
-                    )
+        Gaussian splats and point clouds both report element_type 'point', but
+        splats use submit_3d_splat_paint (SH-tint path via VTK-native actor);
+        ordinary point clouds use submit_3d_point_paint; everything else paints faces.
+        """
+        from coralnet_toolbox.MVAT.core.Products import GaussianSplattingProduct
 
-        except Exception as e:
-            print(f"Error in _on_universal_repaint: {e}")
-        finally:
-            self._pending_unified_propagation_jobs = max(
-                0,
-                self._pending_unified_propagation_jobs - 1,
+        if isinstance(tgt, GaussianSplattingProduct) and hasattr(self, 'submit_3d_splat_paint'):
+            self.submit_3d_splat_paint(
+                painted_ids, color_rgb, class_id, primary_target=tgt, label_id=label_id,
             )
-            self._propagating_annotation = self._pending_unified_propagation_jobs > 0
-            if needs_3d_flush:
-                request_flush = getattr(self, 'request_lazy_flush', None)
-                if callable(request_flush):
-                    request_flush()
-            # Clear the matrix busy state (cursor + propagate button) once the
-            # last queued unified-repaint job has been applied.  This ties the
-            # UI indicators to actual completion instead of a fixed timer, so
-            # they stay active until every camera has really been updated.
-            if self._pending_unified_propagation_jobs <= 0:
-                if self.context_matrix is not None:
-                    set_busy = getattr(self.context_matrix, 'set_propagation_busy', None)
-                    if callable(set_busy):
-                        try:
-                            set_busy(False)
-                        except Exception:
-                            pass
-                # Restore the cursor / post the done message for a multi-annotate
-                # semantic-prediction propagation, which is async and therefore
-                # cannot restore these in its own call frame.
-                self._end_semantic_propagation_busy()
+            return
+
+        is_point = False
+        try:
+            is_point = tgt is not None and tgt.get_element_type() == 'point'
+        except Exception:
+            is_point = False
+
+        if is_point and hasattr(self, 'submit_3d_point_paint'):
+            self.submit_3d_point_paint(
+                painted_ids, color_rgb, class_id, primary_target=tgt, label_id=label_id,
+            )
+        else:
+            self.submit_3d_face_paint(
+                painted_ids, color_rgb, class_id, primary_target=tgt, label_id=label_id,
+            )
+
+    def _apply_repaint_task(self, task: dict):
+        """Apply one repaint/3d_paint/status task. Main thread only."""
+        task_type = task.get('type')
+
+        if task_type == 'status_message':
+            msg = task.get('message', '')
+            timeout = task.get('timeout', 5000)
+            if msg:
+                status_bar = getattr(self.main_window, 'status_bar', None)
+                if status_bar is not None:
+                    try:
+                        status_bar.showMessage(msg, timeout)
+                    except Exception:
+                        pass
+            return
+
+        if task_type == 'reload_annotation_window':
+            try:
+                aw = getattr(self.main_window, 'annotation_window', None)
+                if aw is not None and hasattr(aw, 'load_mask_annotation'):
+                    aw.load_mask_annotation()
+            except Exception:
+                pass
+            return
+
+        if task_type == 'update_image_table':
+            paths = task.get('paths', ())
+            iw = getattr(self.main_window, 'image_window', None)
+            if iw is not None:
+                for _p in paths:
+                    try:
+                        iw.update_image_annotations(_p)
+                    except Exception:
+                        pass
+            return
+
+        if task_type == '3d_paint':
+            label_id = task.get('label_id')
+            tgt = task.get('primary_target')
+            self._dispatch_3d_paint(
+                tgt,
+                task['painted_ids'],
+                task['target_color'],
+                task['source_class_id'],
+                label_id,
+            )
+            self._repaint_needs_3d_flush = True
+            return
+
+        if task_type != 'repaint':
+            return
+
+        target_mask = task.get('mask')
+        if target_mask is None:
+            return
+
+        for label_id in task.get('label_ids', ()):
+            if label_id is not None and label_id not in target_mask.visible_label_ids:
+                target_mask.visible_label_ids.add(label_id)
+
+        target_path = task.get('path')
+        context_canvas = self._get_context_canvas_for_path(target_path)
+        should_update_now = (
+            context_canvas is not None
+            and self.context_matrix is not None
+            and self.context_matrix.is_canvas_on_screen(context_canvas)
+        )
+
+        if should_update_now:
+            context_canvas.set_mask_overlay(target_mask)
+            target_mask.update_graphics_item(update_rect=task.get('update_rect'))
+            overlay_item = getattr(context_canvas, '_mask_overlay_item', None)
+            if overlay_item is not None:
+                try:
+                    overlay_item.update()
+                except Exception:
+                    pass
+        elif self.context_matrix is not None:
+            self.context_matrix.queue_pending_repaint(
+                target_path,
+                target_mask,
+                update_rect=task.get('update_rect'),
+                label_ids=task.get('label_ids', ()),
+            )
 
     def _on_semantic_prediction_applied(self, image_path: str, source_mask_annotation,
                                         prediction_regions=None, override_target_paths=None):
@@ -2365,6 +2577,8 @@ class PropagationEngine(QObject):
             )
             return
 
+        # Densification now happens inside the background worker (densify=True
+        # below), so the element count shown here is the pre-densify seed count.
         _status(
             f"Multi-annotate: painting {element_ids.size:,} element(s) "
             f"across {len(selected_paths)} camera(s)...",
@@ -2383,6 +2597,7 @@ class PropagationEngine(QObject):
             target_paths=selected_paths,
             project_labels=project_labels,
             class_label_ids=class_label_ids,
+            densify=True,
         )
 
     def _end_semantic_propagation_busy(self):
@@ -2437,11 +2652,41 @@ class PropagationEngine(QObject):
         color_rgb = (label.color.red(), label.color.green(), label.color.blue())
 
         # --- 3D-only path (multi-annotate OFF) ---------------------------------
+        # No 2D camera corresponds to the VTK view, so paint the 3D product
+        # directly (mirrors how the brush paints in 3D-only mode). The painter is
+        # selected by element_type: points vs faces.
         if not self.multi_annotate_enabled:
             primary_target = self.viewer.scene_context.get_primary_target()
             if primary_target is None or not hasattr(primary_target, 'apply_labels'):
                 self.main_window.status_bar.showMessage(
                     'MVAT-SAM: no 3D product to paint.', 4000)
+                return
+
+            color_rgb = (label.color.red(), label.color.green(), label.color.blue())
+
+            # Canonical class ID (label position in the project), matching the
+            # scheme used by the propagation worker so a later Mesh→Cameras
+            # projection resolves the class back to this label.
+            real_labels = [lbl for lbl in self.main_window.label_window.labels
+                           if getattr(lbl, 'id', None) and lbl.id != '-1']
+            canonical_id_for = {lbl.id: (idx + 1) for idx, lbl in enumerate(real_labels)}
+            class_id = canonical_id_for.get(label.id)
+            if class_id is None:
+                self.main_window.status_bar.showMessage(
+                    'MVAT-SAM: could not resolve class ID for selected label.', 4000)
+                return
+
+            self._dispatch_3d_paint(
+                primary_target, element_ids, color_rgb, int(class_id), label.id,
+            )
+
+            # Commit to the product (persists labels for export/projection).
+            request_flush = getattr(self, 'request_lazy_flush', None)
+            if callable(request_flush):
+                request_flush()
+
+            self.main_window.status_bar.showMessage(
+                f"MVAT-SAM: applied '{label.short_label_code}' to {n:,} {element_type}(s).", 4000)
             return
 
         # --- multi-annotate ON: propagate to 3D + all visible 2D cameras ------
@@ -2758,16 +3003,24 @@ class PropagationEngine(QObject):
                 if not any(p == ortho_path for p, _ in source_cameras):
                     source_cameras.append((ortho_path, self.ortho_camera))
 
+        # Only cameras that actually have a mask annotation participate — the
+        # status message and logs report that count, not every loaded camera.
+        source_cameras = [
+            (p, c) for p, c in source_cameras
+            if getattr(getattr(c, '_raster', None), 'mask_annotation', None) is not None
+        ]
         if not source_cameras:
-            self._warn_semantic_propagation("No cameras with index maps found.")
+            self._warn_semantic_propagation(
+                "No cameras have mask annotations to aggregate."
+            )
             return
 
         status_bar = getattr(self.main_window, 'status_bar', None)
         if status_bar is not None:
             try:
                 status_bar.showMessage(
-                    f"Cameras → Mesh: scanning {len(source_cameras)} camera(s) "
-                    f"(only those with index maps + labeled masks will contribute)…", 0
+                    f"Cameras → Mesh: aggregating {len(source_cameras)} camera(s) "
+                    f"with mask annotations (cameras without loaded index maps are skipped)…", 0
                 )
             except Exception:
                 pass
@@ -2807,33 +3060,131 @@ class PropagationEngine(QObject):
 
         all_element_ids = []
         all_class_ids = []
-        skipped_no_index = 0
-        skipped_no_mask = 0
-        skipped_no_votes = 0
-        contributing = 0
+        all_vote_counts = []
+        stats = {'no_index': 0, 'no_mask': 0, 'no_votes': 0, 'contributing': 0}
 
-        for path, camera in source_cameras:
+        # Use GPU for vote extraction and conflict resolution when available.
+        use_gpu = _torch is not None and _torch.cuda.is_available()
+        device  = 'cuda' if use_gpu else 'cpu'
+
+        def _accumulate_camera_votes(path, camera):
+            """Extract, canonicalise, and reduce one camera's votes in place."""
             raster = getattr(camera, '_raster', None)
-            if raster is None or getattr(raster, 'index_map', None) is None:
-                skipped_no_index += 1
-                continue
-            mask_annotation = getattr(raster, 'mask_annotation', None)
+            mask_annotation = getattr(raster, 'mask_annotation', None) if raster else None
             if mask_annotation is None:
-                skipped_no_mask += 1
-                continue
+                stats['no_mask'] += 1
+                return
 
+            index_map_np = getattr(raster, 'index_map', None)
+
+            if use_gpu and index_map_np is not None:
+                # ── GPU path: single H2D per camera, all heavy ops on GPU ─────
+                try:
+                    semantic_mask_np = np.asarray(mask_annotation.mask_data)
+                    lock_bit = int(mask_annotation.LOCK_BIT)
+
+                    # cv2.resize is OpenCV-only; handle shape mismatch on CPU.
+                    if semantic_mask_np.shape != index_map_np.shape:
+                        import cv2 as _cv2
+                        semantic_mask_np = _cv2.resize(
+                            np.ascontiguousarray(semantic_mask_np),
+                            (index_map_np.shape[1], index_map_np.shape[0]),
+                            interpolation=_cv2.INTER_NEAREST,
+                        )
+
+                    # Single H2D transfer per camera.
+                    idx_gpu = _torch.as_tensor(
+                        index_map_np, dtype=_torch.int32, device=device
+                    )
+                    sem_gpu = (
+                        _torch.as_tensor(
+                            semantic_mask_np, dtype=_torch.int32, device=device
+                        ) % lock_bit
+                    )
+
+                    valid_gpu = (sem_gpu > 0) & (idx_gpu > -1)
+                    if not valid_gpu.any():
+                        stats['no_votes'] += 1
+                        return
+
+                    elements_gpu      = idx_gpu[valid_gpu].long()
+                    local_classes_gpu = sem_gpu[valid_gpu].long()
+
+                    # Build local_class_id → canonical_class_id LUT (CPU, tiny).
+                    cid_to_label = getattr(mask_annotation, 'class_id_to_label_map', {})
+                    if cid_to_label:
+                        max_local = max(int(k) for k in cid_to_label)
+                        lut_np = np.zeros(max_local + 2, dtype=np.int64)
+                        for local_id, label in cid_to_label.items():
+                            lid   = getattr(label, 'id', None)
+                            canon = canonical_id_for.get(lid) if lid else None
+                            if canon is not None and 0 <= int(local_id) <= max_local:
+                                lut_np[int(local_id)] = int(canon)
+                        lut_gpu    = _torch.as_tensor(lut_np, dtype=_torch.int64, device=device)
+                        lc_clamped = local_classes_gpu.clamp(0, len(lut_np) - 1)
+                        canonical_classes_gpu = lut_gpu[lc_clamped]
+                    else:
+                        canonical_classes_gpu = _torch.zeros_like(local_classes_gpu)
+
+                    valid_canon = canonical_classes_gpu > 0
+                    if not valid_canon.any():
+                        stats['no_votes'] += 1
+                        return
+
+                    elements_gpu          = elements_gpu[valid_canon]
+                    canonical_classes_gpu = canonical_classes_gpu[valid_canon]
+
+                    # Reduce: torch.unique + scatter_add_ replaces np.unique
+                    # in reduce_vote_arrays — much faster on large per-camera arrays.
+                    max_c        = max(100000, int(canonical_classes_gpu.max().item()) + 1)
+                    compound_gpu = elements_gpu * max_c + canonical_classes_gpu
+                    unique_compound, inverse = _torch.unique(compound_gpu, return_inverse=True)
+                    counts_gpu = _torch.zeros(
+                        unique_compound.shape[0], dtype=_torch.float64, device=device
+                    )
+                    counts_gpu.scatter_add_(
+                        0, inverse,
+                        _torch.ones(inverse.shape[0], dtype=_torch.float64, device=device),
+                    )
+
+                    # D2H: reduced arrays are orders of magnitude smaller than input.
+                    elem_r = (unique_compound // max_c).cpu().numpy().astype(np.int64)
+                    cls_r  = (unique_compound % max_c).cpu().numpy().astype(np.int64)
+                    cnt_r  = counts_gpu.cpu().numpy().astype(np.float64)
+
+                    if elem_r.size > 0:
+                        all_element_ids.append(elem_r)
+                        all_class_ids.append(cls_r)
+                        all_vote_counts.append(cnt_r)
+                        stats['contributing'] += 1
+                    else:
+                        stats['no_votes'] += 1
+                    return  # GPU path handled; skip CPU fallback.
+
+                except Exception as exc:
+                    print(
+                        f"[Cameras→Mesh] GPU vote extraction failed for {path}, "
+                        f"falling back to CPU: {exc}"
+                    )
+
+            # ── CPU path (fallback or no CUDA) ────────────────────────────────
             try:
                 element_ids, local_class_ids, class_label_ids = (
                     self._extract_semantic_element_votes(camera, mask_annotation)
                 )
             except Exception as exc:
                 print(f"aggregate_camera_masks_to_mesh: vote extraction failed for {path}: {exc}")
-                skipped_no_votes += 1
-                continue
+                stats['no_votes'] += 1
+                return
 
             if element_ids.size == 0:
-                skipped_no_votes += 1
-                continue
+                stats['no_votes'] += 1
+                return
+
+            # NOTE: no per-camera densify here — it made aggregation scale
+            # linearly with camera count (≈1-4 s of KD-tree gathering per
+            # camera at full-mask seed densities).  One global densify runs on
+            # the merged winners after conflict resolution instead.
 
             # Translate local class IDs → canonical IDs so votes from cameras
             # with different label orderings count toward the same label.
@@ -2846,26 +3197,44 @@ class PropagationEngine(QObject):
 
             valid = canonical_ids > 0
             if not np.any(valid):
-                skipped_no_votes += 1
-                continue
+                stats['no_votes'] += 1
+                return
 
-            all_element_ids.append(element_ids[valid])
-            all_class_ids.append(canonical_ids[valid])
-            contributing += 1
+            elem_reduced, class_reduced, counts = reduce_vote_arrays(
+                element_ids[valid], canonical_ids[valid]
+            )
+            if elem_reduced.size > 0:
+                all_element_ids.append(elem_reduced)
+                all_class_ids.append(class_reduced)
+                all_vote_counts.append(counts.astype(np.float64))
+                stats['contributing'] += 1
+
+        # ── Vote accumulation ──────────────────────────────────────────────
+        # Only cameras whose index maps are ALREADY loaded contribute.  This
+        # push never loads maps itself — use the Load Index Maps action to
+        # pull them from disk cache first.  source_cameras was pre-filtered
+        # to cameras with mask annotations, so the counts reported below are
+        # out of the masked set, not every camera in the project.
+        for path, camera in source_cameras:
+            raster = getattr(camera, '_raster', None)
+            if raster is None or getattr(raster, 'index_map', None) is None:
+                stats['no_index'] += 1
+                continue
+            _accumulate_camera_votes(path, camera)
 
         total = len(source_cameras)
+        contributing = stats['contributing']
         print(
-            f"[Cameras→Mesh] {contributing}/{total} cameras contributed | "
-            f"{skipped_no_index} no index map | "
-            f"{skipped_no_mask} no mask | "
-            f"{skipped_no_votes} no labeled votes"
+            f"[Cameras→Mesh] {contributing}/{total} masked camera(s) contributed | "
+            f"{stats['no_index']} skipped (index map not loaded — use Load Index Maps) | "
+            f"{stats['no_votes']} no labeled votes"
         )
 
         if not all_element_ids:
             msg = (
-                f"Cameras → Mesh: 0 of {total} camera(s) had both index maps and "
-                f"labeled masks. Enable Multi-Annotate so index maps are computed, "
-                f"then paint masks before aggregating."
+                f"Cameras → Mesh: none of the {total} camera(s) with mask "
+                f"annotations have loaded index maps. Use Load Index Maps "
+                f"(or enable Multi-Annotate) first, then aggregate."
             )
             print(f"WARNING: {msg}")
             self._universal_repaint_signal.emit([{
@@ -2874,15 +3243,61 @@ class PropagationEngine(QObject):
             return
 
         element_ids = np.concatenate(all_element_ids).astype(np.int64, copy=False)
-        class_ids = np.concatenate(all_class_ids).astype(np.int64, copy=False)
+        class_ids   = np.concatenate(all_class_ids).astype(np.int64, copy=False)
+        weights     = np.concatenate(all_vote_counts).astype(np.float64, copy=False)
 
-        unique_elements, winning_classes = resolve_class_conflicts_vectorized(
-            element_ids, class_ids
-        )
+        # GPU conflict resolution when the merged array is large enough to justify
+        # the H2D transfer (the GPU torch.unique + stable-sort beats np.lexsort
+        # for arrays above ~50 K entries).
+        if use_gpu and element_ids.size > 50_000:
+            try:
+                unique_elements, winning_classes = _resolve_class_conflicts_gpu(
+                    element_ids, class_ids, weights, device
+                )
+            except Exception as exc:
+                print(f"[Cameras→Mesh] GPU conflict resolution failed, falling back: {exc}")
+                unique_elements, winning_classes = resolve_class_conflicts_vectorized(
+                    element_ids, class_ids, weights=weights
+                )
+        else:
+            unique_elements, winning_classes = resolve_class_conflicts_vectorized(
+                element_ids, class_ids, weights=weights
+            )
 
         if unique_elements.size == 0:
             self._universal_repaint_signal.emit([])
             return
+
+        # ── Global densify: ONE gather over the merged winners ─────────────
+        # Fills the sub-pixel faces every low-res index map skips, like the
+        # old per-camera densify did, but at O(1) gathers per push instead of
+        # O(cameras): with full-mask seeds each per-camera gather cost ~1-4 s.
+        # camera_position=None skips the per-camera facing cull (these faces
+        # were all confirmed visible by some camera); the normal-consistency
+        # cull still rejects geometry behind the labeled surface.
+        if getattr(self, 'densify_enabled', False) and hasattr(
+                primary_target, 'gather_dense_face_ids_multiclass'):
+            t_densify = perf_counter()
+            try:
+                new_faces, new_face_classes = primary_target.gather_dense_face_ids_multiclass(
+                    unique_elements,
+                    winning_classes,
+                    camera_position=None,
+                    radius_mult=getattr(self, 'densify_radius_mult', 1.5),
+                    normal_dot_min=getattr(self, 'densify_normal_dot_min', 0.3),
+                    max_expansion=getattr(self, 'densify_max_expansion', 40.0),
+                )
+            except Exception as exc:
+                print(f"[Cameras→Mesh] global densify failed: {exc}")
+                new_faces = np.array([], dtype=np.int64)
+                new_face_classes = new_faces
+            if new_faces.size:
+                unique_elements = np.concatenate([unique_elements, new_faces])
+                winning_classes = np.concatenate([winning_classes, new_face_classes])
+                print(
+                    f"[Cameras→Mesh] densify: +{new_faces.size:,} face(s) in "
+                    f"{(perf_counter() - t_densify) * 1000:.0f} ms"
+                )
 
         repaint_tasks = []
         new_mesh_class_label_ids = {}
@@ -2919,7 +3334,7 @@ class PropagationEngine(QObject):
         )
         done_msg = (
             f"Cameras → Mesh: {unique_elements.size:,} face(s) from "
-            f"{contributing}/{total} camera(s) in {elapsed_ms:.0f} ms"
+            f"{contributing}/{total} masked camera(s) in {elapsed_ms:.0f} ms"
             + (f"  [{label_summary}]" if label_summary else "")
         )
         print(f"[Cameras→Mesh] {done_msg}")
@@ -2981,7 +3396,7 @@ class PropagationEngine(QObject):
 
         if not self._mesh_class_label_ids:
             self._warn_semantic_propagation(
-                "The mesh has no label data to project.  Paint the mesh first."
+                "The 3D model has no label data to project.  Paint the 3D model first."
             )
             return
 
@@ -3129,23 +3544,29 @@ class PropagationEngine(QObject):
                 im_h, im_w = index_map.shape
                 mask_h, mask_w = mask_data.shape
 
-                # Upscale index_map to full mask resolution if it was downscaled
+                # Vectorised LUT at the index map's NATIVE resolution
+                # (pixel → face_id → mesh class_id), then upscale the small
+                # class layer. Far cheaper than upscaling the int32 index map.
+                valid_small = (index_map >= 0) & (index_map < len(mesh_class_ids))
+                class_layer_small = np.zeros(index_map.shape, dtype=mask_data.dtype)
+                class_layer_small[valid_small] = mesh_class_ids[
+                    index_map[valid_small].astype(np.int64)
+                ].astype(mask_data.dtype)
+
                 if im_h != mask_h or im_w != mask_w:
-                    index_map_full = cv2.resize(
-                        index_map.astype(np.float32),
+                    new_class_layer = cv2.resize(
+                        class_layer_small,
                         (mask_w, mask_h),
                         interpolation=cv2.INTER_NEAREST,
-                    ).astype(np.int32)
+                    )
+                    valid = cv2.resize(
+                        valid_small.astype(np.uint8),
+                        (mask_w, mask_h),
+                        interpolation=cv2.INTER_NEAREST,
+                    ).astype(bool)
                 else:
-                    index_map_full = index_map
-
-                # Vectorised LUT: pixel → face_id → mesh class_id
-                valid = (index_map_full >= 0) & (index_map_full < len(mesh_class_ids))
-                face_ids_at_pixels = index_map_full[valid].astype(np.int64)
-                pixel_mesh_classes = mesh_class_ids[face_ids_at_pixels].astype(np.int32)
-
-                new_class_layer = np.zeros(mask_data.shape, dtype=mask_data.dtype)
-                new_class_layer.flat[np.flatnonzero(valid)] = pixel_mesh_classes
+                    new_class_layer = class_layer_small
+                    valid = valid_small
 
                 lock_bit = getattr(mask_annotation, 'LOCK_BIT', 128)
                 not_locked = mask_data < lock_bit
@@ -3187,14 +3608,18 @@ class PropagationEngine(QObject):
                     canon_to_target_lut[int(canon_id)] = int(target_class_id)
                     written_label_ids.add(label_id)
 
-                # Apply ALL remappings atomically using a clean copy
+                # Apply ALL remappings atomically with an integer LUT — one
+                # gather instead of a full-frame copy + per-class equality scans.
+                written_values = new_class_layer[write_mask]
                 if canon_to_target_lut:
-                    final_class_layer = new_class_layer.copy()
+                    lut_size = max(256, int(written_values.max()) + 1)
+                    remap = np.arange(lut_size, dtype=np.int64)
                     for canon_id, target_id in canon_to_target_lut.items():
-                        final_class_layer[new_class_layer == canon_id] = target_id
-                    mask_data[write_mask] = final_class_layer[write_mask]
+                        if 0 <= canon_id < lut_size:
+                            remap[canon_id] = target_id
+                    mask_data[write_mask] = remap[written_values].astype(mask_data.dtype)
                 else:
-                    mask_data[write_mask] = new_class_layer[write_mask]
+                    mask_data[write_mask] = written_values
 
                 ys, xs = np.where(write_mask)
                 update_rect = (

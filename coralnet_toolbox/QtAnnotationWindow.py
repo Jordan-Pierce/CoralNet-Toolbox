@@ -3,6 +3,7 @@ import warnings
 import os
 import traceback
 import time
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -36,11 +37,11 @@ from coralnet_toolbox.Tools import (
     FillTool,
     DropperTool,
     SAMTool,
+    FeatureSelectTool,
     SeeAnythingTool,
     SelectTool,
     WorkAreaTool,
     ScaleTool,
-    RugosityTool,
     PatchSamplingTool,
 )
 
@@ -50,7 +51,6 @@ from coralnet_toolbox.QtActions import (
     AddAnnotationsAction,
     DeleteAnnotationsAction,
     CompoundAction,
-    ActionStack,
     ChangeLabelAction,
     ChangeLabelsAction,
     ResizeAnnotationAction,
@@ -72,6 +72,8 @@ from coralnet_toolbox import theme as app_theme
 from coralnet_toolbox.MachineLearning.ExportDataset.export_dataset_utils import parse_frame_path
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+_PERF_LOG = bool(os.environ.get("CNT_PERF_LOG"))
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -140,7 +142,7 @@ class AnnotationWindow(BaseCanvas):
         self._placeholder_label.setWordWrap(True)
         self._placeholder_label.setAutoFillBackground(True)
         
-        # Z-channel visualization (BaseCanvas has z_item, z_data_raw, z_data_normalized, etc.)
+        # Z-channel visualization (BaseCanvas has z_item, z_data_raw, z_index, etc.)
         # Just set up AnnotationWindow-specific debounce timer (BaseCanvas has generic one)
         self.dynamic_range_timer = self._dynamic_range_timer  # Reference BaseCanvas timer
         self.dynamic_range_update_delay = 100  # milliseconds
@@ -220,7 +222,14 @@ class AnnotationWindow(BaseCanvas):
         self.transparency_slider.setValue(128)
         # Let the annotation transparency slider naturally expand
         self.transparency_slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.transparency_slider.valueChanged.connect(self.update_label_transparency)
+        self.transparency_slider.valueChanged.connect(self._on_transparency_slider_changed)
+        # Debounce: applying transparency is O(N annotations) + full phantom rebuild,
+        # so coalesce rapid slider ticks into one apply ~75 ms after the last tick.
+        self._pending_transparency = self.transparency_slider.value()
+        self._transparency_debounce = QTimer(self)
+        self._transparency_debounce.setSingleShot(True)
+        self._transparency_debounce.setInterval(75)
+        self._transparency_debounce.timeout.connect(self._apply_pending_transparency)
 
         # --- Positional/Dimensional Labels ---
         self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
@@ -580,10 +589,18 @@ class AnnotationWindow(BaseCanvas):
     def on_z_dynamic_toggled(self, checked):
         """Handle z-dynamic scaling button toggle."""
         self.toggle_dynamic_z_scaling(checked)
-        
+
         # Sync to all context matrix canvases
         if hasattr(self.main_window, 'context_matrix') and self.main_window.context_matrix:
             self.main_window.context_matrix.sync_z_dynamic_scaling_to_all_canvases(checked)
+
+    def _on_transparency_slider_changed(self, value):
+        """Debounced slider handler; the heavy apply runs after the drag pauses."""
+        self._pending_transparency = value
+        self._transparency_debounce.start()
+
+    def _apply_pending_transparency(self):
+        self.update_label_transparency(self._pending_transparency)
 
     def update_label_transparency(self, value):
         """Update the transparency for all annotations in the current image."""
@@ -616,6 +633,22 @@ class AnnotationWindow(BaseCanvas):
         # Sync transparency to all context matrix canvases
         if hasattr(self.main_window, 'context_matrix') and self.main_window.context_matrix:
             self.main_window.context_matrix.sync_annotations_to_all_canvases()
+
+        # Video frames render the mask overlay via FastImageItem._mask_opacity
+        # (a baked-in value), not via MaskGraphicsItem's render-time transparency.
+        # Push the new opacity to the live item and the per-frame cache so the
+        # slider actually affects the displayed mask (including down to 0).
+        if getattr(self, '_active_video_raster', None) is not None:
+            opacity = transparency / 255.0
+            cached = getattr(self, 'batch_results_cache', {}).get(self.current_image_path)
+            if cached is not None:
+                cached['opacity'] = opacity
+            bii = getattr(self, '_base_image_item', None)
+            if bii is not None and getattr(bii, '_mask_image', None) is not None:
+                try:
+                    bii.set_mask_image(bii._mask_image, opacity)
+                except Exception:
+                    pass
 
         # Rebuild phantom layer with updated transparency
         self.refresh_phantom_annotations()
@@ -732,6 +765,7 @@ class AnnotationWindow(BaseCanvas):
             "rectangle": RectangleTool(self),
             "polygon": PolygonTool(self),
             "sam": SAMTool(self),
+            "feature_select": FeatureSelectTool(self),
             "see_anything": SeeAnythingTool(self),
             "work_area": WorkAreaTool(self),
             # Selectable mask tools
@@ -741,7 +775,6 @@ class AnnotationWindow(BaseCanvas):
             "dropper": DropperTool(self),
             # Dialog tools
             "scale": ScaleTool(self),
-            "rugosity": RugosityTool(self),
             "patch_sampling": PatchSamplingTool(self),
         }
         
@@ -1166,6 +1199,19 @@ class AnnotationWindow(BaseCanvas):
         """Compute which frame indices have annotations and push them to the player slider."""
         self._video_player.update_annotation_marks(self._get_annotated_frame_indices())
 
+    def _get_keyframe_indices(self) -> set:
+        """Return the set of keyframe indices for the active video raster."""
+        if self._active_video_raster is None:
+            return set()
+        try:
+            return self._active_video_raster.get_keyframes()
+        except Exception:
+            return set()
+
+    def _update_video_keyframe_marks(self):
+        """Push the active video's keyframe indices to the player slider."""
+        self._video_player.update_keyframe_marks(self._get_keyframe_indices())
+
     def _activate_video_mode(self, video_raster):
         """Switch the annotation window into video mode for the given VideoRaster."""
         # If already active for the same raster, just ensure player is visible
@@ -1217,6 +1263,18 @@ class AnnotationWindow(BaseCanvas):
             self._video_player.prevAnnotatedClicked.disconnect()
         except Exception:
             pass
+        try:
+            self._video_player.nextKeyframeClicked.disconnect()
+        except Exception:
+            pass
+        try:
+            self._video_player.prevKeyframeClicked.disconnect()
+        except Exception:
+            pass
+        try:
+            self._video_player.keyframeToggled.disconnect()
+        except Exception:
+            pass
 
         self._video_player.seekChanged.connect(self._on_video_seek)
         self._video_player.playClicked.connect(self._on_video_play)
@@ -1225,6 +1283,9 @@ class AnnotationWindow(BaseCanvas):
         self._video_player.prevFrameClicked.connect(self._on_video_prev)
         self._video_player.nextAnnotatedClicked.connect(self._on_video_next_annotated)
         self._video_player.prevAnnotatedClicked.connect(self._on_video_prev_annotated)
+        self._video_player.nextKeyframeClicked.connect(self._on_video_next_keyframe)
+        self._video_player.prevKeyframeClicked.connect(self._on_video_prev_keyframe)
+        self._video_player.keyframeToggled.connect(self._on_keyframe_toggled)
 
         # Reset player state
         self._video_player.reset()
@@ -1232,8 +1293,9 @@ class AnnotationWindow(BaseCanvas):
         # Display frame 0
         self._display_video_frame(0)
 
-        # Populate tick marks for any pre-existing annotations
+        # Populate tick marks for any pre-existing annotations and keyframes
         self._update_video_annotation_marks()
+        self._update_video_keyframe_marks()
 
     def _deactivate_video_mode(self):
         """Leave video mode (called when switching to a regular image)."""
@@ -1280,6 +1342,18 @@ class AnnotationWindow(BaseCanvas):
             self._video_player.prevAnnotatedClicked.disconnect()
         except Exception:
             pass
+        try:
+            self._video_player.nextKeyframeClicked.disconnect()
+        except Exception:
+            pass
+        try:
+            self._video_player.prevKeyframeClicked.disconnect()
+        except Exception:
+            pass
+        try:
+            self._video_player.keyframeToggled.disconnect()
+        except Exception:
+            pass
 
         self._video_player.reset()
         self.main_window.set_video_playback_tools_enabled(True)
@@ -1323,6 +1397,14 @@ class AnnotationWindow(BaseCanvas):
         self.imageLoaded.emit(video_raster.width, video_raster.height)
         self.viewChanged.emit(video_raster.width, video_raster.height)
 
+        # Reset the shared editing buffer for THIS displayed frame. If the frame
+        # has no cached mask, clear it to a blank slate (load_mask_annotation's
+        # _restore is load-only and intentionally won't zero on a cache miss).
+        # When a cache exists, _restore (inside load_annotations) loads it.
+        cache = getattr(self, 'batch_results_cache', {}) or {}
+        if cache.get(virtual_path) is None:
+            self._clear_video_frame_mask_data()
+
         # Load annotations for this virtual frame path
         self.load_annotations()
 
@@ -1332,6 +1414,10 @@ class AnnotationWindow(BaseCanvas):
         # Then refresh scrub-bar tick marks (cheap; only runs on seek/pause, not playback)
         # AnnotatedSlider.paintEvent checks slider.maximum(), so ensure range set first.
         self._update_video_annotation_marks()
+        self._update_video_keyframe_marks()
+
+        # Reflect whether this frame is a keyframe on the star toggle button
+        self._video_player.set_keyframe_state(video_raster.is_keyframe(frame_idx))
 
     def _on_video_seek(self, frame_idx: int):
         """Handle slider seek: stop playback, display frame."""
@@ -1377,7 +1463,7 @@ class AnnotationWindow(BaseCanvas):
                 for a in frame_annotations:
                     if getattr(a.label, 'is_visible', True) and not hasattr(a, 'mask_data'):
                         try:
-                            paths_data.append((a.get_painter_path(), a.label.color, a.transparency))
+                            paths_data.append((a.get_cached_painter_path(), a.label.color, a.transparency))
                         except Exception:
                             pass
                 
@@ -1422,6 +1508,9 @@ class AnnotationWindow(BaseCanvas):
         self._video_player.slider.setValue(frame_idx)
         self._video_player.slider.blockSignals(False)
         self._video_player.lbl_frame.setText(f"{frame_idx} / {vr.frame_count}")
+
+        # Live-update the star button so it lights up only on keyframes
+        self._video_player.set_keyframe_state(vr.is_keyframe(frame_idx))
 
         # Clear the drop-frame gate so the worker sends the next frame
         if vr._decode_worker is not None:
@@ -1575,6 +1664,32 @@ class AnnotationWindow(BaseCanvas):
         if candidates:
             self._display_video_frame(max(candidates))
 
+    def _on_keyframe_toggled(self):
+        """Toggle the keyframe state of the currently displayed frame."""
+        vr = self._active_video_raster
+        if vr is None:
+            return
+        new_state = vr.toggle_keyframe(self._current_frame_idx)
+        # Reflect the new state on the button and refresh the slider ticks
+        self._video_player.set_keyframe_state(new_state)
+        self._update_video_keyframe_marks()
+
+    def _on_video_next_keyframe(self):
+        """Jump to the nearest keyframe after the current position."""
+        if self._active_video_raster is None:
+            return
+        candidates = [f for f in self._get_keyframe_indices() if f > self._current_frame_idx]
+        if candidates:
+            self._display_video_frame(min(candidates))
+
+    def _on_video_prev_keyframe(self):
+        """Jump to the nearest keyframe before the current position."""
+        if self._active_video_raster is None:
+            return
+        candidates = [f for f in self._get_keyframe_indices() if f < self._current_frame_idx]
+        if candidates:
+            self._display_video_frame(max(candidates))
+
     def _playback_tick(self):
         """
         Fast playback path: update the scene pixmap only — no annotation load.
@@ -1602,7 +1717,7 @@ class AnnotationWindow(BaseCanvas):
                 for a in frame_annotations:
                     if getattr(a.label, 'is_visible', True) and not hasattr(a, 'mask_data'):
                         try:
-                            paths_data.append((a.get_painter_path(), a.label.color, a.transparency))
+                            paths_data.append((a.get_cached_painter_path(), a.label.color, a.transparency))
                         except Exception:
                             pass
                 self._base_image_item.set_readonly_annotations(paths_data)
@@ -1617,6 +1732,9 @@ class AnnotationWindow(BaseCanvas):
         self._video_player.slider.setValue(next_idx)
         self._video_player.slider.blockSignals(False)
         self._video_player.lbl_frame.setText(f"{next_idx} / {self._active_video_raster.frame_count}")
+
+        # Live-update the star button so it lights up only on keyframes
+        self._video_player.set_keyframe_state(self._active_video_raster.is_keyframe(next_idx))
 
     def cursorInWindow(self, pos, mapped=False):
         """Check if the cursor position is within the image bounds."""
@@ -2533,6 +2651,26 @@ class AnnotationWindow(BaseCanvas):
         is_new = raster.mask_annotation is None
         project_labels = self.main_window.label_window.labels
         mask_annotation = raster.get_mask_annotation(project_labels)
+
+        # Video frames share ONE mask_annotation across every frame, so its
+        # mask_data is only valid for whichever frame was last loaded into it.
+        # Re-seed it from THIS frame's cached prediction before handing it to an
+        # editing tool; otherwise the first brush stroke starts from the wrong
+        # pixels and the post-stroke sync overwrites the frame's cached
+        # prediction (the "painting wipes the batch result" bug). The navigation
+        # restore can leave the buffer wrong here, e.g. when the cached mask was
+        # a different resolution than the native buffer and got dropped by the
+        # shape guard — _restore_video_frame_mask_data now resizes instead, and
+        # this re-seed guarantees the edit target matches the displayed frame.
+        # Skipped while a predict pass is deferring syncs — that path manages the
+        # shared buffer itself.
+        if ('::frame_' in str(self.current_image_path)
+                and not getattr(self, '_deferring_video_cache_sync', False)):
+            _cache = getattr(self, 'batch_results_cache', {}) or {}
+            _cached = _cache.get(self.current_image_path)
+            if _cached is not None:
+                self._restore_video_frame_mask_data(_cached)
+
         try:
             self.annotation_manager.register_mask_annotation(mask_annotation)
         except Exception:
@@ -3265,8 +3403,8 @@ class AnnotationWindow(BaseCanvas):
                 self.main_window.label_window.deselect_active_label()
                 self.main_window.confidence_window.clear_display()
             self.viewport().update()
-            # Rebuild phantom layer to exclude this now-selected annotation
-            self.refresh_phantom_annotations()
+            # Rebuild only this annotation's color group (it left the phantom layer)
+            self.refresh_phantom_annotations(only_annotation=annotation)
             self._emit_selection_changed()
 
     def select_annotations(self):
@@ -3410,7 +3548,7 @@ class AnnotationWindow(BaseCanvas):
                     self.main_window.confidence_window.clear_display()
                 self.viewport().update()
                 if not self._skip_phantom_refresh:
-                    self.refresh_phantom_annotations()
+                    self.refresh_phantom_annotations(only_annotation=annotation)
                 self._emit_selection_changed()
 
     def unselect_annotations(self):
@@ -3581,6 +3719,15 @@ class AnnotationWindow(BaseCanvas):
                 cache = getattr(self, 'batch_results_cache', {}) or {}
                 cached = cache.get(self.current_image_path)
                 bii = getattr(self, '_base_image_item', None)
+
+                # Reset the shared editing target (vr.mask_annotation.mask_data)
+                # to THIS frame's pixels. The displayed overlay is per-frame, but
+                # the brush/fill tools edit vr.mask_annotation directly via
+                # current_mask_annotation. Without this reset, painting on a new
+                # frame mutates the previous frame's mask_data, so its pixels leak
+                # onto every subsequent frame.
+                self._restore_video_frame_mask_data(cached)
+
                 if cached:
                     qimg = cached.get('mask_qimage')
                     opacity = cached.get('opacity', 128 / 255.0)
@@ -3615,14 +3762,119 @@ class AnnotationWindow(BaseCanvas):
         # Set the Z-value to be above the base image but below annotations
         if mask_annotation.graphics_item:
             mask_annotation.graphics_item.setZValue(-5)
-            
+
         # Update the mask graphic item
         mask_annotation.update_graphics_item()
 
         # Update the view
         self.viewport().update()
 
-    def _sync_video_mask_to_cache(self):
+    def _restore_video_frame_mask_data(self, cached):
+        """Reset the shared VideoRaster mask annotation to a frame's cached pixels.
+
+        The VideoRaster holds a single MaskAnnotation reused for every frame; its
+        ``mask_data`` is what the brush/fill tools edit. When navigating to a
+        frame we must reload that buffer from the frame's cached ``mask_arr``
+        (or clear it to zeros when the frame has no mask) so edits never leak
+        across frames.
+
+        ``cached`` is the batch_results_cache entry for the current frame, or
+        None when the frame has no stored mask.
+        """
+        try:
+            vr = getattr(self, '_active_video_raster', None)
+            if vr is None:
+                return
+
+            stored = cached.get('mask_arr') if cached else None
+            ma = getattr(vr, 'mask_annotation', None)
+            if ma is None:
+                # No shared mask exists yet. If this frame has cached pixels we
+                # must create the buffer NOW and seed it with them. Batch
+                # inference writes video predictions ONLY to batch_results_cache
+                # (it never touches vr.mask_annotation), so without this the
+                # buffer is created empty by the first brush stroke and the next
+                # sync overwrites the frame's cached prediction — the "painting
+                # wipes the batch result" bug. With no cached pixels there is
+                # nothing to load, so defer creation to the edit path (a blank
+                # frame correctly starts from a clean zero buffer).
+                if stored is None:
+                    return
+                try:
+                    project_labels = self.main_window.label_window.labels
+                    ma = vr.get_mask_annotation(project_labels)
+                except Exception:
+                    return
+                if ma is None:
+                    return
+
+            # Defensive: a cached prediction whose resolution differs from the
+            # native edit buffer (e.g. a mask reconstructed at model size on the
+            # live-preview tensor path) must NOT be silently dropped — resize it
+            # to the buffer shape so it actually loads. Label maps require
+            # nearest-neighbour so class IDs are preserved.
+            if (stored is not None
+                    and stored.shape != ma.mask_data.shape):
+                try:
+                    import cv2 as _cv2
+                    stored = _cv2.resize(
+                        stored,
+                        (ma.mask_data.shape[1], ma.mask_data.shape[0]),
+                        interpolation=_cv2.INTER_NEAREST,
+                    )
+                except Exception:
+                    pass
+
+            if stored is not None and stored.shape == ma.mask_data.shape:
+                np.copyto(ma.mask_data, stored)
+            else:
+                # No per-frame mask for this frame.
+                #
+                # CRITICAL: do NOT zero mask_data here. _restore can be invoked
+                # transiently for frames that are not actually being displayed
+                # (e.g. MVAT propagation reload tasks, mid-batch reloads) while
+                # the shared mask_data legitimately holds an in-progress result
+                # for another frame. Zeroing on a cache-miss destroys that work.
+                #
+                # Zeroing for a genuinely-blank frame is the responsibility of the
+                # explicit display path (_clear_video_frame_mask_data, called from
+                # _display_video_frame) and of the editing tools, which start a
+                # fresh frame from a clean buffer. Here we only ever *load* known
+                # cached pixels; a miss is a no-op.
+                return
+
+            # The in-memory color canvas / qimage now describe the wrong frame.
+            # Invalidate them so the next display or edit rebuilds from mask_data.
+            ma.colored_mask = None
+            ma.qimage = None
+            ma._invalidate_stats_cache()
+        except Exception:
+            pass
+
+    def _clear_video_frame_mask_data(self):
+        """Zero the shared VideoRaster mask_data for a genuinely-blank displayed frame.
+
+        Called only from the real display path (_display_video_frame) when the
+        frame being shown has no cached mask, so editing starts from a clean
+        buffer. Unlike _restore_video_frame_mask_data this is allowed to zero,
+        because it runs only when we are actually committing to display this
+        frame — never during transient/background reloads.
+        """
+        try:
+            vr = getattr(self, '_active_video_raster', None)
+            if vr is None:
+                return
+            ma = getattr(vr, 'mask_annotation', None)
+            if ma is None:
+                return
+            ma.mask_data[...] = 0
+            ma.colored_mask = None
+            ma.qimage = None
+            ma._invalidate_stats_cache()
+        except Exception:
+            pass
+
+    def _sync_video_mask_to_cache(self, frame_path=None):
         """Store the current VideoRaster mask annotation state in batch_results_cache.
 
         This bridges the direct-paint / single-image-predict path (which writes to
@@ -3630,10 +3882,18 @@ class AnnotationWindow(BaseCanvas):
         lookup so the painted mask is displayed when navigating back to this frame
         and is NOT shown on other frames.
 
-        Only does anything when the current image is a virtual video frame path.
+        Args:
+            frame_path: The virtual frame path the current ``mask_data`` belongs to.
+                Defaults to ``current_image_path`` (the displayed frame), which is
+                correct for interactive painting. Batch inference processes frames
+                other than the displayed one and MUST pass the frame it just wrote
+                so the result is cached under the right key rather than overwriting
+                the displayed frame's entry.
         """
         try:
-            if '::frame_' not in str(self.current_image_path):
+            if frame_path is None:
+                frame_path = self.current_image_path
+            if '::frame_' not in str(frame_path):
                 return
             vr = getattr(self, '_active_video_raster', None)
             if vr is None or vr.mask_annotation is None:
@@ -3659,18 +3919,22 @@ class AnnotationWindow(BaseCanvas):
             # Ensure cache dict exists
             if not hasattr(self, 'batch_results_cache') or self.batch_results_cache is None:
                 self.batch_results_cache = {}
-            self.batch_results_cache[self.current_image_path] = {
+            self.batch_results_cache[frame_path] = {
                 'mask_qimage': qimg_copy,
                 'mask_arr': ma.mask_data.copy(),
                 'opacity': opacity,
             }
-            # Immediately push the overlay to the fast image item
-            bii = getattr(self, '_base_image_item', None)
-            if bii is not None:
-                try:
-                    bii.set_mask_image(qimg_copy, opacity)
-                except Exception:
-                    pass
+            # Only push the overlay to the live fast image item when this is the
+            # frame currently on screen. During batch inference the synced frame is
+            # usually NOT the displayed one, and pushing it would show the wrong
+            # mask over the visible frame.
+            if frame_path == self.current_image_path:
+                bii = getattr(self, '_base_image_item', None)
+                if bii is not None:
+                    try:
+                        bii.set_mask_image(qimg_copy, opacity)
+                    except Exception:
+                        pass
             # Refresh slider tick marks and image-window annotation count so the
             # new mask frame is immediately reflected in the UI.
             try:
@@ -3678,20 +3942,42 @@ class AnnotationWindow(BaseCanvas):
             except Exception:
                 pass
             try:
-                self.main_window.image_window.update_image_annotations(self.current_image_path)
+                self.main_window.image_window.update_image_annotations(frame_path)
             except Exception:
                 pass
         except Exception:
             pass
 
-    def refresh_phantom_annotations(self):
+    def refresh_phantom_annotations(self, only_annotation=None):
         """Rebuild the read-only phantom layer from unselected annotations.
 
         Only PHANTOM-mode annotations are included; FULL-mode (selected)
         annotations own their own QGraphicsItemGroup and are excluded.
         Mask annotations and invisible-label annotations are skipped.
+
+        When ``only_annotation`` is given and the layer already exists, only the
+        single color group that annotation belongs to is rebuilt — O(group size)
+        instead of O(all annotations).
         """
         if self._skip_phantom_refresh or not self.active_image:
+            return
+
+        if (only_annotation is not None
+                and self._readonly_annotation_items
+                and not hasattr(only_annotation, 'mask_data')):
+            c = only_annotation.label.color
+            key = (c.red(), c.green(), c.blue(), only_annotation.transparency, False)
+            group = [
+                a for a in self.get_image_annotations()
+                if not hasattr(a, 'mask_data')
+                and getattr(a.label, 'is_visible', True)
+                and a.render_mode is RenderMode.PHANTOM
+                and a.transparency == key[3]
+                and a.label.color.red() == key[0]
+                and a.label.color.green() == key[1]
+                and a.label.color.blue() == key[2]
+            ]
+            self.update_readonly_group(key, group)
             return
 
         phantom = [
@@ -3737,7 +4023,7 @@ class AnnotationWindow(BaseCanvas):
         if not annotations:
             QApplication.restoreOverrideCursor()
             return []
-        
+
         progress_bar = None
         if verbose:
             progress_bar = ProgressBar(self, title="Cropping Annotations")
@@ -3752,7 +4038,9 @@ class AnnotationWindow(BaseCanvas):
                 rasterio_image = raster.rasterio_src
 
         if rasterio_image is None:
-            rasterio_image = rasterio_open(source_path)
+            # Normalize path for cross-drive compatibility (convert backslashes to forward slashes)
+            normalized_path = str(Path(source_path).as_posix())
+            rasterio_image = rasterio_open(normalized_path)
 
         for annotation in annotations:
             try:

@@ -3,7 +3,7 @@ import numpy as np
 
 from PyQt5.QtGui import QColor, QPen, QBrush, QPainterPath
 from PyQt5.QtCore import Qt, QPointF, QRectF, QTimer, QObject, pyqtSignal, QRunnable, QThreadPool
-from PyQt5.QtWidgets import QGraphicsEllipseItem, QMessageBox, QGraphicsRectItem, QGraphicsPathItem
+from PyQt5.QtWidgets import QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPathItem
 
 from coralnet_toolbox.QtActions import MaskEditAction
 from coralnet_toolbox.Tools.QtTool import Tool
@@ -172,9 +172,8 @@ class BrushTool(Tool):
             return
             
         if not self.annotation_window.selected_label:
-            QMessageBox.warning(self.annotation_window,
-                                "No Label Selected",
-                                "A label must be selected before using the brush tool.")
+            self.annotation_window.main_window.status_bar.showMessage(
+                "A label must be selected before using the brush tool.", 4000)
             return
         
         if not self.annotation_window.cursorInWindow(event.pos()):

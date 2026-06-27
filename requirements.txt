@@ -4,6 +4,8 @@ pyqtgraph
 ujson
 blosc2
 rasterio
+geopandas
+pyogrio
 pycocotools
 ultralytics
 lightly-train[ultralytics]
@@ -15,6 +17,8 @@ scikit-image
 umap-learn
 faiss-cpu
 transformers>=5.0.0
+timm>=1.0.0
+einops
 pyarrow
 hf_xet
 yolo-tiling>=0.0.28

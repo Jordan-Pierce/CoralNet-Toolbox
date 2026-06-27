@@ -41,7 +41,14 @@ def _query_pixels_from_csr_inverted_index(raster, element_ids: np.ndarray, width
     inv_pixels = getattr(raster, 'inv_pixels', None)
 
     if not isinstance(inv_ids, np.ndarray) or not isinstance(inv_offsets, np.ndarray) or not isinstance(inv_pixels, np.ndarray):
-        return None
+        # Build it lazily on first query for this camera (deferred from load time
+        # to bound RAM across large camera sets), then re-read.
+        if getattr(raster, 'ensure_inverted_index', None) and raster.ensure_inverted_index():
+            inv_ids = getattr(raster, 'inv_ids', None)
+            inv_offsets = getattr(raster, 'inv_offsets', None)
+            inv_pixels = getattr(raster, 'inv_pixels', None)
+        if not isinstance(inv_ids, np.ndarray) or not isinstance(inv_offsets, np.ndarray) or not isinstance(inv_pixels, np.ndarray):
+            return None
 
     inv_ids_arr = np.asarray(inv_ids)
     inv_offsets_arr = np.asarray(inv_offsets)
@@ -55,14 +62,19 @@ def _query_pixels_from_csr_inverted_index(raster, element_ids: np.ndarray, width
     inv_ids_arr = inv_ids_arr.astype(np.int64, copy=False)
     inv_offsets_arr = inv_offsets_arr.astype(np.int64, copy=False)
 
-    if inv_offsets_arr[0] != 0:
-        return None
-    if inv_offsets_arr[-1] != inv_pixels_arr.size:
-        return None
-    if np.any(inv_offsets_arr < 0) or np.any(inv_offsets_arr[1:] < inv_offsets_arr[:-1]):
-        return None
-    if inv_ids_arr.size > 1 and np.any(inv_ids_arr[1:] < inv_ids_arr[:-1]):
-        return None
+    # Structural validation is O(n) over the index arrays; run it once per CSR
+    # build and cache the verdict on the raster keyed by array identity.
+    _csr_token = (id(inv_ids), id(inv_offsets), id(inv_pixels))
+    if getattr(raster, '_csr_valid_token', None) != _csr_token:
+        if inv_offsets_arr[0] != 0:
+            return None
+        if inv_offsets_arr[-1] != inv_pixels_arr.size:
+            return None
+        if np.any(inv_offsets_arr < 0) or np.any(inv_offsets_arr[1:] < inv_offsets_arr[:-1]):
+            return None
+        if inv_ids_arr.size > 1 and np.any(inv_ids_arr[1:] < inv_ids_arr[:-1]):
+            return None
+        raster._csr_valid_token = _csr_token
 
     try:
         query_ids = np.asarray(element_ids, dtype=np.int64).ravel()
@@ -89,17 +101,21 @@ def _query_pixels_from_csr_inverted_index(raster, element_ids: np.ndarray, width
         return np.empty(0, dtype=np.int64)
 
     matched_rows = candidate_rows[row_matches]
-    chunks = []
-    for row in matched_rows.tolist():
-        start = int(inv_offsets_arr[row])
-        end = int(inv_offsets_arr[row + 1])
-        if end > start:
-            chunks.append(inv_pixels_arr[start:end])
-
-    if not chunks:
+    starts = inv_offsets_arr[matched_rows]
+    lengths = inv_offsets_arr[matched_rows + 1] - starts
+    nonempty = lengths > 0
+    starts = starts[nonempty]
+    lengths = lengths[nonempty]
+    if starts.size == 0:
         return np.empty(0, dtype=np.int64)
 
-    pixels = np.concatenate(chunks).astype(np.int64, copy=False)
+    # Vectorized multi-range gather: output position p belonging to row i maps
+    # to starts[i] + (p - exclusive_cumsum(lengths)[i]).
+    total = int(lengths.sum())
+    cum = np.cumsum(lengths)
+    offsets_per_out = np.repeat(starts - (cum - lengths), lengths)
+    gather_idx = np.arange(total, dtype=np.int64) + offsets_per_out
+    pixels = inv_pixels_arr[gather_idx].astype(np.int64, copy=False)
 
     if bbox is not None:
         bbox_clamped = _clamp_bbox_to_image(bbox, width, height)
@@ -635,7 +651,7 @@ class Camera:
     # Visualization Logic
     # --------------------------------------------------------------------------
 
-    def create_actor(self, plotter, scale=0.1):
+    def create_actor(self, plotter, scale=0.3):
         """Delegates creation of the Frustum actor to the Frustum class."""
         return self.frustum.create_actor(plotter, scale)
 

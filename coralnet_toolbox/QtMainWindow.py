@@ -38,7 +38,7 @@ from coralnet_toolbox.QtLabelWindow import LabelWindow
 from coralnet_toolbox.Explorer import AnnotationViewerWindow
 from coralnet_toolbox.Explorer import EmbeddingViewerWindow
 from coralnet_toolbox.Explorer import SelectionManager
-from coralnet_toolbox.Explorer.models.ModelRegistry import LIVE_YOLO_MODEL_PREFIX
+from coralnet_toolbox.Features.ModelRegistry import LIVE_YOLO_MODEL_PREFIX
 
 # MVAT Windows
 from coralnet_toolbox.MVAT import MVATViewer
@@ -63,6 +63,7 @@ from coralnet_toolbox.IO import (
     ImportTagLabAnnotations,
     ImportSquidleAnnotations,
     ImportMaskAnnotations,
+    ImportModel,
     ExportLabels,
     ExportTagLabLabels,
     ExportAnnotations,
@@ -75,6 +76,9 @@ from coralnet_toolbox.IO import (
     OpenProject,
     SaveProject
 )
+
+# Features dialogs
+from coralnet_toolbox.Features.QtDeployModel import FeaturesDeployModelDialog
 
 # Machine learning dialogs
 from coralnet_toolbox.MachineLearning import (
@@ -167,7 +171,6 @@ class MainWindow(QMainWindow):
 
         # Define icons
         self.coralnet_icon = get_window_icon("coralnet.svg")
-        self.coral_icon = get_window_icon("coral.svg")
         self.select_icon = get_icon("select.svg")
         self.patch_icon = get_icon("patch.svg")
         self.rectangle_icon = get_icon("rectangle.svg")
@@ -178,6 +181,7 @@ class MainWindow(QMainWindow):
         self.fill_icon = get_icon("fill.svg")
         self.sam_icon = get_icon("wizard.svg")
         self.see_anything_icon = get_icon("eye.svg")
+        self.dino_icon = get_icon("dino.svg")
         self.tile_icon = get_icon("tile.svg")
         self.workarea_icon = get_icon("workarea.svg")
         self.scale_icon = get_icon("scale.svg")
@@ -278,6 +282,7 @@ class MainWindow(QMainWindow):
         self.export_spatial_metrics_dialog = ExportSpatialMetrics(self)
         self.import_frames_dialog = ImportFrames(self)
         self.import_videos = ImportVideos(self)
+        self.import_model = ImportModel(self)
         self.open_project_dialog = OpenProject(self)
         self.save_project_dialog = SaveProject(self)
 
@@ -308,6 +313,9 @@ class MainWindow(QMainWindow):
         self.segment_deploy_model_dialog = SegmentDeployModelDialog(self)
         self.semantic_deploy_model_dialog = SemanticDeployModelDialog(self)
         self.batch_inference_dialog = BatchInferenceDialog(self)
+
+        # Create dialogs (Features)
+        self.feature_deploy_model_dialog = FeaturesDeployModelDialog(self)
 
         # Create dialogs (SAM)
         self.sam_deploy_predictor_dialog = SAMDeployPredictorDialog(self)
@@ -413,6 +421,11 @@ class MainWindow(QMainWindow):
         self.import_segment_dataset_action = QAction("Segment", self)
         self.import_segment_dataset_action.triggered.connect(self.segment_import_dataset_dialog.exec_)
         self.import_dataset_menu.addAction(self.import_segment_dataset_action)
+
+        # 3D Model
+        self.import_model_action = QAction("3D Model", self)
+        self.import_model_action.triggered.connect(self.import_model.import_model)
+        self.import_menu.addAction(self.import_model_action)
 
         # Export menu
         self.export_menu = self.file_menu.addMenu("Export")
@@ -537,17 +550,12 @@ class MainWindow(QMainWindow):
         self.scale_action.triggered.connect(self.open_scale_dialog)
         self.utilities_menu.addAction(self.scale_action)
 
-        # Rugosity
-        self.rugosity_action = QAction("Measure Rugosity", self)
-        self.rugosity_action.triggered.connect(self.open_rugosity_dialog)
-        self.utilities_menu.addAction(self.rugosity_action)
-        
         # ========== AI-ASSIST MENU ==========
         # AI-Assist menu
         self.ai_assist_menu = self.menu_bar.addMenu("AI-Assist")
         
         # SAM submenu
-        self.sam_menu = self.ai_assist_menu.addMenu("SAM")
+        self.sam_menu = self.ai_assist_menu.addMenu("Segment Anything (SAM)")
         # Deploy Predictor
         self.sam_deploy_model_action = QAction("Deploy Predictor", self)
         self.sam_deploy_model_action.triggered.connect(self.open_sam_deploy_predictor_dialog)
@@ -558,7 +566,7 @@ class MainWindow(QMainWindow):
         self.sam_menu.addAction(self.sam_deploy_generator_action)
 
         # See Anything submenu
-        self.see_anything_menu = self.ai_assist_menu.addMenu("See Anything")
+        self.see_anything_menu = self.ai_assist_menu.addMenu("See Anything (YOLOE)")
         # Train Model
         self.see_anything_train_model_action = QAction("Train Model", self)
         self.see_anything_train_model_action.triggered.connect(self.open_see_anything_train_model_dialog)
@@ -573,6 +581,22 @@ class MainWindow(QMainWindow):
         self.see_anything_deploy_generator_action = QAction("Deploy Generator", self)
         self.see_anything_deploy_generator_action.triggered.connect(self.open_see_anything_deploy_generator_dialog)
         self.see_anything_menu.addAction(self.see_anything_deploy_generator_action)
+
+        # Features submenu (at the very top): Deploy Model + Bake Features
+        self.feature_selector_menu = self.ai_assist_menu.addMenu("Feature Selector")
+        self.feature_selector_menu.setToolTipsVisible(True)
+        # Deploy Model — configure / load the dense feature extractor. Available
+        # regardless of 3D scene state (the extractor is used in 2D too).
+        self.feature_selector_deploy_action = QAction("Deploy Model", self)
+        self.feature_selector_deploy_action.triggered.connect(self.open_feature_deploy_model_dialog)
+        self.feature_selector_menu.addAction(self.feature_selector_deploy_action)
+        # Bake Features — build the Tier-2 scene feature mesh (moved here from the
+        # context-matrix toolbar). Requires a loaded 3D scene, so it's gated on
+        # the submenu opening (mirrors the old toolbar's scene-controls gating).
+        self.feature_selector_bake_action = QAction("Bake Features", self)
+        self.feature_selector_bake_action.triggered.connect(self.open_bake_features_dialog)
+        self.feature_selector_menu.addAction(self.feature_selector_bake_action)
+        self.feature_selector_menu.aboutToShow.connect(self._update_features_menu_state)
 
         # ========== MACHINE LEARNING MENU ==========
         # Machine Learning menu
@@ -813,6 +837,18 @@ class MainWindow(QMainWindow):
                              "• Press Backspace to cancel current operation or clear annotations.\n"
                              "• Uncertainty can be adjusted in Parameters section.\n"
                              "• A See Anything (YOLOE) predictor must be deployed first."),
+
+            "feature_select": ("Feature Select Tool\n\n"
+                                "Click-to-query dense-feature semantic similarity. Works on the 2D image\n"
+                                "(heatmap overlay) and, in the 3D viewer, on the baked feature mesh.\n"
+                                "• Ctrl+Left-click to add a positive prototype.\n"
+                                "• Ctrl+Right-click to add a negative prototype.\n"
+                                "• Hold Ctrl and use the mouse wheel to adjust the similarity threshold.\n"
+                                "• 2D: Space to define a work area.\n"
+                                "• 2D & 3D: Press Space to finalize: 2D creates a Polygon/Mask annotation; 3D paints\n"
+                                "  the highlighted faces (and propagates them when Multi-Annotate is on).\n"
+                                "• Press Backspace to clear the current query.\n"
+                                "Requires a deployed feature model to be deployed first.\n"),
             
             "work_area": ("Work Area Tool\n\n"
                           "Defines regions for detection and segmentation models to run predictions on.\n"
@@ -823,7 +859,8 @@ class MainWindow(QMainWindow):
                           "• Hold Ctrl+Alt to temporarily view a work area of the current view.\n"
                           "• Work areas can be used with Tile Batch Inference and other batch operations.\n"
                           "• All work areas are automatically saved with the image in a Project (JSON) file."),
-            
+
+
         }
     
         self.toolbar = QToolBar("Tools", self)
@@ -913,6 +950,12 @@ class MainWindow(QMainWindow):
         self.see_anything_tool_action.setToolTip(self.tool_descriptions["see_anything"])
         self.see_anything_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.see_anything_tool_action)
+
+        self.feature_tool_action = QAction(self.dino_icon, "Feature Select", self)
+        self.feature_tool_action.setCheckable(True)
+        self.feature_tool_action.setToolTip(self.tool_descriptions["feature_select"])
+        self.feature_tool_action.triggered.connect(self.toggle_tool)
+        self.toolbar.addAction(self.feature_tool_action)
 
         self.toolbar.addSeparator()
 
@@ -1445,7 +1488,7 @@ class MainWindow(QMainWindow):
         # - When a new image is loaded, several viewers need to refresh or
         #   re-check state (z-channel, gallery filters, embedding context).
         # - Also close any image-specific dialogs/tools that shouldn't persist
-        #   across images (patch sampling, rugosity, scale dialogs, etc.).
+        #   across images (patch sampling, scale dialogs, etc.).
         # ---------------------------------------------------------------------
         self.image_window.imageLoaded.connect(self.annotation_window.on_image_loaded_check_z_channel)
         self.image_window.imageLoaded.connect(self.annotation_viewer_window.on_image_loaded)
@@ -1890,7 +1933,11 @@ class MainWindow(QMainWindow):
                 tool_map = getattr(self.annotation_window, 'tools', None)
                 if isinstance(tool_map, dict):
                     selected_tool_object = tool_map.get(selected_tool)
-            self.mvat_viewer.set_selected_3d_tool(selected_tool if selected_tool in ('brush', 'erase') else None)
+            mapped_tool = selected_tool if selected_tool in ('brush', 'erase', 'fill', 'dropper') else None
+            if mapped_tool is None and getattr(self, 'feature_tool_action', None) is not None \
+                    and self.feature_tool_action.isChecked():
+                mapped_tool = 'feature'
+            self.mvat_viewer.set_selected_3d_tool(mapped_tool)
 
             if selected_tool in ('brush', 'erase') and selected_tool_object is not None:
                 manager = getattr(self, 'mvat_manager', None)
@@ -1927,6 +1974,7 @@ class MainWindow(QMainWindow):
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
+                self.feature_tool_action.setChecked(False)
 
                 self.toolChanged.emit("select")
             else:
@@ -1944,6 +1992,7 @@ class MainWindow(QMainWindow):
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
+                self.feature_tool_action.setChecked(False)
 
                 self.toolChanged.emit("patch")
             else:
@@ -1961,6 +2010,7 @@ class MainWindow(QMainWindow):
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
+                self.feature_tool_action.setChecked(False)
 
                 self.toolChanged.emit("rectangle")
             else:
@@ -1978,6 +2028,7 @@ class MainWindow(QMainWindow):
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
+                self.feature_tool_action.setChecked(False)
 
                 self.toolChanged.emit("polygon")
             else:
@@ -1995,6 +2046,7 @@ class MainWindow(QMainWindow):
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
+                self.feature_tool_action.setChecked(False)
 
                 self.toolChanged.emit("brush")
                 if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
@@ -2022,6 +2074,7 @@ class MainWindow(QMainWindow):
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
+                self.feature_tool_action.setChecked(False)
 
                 self.toolChanged.emit("erase")
                 if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
@@ -2049,10 +2102,21 @@ class MainWindow(QMainWindow):
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
+                self.feature_tool_action.setChecked(False)
 
                 self.toolChanged.emit("dropper")
+                if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
+                    try:
+                        self.mvat_viewer.set_selected_3d_tool("dropper")
+                    except Exception:
+                        pass
             else:
                 self.toolChanged.emit(None)
+                if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
+                    try:
+                        self.mvat_viewer.set_selected_3d_tool(None)
+                    except Exception:
+                        pass
 
         elif action == self.fill_tool_action:
             if state:
@@ -2066,10 +2130,21 @@ class MainWindow(QMainWindow):
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
+                self.feature_tool_action.setChecked(False)
 
                 self.toolChanged.emit("fill")
+                if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
+                    try:
+                        self.mvat_viewer.set_selected_3d_tool("fill")
+                    except Exception:
+                        pass
             else:
                 self.toolChanged.emit(None)
+                if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
+                    try:
+                        self.mvat_viewer.set_selected_3d_tool(None)
+                    except Exception:
+                        pass
 
         elif action == self.sam_tool_action:
             if not self.sam_deploy_predictor_dialog.loaded_model:
@@ -2089,6 +2164,7 @@ class MainWindow(QMainWindow):
                 self.fill_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
+                self.feature_tool_action.setChecked(False)
 
                 self.toolChanged.emit("sam")
             else:
@@ -2099,7 +2175,7 @@ class MainWindow(QMainWindow):
                 self.see_anything_tool_action.setChecked(False)
                 QMessageBox.warning(self,
                                     "See Anything (YOLOE)",
-                                    "You must deploy a Predictor before using the tool.")
+                                    "You must deploy a Predictor before using See Anything tool.")
                 return
             if state:
                 self.select_tool_action.setChecked(False)
@@ -2112,6 +2188,7 @@ class MainWindow(QMainWindow):
                 self.fill_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
+                self.feature_tool_action.setChecked(False)
 
                 self.toolChanged.emit("see_anything")
             else:
@@ -2129,10 +2206,48 @@ class MainWindow(QMainWindow):
                 self.fill_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
+                self.feature_tool_action.setChecked(False)
 
                 self.toolChanged.emit("work_area")
             else:
                 self.toolChanged.emit(None)
+
+        elif action == self.feature_tool_action:
+            if not getattr(self.feature_deploy_model_dialog, 'loaded_model', None):
+                self.feature_tool_action.setChecked(False)
+                QMessageBox.warning(self,
+                                    "Feature Extractor",
+                                    "You must deploy a model before using the Feature Selector tool.")
+                return
+            if state:
+                self.select_tool_action.setChecked(False)
+                self.patch_tool_action.setChecked(False)
+                self.rectangle_tool_action.setChecked(False)
+                self.polygon_tool_action.setChecked(False)
+                self.brush_tool_action.setChecked(False)
+                self.erase_tool_action.setChecked(False)
+                self.dropper_tool_action.setChecked(False)
+                self.fill_tool_action.setChecked(False)
+                self.sam_tool_action.setChecked(False)
+                self.see_anything_tool_action.setChecked(False)
+                self.work_area_tool_action.setChecked(False)
+
+                # 2D: activate the FeatureSelectTool in the annotation window.
+                self.toolChanged.emit("feature_select")
+
+                # 3D: mirror to the mesh feature tool (parity with brush/erase/etc).
+                if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
+                    try:
+                        self.mvat_viewer.set_selected_3d_tool('feature')
+                    except Exception:
+                        pass
+            else:
+                self.toolChanged.emit(None)
+                if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
+                    try:
+                        self.mvat_viewer.set_selected_3d_tool(None)
+                    except Exception:
+                        pass
 
         self._sync_mvat_3d_tool_selection()
 
@@ -2153,6 +2268,7 @@ class MainWindow(QMainWindow):
         self.sam_tool_action.setChecked(False)
         self.see_anything_tool_action.setChecked(False)
         self.work_area_tool_action.setChecked(False)
+        self.feature_tool_action.setChecked(False)
 
         # Emit to reset the tool
         self.toolChanged.emit(None)
@@ -2178,9 +2294,10 @@ class MainWindow(QMainWindow):
             action.setEnabled(enabled)
         if not enabled:
             # Untoggle any of these tools that are currently active
-            needs_reset = any(a.isChecked() for a in video_locked_actions)
+            needs_reset = any(a.isChecked() for a in video_locked_actions) or self.feature_tool_action.isChecked()
             for action in video_locked_actions:
                 action.setChecked(False)
+            self.feature_tool_action.setChecked(False)
             if needs_reset:
                 self.toolChanged.emit(None)
                 self._sync_mvat_3d_tool_selection()
@@ -2202,6 +2319,7 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
+            self.feature_tool_action.setChecked(False)
 
         elif tool == "patch":
             self.select_tool_action.setChecked(False)
@@ -2215,6 +2333,7 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
+            self.feature_tool_action.setChecked(False)
 
         elif tool == "rectangle":
             self.select_tool_action.setChecked(False)
@@ -2229,6 +2348,7 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
+            self.feature_tool_action.setChecked(False)
 
         elif tool == "polygon":
             self.select_tool_action.setChecked(False)
@@ -2242,6 +2362,7 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
+            self.feature_tool_action.setChecked(False)
 
         elif tool == "brush":
             self.select_tool_action.setChecked(False)
@@ -2255,6 +2376,7 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
+            self.feature_tool_action.setChecked(False)
 
         elif tool == "erase":
             self.select_tool_action.setChecked(False)
@@ -2268,6 +2390,7 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
+            self.feature_tool_action.setChecked(False)
 
         elif tool == "dropper":
             self.select_tool_action.setChecked(False)
@@ -2281,6 +2404,7 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
+            self.feature_tool_action.setChecked(False)
 
         elif tool == "fill":
             self.select_tool_action.setChecked(False)
@@ -2294,6 +2418,7 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
+            self.feature_tool_action.setChecked(False)
 
         elif tool == "sam":
             self.select_tool_action.setChecked(False)
@@ -2307,6 +2432,7 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(True)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
+            self.feature_tool_action.setChecked(False)
 
         elif tool == "see_anything":
             self.select_tool_action.setChecked(False)
@@ -2320,6 +2446,7 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(True)
             self.work_area_tool_action.setChecked(False)
+            self.feature_tool_action.setChecked(False)
 
         elif tool == "work_area":
             self.select_tool_action.setChecked(False)
@@ -2333,6 +2460,7 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(True)
+            self.feature_tool_action.setChecked(False)
             
         elif tool == "scale":
             self.select_tool_action.setChecked(False)
@@ -2346,6 +2474,7 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
+            self.feature_tool_action.setChecked(False)
                     
         elif tool == "patch_sampling":
             # Patch Sampling has no toolbar button - uncheck all toolbar buttons
@@ -2360,21 +2489,8 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
+            self.feature_tool_action.setChecked(False)
             
-        elif tool == "rugosity":
-            # Rugosity has no toolbar button - uncheck all toolbar buttons
-            self.select_tool_action.setChecked(False)
-            self.patch_tool_action.setChecked(False)
-            self.rectangle_tool_action.setChecked(False)
-            self.polygon_tool_action.setChecked(False)
-            self.brush_tool_action.setChecked(False)
-            self.erase_tool_action.setChecked(False)
-            self.dropper_tool_action.setChecked(False)
-            self.fill_tool_action.setChecked(False)
-            self.sam_tool_action.setChecked(False)
-            self.see_anything_tool_action.setChecked(False)
-            self.work_area_tool_action.setChecked(False)
-
         else:
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
@@ -2387,27 +2503,10 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
+            self.feature_tool_action.setChecked(False)
 
-        if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
-            try:
-                selected_tool = None
-                if hasattr(self, 'annotation_window') and self.annotation_window is not None:
-                    selected_tool = self.annotation_window.get_selected_tool()
-                self.mvat_viewer.set_selected_3d_tool(selected_tool if selected_tool in ('brush', 'erase') else None)
+        self._sync_mvat_3d_tool_selection()
 
-                if selected_tool in ('brush', 'erase'):
-                    manager = getattr(self, 'mvat_manager', None)
-                    tool_map = getattr(self.annotation_window, 'tools', None)
-                    if manager is not None and isinstance(tool_map, dict):
-                        selected_tool_object = tool_map.get(selected_tool)
-                        if selected_tool_object is not None:
-                            try:
-                                manager.on_2d_tool_size_changed(selected_tool_object)
-                            except Exception:
-                                pass
-            except Exception:
-                pass
-    
     def get_available_devices(self):
         """Get a list of available devices for PyTorch."""
         devices = ['cpu',]
@@ -2517,7 +2616,7 @@ class MainWindow(QMainWindow):
 
     # TODO update IO classes to have dialogs
     def open_import_frames_dialog(self):
-        """Open the Import Frames dialog to import frames into the project"""
+        """Open the Extract Frames dialog to extract frames into the project"""
         try:
             self.untoggle_all_tools()
             self.import_frames_dialog.exec_()
@@ -2647,41 +2746,6 @@ class MainWindow(QMainWindow):
             self.untoggle_all_tools()
             # Activate the patch sampling tool
             self.annotation_window.set_selected_tool("patch_sampling")
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-
-    def open_rugosity_dialog(self):
-        """Open the Rugosity tool for measuring rugosity and spatial analysis"""
-        # Check if there is an image loaded
-        image_path = self.annotation_window.current_image_path
-        if not image_path:
-            QMessageBox.warning(self,
-                                "No Image Loaded",
-                                "Please load an image before using the Rugosity tool.")
-            return
-        
-        # Check if scale is set on current image
-        raster = self.image_window.raster_manager.get_raster(image_path)
-        if not raster or not raster.scale_x or not raster.scale_y:
-            QMessageBox.warning(self,
-                                "Scale Not Set",
-                                "The Rugosity tool requires scale to be set on the current image.\n\n"
-                                "Please use the Scale Tool to set the scale first.")
-            return
-        
-        # Check the z-channel existing for the current image
-        if not raster.has_z_channel():
-            QMessageBox.warning(self,
-                                "Z-Channel Not Found",
-                                "The Rugosity tool requires a z-channel in the current image.\n\n"
-                                "Please ensure the image has a z-channel before using the Rugosity tool.")
-            return
-        
-        try:
-            # Deactivate other tools
-            self.untoggle_all_tools()
-            # Activate the rugosity tool
-            self.annotation_window.set_selected_tool("rugosity")
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
@@ -3055,6 +3119,109 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
+    def open_sam_deploy_predictor_dialog(self):
+        """Open the SAM Deploy Predictor dialog to deploy a SAM predictor."""
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "SAM Deploy Predictor",
+                                "No images are present in the project.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.sam_deploy_predictor_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_sam_deploy_generator_dialog(self):
+        """Open the SAM Deploy Generator dialog to deploy a SAM generator."""
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "SAM Deploy Generator",
+                                "No images are present in the project.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.sam_deploy_generator_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_see_anything_train_model_dialog(self):
+        """Open the See Anything Train Model dialog to train a See Anything model."""
+        try:
+            self.untoggle_all_tools()
+            self.see_anything_train_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_see_anything_deploy_predictor_dialog(self):
+        """Open the See Anything Deploy Predictor dialog to deploy a See Anything predictor."""
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "See Anything (YOLOE)",
+                                "No images are present in the project.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.see_anything_deploy_predictor_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_see_anything_deploy_generator_dialog(self):
+        """Open the See Anything Deploy Generator dialog to deploy a See Anything generator."""
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "See Anything (YOLOE)",
+                                "No images are present in the project.")
+            return
+        
+        if len(self.label_window.labels) <= 1:
+            QMessageBox.warning(self,
+                                "See Anything (YOLOE)",
+                                "At least one reference label is required for reference.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.see_anything_deploy_generator_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"An error occurred: {e}")
+
+    def open_feature_deploy_model_dialog(self):
+        """Open the Feature Extractor configuration dialog."""
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "Feature Extractor",
+                                "No images are present in the project.")
+            return
+    
+        try:
+            self.untoggle_all_tools()
+            self.feature_deploy_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+    
+    def _update_features_menu_state(self):
+        """Enable 'Bake Features' only when a 3D scene is loaded (a mesh/point cloud)."""
+        has_scene = False
+        try:
+            scene_context = getattr(self.mvat_viewer, 'scene_context', None)
+            has_scene = bool(scene_context is not None and scene_context.has_any_product())
+        except Exception:
+            has_scene = False
+
+        self.feature_selector_bake_action.setEnabled(has_scene)
+
+    def open_bake_features_dialog(self):
+        """Open the Tier-2 Bake Features dialog (moved from the context-matrix toolbar)."""
+        try:
+            self.untoggle_all_tools()
+            self.mvat_manager._on_bake_features_requested()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
     def open_classify_merge_datasets_dialog(self):
         """Open the Classify Merge Datasets dialog to merge datasets."""
         try:
@@ -3296,76 +3463,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
-    def open_sam_deploy_predictor_dialog(self):
-        """Open the SAM Deploy Predictor dialog to deploy a SAM predictor."""
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.warning(self,
-                                "SAM Deploy Predictor",
-                                "No images are present in the project.")
-            return
-
-        try:
-            self.untoggle_all_tools()
-            self.sam_deploy_predictor_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-
-    def open_sam_deploy_generator_dialog(self):
-        """Open the SAM Deploy Generator dialog to deploy a SAM generator."""
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.warning(self,
-                                "SAM Deploy Generator",
-                                "No images are present in the project.")
-            return
-
-        try:
-            self.untoggle_all_tools()
-            self.sam_deploy_generator_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-
-    def open_see_anything_train_model_dialog(self):
-        """Open the See Anything Train Model dialog to train a See Anything model."""
-        try:
-            self.untoggle_all_tools()
-            self.see_anything_train_model_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-
-    def open_see_anything_deploy_predictor_dialog(self):
-        """Open the See Anything Deploy Predictor dialog to deploy a See Anything predictor."""
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.warning(self,
-                                "See Anything (YOLOE)",
-                                "No images are present in the project.")
-            return
-
-        try:
-            self.untoggle_all_tools()
-            self.see_anything_deploy_predictor_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-            
-    def open_see_anything_deploy_generator_dialog(self):
-        """Open the See Anything Deploy Generator dialog to deploy a See Anything generator."""
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.warning(self,
-                                "See Anything (YOLOE)",
-                                "No images are present in the project.")
-            return
-        
-        if len(self.label_window.labels) <= 1:
-            QMessageBox.warning(self,
-                                "See Anything (YOLOE)",
-                                "At least one reference label is required for reference.")
-            return
-
-        try:
-            self.untoggle_all_tools()
-            self.see_anything_deploy_generator_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"An error occurred: {e}")
-            
     def open_usage_dialog(self):
         """Display QMessageBox with link to create new issue on GitHub."""
         try:
@@ -3373,7 +3470,7 @@ class MainWindow(QMainWindow):
             # URL to create a new issue
             here = '<a href="https://jordan-pierce.github.io/CoralNet-Toolbox/usage">here</a>'
             msg = QMessageBox()
-            msg.setWindowIcon(self.coral_icon)
+            msg.setWindowIcon(self.coralnet_icon)
             msg.setWindowTitle("Usage Information")
             msg.setText(f'For information on how to use the toolbox, see {here}.')
             msg.setTextFormat(Qt.RichText)
@@ -3439,7 +3536,7 @@ class MainWindow(QMainWindow):
             # URL to create a new issue
             here = '<a href="https://github.com/Jordan-Pierce/CoralNet-Toolbox/issues/new/choose">here</a>'
             msg = QMessageBox()
-            msg.setWindowIcon(self.coral_icon)
+            msg.setWindowIcon(self.coralnet_icon)
             msg.setWindowTitle("Issues / Feature Requests")
             msg.setText(f'Click {here} to create a new issue or feature request.')
             msg.setTextFormat(Qt.RichText)
@@ -3481,7 +3578,7 @@ class MainWindow(QMainWindow):
     # Special Windows
     
     def close_image_specific_dialogs(self):
-        """Close image-specific dialogs (e.g., patch sampling, rugosity) when a new image is loaded."""
+        """Close image-specific dialogs (e.g., patch sampling, scale) when a new image is loaded."""
         # Check if there is a dialog tool selected, if so, get the tool
         if self.annotation_window.selected_tool:
             selected_tool = self.annotation_window.selected_tool
@@ -3496,10 +3593,6 @@ class MainWindow(QMainWindow):
                 self.annotation_window.tools[selected_tool].dialog.cleanup()
                 self.annotation_window.set_selected_tool(None)
             
-            # Deactivate rugosity tool if active
-            if selected_tool == "rugosity":
-                self.annotation_window.tools[selected_tool].dialog.cleanup()
-                self.annotation_window.set_selected_tool(None)
     
     def handle_image_changed(self):
         """Handle actions needed when the image is changed."""

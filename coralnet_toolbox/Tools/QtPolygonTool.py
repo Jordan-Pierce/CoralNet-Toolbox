@@ -2,8 +2,6 @@ import warnings
 
 from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtGui import QMouseEvent, QKeyEvent
-from PyQt5.QtWidgets import QMessageBox
-
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 
@@ -42,9 +40,8 @@ class PolygonTool(Tool):
     def mousePressEvent(self, event: QMouseEvent):
         """Handles mouse press events for starting, continuing, or finishing polygon drawing."""
         if not self.annotation_window.selected_label:
-            QMessageBox.warning(self.annotation_window,
-                                "No Label Selected",
-                                "A label must be selected before adding an annotation.")
+            self.annotation_window.main_window.status_bar.showMessage(
+                "A label must be selected before adding an annotation.", 4000)
             return None
         
         # Add cursor bounds check
@@ -183,10 +180,8 @@ class PolygonTool(Tool):
                         QPointF(center_x - MIN_SIZE, center_y - MIN_SIZE)  # Close the polygon
                     ]
                     
-                    QMessageBox.information(
-                        self.annotation_window, 
-                        "Polygon Adjusted",
-                        "The polygon had too few unique points and has been adjusted to a minimum size."
+                    self.annotation_window.main_window.status_bar.showMessage(
+                        "The polygon had too few unique points and has been adjusted to a minimum size.", 4000
                     )
             
             # Use the filtered points list instead of the original

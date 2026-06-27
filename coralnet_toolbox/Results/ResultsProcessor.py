@@ -133,7 +133,7 @@ class ResultsProcessor:
 
         return list(indices)
     
-    def _process_single_result_set(self, results, model_type):
+    def _process_single_result_set(self, results, model_type, existing_annotations=None):
         """
         Processes a *single* Results object from a single work area.
         
@@ -165,10 +165,11 @@ class ResultsProcessor:
         np_scores = new_scores.numpy()
         
         # --- 3. Fast-Extract Existing Annotations ---
-        existing_annotations = self.annotation_window.get_image_annotations(image_path)
-        existing_annotations = [a for a in existing_annotations if (isinstance(a, RectangleAnnotation) or 
-                                                                    isinstance(a, PolygonAnnotation))]
-        
+        if existing_annotations is None:
+            existing_annotations = self.annotation_window.get_image_annotations(image_path)
+            existing_annotations = [a for a in existing_annotations if (isinstance(a, RectangleAnnotation) or
+                                                                        isinstance(a, PolygonAnnotation))]
+
         if existing_annotations:
             ext_boxes = []
             for ann in existing_annotations:
@@ -599,10 +600,20 @@ class ResultsProcessor:
         all_new_annos = []
         contributing_sources = 0
 
+        existing_by_path = {}
         for results in results_list:
             if not results or not results.boxes:
                 continue
-            new_annos = self._process_single_result_set(results, 'segmentation')
+            image_path = results.path.replace("\\", "/")
+            if image_path not in existing_by_path:
+                anns = self.annotation_window.get_image_annotations(image_path)
+                existing_by_path[image_path] = [
+                    a for a in anns
+                    if isinstance(a, (RectangleAnnotation, PolygonAnnotation))
+                ]
+            new_annos = self._process_single_result_set(
+                results, 'segmentation',
+                existing_annotations=existing_by_path[image_path])
             if new_annos:
                 all_new_annos.extend(new_annos)
                 contributing_sources += 1
@@ -621,10 +632,20 @@ class ResultsProcessor:
         all_new_annos = []
         contributing_sources = 0
 
+        existing_by_path = {}
         for results in results_list:
             if not results or not results.boxes:
                 continue
-            new_annos = self._process_single_result_set(results, 'detection')
+            image_path = results.path.replace("\\", "/")
+            if image_path not in existing_by_path:
+                anns = self.annotation_window.get_image_annotations(image_path)
+                existing_by_path[image_path] = [
+                    a for a in anns
+                    if isinstance(a, (RectangleAnnotation, PolygonAnnotation))
+                ]
+            new_annos = self._process_single_result_set(
+                results, 'detection',
+                existing_annotations=existing_by_path[image_path])
             if new_annos:
                 all_new_annos.extend(new_annos)
                 contributing_sources += 1

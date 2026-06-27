@@ -1,6 +1,6 @@
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPen, QPainterPath, QColor
-from PyQt5.QtWidgets import QGraphicsPathItem, QMessageBox
+from PyQt5.QtWidgets import QGraphicsPathItem
 
 from coralnet_toolbox.Tools.QtSubTool import SubTool
 
@@ -43,12 +43,10 @@ class CutSubTool(SubTool):
 
         if not self.target_annotation.verified:
             # Only verified annotations can be cut
-            QMessageBox.warning(
-                self.annotation_window, "Cannot Cut",
-                "Cannot alter annotations that still have machine learning predictions until they are verified. "
-                "This prevents changes to machine-generated labels before user confirmation. To verify an "
-                "annotation, select it and press Ctrl+Space, click a label in the ConfidenceWindow, or update "
-                "the label manually."
+            self.annotation_window.main_window.status_bar.showMessage(
+                "Cannot cut: verify by selecting and pressing Ctrl+Space, "
+                "clicking a label in the ConfidenceWindow, or updating the label manually.",
+                5000,
             )
             self.parent_tool.deactivate_subtool()
             return

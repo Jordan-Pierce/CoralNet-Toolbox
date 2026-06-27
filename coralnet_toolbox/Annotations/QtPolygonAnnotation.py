@@ -393,9 +393,10 @@ class PolygonAnnotation(Annotation):
             return None
 
         # --- Create the painter path with translated coordinates ---
-        # The path needs coordinates relative to the cropped image's top-left corner.
-        offset_x = self.cropped_bbox[0]
-        offset_y = self.cropped_bbox[1]
+        # Use the actual integer crop origin (set by create_cropped_image) so the
+        # polygon overlay aligns pixel-perfectly with the cropped image data.
+        offset_x = getattr(self, '_crop_origin_x', self.cropped_bbox[0])
+        offset_y = getattr(self, '_crop_origin_y', self.cropped_bbox[1])
 
         path = QPainterPath()
         path.setFillRule(Qt.OddEvenFill)
@@ -457,32 +458,37 @@ class PolygonAnnotation(Annotation):
         """Create a cropped image from the rasterio source based on the polygon points."""
         # Clear cached graphic when creating new cropped image
         self._cached_cropped_image_graphic = None
-        
+
         # Set the rasterio source for the annotation
         self.rasterio_src = rasterio_src
         # Set the cropped bounding box for the annotation
         self.set_cropped_bbox()
         # Get the bounding box of the polygon
         min_x, min_y, max_x, max_y = self.cropped_bbox
-        
+
         # Ensure min/max values are correctly ordered
         min_x, max_x = min(min_x, max_x), max(min_x, max_x)
         min_y, max_y = min(min_y, max_y), max(min_y, max_y)
-        
+
         # Clamp values to image bounds
         min_x = max(0, min(rasterio_src.width - 1, min_x))
         min_y = max(0, min(rasterio_src.height - 1, min_y))
         max_x = max(min_x + 1, min(rasterio_src.width, max_x))
         max_y = max(min_y + 1, min(rasterio_src.height, max_y))
-    
+
+        # Store the actual integer crop origin so _create_cropped_image_graphic
+        # can align the polygon overlay pixel-perfectly with the image data.
+        self._crop_origin_x = int(min_x)
+        self._crop_origin_y = int(min_y)
+
         # Calculate the window for rasterio
         window = Window(
-            col_off=int(min_x),
-            row_off=int(min_y),
+            col_off=self._crop_origin_x,
+            row_off=self._crop_origin_y,
             width=int(max_x - min_x),
             height=int(max_y - min_y)
         )
-    
+
         # Convert rasterio to QImage
         q_image = rasterio_to_cropped_image(self.rasterio_src, window)
         # Convert QImage to QPixmap

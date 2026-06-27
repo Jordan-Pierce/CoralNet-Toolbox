@@ -259,11 +259,17 @@ class DeployGeneratorDialog(QDialog):
             raster = self.image_selection_window.raster_manager.get_raster(path)
             if not raster:
                 continue
-                
+
+            # Skip VideoRasters — VPE generation requires loading a static image
+            # from the path, which doesn't work for video files. Users should
+            # extract frames first if they want to use video content as references.
+            if getattr(raster, 'raster_type', None) == 'VideoRaster':
+                continue
+
             # 1. From the cache, get the set of annotation types specifically for our selected label.
             #    Use .get() to safely return an empty set if the label isn't on this image at all.
             types_for_this_label = raster.label_to_types_map.get(selected_label_code, set())
-            
+
             # 2. Check for any overlap between the types found FOR THIS LABEL and the
             #    valid types we need (Polygon/Rectangle). This is the key check.
             if not valid_types.isdisjoint(types_for_this_label):
@@ -679,6 +685,9 @@ class DeployGeneratorDialog(QDialog):
         Return a list of bboxes and masks for a specific image
         belonging to the selected label.
 
+        For VideoRaster paths, annotations are stored under virtual frame paths
+        (e.g. video.mp4::frame_42), so aggregate across all frames.
+
         :param reference_label: The Label object to filter annotations by.
         :param reference_image_path: The path of the image to get annotations from.
         :return: A tuple containing a numpy array of bboxes and a list of masks.
@@ -1012,8 +1021,20 @@ class DeployGeneratorDialog(QDialog):
                     and self.annotation_window.get_selected_tool() == "work_area"
                 )
                 if use_tiles:
-                    work_areas = raster.get_work_areas()
-                    work_items_data = raster.get_work_areas_data()
+                    # A VideoRaster stores work areas for every frame in one flat
+                    # list keyed by the virtual frame path; restrict to the frame
+                    # being processed so we don't tile other frames' areas against
+                    # the current frame's pixels.
+                    all_areas = raster.get_work_areas()
+                    frame_areas = [wa for wa in all_areas if wa.image_path == image_path]
+                    if frame_areas and len(frame_areas) != len(all_areas):
+                        work_areas = frame_areas
+                        work_items_data = [
+                            raster.get_work_area_data(wa) for wa in frame_areas
+                        ]
+                    else:
+                        work_areas = all_areas
+                        work_items_data = raster.get_work_areas_data()
                 else:
                     work_areas = [None]
                     # For virtual video frame paths, decode the specific frame
@@ -1094,6 +1115,12 @@ class DeployGeneratorDialog(QDialog):
                                     results_obj, raster, work_area, is_segmentation,
                                     boundary_tolerance=self.thresholds_widget.get_boundary_tolerance()
                                 )
+                                # map_results_from_work_area resets result.path to
+                                # the bare raster.image_path; for a virtual video
+                                # frame (video.mp4::frame_N) that drops the frame
+                                # suffix and the baked annotations get keyed to the
+                                # wrong path and vanish on redraw. Restore it.
+                                mapped_result.path = image_path
                             else:
                                 mapped_result = results_obj
 

@@ -24,6 +24,7 @@ from coralnet_toolbox.MVAT.core.Ray import CameraRay
 from coralnet_toolbox.MVAT.managers.SelectionManager import SelectionManager
 from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
 from coralnet_toolbox.MVAT.workers.VisibilityWorker import VisibilityWorker
+from coralnet_toolbox.MVAT.managers.PersistentRasterizer import PersistentRasterizer
 from coralnet_toolbox.MVAT.managers.CacheManager import CacheManager
 from coralnet_toolbox.MVAT.workers.LabelWorker import LabelWorker
 from coralnet_toolbox.MVAT.utils.MVATLogger import (
@@ -37,7 +38,7 @@ from coralnet_toolbox.MVAT.core.constants import (
     MARKER_COLOR_INVALID,
 )
 
-from coralnet_toolbox.MVAT.core.Products import MeshProduct
+from coralnet_toolbox.MVAT.core.Products import MeshProduct, PointCloudProduct, GaussianSplattingProduct
 from coralnet_toolbox.MVAT.managers.MousePositionBridge import MousePositionBridge
 from coralnet_toolbox.MVAT.managers.PropagationEngine import PropagationEngine
 
@@ -59,6 +60,9 @@ class MVATManager(QObject):
     cameraSelectedInMVAT = pyqtSignal(str)
     contextStatsComputed = pyqtSignal(int, str, int, int)
     _orthoIndexMapReady  = pyqtSignal(object)  # internal: carries result dict from worker thread
+    _visibilityCacheLoaded = pyqtSignal(object)  # internal: disk-cache load results from worker thread
+    _cacheToDiskFinished = pyqtSignal(int, int)  # internal: (saved, total) from manual cache thread
+    _warmMapsReady = pyqtSignal(object)  # internal: {path: index_map} from the off-thread warm batch
 
     def __getattr__(self, name):
         """Delegate unknown attributes to propagation_engine.
@@ -133,8 +137,19 @@ class MVATManager(QObject):
         self.compute_depth_maps_enabled = True
         # New toggle: whether to compute index maps in background
         self.compute_index_maps_enabled = True
+        # Stage 1 densification: expand sparse index-map-sampled face IDs into a
+        # dense surface patch via the face-center KD-tree before propagation.
+        # See MeshProduct.gather_dense_face_ids / PropagationEngine._densify_source_ids.
+        # Tunable from the Propagation Hub dropdown (Settings → Densify).
+        self.densify_enabled = True
+        self.densify_radius_mult = 1.5      # gather radius vs. median seed spacing
+        self.densify_normal_dot_min = 0.3   # lower = include more curved surface
+        self.densify_max_expansion = 40.0   # circuit-breaker ceiling (× seed count)
         # Maximum pixel budget for background index map computation
         self.pixel_budget = 4_000_000  # Default to ~4 Megapixels
+        # True once the user has explicitly picked a quality this session (via
+        # the visibility dialog); blocks cache-loaded archives from overriding it.
+        self._pixel_budget_user_set = False
         # Number of parallel workers for cache disk I/O
         self._cache_n_workers = 4  # Default to 4 workers
         # Safety factor for distortion VRAM allocation (0.8 = 80% of free VRAM)
@@ -146,8 +161,45 @@ class MVATManager(QObject):
             self._distortion_vram_safety_factor = 0.8
         # Safety flag to prevent concurrent visibility computations
         self._is_computing_visibility = False
+        # Camera paths whose index maps are currently loading from disk cache
+        # in the background (guards duplicate loads across rapid UI events).
+        self._inflight_cache_loads = set()
         # Track active worker threads to prevent GC
         self._active_workers = []
+        # Warm GL-context service shared by all background visibility passes. Owns
+        # the moderngl context on a dedicated thread and keeps mesh/point geometry
+        # uploaded across runs, so incremental camera adds skip the full context
+        # rebuild + geometry re-upload. The owner thread starts lazily on first
+        # render and is torn down in cleanup().
+        self.persistent_rasterizer = PersistentRasterizer()
+        # Aggressive index-map mode: when False, the session never reads or writes
+        # index maps to disk. Maps are computed in RAM and regenerated on demand
+        # from the warm rasterizer (~25-40ms/cam); disk is touched only by the
+        # explicit "Cache Index Maps to Disk" action. Set True to restore the
+        # legacy disk-cache-during-navigation behavior.
+        self.index_map_disk_cache_enabled = False
+        # Aggressive-mode RAM retention for index maps that get unpinned when a
+        # camera leaves the context matrix. Holding a bounded set of recently
+        # unpinned maps means removing + re-adding a working set is a RAM hit
+        # rather than a recompute. Keyed by image_path, insertion-ordered (oldest
+        # first) for LRU eviction once over the byte budget. Tune the budget freely
+        # — on Windows freed pages aren't returned to the OS anyway, so retaining
+        # maps mostly reuses already-committed memory.
+        self._unpinned_map_cache = {}
+        self._unpinned_map_cache_max_bytes = 10 * 1024**3
+        # Cameras whose dense map is being batch-warmed off-thread (guards against
+        # launching duplicate warm batches for the same cameras on rapid changes).
+        self._inflight_warm_maps = set()
+        # Bumped when geometry/budget changes; an in-flight warm batch tagged with
+        # an older generation is discarded instead of seeding stale maps.
+        self._warm_generation = 0
+        # Deferred 3D camera glide: a camera switch runs the glide LAST, after the
+        # AnnotationWindow, ContextMatrix canvases, and the visibility worker have
+        # all settled. The token supersedes a pending glide when the user picks a
+        # new camera first; _pending_anim_fire is invoked by _on_visibility_computed.
+        self._pending_anim_token = 0
+        self._pending_anim_camera = None
+        self._pending_anim_fire = None
         self._context_stats_request_id = 0
         self._latest_context_stats_request_id = 0
         self._depth_build_lock = threading.Lock()
@@ -167,6 +219,33 @@ class MVATManager(QObject):
         self.cache_manager = CacheManager("")
         self.mouse_bridge = MousePositionBridge(self)
 
+        # FeatureMeshManager handles Tier-2 feature buffer baking, querying, and caching
+        # (constructed after cache_manager is ready)
+        from coralnet_toolbox.MVAT.managers.FeatureMeshManager import FeatureMeshManager
+        self.feature_mesh_manager = FeatureMeshManager(self)
+
+        # PaintShaderManager renders the "Labels" array via a GPU class-id shader
+        # (gating paint to the Labels array + buttery-smooth texture-update painting).
+        from coralnet_toolbox.MVAT.managers.PaintShaderManager import PaintShaderManager
+        self.paint_shader_manager = PaintShaderManager(self)
+
+        # Drive the label-over-array blend opacity from the annotation window's
+        # existing transparency slider (0..255) rather than a separate 3D control,
+        # so 2D and 3D label transparency stay in one place. On the Labels array the
+        # shader shows labels fully (replace mode); on RGB / Texture it blends at the
+        # slider's opacity (0 == hidden off the Labels array).
+        try:
+            slider = getattr(self.annotation_window, 'transparency_slider', None)
+            if slider is not None:
+                self.paint_shader_manager.paint_opacity = max(
+                    0.0, min(1.0, slider.value() / 255.0)
+                )
+                slider.valueChanged.connect(
+                    lambda v: self.viewer._apply_paint_blend_opacity(v / 255.0)
+                )
+        except Exception:
+            pass
+
         # Lazy flush debounce timer: 3D GPU uploads happen only after the user pauses.
         self._lazy_flush_timer = QTimer(self)
         self._lazy_flush_timer.setSingleShot(True)
@@ -182,6 +261,19 @@ class MVATManager(QObject):
 
         # Overlay actor handle (tiny actor swapped during painting)
         self._label_overlay_actor = None
+        # Persistent "committed paint" overlay: all painted faces, kept on top of
+        # the base mesh so the heavy Labels GPU flush can be deferred (Tier 2).
+        self._committed_overlay_actor = None
+        # Point-cloud label overlay actor (painted points rendered on top of the cloud).
+        self._point_label_overlay_actor = None
+        self._point_overlay_last_render_time = None
+        # Point-cloud stroke-only overlay (current drag), swapped in place per move.
+        self._point_stroke_overlay_actor = None
+        self._point_stroke_chunks = []
+        self._point_stroke_mask = None
+        # True when any erase (class 0) was submitted since the last stroke commit;
+        # erasing over a previously-flushed VTK array requires a real flush.
+        self._active_stroke_had_erase = False
         self._hover_overlay_actor = None
         self._hover_overlay_context = None
         self._hover_overlay_face_ids = None
@@ -227,6 +319,9 @@ class MVATManager(QObject):
         self.viewer.computeDepthMapsToggled.connect(self._on_compute_depth_maps_toggled)
         self.viewer.primaryTargetChanged.connect(self._on_primary_target_changed)
         self._orthoIndexMapReady.connect(self._on_ortho_index_map_computed)
+        self._visibilityCacheLoaded.connect(self._on_visibility_cache_loaded)
+        self._cacheToDiskFinished.connect(self._on_cache_to_disk_finished)
+        self._warmMapsReady.connect(self._on_warm_maps_ready)
         
         # 5. Main Window Sync
         if hasattr(self.annotation_window, 'mouseMoved'):
@@ -236,11 +331,14 @@ class MVATManager(QObject):
         label_window = getattr(self.main_window, 'label_window', None)
         if label_window is not None and hasattr(label_window, 'labelSelected'):
             label_window.labelSelected.connect(self._on_label_window_selected)
+        if label_window is not None and hasattr(label_window, 'labelVisibilityChanged'):
+            label_window.labelVisibilityChanged.connect(self._on_label_visibility_changed_3d)
         # 6. Context Matrix Signals
         if self.context_matrix is not None:
             # Toolbar buttons
             self.context_matrix.loadCamerasRequested.connect(self.load_cameras)
             self.context_matrix.loadIndexMapsRequested.connect(self.load_index_maps)
+            self.context_matrix.cacheIndexMapsRequested.connect(self.cache_index_maps_to_disk)
             self.context_matrix.clearSelectionsRequested.connect(self.selection_model.clear_selections)
             self.context_matrix.previousCameraRequested.connect(self._on_previous_camera_requested)
             self.context_matrix.nextCameraRequested.connect(self._on_next_camera_requested)
@@ -248,6 +346,7 @@ class MVATManager(QObject):
             # Canvas click intents
             self.context_matrix.camera_highlighted_single.connect(self._on_camera_highlighted_single)
             self.context_matrix.new_active_camera_requested.connect(self._on_camera_selected)
+            self.context_matrix.frustumHoverRequested.connect(self._on_frustum_hover_requested)
             # Phase 5 / multi-annotate
             self.context_matrix.set_mvat_manager(self)
             self.context_matrix.multiAnnotateToggled.connect(self._on_multi_annotate_toggled)
@@ -391,7 +490,8 @@ class MVATManager(QObject):
                     uncached_cameras.append(cam)
 
             if uncached_cameras:
-                choice_mode, new_budget, n_workers, dtype, enable_cache = self._prompt_visibility_quality_dialog(
+                (choice_mode, new_budget, n_workers, enable_cache,
+                 enable_compression, splat_radius, splat_round) = self._prompt_visibility_quality_dialog(
                     len(uncached_cameras)
                 )
 
@@ -400,9 +500,12 @@ class MVATManager(QObject):
 
                 previous_budget = getattr(self, 'pixel_budget', None)
                 self.pixel_budget = new_budget
+                self._pixel_budget_user_set = True
                 self._cache_n_workers = n_workers  # Store for use in _compute_visibility_async
-                self.debug_frag_face_id_dtype = dtype  # Debug: frag face ID dtype
                 self.debug_enable_cache = enable_cache  # Debug: enable/disable caching
+                self.debug_enable_compression = enable_compression  # Debug: compress cache or not
+                self.debug_splat_radius = splat_radius  # Debug: point-cloud splat sprite radius (px)
+                self.debug_splat_round = splat_round  # Debug: point-cloud splat shape (round vs square)
 
                 # If the budget actually changed, the previously cached
                 # visibility maps (in RAM) were produced at a different
@@ -454,6 +557,23 @@ class MVATManager(QObject):
             elif self.cameras:
                 self.selection_model.set_active(next(iter(self.cameras)))
 
+    @staticmethod
+    def _stamp_index_map_budget(raster, data: dict) -> Optional[int]:
+        """Record the render quality a cached archive was produced at on the raster.
+
+        Returns the budget (0 = Native) when the archive carries the metadata
+        key, or None for legacy archives, leaving the raster untouched.
+        """
+        budget = data.get('pixel_budget') if data else None
+        if budget is None:
+            return None
+        try:
+            budget = int(budget)
+        except Exception:
+            return None
+        raster.index_map_pixel_budget = budget
+        return budget
+
     def load_index_maps(self):
         """Attempt to load pre-computed index maps from disk cache for all loaded cameras.
 
@@ -494,6 +614,7 @@ class MVATManager(QObject):
 
         loaded = 0
         skipped = 0
+        cached_budgets = set()
         try:
             from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -533,6 +654,9 @@ class MVATManager(QObject):
                             element_type=element_type,
                             inverted_index=data.get('inverted_index'),
                         )
+                        budget = self._stamp_index_map_budget(cam._raster, data)
+                        if budget is not None:
+                            cached_budgets.add(budget)
                         if self.compute_depth_maps_enabled:
                             depth_map = data.get('depth_map')
                             if depth_map is not None:
@@ -549,28 +673,51 @@ class MVATManager(QObject):
                 f"Index maps: {loaded} loaded from cache, {skipped} not cached.", 5000
             )
 
+        self._maybe_restore_pixel_budget(cached_budgets)
+
+    def _maybe_restore_pixel_budget(self, cached_budgets: set):
+        """Adopt the cached render quality as the session budget.
+
+        When every loaded archive agrees on the quality it was rendered at,
+        use it instead of the constructor default — otherwise densify gating
+        and overlap counting would treat Native-quality caches as budgeted
+        (or vice versa) after a restart. Never overrides a quality the user
+        explicitly picked in the visibility dialog this session.
+        """
+        if self._pixel_budget_user_set or len(cached_budgets) != 1:
+            return
+        budget = next(iter(cached_budgets))
+        restored = None if budget == 0 else budget
+        if restored != self.pixel_budget:
+            label = "Native" if restored is None else f"{restored / 1e6:.1f}MP"
+            print(f"💽 Restored index map quality from cache: {label}")
+            self.pixel_budget = restored
+
     def _render_frustums(self):
         """
         Update the 3D scene to render frustums, point cloud and axes.
 
         This prepares the viewer by ensuring the point cloud and axes are
-        present, then asks the viewer to draw all camera frustums using the
-        current selection/highlight/hover state.
+        present, then asks the viewer to draw frustums for cameras currently
+        visible in the context matrix using the current selection/highlight/hover state.
         """
         try:
             QApplication.setOverrideCursor(Qt.WaitCursor)
             self.viewer.add_point_cloud()
         finally:
             QApplication.restoreOverrideCursor()
-            
+
         self.viewer.add_axes()
         visible_paths = self._get_visible_context_camera_paths()
         selected_path = None
         if self.selected_camera and self.selected_camera.image_path in visible_paths:
             selected_path = self.selected_camera.image_path
-        
+
+        # Filter cameras dict to only include visible cameras from context matrix
+        visible_cameras = {path: self.cameras[path] for path in visible_paths if path in self.cameras}
+
         self.viewer.add_frustums(
-            self.cameras,
+            visible_cameras,
             selected_camera=self.selected_camera if selected_path else None,
             highlighted_paths=visible_paths,
             hovered_camera=self.hovered_camera,
@@ -588,6 +735,7 @@ class MVATManager(QObject):
             QHBoxLayout,
             QLabel,
             QSlider,
+            QSpinBox,
             QVBoxLayout,
         )
         from PyQt5.QtCore import Qt
@@ -701,19 +849,6 @@ class MVATManager(QObject):
 
         debug_layout = QFormLayout(debug_groupbox)
 
-        dtype_combo = QComboBox(dialog)
-        dtype_options = ["r8", "rg16", "rgb24", "int32"]
-        dtype_combo.addItems(dtype_options)
-        dtype_combo.setCurrentIndex(3)  # Default to int32 (most reliable, fastest)
-        dtype_combo.setToolTip(
-            "Fragment face ID dtype for index map generation.\n"
-            "r8: 1 byte per pixel (256 max faces)\n"
-            "rg16: 2 bytes per pixel (65K max faces)\n"
-            "rgb24: 3 bytes per pixel (16M max faces)\n"
-            "int32: 4 bytes per pixel (4B max faces)"
-        )
-        debug_layout.addRow("Index Map Dtype:", dtype_combo)
-
         cache_combo = QComboBox(dialog)
         cache_combo.addItems(["Enabled", "Disabled"])
         cache_combo.setCurrentIndex(0)
@@ -722,6 +857,37 @@ class MVATManager(QObject):
             "Disabled: Measures pure generation time without I/O overhead"
         )
         debug_layout.addRow("Caching:", cache_combo)
+
+        compression_combo = QComboBox(dialog)
+        compression_combo.addItems(["True", "False"])
+        compression_combo.setCurrentIndex(0)  # Default to True (compressed .npz)
+        compression_combo.setToolTip(
+            "Compress cached index maps (DEFLATE .npz).\n"
+            "True: reduces the amount of disk space used, but takes more time to write.\n"
+            "False: faster writes, but larger files on disk."
+        )
+        debug_layout.addRow("Cache Compression:", compression_combo)
+
+        # Point-cloud splatting controls (no effect on meshes). Each point is
+        # rasterized as a sprite of this radius so a foreground cloud occludes the
+        # background; radius is in render-resolution pixels (after the quality downscale).
+        splat_radius_spin = QSpinBox(dialog)
+        splat_radius_spin.setRange(1, 20)
+        splat_radius_spin.setValue(1)
+        splat_radius_spin.setToolTip(
+            "Point clouds only: GL_POINTS sprite radius in render-resolution pixels.\n"
+            "1 = single-pixel points (holey, no occlusion). Larger = more volume/occlusion."
+        )
+        debug_layout.addRow("Splat Radius (px):", splat_radius_spin)
+
+        splat_shape_combo = QComboBox(dialog)
+        splat_shape_combo.addItems(["Square", "Round"])
+        splat_shape_combo.setCurrentIndex(0)
+        splat_shape_combo.setToolTip(
+            "Point clouds only: shape of each splat sprite.\n"
+            "Square: fast point sprite. Round: discard corners for a filled disc."
+        )
+        debug_layout.addRow("Splat Shape:", splat_shape_combo)
 
         layout.addWidget(debug_groupbox)
 
@@ -736,13 +902,16 @@ class MVATManager(QObject):
 
         mode = selected_mode['mode']
         if mode is None:
-            return None, None, None, None, None
+            return None, None, None, None, None, None, None
 
         chosen_quality = quality_combo.currentText()
         n_workers = workers_slider.value()
-        dtype = dtype_combo.currentText()
         enable_cache = cache_combo.currentIndex() == 0
-        return mode, quality_map[chosen_quality], n_workers, dtype, enable_cache
+        enable_compression = compression_combo.currentIndex() == 0
+        splat_radius = splat_radius_spin.value()
+        splat_round = splat_shape_combo.currentIndex() == 1  # 0=Square, 1=Round
+        return (mode, quality_map[chosen_quality], n_workers, enable_cache,
+                enable_compression, splat_radius, splat_round)
 
     # --- Signal Handlers ---
 
@@ -1020,6 +1189,14 @@ class MVATManager(QObject):
             self.hovered_camera = None
         self._update_frustum_states()
 
+    def _on_frustum_hover_requested(self, path: str):
+        """Ctrl+hover over a context canvas: temporarily color the frustum red."""
+        if path:
+            self._on_camera_hovered(path)
+        else:
+            if self.hovered_camera is not None:
+                self._on_camera_unhovered(self.hovered_camera)
+
     # Note: full-cloud toggling and GPU-based subsetting have been removed.
     # The viewer now renders the full point cloud; background index-map
     # computation is controlled by the computeIndexMaps toggle.
@@ -1054,9 +1231,18 @@ class MVATManager(QObject):
         # After perspective maps are done, build the ortho index map if needed
         self._maybe_compute_ortho_index_map()
 
+        # The visibility worker has finished — run any camera glide that was
+        # deferred to keep it off the worker's busy main thread. Posted to the
+        # next idle turn so this handler unwinds (and one paint flushes) first.
+        QTimer.singleShot(0, self._fire_pending_camera_animation)
+
     def _on_primary_target_changed(self, product_id: str):
         """A new 3D model was loaded — clear stale ortho index map and rebuild."""
         self._computing_ortho_index_map = False  # reset any in-flight build
+        # Retained maps belong to the previous geometry — drop them, and bump the
+        # warm generation so any in-flight warm batch doesn't seed stale maps.
+        self._unpinned_map_cache.clear()
+        self._warm_generation += 1
         self.clear_sphere_hover_overlay(reset_context=True)
         primary_target = self.viewer.scene_context.get_primary_target()
         self._prewarm_spatial_caches(primary_target)
@@ -1095,6 +1281,15 @@ class MVATManager(QObject):
                 tree = cKDTree(np.asarray(centers, dtype=np.float32))
                 primary_target._hover_face_kdtree = tree
                 primary_target._hover_face_kdtree_product_id = getattr(primary_target, 'product_id', None)
+
+                # Prewarm per-face normals too — the densify gather needs them,
+                # and computing them lazily on the first stroke causes a hitch on
+                # large meshes.
+                if hasattr(primary_target, '_get_cached_face_normals'):
+                    try:
+                        primary_target._get_cached_face_normals()
+                    except Exception:
+                        pass
 
             try:
                 self.main_window.status_bar.showMessage("KD-Tree built.", 3000)
@@ -1419,26 +1614,14 @@ class MVATManager(QObject):
 
             element_type = result.get('element_type', 'point')
             cache_path = result.get('cache_path')
-            
-            # --- Reload arrays from disk if stripped by the worker ---
-            if result.get('index_map') is None and cache_path and self.cache_manager:
-                cache_key = camera._raster.extrinsics
-                extra = (camera._raster.dist_coeffs.tobytes()
-                         if camera.is_distorted
-                         and camera._raster.dist_coeffs is not None else None)
-                
-                # Loads using memory-mapping (mmap_mode='r') where possible
-                loaded_data = self.cache_manager.load_visibility(
-                    cache_key, target_file_path, element_type, extra,
-                    pixel_budget=self.pixel_budget,
-                )
-                
-                if loaded_data:
-                    result['index_map'] = loaded_data.get('index_map')
-                    result['depth_map'] = loaded_data.get('depth_map')
 
-            # 2. Fallback to check cache if result is not yet computed
-            if cache_path is None and self.cache_manager is not None and target_file_path:
+            # Fallback to save to cache if result is not yet cached.
+            # Worker results already have cache_path set; this handles other paths.
+            # Skipped in aggressive mode: disk is touched only by the explicit
+            # "Cache Index Maps to Disk" action, and a cache_path here would also
+            # shadow the recompute provider in the index_map getter.
+            if (self.index_map_disk_cache_enabled and cache_path is None
+                    and self.cache_manager is not None and target_file_path):
                 try:
                     cache_key = camera._raster.extrinsics
                     extra = (camera._raster.dist_coeffs.tobytes()
@@ -1449,20 +1632,36 @@ class MVATManager(QObject):
                         result.get('visible_indices'),
                         result.get('depth_map') if self.compute_depth_maps_enabled else None,
                         element_type=element_type, extra_hash_data=extra,
+                        compressed=getattr(self, 'debug_enable_compression', True),
                         pixel_budget=self.pixel_budget,
                     )
                 except Exception:
                     cache_path = None
-                    
-            # 3. Apply the results to the camera
+
+            # Aggressive mode: install the recompute provider BEFORE add_index_map so
+            # the raster's setter treats the seeded map as provider-backed (held only
+            # while pinned). With cache_path=None, a later read of a map that isn't
+            # resident regenerates it from the warm rasterizer instead of disk.
+            if not self.index_map_disk_cache_enabled:
+                try:
+                    camera._raster._index_map_provider = (
+                        lambda cam=camera: self._recompute_index_map(cam)
+                    )
+                except Exception:
+                    pass
+
+            # Register the result with the camera. For worker results with index_map=None,
+            # this triggers lazy loading from cache_path on first access via the LRU.
             try:
                 camera._raster.add_index_map(
-                    result.get('index_map'), 
-                    cache_path, 
+                    result.get('index_map'),
+                    cache_path,
                     result.get('visible_indices'),
                     element_type=element_type,
                     inverted_index=result.get('inverted_index')
                 )
+                # Fresh results were rendered at the session budget (0 = Native).
+                camera._raster.index_map_pixel_budget = int(self.pixel_budget or 0)
             except Exception:
                 pass
 
@@ -1476,7 +1675,174 @@ class MVATManager(QObject):
 
         self._queue_active_camera_depth_build(primary_target)
 
-            
+    def _recompute_index_map(self, camera):
+        """Regenerate one camera's dense index map from the warm rasterizer.
+
+        The on-demand provider for aggressive (no-disk) mode: when a raster's
+        index_map is read but isn't RAM-resident, it is re-rendered (~25-40 ms)
+        from the persistent warm GL context instead of loaded from disk. Returns
+        an (H, W) int32 array, or None on failure.
+
+        Safe to call from any thread — the rasterizer marshals GL work to its
+        owner thread and hands back CPU numpy. Lens distortion is fused into the
+        render exactly like the batch path, so the result is native-resolution.
+        """
+        try:
+            product = self.viewer.scene_context.get_primary_target()
+        except Exception:
+            product = None
+        if product is None or self.persistent_rasterizer is None:
+            return None
+
+        try:
+            raster = camera._raster
+            params = (camera.K_linear, camera.R, camera.t, camera.width, camera.height)
+
+            warp_maps = None
+            if camera.is_distorted and raster.intrinsics_undistorted is not None:
+                try:
+                    raster._ensure_warp_maps()
+                    warp_maps = [(raster._map_x, raster._map_y)]
+                except Exception:
+                    warp_maps = None
+
+            results = self.persistent_rasterizer.render(
+                product, [params],
+                compute_depth_map=False,
+                compute_visible_indices=False,
+                pixel_budget=self.pixel_budget,
+                upsample_to_native=True,
+                warp_maps_list=warp_maps,
+                splat_radius=getattr(self, 'debug_splat_radius', 1),
+                splat_round=getattr(self, 'debug_splat_round', False),
+            )
+            if not results:
+                return None
+            idx = results[0].get('index_map')
+            if idx is None:
+                return None
+            return np.asarray(idx).astype(np.int32, copy=False)
+        except Exception as e:
+            print(f"⚠️ Index map recompute failed for {getattr(camera, 'label', '?')}: {e}")
+            return None
+
+    def cache_index_maps_to_disk(self):
+        """Explicitly persist current index maps to disk (manual action).
+
+        In aggressive mode this is the ONLY thing that writes to the disk cache.
+        For every camera with computed visibility, the dense map is taken from RAM
+        (or recomputed from the warm rasterizer if not resident) and written via
+        the CacheManager, so a future session can warm-start. Recompute + the
+        compressed writes run on a background thread to keep the UI responsive.
+        """
+        if self.cache_manager is None:
+            self.main_window.status_bar.showMessage("No cache available.", 3000)
+            return
+        try:
+            primary_target = self.viewer.scene_context.get_primary_target()
+        except Exception:
+            primary_target = None
+        if primary_target is None:
+            self.main_window.status_bar.showMessage("No 3D model loaded.", 3000)
+            return
+
+        target_file_path = primary_target.file_path
+        element_type = primary_target.get_element_type()
+        compressed = getattr(self, 'debug_enable_compression', True)
+        pixel_budget = self.pixel_budget
+
+        # Snapshot what to save on the main thread. Pre-build warp maps here so the
+        # background thread only does GL renders (via the rasterizer) and disk I/O,
+        # never first-touch raster state. Cameras whose map is ALREADY on disk are
+        # skipped — no recompute, no rewrite.
+        to_save = []
+        skipped = 0
+        for camera in self.cameras.values():
+            raster = getattr(camera, '_raster', None)
+            if raster is None or raster.visible_indices is None:
+                continue
+            extra = (raster.dist_coeffs.tobytes()
+                     if camera.is_distorted and raster.dist_coeffs is not None else None)
+            # Skip if a cache file already exists for this camera at this quality.
+            try:
+                if self.cache_manager.has_visibility_cache(
+                    raster.extrinsics, target_file_path, element_type, extra,
+                    pixel_budget=pixel_budget,
+                ):
+                    skipped += 1
+                    continue
+            except Exception:
+                pass
+            if camera.is_distorted and raster.intrinsics_undistorted is not None:
+                try:
+                    raster._ensure_warp_maps()
+                except Exception:
+                    pass
+            to_save.append((camera, raster.extrinsics, extra, raster.visible_indices))
+
+        if not to_save:
+            msg = (f"All {skipped} index map(s) already cached." if skipped
+                   else "No index maps to cache.")
+            self.main_window.status_bar.showMessage(msg, 3000)
+            return
+
+        total = len(to_save)
+        self.main_window.status_bar.showMessage(
+            f"Caching {total} index map(s) to disk... ({skipped} already cached)", 0
+        )
+        # Busy cursor for the duration; restored on the main thread when the
+        # background thread emits _cacheToDiskFinished.
+        QApplication.setOverrideCursor(Qt.BusyCursor)
+
+        def _post_status(msg, timeout=4000):
+            try:
+                from PyQt5.QtCore import QMetaObject, Q_ARG
+                QMetaObject.invokeMethod(
+                    self.main_window.status_bar, "showMessage",
+                    Qt.QueuedConnection, Q_ARG(str, msg), Q_ARG(int, timeout),
+                )
+            except Exception:
+                pass
+
+        def _worker():
+            saved = 0
+            try:
+                for (camera, cache_key, extra, vis) in to_save:
+                    try:
+                        # Prefer the resident array (read the private field to avoid the
+                        # getter's pin side effects from a background thread); recompute
+                        # only when it isn't resident.
+                        idx = getattr(camera._raster, '_index_map', None)
+                        if idx is None:
+                            idx = self._recompute_index_map(camera)
+                        if idx is None:
+                            continue
+                        self.cache_manager.save_visibility(
+                            cache_key, target_file_path, idx, vis, None,
+                            element_type=element_type, extra_hash_data=extra,
+                            compressed=compressed, pixel_budget=pixel_budget,
+                        )
+                        saved += 1
+                        if saved % 10 == 0 or saved == total:
+                            _post_status(f"Caching index maps to disk... ({saved}/{total})", 0)
+                    except Exception as e:
+                        print(f"⚠️ Cache save failed for {getattr(camera, 'label', '?')}: {e}")
+            finally:
+                # Always signal completion so the busy cursor is restored.
+                self._cacheToDiskFinished.emit(saved, total)
+
+        threading.Thread(target=_worker, daemon=True, name='mvat_manual_cache').start()
+
+    def _on_cache_to_disk_finished(self, saved: int, total: int):
+        """Main thread: restore the cursor and report the manual cache result."""
+        try:
+            QApplication.restoreOverrideCursor()
+        except Exception:
+            pass
+        self.main_window.status_bar.showMessage(
+            f"Cached {saved}/{total} index map(s) to disk.", 5000
+        )
+
     def _on_visibility_error(self, error_str: str):
         print(f"Visibility worker error:\n{error_str}")
         self._is_computing_visibility = False
@@ -1503,21 +1869,112 @@ class MVATManager(QObject):
         if camera:
             self.viewer.clear_ray()
             self._select_camera(path, camera)
-            if hasattr(self.viewer, 'match_camera_perspective'):
-                # Double-click to set active: animate
-                self.viewer.match_camera_perspective(camera, animate=True)
-            self._reorder_cameras(path)
             self._context_view_path = path
+
+            # Sequence the transition so the 3D camera animation never competes
+            # with the heavy synchronous work for a smooth glide:
+            #   1) the AnnotationWindow loads the image (full-res decode +
+            #      annotation rebuild — gated by the imageLoaded signal),
+            #   2) THEN the ContextMatrix reorders + reloads its N canvases and
+            #      dispatches the index-map work (also heavy + synchronous),
+            #   3) THEN the 60fps camera animation starts — posted to the next
+            #      idle event-loop turn so steps 1-2 have fully flushed first.
+            # A guard flag makes the deferred sequence run exactly once.
+            _seq_ran = {'done': False}
+
+            def _after_image_loaded(cam=camera, p=path):
+                if _seq_ran['done']:
+                    return
+                _seq_ran['done'] = True
+                # 2) ContextMatrix + index maps (this dispatches the visibility
+                #    worker for any newly-visible cameras).
+                self._reorder_cameras(p)
+                # 3) Camera glide LAST — only once the visibility worker for the
+                #    new set has finished, so it isn't fighting the worker's
+                #    main-thread completion handler.
+                self._animate_camera_after_settle(cam)
+
+            def _on_image_loaded(*_args):
+                try:
+                    self.image_window.imageLoaded.disconnect(_on_image_loaded)
+                except Exception:
+                    pass
+                _after_image_loaded()
+
+            already_loaded = (self.image_window.selected_image_path == path)
+            if not already_loaded:
+                self.image_window.imageLoaded.connect(_on_image_loaded)
 
             try:
                 self.image_window.load_image_by_path(path)
             except Exception:
-                pass
+                # Load failed → imageLoaded won't fire; run the sequence anyway so
+                # the context matrix and animation aren't left stale.
+                if not already_loaded:
+                    _on_image_loaded()
+
+            if already_loaded:
+                # No reload will happen — run the context + animation sequence now.
+                _after_image_loaded()
 
             self._queue_active_camera_depth_build()
 
             # Update the N / M stat when the active camera changes.
             self._update_context_stats()
+
+    def _animate_camera_after_settle(self, camera):
+        """Run the 3D camera glide as the FINAL action of a camera switch.
+
+        By the time this is called the synchronous work (AnnotationWindow decode,
+        ContextMatrix canvas loads, frustum rebuild) is already done. The one thing
+        still outstanding is the visibility worker computing the new visible set;
+        its main-thread completion handler (_process_visibility_results) would
+        otherwise hitch the glide. So:
+
+        * if a visibility compute is in flight, the glide fires from
+          _on_visibility_computed (with a fallback timer in case the compute was
+          coalesced away and never completes);
+        * otherwise the glide fires on the next idle turn, after one paint flush.
+
+        A monotonic token supersedes the pending glide when the user picks another
+        camera first, so only the latest selection animates.
+        """
+        if camera is None or not hasattr(self.viewer, 'match_camera_perspective'):
+            return
+
+        self._pending_anim_token += 1
+        token = self._pending_anim_token
+        self._pending_anim_camera = camera
+
+        def _fire():
+            # Superseded by a newer selection, or already fired (camera cleared).
+            if token != self._pending_anim_token:
+                return
+            cam = self._pending_anim_camera
+            self._pending_anim_camera = None
+            if cam is not None:
+                try:
+                    self.viewer.match_camera_perspective(cam, animate=True)
+                except Exception:
+                    pass
+
+        self._pending_anim_fire = _fire
+
+        if self._is_computing_visibility:
+            # Glide when the worker finishes; fallback guarantees it still runs.
+            QTimer.singleShot(1500, _fire)
+        else:
+            QTimer.singleShot(0, _fire)
+
+    def _fire_pending_camera_animation(self):
+        """Start a glide that was deferred until the visibility worker finished."""
+        fire = self._pending_anim_fire
+        if fire is not None:
+            self._pending_anim_fire = None
+            try:
+                fire()
+            except Exception:
+                pass
 
     def _on_camera_selected(self, path: str):
         """Handle camera_selected from the grid (context menu 'Select Image').
@@ -1683,29 +2140,17 @@ class MVATManager(QObject):
         except Exception: 
             pass
         
-        # Update thumbnails (show/hide based on selection/highlight state)
+        # Update thumbnails from the frustum manager's full camera set
         try:
             if hasattr(self.viewer, '_show_thumbnails_enabled') and self.viewer._show_thumbnails_enabled:
-                # Clear all existing thumbnails
                 if hasattr(self.viewer, 'remove_thumbnails'):
                     self.viewer.remove_thumbnails()
-                
-                # Add thumbnail for selected camera
-                if self.selected_camera is not None:
+                cameras = getattr(self.viewer._frustum_manager, 'cameras', {})
+                for cam in cameras.values():
                     try:
-                        if hasattr(self.viewer, '_add_thumbnail_for_camera'):
-                            self.viewer._add_thumbnail_for_camera(self.selected_camera)
+                        self.viewer._add_thumbnail_for_camera(cam)
                     except Exception:
                         pass
-                
-                # Add thumbnails for highlighted cameras (excluding the selected camera to avoid duplication)
-                for cam in self.highlighted_cameras:
-                    if self.selected_camera is None or cam.image_path != self.selected_camera.image_path:
-                        try:
-                            if hasattr(self.viewer, '_add_thumbnail_for_camera'):
-                                self.viewer._add_thumbnail_for_camera(cam)
-                        except Exception:
-                            pass
         except Exception:
             pass
 
@@ -1729,8 +2174,6 @@ class MVATManager(QObject):
         target_file_path = primary_target.file_path
         element_type = primary_target.get_element_type()
 
-        cameras_needing_visibility = []
-
         # ------------------------------------------------------------------
         # Phase 1: Split cameras into RAM-hits and disk-cache candidates
         # ------------------------------------------------------------------
@@ -1742,53 +2185,115 @@ class MVATManager(QObject):
             # Already in active memory — nothing to do
             if camera.visible_indices is not None:
                 continue
+            # Already loading from disk in the background — don't double up
+            if path in self._inflight_cache_loads:
+                continue
             cache_candidates[path] = camera
 
-        # ------------------------------------------------------------------
-        # Phase 2: Parallel disk-cache load for all candidates
-        # ------------------------------------------------------------------
-        cache_results = {}  # path -> cached_data (or None)
-        if self.cache_manager is not None and target_file_path and cache_candidates:
-            self.main_window.status_bar.showMessage(
-                f"Checking cache for {len(cache_candidates)} camera(s)...", 1000
-            )
+        if not cache_candidates:
+            return
 
-            def _load_one(path, camera):
-                cache_key = camera._raster.extrinsics
-                extra = (camera._raster.dist_coeffs.tobytes()
-                         if camera.is_distorted
-                         and camera._raster.dist_coeffs is not None else None)
-                try:
-                    return path, self.cache_manager.load_visibility(
-                        cache_key, target_file_path, element_type, extra,
-                        pixel_budget=self.pixel_budget,
-                    )
-                except Exception as exc:
-                    print(f"⚠️ Cache load error for {camera.label}: {exc}")
-                    return path, None
+        # ------------------------------------------------------------------
+        # Aggressive mode: skip the disk-cache read entirely and compute. Maps
+        # are regenerated from the warm rasterizer, so a disk round-trip would
+        # only add latency. Route misses straight to the compute path.
+        # ------------------------------------------------------------------
+        if not self.index_map_disk_cache_enabled:
+            self._on_visibility_cache_loaded({
+                'results': {},
+                'candidates': cache_candidates,
+                'target_file_path': target_file_path,
+                'element_type': element_type,
+                'primary_target': primary_target,
+            })
+            return
 
-            n_workers = min(8, max(1, len(cache_candidates)))
+        # ------------------------------------------------------------------
+        # Phase 2: Background disk-cache load for all candidates
+        # ------------------------------------------------------------------
+        # The loads run on a short-lived daemon thread (pooled internally) and
+        # results come back to the main thread via _visibilityCacheLoaded.
+        # The Qt main thread must never block here: dozens of map loads can
+        # take tens of seconds and previously froze the whole app.
+        if self.cache_manager is not None and target_file_path:
+            self._inflight_cache_loads.update(cache_candidates)
             self.main_window.status_bar.showMessage(
                 f"Loading index maps for {len(cache_candidates)} camera(s) from cache...", 0
             )
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            QApplication.processEvents()
-            try:
-                with ThreadPoolExecutor(max_workers=n_workers) as pool:
-                    futs = {
-                        pool.submit(_load_one, path, cam): path
-                        for path, cam in cache_candidates.items()
-                    }
-                    for fut in as_completed(futs):
-                        path, data = fut.result()
-                        cache_results[path] = data
-            finally:
-                QApplication.restoreOverrideCursor()
 
-        # ------------------------------------------------------------------
-        # Phase 3: Apply cache results on the main (Qt) thread, queue misses
-        # ------------------------------------------------------------------
-        for path, camera in cache_candidates.items():
+            cache_manager = self.cache_manager
+            pixel_budget = self.pixel_budget
+
+            def _load_all(candidates=dict(cache_candidates),
+                          tfp=target_file_path,
+                          etype=element_type,
+                          ptarget=primary_target):
+                def _load_one(path, camera):
+                    cache_key = camera._raster.extrinsics
+                    extra = (camera._raster.dist_coeffs.tobytes()
+                             if camera.is_distorted
+                             and camera._raster.dist_coeffs is not None else None)
+                    try:
+                        loaded_data = cache_manager.load_visibility(
+                            cache_key, tfp, etype, extra,
+                            pixel_budget=pixel_budget,
+                        )
+                        return path, loaded_data
+                    except Exception as exc:
+                        print(f"⚠️ Cache load error for {camera.label}: {exc}")
+                        return path, None
+
+                results = {}
+                try:
+                    n_workers = min(8, max(1, len(candidates)))
+                    with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                        futs = {
+                            pool.submit(_load_one, path, cam): path
+                            for path, cam in candidates.items()
+                        }
+                        for fut in as_completed(futs):
+                            path, data = fut.result()
+                            results[path] = data
+                finally:
+                    self._visibilityCacheLoaded.emit({
+                        'results': results,
+                        'candidates': candidates,
+                        'target_file_path': tfp,
+                        'element_type': etype,
+                        'primary_target': ptarget,
+                    })
+
+            threading.Thread(
+                target=_load_all, daemon=True, name='mvat_cache_load'
+            ).start()
+            return
+
+        # No cache manager / target — everything is a miss; compute directly.
+        self._on_visibility_cache_loaded({
+            'results': {},
+            'candidates': cache_candidates,
+            'target_file_path': target_file_path,
+            'element_type': element_type,
+            'primary_target': primary_target,
+        })
+
+    def _on_visibility_cache_loaded(self, payload: dict):
+        """Main thread: apply disk-cache results, then queue compute for misses.
+
+        Phase 3 of ``_update_visibility_filter`` — split out so the disk loads
+        can run on a background thread and deliver here via signal.
+        """
+        candidates = payload.get('candidates') or {}
+        cache_results = payload.get('results') or {}
+        target_file_path = payload.get('target_file_path', '')
+        element_type = payload.get('element_type', 'face')
+        primary_target = payload.get('primary_target')
+
+        self._inflight_cache_loads.difference_update(candidates.keys())
+
+        cameras_needing_visibility = []
+        cached_budgets = set()
+        for path, camera in candidates.items():
             cached_data = cache_results.get(path)
 
             if cached_data is not None:
@@ -1815,6 +2320,9 @@ class MVATManager(QObject):
                     element_type=element_type,
                     inverted_index=cached_data.get('inverted_index')
                 )
+                budget = self._stamp_index_map_budget(camera._raster, cached_data)
+                if budget is not None:
+                    cached_budgets.add(budget)
 
                 if self.compute_depth_maps_enabled:
                     depth_map = cached_data.get('depth_map')
@@ -1829,10 +2337,16 @@ class MVATManager(QObject):
                 # Miss — must be computed
                 cameras_needing_visibility.append(camera)
 
+        self._maybe_restore_pixel_budget(cached_budgets)
+
         if not cameras_needing_visibility:
             return
 
         if self._is_computing_visibility:
+            return
+
+        # Guard against the primary target changing while loads were in flight.
+        if primary_target is None or primary_target is not self.viewer.scene_context.get_primary_target():
             return
 
         # Proceed to async computation for only the remaining cameras
@@ -1857,16 +2371,19 @@ class MVATManager(QObject):
 
             mgl_ctx = None
             try:
-                mgl_ctx = VisibilityManager.setup_batch_moderngl_context(
+                mgl_ctx = VisibilityManager.setup_batch_mesh_moderngl_context(
                     mesh_product, self.pixel_budget,
                     cameras[0].width, cameras[0].height,
                 )
-                batch = VisibilityManager.compute_batch_mesh_visibility_moderngl(
+                batch = VisibilityManager.compute_batch_visibility_moderngl(
                     mesh_product, camera_params,
                     compute_depth_map=self.compute_depth_maps_enabled,
                     compute_visible_indices=False,
                     pixel_budget=self.pixel_budget,
                     mgl_context=mgl_ctx,
+                    # Results are cached to disk by _process_visibility_results;
+                    # they must be native-sized like the async worker's output.
+                    upsample_to_native=True,
                 )
             except Exception as mgl_err:
                 print(f"⚠️ moderngl sync failed ({mgl_err})")
@@ -1930,8 +2447,13 @@ class MVATManager(QObject):
             # Pass the cache data and scale factors to the worker
             n_workers = getattr(self, '_cache_n_workers', 4)  # Default to 4 if not set
             distortion_vram_safety = getattr(self, '_distortion_vram_safety_factor', 0.8)  # Default to 0.8
-            dtype = getattr(self, 'debug_frag_face_id_dtype', 'rgb24')
-            enable_cache = getattr(self, 'debug_enable_cache', True)
+            # Aggressive mode (default) disables disk writes during the session;
+            # the debug flag can still force-disable caching independently.
+            enable_cache = (self.index_map_disk_cache_enabled
+                            and getattr(self, 'debug_enable_cache', True))
+            enable_compression = getattr(self, 'debug_enable_compression', True)
+            splat_radius = getattr(self, 'debug_splat_radius', 1)
+            splat_round = getattr(self, 'debug_splat_round', False)
             worker = VisibilityWorker(
                 primary_target=primary_target,
                 camera_params_dict=camera_params_dict,
@@ -1944,10 +2466,13 @@ class MVATManager(QObject):
                 dist_coeffs_bytes_dict=dist_coeffs_bytes_dict,
                 n_workers=n_workers,
                 distortion_vram_safety_factor=distortion_vram_safety,
-                frag_face_id_dtype=dtype,
                 enable_cache=enable_cache,
+                enable_compression=enable_compression,
+                splat_radius=splat_radius,
+                splat_round=splat_round,
+                persistent_rasterizer=self.persistent_rasterizer,
             )
-            
+
             thread = QThread()
             worker.moveToThread(thread)
             thread.started.connect(worker.run)
@@ -2026,6 +2551,14 @@ class MVATManager(QObject):
 
         if int(class_id) == 0:
             color_rgb = (255, 255, 255)
+            self._active_stroke_had_erase = True
+
+        # The LabelWorker writes the product's _labels_cache directly, bypassing
+        # apply_labels — mark the cache as diverged from the VTK array here.
+        try:
+            primary_target._labels_dirty = True
+        except Exception:
+            pass
 
         # Keep the mesh class-label registry in sync so a mesh painted
         # directly (without a prior camera -> mesh projection) can still be
@@ -2052,10 +2585,43 @@ class MVATManager(QObject):
             except Exception as e:
                 pass
 
+        # Render-path selection. When the label-paint GPU shader is enabled, it
+        # renders the Labels array directly from its own packed class-id texture:
+        # we keep class_ids + the labels cache (the source of truth) updated in RAM
+        # and push an O(painted) texture write — no overlay geometry, no committed
+        # weld, no LabelWorker. The overlay path below remains the fallback when the
+        # shader is disabled (an install/build failure flips it off for the session).
+        psm = getattr(self, 'paint_shader_manager', None)
+        if (psm is not None and getattr(psm, 'shader_enabled', False)
+                and isinstance(primary_target, MeshProduct)):
+            try:
+                primary_target.apply_labels(face_ids, int(class_id), color_rgb)
+            except Exception:
+                pass
+            # The texture only exists once we've been on the Labels array (the
+            # shader state is built on install). If it's not built yet, the RAM
+            # write above is enough — switching to Labels seeds the texture from
+            # class_ids, so the paint shows then (matching "paint only on Labels").
+            if psm.update_class_ids_subset(primary_target, face_ids, int(class_id),
+                                           color_rgb=color_rgb):
+                self._render_paint_shader_throttled()
+            return
+
         self._ensure_label_painter(primary_target)
         painter = self._label_painter_thread
         if painter is not None and painter.isRunning():
             painter.submit(face_ids, color_rgb, int(class_id))
+
+    def _render_paint_shader_throttled(self):
+        """Render at most ~60 Hz during a shader paint drag (texture update is cheap)."""
+        try:
+            now = perf_counter()
+            last = getattr(self, '_last_paint_shader_render_time', None)
+            if last is None or (now - last) > 0.016:
+                self.viewer.plotter.render()
+                self._last_paint_shader_render_time = now
+        except Exception:
+            pass
 
     def _ensure_label_painter(self, primary_target):
         """Start the painter thread the first time a mesh is annotated."""
@@ -2103,6 +2669,8 @@ class MVATManager(QObject):
                 class_ids=class_ids,
             )
             self._label_painter_thread.overlay_ready.connect(self._on_overlay_ready, Qt.QueuedConnection)
+            self._label_painter_thread.committed_overlay_ready.connect(
+                self._on_committed_overlay_ready, Qt.QueuedConnection)
             self._label_painter_thread.start()
         except Exception as e:
             print(f"⚠️ _ensure_label_painter failed: {e}")
@@ -2115,34 +2683,77 @@ class MVATManager(QObject):
             status_bar.showMessage("Waiting for pause to commit 3D paint...", 1500)
 
     def _execute_lazy_flush(self):
-        """Commit painted labels to the GPU and refresh the 3D view. Runs when the user pauses."""
+        """Commit the finished stroke into the persistent overlay. Runs when the user pauses.
+
+        Tier 2: the expensive Labels GPU flush (full VTK mapper rebuild) is NOT
+        performed here anymore. Painted state stays visible through the committed
+        overlay actor; `flush_labels_to_gpu` runs only at rare barriers (scene
+        rebuild / array switch in render_scene) or when an erase stroke touched a
+        previously-flushed VTK array (which would otherwise show stale colors).
+        """
         status_bar = getattr(self.main_window, 'status_bar', None)
-        if status_bar is not None:
-            status_bar.showMessage("Saving paint to 3D model...", 0)
+        had_erase = self._active_stroke_had_erase
+        self._active_stroke_had_erase = False
 
-        QApplication.setOverrideCursor(Qt.WaitCursor)
+        # When the mesh paint shader is the renderer, there is nothing to commit on
+        # pause — the class-id texture was already updated live during the stroke,
+        # and class_ids / the labels cache are the source of truth. Skip the
+        # (now-retired) mesh overlay commit; the trailing render() still fires.
+        psm = getattr(self, 'paint_shader_manager', None)
+        shader_mesh_renderer = psm is not None and getattr(psm, 'shader_enabled', False)
+
         try:
-            # 1. Tell LabelWorker to clear its temporary overlay.
-            painter = self._label_painter_thread
-            if painter is not None and painter.isRunning():
-                painter.finish_stroke()
-            else:
-                self._on_overlay_ready(None)
+            primary_mesh = self._get_primary_mesh_target()
+            if (primary_mesh is not None
+                    and not (shader_mesh_renderer and isinstance(primary_mesh, MeshProduct))):
+                painter = self._label_painter_thread
+                painter_alive = painter is not None and painter.isRunning()
+                hard_flush = had_erase and getattr(primary_mesh, '_vtk_labels_have_paint', False)
 
-            # 2. Do the heavy VBO rebuild.
-            primary_target = self._get_primary_mesh_target()
-            if primary_target and hasattr(primary_target, 'flush_labels_to_gpu'):
-                primary_target.flush_labels_to_gpu()
+                if hard_flush:
+                    # Erase over a flushed array: the base actor holds stale
+                    # colors that the committed overlay no longer covers.
+                    if status_bar is not None:
+                        status_bar.showMessage("Saving paint to 3D model...", 0)
+                    QApplication.setOverrideCursor(Qt.WaitCursor)
+                    try:
+                        if painter_alive:
+                            painter.finish_stroke(discard=True)
+                        else:
+                            self._on_overlay_ready(None, render=False)
+                        primary_mesh.flush_labels_to_gpu()
+                        if getattr(primary_mesh, 'selected_array', None) == 'Labels':
+                            # Base actor now shows current labels itself.
+                            self._on_committed_overlay_ready(None, render=False)
+                        else:
+                            self.refresh_primary_mesh_overlay(render=False)
+                    finally:
+                        QApplication.restoreOverrideCursor()
+                elif painter_alive:
+                    # Worker builds the committed overlay off the main thread and
+                    # clears the live stroke overlay after it (no flicker, no
+                    # base-mesh rebuild).
+                    painter.finish_stroke()
+                else:
+                    self._on_overlay_ready(None, render=False)
+                    self.refresh_primary_mesh_overlay(render=False)
 
-            # 3. Force the screen to update.
+            primary_point = self._get_primary_point_target()
+            if (primary_point is not None
+                    and not (shader_mesh_renderer and isinstance(primary_point, PointCloudProduct))):
+                # Fold the stroke into the persistent painted-points overlay.
+                self._clear_point_stroke_overlay(render=False)
+                if had_erase and getattr(primary_point, '_vtk_labels_have_paint', False):
+                    primary_point.flush_labels_to_gpu()
+                self.refresh_primary_point_overlay(render=False)
+
             try:
                 self.viewer.plotter.render()
             except Exception:
                 pass
         finally:
-            QApplication.restoreOverrideCursor()
             if status_bar is not None:
-                status_bar.showMessage("3D model updated.", 3000)
+                status_bar.showMessage("3D paint committed.", 2000)
 
     def _build_primary_mesh_overlay(self):
         """Snapshot the current painted mesh faces into a tiny overlay payload."""
@@ -2199,25 +2810,87 @@ class MVATManager(QObject):
             return None
 
     def refresh_primary_mesh_overlay(self, force_recreate: bool = False, render: bool = True):
-        """Rebuild the visible mesh-label overlay from the current mesh state."""
-        overlay = self._build_primary_mesh_overlay()
-        if overlay is None:
-            if self._label_overlay_actor is not None:
-                self._on_overlay_ready(None, render=render)
+        """Rebuild the persistent painted-faces overlay from the current mesh state.
+
+        Main-thread fallback/barrier path (scene rebuilds, hard flushes); during
+        interactive painting the LabelWorker builds this payload off-thread and
+        delivers it via committed_overlay_ready.
+
+        No-op when the paint shader is the renderer: it draws labels straight on the
+        base actor, so this floating overlay must not be (re)built on top of it.
+        """
+        psm = getattr(self, 'paint_shader_manager', None)
+        if psm is not None and getattr(psm, 'shader_enabled', False):
+            if self._committed_overlay_actor is not None:
+                self._on_committed_overlay_ready(None, render=render)
             return
 
-        self._on_overlay_ready(overlay, force_recreate=force_recreate, render=render)
+        overlay = self._build_primary_mesh_overlay()
+        if overlay is None:
+            if self._committed_overlay_actor is not None:
+                self._on_committed_overlay_ready(None, render=render)
+            return
+
+        self._on_committed_overlay_ready(overlay, force_recreate=force_recreate, render=render)
+
+    def set_paint_overlays_visible(self, on_labels_array: bool) -> None:
+        """Show/hide the floating paint-overlay actors (gate paint to the Labels array).
+
+        The committed/stroke overlays are array-independent actors that otherwise
+        float over RGB / Texture / etc., so they are shown only on the Labels array.
+        When the paint shader is the renderer, the mesh (face) and point overlays
+        are hidden entirely — the shader draws the labels straight on the base actor.
+        """
+        psm = getattr(self, 'paint_shader_manager', None)
+        shader_on = psm is not None and getattr(psm, 'shader_enabled', False)
+
+        face_visible = bool(on_labels_array) and not shader_on
+        point_visible = bool(on_labels_array) and not shader_on
+
+        for attr in ('_label_overlay_actor', '_committed_overlay_actor'):
+            actor = getattr(self, attr, None)
+            if actor is not None:
+                try:
+                    actor.SetVisibility(face_visible)
+                except Exception:
+                    pass
+        for attr in ('_point_label_overlay_actor', '_point_stroke_overlay_actor'):
+            actor = getattr(self, attr, None)
+            if actor is not None:
+                try:
+                    actor.SetVisibility(point_visible)
+                except Exception:
+                    pass
 
     def _on_overlay_ready(self, overlay, force_recreate: bool = False, render: bool = True):
-        """Main thread: update the overlay actor in place when possible."""
+        """Main thread: update the live stroke overlay actor in place when possible."""
+        self._update_face_overlay_actor('_label_overlay_actor', overlay,
+                                        force_recreate=force_recreate, render=render)
+
+    def _on_committed_overlay_ready(self, overlay, force_recreate: bool = False, render: bool = True):
+        """Main thread: update the persistent committed-paint overlay actor.
+
+        Draw-order invariant: this actor must be added to the plotter before the
+        stroke overlay actor so the in-progress stroke wins on equal depth
+        (GL_LEQUAL). The stroke actor is destroyed at every stroke end and
+        recreated on the next stroke, which preserves the order naturally.
+        """
+        self._update_face_overlay_actor('_committed_overlay_actor', overlay,
+                                        force_recreate=force_recreate, render=render)
+
+    def _update_face_overlay_actor(self, actor_attr: str, overlay,
+                                   force_recreate: bool = False, render: bool = True):
+        """Create/update/remove a face-overlay actor stored at `actor_attr`."""
         try:
+            actor = getattr(self, actor_attr)
+
             if overlay is None:
-                if self._label_overlay_actor is not None:
+                if actor is not None:
                     try:
-                        self.viewer.plotter.remove_actor(self._label_overlay_actor, render=False)
+                        self.viewer.plotter.remove_actor(actor, render=False)
                     except Exception:
                         pass
-                    self._label_overlay_actor = None
+                    setattr(self, actor_attr, None)
                     if render:
                         try:
                             self.viewer.plotter.render()
@@ -2233,6 +2906,7 @@ class MVATManager(QObject):
                     copy_mesh=False,
                     lighting=False,
                     show_scalar_bar=False,
+                    pickable=False,
                 )
 
             # If overlay is a tuple/list from the worker: assemble PolyData here.
@@ -2250,47 +2924,28 @@ class MVATManager(QObject):
                 # Backwards-compat: already a pv.PolyData.
                 mesh_to_add = overlay
 
-            if force_recreate and self._label_overlay_actor is not None:
+            if force_recreate and actor is not None:
                 try:
-                    self.viewer.plotter.remove_actor(self._label_overlay_actor, render=False)
+                    self.viewer.plotter.remove_actor(actor, render=False)
                 except Exception:
                     pass
-                self._label_overlay_actor = None
+                actor = None
+                setattr(self, actor_attr, None)
 
-            if self._label_overlay_actor is None:
-                self._label_overlay_actor = _add_overlay_actor(mesh_to_add)
+            if actor is None:
+                actor = _add_overlay_actor(mesh_to_add)
+                setattr(self, actor_attr, actor)
             else:
-                mapper = None
-                try:
-                    mapper = self._label_overlay_actor.GetMapper()
-                except Exception:
-                    mapper = None
-
-                updated = False
-                if mapper is not None:
-                    for method_name in ('SetInputDataObject', 'SetInputData'):
-                        method = getattr(mapper, method_name, None)
-                        if callable(method):
-                            try:
-                                method(mesh_to_add)
-                                try:
-                                    mapper.Update()
-                                except Exception:
-                                    pass
-                                updated = True
-                                break
-                            except Exception:
-                                continue
-
-                if not updated:
+                if not self._swap_mapper_input(actor, mesh_to_add):
                     try:
-                        self.viewer.plotter.remove_actor(self._label_overlay_actor, render=False)
+                        self.viewer.plotter.remove_actor(actor, render=False)
                     except Exception:
                         pass
-                    self._label_overlay_actor = _add_overlay_actor(mesh_to_add)
+                    actor = _add_overlay_actor(mesh_to_add)
+                    setattr(self, actor_attr, actor)
 
             try:
-                self._label_overlay_actor.SetVisibility(True)
+                actor.SetVisibility(True)
             except Exception:
                 pass
             if render:
@@ -2304,10 +2959,41 @@ class MVATManager(QObject):
         except Exception as e:
             print(f"⚠️ Overlay swap failed: {e}")
 
+    @staticmethod
+    def _swap_mapper_input(actor, mesh_to_add) -> bool:
+        """Replace an actor's mapper input in place. Returns False on failure."""
+        try:
+            mapper = actor.GetMapper()
+        except Exception:
+            return False
+        if mapper is None:
+            return False
+
+        for method_name in ('SetInputDataObject', 'SetInputData'):
+            method = getattr(mapper, method_name, None)
+            if callable(method):
+                try:
+                    method(mesh_to_add)
+                    try:
+                        mapper.Update()
+                    except Exception:
+                        pass
+                    return True
+                except Exception:
+                    continue
+        return False
+
     def _on_label_window_selected(self, *_args):
         """Refresh the hover overlay when the active label changes."""
         try:
             self.refresh_sphere_hover_overlay()
+        except Exception:
+            pass
+
+    def _on_label_visibility_changed_3d(self, label, is_visible):
+        """Route label visibility toggle to the 3D viewer."""
+        try:
+            self.viewer.update_label_visibility(label, is_visible)
         except Exception:
             pass
 
@@ -2350,6 +3036,364 @@ class MVATManager(QObject):
         if primary_target is None or not isinstance(primary_target, MeshProduct):
             return None
         return primary_target
+
+    # --- Point-cloud label painting ----------------------------------------------
+    def _get_primary_point_target(self):
+        """Return the primary target if it is a paintable point cloud, else None."""
+        try:
+            primary_target = self.viewer.scene_context.get_primary_target()
+        except Exception:
+            primary_target = None
+
+        if primary_target is None or not isinstance(primary_target, PointCloudProduct):
+            return None
+        return primary_target
+
+    def submit_3d_point_paint(self, point_ids, color_rgb, class_id: int, primary_target=None, label_id=None):
+        """Paint point-cloud points by ID.
+
+        The point-cloud analogue of ``submit_3d_face_paint``: it commits the labels
+        into the product (class IDs + label-color cache) and updates a stroke-only
+        overlay actor inline. The full painted-set overlay is rebuilt once per
+        stroke end (lazy flush), never per mouse move.
+        """
+        try:
+            point_ids = np.asarray(point_ids, dtype=np.int32).ravel()
+        except Exception:
+            return
+
+        if point_ids.size == 0:
+            return
+
+        if primary_target is None:
+            primary_target = self._get_primary_point_target()
+
+        if primary_target is None:
+            return
+
+        if int(class_id) == 0:
+            color_rgb = (255, 255, 255)
+            self._active_stroke_had_erase = True
+
+        # Keep the propagation registry in sync so a directly-painted cloud can be
+        # projected back out to the cameras (mirrors submit_3d_face_paint).
+        if int(class_id) != 0:
+            try:
+                engine = getattr(self, 'propagation_engine', None)
+                if engine is not None:
+                    if label_id is not None:
+                        engine._mesh_class_label_ids[int(class_id)] = label_id
+                    else:
+                        active_label = self._get_active_label_widget()
+                        fallback_label_id = getattr(active_label, 'id', None)
+                        if fallback_label_id is not None:
+                            engine._mesh_class_label_ids[int(class_id)] = fallback_label_id
+            except Exception:
+                pass
+
+        # Commit into the product's Python-owned caches (cheap numpy, no GPU work).
+        try:
+            primary_target.apply_labels(point_ids, int(class_id), color_rgb)
+        except Exception as e:
+            print(f"⚠️ submit_3d_point_paint apply_labels failed: {e}")
+            return
+
+        # Shader render path (mirrors submit_3d_face_paint): when the paint shader
+        # is enabled it renders the cloud's Labels directly from its class-id texture
+        # (gl_PrimitiveID == point id for GL_POINTS). apply_labels above already kept
+        # class_ids + the labels cache (the source of truth) in sync; push an
+        # O(painted) texture write and skip the stroke overlay entirely.
+        psm = getattr(self, 'paint_shader_manager', None)
+        if psm is not None and getattr(psm, 'shader_enabled', False):
+            if psm.update_class_ids_subset(primary_target, point_ids, int(class_id),
+                                           color_rgb=color_rgb):
+                self._render_paint_shader_throttled()
+            return
+
+        # Update only the stroke-sized overlay (throttled render). The previous
+        # implementation scanned all class_ids (O(N)) and recreated the full
+        # painted overlay actor on every brush move.
+        self._accumulate_point_stroke(primary_target, point_ids)
+        self._update_point_stroke_overlay(primary_target, render=True)
+
+    # --- Gaussian-splat label painting -------------------------------------------
+    def _get_primary_splat_target(self):
+        """Return the primary target if it is a paintable Gaussian splat, else None."""
+        try:
+            primary_target = self.viewer.scene_context.get_primary_target()
+        except Exception:
+            primary_target = None
+
+        if primary_target is None or not isinstance(primary_target, GaussianSplattingProduct):
+            return None
+        return primary_target
+
+    def submit_3d_splat_paint(self, point_ids, color_rgb, class_id: int, primary_target=None, label_id=None):
+        """Paint Gaussian splats by ID.
+
+        The splat analogue of submit_3d_point_paint. Splats are rendered by
+        VTK's geometry shader via the VTK-native GaussianActor, so there is no
+        separate overlay actor / paint-shader path: we commit the labels into
+        the product's Python caches and recolour by re-tinting the splat SH
+        coefficients via paint_labels(), then issue a throttled render.
+        """
+        try:
+            point_ids = np.asarray(point_ids, dtype=np.int32).ravel()
+        except Exception:
+            return
+
+        if point_ids.size == 0:
+            return
+
+        if primary_target is None:
+            primary_target = self._get_primary_splat_target()
+
+        if primary_target is None:
+            return
+
+        if int(class_id) == 0:
+            color_rgb = (255, 255, 255)
+            self._active_stroke_had_erase = True
+
+        # Keep the propagation registry in sync (mirrors submit_3d_point_paint).
+        if int(class_id) != 0:
+            try:
+                engine = getattr(self, 'propagation_engine', None)
+                if engine is not None:
+                    if label_id is not None:
+                        engine._mesh_class_label_ids[int(class_id)] = label_id
+                    else:
+                        active_label = self._get_active_label_widget()
+                        fallback_label_id = getattr(active_label, 'id', None)
+                        if fallback_label_id is not None:
+                            engine._mesh_class_label_ids[int(class_id)] = fallback_label_id
+            except Exception:
+                pass
+
+        # Commit into the product's Python-owned caches and recolour the splats.
+        # paint_labels writes the per-splat class ids into the GPU label channel
+        # (O(painted)); the label fragment shader renders them boosted-opacity so
+        # they read through the surrounding translucency.
+        try:
+            primary_target.paint_labels(point_ids, int(class_id), color_rgb)
+        except Exception as e:
+            print(f"⚠️ submit_3d_splat_paint failed: {e}")
+            return
+
+        self._render_paint_shader_throttled()
+
+    # --- Point-cloud stroke overlay (current drag only) ---------------------------
+    def _accumulate_point_stroke(self, primary_target, point_ids: np.ndarray):
+        """Track stroke membership with an O(chunk) boolean-mask dedupe."""
+        try:
+            n_points = int(primary_target.mesh.n_points)
+        except Exception:
+            n_points = 0
+
+        mask = self._point_stroke_mask
+        if n_points > 0 and (mask is None or mask.size != n_points):
+            # First stroke on this product (or product switched): fresh mask.
+            mask = np.zeros(n_points, dtype=bool)
+            self._point_stroke_mask = mask
+            self._point_stroke_chunks = []
+
+        if mask is not None and point_ids.size and point_ids.max() < mask.size:
+            new_ids = point_ids[~mask[point_ids]]
+            if new_ids.size == 0:
+                return
+            mask[new_ids] = True
+            self._point_stroke_chunks.append(new_ids)
+        else:
+            self._point_stroke_chunks.append(point_ids)
+
+    def _collect_point_stroke_ids(self) -> np.ndarray:
+        if not self._point_stroke_chunks:
+            return np.empty(0, dtype=np.int32)
+        if len(self._point_stroke_chunks) == 1:
+            return self._point_stroke_chunks[0]
+        return np.concatenate(self._point_stroke_chunks)
+
+    def _update_point_stroke_overlay(self, primary_target, render: bool = True):
+        """Swap the stroke-only points overlay in place (cheap, O(stroke))."""
+        stroke_ids = self._collect_point_stroke_ids()
+        if stroke_ids.size == 0:
+            return
+
+        try:
+            points = np.asarray(primary_target.mesh.points, dtype=np.float32)[stroke_ids]
+            colors = np.asarray(primary_target._labels_cache, dtype=np.uint8)[stroke_ids, :3]
+        except Exception:
+            return
+
+        try:
+            import pyvista as pv
+            tiny = pv.PolyData(points)
+            tiny.point_data['OverlayColors'] = colors
+
+            actor = self._point_stroke_overlay_actor
+            if actor is None or not self._swap_mapper_input(actor, tiny):
+                if actor is not None:
+                    try:
+                        self.viewer.plotter.remove_actor(actor, render=False)
+                    except Exception:
+                        pass
+                point_size = float(getattr(self.viewer, 'point_size', 3) or 3) + 2.0
+                self._point_stroke_overlay_actor = self.viewer.plotter.add_mesh(
+                    tiny,
+                    scalars='OverlayColors',
+                    rgb=True,
+                    style='points',
+                    point_size=point_size,
+                    render_points_as_spheres=True,
+                    copy_mesh=False,
+                    lighting=False,
+                    show_scalar_bar=False,
+                    pickable=False,
+                )
+
+            if render:
+                last = self._point_overlay_last_render_time
+                if last is None or (perf_counter() - last) > 0.033:
+                    self.viewer.plotter.render()
+                    self._point_overlay_last_render_time = perf_counter()
+        except Exception as e:
+            print(f"⚠️ Point stroke overlay update failed: {e}")
+
+    def _clear_point_stroke_overlay(self, render: bool = False):
+        """Reset stroke tracking and remove the stroke overlay actor."""
+        mask = self._point_stroke_mask
+        if mask is not None:
+            for chunk in self._point_stroke_chunks:
+                valid = chunk[chunk < mask.size]
+                mask[valid] = False
+        self._point_stroke_chunks = []
+
+        actor = self._point_stroke_overlay_actor
+        if actor is not None:
+            try:
+                self.viewer.plotter.remove_actor(actor, render=False)
+            except Exception:
+                pass
+            self._point_stroke_overlay_actor = None
+            if render:
+                try:
+                    self.viewer.plotter.render()
+                except Exception:
+                    pass
+
+    def _build_primary_point_overlay(self):
+        """Snapshot all currently painted points into an overlay payload.
+
+        Returns (points_xyz, colors) for every point with a non-zero class ID, or
+        None when nothing is painted.
+        """
+        primary_target = self._get_primary_point_target()
+        if primary_target is None or primary_target.mesh is None:
+            return None
+
+        class_ids = getattr(primary_target, 'class_ids', None)
+        labels_cache = getattr(primary_target, '_labels_cache', None)
+        if class_ids is None or labels_cache is None:
+            return None
+
+        painted = np.flatnonzero(np.asarray(class_ids) != 0)
+        if painted.size == 0:
+            return None
+
+        try:
+            points = np.asarray(primary_target.mesh.points, dtype=np.float32)[painted]
+            colors = np.asarray(labels_cache, dtype=np.uint8)[painted, :3]
+            return points, colors
+        except Exception:
+            return None
+
+    def refresh_primary_point_overlay(self, force_recreate: bool = False, render: bool = True):
+        """Rebuild the point-label overlay actor from the current painted state.
+
+        No-op when the paint shader is the renderer (it draws labels straight on the
+        cloud's base actor).
+        """
+        psm = getattr(self, 'paint_shader_manager', None)
+        if psm is not None and getattr(psm, 'shader_enabled', False):
+            if self._point_label_overlay_actor is not None:
+                self._on_point_overlay_ready(None, render=render)
+            return
+
+        overlay = self._build_primary_point_overlay()
+        if overlay is None:
+            if self._point_label_overlay_actor is not None:
+                self._on_point_overlay_ready(None, render=render)
+            return
+        self._on_point_overlay_ready(overlay, force_recreate=force_recreate, render=render)
+
+    def _on_point_overlay_ready(self, overlay, force_recreate: bool = False, render: bool = True):
+        """Main thread: create/update the point overlay actor in place."""
+        try:
+            if overlay is None:
+                if self._point_label_overlay_actor is not None:
+                    try:
+                        self.viewer.plotter.remove_actor(self._point_label_overlay_actor, render=False)
+                    except Exception:
+                        pass
+                    self._point_label_overlay_actor = None
+                    if render:
+                        try:
+                            self.viewer.plotter.render()
+                        except Exception:
+                            pass
+                return
+
+            import pyvista as pv
+            pts, colors = overlay
+            pts_arr = np.asarray(pts, dtype=np.float32)
+            colors_arr = np.asarray(colors, dtype=np.uint8)
+
+            tiny = pv.PolyData(pts_arr)
+            tiny.point_data['OverlayColors'] = colors_arr
+
+            # Render painted points a touch larger than the base cloud so they read
+            # as a highlight on top of it.
+            point_size = float(getattr(self.viewer, 'point_size', 3) or 3) + 2.0
+
+            def _add_overlay_actor(mesh_to_add):
+                return self.viewer.plotter.add_mesh(
+                    mesh_to_add,
+                    scalars='OverlayColors',
+                    rgb=True,
+                    style='points',
+                    point_size=point_size,
+                    render_points_as_spheres=True,
+                    copy_mesh=False,
+                    lighting=False,
+                    show_scalar_bar=False,
+                    pickable=False,
+                )
+
+            # Points-only overlays change vertex count every stroke, so the in-place
+            # mapper-swap used for meshes doesn't help; recreate the actor each time.
+            if self._point_label_overlay_actor is not None:
+                try:
+                    self.viewer.plotter.remove_actor(self._point_label_overlay_actor, render=False)
+                except Exception:
+                    pass
+                self._point_label_overlay_actor = None
+
+            self._point_label_overlay_actor = _add_overlay_actor(tiny)
+            try:
+                self._point_label_overlay_actor.SetVisibility(True)
+            except Exception:
+                pass
+
+            if render:
+                try:
+                    last = self._point_overlay_last_render_time
+                    if last is None or (perf_counter() - last) > 0.033:
+                        self.viewer.plotter.render()
+                        self._point_overlay_last_render_time = perf_counter()
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"⚠️ Point overlay swap failed: {e}")
 
     def _get_sphere_hover_radius(self):
         active_tool = getattr(self.viewer, '_active_3d_tool', None)
@@ -3936,11 +4980,211 @@ class MVATManager(QObject):
         except Exception:
             pass
 
-        self._update_frustum_states()
+        self._sync_pinned_index_maps(visible_paths)
+
+        # Rebuild frustums from scratch so only context-visible cameras are shown.
+        self._rebuild_visible_frustums()
         self._update_visibility_filter(list(visible_paths))
 
         # Update the N / M stat when the visible count changes.
         self._update_context_stats()
+
+    def _rebuild_visible_frustums(self):
+        """Rebuild the batched frustum mesh for cameras visible in the context matrix."""
+        visible_paths = self._get_visible_context_camera_paths()
+        visible_cameras = {path: self.cameras[path] for path in visible_paths if path in self.cameras}
+
+        selected_path = None
+        if self.selected_camera and self.selected_camera.image_path in visible_paths:
+            selected_path = self.selected_camera.image_path
+
+        self.viewer.add_frustums(
+            visible_cameras,
+            selected_camera=self.selected_camera if selected_path else None,
+            highlighted_paths=visible_paths,
+            hovered_camera=self.hovered_camera,
+            context_highlighted_paths=visible_paths,
+        )
+
+    def _sync_pinned_index_maps(self, visible_paths):
+        """Pin index maps for on-screen context cameras in RAM; unpin the rest.
+
+        The per-hover occlusion loop reads each visible camera's index_map every
+        frame; backed by the bounded INDEX_MAP_LRU, those reads thrash to disk
+        once the visible working set exceeds the cache budget (the multi-second
+        hover freeze). Pinning the cameras the user is actually viewing keeps
+        their maps resident so the reads are O(1), bounding RAM to what is shown.
+        Each map loads at most once here when the visible set changes.
+
+        In aggressive (recompute) mode unpinned maps would be dropped and have to
+        be recomputed on re-add. Instead we park them in a bounded RAM retention
+        cache and restore them when the camera comes back, so removing + re-adding
+        a working set is a hit, not a burst of single-camera recomputes.
+        """
+        visible = set(visible_paths or [])
+        aggressive = not self.index_map_disk_cache_enabled
+        for path, camera in self.cameras.items():
+            raster = getattr(camera, '_raster', None)
+            if raster is None or not hasattr(raster, 'pin_index_map'):
+                continue
+            try:
+                if path in visible:
+                    # Restore a retained map (if any) so the re-pin is a RAM hit
+                    # rather than a provider recompute on first read.
+                    if aggressive and getattr(raster, '_index_map', None) is None:
+                        cached = self._unpinned_map_cache.pop(path, None)
+                        if cached is not None:
+                            raster._index_map = cached
+                    raster.pin_index_map()
+                else:
+                    # Park the resident map before unpin drops it.
+                    if aggressive:
+                        resident = getattr(raster, '_index_map', None)
+                        if resident is not None:
+                            self._retain_unpinned_map(path, resident)
+                    raster.unpin_index_map()
+            except Exception:
+                pass
+
+        # Aggressive mode: proactively warm the dense maps for visible cameras that
+        # are "computed" (have visible_indices) but aren't resident — these would
+        # otherwise be recomputed one-at-a-time on the UI thread by the hover
+        # occlusion loop. Cameras still missing visible_indices are handled by the
+        # async worker (which seeds their dense map), so they're excluded here.
+        if aggressive:
+            need_warm = [
+                cam for path in visible
+                if (cam := self.cameras.get(path)) is not None
+                and getattr(cam, '_raster', None) is not None
+                and cam._raster.visible_indices is not None
+                and getattr(cam._raster, '_index_map', None) is None
+                and path not in self._inflight_warm_maps
+            ]
+            if need_warm:
+                self._warm_visible_maps_async(need_warm)
+
+    def _warm_visible_maps_async(self, cameras):
+        """Batch-render dense index maps for ``cameras`` off the UI thread.
+
+        Turns the hover occlusion loop's worst case — N sequential single-camera
+        recomputes on the main thread — into one background ``render()`` whose
+        results are seeded into the rasters on the main thread. Only used in
+        aggressive mode for cameras that already have visible_indices but no
+        resident dense map.
+        """
+        if not cameras or self.persistent_rasterizer is None:
+            return
+        try:
+            product = self.viewer.scene_context.get_primary_target()
+        except Exception:
+            product = None
+        if product is None:
+            return
+
+        # Snapshot params + warp maps on the main thread (camera geometry is
+        # immutable; warp maps must not be first-built off-thread).
+        jobs = []  # (image_path, params, warp_or_None)
+        for cam in cameras:
+            raster = getattr(cam, '_raster', None)
+            if raster is None:
+                continue
+            warp = None
+            if cam.is_distorted and raster.intrinsics_undistorted is not None:
+                try:
+                    raster._ensure_warp_maps()
+                    warp = (raster._map_x, raster._map_y)
+                except Exception:
+                    warp = None
+            jobs.append((cam.image_path,
+                         (cam.K_linear, cam.R, cam.t, cam.width, cam.height),
+                         warp))
+            self._inflight_warm_maps.add(cam.image_path)
+
+        if not jobs:
+            return
+
+        splat_radius = getattr(self, 'debug_splat_radius', 1)
+        splat_round = getattr(self, 'debug_splat_round', False)
+        pixel_budget = self.pixel_budget
+        gen = self._warm_generation
+
+        def _worker():
+            seeds = {}
+            try:
+                params_list = [j[1] for j in jobs]
+                warp_list = [j[2] for j in jobs]
+                any_warp = any(w is not None for w in warp_list)
+                results = self.persistent_rasterizer.render(
+                    product, params_list,
+                    compute_depth_map=False,
+                    compute_visible_indices=False,
+                    pixel_budget=pixel_budget,
+                    upsample_to_native=True,
+                    warp_maps_list=(warp_list if any_warp else None),
+                    splat_radius=splat_radius,
+                    splat_round=splat_round,
+                )
+                for job, res in zip(jobs, results):
+                    idx = res.get('index_map') if res else None
+                    if idx is not None:
+                        seeds[job[0]] = np.asarray(idx).astype(np.int32, copy=False)
+            except Exception as e:
+                print(f"⚠️ Warm batch render failed: {e}")
+            finally:
+                # Carry the full dispatched set so the main thread clears every
+                # inflight flag, even for cameras that failed to render.
+                self._warmMapsReady.emit({
+                    'seeds': seeds,
+                    'dispatched': [j[0] for j in jobs],
+                    'gen': gen,
+                })
+
+        threading.Thread(target=_worker, daemon=True, name='mvat_warm_maps').start()
+
+    def _on_warm_maps_ready(self, payload):
+        """Main thread: seed batch-warmed dense maps into still-visible rasters."""
+        try:
+            for path in payload.get('dispatched', []) or []:
+                self._inflight_warm_maps.discard(path)
+            # Discard stale results from before a geometry/budget change.
+            if payload.get('gen') != self._warm_generation:
+                return
+            seeds = payload.get('seeds', {}) or {}
+            visible = set(self._get_visible_context_camera_paths())
+            for path, idx in seeds.items():
+                cam = self.cameras.get(path)
+                if cam is None:
+                    continue
+                raster = getattr(cam, '_raster', None)
+                if raster is None:
+                    continue
+                # Only seed if still on-screen (pinned) and still missing, so the
+                # held reference stays bounded to the visible set.
+                if (path in visible
+                        and getattr(raster, '_index_map', None) is None
+                        and raster.visible_indices is not None):
+                    raster._index_map = idx
+        except Exception:
+            pass
+
+    def _retain_unpinned_map(self, path: str, arr) -> None:
+        """Stash an unpinned index map in the bounded RAM retention cache.
+
+        Newest entries are kept at the end; once the total exceeds the byte
+        budget the oldest maps are evicted (their references dropped) until it
+        fits. A no-op when ``arr`` is None.
+        """
+        if arr is None:
+            return
+        cache = self._unpinned_map_cache
+        cache.pop(path, None)       # re-insert at end (most recently used)
+        cache[path] = arr
+        budget = self._unpinned_map_cache_max_bytes
+        total = sum(getattr(a, 'nbytes', 0) for a in cache.values())
+        while total > budget and len(cache) > 1:
+            old_path = next(iter(cache))
+            old = cache.pop(old_path)
+            total -= getattr(old, 'nbytes', 0)
 
     def _get_scene_size_snapshot(self):
         """Capture the viewer scene size on the main thread for background proximity checks."""
@@ -3967,6 +5211,10 @@ class MVATManager(QObject):
         next call to _maybe_compute_ortho_index_map sees a stale-scale state
         and rebuilds at the new budget.
         """
+        # Retained maps were rendered at the previous budget — drop them too, and
+        # invalidate any in-flight warm batch (it targets the old budget).
+        self._unpinned_map_cache.clear()
+        self._warm_generation += 1
         for cam in self.cameras.values():
             raster = getattr(cam, '_raster', None)
             if raster is None:
@@ -3978,6 +5226,8 @@ class MVATManager(QObject):
                     raster.index_map_path = None
                 if hasattr(raster, 'index_map_scale_factor'):
                     raster.index_map_scale_factor = None
+                if hasattr(raster, 'index_map_pixel_budget'):
+                    raster.index_map_pixel_budget = None
                 if hasattr(raster, 'inv_ids'):
                     raster.inv_ids = None
                 if hasattr(raster, 'inv_offsets'):
@@ -3997,6 +5247,8 @@ class MVATManager(QObject):
                         ortho_raster.index_map_path = None
                     if hasattr(ortho_raster, 'index_map_scale_factor'):
                         ortho_raster.index_map_scale_factor = None
+                    if hasattr(ortho_raster, 'index_map_pixel_budget'):
+                        ortho_raster.index_map_pixel_budget = None
                     if hasattr(ortho_raster, 'inv_ids'):
                         ortho_raster.inv_ids = None
                     if hasattr(ortho_raster, 'inv_offsets'):
@@ -4336,6 +5588,12 @@ class MVATManager(QObject):
         dlg.exec_()
 
 
+    def _on_bake_features_requested(self):
+        """Open the bake features dialog."""
+        from coralnet_toolbox.MVAT.managers.FeatureMeshManager import BakeFeatureDialog
+        dlg = BakeFeatureDialog(self.feature_mesh_manager, parent=self.main_window)
+        dlg.exec_()
+
     def cleanup(self):
         """Clean up resources before closing."""
         self._on_multi_annotate_toggled(False)
@@ -4359,3 +5617,12 @@ class MVATManager(QObject):
             except Exception:
                 pass
         self._active_workers.clear()
+
+        # Shut down the warm rasterizer AFTER the workers above have been waited
+        # on: a worker blocked in render() needs the owner thread alive to deliver
+        # its result. shutdown() releases all warm GL contexts on the owner thread
+        # and joins it.
+        try:
+            self.persistent_rasterizer.shutdown()
+        except Exception:
+            pass

@@ -368,8 +368,20 @@ class DeployGeneratorDialog(QDialog):
                     and self.annotation_window.get_selected_tool() == "work_area"
                 )
                 if use_tiles:
-                    work_areas = raster.get_work_areas()
-                    work_items_data = raster.get_work_areas_data()  # RGB
+                    # A VideoRaster stores work areas for every frame in one flat
+                    # list keyed by the virtual frame path; restrict to the frame
+                    # being processed so we don't tile other frames' areas against
+                    # the current frame's pixels.
+                    all_areas = raster.get_work_areas()
+                    frame_areas = [wa for wa in all_areas if wa.image_path == image_path]
+                    if frame_areas and len(frame_areas) != len(all_areas):
+                        work_areas = frame_areas
+                        work_items_data = [
+                            raster.get_work_area_data(wa) for wa in frame_areas
+                        ]  # RGB
+                    else:
+                        work_areas = all_areas
+                        work_items_data = raster.get_work_areas_data()  # RGB
                 else:
                     work_areas = [None]
                     # If the requested image_path is a virtual video frame, try
@@ -468,6 +480,12 @@ class DeployGeneratorDialog(QDialog):
                                 task=self.task,
                                 boundary_tolerance=self.thresholds_widget.get_boundary_tolerance(),
                             )
+                            # map_results_from_work_area resets result.path to the
+                            # bare raster.image_path; for a virtual video frame
+                            # (video.mp4::frame_N) that drops the frame suffix and
+                            # the baked annotations get keyed to the wrong path and
+                            # vanish on redraw. Restore the per-frame image_path.
+                            result.path = image_path
                             wa.unhighlight()
 
                         results_for_image.append(result)

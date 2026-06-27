@@ -2,11 +2,10 @@
 MousePositionBridge — bridges AnnotationWindow mouse-move events into the MVAT
 controller, building camera rays and updating context-canvas markers.
 """
-import time
-
 import numpy as np
 
-from PyQt5.QtCore import QObject
+
+from PyQt5.QtCore import QObject, QTimer
 
 from coralnet_toolbox.MVAT.core.Ray import CameraRay
 from coralnet_toolbox.MVAT.core.constants import (
@@ -43,24 +42,48 @@ class MousePositionBridge(QObject):
         super().__init__()
         self.manager = manager
         self.enabled = True
-        self._last_update_time = 0
-        self._last_mouse_x = -1
-        self._last_mouse_y = -1
+        self._pending_x = -1
+        self._pending_y = -1
+        self._pending_timer = QTimer(self)
+        self._pending_timer.setSingleShot(True)
+        self._pending_timer.setInterval(16)
+        self._pending_timer.timeout.connect(self._process_pending_update)
 
     def on_mouse_moved(self, x: int, y: int):
         if not self.enabled:
             return
-        # Skip duplicate pixels (Qt can fire multiple events for the same position)
-        if x == self._last_mouse_x and y == self._last_mouse_y:
+        # Check if the 3D viewer window and rays are available
+        viewer = getattr(self.manager, 'viewer', None)
+        if viewer is None or not getattr(viewer, '_show_rays_enabled', False):
             return
-        # Time-gate: cap at ~60 fps to avoid flooding the ortho ray-trace / perspective
-        # projection loop on every raw mouse event.
-        now = time.monotonic()
-        if now - self._last_update_time < 0.016:
+        # Store the latest position and arm the timer for coalesced processing
+        self._pending_x = x
+        self._pending_y = y
+        if not self._pending_timer.isActive():
+            self._pending_timer.start()
+
+    @staticmethod
+    def _sample_index_map(index_map, x: int, y: int, cam_w: int, cam_h: int) -> int:
+        """Sample an index map using native pixel coordinates.
+
+        Index maps are normally stored at native resolution, but archives cached
+        before upsampling (e.g. low-quality runs) can come back sub-native from
+        the LRU. Scale the lookup by the actual map shape so those never go out
+        of bounds.
+        """
+        map_h, map_w = index_map.shape[:2]
+        if map_w != cam_w or map_h != cam_h:
+            x = min(map_w - 1, (x * map_w) // max(1, cam_w))
+            y = min(map_h - 1, (y * map_h) // max(1, cam_h))
+        return int(index_map[y, x])
+
+    def _process_pending_update(self):
+        """Process the most recent queued mouse position on the coalescing timer."""
+        if self._pending_x < 0 or self._pending_y < 0:
             return
-        self._last_update_time = now
-        self._last_mouse_x = x
-        self._last_mouse_y = y
+        x, y = self._pending_x, self._pending_y
+        self._pending_x = -1
+        self._pending_y = -1
         self._process_pending_position(x, y)
             
     def _process_pending_position(self, x: int, y: int):
@@ -95,7 +118,7 @@ class MousePositionBridge(QObject):
         candidate_id = -1
         index_map = camera._raster.index_map
         if index_map is not None:
-            candidate_id = int(index_map[y, x])
+            candidate_id = self._sample_index_map(index_map, x, y, camera.width, camera.height)
 
         if candidate_id > -1 and primary_target is not None:
             coord = primary_target.get_element_coordinate(candidate_id)
@@ -182,8 +205,16 @@ class MousePositionBridge(QObject):
             is_occluded = True
             found_id = -1
 
-            if getattr(target_cam, '_raster', None) is not None and target_cam._raster.index_map is not None and ray.element_id > -1:
-                found_id = int(target_cam._raster.index_map[v_proj, u_proj])
+            # Fetch the index_map once (property access can hit the LRU) instead
+            # of dereferencing it twice (condition + sample).
+            target_raster = getattr(target_cam, '_raster', None)
+            target_index_map = target_raster.index_map if target_raster is not None else None
+
+            if target_index_map is not None and ray.element_id > -1:
+                found_id = self._sample_index_map(
+                    target_index_map, u_proj, v_proj,
+                    target_cam.width, target_cam.height,
+                )
 
                 # Determine visibility with spatial tolerance.
                 # METHOD A: 3D Distance Threshold (ACTIVE)
@@ -257,6 +288,7 @@ class MousePositionBridge(QObject):
             rays_with_colors.append((target_ray, ray_color))
 
         self.manager.viewer.show_rays(rays_with_colors)
+
         # Project only into visible cameras — avoids O(all_cameras) work per frame
         visible_cam_dict = {cam.image_path: cam for cam in highlighted_cameras}
         visible_cam_dict[camera.image_path] = camera  # include the primary camera
@@ -340,4 +372,8 @@ class MousePositionBridge(QObject):
                 pass
 
     def cleanup(self):
+        try:
+            self._pending_timer.stop()
+        except Exception:
+            pass
         self.clear_all_markers()

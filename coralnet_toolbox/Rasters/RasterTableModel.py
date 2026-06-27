@@ -189,6 +189,14 @@ class RasterTableModel(QAbstractTableModel):
                     else:
                         tooltip_parts.append(f"<b>Has Extrinsics:</b> No")
 
+                # Add feature map information if it exists
+                if raster.has_feature_map():
+                    tooltip_parts.append(
+                        f"<b>Feature Map:</b> {raster.feature_map_model_id} ({raster.feature_map_dim}-D)"
+                    )
+                else:
+                    tooltip_parts.append("<b>Feature Map:</b> No")
+
                 tooltip_parts.extend([
                     f"<b>Annotations:</b> {'Yes' if raster.has_annotations else 'No'}",
                     f"<b>Predictions:</b> {'Yes' if raster.has_predictions else 'No'}"

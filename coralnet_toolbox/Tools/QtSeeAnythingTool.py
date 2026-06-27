@@ -6,7 +6,7 @@ import numpy as np
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush
-from PyQt5.QtWidgets import QMessageBox, QGraphicsRectItem, QApplication
+from PyQt5.QtWidgets import QGraphicsRectItem, QApplication
 
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.Annotations.QtAnnotation import RenderMode
@@ -374,9 +374,8 @@ class SeeAnythingTool(Tool):
             event (QMouseEvent): The mouse press event.
         """
         if not self.annotation_window.selected_label:
-            QMessageBox.warning(self.annotation_window,
-                                "No Label Selected",
-                                "A label must be selected before adding an annotation.")
+            self.annotation_window.main_window.status_bar.showMessage(
+                "A label must be selected before adding an annotation.", 4000)
             return None
 
         # Get position in scene coordinates
@@ -714,6 +713,26 @@ class SeeAnythingTool(Tool):
             if total == 0:
                 return
 
+            # Strip the preview-only selected state and graphics so annotations
+            # enter the data model as normal unselected items (no dashed pen).
+            for annotation in self.annotations:
+                annotation.is_selected = False
+                annotation.render_mode = RenderMode.PHANTOM
+                if annotation.graphics_item_group is not None:
+                    try:
+                        if annotation.graphics_item_group.scene():
+                            annotation.graphics_item_group.scene().removeItem(
+                                annotation.graphics_item_group
+                            )
+                    except RuntimeError:
+                        pass
+                annotation.graphics_item_group = None
+                annotation.graphics_item = None
+                annotation.center_graphics_item = None
+                annotation.bounding_box_graphics_item = None
+                annotation.tag_item = None
+                annotation.dimension_tag_item = None
+
             # Threshold for switching to the optimized, bulk path.
             BATCH_THRESHOLD = 10
 
@@ -804,32 +823,16 @@ class SeeAnythingTool(Tool):
         
         # Get the original working area image dimensions
         original_h, original_w = self.work_area_image.shape[:2]
-        
-        # Get the actual dimensions that SAM processed from the results object
-        if processed_results and len(processed_results) > 0 and hasattr(processed_results[0], 'orig_img'):
-            processed_h, processed_w = processed_results[0].orig_img.shape[:2]
-        else:
-            # Fallback to calculating from imgsz if orig_img not available
-            imgsz = self.see_anything_dialog.sam_dialog.imgsz_spinbox.value()
-            if original_h > original_w:
-                processed_h = imgsz
-                processed_w = int(imgsz * original_w / original_h)
-            else:
-                processed_w = imgsz
-                processed_h = int(imgsz * original_h / original_w)
-        
-        # Calculate scaling factors to map from processed size back to original size
-        scale_x = original_w / processed_w
-        scale_y = original_h / processed_h
 
-        # Update mask coordinates to account for resizing
-        if processed_results[0].masks is not None:
-            for i, mask in enumerate(processed_results[0].masks.xy):
-                if len(mask) > 0:
-                    # Scale coordinates back to original size
-                    mask[:, 0] *= scale_x
-                    mask[:, 1] *= scale_y
-                    processed_results[0].masks.xy[i] = mask
+        # SAM returns masks at its own processed resolution which may differ
+        # from the original work area.  Ultralytics' Masks.xy property uses
+        # scale_coords(mask_shape, contours, orig_shape) to map contour
+        # coordinates from mask-tensor space to orig_shape space.  Setting
+        # orig_shape to the work area dimensions makes that scaling produce
+        # work-area-local coordinates, which MapResults then offsets to
+        # full-image space.
+        if processed_results and processed_results[0].masks is not None:
+            processed_results[0].masks.orig_shape = (original_h, original_w)
 
         # Get the raster
         raster = self.main_window.image_window.raster_manager.get_raster(self.image_path)
@@ -842,6 +845,16 @@ class SeeAnythingTool(Tool):
             map_masks=True,
             boundary_tolerance=self.see_anything_dialog.thresholds_widget.get_boundary_tolerance(),
         )
+
+        # map_results_from_work_area resets result.path to raster.image_path;
+        # for a virtual video frame (video.mp4::frame_N) that drops the frame
+        # suffix and annotations get keyed to the wrong path. Restore it.
+        if isinstance(final_results, list):
+            for r in final_results:
+                if r is not None:
+                    r.path = self.image_path
+        elif final_results is not None:
+            final_results.path = self.image_path
 
         # Process the results
         results_processor.process_segmentation_results(final_results)

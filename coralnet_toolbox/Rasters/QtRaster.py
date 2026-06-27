@@ -18,7 +18,8 @@ from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from coralnet_toolbox.Annotations import MaskAnnotation
-from coralnet_toolbox.MVAT.utils.IndexMapCodec import load_index_map_archive
+from coralnet_toolbox.MVAT.utils.IndexMapCodec import load_index_map_archive, INDEX_MAP_LRU
+from coralnet_toolbox.Features.FeatureMapCodec import load_feature_map, FEATURE_MAP_LRU
 
 from coralnet_toolbox.WorkArea import WorkArea
 
@@ -136,15 +137,37 @@ class Raster(QObject):
         self.dist_coeffs: Optional[np.ndarray] = None  # OpenCV layout [k1,k2,p1,p2,k3,k4,k5,k6] float64
         self.intrinsics_undistorted: Optional[np.ndarray] = None  # K_new: linear camera matrix (wider FOV)
         # Visibility/Index map information (for MultiView Annotation)
-        self.index_map: Optional[np.ndarray] = None  # 2D array mapping pixels to element IDs (H x W int32)
+        self._index_map: Optional[np.ndarray] = None  # 2D array mapping pixels to element IDs (H x W int32)
+        # When True, keep _index_map RAM-resident (bypass LRU eviction). Set for
+        # context cameras the user is actively viewing so the per-hover occlusion
+        # loop never pays a synchronous LRU/disk reload (see pin_index_map).
+        self._index_map_pinned: bool = False
+        # Optional zero-arg callable that recomputes and returns this raster's
+        # dense index map (H x W int32) on demand. Set by MVAT's aggressive
+        # (no-disk) mode so a map that isn't resident is regenerated from the warm
+        # GL context instead of read from disk. When None (2D rasters, disk mode)
+        # the index_map machinery behaves exactly as before.
+        self._index_map_provider = None
         self.index_map_path: Optional[str] = None  # Path to index_map file if saved separately
         self.visible_indices: Optional[np.ndarray] = None  # 1D array of visible element IDs
         self.index_element_type: Optional[str] = None  # Element type: 'point', 'face', or 'cell'
+        # Render pixel budget that produced the index map: 0 = Native quality,
+        # None = unknown (e.g. legacy cache archives without the metadata key)
+        self.index_map_pixel_budget: Optional[int] = None
         # CSR inverted index (element_id -> flat pixel indices)
         self.inv_ids: Optional[np.ndarray] = None      # int32: sorted unique element IDs
         self.inv_offsets: Optional[np.ndarray] = None  # int64: offsets into inv_pixels
         self.inv_pixels: Optional[np.ndarray] = None   # int32: flat pixel indices
-        
+
+        # Feature map information (dense per-image feature vectors)
+        self._feature_map: Optional[np.ndarray] = None  # [h, w, C] float16 at patch-grid resolution
+        self.feature_map_path: Optional[str] = None  # Path to feature map file if saved separately
+        self.feature_map_model_id: Optional[str] = None  # Model identifier used for extraction
+        self.feature_map_stride: Optional[int] = None  # Patch grid stride (16 for ViT/16)
+        self.feature_map_dim: Optional[int] = None  # Number of feature channels C
+        self.feature_map_normalized: bool = False  # Whether features are L2-normalized
+        self.feature_vector: Optional[np.ndarray] = None  # [C] pooled vector (optional, for Explorer)
+
         # Metadata
         self.metadata = {}  # Can store any additional metadata
         
@@ -172,7 +195,7 @@ class Raster(QObject):
     def set_display_name(self, max_length=25):
         """
         Set a display name (truncated if necessary) for showing in table
-        
+
         Args:
             max_length (int): Maximum length for display name before truncation
         """
@@ -180,7 +203,117 @@ class Raster(QObject):
             self.display_name = self.basename[:max_length - 3] + "..."
         else:
             self.display_name = self.basename
-        
+
+    @property
+    def index_map(self) -> Optional[np.ndarray]:
+        """Lazy-load index_map from disk cache on first access via LRU.
+
+        If _index_map is in memory, return it. Otherwise, if index_map_path is set,
+        load from disk via the bounded LRU cache. Avoids keeping all maps resident.
+        """
+        if self._index_map is not None:
+            return self._index_map
+        if self.index_map_path:
+            return INDEX_MAP_LRU.get(self.index_map_path)
+        # Aggressive (no-disk) mode: regenerate from the warm GL context. Hold the
+        # result only while pinned, so RAM stays bounded to the on-screen working
+        # set; off-screen reads recompute transiently and are GC'd. Pinned reads
+        # recompute at most once per pin (the hover loop then hits _index_map).
+        if self._index_map_provider is not None:
+            arr = self._index_map_provider()
+            if arr is not None and self._index_map_pinned:
+                self._index_map = arr
+            return arr
+        return None
+
+    @index_map.setter
+    def index_map(self, value: Optional[np.ndarray]) -> None:
+        """Set index_map, routing to LRU cache if disk-backed, else retaining in memory."""
+        if value is None:
+            self._index_map = None
+            if self.index_map_path:
+                INDEX_MAP_LRU.discard(self.index_map_path)
+            return
+
+        if self.index_map_path:
+            INDEX_MAP_LRU.put(self.index_map_path, value)
+            # Keep a RAM-resident reference while pinned so a freshly (re)computed
+            # map for an on-screen camera stays hot for the hover loop.
+            self._index_map = value if self._index_map_pinned else None
+        elif self._index_map_provider is not None:
+            # Provider-backed (recompute) map: hold only while pinned, mirroring the
+            # disk-backed branch, so a seeded on-screen map stays hot but RAM is
+            # bounded to the pinned set (the provider regenerates after eviction).
+            self._index_map = value if self._index_map_pinned else None
+        else:
+            self._index_map = value
+
+    def pin_index_map(self) -> bool:
+        """Keep this raster's index map RAM-resident, bypassing the LRU.
+
+        The per-hover occlusion loop reads each visible context camera's
+        index_map every frame. Backed by the bounded ``INDEX_MAP_LRU``, that read
+        silently reloads from disk (tens of ms each) whenever the visible working
+        set exceeds the cache budget — which freezes interaction once ~20+
+        cameras can see the cursor. Pinning the on-screen cameras promotes their
+        maps to a held reference so the reads become O(1), bounding RAM to what is
+        actually displayed.
+
+        Idempotent: a no-op (no reload) when already resident. Returns True if a
+        map is resident afterwards.
+        """
+        self._index_map_pinned = True
+        if self._index_map is not None:
+            return True
+        if self.index_map_path:
+            arr = INDEX_MAP_LRU.get(self.index_map_path)
+            if arr is not None:
+                self._index_map = arr
+                return True
+        return False
+
+    def unpin_index_map(self) -> None:
+        """Release a RAM-pinned index map, freeing memory immediately.
+
+        Drops both the held ``_index_map`` reference and the LRU entry so the
+        array can be GC'd. The map is still on disk (``index_map_path``) and
+        will be reloaded on demand if this camera becomes visible again.
+        """
+        if not self._index_map_pinned:
+            return
+        self._index_map_pinned = False
+        if self.index_map_path:
+            INDEX_MAP_LRU.discard(self.index_map_path)
+        self._index_map = None
+
+    @property
+    def feature_map(self) -> Optional[np.ndarray]:
+        """Lazy-load feature_map from disk cache on first access via LRU.
+
+        If _feature_map is in memory, return it. Otherwise, if feature_map_path is set,
+        load from disk via the bounded LRU cache. Avoids keeping all maps resident.
+        """
+        if self._feature_map is not None:
+            return self._feature_map
+        if self.feature_map_path:
+            return FEATURE_MAP_LRU.get(self.feature_map_path)
+        return None
+
+    @feature_map.setter
+    def feature_map(self, value: Optional[np.ndarray]) -> None:
+        """Set feature_map, routing to LRU cache if disk-backed, else retaining in memory."""
+        if value is None:
+            self._feature_map = None
+            if self.feature_map_path:
+                FEATURE_MAP_LRU.discard(self.feature_map_path)
+            return
+
+        if self.feature_map_path:
+            FEATURE_MAP_LRU.put(self.feature_map_path, value)
+            self._feature_map = None
+        else:
+            self._feature_map = value
+
     def load_rasterio(self) -> bool:
         """
         Load the image using rasterio and extract basic properties.
@@ -565,19 +698,25 @@ class Raster(QObject):
 
     @staticmethod
     def _estimate_batch_warp_bytes(maps, grid_gpu=None):
-        """Estimate temporary memory required to warp a batch of 2D maps."""
+        """Estimate temporary memory required to warp a batch of 2D maps.
+
+        ``maps`` elements may be numpy arrays (CPU) or CUDA tensors (already in VRAM).
+        """
         if not maps:
             return 0
 
-        first_shape = np.asarray(maps[0]).shape
+        import torch
+        m0 = maps[0]
+        first_shape = tuple(m0.shape) if torch.is_tensor(m0) else np.asarray(m0).shape
         if len(first_shape) != 2:
             raise ValueError("warp_batch_cuda expects 2D maps")
 
         height, width = first_shape
         batch_size = len(maps)
 
-        # CPU staging: np.stack(...)->float32 with singleton channel axis.
-        cpu_bytes = batch_size * height * width * 4
+        # CPU staging only applies to numpy inputs; CUDA tensors already live in VRAM.
+        any_cpu = any(not torch.is_tensor(m) for m in maps)
+        cpu_bytes = batch_size * height * width * 4 if any_cpu else 0
 
         # GPU tensor staging plus expanded sampling grid.
         gpu_bytes = batch_size * height * width * 4
@@ -599,7 +738,9 @@ class Raster(QObject):
         All maps must share the same (H, W) and the same lens model (same grid).
 
         Args:
-            maps          : list of np.ndarray, each shape (H, W)
+            maps          : list of np.ndarray (CPU) or CUDA int32 tensors, each shape (H, W).
+                            Tensor inputs are consumed in-place from VRAM (no PCIe upload).
+                            Maps may be lower resolution than the grid; grid_sample upsamples.
             border_values : list of scalars — border fill per map (-1 for index, nan for depth)
             grid_gpu      : torch.Tensor shape (1, H, W, 2) already on CUDA
             oob_mask      : bool torch.Tensor shape (H, W) — out-of-bounds pixels
@@ -615,7 +756,15 @@ class Raster(QObject):
         if not maps:
             return [], []
 
-        shapes = {np.asarray(m).shape for m in maps}
+        def _shape(m):
+            return tuple(m.shape) if torch.is_tensor(m) else np.asarray(m).shape
+
+        def _is_int_map(m):
+            if torch.is_tensor(m):
+                return m.dtype in (torch.int32, torch.int64)
+            return m.dtype in (np.int32, np.int64)
+
+        shapes = {_shape(m) for m in maps}
         if len(shapes) != 1:
             raise ValueError("All maps passed to warp_batch_cuda must have the same shape")
 
@@ -634,22 +783,23 @@ class Raster(QObject):
             # and let the actual CUDA call decide.
             pass
 
-        is_int = [m.dtype in (np.int32, np.int64) for m in maps]
+        is_int = [_is_int_map(m) for m in maps]
         n = len(maps)
 
-        total_size_mb = sum(m.nbytes for m in maps) / (1024 * 1024)
+        def _nbytes(m):
+            return m.element_size() * m.nelement() if torch.is_tensor(m) else m.nbytes
+        total_size_mb = sum(_nbytes(m) for m in maps) / (1024 * 1024)
         import time
         stream_start = time.perf_counter()
 
         # 1. Pre-allocate the final, empty tensor directly on the GPU
-        h, w = maps[0].shape
+        h, w = _shape(maps[0])
         tensor = torch.empty((n, 1, h, w), dtype=torch.float32, device=grid_gpu.device)
 
-        # 2. Stream the numpy arrays directly into VRAM
+        # 2. Stream each map into VRAM. CUDA tensors are a GPU→GPU copy + cast (no
+        #    PCIe); numpy arrays transfer from the CPU. Both cast to float32 on assign.
         for i, m in enumerate(maps):
-            # torch.from_numpy shares memory with the numpy array (no CPU copy).
-            # Assigning it to the GPU tensor handles the transfer and float32 cast on the fly.
-            tensor[i, 0] = torch.from_numpy(m)
+            tensor[i, 0] = m if torch.is_tensor(m) else torch.from_numpy(m)
 
         stream_time = time.perf_counter() - stream_start
 
@@ -681,59 +831,67 @@ class Raster(QObject):
         
         return warped_maps, visible_indices_list
 
-    def add_index_map(self, index_map: np.ndarray, index_map_path: Optional[str] = None,
+    def add_index_map(self, index_map: Optional[np.ndarray], index_map_path: Optional[str] = None,
                       visible_indices: Optional[np.ndarray] = None,
                       element_type: Optional[str] = 'point',
                       inverted_index: Optional[dict] = None):
         """
         Add or update index map and visible indices data.
-        
+
+        When index_map is None but index_map_path is provided, registers a lazy disk-backed
+        map (data is loaded on first access via LRU). This avoids eager decompression and
+        keeps dense maps out of memory until needed.
+
         Args:
-            index_map (np.ndarray): 2D array mapping pixels to element IDs (H x W int32)
+            index_map (np.ndarray, optional): 2D array mapping pixels to element IDs (H x W int32),
+                or None for lazy (disk-backed) registration.
             index_map_path (str, optional): Path to the index_map file if saved separately
             visible_indices (np.ndarray, optional): 1D array of visible element IDs
             element_type (str, optional): Type of element IDs in the index map.
                 One of 'point' (point cloud), 'face' (mesh faces), or 'cell' (DEM grid).
                 Defaults to 'point' for backward compatibility.
             inverted_index (dict, optional): CSR inverted index with keys
+                'inv_ids', 'inv_offsets', 'inv_pixels'.
         """
-        if not isinstance(index_map, np.ndarray):
-            raise ValueError("Index map must be a numpy array")
-        if index_map.ndim != 2:
-            raise ValueError("Index map must be a 2D array")
-        if index_map.dtype != np.int32:
-            raise ValueError("Index map must be int32 dtype")
-        
         # Validate element_type
-        valid_element_types = {'point', 'face', 'cell'}
+        valid_element_types = {'point', 'face', 'cell', 'splat'}
         if element_type is not None and element_type not in valid_element_types:
             raise ValueError(f"element_type must be one of {valid_element_types}, got '{element_type}'")
-        
-        # Resize index_map if dimensions don't match
-        if index_map.shape != (self.height, self.width):
-            index_map = cv2.resize(
-                index_map,
-                (self.width, self.height),
-                interpolation=cv2.INTER_NEAREST
-            )
-        
-        # Keep the loaded array as-is so cache-backed memmaps and other large
-        # results do not get duplicated in RAM.
-        self.index_map = index_map
+
+        # Validate and prepare index_map if provided
+        if index_map is not None:
+            if not isinstance(index_map, np.ndarray):
+                raise ValueError("Index map must be a numpy array")
+            if index_map.ndim != 2:
+                raise ValueError("Index map must be a 2D array")
+            if index_map.dtype != np.int32:
+                raise ValueError("Index map must be int32 dtype")
+
+            # Resize index_map if dimensions don't match
+            if index_map.shape != (self.height, self.width):
+                index_map = cv2.resize(
+                    index_map,
+                    (self.width, self.height),
+                    interpolation=cv2.INTER_NEAREST
+                )
+
+        # Set path BEFORE index_map so the property setter can route correctly to LRU
         self.index_map_path = index_map_path
+        self.index_map = index_map
         self.index_element_type = element_type
-        
+
         # Store CSR inverted index
         if inverted_index is not None:
             self.inv_ids     = inverted_index['inv_ids']
             self.inv_offsets = inverted_index['inv_offsets']
             self.inv_pixels  = inverted_index['inv_pixels']
         else:
-            # No prebuilt index supplied (common on cache-hit loads).
-            # Build it in a daemon thread so it's ready for the first query
-            # without blocking the UI during cache loading.
+            # No prebuilt index supplied (common on cache-hit loads). Defer the
+            # build to the first pixel query (ensure_inverted_index) instead of
+            # eagerly building one per camera — at thousands of cameras that
+            # retained an inverted index in RAM for every map and spawned a
+            # daemon-thread burst.
             self.inv_ids = self.inv_offsets = self.inv_pixels = None
-            self._schedule_inverted_index_build(index_map)
 
         # Set visible_indices if provided
         if visible_indices is not None:
@@ -776,31 +934,28 @@ class Raster(QObject):
             'inv_pixels':  sorted_pixels,
         }
 
-    def _schedule_inverted_index_build(self, index_map_reference: np.ndarray) -> None:
+    def ensure_inverted_index(self) -> bool:
+        """Build the CSR inverted index on demand (first pixel query).
+
+        Bounded to this raster: only cameras that are actually queried pay the
+        build cost and retain the index in RAM, rather than eagerly building one
+        for every loaded camera. Idempotent; returns True if a usable index is
+        present afterward.
         """
-        Kick off a daemon thread to build the CSR inverted index.
-
-        The index map is treated as read-only geometric reference data, so the
-        thread can work on the original array without duplicating it in RAM.
-        """
-        raster_ref = self  # capture for closure
-        cls = type(self)   # capture class explicitly — 'QtRaster' is not in thread scope
-
-        def _build_and_store():
-            inv = cls._build_inverted_index(index_map_reference)
-            if inv is None:
-                return
-            # Guard: only store if the raster still holds the same index_map
-            # object.
-            if raster_ref.index_map is not None and raster_ref.index_map is not index_map_reference:
-                # The raster has been updated in the meantime; discard stale result.
-                return
-            raster_ref.inv_ids     = inv['inv_ids']
-            raster_ref.inv_offsets = inv['inv_offsets']
-            raster_ref.inv_pixels  = inv['inv_pixels']
-
-        t = threading.Thread(target=_build_and_store, daemon=True)
-        t.start()
+        if (isinstance(self.inv_ids, np.ndarray)
+                and isinstance(self.inv_offsets, np.ndarray)
+                and isinstance(self.inv_pixels, np.ndarray)):
+            return True
+        index_map = self.index_map
+        if index_map is None:
+            return False
+        inv = self._build_inverted_index(index_map)
+        if inv is None:
+            return False
+        self.inv_ids     = inv['inv_ids']
+        self.inv_offsets = inv['inv_offsets']
+        self.inv_pixels  = inv['inv_pixels']
+        return True
 
     def update_index_map(self, index_map: np.ndarray, index_map_path: Optional[str] = None,
                          visible_indices: Optional[np.ndarray] = None,
@@ -848,11 +1003,17 @@ class Raster(QObject):
     
     def remove_index_map(self):
         """Remove the index map and visible indices data."""
+        if self.index_map_path:
+            INDEX_MAP_LRU.discard(self.index_map_path)
+        # Drop any recompute provider so a removed map stays removed (no silent
+        # regeneration on the next index_map read).
+        self._index_map_provider = None
         self.index_map = None
         self.index_map_path = None
         self.visible_indices = None
         self.index_element_type = None
         self.inv_ids = self.inv_offsets = self.inv_pixels = None
+        self.index_map_pixel_budget = None
         if hasattr(self, 'index_map_scale_factor'):
             self.index_map_scale_factor = None
 
@@ -863,6 +1024,12 @@ class Raster(QObject):
         self.index_map = data['index_map']
         self.visible_indices = data.get('visible_indices')
         self.index_element_type = data.get('element_type', self.index_element_type)
+
+        if 'pixel_budget' in data:
+            try:
+                self.index_map_pixel_budget = int(data['pixel_budget'])
+            except Exception:
+                pass
 
         if hasattr(self, 'index_map_scale_factor') and 'scale_factor' in data:
             try:
@@ -876,9 +1043,8 @@ class Raster(QObject):
             self.inv_offsets = inverted_index.get('inv_offsets')
             self.inv_pixels = inverted_index.get('inv_pixels')
         else:
+            # Deferred: built lazily on the first pixel query via ensure_inverted_index.
             self.inv_ids = self.inv_offsets = self.inv_pixels = None
-            if self.index_map is not None:
-                self._schedule_inverted_index_build(self.index_map)
 
         return self.index_map
         
@@ -915,7 +1081,97 @@ class Raster(QObject):
         
         # Return None if no index map is available
         return None
-        
+
+    # ------------------------------------------------------------------
+    # Feature Map management
+    # ------------------------------------------------------------------
+
+    def add_feature_map(
+        self,
+        feature_map: np.ndarray,
+        *,
+        model_id: str,
+        stride: int,
+        dim: int,
+        path: Optional[str] = None,
+        normalized: bool = True,
+        feature_vector: Optional[np.ndarray] = None,
+    ) -> None:
+        """
+        Add or update a feature map for this raster.
+
+        When feature_map is None but path is provided, registers a lazy disk-backed
+        map (data is loaded on first access via LRU). This avoids eager loading and
+        keeps dense maps out of memory until needed.
+
+        Args:
+            feature_map: Dense [h, w, C] array as float16, or None for lazy loading.
+            model_id: Model identifier used for extraction.
+            stride: Patch grid stride (16 for ViT/16).
+            dim: Number of feature channels C.
+            path: Path to the .npy file if saved separately (enables disk-backing).
+            normalized: Whether features are L2-normalized.
+            feature_vector: Optional pooled vector [C] for Explorer use.
+        """
+        if feature_map is not None:
+            if not isinstance(feature_map, np.ndarray):
+                raise ValueError("Feature map must be a numpy array")
+            if feature_map.ndim != 3:
+                raise ValueError("Feature map must be a 3D array [h, w, C]")
+            if feature_map.dtype != np.float16:
+                raise ValueError("Feature map must be float16 dtype")
+
+        # Set path BEFORE feature_map so the property setter can route correctly to LRU
+        self.feature_map_path = path
+        self.feature_map = feature_map
+        self.feature_map_model_id = model_id
+        self.feature_map_stride = stride
+        self.feature_map_dim = dim
+        self.feature_map_normalized = normalized
+        self.feature_vector = feature_vector
+
+    def clear_feature_map(self) -> None:
+        """Remove the feature map from this raster."""
+        if self.feature_map_path:
+            FEATURE_MAP_LRU.discard(self.feature_map_path)
+        self.feature_map = None
+        self.feature_map_path = None
+        self.feature_map_model_id = None
+        self.feature_map_stride = None
+        self.feature_map_dim = None
+        self.feature_map_normalized = False
+        self.feature_vector = None
+
+    def has_feature_map(self) -> bool:
+        """Check if this raster has a feature map."""
+        return self.feature_map is not None
+
+    def get_feature_at_pixel(self, x: int, y: int) -> Optional[np.ndarray]:
+        """
+        Get the feature vector at a specific pixel location.
+
+        Maps pixel coordinates to the patch-grid cell and returns the feature vector.
+
+        Args:
+            x: Pixel x-coordinate (column).
+            y: Pixel y-coordinate (row).
+
+        Returns:
+            Feature vector [C] as float16, or None if out of bounds or no feature map.
+        """
+        feature_map = self.feature_map
+        if feature_map is None or self.feature_map_stride is None:
+            return None
+
+        stride = self.feature_map_stride
+        grid_y = y // stride
+        grid_x = x // stride
+
+        if grid_y < 0 or grid_x < 0 or grid_y >= feature_map.shape[0] or grid_x >= feature_map.shape[1]:
+            return None
+
+        return feature_map[grid_y, grid_x].copy()
+
     def add_z_channel(self, z_data: np.ndarray, z_path: Optional[str] = None, z_unit: Optional[str] = None, 
                       z_data_type: Optional[str] = None, z_nodata: Optional[float] = None):
         """
@@ -1738,15 +1994,15 @@ class Raster(QObject):
         # Include z_channel path if available
         if self.z_channel_path is not None:
             raster_data['z_channel_path'] = self.z_channel_path
-            
+
         # Include z_unit if available
         if self.z_unit is not None:
             raster_data['z_unit'] = self.z_unit
-            
+
         # Include z_data_type if available
         if self.z_data_type is not None:
             raster_data['z_data_type'] = self.z_data_type
-        
+
         if self.z_channel is not None:
             raster_data['has_z_channel'] = True
             # Optionally store basic info about the z_channel
@@ -1757,7 +2013,15 @@ class Raster(QObject):
                 'max': float(np.max(self.z_channel)),
                 'mean': float(np.mean(self.z_channel))
             }
-            
+
+        # Include feature map path and metadata if available
+        if self.feature_map_path is not None:
+            raster_data['feature_map_path'] = self.feature_map_path
+            raster_data['feature_map_model_id'] = self.feature_map_model_id
+            raster_data['feature_map_stride'] = self.feature_map_stride
+            raster_data['feature_map_dim'] = self.feature_map_dim
+            raster_data['feature_map_normalized'] = self.feature_map_normalized
+
         return raster_data
     
     def update_from_dict(self, raster_dict: dict):
@@ -1856,6 +2120,26 @@ class Raster(QObject):
         z_data_type = raster_dict.get('z_data_type')
         if z_data_type:
             self.z_data_type = z_data_type
+
+        # Feature map path and metadata (lazy — do not load data yet)
+        feature_map_path = raster_dict.get('feature_map_path')
+        if feature_map_path:
+            try:
+                model_id = raster_dict.get('feature_map_model_id')
+                stride = raster_dict.get('feature_map_stride', 16)
+                dim = raster_dict.get('feature_map_dim', 768)
+                normalized = raster_dict.get('feature_map_normalized', True)
+
+                self.add_feature_map(
+                    None,  # Lazy load from path
+                    model_id=model_id,
+                    stride=stride,
+                    dim=dim,
+                    path=feature_map_path,
+                    normalized=normalized,
+                )
+            except Exception as e:
+                print(f"Error loading feature map for {self.image_path}: {str(e)}")
 
     @classmethod
     def from_dict(cls, raster_dict):

@@ -45,20 +45,17 @@ except ImportError:
 
 # Shader sources and GPU utilities
 from coralnet_toolbox.MVAT.shaders import VERT as _MGL_VERT
-from coralnet_toolbox.MVAT.shaders import (
-    FRAG_FACE_ID_R8 as _MGL_FRAG_R8,
-    FRAG_FACE_ID_RG16 as _MGL_FRAG_RG16,
-    FRAG_FACE_ID_RGB24 as _MGL_FRAG_RGB24,
-    FRAG_FACE_ID_INT as _MGL_FRAG_INT,
-)
-from coralnet_toolbox.MVAT.shaders.gpu_interop import (
-    _resolve_gl_fns,
-    _build_mvp,
-)
+from coralnet_toolbox.MVAT.shaders import FRAG_FACE_ID_INT as _MGL_FRAG_INT
+from coralnet_toolbox.MVAT.shaders import VERT_POINT as _MGL_VERT_POINT
+from coralnet_toolbox.MVAT.shaders import FRAG_POINT_ID_INT as _MGL_FRAG_POINT_INT
+from coralnet_toolbox.MVAT.shaders import COVERAGE_CS as _MGL_COVERAGE_CS
+from coralnet_toolbox.MVAT.shaders import WARP_VERT as _MGL_WARP_VERT
+from coralnet_toolbox.MVAT.shaders import WARP_FRAG as _MGL_WARP_FRAG
+from coralnet_toolbox.MVAT.shaders.gpu_interop import _build_mvp
 
 logger = get_visibility_logger()
-    
-    
+
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
@@ -159,103 +156,6 @@ class VisibilityManager:
             'inv_offsets': offsets,
             'inv_pixels':  sorted_pixels,
         }
-
-    @staticmethod
-    def _select_encoding_scheme(n_elements: int, dtype_override: str = None) -> tuple:
-        """
-        Choose optimal encoding scheme based on element count.
-
-        Args:
-            n_elements: Number of mesh elements (faces/cells)
-            dtype_override: Optional override ('r8', 'rg16', 'rgb24', or 'int32') for debugging
-
-        Returns:
-            (shader_source, encoding_name, num_components, decoder_fn)
-            encoding_name: 'r8', 'rg16', 'rgb24', or 'int32'
-
-        Note: Tiered encoding trades bandwidth savings for decode overhead.
-              For large meshes (> 100K faces), int32 is often faster due to zero-cost decode.
-        """
-        dtype_map = {
-            'r8': (_MGL_FRAG_R8, 'r8', 1, VisibilityManager._decode_r8),
-            'rg16': (_MGL_FRAG_RG16, 'rg16', 2, VisibilityManager._decode_rg16),
-            'rgb24': (_MGL_FRAG_RGB24, 'rgb24', 3, VisibilityManager._decode_rgb24),
-            'int32': (_MGL_FRAG_INT, 'int32', 1, VisibilityManager._decode_int32),
-        }
-
-        if dtype_override and dtype_override in dtype_map:
-            return dtype_map[dtype_override]
-
-        if n_elements <= 255:
-            return _MGL_FRAG_R8, 'r8', 1, VisibilityManager._decode_r8
-        elif n_elements <= 65535:
-            return _MGL_FRAG_RG16, 'rg16', 2, VisibilityManager._decode_rg16
-        elif n_elements <= 1000000:
-            # RGB24 for medium meshes where decode overhead (~10-20ms) is acceptable
-            return _MGL_FRAG_RGB24, 'rgb24', 3, VisibilityManager._decode_rgb24
-        else:
-            # Fall back to int32 for very large meshes: decode overhead exceeds bandwidth savings
-            # e.g., 3.4M faces: RGB24 decode ~80ms vs int32 decode ~0ms
-            return _MGL_FRAG_INT, 'int32', 1, VisibilityManager._decode_int32
-
-    @staticmethod
-    def _decode_r8(raw_bytes: bytes, shape: tuple) -> np.ndarray:
-        """Decode R8 (1 byte/pixel) back to int32 index map."""
-        data = np.frombuffer(raw_bytes, dtype=np.uint8).reshape(shape)
-        result = np.empty(shape, dtype=np.int32)
-        np.subtract(data.astype(np.int32, copy=False), 1, out=result)
-        return result
-
-    @staticmethod
-    def _decode_rg16(raw_bytes: bytes, shape: tuple) -> np.ndarray:
-        """Decode RG16 (2 bytes/pixel) back to int32 index map (optimized)."""
-        data = np.frombuffer(raw_bytes, dtype=np.uint8).reshape((*shape, 2))
-        h, w = shape
-        decoded = np.empty((h, w), dtype=np.int32)
-        # Vectorized decode: (high << 8) | low
-        decoded[:] = (data[..., 0].astype(np.int32) << 8) | data[..., 1].astype(np.int32)
-        decoded -= 1
-        return decoded
-
-    @staticmethod
-    def _decode_rgb24(raw_bytes: bytes, shape: tuple) -> np.ndarray:
-        """Decode RGB24 (3 bytes/pixel) back to int32 index map (optimized)."""
-        data = np.frombuffer(raw_bytes, dtype=np.uint8).reshape((*shape, 3))
-        h, w = shape
-        decoded = np.empty((h, w), dtype=np.int32)
-        # Vectorized decode: (R << 16) | (G << 8) | B
-        decoded[:] = (data[..., 0].astype(np.int32) << 16) | (data[..., 1].astype(np.int32) << 8) | data[..., 2].astype(np.int32)
-        decoded -= 1
-        return decoded
-
-    @staticmethod
-    def _decode_int32(raw_bytes: bytes, shape: tuple) -> np.ndarray:
-        """Decode int32 back to int32 index map (fast path, just subtract offset)."""
-        from time import perf_counter
-        import logging
-        logger = logging.getLogger(__name__)
-
-        t0 = perf_counter()
-        data = np.frombuffer(raw_bytes, dtype=np.int32).reshape(shape)
-        t_frombuffer = perf_counter() - t0
-
-        t0 = perf_counter()
-        result = np.empty(shape, dtype=np.int32)
-        t_empty = perf_counter() - t0
-
-        t0 = perf_counter()
-        np.subtract(data, 1, out=result)
-        t_subtract = perf_counter() - t0
-
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                f"      _decode_int32 breakdown (shape={shape}): "
-                f"frombuffer={t_frombuffer*1000:.2f}ms | "
-                f"empty={t_empty*1000:.2f}ms | subtract={t_subtract*1000:.2f}ms | "
-                f"total={((t_frombuffer + t_empty + t_subtract)*1000):.2f}ms"
-            )
-
-        return result
 
     @staticmethod
     def _normalize_result_dict(result: dict, compute_depth_map: bool = True) -> dict:
@@ -415,7 +315,20 @@ class VisibilityManager:
     def reconstruct_depth_map_fast(cls,
                                    camera,
                                    scene_product: 'AbstractSceneProduct') -> np.ndarray:
-        """Fast depth reconstruction using cached visible indices and CPU NumPy."""
+        """Fast depth reconstruction from cached visible indices.
+
+        The cost is the per-pixel gather over the full-resolution index map (tens
+        of millions of pixels). Two things keep it cheap:
+
+        * The gather runs on the GPU when CUDA is available — only the int32 index
+          map crosses PCIe up and the float16 depth crosses back; the lookup table
+          and the 40M+ element gather stay on the device (~15x faster than NumPy).
+        * Background pixels (-1) index the trailing NaN slot directly via negative
+          indexing, so there is no separate int64 conversion / copy / mask pass.
+
+        Output is float16 camera-space depth (NaN = background), matching the prior
+        CPU implementation's values exactly. Returns None when inputs are missing.
+        """
         if camera is None or scene_product is None:
             return None
 
@@ -442,26 +355,49 @@ class VisibilityManager:
         if coords.size == 0:
             return None
 
-        max_visible_id = int(visible_ids.max()) if visible_ids.size else -1
-        if max_visible_id >= coords.shape[0]:
-            visible_ids = visible_ids[visible_ids < coords.shape[0]]
+        element_count = int(coords.shape[0])
+        if int(visible_ids.max()) >= element_count:
+            visible_ids = visible_ids[visible_ids < element_count]
             if visible_ids.size == 0:
                 return None
 
-        visible_coords = coords[visible_ids]
         R = np.asarray(camera.R, dtype=np.float32)
         t = np.asarray(camera.t, dtype=np.float32)
 
-        # Z-axis only: depth = dot(X, R[2, :]) + t[2]
-        z_values = visible_coords @ R[2, :].astype(np.float32, copy=False) + t[2]
+        # GPU path: keep the lookup-table build and the full-frame gather on the
+        # device so only the index map (up) and depth (down) cross PCIe.
+        if HAS_TORCH and torch.cuda.is_available():
+            try:
+                coords_t = getattr(scene_product, '_cached_face_centers_pt', None)
+                if coords_t is None or int(coords_t.shape[0]) != element_count:
+                    coords_t = torch.as_tensor(coords, device='cuda')
+                    try:
+                        scene_product._cached_face_centers_pt = coords_t
+                    except Exception:
+                        pass
+                coords_t = coords_t.to(device='cuda', dtype=torch.float32)
+                vis_t = torch.as_tensor(visible_ids, dtype=torch.long, device='cuda')
+                R2 = torch.as_tensor(R[2, :], dtype=torch.float32, device='cuda')
+                # z and the lookup table stay float32 (matches the prior CPU values
+                # bit-for-bit); only the gather output is cast to float16.
+                z = coords_t.index_select(0, vis_t) @ R2 + float(t[2])
+                lookup = torch.full((element_count + 1,), float('nan'),
+                                    dtype=torch.float32, device='cuda')
+                lookup[vis_t] = z
+                # int32 → long device-side; -1 stays -1 and gathers the NaN slot.
+                idx_t = torch.as_tensor(
+                    np.ascontiguousarray(index_map, dtype=np.int32), device='cuda'
+                ).to(torch.long)
+                return lookup[idx_t].to(torch.float16).cpu().numpy()
+            except Exception:
+                pass  # fall through to CPU
 
-        element_count = int(coords.shape[0])
+        # CPU fallback: gather then cast. -1 indexes the trailing NaN slot, so the
+        # int64 conversion / copy / mask of the old path are gone (5 passes → 2).
+        z_values = coords[visible_ids] @ R[2, :] + t[2]
         lookup = np.full(element_count + 1, np.nan, dtype=np.float32)
         lookup[visible_ids] = z_values.astype(np.float32, copy=False)
-
-        index_map_safe = np.asarray(index_map, dtype=np.int64).copy()
-        index_map_safe[index_map_safe < 0] = element_count
-        return lookup[index_map_safe].astype(np.float16, copy=False)
+        return lookup[index_map].astype(np.float16, copy=False)
 
     @classmethod
     def compute_visibility_from_scene(cls,
@@ -509,20 +445,72 @@ class VisibilityManager:
 
         # Strategy dispatch based on element type
         if element_type == 'point':
-            from coralnet_toolbox.MVAT.core.Products import PointCloudProduct
-            if isinstance(primary_target, PointCloudProduct):
-                points = primary_target.get_points_array()
-                if points is not None:
-                    result = cls.compute_point_cloud_visibility(points, K, R, t, width, height,
-                                                                compute_depth_map=compute_depth_map)
+            # Point clouds rasterize through the SAME moderngl GL_POINTS path as
+            # meshes (see setup_batch_point_moderngl_context). GaussianSplattingProduct
+            # also reports element_type 'point' but is routed to its own
+            # solid-ellipsoid splat path (setup_batch_splat_moderngl_context).
+            from coralnet_toolbox.MVAT.core.Products import (
+                PointCloudProduct,
+                GaussianSplattingProduct,
+            )
+            if isinstance(primary_target, GaussianSplattingProduct):
+                # 3D Gaussian Splats: solid-ellipsoid index map via a dedicated
+                # ModernGL program that reuses pyvista_gs' gau_vert.glsl.
+                mgl_ctx = cls.setup_batch_splat_moderngl_context(
+                    primary_target, width, height,
+                )
+                try:
+                    results = cls.compute_batch_visibility_moderngl(
+                        primary_target, [(K, R, t, width, height)],
+                        compute_depth_map=compute_depth_map,
+                        compute_visible_indices=True,
+                        pixel_budget=None,
+                        mgl_context=mgl_ctx,
+                    )
+                    result = results[0]
                     result['element_type'] = 'point'
-                    return result
+                    return cls._normalize_result_dict(result, compute_depth_map)
+                finally:
+                    try:
+                        for buf in mgl_ctx.get('buffers_to_release', []):
+                            buf.release()
+                        for fbo in mgl_ctx.get('_fbo_cache', {}).values():
+                            fbo.release()
+                        mgl_ctx['ctx'].release()
+                    except Exception:
+                        pass
+            elif isinstance(primary_target, PointCloudProduct):
+                # Interactive default: splat radius follows the product's display
+                # point_size, square sprites. Batch caching overrides these via the dialog.
+                splat_radius = float(getattr(primary_target, 'point_size', 1) or 1)
+                mgl_ctx = cls.setup_batch_point_moderngl_context(
+                    primary_target, None, width, height,
+                    splat_radius=splat_radius, splat_round=False,
+                )
+                try:
+                    results = cls.compute_batch_visibility_moderngl(
+                        primary_target, [(K, R, t, width, height)],
+                        compute_depth_map=compute_depth_map,
+                        compute_visible_indices=True,
+                        pixel_budget=None,
+                        mgl_context=mgl_ctx,
+                    )
+                    result = results[0]
+                    result['element_type'] = 'point'
+                    return cls._normalize_result_dict(result, compute_depth_map)
+                finally:
+                    try:
+                        for fbo in mgl_ctx.get('_fbo_cache', {}).values():
+                            fbo.release()
+                        mgl_ctx['ctx'].release()
+                    except Exception:
+                        pass
 
         elif element_type == 'face':
             # Mesh visibility with ModernGL (VTK removed in Phase 3)
             # Keep visible_indices=False to skip expensive computation in batch paths.
             # compute_depth_map is controlled by caller (True for interactive SAM, False for batch).
-            results = cls.compute_batch_mesh_visibility_moderngl(
+            results = cls.compute_batch_visibility_moderngl(
                 primary_target, [(K, R, t, width, height)],
                 compute_depth_map=compute_depth_map,
                 compute_visible_indices=False,
@@ -543,17 +531,166 @@ class VisibilityManager:
 
 
     # =========================================================================
-    # moderngl batch rasterizer  (zero-PCIe primary path)
+    # moderngl batch rasterizer  (CPU framebuffer readback)
     # =========================================================================
 
-    @classmethod
-    def setup_batch_moderngl_context(cls, mesh_product, pixel_budget,
-                                     sample_width, sample_height, dtype_override: str = None):
-        """Create a moderngl offscreen context and upload mesh geometry once.
+    # Clipping planes shared by _build_mvp (mesh/point) and the per-camera splat
+    # projection. Kept here so the in-shader depth linearization (u_near/u_far) and
+    # the matrix builders stay in lockstep.
+    GL_NEAR = 0.01
+    GL_FAR = 100000.0
 
-        Args:
-            dtype_override: Optional dtype override ('r8', 'rg16', 'rgb24', 'int32') for debugging.
+    # Max number of distinct-resolution FBOs retained in a context's _fbo_cache.
+    # Viewport cropping produces a different (crop_w, crop_h) per camera, so on a
+    # warm (persistent) context the cache would otherwise grow one FBO per crop
+    # size for the lifetime of the scene. FIFO-evict the oldest beyond this cap so
+    # resident VRAM stays bounded. With a per-batch (released) context this is a
+    # no-op in practice — sizes within one batch rarely exceed the cap.
+    _FBO_CACHE_CAP = 12
+
+    @staticmethod
+    def _set_depth_uniforms(prog):
+        """Upload the near/far clipping planes used by the in-shader depth
+        linearization. No-op if the program was built without the depth output
+        (older shader), so callers don't need to special-case that."""
+        if 'u_near' in prog:
+            prog['u_near'].value = VisibilityManager.GL_NEAR
+        if 'u_far' in prog:
+            prog['u_far'].value = VisibilityManager.GL_FAR
+
+    @staticmethod
+    def _setup_coverage(ctx, n_cells):
+        """Best-effort build of the visible-element coverage compute pass.
+
+        Returns ``(cov_prog, cov_buffer)`` on success or ``(None, None)`` when the
+        driver/context cannot run compute shaders (e.g. legacy macOS GL 4.1). The
+        render loop falls back to np.bincount in that case. Compilation is the only
+        reliable capability probe: standalone contexts report GL 3.3 even on drivers
+        that fully support compute (see COVERAGE_CS docstring)."""
+        # Coverage stores one uint per element, so the buffer + per-camera readback
+        # scale with element count. Beyond ~32M elements that readback (and the
+        # np.flatnonzero over it) costs more than np.unique over the visible pixels,
+        # so disable it and let the caller fall back to np.unique.
+        if int(n_cells) > 32_000_000:
+            logger.debug(f"   ℹ️ coverage disabled for {n_cells:,} elements; using np.unique fallback")
+            return None, None
+        try:
+            cov_prog = ctx.compute_shader(_MGL_COVERAGE_CS)
+            # One uint slot per element; reused across cameras (cleared per frame).
+            cov_buffer = ctx.buffer(reserve=max(1, int(n_cells)) * 4)
+            return cov_prog, cov_buffer
+        except Exception as e:
+            logger.debug(f"   ℹ️ coverage compute unavailable, using np.unique fallback: {e}")
+            return None, None
+
+    @staticmethod
+    def _get_interop(mgl_context):
+        """Lazily set up CUDA-GL interop for zero-PCIe FBO readback (NVIDIA only).
+
+        Returns ``{gl, cudart, cache}`` when torch.cuda + the GL/cudart function
+        pointers all resolve, else ``None`` (caller falls back to the portable
+        moderngl PBO readback). The probe runs once per context and is cached. The
+        D2D path reads the FBO into a CUDA tensor without a PCIe copy, so the index
+        map and its visible-element ``torch.unique`` both stay on the GPU; only the
+        final host copy crosses PCIe (via torch's faster ``.cpu()``). Must be called
+        with the GL context current — it is, inside the render loop.
         """
+        if '_interop' in mgl_context:
+            return mgl_context['_interop']
+        interop = None
+        try:
+            import torch
+            if torch.cuda.is_available():
+                import ctypes
+                from coralnet_toolbox.MVAT.shaders.gpu_interop import _resolve_gl_fns, _load_cudart
+                gl = _resolve_gl_fns()
+                cudart = _load_cudart()
+                # cudaError_t (int) return so _pbo_cuda_readback's `if err:` checks fire.
+                for _fn in ('cudaGraphicsGLRegisterBuffer', 'cudaGraphicsMapResources',
+                            'cudaGraphicsResourceGetMappedPointer', 'cudaMemcpy',
+                            'cudaGraphicsUnmapResources', 'cudaGraphicsUnregisterResource'):
+                    try:
+                        getattr(cudart, _fn).restype = ctypes.c_int
+                    except Exception:
+                        pass
+                interop = {'gl': gl, 'cudart': cudart, 'cache': {}}
+                logger.debug("   ✅ CUDA-GL interop ready (zero-PCIe readback)")
+        except Exception as e:
+            logger.debug(f"   ℹ️ CUDA-GL interop unavailable, using moderngl readback: {e}")
+            interop = None
+        mgl_context['_interop'] = interop
+        return interop
+
+    @classmethod
+    def _warp_fbo_gl(cls, mgl_context, src_fbo, in_w, in_h, map_x, map_y,
+                     out_w, out_h, have_depth):
+        """Distort the *resident* render-FBO (index + linear depth) into a native-res
+        warped FBO via a GL fullscreen pass — no PCIe round-trip.
+
+        A standalone GL warp (upload → warp → readback) is PCIe-bound and actually
+        slower than cv2.remap; the win only materializes by warping the textures that
+        are already on the GPU after rasterization, so distortion costs only the
+        existing single readback. ``(map_x, map_y)`` are ``Raster._map_x/_map_y``
+        (native-resolution source-pixel coords); the source index is 1-based so the
+        normal `-1` decode on readback yields the background. Matches
+        grid_sample(nearest, align_corners=True) + border fill (verified bit-exact
+        vs cv2.remap and grid_sample).
+
+        Returns the warped FBO (color 0 = 1-based R32I index, color 1 = R32F depth),
+        cached per output size on ``mgl_context``. The caller then reads it back with
+        the same code path as a freshly-rendered native FBO. GL is single-threaded —
+        call this on the thread that owns the context.
+        """
+        import moderngl
+        ctx = mgl_context['ctx']
+
+        prog = mgl_context.get('_warp_prog')
+        if prog is None:
+            prog = ctx.program(vertex_shader=_MGL_WARP_VERT,
+                               fragment_shader=_MGL_WARP_FRAG)
+            mgl_context['_warp_prog'] = prog
+            mgl_context['_warp_vao'] = ctx.vertex_array(prog, [])  # attribute-less fullscreen tri
+        vao = mgl_context['_warp_vao']
+
+        cache = mgl_context.setdefault('_warp_res', {})
+        entry = cache.get((out_w, out_h))
+        if entry is None:
+            map_tex = ctx.texture((out_w, out_h), 2, dtype='f4')
+            map_tex.filter = (moderngl.NEAREST, moderngl.NEAREST)
+            out_idx = ctx.texture((out_w, out_h), 1, dtype='i4')
+            out_dep = ctx.texture((out_w, out_h), 1, dtype='f4')
+            warp_fbo = ctx.framebuffer(color_attachments=[out_idx, out_dep])
+            entry = {'map': map_tex, 'fbo': warp_fbo, 'map_id': None}
+            cache[(out_w, out_h)] = entry
+        map_tex, warp_fbo = entry['map'], entry['fbo']
+
+        # Warp maps are shared per-lens (Raster caches them), so re-upload only when
+        # the array object actually changes between cameras of different lenses.
+        if entry['map_id'] != id(map_x):
+            map_arr = np.ascontiguousarray(
+                np.stack([np.asarray(map_x, np.float32), np.asarray(map_y, np.float32)], axis=-1)
+            )
+            map_tex.write(map_arr.tobytes())
+            entry['map_id'] = id(map_x)
+
+        warp_fbo.use()
+        ctx.viewport = (0, 0, out_w, out_h)
+        prog['srcIdx'].value = 0
+        prog['srcDepth'].value = 1
+        prog['mapTex'].value = 2
+        prog['in_size'].value = (in_w, in_h)
+        prog['out_size'].value = (out_w, out_h)
+        prog['have_depth'].value = 1 if have_depth else 0
+        src_fbo.color_attachments[0].use(0)   # isampler2D ← R32I index (texelFetch)
+        src_fbo.color_attachments[1].use(1)   # sampler2D  ← R32F depth (texelFetch)
+        map_tex.use(2)
+        vao.render(mode=moderngl.TRIANGLES, vertices=3)
+        return warp_fbo
+
+    @classmethod
+    def setup_batch_mesh_moderngl_context(cls, mesh_product, pixel_budget,
+                                     sample_width, sample_height):
+        """Create a moderngl offscreen context and upload mesh geometry once."""
         import moderngl
 
         ctx = moderngl.create_context(standalone=True)
@@ -570,12 +707,15 @@ class VisibilityManager:
         vbo = ctx.buffer(vertices.tobytes())
         ibo = ctx.buffer(faces.tobytes())
 
-        # Choose encoding scheme based on mesh size (with optional override for debugging)
-        frag_shader, encoding_name, num_components, decoder = cls._select_encoding_scheme(n_cells, dtype_override)
-        prog_int = ctx.program(vertex_shader=_MGL_VERT, fragment_shader=frag_shader)
+        # Single-channel R32I face-ID target (always int32; tiered encoding removed)
+        prog_int = ctx.program(vertex_shader=_MGL_VERT, fragment_shader=_MGL_FRAG_INT)
         vao_int  = ctx.vertex_array(prog_int, [(vbo, '3f', 'position')], ibo)
 
-        gl_fns = _resolve_gl_fns()
+        # Clipping planes for the in-shader depth linearization (match _build_mvp).
+        cls._set_depth_uniforms(prog_int)
+
+        # GPU visible-element coverage pass (falls back to bincount if unavailable).
+        cov_prog, cov_buffer = cls._setup_coverage(ctx, n_cells)
 
         face_centers_pt = None
         if HAS_TORCH and torch.cuda.is_available():
@@ -583,29 +723,201 @@ class VisibilityManager:
                 mesh.cell_centers().points.astype(np.float32)
             ).cuda()
 
-        encoding_display = {"r8": "8-bit", "rg16": "16-bit", "rgb24": "24-bit", "int32": "32-bit"}
-        logger.debug(
-            f"   ✅ moderngl context ready: {n_cells:,} faces ({encoding_display.get(encoding_name, 'unknown')} encoding)"
-        )
+        logger.debug(f"   ✅ moderngl context ready: {n_cells:,} faces (32-bit int encoding)")
 
         return {
             'ctx':             ctx,
             'prog_int':        prog_int,
             'vao_int':         vao_int,
             'n_cells':         n_cells,
-            'gl_fns':          gl_fns,
             'pixel_budget':    pixel_budget,
             'face_centers_pt': face_centers_pt,
-            'encoding_name':   encoding_name,
-            'num_components':  num_components,
-            'decoder':         decoder,
             '_fbo_cache':      {},
+            'cov_prog':        cov_prog,
+            'cov_buffer':      cov_buffer,
+            # Geometry source descriptors consumed by the generic render loop so
+            # the same loop drives both the mesh (TRIANGLES) and point (POINTS) paths.
+            'bounds':          mesh.bounds,
+            'render_mode':     moderngl.TRIANGLES,
         }
 
     @classmethod
-    def compute_batch_mesh_visibility_moderngl(
+    def setup_batch_point_moderngl_context(cls, point_product, pixel_budget,
+                                           sample_width, sample_height,
+                                           splat_radius: float = 1.0,
+                                           splat_round: bool = False):
+        """Create a moderngl offscreen context and upload point-cloud geometry once.
+
+        Mirrors ``setup_batch_mesh_moderngl_context`` but for a GL_POINTS draw: point
+        IDs are ``gl_VertexID`` and each point is rasterized as a sprite of
+        ``splat_radius`` render-resolution pixels (square, or a disc when
+        ``splat_round``). The returned context is consumed by the SAME
+        ``compute_batch_visibility_moderngl`` render loop as meshes.
+        """
+        import moderngl
+
+        ctx = moderngl.create_context(standalone=True)
+        ctx.enable(moderngl.DEPTH_TEST)
+        # gl_PointSize in the vertex shader is only honored when this is enabled.
+        ctx.enable(moderngl.PROGRAM_POINT_SIZE)
+
+        points = np.asarray(point_product.get_points_array(), dtype=np.float32)
+        n_points = int(points.shape[0])
+
+        vbo = ctx.buffer(points.tobytes())
+
+        # Single-channel R32I point-ID target (same encoding as the mesh path).
+        prog_int = ctx.program(vertex_shader=_MGL_VERT_POINT,
+                               fragment_shader=_MGL_FRAG_POINT_INT)
+        vao_int  = ctx.vertex_array(prog_int, [(vbo, '3f', 'position')])
+
+        # Splat uniforms are constant across cameras (radius is in render pixels),
+        # so set them once here rather than per-frame in the render loop.
+        prog_int['point_size'].value = float(max(1.0, splat_radius))
+        prog_int['splat_round'].value = 1 if splat_round else 0
+
+        # Clipping planes for the in-shader depth linearization (match _build_mvp).
+        cls._set_depth_uniforms(prog_int)
+
+        # GPU visible-element coverage pass (falls back to bincount if unavailable).
+        cov_prog, cov_buffer = cls._setup_coverage(ctx, n_points)
+
+        # Points are their own element centers (used by depth reconstruction).
+        face_centers_pt = None
+        if HAS_TORCH and torch.cuda.is_available():
+            face_centers_pt = torch.from_numpy(points).cuda()
+
+        logger.debug(
+            f"   ✅ moderngl point context ready: {n_points:,} points "
+            f"(splat={splat_radius}px {'round' if splat_round else 'square'})"
+        )
+
+        return {
+            'ctx':             ctx,
+            'prog_int':        prog_int,
+            'vao_int':         vao_int,
+            'n_cells':         n_points,
+            'pixel_budget':    pixel_budget,
+            'face_centers_pt': face_centers_pt,
+            '_fbo_cache':      {},
+            'cov_prog':        cov_prog,
+            'cov_buffer':      cov_buffer,
+            'bounds':          point_product.get_bounds(),
+            'render_mode':     moderngl.POINTS,
+        }
+
+    @classmethod
+    def setup_batch_splat_moderngl_context(cls, splat_product, sample_width, sample_height):
+        """Create a ModernGL context for instanced 3D Gaussian Splats.
+
+        Reuses pyvista_gs' ``gau_vert.glsl`` (which projects each splat's 3D
+        covariance into a screen-space quad) but pairs it with a hard-cutoff
+        integer Splat-ID fragment shader (``FRAG_SPLAT_ID_INT``). DEPTH_TEST is
+        enabled so the nearest opaque ellipsoid wins per pixel without any CPU
+        depth sorting — the per-camera ``gi`` order is therefore irrelevant and
+        left as the identity ``arange``.
+
+        ``gau_vert.glsl`` is patched in-memory to forward the resolved splat
+        index ``boxid`` to the fragment stage via the flat varying
+        ``v_splatID`` (``gl_InstanceID`` is not readable in the fragment stage).
+        """
+        import moderngl
+        import os
+        from coralnet_toolbox.MVAT.shaders import FRAG_SPLAT_ID_INT
+        import pyvista_gs
+        from pyvista_gs.data import GaussianData
+
+        ctx = moderngl.create_context(standalone=True)
+        # Depth test gives automatic solid occlusion without CPU sorting.
+        ctx.enable(moderngl.DEPTH_TEST)
+
+        # The GaussianActor keeps live splat data in its mesh point_data (it has
+        # no standalone .gaussians); rebuild a GaussianData exactly as the actor
+        # does when syncing to its renderer so the .flat() layout matches the
+        # shader's std430 buffer (xyz, rot, scale, opacity, sh).
+        mesh = splat_product.gaussian_actor._mesh
+        opacity = np.asarray(mesh.point_data['opacity'], dtype=np.float32)
+        if opacity.ndim == 1:
+            opacity = opacity.reshape(-1, 1)
+        gaussians = GaussianData(
+            xyz=np.asarray(mesh.points, dtype=np.float32),
+            rot=np.asarray(mesh.point_data['rot'], dtype=np.float32),
+            scale=np.asarray(mesh.point_data['scale'], dtype=np.float32),
+            opacity=opacity,
+            sh=np.asarray(mesh.point_data['sh'], dtype=np.float32),
+        )
+        gaussian_data = gaussians.flat()
+        num_gau = len(gaussians)
+
+        # Load the upstream vertex shader and patch in a flat Splat-ID varying.
+        vs_path = os.path.join(os.path.dirname(pyvista_gs.__file__), 'shaders', 'gau_vert.glsl')
+        with open(vs_path, 'r', encoding='utf-8') as f:
+            vs_source = f.read()
+        vs_source = vs_source.replace(
+            'out vec2 coordxy;  // local coordinate in quad, unit in pixel',
+            'out vec2 coordxy;  // local coordinate in quad, unit in pixel\nflat out int v_splatID;',
+        )
+        vs_source = vs_source.replace(
+            'int boxid = gi[gl_InstanceID];',
+            'int boxid = gi[gl_InstanceID];\n\tv_splatID = boxid;',
+        )
+
+        prog_int = ctx.program(vertex_shader=vs_source, fragment_shader=FRAG_SPLAT_ID_INT)
+
+        # Clipping planes for the in-shader depth linearization (match the P matrix
+        # built per-camera in the render loop: near=0.01, far=100000).
+        cls._set_depth_uniforms(prog_int)
+
+        # Unit quad (two triangles) instanced once per splat.
+        quad_v = np.array([-1, 1, 1, 1, 1, -1, -1, -1], dtype=np.float32).reshape(4, 2)
+        quad_f = np.array([0, 1, 2, 0, 2, 3], dtype=np.int32).reshape(2, 3)
+        vbo = ctx.buffer(quad_v.tobytes())
+        ibo = ctx.buffer(quad_f.tobytes())
+        vao_int = ctx.vertex_array(prog_int, [(vbo, '2f', 'position')], ibo)
+
+        # SSBOs: packed gaussian data (binding 0) + identity draw order (binding 1).
+        gau_buffer = ctx.buffer(gaussian_data.tobytes())
+        gau_buffer.bind_to_storage_buffer(binding=0)
+        gi = np.arange(num_gau, dtype=np.int32)
+        index_buffer = ctx.buffer(gi.tobytes())
+        index_buffer.bind_to_storage_buffer(binding=1)
+
+        # GPU visible-element coverage pass (falls back to bincount if unavailable).
+        cov_prog, cov_buffer = cls._setup_coverage(ctx, num_gau)
+
+        # Static uniforms (per-camera matrices are set in the render loop).
+        if 'sh_dim' in prog_int:
+            prog_int['sh_dim'].value = gaussians.sh_dim
+        if 'scale_modifier' in prog_int:
+            prog_int['scale_modifier'].value = 1.0
+        if 'render_mod' in prog_int:
+            prog_int['render_mod'].value = 0
+        if 'crop_enabled' in prog_int:
+            prog_int['crop_enabled'].value = 0
+        if 'model_matrix' in prog_int:
+            prog_int['model_matrix'].write(np.eye(4, dtype=np.float32).tobytes('F'))
+
+        logger.debug(f"   ✅ moderngl splat context ready: {num_gau:,} splats (solid ellipsoids)")
+
+        return {
+            'ctx':             ctx,
+            'prog_int':        prog_int,
+            'vao_int':         vao_int,
+            'n_cells':         num_gau,
+            'pixel_budget':    None,
+            'face_centers_pt': None,
+            '_fbo_cache':      {},
+            'bounds':          splat_product.get_bounds(),
+            'render_mode':     moderngl.TRIANGLES,
+            'instances':       num_gau,
+            'is_splat':        True,
+            'buffers_to_release': [gau_buffer, index_buffer, vbo, ibo],
+        }
+
+    @classmethod
+    def compute_batch_visibility_moderngl(
         cls,
-        mesh_product,
+        geometry_product,
         camera_params_list: list,
         compute_depth_map: bool = True,
         compute_visible_indices: bool = True,
@@ -615,12 +927,24 @@ class VisibilityManager:
         mgl_context: dict = None,
         camera_index_offset: int = 0,
         use_viewport_cropping: bool = True,
-        dtype_override: str = None,
+        warp_maps_list: Optional[list] = None,
     ) -> list:
-        """GPU rasterization via moderngl with zero-PCIe CUDA-GL framebuffer readback.
+        """GPU rasterization via moderngl with CPU framebuffer readback.
 
-        Args:
-            dtype_override: Optional dtype override ('r8', 'rg16', 'rgb24', 'int32') for debugging.
+        ``warp_maps_list`` (optional, aligned with ``camera_params_list``) fuses the
+        lens-distortion warp into the render: each entry is ``(map_x, map_y)``
+        (``Raster._map_x/_map_y``, native-resolution source-pixel coords) or ``None``.
+        For a camera with a warp map the full frame is rendered (viewport cropping is
+        forced off — distortion samples across the whole frame), the still-resident
+        index/depth textures are warped on the GPU, and the result is read back at
+        native resolution — replacing the separate cv2.remap / grid_sample round-trip
+        the caller would otherwise apply after readback.
+
+        Despite the name, this drives BOTH meshes and point clouds: the geometry
+        source (VAO, bounds, draw primitive) is read from ``mgl_context``, which is
+        built by ``setup_batch_mesh_moderngl_context`` (mesh, TRIANGLES) or
+        ``setup_batch_point_moderngl_context`` (point cloud, POINTS). ``geometry_product``
+        is only used when ``mgl_context`` is None to auto-build a mesh context.
 
         Returns a list of result dicts with 'index_map', 'visible_indices', 'depth_map', etc.
         """
@@ -628,17 +952,17 @@ class VisibilityManager:
         import logging
         perf_counter = time.perf_counter
 
-        # Set up file logging for detailed debug output (disabled by default)
-        # To enable: set environment variable VISIBILITY_DEBUG=1
-        debug_handler = logging.FileHandler('visibility_timing_debug.log', mode='w', encoding='utf-8')
-        debug_handler.setLevel(logging.DEBUG)
-        debug_formatter = logging.Formatter('%(message)s')
-        debug_handler.setFormatter(debug_formatter)
-        logger.addHandler(debug_handler)
-        # Only enable debug logging if explicitly requested
+        # Set up file logging for detailed debug output (enabled by default)
+        # To disable: set environment variable VISIBILITY_DEBUG=0
         import os
+        import logging
         os.environ.setdefault('VISIBILITY_DEBUG', '1')
-        if os.environ.get('VISIBILITY_DEBUG', '0') == '1':
+        if os.environ.get('VISIBILITY_DEBUG', '0') != '0':
+            debug_handler = logging.FileHandler('visibility_timing_debug.log', mode='w', encoding='utf-8')
+            debug_handler.setLevel(logging.DEBUG)
+            debug_formatter = logging.Formatter('%(message)s')
+            debug_handler.setFormatter(debug_formatter)
+            logger.addHandler(debug_handler)
             logger.setLevel(logging.DEBUG)
 
         def _scale_for(w, h):
@@ -655,37 +979,69 @@ class VisibilityManager:
         start_time = perf_counter()
 
         if mgl_context is None:
-            mgl_context = cls.setup_batch_moderngl_context(
-                mesh_product, pixel_budget,
+            mgl_context = cls.setup_batch_mesh_moderngl_context(
+                geometry_product, pixel_budget,
                 camera_params_list[0][3], camera_params_list[0][4],
-                dtype_override=dtype_override,
             )
 
         ctx          = mgl_context['ctx']
         prog_int     = mgl_context['prog_int']
         vao_int      = mgl_context['vao_int']
-        gl_fns       = mgl_context['gl_fns']
         fbo_cache    = mgl_context['_fbo_cache']
-        encoding_name = mgl_context['encoding_name']
-        num_components = mgl_context['num_components']
-        decoder      = mgl_context['decoder']
+        # Optional GPU coverage pass for visible-element extraction (None → bincount).
+        cov_prog     = mgl_context.get('cov_prog')
+        cov_buffer   = mgl_context.get('cov_buffer')
 
-        mesh        = mesh_product.get_mesh()
-        mesh_bounds = mesh.bounds
+        # Geometry bounds + draw primitive come from the context so this loop is
+        # geometry-agnostic: meshes supply TRIANGLES, point clouds supply POINTS.
+        mesh_bounds = mgl_context['bounds']
+        render_mode = mgl_context.get('render_mode')
+        # 3DGS splats are drawn instanced (one quad per splat) and need the
+        # gau_vert.glsl camera uniforms instead of a single packed MVP.
+        is_splat    = mgl_context.get('is_splat', False)
+        n_instances = mgl_context.get('instances', 1)
 
         def _get_fbo(w, h):
             key = (w, h)
             if key not in fbo_cache:
-                # Use compact format for tiered encoding (R8/RG8/RGB8 instead of I32)
-                dtype = 'i4' if encoding_name == 'int32' else 'u1'
-
+                # color 0: single-channel R32I face/point/splat-ID (always int32).
+                # color 1: single-channel R32F linearized camera-space depth, written
+                #   by the fragment shader so the CPU skips the z_ndc → linear math.
+                # The depth *texture* is still attached for the hardware z-test.
                 fbo_cache[key] = ctx.framebuffer(
-                    color_attachments=[ctx.texture((w, h), num_components, dtype=dtype)],
+                    color_attachments=[
+                        ctx.texture((w, h), 1, dtype='i4'),
+                        ctx.texture((w, h), 1, dtype='f4'),
+                    ],
                     depth_attachment=ctx.depth_texture((w, h)),
                 )
+                # Bound the cache on a warm context: FIFO-evict the oldest FBO(s)
+                # (and their textures) once past the cap so resident VRAM stays
+                # flat across a long session of variably-cropped cameras. dicts
+                # preserve insertion order, so the first key is the oldest.
+                while len(fbo_cache) > cls._FBO_CACHE_CAP:
+                    old_key = next(iter(fbo_cache))
+                    if old_key == key:
+                        break  # never evict the FBO we just created/returned
+                    old_fbo = fbo_cache.pop(old_key)
+                    try:
+                        for _tex in old_fbo.color_attachments:
+                            _tex.release()
+                        if old_fbo.depth_attachment is not None:
+                            old_fbo.depth_attachment.release()
+                        old_fbo.release()
+                    except Exception:
+                        pass
             return fbo_cache[key]
 
-        results = []
+        # Pre-allocate persistent PBOs for readback (sized to largest camera)
+        # This avoids per-camera PBO allocation overhead; double-buffer enables
+        # async readback overlap with decode of previous result
+        max_pixels = max(w * h for (_,_,_,w,h) in camera_params_list)
+        max_bytes = 4 * max_pixels  # int32 = 4 bytes per pixel
+        pbos = [ctx.buffer(reserve=max_bytes) for _ in range(2)]
+
+        results = []  # Results will be appended in camera order
         # Accumulators for totals
         _t_render_total     = 0.0
         _t_readback_total   = 0.0
@@ -730,6 +1086,9 @@ class VisibilityManager:
                 progress_callback(camera_index_offset + i + 1,
                                   camera_index_offset + len(camera_params_list))
 
+            # Distortion warp map for this camera (fuses into the render below).
+            wm = warp_maps_list[i] if warp_maps_list is not None else None
+
             dynamic_scale = _scale_for(width, height)
             render_w = max(1, int(round(width  * dynamic_scale)))
             render_h = max(1, int(round(height * dynamic_scale)))
@@ -738,21 +1097,31 @@ class VisibilityManager:
             K_scaled[0, :3] *= dynamic_scale
             K_scaled[1, :3] *= dynamic_scale
 
-            # Viewport cropping calculation
+            # Viewport cropping calculation.
+            # Cropping is skipped for distorted cameras: the warp samples source
+            # pixels across the whole undistorted frame, so the full frame must be
+            # rendered (a crop would leave the out-of-crop source pixels missing).
             t0_crop = perf_counter()
             u_min = v_min = 0
             crop_w, crop_h = render_w, render_h
-            if use_viewport_cropping:
+            if use_viewport_cropping and wm is None:
                 u_min, u_max, v_min, v_max, crop_status = cls._get_2d_bounding_box(
                     mesh_bounds, K_scaled, R, t, render_w, render_h
                 )
                 if crop_status == "OFF_SCREEN":
+                    # Honor upsample_to_native here too — this early-out skips
+                    # the upsample step below, and a sub-native empty map would
+                    # otherwise be cached and indexed with native pixel coords.
+                    if upsample_to_native:
+                        empty_h, empty_w, empty_scale = height, width, 1.0
+                    else:
+                        empty_h, empty_w, empty_scale = render_h, render_w, dynamic_scale
                     results.append(cls._normalize_result_dict({
-                        'index_map':      np.full((render_h, render_w), -1, dtype=np.int32),
+                        'index_map':      np.full((empty_h, empty_w), -1, dtype=np.int32),
                         'visible_indices': np.array([], dtype=np.int32),
-                        'depth_map':      np.full((render_h, render_w), np.nan, dtype=np.float32) if compute_depth_map else None,
+                        'depth_map':      np.full((empty_h, empty_w), np.nan, dtype=np.float32) if compute_depth_map else None,
                         'inverted_index': None,
-                        'scale_factor':   dynamic_scale,
+                        'scale_factor':   empty_scale,
                     }, compute_depth_map))
                     camera_total_sum += perf_counter() - cam_start
                     continue
@@ -773,15 +1142,75 @@ class VisibilityManager:
 
             # MVP build + render
             t0_mvp = perf_counter()
-            mvp = _build_mvp(K_scaled, R, t, crop_w, crop_h)
+            if is_splat:
+                # 3DGS path: feed gau_vert.glsl the separate view/projection
+                # matrices, camera position and focal/tan-fov it expects.
+                # OpenCV (y-down, +z forward) → OpenGL camera convention.
+                V = np.eye(4, dtype=np.float32)
+                V[:3, :3] = R
+                V[:3, 3] = t
+                flip_yz = np.diag([1.0, -1.0, -1.0, 1.0]).astype(np.float32)
+                V = flip_yz @ V
+
+                fx, fy = float(K_scaled[0, 0]), float(K_scaled[1, 1])
+                cx, cy = float(K_scaled[0, 2]), float(K_scaled[1, 2])
+                W_f, H_f = float(crop_w), float(crop_h)
+                far, near = 100000.0, 0.01
+                P = np.zeros((4, 4), dtype=np.float32)
+                P[0, 0] = 2.0 * fx / W_f
+                P[0, 2] = 1.0 - 2.0 * cx / W_f
+                P[1, 1] = 2.0 * fy / H_f
+                P[1, 2] = 2.0 * cy / H_f - 1.0
+                P[2, 2] = -(far + near) / (far - near)
+                P[2, 3] = -2.0 * far * near / (far - near)
+                P[3, 2] = -1.0
+                # Bake the vertical flip into projection so the framebuffer is
+                # already top-to-bottom, matching the mesh/point readback (which
+                # does no CPU [::-1]). gau_vert.glsl performs no Y-flip itself.
+                P[1, :] = -P[1, :]
+
+                cam_pos = (-R.T @ t).astype(np.float32)
+                htany = (crop_h / 2.0) / fy
+                htanx = (crop_w / 2.0) / fx
+
+                if 'view_matrix' in prog_int:
+                    prog_int['view_matrix'].write(V.T.tobytes())
+                if 'projection_matrix' in prog_int:
+                    prog_int['projection_matrix'].write(P.T.tobytes())
+                if 'cam_pos' in prog_int:
+                    prog_int['cam_pos'].value = tuple(float(c) for c in cam_pos)
+                if 'hfovxy_focal' in prog_int:
+                    prog_int['hfovxy_focal'].value = (htanx, htany, fy)
+                mvp = None
+            else:
+                mvp = _build_mvp(K_scaled, R, t, crop_w, crop_h)
             t_mvp_build = perf_counter() - t0_mvp
 
             t0_render = perf_counter()
-            prog_int['mvp'].write(mvp.tobytes())
-            vao_int.render()
+            if is_splat:
+                vao_int.render(mode=render_mode, instances=n_instances)
+            else:
+                prog_int['mvp'].write(mvp.tobytes())
+                vao_int.render(mode=render_mode) if render_mode is not None else vao_int.render()
             # NOTE: Removed ctx.finish() — fbo.read() synchronizes implicitly.
             # This saves ~3.2ms per camera by avoiding redundant GPU stall.
             t_render = perf_counter() - t0_render
+
+            # Fused distortion: warp the still-resident index + depth textures into a
+            # native-resolution warped FBO, then point the rest of the loop at it. The
+            # warped FBO has the same layout as a freshly-rendered native FBO (1-based
+            # R32I index in color 0, R32F depth in color 1), so the existing readback,
+            # coverage and assembly code below runs unchanged. result_scale becomes 1.0
+            # (output is native), so the paste/upsample fast-paths engage.
+            if wm is not None:
+                map_x, map_y = wm
+                fbo = cls._warp_fbo_gl(mgl_context, fbo, render_w, render_h,
+                                       map_x, map_y, width, height,
+                                       have_depth=compute_depth_map)
+                u_min = v_min = 0
+                crop_w, crop_h = width, height
+                render_w, render_h = width, height
+                dynamic_scale = 1.0
 
             t_setup = t_crop + t_fbo  # Total setup time
 
@@ -791,68 +1220,109 @@ class VisibilityManager:
             t0_readback_total = perf_counter()
 
             # GPU sync: ensure render is complete before readback
+            # NOTE: removed ctx.finish() — fbo.read_into() synchronizes implicitly
             t0_sync = perf_counter()
-            ctx.finish()
-            t_gpu_sync = perf_counter() - t0_sync
+            t_gpu_sync = 0.0
 
-            # Use FBO directly (no GPU-side flip)
+            # The vertex shader bakes the vertical flip into clip space, so the
+            # readback is already in top-to-bottom image order (no CPU [::-1]).
             fbo_to_read = fbo
 
-            # Texture readback from GPU to CPU (tiered encoding)
+            # Readback: CUDA-GL interop (zero-PCIe FBO→CUDA D2D) when available, else
+            # the portable moderngl PBO readback. The interop path keeps the index map
+            # on the GPU long enough to also compute visible_indices (torch.unique) for
+            # free, then copies to host via torch's faster .cpu(); the standalone PBO
+            # copy (glGetBufferSubData) runs at ~3.7 GB/s, torch's at ~6.7 GB/s.
             t0_read = perf_counter()
-            read_dtype = 'i4' if encoding_name == 'int32' else 'u1'
-            raw = fbo_to_read.read(components=num_components, dtype=read_dtype)
+            interop = cls._get_interop(mgl_context)
+            crop_index_map = None
+            visible_indices = None  # may be filled here by interop
+            if interop is not None:
+                try:
+                    import torch
+                    from coralnet_toolbox.MVAT.shaders.gpu_interop import _pbo_cuda_readback
+                    fbo_to_read.use()  # bind so glReadPixels targets this FBO's attachment 0
+                    t_gpu = _pbo_cuda_readback(interop['gl'], interop['cudart'],
+                                               crop_w, crop_h, flip=False, cache=interop['cache'])
+                    if t_gpu is None:
+                        raise RuntimeError("interop readback returned None")
+                    t_gpu -= 1  # decode 1-based → 0-based on the GPU
+                    if compute_visible_indices:
+                        valid = t_gpu[t_gpu >= 0]
+                        visible_indices = (torch.unique(valid).to(torch.int32).cpu().numpy()
+                                           if valid.numel() else np.array([], dtype=np.int32))
+                    crop_index_map = t_gpu.cpu().numpy()
+                    del t_gpu
+                except Exception as interop_err:
+                    logger.debug(f"      interop readback failed, moderngl fallback: {interop_err}")
+                    crop_index_map = None
+                    visible_indices = None
+
+            if crop_index_map is None:
+                # Portable moderngl path: persistent PBO, decode in place.
+                pbo = pbos[i % 2]  # Double-buffered PBO (round-robin)
+                fbo_to_read.read_into(pbo, components=1, dtype='i4')
+                raw_bytes = pbo.read(size=crop_h * crop_w * 4)
+                crop_index_map = np.frombuffer(raw_bytes, dtype=np.int32).reshape(crop_h, crop_w).copy()
+                np.subtract(crop_index_map, 1, out=crop_index_map)
             t_fbo_read = perf_counter() - t0_read
 
-            # Data processing: decode, reshape, flip, copy (detailed breakdown)
+            # Data processing: timing attribution (read_into is now the only operation)
             t0_proc_total = perf_counter()
-
             t0_decode_data = perf_counter()
-            decoded = decoder(raw, (crop_h, crop_w))
-            t_decode_data = perf_counter() - t0_decode_data
+            t_decode_data = 0.0  # Decoding now happens in-place during read_into
 
-            # CPU flip + copy
-            t0_flip = perf_counter()
-            shot_int32 = decoded[::-1]
-            t_flip = perf_counter() - t0_flip
-
-            t0_copy = perf_counter()
-            # ascontiguousarray is faster than pre-allocate + assign
-            shot_int32 = np.ascontiguousarray(shot_int32)
-            t_copy = perf_counter() - t0_copy
-
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"      Copy: {t_copy*1000:.2f}ms (ascontiguousarray)")
+            # Flip + copy now happen on the GPU (MVP Y-flip), so these are no-ops.
+            t_flip = 0.0
+            t_copy = 0.0
 
             t_data_proc = perf_counter() - t0_proc_total
 
             # Store encoding info for later breakdown logging
-            _decode_encoding = encoding_name
+            _decode_encoding = 'int32'
 
             t_readback = perf_counter() - t0_readback_total
 
             # ================================================================
-            # DECODE PHASE: Offset adjustment + visible indices computation
+            # DECODE PHASE: visible indices computation
             # ================================================================
             t0_decode_total = perf_counter()
-
-            t0_offset = perf_counter()
-            t0_cpu_convert = perf_counter()
-            # Decoder already applied the -1 offset, so shot_int32 is 0-indexed with -1 for invalid
-            crop_index_map = shot_int32.cpu().numpy() if hasattr(shot_int32, 'cpu') else shot_int32
-            t_cpu_convert = perf_counter() - t0_cpu_convert
-            t_offset_adj = perf_counter() - t0_offset
+            t_cpu_convert = 0.0
+            t_offset_adj = 0.0
 
             # Compute visible indices only if requested (skip for ~47ms savings in batch mode)
             t0_indices = perf_counter()
-            if compute_visible_indices:
-                valid_indices = crop_index_map[crop_index_map >= 0]
-                if valid_indices.size > 0:
-                    visible_indices = np.where(np.bincount(valid_indices) > 0)[0].astype(np.int32)
-                else:
-                    visible_indices = np.array([], dtype=np.int32)
-            else:
+            if not compute_visible_indices:
                 visible_indices = np.array([], dtype=np.int32)
+            elif visible_indices is not None:
+                pass  # already computed on the GPU during the interop readback
+            else:
+                # GPU coverage: scan the still-resident index texture, scatter
+                # cov[id]=1, then read back N uints + flatnonzero. Replaces a
+                # bincount over millions of foreground pixels (~66-109ms at
+                # production resolution) with an O(N_elements) readback (~0.4-18ms).
+                if cov_prog is not None and cov_buffer is not None:
+                    try:
+                        cov_buffer.clear()
+                        cov_buffer.bind_to_storage_buffer(5)
+                        fbo.color_attachments[0].bind_to_image(0, read=True, write=False)
+                        cov_prog['dims'].value = (crop_w, crop_h)
+                        ctx.memory_barrier()  # rasterization writes → image reads
+                        cov_prog.run(group_x=(crop_w + 15) // 16,
+                                     group_y=(crop_h + 15) // 16)
+                        ctx.memory_barrier()  # compute writes → buffer readback
+                        cov = np.frombuffer(cov_buffer.read(), dtype=np.uint32)
+                        visible_indices = np.flatnonzero(cov).astype(np.int32)
+                    except Exception as cov_err:
+                        logger.debug(f"      coverage compute failed, bincount fallback: {cov_err}")
+                        visible_indices = None
+                if visible_indices is None:
+                    # np.unique (not bincount): scales with the visible pixels, not the
+                    # element-id range, so it doesn't allocate an n_cells-sized array on
+                    # huge meshes. Same sorted-unique result.
+                    valid_indices = crop_index_map[crop_index_map >= 0]
+                    visible_indices = (np.unique(valid_indices).astype(np.int32)
+                                       if valid_indices.size else np.array([], dtype=np.int32))
             t_indices_compute = perf_counter() - t0_indices
 
             t_decode = perf_counter() - t0_decode_total
@@ -877,23 +1347,20 @@ class VisibilityManager:
             if compute_depth_map:
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug(f"      → Computing depth map for camera {camera_index_offset + i + 1}")
-                # Read depth texture directly from FBO depth attachment
+                # Linear camera-space depth is computed in the fragment shader and
+                # written to color attachment 1 (R32F), so the CPU only reshapes and
+                # masks the background — the z_ndc → linear math is gone.
                 try:
-                    # ModernGL depth texture is read without components parameter
-                    depth_raw = fbo.depth_attachment.read()
-                    depth_buffer = np.frombuffer(depth_raw, dtype=np.float32).reshape(crop_h, crop_w)[::-1]
+                    # glReadPixels on attachment 1 uses the same orientation as the
+                    # index map (shader bakes the Y-flip), so this aligns pixel-for-
+                    # pixel with crop_index_map. No [::-1] needed.
+                    depth_raw = fbo.read(components=1, attachment=1, dtype='f4')
+                    linear_depth = np.frombuffer(depth_raw, dtype=np.float32).reshape(crop_h, crop_w).copy()
 
-                    # Linearize OpenGL depth [0, 1] to CV depth (meters)
-                    # Using the exact near/far clipping planes defined in _build_mvp
-                    near, far = 0.01, 100000.0
-                    z_ndc = 2.0 * depth_buffer - 1.0
-
-                    with np.errstate(divide='ignore', invalid='ignore'):
-                        linear_depth = (2.0 * near * far) / (far + near - z_ndc * (far - near))
-
-                    # Mask out the background (where the camera sees nothing)
+                    # Background fragments never ran the shader, so they hold the
+                    # framebuffer clear value (0.0); mask them to NaN via the index map.
                     linear_depth[crop_index_map == -1] = np.nan
-                    crop_depth_map = linear_depth.astype(np.float32)
+                    crop_depth_map = linear_depth
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(f"      ✓ Depth map extracted: shape={crop_depth_map.shape}, range=[{np.nanmin(crop_depth_map):.2f}, {np.nanmax(crop_depth_map):.2f}]")
                 except Exception as depth_err:
@@ -1066,11 +1533,30 @@ class VisibilityManager:
                 cam_time, 0.0, t_render, t_readback, t_decode, 0.0, 0.0, 0.0, logger
             )
 
+        # Release the per-call readback PBOs. These were allocated above sized to
+        # this batch's largest camera; with a per-batch context they vanished on
+        # ctx.release(), but on a warm (persistent) context they would leak a few
+        # hundred MB of VRAM every call. The FBO cache and uploaded geometry are
+        # intentionally retained on the context for reuse — only these transient
+        # PBOs are freed here.
+        for _pbo in pbos:
+            try:
+                _pbo.release()
+            except Exception:
+                pass
+
         n_cams = max(1, len(camera_params_list))
         total_time = perf_counter() - start_time
         accounted_time = _t_setup_total + _t_render_total + _t_readback_total + _t_decode_total
         unaccounted_time = total_time - accounted_time
         readback_mode = "CPU readback"
+
+        # Off-screen cameras early-out before the per-camera timers run, which
+        # can leave a stat's 'min' at the initial +inf. Reset those to 0 so the
+        # summary doesn't print "infms".
+        for _s in _stats.values():
+            if _s['min'] == float('inf'):
+                _s['min'] = 0.0
 
         # Format statistics with min/max/avg
         def fmt_stat(name, total, stat_dict):
@@ -1217,7 +1703,7 @@ class VisibilityManager:
 
         # Call batch moderngl with single ortho camera
         try:
-            results = cls.compute_batch_mesh_visibility_moderngl(
+            results = cls.compute_batch_visibility_moderngl(
                 mesh_product,
                 [(K, R, t, render_w, render_h)],
                 compute_depth_map=False,
@@ -1245,211 +1731,3 @@ class VisibilityManager:
         except Exception as e:
             logger.warning(f"   ⚠️ ModernGL ortho rasterization failed ({e})")
             return None
-
-    @classmethod
-    def compute_point_cloud_visibility(cls, points_world, K, R, t, width, height,
-                                       point_ids=None, compute_depth_map=True):
-        """Compute visibility for a cloud of points given single camera parameters."""
-        perf_counter = time.perf_counter
-        start_time = perf_counter()
-        log_section("👁️  POINT CLOUD VISIBILITY COMPUTATION", logger)
-        if point_ids is None:
-            point_ids = np.arange(len(points_world), dtype=np.int32)
-        logger.debug(f"   Points: {len(points_world):,} | Render: {width}x{height} pixels")
-
-        if HAS_TORCH:
-            device = 'cuda' if torch.cuda.is_available() else 'cpu'
-            logger.debug(f"   Using {device.upper()} backend")
-            compute_start = perf_counter()
-            result = cls._compute_torch(points_world, point_ids, K, R, t,
-                                        width, height, device, compute_depth_map=compute_depth_map)
-            compute_time = perf_counter() - compute_start
-        else:
-            logger.debug("   Using NUMPY backend (PyTorch not available)")
-            compute_start = perf_counter()
-            result = cls._compute_numpy(points_world, point_ids, K, R, t,
-                                        width, height, compute_depth_map=compute_depth_map)
-            compute_time = perf_counter() - compute_start
-
-        result = cls._normalize_result_dict(result, compute_depth_map)
-        total_time = perf_counter() - start_time
-        visible_count = len(result['visible_indices'])
-        coverage = np.sum(result['index_map'] >= 0) / (width * height) * 100
-        log_summary("Point Cloud Visibility",
-                    [f"   - Computation (Z-buffer): {compute_time:.4f}s",
-                     f"   - Total Time            : {total_time:.4f}s",
-                     f"   - Result: {visible_count:,} visible points, {coverage:.1f}% pixel coverage"],
-                    logger)
-        return result
-
-    @classmethod
-    def compute_batch_point_cloud_visibility(cls, points_world, camera_params_list,
-                                             point_ids=None, compute_depth_map=True):
-        perf_counter = time.perf_counter
-        start_time = perf_counter()
-        log_section("👁️  BATCH POINT CLOUD VISIBILITY COMPUTATION (STREAMING MODE)", logger)
-        N_total = len(points_world)
-        if point_ids is None:
-            point_ids = np.arange(N_total, dtype=np.int32)
-        logger.debug(f"   Points: {N_total:,} | Cameras: {len(camera_params_list)}")
-        if not HAS_TORCH:
-            pass
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        logger.debug(f"   Using {device.upper()} backend")
-        M = len(camera_params_list)
-        results = []
-        CHUNK_SIZE = 100_000_000
-
-        for i in range(M):
-            cam_start = perf_counter()
-            K_np, R_np, t_np, width, height = camera_params_list[i]
-            K = torch.as_tensor(K_np, dtype=torch.float32, device=device)
-            R = torch.as_tensor(R_np, dtype=torch.float32, device=device)
-            t = torch.as_tensor(t_np, dtype=torch.float32, device=device)
-            global_z_buffer  = torch.full((height*width,), float('inf'), device=device, dtype=torch.float32)
-            global_index_map = torch.full((height*width,), -1, device=device, dtype=torch.int32)
-            local_z_buffer   = torch.empty((height*width,), device=device, dtype=torch.float32)
-            local_index_map  = torch.empty((height*width,), device=device, dtype=torch.int32)
-            logger.debug(f'   -> Processing {cam_label(i+1)}/{M} in chunks...')
-
-            for start_idx in range(0, N_total, CHUNK_SIZE):
-                end_idx   = min(start_idx + CHUNK_SIZE, N_total)
-                chunk_pts = torch.as_tensor(points_world[start_idx:end_idx], dtype=torch.float32, device=device)
-                chunk_ids = torch.as_tensor(point_ids[start_idx:end_idx], dtype=torch.int32, device=device)
-                points_cam = chunk_pts @ R.T + t
-                x, y, z = points_cam[:,0], points_cam[:,1], points_cam[:,2]
-                u = K[0,0]*x/z + K[0,2]; v = K[1,1]*y/z + K[1,2]
-                u_idx, v_idx = u.round().long(), v.round().long()
-                valid_mask = (u_idx>=0)&(u_idx<width)&(v_idx>=0)&(v_idx<height)&(z>0)
-                valid_u, valid_v, valid_z, valid_ids = u_idx[valid_mask], v_idx[valid_mask], z[valid_mask], chunk_ids[valid_mask]
-                if valid_ids.numel() == 0:
-                    continue
-                flat_indices = valid_v * width + valid_u
-                local_z_buffer.fill_(float('inf'))
-                local_z_buffer.scatter_reduce_(0, flat_indices, valid_z, reduce='amin', include_self=True)
-                is_closest = torch.abs(valid_z - local_z_buffer[flat_indices]) < 0.0001
-                local_index_map.fill_(-1)
-                local_index_map[flat_indices[is_closest]] = valid_ids[is_closest]
-                won_mask = local_z_buffer < global_z_buffer
-                global_z_buffer[won_mask]  = local_z_buffer[won_mask]
-                global_index_map[won_mask] = local_index_map[won_mask]
-                del chunk_pts, chunk_ids, points_cam, x, y, z, u, v, u_idx, v_idx
-                del valid_mask, valid_u, valid_v, valid_z, valid_ids, flat_indices, is_closest, won_mask
-
-            visible_indices = torch.unique(global_index_map[global_index_map != -1], sorted=True)
-            if compute_depth_map:
-                try:
-                    global_z_buffer[global_z_buffer == float('inf')] = float('nan')
-                    depth_map_np = global_z_buffer.view(height, width).cpu().numpy()
-                except Exception:
-                    depth_map_np = np.full((height, width), np.nan, dtype=np.float32)
-            else:
-                depth_map_np = None
-            index_map_np = global_index_map.view(height, width).cpu().numpy()
-            results.append({'index_map': index_map_np, 'visible_indices': visible_indices.cpu().numpy(),
-                             'depth_map': depth_map_np,
-                             'inverted_index': VisibilityManager._build_inverted_index(index_map_np)})
-            log_cam_complete(cam_label(i+1), perf_counter() - cam_start, logger)
-            del K, R, t, global_z_buffer, global_index_map, visible_indices, local_z_buffer, local_index_map
-
-        if device == 'cuda':
-            torch.cuda.empty_cache()
-        logger.debug(f'\n   - Total Time: {perf_counter() - start_time:.4f}s')
-        return results
-
-    @staticmethod
-    def _compute_torch(points_np, ids_np, K_np, R_np, t_np, width, height,
-                       device='cpu', compute_depth_map=False):
-        """PyTorch-based visibility via scatter_reduce_ Z-buffering."""
-        points = torch.as_tensor(points_np, dtype=torch.float32, device=device)
-        p_ids  = torch.as_tensor(ids_np,    dtype=torch.int32,   device=device)
-        K = torch.as_tensor(K_np, dtype=torch.float32, device=device)
-        R = torch.as_tensor(R_np, dtype=torch.float32, device=device)
-        t = torch.as_tensor(t_np, dtype=torch.float32, device=device)
-
-        points_cam = points @ R.T + t
-        x_cam, y_cam, z_cam = points_cam[:,0], points_cam[:,1], points_cam[:,2]
-        u = K[0,0]*x_cam/z_cam + K[0,2]
-        v = K[1,1]*y_cam/z_cam + K[1,2]
-        u_idx, v_idx = u.round().long(), v.round().long()
-        valid_mask = (u_idx>=0)&(u_idx<width)&(v_idx>=0)&(v_idx<height)&(z_cam>0)
-        valid_u, valid_v, valid_z, valid_ids = u_idx[valid_mask], v_idx[valid_mask], z_cam[valid_mask], p_ids[valid_mask]
-
-        if valid_ids.numel() == 0:
-            return VisibilityManager._normalize_result_dict({
-                'index_map':      np.full((height, width), -1, dtype=np.int32),
-                'visible_indices': np.array([], dtype=np.int32),
-                'depth_map':      np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
-                'inverted_index': None,
-            }, compute_depth_map)
-
-        flat_indices = valid_v * width + valid_u
-        z_buffer = torch.full((height*width,), float('inf'), device=device, dtype=torch.float32)
-        try:
-            z_buffer.scatter_reduce_(0, flat_indices, valid_z, reduce='amin', include_self=True)
-        except AttributeError:
-            warnings.warn('PyTorch version too old for scatter_reduce_. Falling back to NumPy.')
-            return VisibilityManager._compute_numpy(points_np, ids_np, K_np, R_np, t_np, width, height)
-
-        is_closest = torch.abs(valid_z - z_buffer[flat_indices]) < 0.0001
-        final_pixel_indices = flat_indices[is_closest]
-        final_ids           = valid_ids[is_closest]
-
-        index_map_tensor = torch.full((height*width,), -1, device=device, dtype=torch.int32)
-        index_map_tensor[final_pixel_indices] = final_ids
-        index_map_np    = index_map_tensor.view(height, width).cpu().numpy()
-        visible_indices = torch.unique(final_ids, sorted=True)
-
-        if compute_depth_map:
-            try:
-                z_buffer[z_buffer == float('inf')] = float('nan')
-                depth_map_np = z_buffer.view(height, width).cpu().numpy()
-            except Exception:
-                depth_map_np = np.full((height, width), np.nan, dtype=np.float32)
-        else:
-            depth_map_np = None
-
-        if str(device) == 'cuda':
-            torch.cuda.empty_cache()
-
-        return VisibilityManager._normalize_result_dict({
-            'index_map':      index_map_np,
-            'visible_indices': visible_indices.cpu().numpy(),
-            'depth_map':      depth_map_np,
-            'inverted_index': None,
-        }, compute_depth_map)
-
-    @staticmethod
-    def _compute_numpy(points, ids, K, R, t, width, height, compute_depth_map=False):
-        """CPU-based visibility via sort-by-depth Z-buffering (fallback)."""
-        points_cam = points @ R.T + t
-        x_cam, y_cam, z_cam = points_cam[:,0], points_cam[:,1], points_cam[:,2]
-        with np.errstate(divide='ignore', invalid='ignore'):
-            u = K[0,0]*x_cam/z_cam + K[0,2]
-            v = K[1,1]*y_cam/z_cam + K[1,2]
-        u_idx = np.rint(u).astype(np.int32)
-        v_idx = np.rint(v).astype(np.int32)
-        valid_mask = (u_idx>=0)&(u_idx<width)&(v_idx>=0)&(v_idx<height)&(z_cam>0)
-        u_valid, v_valid, z_valid, id_valid = u_idx[valid_mask], v_idx[valid_mask], z_cam[valid_mask], ids[valid_mask]
-
-        if len(id_valid) == 0:
-            return VisibilityManager._normalize_result_dict({
-                'index_map':      np.full((height, width), -1, dtype=np.int32),
-                'visible_indices': np.array([], dtype=np.int32),
-                'depth_map':      np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
-                'inverted_index': None,
-            }, compute_depth_map)
-
-        sort_order = np.argsort(z_valid)[::-1]
-        index_map = np.full((height, width), -1, dtype=np.int32)
-        depth_map = np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None
-        index_map[v_valid[sort_order], u_valid[sort_order]] = id_valid[sort_order]
-        if compute_depth_map:
-            depth_map[v_valid[sort_order], u_valid[sort_order]] = z_valid[sort_order].astype(np.float32)
-        visible_indices = np.unique(index_map[index_map != -1])
-        return VisibilityManager._normalize_result_dict({
-            'index_map':      index_map,
-            'visible_indices': visible_indices,
-            'depth_map':      depth_map,
-            'inverted_index': None,
-        }, compute_depth_map)

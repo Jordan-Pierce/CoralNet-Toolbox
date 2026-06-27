@@ -2,7 +2,7 @@ import warnings
 
 from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtGui import QMouseEvent, QBrush, QPen, QColor
-from PyQt5.QtWidgets import QGraphicsPathItem, QMessageBox
+from PyQt5.QtWidgets import QGraphicsPathItem
 
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
@@ -35,9 +35,8 @@ class PatchTool(Tool):
     def mousePressEvent(self, event: QMouseEvent):
 
         if not self.annotation_window.selected_label:
-            QMessageBox.warning(self.annotation_window,
-                                "No Label Selected",
-                                "A label must be selected before adding an annotation.")
+            self.annotation_window.main_window.status_bar.showMessage(
+                "A label must be selected before adding an annotation.", 4000)
             return None
         
         # Add cursor bounds check

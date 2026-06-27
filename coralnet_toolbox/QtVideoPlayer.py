@@ -21,10 +21,16 @@ class AnnotatedSlider(QSlider):
     def __init__(self, orientation, parent=None):
         super().__init__(orientation, parent)
         self._annotation_frames: set = set()
+        self._keyframe_frames: set = set()
 
     def set_annotation_frames(self, frames):
         """Update the set of frame indices that have annotations and repaint."""
         self._annotation_frames = set(frames)
+        self.update()
+
+    def set_keyframe_frames(self, frames):
+        """Update the set of frame indices marked as keyframes and repaint."""
+        self._keyframe_frames = set(frames)
         self.update()
 
     def paintEvent(self, event):
@@ -32,25 +38,34 @@ class AnnotatedSlider(QSlider):
         # including the groove, default ticks, and handle.
         super().paintEvent(event)
 
-        if not self._annotation_frames or (self.maximum() <= self.minimum()):
+        if (not self._annotation_frames and not self._keyframe_frames) or (self.maximum() <= self.minimum()):
             return
 
         painter = QPainter(self)
         opt = QStyleOptionSlider()
         self.initStyleOption(opt)
-        
+
         # Get the groove rectangle to position your custom marks
         groove = self.style().subControlRect(QStyle.CC_Slider, opt, QStyle.SC_SliderGroove, self)
-        
-        tick_color = QColor(230, 62, 0, 220)  # blood red
-        painter.setPen(QPen(tick_color, 2))
 
         span = max(1, self.maximum() - self.minimum())
+
+        # Annotation ticks (blood red) drawn above the groove
+        annotation_color = QColor(230, 62, 0, 220)
+        painter.setPen(QPen(annotation_color, 2))
         for frame_idx in sorted(self._annotation_frames):
             ratio = (frame_idx - self.minimum()) / span
             x = groove.x() + int(ratio * groove.width())
-            painter.drawLine(x, groove.top() - 2, x, groove.bottom() + 2)
-        
+            painter.drawLine(x, groove.top() - 6, x, groove.top())
+
+        # Keyframe ticks (gold) drawn below the groove
+        keyframe_color = QColor(255, 193, 7, 240)
+        painter.setPen(QPen(keyframe_color, 2))
+        for frame_idx in sorted(self._keyframe_frames):
+            ratio = (frame_idx - self.minimum()) / span
+            x = groove.x() + int(ratio * groove.width())
+            painter.drawLine(x, groove.bottom(), x, groove.bottom() + 6)
+
         painter.end()
 
     def mousePressEvent(self, event):
@@ -117,6 +132,9 @@ class VideoPlayerWidget(QWidget):
     prevFrameClicked = pyqtSignal()
     nextAnnotatedClicked = pyqtSignal()
     prevAnnotatedClicked = pyqtSignal()
+    nextKeyframeClicked = pyqtSignal()
+    prevKeyframeClicked = pyqtSignal()
+    keyframeToggled = pyqtSignal()      # Toggle keyframe state of the current frame
 
     def __init__(self, parent=None, annotation_window=None):
         super().__init__(parent)
@@ -138,6 +156,10 @@ class VideoPlayerWidget(QWidget):
 
         self.prev_annotated_icon = get_icon("left.svg", tint=self.control_icon_tint)
         self.next_annotated_icon = get_icon("right.svg", tint=self.control_icon_tint)
+
+        self.star_icon = get_icon("star.svg", tint=self.control_icon_tint)
+        self.prev_keyframe_icon = get_icon("left.svg", tint=self.control_icon_tint)
+        self.next_keyframe_icon = get_icon("right.svg", tint=self.control_icon_tint)
         
         self.setup_ui()
 
@@ -257,6 +279,51 @@ class VideoPlayerWidget(QWidget):
         self.lbl_frame.setMinimumWidth(80)
         self.lbl_frame.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.lbl_frame)
+
+        # --- 10. Keyframe controls (bottom-right): [prev] [star] [next] ---
+        # Add a visual separator before the keyframe group
+        kf_separator = QFrame()
+        kf_separator.setStyleSheet("color: white;")
+        kf_separator.setFrameShape(QFrame.VLine)
+        kf_separator.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(kf_separator)
+
+        # Jump to Previous Keyframe
+        self.btn_prev_keyframe = QPushButton()
+        self.btn_prev_keyframe.setIcon(self.prev_keyframe_icon)
+        self.btn_prev_keyframe.setToolTip("Jump to Previous Keyframe")
+        self.btn_prev_keyframe.setFixedSize(app_theme.scale_int(30), app_theme.scale_int(30))
+        self.btn_prev_keyframe.setIconSize(app_theme.scale_size(18))
+        self.btn_prev_keyframe.clicked.connect(self.prevKeyframeClicked.emit)
+        layout.addWidget(self.btn_prev_keyframe)
+
+        # Keyframe ("star") Toggle Button.
+        # Checkable: when checked, the current frame is a keyframe. The checked
+        # state is refreshed each time a new frame is displayed. A stylesheet
+        # gives the checked state an obvious gold highlight.
+        self.btn_star = QPushButton()
+        self.btn_star.setIcon(self.star_icon)
+        self.btn_star.setCheckable(True)
+        self.btn_star.setFixedSize(app_theme.scale_int(30), app_theme.scale_int(30))
+        self.btn_star.setIconSize(app_theme.scale_size(18))
+        self.btn_star.setStyleSheet(
+            "QPushButton:checked {"
+            "  background-color: #FFC107;"
+            "  border: 1px solid #FFA000;"
+            "  border-radius: 3px;"
+            "}"
+        )
+        self.btn_star.clicked.connect(self._on_star_clicked)
+        layout.addWidget(self.btn_star)
+
+        # Jump to Next Keyframe
+        self.btn_next_keyframe = QPushButton()
+        self.btn_next_keyframe.setIcon(self.next_keyframe_icon)
+        self.btn_next_keyframe.setToolTip("Jump to Next Keyframe")
+        self.btn_next_keyframe.setFixedSize(app_theme.scale_int(30), app_theme.scale_int(30))
+        self.btn_next_keyframe.setIconSize(app_theme.scale_size(18))
+        self.btn_next_keyframe.clicked.connect(self.nextKeyframeClicked.emit)
+        layout.addWidget(self.btn_next_keyframe)
 
     def _on_slider_value_changed(self, value):
         """
@@ -429,6 +496,11 @@ class VideoPlayerWidget(QWidget):
         self.btn_next.setEnabled(False)
         self.btn_next_annotated.setEnabled(False)
         self.btn_last.setEnabled(False)
+        self.btn_prev_keyframe.setEnabled(False)
+        self.btn_next_keyframe.setEnabled(False)
+        # Leave btn_star enabled during playback so its checked (gold) state
+        # remains a clear live indicator of whether the current frame is a
+        # keyframe — a disabled checked button renders greyed out.
 
     def set_paused(self):
         """Force UI to 'Paused' state."""
@@ -441,6 +513,9 @@ class VideoPlayerWidget(QWidget):
         self.btn_next.setEnabled(True)
         self.btn_next_annotated.setEnabled(True)
         self.btn_last.setEnabled(True)
+        self.btn_prev_keyframe.setEnabled(True)
+        self.btn_next_keyframe.setEnabled(True)
+        self.btn_star.setEnabled(True)
 
     def stop_playback(self):
         """Stop playback and return the widget to a paused state."""
@@ -484,8 +559,35 @@ class VideoPlayerWidget(QWidget):
         """
         self.slider.set_annotation_frames(frame_indices)
 
+    def update_keyframe_marks(self, frame_indices):
+        """
+        Update the keyframe tick marks on the scrub bar.
+
+        Args:
+            frame_indices (set[int]): Frame indices marked as keyframes.
+        """
+        self.slider.set_keyframe_frames(frame_indices)
+
+    def set_keyframe_state(self, is_keyframe: bool):
+        """Reflect whether the currently displayed frame is a keyframe (no signal)."""
+        is_keyframe = bool(is_keyframe)
+        self.btn_star.blockSignals(True)
+        self.btn_star.setChecked(is_keyframe)
+        self.btn_star.blockSignals(False)
+        # Update tooltip so the state is unambiguous on hover
+        if is_keyframe:
+            self.btn_star.setToolTip("This frame is a keyframe (click to unstar)")
+        else:
+            self.btn_star.setToolTip("Mark this frame as a keyframe")
+
+    def _on_star_clicked(self):
+        """User toggled the star button; notify the controller to flip frame state."""
+        self.keyframeToggled.emit()
+
     def reset(self):
         """Reset controls to initial state."""
         self.set_paused()
         self.update_state(0, 0)
         self.slider.set_annotation_frames(set())
+        self.slider.set_keyframe_frames(set())
+        self.set_keyframe_state(False)

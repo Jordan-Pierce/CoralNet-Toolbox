@@ -27,6 +27,26 @@ RenderStyle = Dict[str, Union[str, int, float, bool]]
 
 
 # ----------------------------------------------------------------------------------------------------------------------
+# KD-tree query helpers
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Minimum number of query points before a scipy KD-tree query is worth
+# parallelising.  Below this, single-threaded queries finish faster than the
+# thread team can even be spawned.
+_KDTREE_PARALLEL_MIN_QUERIES = 4096
+
+
+def _kdtree_workers(n_queries: int) -> int:
+    """Pick the scipy ``workers`` value for a KD-tree query of this size.
+
+    scipy spawns and joins a fresh thread per worker on every parallel query —
+    there is no persistent pool — so for small batches the spawn/join cost
+    dwarfs the query itself.  Stay single-threaded below the threshold.
+    """
+    return -1 if n_queries >= _KDTREE_PARALLEL_MIN_QUERIES else 1
+
+
+# ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
@@ -256,30 +276,50 @@ class PointCloudProduct(AbstractSceneProduct):
         selected_array (str): Currently selected array for visualization
     """
     
-    def __init__(self, file_path: str, point_size: int = 1, product_id: Optional[str] = None):
+    def __init__(self, file_path: str, point_size: int = 1, product_id: Optional[str] = None,
+                 sort_data: bool = True, simplification_ratio: float = 0.0):
         """
         Initialize PointCloudProduct from file.
-        
+
         Args:
             file_path: Path to 3D file (.ply, .stl, .obj, .vtk, .pcd)
             point_size: Size of points when rendered
             product_id: Optional unique ID (defaults to filename)
+            sort_data: When True, spatially sort points via Morton Z-order after
+                       loading so point IDs are spatially coherent (lower index-map
+                       entropy → better cache compression). Mirrors MeshProduct.
+            simplification_ratio: Fraction of points to *remove* at load via
+                       uniform random decimation (0.0 = keep all, 0.9 = keep 10%).
+                       Produces a lighter "proxy" cloud used for all visualization
+                       and index-map creation, mirroring MeshProduct decimation.
         """
         # Generate product_id from filename if not provided
         if product_id is None:
             product_id = os.path.basename(file_path)
-        
+
         super().__init__(product_id=product_id, file_path=file_path)
-        
+
         self.point_size = point_size
         self.mesh: Optional[pv.PolyData] = None
         self.array_names = []
         self.available_arrays = []  # Will be built after loading
         self.selected_array = "RGB"  # Default to RGB
-        
+
         # Load from file with timing
         start_time = time.time()
         self.mesh = pv.read(file_path, progress_bar=True)
+
+        # Step 1: optional decimation (fraction of points removed). Mirrors the
+        # mesh proxy: a single lighter cloud used for everything downstream.
+        if simplification_ratio and simplification_ratio > 0.0 and self.mesh is not None:
+            self.mesh = self._simplify_point_cloud(self.mesh, float(simplification_ratio))
+
+        # Step 2: optional spatial sort (before scalar synthesis so every per-point
+        # array, including the ones we are about to create, ends up in sorted order).
+        if sort_data and self.mesh is not None and self.mesh.n_points > 1:
+            self.mesh = self._spatially_sort_point_cloud(self.mesh)
+            print(f"⏱️ Spatially sorted point cloud for {self.label} in {time.time() - start_time:.3f}s")
+
         self.array_names = self.mesh.array_names
         
         # Synthesize missing scalar arrays for consistent visualization
@@ -296,18 +336,101 @@ class PointCloudProduct(AbstractSceneProduct):
         print(f"   Available arrays for visualization: {self.available_arrays}")
     
     @classmethod
-    def from_file(cls, file_path: str, point_size: int = 1) -> 'PointCloudProduct':
+    def from_file(cls, file_path: str, point_size: int = 1,
+                  sort_data: bool = True, simplification_ratio: float = 0.0) -> 'PointCloudProduct':
         """
         Load a point cloud from a file.
-        
+
         Args:
             file_path: Path to 3D file (.ply, .stl, .obj, .vtk, .pcd)
             point_size: Size of points when rendered
-            
+            sort_data: When True, Morton-sort the points at load (see __init__).
+            simplification_ratio: Fraction of points to remove at load (see __init__).
+
         Returns:
             PointCloudProduct instance
         """
-        return cls(file_path=file_path, point_size=point_size)
+        return cls(file_path=file_path, point_size=point_size,
+                   sort_data=sort_data, simplification_ratio=simplification_ratio)
+
+    def _simplify_point_cloud(self, mesh: 'pv.PolyData', ratio: float) -> 'pv.PolyData':
+        """Uniformly decimate the cloud by removing a fraction of points.
+
+        Point-cloud analogue of mesh face decimation: keeps ``1 - ratio`` of the
+        points (chosen uniformly at random with a fixed seed for reproducibility)
+        and carries every per-point array across so RGB / Normals stay aligned.
+        Random sampling preserves the cloud's overall density distribution; a
+        voxel-grid downsample could be swapped in later for uniform spacing.
+        """
+        ratio = float(np.clip(ratio, 0.0, 0.999))
+        if ratio <= 0.0:
+            return mesh
+
+        pts = np.asarray(mesh.points)
+        n = pts.shape[0]
+        keep = max(1, int(round(n * (1.0 - ratio))))
+        if keep >= n:
+            return mesh
+
+        start_time = time.time()
+        rng = np.random.default_rng(0)
+        # Sorted indices keep the relative point order stable (the Morton sort
+        # reorders afterwards anyway, but this keeps un-sorted clouds tidy).
+        idx = np.sort(rng.choice(n, size=keep, replace=False))
+
+        out = pv.PolyData(pts[idx])
+        for name in list(mesh.point_data.keys()):
+            out.point_data[name] = np.asarray(mesh.point_data[name])[idx]
+
+        print(f"⏱️ Decimated point cloud {n:,} → {keep:,} points "
+              f"({ratio:.0%} removed) in {time.time() - start_time:.3f}s")
+        return out
+
+    def _spatially_sort_point_cloud(self, mesh: 'pv.PolyData') -> 'pv.PolyData':
+        """Spatially sort points along a Morton (Z-order) curve.
+
+        Point-cloud analogue of MeshProduct._spatially_sort_mesh. Reorders the
+        point coordinates AND every per-point data array by the same permutation
+        so a point's sequential ID (gl_VertexID) becomes spatially coherent.
+
+        Benefit: adjacent pixels in a rendered index map then reference points
+        with numerically close IDs, which lowers the index map's local entropy
+        and markedly improves DEFLATE (.npz) compression of the cached visibility
+        maps and visible-index arrays. Unlike meshes there is no shared-vertex
+        cache to exploit (GL_POINTS draws each point once), so this is a storage/
+        I-O optimization rather than a rasterization-speed one.
+        """
+        pts = np.asarray(mesh.points)
+        if pts.ndim != 2 or pts.shape[0] < 2:
+            return mesh
+
+        # Normalize XYZ into a 10-bit integer grid (0..1023).
+        c_min = pts.min(axis=0)
+        c_max = pts.max(axis=0)
+        extent = np.maximum(c_max - c_min, 1e-8)
+        normalized = ((pts - c_min) / extent * 1023).astype(np.uint32)
+        x, y, z = normalized[:, 0], normalized[:, 1], normalized[:, 2]
+
+        # Interleave X, Y, Z bits into a 30-bit Morton code (same as the mesh path).
+        def expand_bits(v):
+            v = (v | (v << 16)) & 0x030000FF
+            v = (v | (v << 8)) & 0x0300F00F
+            v = (v | (v << 4)) & 0x030C30C3
+            v = (v | (v << 2)) & 0x09249249
+            return v
+
+        morton_codes = (expand_bits(x) | (expand_bits(y) << 1) | (expand_bits(z) << 2))
+        sort_idx = np.argsort(morton_codes)
+
+        # Rebuild a points-only PolyData and carry every per-point array across in
+        # the SAME order — otherwise RGB / Normals / Labels would be scrambled.
+        sorted_cloud = pv.PolyData(pts[sort_idx])
+        for name in list(mesh.point_data.keys()):
+            sorted_cloud.point_data[name] = np.asarray(mesh.point_data[name])[sort_idx]
+
+        # Keep the permutation for any future proof/debug visualization.
+        self._sort_idx = sort_idx
+        return sorted_cloud
     
     # --------------------------------------------------------------------------
     # AbstractSceneProduct Implementation
@@ -330,8 +453,10 @@ class PointCloudProduct(AbstractSceneProduct):
         # Use them directly via the mapper
         if self.selected_array in self.array_names:
             style['scalars'] = self.selected_array
-            # RGB, Labels, and Normals_RGB are all Nx3 uint8, so they need direct RGB mode
-            if self.selected_array in ("RGB", "Labels", "Normals_RGB"):
+            # RGB, Labels, Normals_RGB and the Tier-2 feature arrays are all Nx3
+            # uint8, so they need direct RGB mode (no LUT).
+            if self.selected_array in ("RGB", "Labels", "Normals_RGB",
+                                       "Similarity", "Features (RGB)"):
                 style['rgb'] = True
         else:
             # Fallback: render as metashape purple
@@ -378,13 +503,26 @@ class PointCloudProduct(AbstractSceneProduct):
     def get_points_array(self) -> Optional[np.ndarray]:
         """
         Get the raw point coordinates as a numpy array for efficient processing.
-        
+
         Returns:
             np.ndarray: (N, 3) array of point coordinates, or None if no mesh
         """
         if self.mesh is None:
             return None
         return self.mesh.points
+
+    def prepare_geometry(self):
+        """Populate the element-center cache used by the spatial (KD-tree) query stack.
+
+        For a point cloud the "elements" are the points themselves, so the element
+        centers are simply the point coordinates. This mirrors MeshProduct.prepare_geometry
+        so the shared brush-volume / hover-overlay machinery (which only consumes
+        ``_element_centers_np``) works for point clouds without any special-casing.
+        """
+        if self.mesh is None:
+            self._element_centers_np = None
+            return
+        self._element_centers_np = np.asarray(self.mesh.points, dtype=np.float32)
     
     def has_rgb(self) -> bool:
         """Check if point cloud has RGB color data."""
@@ -443,13 +581,19 @@ class PointCloudProduct(AbstractSceneProduct):
             return
         
         n_points = self.mesh.n_points
-        
-        if "Labels" not in self.mesh.array_names:
+
+        labels_preexisting = "Labels" in self.mesh.array_names
+        if not labels_preexisting:
             labels_array = np.ones((n_points, 3), dtype=np.uint8) * 255  # White
             self.mesh.point_data["Labels"] = labels_array
         # Create a Python-owned cache detached from the VTK array for background painting
         # This avoids writing into VTK memory from worker threads.
         self._labels_cache = np.asarray(self.mesh.point_data["Labels"]).copy()
+        # Deferred-flush bookkeeping: dirty = cache diverged from the VTK array;
+        # have_paint = the VTK array may contain non-white labels (so erasing
+        # later requires a real flush to avoid stale colors under the overlay).
+        self._labels_dirty = False
+        self._vtk_labels_have_paint = labels_preexisting
 
         # Keep a readonly reference to the PyVista view for eventual flush, but
         # do NOT write to it directly during painting.
@@ -485,49 +629,156 @@ class PointCloudProduct(AbstractSceneProduct):
             # Fallback: materialize cache if missing
             self._labels_cache = np.asarray(self.mesh.point_data["Labels"]).copy()
         self._labels_cache[element_ids] = color_rgb
+        self._labels_dirty = True
 
         # NOTE: Do NOT call Modified() here. The expensive GPU upload is deferred
         # and performed once by `flush_labels_to_gpu()` on the main thread.
 
     def flush_labels_to_gpu(self) -> None:
-        """One full GPU upload. Call only on the GUI/main thread when painting pauses."""
+        """One full GPU upload. Call only on the GUI/main thread, and only at
+        rare barriers (scene rebuild, array switch, erase-after-flush) — this
+        triggers a full VTK mapper rebuild on the next render."""
         if self.mesh is None or not hasattr(self, '_labels_cache'):
             return
+        if not getattr(self, '_labels_dirty', True):
+            return
         try:
-            # Overwrite the PyVista/VTK array from our python cache, then mark modified
-            self.mesh.point_data["Labels"] = self._labels_cache
+            gpu_labels = self._labels_cache.copy()
+            hidden = getattr(self, '_hidden_class_ids', None)
+            if hidden:
+                for cid in hidden:
+                    gpu_labels[self.class_ids == cid] = (255, 255, 255)
+            self.mesh.point_data["Labels"] = gpu_labels
             v_arr = self.mesh.GetPointData().GetArray("Labels")
             if v_arr:
                 v_arr.Modified()
+            self._labels_dirty = False
+            self._vtk_labels_have_paint = True
         except Exception as e:
             print(f"⚠️ flush_labels_to_gpu (PointCloud) failed: {e}")
+
+    # --------------------------------------------------------------------------
+    # Tier-2 Feature Similarity
+    # --------------------------------------------------------------------------
+
+    def attach_feature_arrays(self, buffer) -> None:
+        """Attach Tier-2 feature buffer arrays to the cloud for visualization.
+
+        Mirrors MeshProduct.attach_feature_arrays but stores the per-point
+        arrays in ``point_data`` (a cloud's elements are its points).
+        """
+        if self.mesh is None or buffer is None:
+            return
+
+        try:
+            N = self.mesh.n_points
+            if buffer.features.shape[0] != N:
+                print(f"⚠️ Buffer size {buffer.features.shape[0]} != cloud {N}")
+                return
+
+            # Similarity: [N, 3] uint8 DIRECT RGB. Initialize to the baseline
+            # colormap color so the cloud is never rendered black with no query.
+            try:
+                import matplotlib
+                cmap = matplotlib.colormaps["plasma"]
+                base_rgb = (np.asarray(cmap(0.0))[:3] * 255).round().astype(np.uint8)
+            except Exception:
+                base_rgb = np.array([13, 8, 135], dtype=np.uint8)  # plasma(0)
+            sim_array = np.empty((N, 3), dtype=np.uint8)
+            sim_array[:] = base_rgb
+            self.mesh.point_data["Similarity"] = sim_array
+
+            # Features (RGB): [N, 3] uint8 from PCA or None
+            if buffer.pca_rgb is not None:
+                self.mesh.point_data["Features (RGB)"] = buffer.pca_rgb.astype(np.uint8)
+
+            self.array_names = self.mesh.array_names
+            for array_name in ("Similarity", "Features (RGB)"):
+                if array_name in self.mesh.point_data and array_name not in self.available_arrays:
+                    self.available_arrays.append(array_name)
+
+        except Exception as e:
+            print(f"⚠️ attach_feature_arrays (PointCloud) failed: {e}")
+
+    def clear_feature_arrays(self) -> None:
+        """Remove Tier-2 feature arrays from the cloud."""
+        if self.mesh is None:
+            return
+
+        try:
+            for key in ["Similarity", "Features (RGB)"]:
+                if key in self.mesh.point_data:
+                    del self.mesh.point_data[key]
+                if key in self.available_arrays:
+                    self.available_arrays.remove(key)
+                if self.selected_array == key:
+                    self.selected_array = "RGB"
+
+            self.array_names = self.mesh.array_names
+
+        except Exception as e:
+            print(f"⚠️ clear_feature_arrays (PointCloud) failed: {e}")
+
+    def set_similarity_colors(self, colors: np.ndarray) -> None:
+        """Write the per-point similarity RGB colors in place (cheap mtime bump,
+        no full geometry rebuild)."""
+        if self.mesh is None or "Similarity" not in self.mesh.point_data:
+            return
+        try:
+            self.mesh.point_data["Similarity"][:] = colors
+            self.mesh.GetPointData().GetArray("Similarity").Modified()
+        except Exception as e:
+            print(f"⚠️ set_similarity_colors (PointCloud) failed: {e}")
 
 
 class MeshProduct(AbstractSceneProduct):
     """
     Scene product for surface mesh data.
-    
+
     Wraps PyVista mesh with faces (triangles/polygons) for solid surface rendering
     and accurate occlusion testing. Meshes ARE solid (is_solid=True).
-    
+
+    Texture Support:
+        If a texture image (texture.png, texture.jpg, etc.) is present in the same
+        directory as the mesh file, it will be auto-loaded and added as a "Texture"
+        layer in the viewer's array dropdown. Texture rendering requires UV coordinates
+        to be present in the mesh (commonly texture_u/texture_v or u/v arrays from
+        Metashape and other photogrammetry software). If a texture image exists but
+        the mesh lacks UV coordinates, the texture will be disabled to prevent crashes.
+
+    Simplification Caveat:
+        When simplification_ratio > 0.0, UV coordinates may be corrupted due to
+        nearest-neighbor transfer to the decimated mesh. Textures will likely tear
+        or stretch. For textured meshes, keep simplification_ratio = 0.0.
+
+        Spatial sorting (sort_data=True) is safe for textures — it only reorders
+        faces, not vertex data or UV mappings.
+
     Attributes:
         mesh (pv.PolyData): The underlying PyVista surface mesh.
         opacity (float): Default rendering opacity.
+        texture (pv.Texture): Loaded image texture, or None.
     """
     
     def __init__(self, file_path: str, opacity: float = 1.0, product_id: Optional[str] = None,
-                 sort_mesh: bool = True, simplification_ratio: float = 0.0):
+                 sort_data: bool = True, simplification_ratio: float = 0.0, load_texture: bool = True):
         """
         Initialize MeshProduct from file.
 
         Args:
-            sort_mesh: When True, spatially sort faces via Morton Z-order after
-                       loading for better GPU cache coherence.
+            file_path: Path to the mesh file (.ply, .obj, .stl, .vtk).
+            opacity: Default rendering opacity (0.0 - 1.0).
+            product_id: Optional unique identifier (defaults to filename).
+            sort_data: When True, spatially sort faces via Morton Z-order after
+                       loading for better GPU cache coherence and index-map quality.
             simplification_ratio: Fraction of faces to *remove* via
                 fast-simplification (0.0 = no simplification, 1.0 = remove all
                 faces).  Applied before sorting so the sort operates on the
                 already-reduced mesh.  Values above 0.99 are clamped to 0.99 to
                 ensure a non-degenerate result.
+            load_texture: When True, attempt to load an associated texture image
+                (texture.png, texture.jpg, etc.) from the same directory as the
+                mesh file. Only applied if the mesh has UV coordinates.
         """
         if product_id is None:
             product_id = os.path.basename(file_path)
@@ -587,7 +838,7 @@ class MeshProduct(AbstractSceneProduct):
                       f"{faces_before:,} → {working_mesh.n_cells:,} faces in {time.time() - start_time:.3f}s")
 
         # Step 2: optional spatial sort for GPU cache coherence.
-        if sort_mesh:
+        if sort_data:
             self.mesh = self._spatially_sort_mesh(working_mesh)
             print(f"⏱️ Spatially sorted mesh for {self.label} in {time.time() - start_time:.3f}s")
         else:
@@ -595,14 +846,292 @@ class MeshProduct(AbstractSceneProduct):
 
         self.array_names = self.mesh.array_names
         self._ensure_scalar_arrays()
-        other_arrays = [arr for arr in self.array_names if arr.lower() not in ('rgb', 'labels', 'normals', 'class_ids')]
+
+        # --- TEXTURE IMPORT LOGIC ---
+        # Only attempt to load texture if explicitly enabled by the user and a file exists
+        self.texture = None
+        if load_texture:
+            dir_name = os.path.dirname(self.file_path)
+            for ext in ['.png', '.jpg', '.jpeg', '.tif', '.tiff']:
+                tex_path = os.path.join(dir_name, f"texture{ext}")
+                if os.path.exists(tex_path):
+                    try:
+                        self.texture = pv.Texture(tex_path)
+                        print(f"🖼️ Loaded texture from {tex_path}")
+                        break
+                    except Exception as e:
+                        print(f"⚠️ Failed to load texture {tex_path}: {e}")
+
+        # Check and bind UV coordinates — they may have been lost during simplification/sorting
+        has_uvs = False
+        if self.mesh is not None:
+            # Check if PyVista already has active texture coordinates bound
+            try:
+                if self.mesh.active_texture_coordinates is not None:
+                    has_uvs = True
+            except Exception:
+                pass
+
+            if not has_uvs:
+                pd = self.mesh.point_data
+                # TCoords is PyVista's default name; it may have survived simplification as a normal array
+                if "TCoords" in pd:
+                    try:
+                        self.mesh.active_texture_coordinates = np.asarray(pd["TCoords"], dtype=np.float64)
+                        has_uvs = True
+                    except Exception:
+                        pass
+
+                if not has_uvs:
+                    # Check common PLY UV array names and bind as the active texture coordinates
+                    for u_name, v_name in [("texture_u", "texture_v"), ("u", "v"), ("s", "t")]:
+                        if u_name in pd and v_name in pd:
+                            try:
+                                uv_coords = np.column_stack((pd[u_name], pd[v_name])).astype(np.float64)
+                                self.mesh.active_texture_coordinates = uv_coords
+                                has_uvs = True
+                                break
+                            except Exception:
+                                pass
+
+        # If we loaded an image but the mesh has no UVs, discard the texture to prevent rendering crashes
+        if self.texture is not None and not has_uvs:
+            print(f"⚠️ Texture image found, but mesh lacks UV coordinates. Disabling texture support.")
+            self.texture = None
+
+        # Update array names in case binding UVs added a new array
+        self.array_names = self.mesh.array_names
+        # --------------------------------
+
+        other_arrays = [arr for arr in self.array_names if arr.lower() not in (
+            'rgb', 'labels', 'normals', 'class_ids', 'texture coordinates', 'tcoords',
+            'uv_segments_rgb')]
+
+        # Register Texture as a valid dropdown array choice ONLY if we loaded one AND have UVs
         self.available_arrays = ["RGB", "Labels"]
+        self.texture_segment_ids = None
+        if self.texture is not None and has_uvs:
+            self.available_arrays.append("Texture")
+
+        # UV Segments — distinct color per connected UV island. These islands are
+        # exactly the regions the 3D Fill tool floods on a single click.
+        # Because vertices are duplicated at UV seams, connected components = UV islands.
+        if self.texture is not None and has_uvs:
+            try:
+                conn = self.mesh.connectivity(extraction_mode='all')
+                self.texture_segment_ids = np.asarray(conn.cell_data['RegionId'])
+                print(f"🧩 Computed {self.texture_segment_ids.max() + 1} texture segments.")
+            except Exception as e:
+                print(f"⚠️ Failed to compute texture segments: {e}")
+                self.texture_segment_ids = None
+
+            if self.texture_segment_ids is not None and self._build_uv_segments_rgb_array():
+                self.available_arrays.append("UV Segments")
+
+        # Keep array_names in sync so the baked visualization arrays are tracked.
+        self.array_names = self.mesh.array_names
+
         self.available_arrays.extend(other_arrays)
 
         if self.mesh.n_cells == 0:
             raise ValueError(f"File '{file_path}' has no cells/faces - use PointCloudProduct instead")
 
         print(f"⏱️ Loaded MeshProduct: {self.label} with {self.mesh.n_cells:,} faces in {time.time() - start_time:.3f}s")
+
+    # Palette seed and per-notch multiplicative step for segment coarsening.
+    _SEGMENT_PALETTE_SEED = 42
+    _SEGMENT_COARSEN_STEP = 0.85
+
+    def _build_uv_segments_rgb_array(self) -> bool:
+        """Bake the UV segment ids into a per-face RGB array of distinct colors.
+
+        Each connected UV island (``texture_segment_ids``) receives a stable,
+        pseudo-random color so the Fill tool's flood regions are visible at a
+        glance. The result is stored as the cell array ``UV_Segments_RGB``.
+
+        Returns:
+            True if the array was created, False otherwise.
+        """
+        seg = getattr(self, 'texture_segment_ids', None)
+        if seg is None:
+            return False
+        seg = np.asarray(seg)
+        if seg.shape[0] != self.mesh.n_cells or seg.size == 0:
+            return False
+        if int(seg.max()) + 1 <= 0:
+            return False
+        self._recolor_uv_segments(seg)
+        return 'UV_Segments_RGB' in self.mesh.cell_data
+
+    def _recolor_uv_segments(self, seg_ids: np.ndarray) -> None:
+        """Rewrite the ``UV_Segments_RGB`` cell array in place from a palette.
+
+        Writing in place (and bumping the VTK array MTime) lets a live
+        granularity change refresh the rendered colors without rebuilding the
+        actor — the fast path the Fill-tool coarsening relies on.
+        """
+        try:
+            seg_ids = np.asarray(seg_ids)
+            n_segments = int(seg_ids.max()) + 1 if seg_ids.size else 0
+            if n_segments <= 0:
+                return
+            # Deterministic greyscale palette; floor at 40 to avoid near-black segments.
+            rng = np.random.default_rng(self._SEGMENT_PALETTE_SEED)
+            gray = rng.integers(40, 256, size=(n_segments, 1), dtype=np.uint8)
+            palette = np.repeat(gray, 3, axis=1)
+            colors = palette[seg_ids]
+
+            existing = None
+            if 'UV_Segments_RGB' in self.mesh.cell_data:
+                existing = np.asarray(self.mesh.cell_data['UV_Segments_RGB'])
+            if existing is not None and existing.shape == colors.shape:
+                existing[:] = colors
+                vtk_arr = self.mesh.GetCellData().GetArray('UV_Segments_RGB')
+                if vtk_arr is not None:
+                    vtk_arr.Modified()
+            else:
+                self.mesh.cell_data['UV_Segments_RGB'] = colors
+            self.mesh.Modified()
+        except Exception as e:
+            print(f"⚠️ Failed to recolor UV segments: {e}")
+
+    # ------------------------------------------------------------------
+    # UV segment coarsening (Fill-tool granularity control)
+    # ------------------------------------------------------------------
+
+    def _ensure_segment_hierarchy(self) -> bool:
+        """Lazily build the merge order used to coarsen UV segments.
+
+        Builds a kNN graph over per-segment centroids and sorts the candidate
+        edges by distance, giving a single-linkage merge order that is cheap to
+        replay for any target cluster count. The finest segmentation (what was
+        computed at load) is snapshotted so refining can restore it exactly.
+
+        Returns:
+            True if a non-trivial hierarchy is available, False otherwise.
+        """
+        if getattr(self, '_segment_merge_edges', None) is not None:
+            return self._segment_merge_edges.size > 0
+
+        self._segment_merge_edges = np.empty((0, 2), dtype=np.int64)
+        seg = getattr(self, 'texture_segment_ids', None)
+        if seg is None:
+            return False
+        seg = np.asarray(seg)
+        if seg.size == 0:
+            return False
+
+        # Snapshot the finest segmentation; coarsening always derives from this.
+        self._segment_ids_fine = seg.copy()
+        n_seg = int(seg.max()) + 1
+        self._segment_n_fine = n_seg
+        self._segment_target_clusters = n_seg
+        if n_seg <= 1:
+            return False
+
+        try:
+            from scipy.spatial import cKDTree
+
+            centers = getattr(self, '_element_centers_np', None)
+            if centers is None or len(centers) != seg.shape[0]:
+                centers = np.asarray(self.mesh.cell_centers().points, dtype=np.float64)
+
+            # Per-segment centroid = mean of its face centers.
+            sums = np.zeros((n_seg, 3), dtype=np.float64)
+            counts = np.zeros(n_seg, dtype=np.int64)
+            np.add.at(sums, seg, centers)
+            np.add.at(counts, seg, 1)
+            centroids = sums / np.maximum(counts, 1)[:, None]
+
+            # kNN candidate edges between segment centroids (deduped, undirected).
+            k = int(min(9, n_seg))
+            tree = cKDTree(centroids)
+            _, nbr = tree.query(centroids, k=k)
+            nbr = np.atleast_2d(nbr)
+            src = np.repeat(np.arange(n_seg), nbr.shape[1])
+            dst = nbr.ravel()
+            keep = src != dst
+            src, dst = src[keep], dst[keep]
+            lo = np.minimum(src, dst)
+            hi = np.maximum(src, dst)
+            edges = np.unique(np.stack([lo, hi], axis=1), axis=0)
+            dists = np.linalg.norm(centroids[edges[:, 0]] - centroids[edges[:, 1]], axis=1)
+            self._segment_merge_edges = edges[np.argsort(dists, kind='stable')]
+            return self._segment_merge_edges.size > 0
+        except Exception as e:
+            print(f"⚠️ Failed to build segment hierarchy: {e}")
+            self._segment_merge_edges = np.empty((0, 2), dtype=np.int64)
+            return False
+
+    def _segment_labels_for_clusters(self, target_clusters: int) -> np.ndarray:
+        """Return per-fine-segment coarse cluster ids for a target cluster count.
+
+        Replays the precomputed single-linkage merge order with a union-find
+        until the desired number of clusters remains, then compacts the roots
+        into a dense 0..C-1 labeling.
+        """
+        edges = self._segment_merge_edges
+        n_seg = self._segment_n_fine
+        parent = np.arange(n_seg, dtype=np.int64)
+
+        def find(x):
+            root = x
+            while parent[root] != root:
+                root = parent[root]
+            while parent[x] != root:
+                parent[x], x = root, parent[x]
+            return root
+
+        n_clusters = n_seg
+        target = max(1, min(int(target_clusters), n_seg))
+        for a, b in edges:
+            if n_clusters <= target:
+                break
+            ra, rb = find(int(a)), find(int(b))
+            if ra != rb:
+                parent[rb] = ra
+                n_clusters -= 1
+
+        roots = np.fromiter((find(i) for i in range(n_seg)), dtype=np.int64, count=n_seg)
+        _, comp = np.unique(roots, return_inverse=True)
+        return comp.astype(np.int64)
+
+    def set_segment_granularity(self, direction: int) -> Optional[int]:
+        """Coarsen (``direction < 0``) or refine (``direction > 0``) UV segments.
+
+        Steps the active cluster count multiplicatively and rewrites both
+        ``texture_segment_ids`` (consumed by the Fill tool) and the
+        ``UV_Segments_RGB`` display array in place. The finest level equals the
+        original load-time segmentation.
+
+        Returns:
+            The new active segment count, or None when no hierarchy exists.
+        """
+        if not self._ensure_segment_hierarchy():
+            return None
+
+        n_seg = self._segment_n_fine
+        current = int(getattr(self, '_segment_target_clusters', n_seg))
+
+        if direction > 0:  # finer -> more clusters
+            target = max(current + 1, int(np.ceil(current / self._SEGMENT_COARSEN_STEP)))
+        else:              # coarser -> fewer clusters
+            target = min(current - 1, int(np.floor(current * self._SEGMENT_COARSEN_STEP)))
+        target = max(1, min(target, n_seg))
+
+        if target == current:
+            return current
+        self._segment_target_clusters = target
+
+        if target >= n_seg:
+            # Restore the finest segmentation exactly.
+            self.texture_segment_ids = self._segment_ids_fine.copy()
+        else:
+            cluster_of_fine = self._segment_labels_for_clusters(target)
+            self.texture_segment_ids = cluster_of_fine[self._segment_ids_fine]
+
+        self._recolor_uv_segments(self.texture_segment_ids)
+        return int(self.texture_segment_ids.max()) + 1
 
     def _spatially_sort_mesh(self, mesh: pv.PolyData) -> pv.PolyData:
         """
@@ -794,10 +1323,24 @@ class MeshProduct(AbstractSceneProduct):
     
     @classmethod
     def from_file(cls, file_path: str, opacity: float = 1.0,
-                  sort_mesh: bool = True, simplification_ratio: float = 0.0) -> 'MeshProduct':
-        """Load a mesh from file."""
+                  sort_data: bool = True, simplification_ratio: float = 0.0,
+                  load_texture: bool = True) -> 'MeshProduct':
+        """
+        Load a mesh from file.
+
+        Args:
+            file_path: Path to the mesh file.
+            opacity: Default rendering opacity.
+            sort_data: Whether to spatially sort faces for GPU cache coherence.
+            simplification_ratio: Fraction of faces to remove at load.
+            load_texture: Whether to load an associated texture image file.
+
+        Returns:
+            MeshProduct instance.
+        """
         return cls(file_path=file_path, opacity=opacity,
-                   sort_mesh=sort_mesh, simplification_ratio=simplification_ratio)
+                   sort_data=sort_data, simplification_ratio=simplification_ratio,
+                   load_texture=load_texture)
     
     # Custom method to build and cache Open3D RaycastingScene for this mesh
     def prepare_geometry(self):
@@ -850,10 +1393,30 @@ class MeshProduct(AbstractSceneProduct):
             'show_edges': False,
             'lighting': True,
         }
-        
+
+        # If the user selected the Texture layer, apply the pyvista.Texture
+        if self.selected_array == "Texture" and getattr(self, 'texture', None) is not None:
+            style['texture'] = self.texture
+            style['color'] = 'white'
+        # UV islands — baked per-face RGB view of the Fill-tool flood regions.
+        elif self.selected_array == "UV Segments" and "UV_Segments_RGB" in self.mesh.array_names:
+            style['scalars'] = "UV_Segments_RGB"
+            style['rgb'] = True
+            style['lighting'] = False
+        # Similarity heatmap (Tier-2 feature queries). The array holds DIRECT RGB
+        # colors ([N,3] uint8, colormapped on the GPU), rendered without a LUT —
+        # the fast path that avoids VTK's CPU scalar->color MapScalars.
+        elif self.selected_array == "Similarity" and "Similarity" in self.mesh.array_names:
+            style['scalars'] = "Similarity"
+            style['rgb'] = True
+            style['lighting'] = False
+        # Features (RGB) — PCA top-3 dims
+        elif self.selected_array == "Features (RGB)" and "Features (RGB)" in self.mesh.array_names:
+            style['scalars'] = "Features (RGB)"
+            style['rgb'] = True
         # All arrays (RGB, Labels, and data arrays) are now real scalars in the mesh
         # Use them directly via the mapper
-        if self.selected_array in self.array_names:
+        elif self.selected_array in self.array_names:
             style['scalars'] = self.selected_array
             # RGB, Labels, and Normals_RGB are all Nx3 uint8, so they need direct RGB mode
             if self.selected_array in ("RGB", "Labels", "Normals_RGB"):
@@ -861,7 +1424,7 @@ class MeshProduct(AbstractSceneProduct):
         else:
             # Fallback: render as metashape purple
             style['color'] = '#8d8cc4'  # Metashape purple
-        
+
         return style
     
     def get_bounds(self) -> BoundsType:
@@ -915,6 +1478,236 @@ class MeshProduct(AbstractSceneProduct):
         self.mesh.compute_normals(cell_normals=True, point_normals=False, inplace=True)
         return self.mesh.cell_data['Normals']
 
+    def _get_cached_face_normals(self) -> Optional[np.ndarray]:
+        """Return cached per-face normals, computing them once per product.
+
+        ``get_face_normals`` recomputes normals on every call; the densify
+        gather needs them per stroke, so cache the result and invalidate only
+        when the product identity changes (mirrors the KD-tree caching).
+        """
+        cached = getattr(self, '_face_normals_np', None)
+        cached_pid = getattr(self, '_face_normals_product_id', None)
+        if cached is not None and cached_pid == getattr(self, 'product_id', None):
+            return cached
+        try:
+            normals = np.asarray(self.get_face_normals(), dtype=np.float32)
+        except Exception:
+            return None
+        self._face_normals_np = normals
+        self._face_normals_product_id = getattr(self, 'product_id', None)
+        return normals
+
+    def gather_dense_face_ids(self, seed_ids, *, camera_position=None,
+                              radius_mult: float = 1.5, normal_dot_min: float = 0.3,
+                              max_expansion: float = 40.0) -> np.ndarray:
+        """Expand sparse seed face IDs into the dense set covering the same patch.
+
+        Faces sampled from a low-resolution index map are sparse — many faces
+        between samples never get a pixel.  This uses the prewarmed face-center
+        KD-tree (``_hover_face_kdtree``) to gather every face whose centroid lies
+        within a self-calibrating radius of any seed, then filters out occluded
+        / back-facing candidates so the result tracks the visible surface rather
+        than geometry behind it.
+
+        Args:
+            seed_ids: Sparse face IDs sampled from a (low-res) index map.
+            camera_position: Source camera world position.  Enables the
+                camera-facing cull (Stage 1); skipped when None (e.g. ortho).
+            radius_mult: Gather radius as a multiple of the median
+                nearest-neighbor spacing among the seed centroids.
+            normal_dot_min: Minimum dot product between a candidate's normal and
+                its nearest seed's normal to keep the candidate (Stage 2).  Set
+                to None to disable.
+            max_expansion: Circuit breaker — if the gathered set exceeds this
+                multiple of the seed count, the seeds are returned unchanged.
+
+        Returns:
+            np.ndarray[int64] dense face IDs (always a superset of the surviving
+            seeds), or the original seeds on any failure / no-op.
+        """
+        seeds = np.asarray(seed_ids, dtype=np.int64).ravel()
+        seeds = np.unique(seeds[seeds >= 0])
+        if seeds.size == 0:
+            return seeds
+
+        new_ids, _ = self.gather_dense_face_ids_multiclass(
+            seeds,
+            np.zeros(seeds.size, dtype=np.int64),
+            camera_position=camera_position,
+            radius_mult=radius_mult,
+            normal_dot_min=normal_dot_min,
+            max_expansion=max_expansion,
+        )
+        if new_ids.size == 0:
+            return seeds
+        return np.union1d(seeds, new_ids)
+
+    def gather_dense_face_ids_multiclass(self, seed_ids, seed_class_ids, *,
+                                         camera_position=None,
+                                         radius_mult: float = 1.5,
+                                         normal_dot_min: float = 0.3,
+                                         max_expansion: float = 40.0):
+        """Gather newly reached faces around multi-class seeds in one batched pass.
+
+        Batched core of the densify gather: all classes' seeds are expanded with
+        a single set of KD-tree queries (instead of one set per class), and each
+        newly reached face inherits the class of its nearest seed.  scipy spawns
+        and joins a fresh thread team on every parallel query, so collapsing the
+        per-class calls into one — and staying single-threaded for small batches
+        via ``_kdtree_workers`` — is what keeps thread churn off the semantic
+        propagation hot path.
+
+        Args:
+            seed_ids: Face IDs sampled from a (low-res) index map.  Duplicates
+                are allowed; a face seeded under several classes keeps the class
+                of its first occurrence for nearest-seed assignment.
+            seed_class_ids: Class ID per entry of ``seed_ids`` (same length).
+            camera_position, radius_mult, normal_dot_min, max_expansion: see
+                ``gather_dense_face_ids``.
+
+        Returns:
+            ``(new_face_ids, new_face_classes)`` — int64 arrays of faces *not*
+            in the seed set, each tagged with the class of its nearest surviving
+            seed.  Both empty on no-op, failure, or when the circuit breaker
+            trips (callers keep their original seeds/votes either way).
+        """
+        empty = (np.array([], dtype=np.int64), np.array([], dtype=np.int64))
+
+        seeds_raw = np.asarray(seed_ids, dtype=np.int64).ravel()
+        classes_raw = np.asarray(seed_class_ids, dtype=np.int64).ravel()
+        if seeds_raw.size == 0 or seeds_raw.size != classes_raw.size:
+            return empty
+
+        valid = seeds_raw >= 0
+        seeds_raw = seeds_raw[valid]
+        classes_raw = classes_raw[valid]
+        seeds, first_idx = np.unique(seeds_raw, return_index=True)
+        seed_classes = classes_raw[first_idx]
+        if seeds.size == 0:
+            return empty
+
+        tree = getattr(self, '_hover_face_kdtree', None)
+        centers = getattr(self, '_element_centers_np', None)
+        if tree is None or centers is None:
+            return empty
+
+        centers = np.asarray(centers, dtype=np.float32)
+        n_faces = len(centers)
+        in_range = seeds < n_faces
+        seeds = seeds[in_range]
+        seed_classes = seed_classes[in_range]
+        if seeds.size == 0:
+            return empty
+
+        pts = centers[seeds]
+
+        # --- Self-calibrating gather radius from seed spacing ---
+        radius = 0.0
+        if seeds.size >= 2:
+            try:
+                nn_dist, _ = tree.query(pts, k=2, workers=_kdtree_workers(pts.shape[0]))
+                nn_dist = nn_dist[:, 1]
+                nn_dist = nn_dist[np.isfinite(nn_dist) & (nn_dist > 0)]
+                if nn_dist.size:
+                    radius = float(np.median(nn_dist)) * float(radius_mult)
+            except Exception:
+                radius = 0.0
+        if radius <= 0.0:
+            diag = float(np.linalg.norm(centers.max(axis=0) - centers.min(axis=0)))
+            radius = diag * 1e-3
+        if radius <= 0.0:
+            return empty
+
+        # --- Thin query centers to ~half the gather radius -------------------
+        # query_ball_point cost (and the volume of duplicate output we then
+        # dedupe) scales with the number of ball centers.  Seeds sampled from a
+        # dense mesh heavily overlap, so collapse them to one representative per
+        # voxel; the union of the (unchanged-radius) balls is virtually identical
+        # but far cheaper.  On sparse low-res seeds this is a no-op.
+        query_pts = pts
+        if pts.shape[0] > 1:
+            voxel = radius * 0.5
+            if voxel > 0.0:
+                cell_keys = np.floor(pts / voxel).astype(np.int64)
+                _, rep_idx = np.unique(cell_keys, axis=0, return_index=True)
+                query_pts = pts[rep_idx]
+
+        # --- Radius-union gather (conforms to the stroke shape) --------------
+        try:
+            neighbor_lists = tree.query_ball_point(
+                query_pts, radius, workers=_kdtree_workers(query_pts.shape[0])
+            )
+        except TypeError:
+            neighbor_lists = tree.query_ball_point(query_pts, radius)
+        # C-level concat of per-center arrays, not a Python generator flatten.
+        sub_arrays = [np.asarray(sub, dtype=np.int64) for sub in neighbor_lists if len(sub)]
+        if not sub_arrays:
+            return empty
+        candidates = np.unique(np.concatenate(sub_arrays))
+        if candidates.size == 0:
+            return empty
+
+        cand_centers = centers[candidates]
+
+        # Nearest surviving seed per candidate — shared by the Stage 2 normal
+        # consistency cull and by class assignment for newly reached faces.
+        nearest_local = None
+        multi_class = np.unique(seed_classes).size > 1
+        if multi_class or normal_dot_min is not None:
+            try:
+                from scipy.spatial import cKDTree
+                seed_tree = cKDTree(pts)
+                _, nearest_local = seed_tree.query(
+                    cand_centers, k=1, workers=_kdtree_workers(cand_centers.shape[0])
+                )
+            except Exception:
+                nearest_local = None
+
+        # --- Back-face / occlusion filtering ---
+        normals = self._get_cached_face_normals()
+        if normals is not None and normals.shape[0] == n_faces:
+            cand_normals = normals[candidates]
+            keep = np.ones(candidates.size, dtype=bool)
+
+            # Stage 1: camera-facing cull. A front face points back toward the
+            # camera, so dot(normal, view_dir) <= 0.
+            if camera_position is not None:
+                cam = np.asarray(camera_position, dtype=np.float32).reshape(3)
+                view = cand_centers - cam
+                vn = np.linalg.norm(view, axis=1, keepdims=True)
+                vn[vn < 1e-8] = 1.0
+                view = view / vn
+                facing = np.einsum('ij,ij->i', cand_normals, view)
+                keep &= facing <= 0.0
+
+            # Stage 2: normal consistency vs the nearest seed.
+            if normal_dot_min is not None and nearest_local is not None:
+                ref_normals = normals[seeds][nearest_local]
+                consistency = np.einsum('ij,ij->i', cand_normals, ref_normals)
+                keep &= consistency >= float(normal_dot_min)
+
+            candidates = candidates[keep]
+            if nearest_local is not None:
+                nearest_local = nearest_local[keep]
+
+        new_mask = ~np.isin(candidates, seeds, assume_unique=True)
+        new_ids = candidates[new_mask]
+        if new_ids.size == 0:
+            return empty
+
+        # Circuit breaker: a gather straddling a discontinuity can balloon —
+        # report no expansion rather than mislabel distant geometry.
+        if seeds.size + new_ids.size > max_expansion * seeds.size:
+            return empty
+
+        if nearest_local is not None:
+            new_classes = seed_classes[nearest_local[new_mask]]
+        else:
+            new_classes = np.full(new_ids.size, int(seed_classes[0]), dtype=np.int64)
+
+        return (new_ids.astype(np.int64, copy=False),
+                new_classes.astype(np.int64, copy=False))
+
     def get_element_coordinate(self, element_id: int):
         """Return the 3D center coordinate of a mesh face by its ID."""
         if not hasattr(self, '_element_centers_np') or self._element_centers_np is None:
@@ -961,14 +1754,18 @@ class MeshProduct(AbstractSceneProduct):
             return
         
         n_faces = self.mesh.n_cells
-        
+
         # 1. Create "Labels" array if it doesn't exist - uniform white
-        if "Labels" not in self.mesh.array_names:
+        labels_preexisting = "Labels" in self.mesh.array_names
+        if not labels_preexisting:
             labels_array = np.ones((n_faces, 3), dtype=np.uint8) * 255  # White
             self.mesh.cell_data["Labels"] = labels_array
 
         # Create a Python-owned labels cache detached from VTK for background painting
         self._labels_cache = np.asarray(self.mesh.cell_data["Labels"]).copy()
+        # Deferred-flush bookkeeping (see PointCloudProduct._ensure_scalar_arrays)
+        self._labels_dirty = False
+        self._vtk_labels_have_paint = labels_preexisting
 
         # Keep a readonly reference to the PyVista view for flush operations only
         self._labels_view = self.mesh.cell_data["Labels"]
@@ -1005,21 +1802,109 @@ class MeshProduct(AbstractSceneProduct):
         if not hasattr(self, '_labels_cache'):
             self._labels_cache = np.asarray(self.mesh.cell_data["Labels"]).copy()
         self._labels_cache[element_ids] = color_rgb
+        self._labels_dirty = True
 
         # NOTE: No immediate VTK Modified() here. The GUI thread should call
         # `flush_labels_to_gpu()` once painting activity settles.
 
     def flush_labels_to_gpu(self) -> None:
-        """One full GPU upload. Call only when painting pauses (main thread)."""
+        """One full GPU upload. Call only on the GUI/main thread, and only at
+        rare barriers (scene rebuild, array switch, erase-after-flush) — this
+        triggers a full VTK mapper rebuild on the next render."""
         if self.mesh is None or not hasattr(self, '_labels_cache'):
             return
+        if not getattr(self, '_labels_dirty', True):
+            return
         try:
-            self.mesh.cell_data["Labels"] = self._labels_cache
+            gpu_labels = self._labels_cache.copy()
+            hidden = getattr(self, '_hidden_class_ids', None)
+            if hidden:
+                for cid in hidden:
+                    gpu_labels[self.class_ids == cid] = (255, 255, 255)
+            self.mesh.cell_data["Labels"] = gpu_labels
             labels_array = self.mesh.GetCellData().GetArray("Labels")
             if labels_array:
                 labels_array.Modified()
+            self._labels_dirty = False
+            self._vtk_labels_have_paint = True
         except Exception as e:
             print(f"⚠️ flush_labels_to_gpu (Mesh) failed: {e}")
+
+    def attach_feature_arrays(self, buffer) -> None:
+        """
+        Attach Tier-2 feature buffer arrays to the mesh for visualization.
+
+        Args:
+            buffer: FeatureBuffer instance with features, coverage, valid, pca_rgb.
+        """
+        if self.mesh is None or buffer is None:
+            return
+
+        try:
+            N = self.mesh.n_cells
+            if buffer.features.shape[0] != N:
+                print(f"⚠️ Buffer size {buffer.features.shape[0]} != mesh {N}")
+                return
+
+            # Similarity: [N, 3] uint8 DIRECT RGB. Initialize to the baseline
+            # colormap color (index 0 of the similarity colormap) so the mesh
+            # is never rendered as black when no query is active.
+            try:
+                import matplotlib
+                cmap = matplotlib.colormaps["plasma"]
+                base_rgb = (np.asarray(cmap(0.0))[:3] * 255).round().astype(np.uint8)
+            except Exception:
+                base_rgb = np.array([13, 8, 135], dtype=np.uint8)  # plasma(0)
+            sim_array = np.empty((N, 3), dtype=np.uint8)
+            sim_array[:] = base_rgb
+            self.mesh.cell_data["Similarity"] = sim_array
+
+            # Features (RGB): [N, 3] uint8 from PCA or None
+            if buffer.pca_rgb is not None:
+                self.mesh.cell_data["Features (RGB)"] = buffer.pca_rgb.astype(np.uint8)
+
+            # Refresh array_names and append the new Tier-2 arrays without
+            # discarding whatever was already available (RGB, UV Segments, etc.)
+            self.array_names = self.mesh.array_names
+            for array_name in ("Similarity", "Features (RGB)"):
+                if array_name in self.mesh.cell_data and array_name not in self.available_arrays:
+                    self.available_arrays.append(array_name)
+
+        except Exception as e:
+            print(f"⚠️ attach_feature_arrays failed: {e}")
+
+    def clear_feature_arrays(self) -> None:
+        """Remove Tier-2 feature arrays from the mesh."""
+        if self.mesh is None:
+            return
+
+        try:
+            for key in ["Similarity", "Features (RGB)"]:
+                if key in self.mesh.cell_data:
+                    del self.mesh.cell_data[key]
+                if key in self.available_arrays:
+                    self.available_arrays.remove(key)
+                if self.selected_array == key:
+                    self.selected_array = "RGB"
+
+            self.array_names = self.mesh.array_names
+
+        except Exception as e:
+            print(f"⚠️ clear_feature_arrays failed: {e}")
+
+    def set_similarity_colors(self, colors: np.ndarray) -> None:
+        """Write the per-face similarity RGB colors in place.
+
+        Updates only the color array's mtime — NOT mesh.Modified() (that would
+        rebuild the whole geometry VBO; seconds at tens of millions of cells).
+        """
+        if self.mesh is None or "Similarity" not in self.mesh.cell_data:
+            return
+        try:
+            self.mesh.cell_data["Similarity"][:] = colors
+            self.mesh.GetCellData().GetArray("Similarity").Modified()
+        except Exception as e:
+            print(f"⚠️ set_similarity_colors (Mesh) failed: {e}")
 
 
 class GaussianSplattingProduct(AbstractSceneProduct):
@@ -1030,14 +1915,25 @@ class GaussianSplattingProduct(AbstractSceneProduct):
     quaternion rotations, anisotropic scales and opacities) via pyvista_gs
     and wraps the resulting GaussianActor.
 
-    Rendering is handled entirely by the GaussianActor's own OpenGL pipeline,
-    which is injected into the PyVista plotter via bind_to_plotter().  The
-    pv.PolyData of splat centres is kept as a lightweight scene anchor that
-    provides correct bounding-box information to the viewer without involving
-    the splat renderer.
+    The GaussianActor is a hybrid VTK + ModernGL actor: its ``actor`` is a real
+    ``vtkActor`` (a VTKProxyActor) that participates in the VTK scene — providing
+    correct bounds for camera framing, depth ordering against meshes/clouds, and
+    hardware picking — while the visible splats are drawn by the ModernGL
+    pipeline registered via bind_to_plotter().
 
-    Index mapping and annotation are not supported for this product type.
+    Index mapping is supported via a solid-ellipsoid ModernGL rasterizer
+    (see VisibilityManager.setup_batch_splat_moderngl_context). Annotation
+    write-back (apply_labels / flush_labels_to_gpu) recolours splats by tinting
+    their SH coefficients through the GaussianActor.
     """
+
+    # Strength of the label tint applied to a splat's SH-DC colour. High enough
+    # for labels to read clearly while retaining some of the splat's shading.
+    LABEL_TINT_BLEND = 0.8
+
+    # Default strength of the GPU label channel (per-splat class-id overlay).
+    # >0 so painted labels are visible immediately; 0 hides them (e.g. similarity).
+    LABEL_BOOST_DEFAULT = 0.9
 
     def __init__(self, file_path: str, product_id: Optional[str] = None):
         """
@@ -1060,6 +1956,38 @@ class GaussianSplattingProduct(AbstractSceneProduct):
         gaussian_data = load_ply(file_path)
         self.gaussian_actor = GaussianActor(gaussian_data)
 
+        # Annotation state (mirrors PointCloudProduct): per-splat class IDs and a
+        # label-colour cache in pure Python RAM. The visual update is deferred to
+        # flush_labels_to_gpu(), which recolours via the GaussianActor's SH tint.
+        n = self.gaussian_actor.point_count
+        self.class_ids = np.zeros(n, dtype=np.int32)
+        self._label_color_cache = np.full((n, 3), 255, dtype=np.uint8)
+        self._labels_dirty = False
+
+        # Visualization-array participation (parity with mesh / point cloud), so
+        # the array dropdown and the feature-select tool's save/restore work. The
+        # splat has no VTK scalar mapper — its colour always comes from the SH —
+        # so "RGB" is just the base entry (selecting it restores the label/pristine
+        # tint). "Similarity" is appended by attach_feature_arrays once a feature
+        # buffer is baked.
+        self.selected_array = "RGB"
+        self.available_arrays = ["RGB"]
+
+        # Tier-2 feature views. Splats have no VTK scalar array — both the
+        # similarity heatmap and the feature-RGB view are pushed straight into the
+        # splat SH (set_colors). We cache the latest similarity colours (seeded to
+        # the colormap baseline at attach) and the precomputed PCA-RGB so the array
+        # dropdown can re-display either view on demand. Populated by
+        # attach_feature_arrays; cleared by clear_feature_arrays.
+        self._similarity_colors = None  # [N, 3] uint8 or None
+        self._pca_rgb = None            # [N, 3] uint8 or None
+
+        # Label-channel strength, driven by the shared transparency slider via
+        # apply_label_opacity(); seeded to the default until the viewer syncs it.
+        # Buffered on the actor and applied when bind_to_plotter attaches.
+        self._label_opacity = self.LABEL_BOOST_DEFAULT
+        self.gaussian_actor.set_label_boost(self._label_opacity)
+
         load_time = time.time() - start_time
         print(
             f"⏱️ Loaded GaussianSplattingProduct: {self.label} "
@@ -1079,20 +2007,22 @@ class GaussianSplattingProduct(AbstractSceneProduct):
         """
         Return the PolyData of Gaussian splat centres.
 
-        This mesh is used only as a scene anchor for bounding-box queries.
-        Actual rendering is performed by the GaussianActor via its OpenGL
-        pipeline; the actor's pv.Actor has opacity=0 so nothing is visible
-        through the standard PyVista path.
+        This mesh is the bounds anchor used by spatial caches (KD-tree, brush
+        volume) and bounding-box queries. The visible splats are drawn by the
+        VTK-native geometry shader inside GaussianActor; the actor
+        (``gaussian_actor.actor``) participates in VTK's scene graph as a
+        standard opaque actor.
         """
         return self.gaussian_actor._mesh
 
     def get_render_style(self) -> RenderStyle:
         """
-        Return a minimal invisible style.
+        Vestigial style — splats are not added via the standard add_mesh() path.
 
-        The GaussianActor renders via its own OpenGL observer registered in
-        bind_to_plotter().  The pv.Actor added by that call has opacity=0
-        and only serves as a handle for the plotter's actor registry.
+        render_scene() short-circuits for GaussianSplattingProduct (it calls
+        bind_to_plotter() once and only toggles visibility thereafter), so this
+        style dict is never consumed; kept only to satisfy the
+        AbstractSceneProduct contract.
         """
         return {
             'style': 'points',
@@ -1113,16 +2043,38 @@ class GaussianSplattingProduct(AbstractSceneProduct):
         return False
 
     def supports_index_mapping(self) -> bool:
-        """Index-map annotation is not supported for Gaussian splats."""
-        return False
+        """Splats support index mapping via the solid-ellipsoid GL rasterizer."""
+        return True
 
     def get_element_type(self) -> ElementType:
-        """Splat centres are treated as points."""
-        return 'point'
+        """Splat centres are treated as splats for the shader pipeline."""
+        return 'splat'
 
     def get_element_count(self) -> int:
         """Number of Gaussian splats."""
         return self.gaussian_actor.point_count
+
+    def prepare_geometry(self):
+        """Cache splat centres for depth reconstruction / spatial queries.
+
+        The "elements" of a splat scene are the splats themselves, indexed by
+        their position in the GaussianActor's data buffer (which matches the
+        splat-ID written by the index-map shader). Mirrors
+        ``PointCloudProduct.prepare_geometry`` so the shared depth/overlay
+        machinery (which only consumes ``_element_centers_np``) just works.
+        """
+        mesh = self.gaussian_actor._mesh
+        if mesh is None:
+            self._element_centers_np = None
+            return
+        self._element_centers_np = np.asarray(mesh.points, dtype=np.float32)
+
+        # Ensure annotation caches exist and match the current splat count.
+        n = self.gaussian_actor.point_count
+        if getattr(self, 'class_ids', None) is None or len(self.class_ids) != n:
+            self.class_ids = np.zeros(n, dtype=np.int32)
+            self._label_color_cache = np.full((n, 3), 255, dtype=np.uint8)
+            self._labels_dirty = False
 
     def get_element_coordinate(self, element_id: int) -> Optional[np.ndarray]:
         """Return the world-space centre of a single splat."""
@@ -1131,16 +2083,264 @@ class GaussianSplattingProduct(AbstractSceneProduct):
             return None
         return pts[element_id].astype(np.float64)
 
+    def get_points_array(self) -> Optional[np.ndarray]:
+        """Get the splat centres as an (N, 3) array (parity with PointCloudProduct).
+
+        Lets generic point-consuming code treat splats uniformly without a
+        GaussianSplattingProduct-specific branch.
+        """
+        mesh = self.gaussian_actor._mesh
+        if mesh is None or mesh.n_points == 0:
+            return None
+        return mesh.points
+
     def apply_labels(self, element_ids: np.ndarray, class_id: int, color_rgb: tuple) -> None:
-        """No-op — splat annotation is not yet implemented."""
-        pass
+        """Update the class ID and label colour for specific splats (RAM only).
+
+        Mirrors PointCloudProduct.apply_labels: updates the pure-Python caches
+        and marks them dirty. The GPU/visual update (re-tinting the splat SH)
+        is deferred to flush_labels_to_gpu() on the main thread.
+        """
+        if self.class_ids is None or len(element_ids) == 0:
+            return
+
+        element_ids = np.asarray(element_ids)
+
+        # Fast no-op check (matches PointCloudProduct).
+        if np.all(self.class_ids[element_ids] == class_id):
+            return
+
+        self.class_ids[element_ids] = class_id
+        self._label_color_cache[element_ids] = color_rgb
+        self._labels_dirty = True
+
+    def flush_labels_to_gpu(self) -> None:
+        """Push the full per-splat class-id array into the GPU label channel.
+
+        Main/GUI thread only. The label fragment shader reads each splat's class
+        id from its own SSBO and renders painted splats (cid > 0) in their label
+        colour at boosted opacity, so the SH (scene appearance) is never touched.
+        Hidden classes are pushed as cid 0 so they render as unlabelled scene.
+        """
+        if not getattr(self, '_labels_dirty', False):
+            return
+        self._push_class_ids_full()
+        self._labels_dirty = False
+
+    def _push_class_ids_full(self) -> None:
+        """Upload the whole class-id array + re-pin each class's painted colour."""
+        ga = self.gaussian_actor
+        try:
+            cids = np.asarray(self.class_ids, dtype=np.int32).copy()
+
+            # Hidden classes render as unlabelled (cid 0) without losing the RAM
+            # class_ids (so they can be restored later).
+            hidden = getattr(self, '_hidden_class_ids', None)
+            if hidden:
+                for cid in hidden:
+                    cids[cids == cid] = 0
+
+            # Re-pin the LUT colour for every visible class from the label cache.
+            labeled = np.flatnonzero(cids != 0)
+            if labeled.size:
+                for cid in np.unique(cids[labeled]):
+                    rep = labeled[cids[labeled] == cid][0]
+                    color = self._label_color_cache[rep]
+                    ga.set_label_color(int(cid),
+                                       (int(color[0]), int(color[1]), int(color[2])))
+
+            ga.set_label_ids_full(cids)
+        except Exception as e:
+            print(f"⚠️ _push_class_ids_full (Gaussian) failed: {e}")
+
+    def _restore_label_visual(self) -> None:
+        """Undo a similarity SH-DC override and re-show labels via the class
+        channel: restore pristine SH, re-enable the label boost, and re-push the
+        full class-id array."""
+        try:
+            self.gaussian_actor.reset_colors()
+            self.gaussian_actor.set_label_boost(self._label_opacity)
+        except Exception as e:
+            print(f"⚠️ _restore_label_visual (Gaussian) failed: {e}")
+        self._labels_dirty = True
+        self._push_class_ids_full()
+        self._labels_dirty = False
+
+    def paint_labels(self, element_ids: np.ndarray, class_id: int, color_rgb: tuple) -> None:
+        """Interactive paint: commit labels and update the GPU label channel.
+
+        O(painted): writes the class id into the per-splat class buffer (a tiny
+        partial upload) and pins the painted colour into the label LUT. The splat
+        SH is never touched, so painted labels render boosted-opacity over the
+        pristine scene; erase (class_id == 0) clears the class id and the splat
+        reverts to its scene appearance.
+        """
+        if self.class_ids is None or len(element_ids) == 0:
+            return
+
+        element_ids = np.asarray(element_ids)
+
+        # Commit to RAM (sets _labels_dirty when something actually changed).
+        self.apply_labels(element_ids, class_id, color_rgb)
+
+        try:
+            ga = self.gaussian_actor
+            if int(class_id) != 0:
+                # Pin the exact painted colour, then tag the splats with this id.
+                # Label visibility is the slider's job (apply_label_opacity), so we
+                # do not force the boost on here.
+                ga.set_label_color(int(class_id),
+                                   (int(color_rgb[0]), int(color_rgb[1]), int(color_rgb[2])))
+            if not ga.set_label_ids(element_ids, int(class_id)):
+                # Renderer not bound yet — fall back to a full push.
+                self.flush_labels_to_gpu()
+                return
+            self._labels_dirty = False
+        except Exception:
+            self.flush_labels_to_gpu()
+
+    # --------------------------------------------------------------------------
+    # Array Management & Tier-2 Feature Similarity
+    # --------------------------------------------------------------------------
+
+    def get_available_arrays(self) -> list:
+        """Visualization arrays the splat scene exposes (array dropdown + the
+        feature-select tool's save/restore)."""
+        return self.available_arrays
+
+    def get_selected_array(self) -> str:
+        """Currently selected visualization array."""
+        return self.selected_array
+
+    def set_selected_array(self, array_name: str) -> bool:
+        """Select a visualization array.
+
+        Splats render through their own geometry shader (colour from SH), not a
+        VTK scalar mapper, so there is no mapper to rebind. The "Similarity" and
+        "Features (RGB)" data views push their colours straight into the splat SH
+        (set_colors); switching back to "RGB"/"Labels" restores the pristine SH
+        and the label channel that those overrides replaced.
+        """
+        if array_name not in self.available_arrays:
+            print(f"⚠️ Array '{array_name}' not available in {self.label}")
+            return False
+        self.selected_array = array_name
+        if array_name == "Similarity":
+            # Hide the label channel so the similarity SH colours are unobscured,
+            # then (re)display the latest similarity colours. Without this push the
+            # splat would keep its pristine scene SH and selecting "Similarity"
+            # would appear to do nothing until the next hover/query.
+            self._show_feature_colors(self._similarity_colors)
+        elif array_name == "Features (RGB)":
+            # Same path for the per-splat PCA-RGB "colourful features" view.
+            self._show_feature_colors(self._pca_rgb)
+        else:
+            # Restore pristine SH (undo any feature override) and re-show labels.
+            self._restore_label_visual()
+        return True
+
+    def _show_feature_colors(self, colors) -> None:
+        """Drop the label channel and push an absolute per-splat colour array
+        (similarity or PCA-RGB) into the SH. No-op if no colours are cached yet."""
+        try:
+            self.gaussian_actor.set_label_boost(0.0)
+        except Exception:
+            pass
+        if colors is None:
+            return
+        try:
+            self.gaussian_actor.set_colors(colors)
+        except Exception as e:
+            print(f"⚠️ _show_feature_colors (Gaussian) failed: {e}")
+
+    def apply_label_opacity(self, value: float) -> None:
+        """Set the label-channel strength from the shared transparency slider.
+
+        Stored so paint / array-restore reuse the same value; suppressed (the
+        actor boost stays 0) while the Similarity view is active so the similarity
+        colours are unobscured.
+        """
+        self._label_opacity = float(max(0.0, min(1.0, value)))
+        if self.selected_array != "Similarity":
+            try:
+                self.gaussian_actor.set_label_boost(self._label_opacity)
+            except Exception:
+                pass
+
+    def set_similarity_colors(self, colors: np.ndarray) -> None:
+        """Display per-splat similarity colours by overwriting the splat SH
+        (single partial GPU upload via the GaussianActor).
+
+        The colours are also cached so re-selecting "Similarity" from the array
+        dropdown can re-display the latest query without recomputing it.
+        """
+        try:
+            self._similarity_colors = np.asarray(colors, dtype=np.uint8)
+            self.gaussian_actor.set_colors(self._similarity_colors)
+        except Exception as e:
+            print(f"⚠️ set_similarity_colors (Gaussian) failed: {e}")
+
+    def attach_feature_arrays(self, buffer) -> None:
+        """Register the Tier-2 feature buffer for the splat data views.
+
+        Unlike meshes / point clouds there is no VTK scalar array to populate —
+        both views are pushed straight to the splat SH (set_colors) — so this
+        caches the colour arrays and exposes "Similarity" (always) and
+        "Features (RGB)" (when the buffer carries PCA-RGB) as selectable arrays.
+        """
+        if buffer is None:
+            return
+        try:
+            N = self.gaussian_actor.point_count
+            if buffer.features.shape[0] != N:
+                print(f"⚠️ Buffer size {buffer.features.shape[0]} != splats {N}")
+                return
+
+            # Seed the similarity colours to the colormap baseline (plasma(0)) so
+            # selecting "Similarity" before any query shows the same flat baseline
+            # the mesh / point-cloud Similarity array initialises to, not the bare
+            # scene. Overwritten on the first hover/query via set_similarity_colors.
+            try:
+                import matplotlib
+                cmap = matplotlib.colormaps["plasma"]
+                base_rgb = (np.asarray(cmap(0.0))[:3] * 255).round().astype(np.uint8)
+            except Exception:
+                base_rgb = np.array([13, 8, 135], dtype=np.uint8)  # plasma(0)
+            sim = np.empty((N, 3), dtype=np.uint8)
+            sim[:] = base_rgb
+            self._similarity_colors = sim
+            if "Similarity" not in self.available_arrays:
+                self.available_arrays.append("Similarity")
+
+            # Features (RGB): precomputed per-splat PCA-RGB (uncovered splats are
+            # zero/black). Only exposed when the buffer actually carries it.
+            if buffer.pca_rgb is not None:
+                self._pca_rgb = np.asarray(buffer.pca_rgb, dtype=np.uint8)
+                if "Features (RGB)" not in self.available_arrays:
+                    self.available_arrays.append("Features (RGB)")
+        except Exception as e:
+            print(f"⚠️ attach_feature_arrays (Gaussian) failed: {e}")
+
+    def clear_feature_arrays(self) -> None:
+        """Drop the feature data views and restore the label/pristine colours."""
+        try:
+            self._similarity_colors = None
+            self._pca_rgb = None
+            for key in ("Similarity", "Features (RGB)"):
+                if key in self.available_arrays:
+                    self.available_arrays.remove(key)
+            if self.selected_array in ("Similarity", "Features (RGB)"):
+                self.selected_array = "RGB"
+                self._restore_label_visual()
+        except Exception as e:
+            print(f"⚠️ clear_feature_arrays (Gaussian) failed: {e}")
 
     # --------------------------------------------------------------------------
     # Lifecycle
     # --------------------------------------------------------------------------
 
     def cleanup(self) -> None:
-        """Release the OpenGL resources held by the GaussianActor."""
+        """Release GPU resources held by the GaussianActor."""
         try:
             self.gaussian_actor.cleanup()
         except Exception as e:

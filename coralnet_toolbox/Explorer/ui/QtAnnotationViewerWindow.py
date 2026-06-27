@@ -7,8 +7,6 @@ that integrates directly with MainWindow as a dockable widget. It combines
 the gallery display functionality with built-in filtering capabilities.
 """
 
-import warnings
-
 import os
 
 from PyQt5 import QtCore, QtGui
@@ -401,6 +399,7 @@ class AnnotationViewerWindow(QWidget):
                 self.setAutoFillBackground(False)
                 self._group_key = None
                 self._callback = None
+                self._select_callback = None
                 hl = QHBoxLayout(self)
                 hl.setContentsMargins(8, 0, 8, 0)
                 self.title = QLabel('', self)
@@ -413,12 +412,21 @@ class AnnotationViewerWindow(QWidget):
             def set_callback(self, cb):
                 self._callback = cb
 
+            def set_select_callback(self, cb):
+                self._select_callback = cb
+
             def mousePressEvent(self, event):
-                if event.button() == Qt.LeftButton and self._callback:
-                    try:
-                        self._callback(self._group_key)
-                    except Exception:
-                        pass
+                if event.button() == Qt.LeftButton:
+                    if event.modifiers() & Qt.ControlModifier and self._select_callback:
+                        try:
+                            self._select_callback(self._group_key)
+                        except Exception:
+                            pass
+                    elif self._callback:
+                        try:
+                            self._callback(self._group_key)
+                        except Exception:
+                            pass
                 return super().mousePressEvent(event)
 
             def set_content(self, text, bg_color, text_color, expanded, group_key):
@@ -437,8 +445,9 @@ class AnnotationViewerWindow(QWidget):
 
         self._sticky_header = StickyHeaderWidget(self.list_view.viewport(), height=self.list_delegate.header_height)
         self._sticky_header.hide()
-        # clicking header will toggle group expansion
+        # clicking header will toggle group expansion; Ctrl+click selects all in group
         self._sticky_header.set_callback(lambda key: self._toggle_group_from_header(key))
+        self._sticky_header.set_select_callback(lambda key: self._select_group_annotations(key))
 
         # update sticky header when view scrolls or model changes
         self.list_view.verticalScrollBar().valueChanged.connect(self._update_sticky_header)
@@ -1268,17 +1277,29 @@ class AnnotationViewerWindow(QWidget):
         elif sort_type == "Area":
             items.sort(key=self._area_sort_key)
         elif sort_type == "Cluster":
-            # Build {ann_id -> cluster_id} from the EmbeddingViewer
+            # Build {ann_id -> (cluster_id, dist_from_centroid)} from the EmbeddingViewer
             cluster_map = {}
             try:
                 ev = getattr(self.main_window, 'embedding_viewer_window', None)
                 if ev is not None and ev._cluster_labels.size > 0:
-                    for ann_id, cluster_id in zip(ev._point_ids.tolist(), ev._cluster_labels.tolist()):
-                        cluster_map[ann_id] = int(cluster_id)
+                    import numpy as _np
+                    coords = ev._point_coords_2d
+                    labels = ev._cluster_labels
+                    ids = ev._point_ids
+                    # Compute per-cluster centroids
+                    k = int(labels.max()) + 1
+                    centroids = _np.zeros((k, 2), dtype=_np.float32)
+                    for c in range(k):
+                        mask = labels == c
+                        if mask.any():
+                            centroids[c] = coords[mask].mean(axis=0)
+                    # Compute distance from centroid for each point
+                    dists = _np.linalg.norm(coords - centroids[labels], axis=1)
+                    for ann_id, cluster_id, dist in zip(ids.tolist(), labels.tolist(), dists.tolist()):
+                        cluster_map[ann_id] = (int(cluster_id), float(dist))
             except Exception:
                 pass
-            # Annotations not in the embedding go last (cluster_id = max_int)
-            _NO_CLUSTER = 2 ** 31
+            _NO_CLUSTER = (2 ** 31, 0.0)
             items.sort(key=lambda i: cluster_map.get(i.annotation.id, _NO_CLUSTER))
 
         return items
@@ -1292,12 +1313,19 @@ class AnnotationViewerWindow(QWidget):
 
         # Build cluster map once (needed for "Cluster" sort)
         _cluster_map = {}
+        _cluster_colors = {}
         if sort_type == "Cluster":
             try:
                 ev = getattr(self.main_window, 'embedding_viewer_window', None)
                 if ev is not None and ev._cluster_labels.size > 0:
                     for ann_id, cluster_id in zip(ev._point_ids.tolist(), ev._cluster_labels.tolist()):
                         _cluster_map[ann_id] = int(cluster_id)
+                        
+                    # Fetch cluster colors from the embedding viewer to style the headers
+                    if hasattr(ev, '_cluster_colors_rgba'):
+                        from PyQt5.QtGui import QColor
+                        for i, qc in enumerate(ev._cluster_colors_rgba):
+                            _cluster_colors[i] = QColor(int(qc[0]), int(qc[1]), int(qc[2]))
             except Exception:
                 pass
 
@@ -1319,7 +1347,7 @@ class AnnotationViewerWindow(QWidget):
             elif sort_type == "Cluster":
                 cid = _cluster_map.get(item.annotation.id)
                 key = f"Cluster {cid}" if cid is not None else "No Cluster"
-                color = None
+                color = _cluster_colors.get(cid)  # Apply the centroid color here
             else:
                 key = ""
                 color = None
@@ -1929,6 +1957,19 @@ class AnnotationViewerWindow(QWidget):
                 self.list_model.set_grouped_items(grouped)
             except Exception:
                 pass
+
+    def _select_group_annotations(self, group_key):
+        """Select all annotations belonging to the given group (Ctrl+click header)."""
+        if not group_key:
+            return
+        ids = []
+        for gk, _gc, items in getattr(self.list_model, '_grouped_items', []):
+            if gk == group_key:
+                ids.extend(it.annotation.id for it in items)
+                break
+        if ids:
+            self.render_selection_from_ids(set(ids))
+            self.selection_changed.emit(ids)
 
     def _update_sticky_header(self):
         """Update the header overlay to show the group for the top visible items."""

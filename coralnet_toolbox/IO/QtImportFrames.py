@@ -1,15 +1,24 @@
 import os
 import math
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import cv2
+import numpy as np
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (QFileDialog, QVBoxLayout, QPushButton, QLabel, QLineEdit,
                              QDialog, QApplication, QMessageBox, QGroupBox,
                              QHBoxLayout, QFormLayout, QComboBox, QSpinBox, QSlider,
-                             QStyle, QTabWidget, QWidget)
+                             QStyle, QTabWidget, QWidget, QCheckBox)
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Icons import get_window_icon
+
+from coralnet_toolbox.Rasters.VideoRaster import VideoRaster
+from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
+from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
+from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
+from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
+from coralnet_toolbox.Annotations.QtMaskAnnotation import MaskAnnotation
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -142,18 +151,24 @@ class FrameExtractorThread(QThread):
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Main Import Frames Dialog
+# Main Extract Frames Dialog
 # ----------------------------------------------------------------------------------------------------------------------
 
 
 class ImportFrames(QDialog):
-    def __init__(self, main_window, parent=None):
+    def __init__(self, main_window, parent=None, video_raster=None):
         super().__init__(parent)
         self.main_window = main_window
 
+        # When launched from a VideoRaster row, the dialog operates in
+        # "video-raster mode": the video file is pre-filled and locked, the
+        # Keyframes tab and Include-annotations option become available, and
+        # extracted frames can inherit the raster's per-frame annotations.
+        self.video_raster = video_raster
+
         self.setWindowIcon(get_window_icon("coralnet.svg"))
-        self.setWindowTitle("Import Frames from Video")
-        self.resize(1000, 600)
+        self.setWindowTitle("Extract Frames from Video")
+        self.resize(500, 600)
 
         self.video_file = ""
         self.output_dir = ""
@@ -161,6 +176,12 @@ class ImportFrames(QDialog):
         self.fps = 30.0
 
         self.frame_paths = []
+
+        # Captured during import_frames so extraction_completed can rebuild the
+        # per-frame output paths for annotation cloning.
+        self.frame_prefix = ""
+        self.frame_ext = "jpg"
+        self.last_frame_indices = []
 
         # Build UI (controls only)
         main_layout = QVBoxLayout()
@@ -173,6 +194,10 @@ class ImportFrames(QDialog):
 
         main_layout.addLayout(controls_layout)
         self.setLayout(main_layout)
+
+        # If a VideoRaster was supplied, pre-load it now that the UI exists.
+        if self.video_raster is not None:
+            self._load_video_raster()
 
     # ------------------------------------------------------------------
     # UI Group Builders
@@ -305,6 +330,34 @@ class ImportFrames(QDialog):
 
         self.tab_widget.addTab(range_tab, "Frame Range")
         self.tab_widget.addTab(specific_tab, "Specific Frames")
+
+        # Keyframes / Annotated-Frames tabs only make sense when a VideoRaster was
+        # supplied (i.e. launched from the ImageWindow context menu). When launched
+        # from the MainWindow menu there is no source raster, so they are omitted
+        # entirely rather than shown disabled (Qt's disabled-tab styling is too
+        # subtle to read as unavailable). Indices default to -1 so the
+        # current_tab dispatch never matches a missing tab.
+        self.keyframes_tab_index = -1
+        self.annotated_tab_index = -1
+        if self.video_raster is not None:
+            # --- Keyframes Tab ---
+            keyframes_tab = QWidget()
+            keyframes_layout = QFormLayout()
+            self.keyframes_label = QLabel("No keyframes available.")
+            self.keyframes_label.setWordWrap(True)
+            keyframes_layout.addRow("Starred Keyframes:", self.keyframes_label)
+            keyframes_tab.setLayout(keyframes_layout)
+            self.keyframes_tab_index = self.tab_widget.addTab(keyframes_tab, "Keyframes")
+
+            # --- Annotated Frames Tab ---
+            annotated_tab = QWidget()
+            annotated_layout = QFormLayout()
+            self.annotated_label = QLabel("No annotated frames available.")
+            self.annotated_label.setWordWrap(True)
+            annotated_layout.addRow("Frames with Annotations:", self.annotated_label)
+            annotated_tab.setLayout(annotated_layout)
+            self.annotated_tab_index = self.tab_widget.addTab(annotated_tab, "Annotated Frames")
+
         self.tab_widget.currentChanged.connect(self.on_tab_changed)
 
         layout.addWidget(self.tab_widget)
@@ -322,11 +375,35 @@ class ImportFrames(QDialog):
         return group_box
 
     def on_tab_changed(self, index):
-        self.current_tab = "range" if index == 0 else "specific"
+        if index == 0:
+            self.current_tab = "range"
+        elif index == 1:
+            self.current_tab = "specific"
+        elif index == self.keyframes_tab_index:
+            self.current_tab = "keyframes"
+        elif index == self.annotated_tab_index:
+            self.current_tab = "annotated"
+        else:
+            self.current_tab = "range"
         self.update_calculated_frames()
 
     def create_buttons_layout(self):
-        buttons_layout = QHBoxLayout()
+        buttons_layout = QVBoxLayout()
+
+        # Include-annotations option. When checked, annotations on the source
+        # video frames are re-created on the newly imported still images during
+        # "Extract and Import". Only available in video-raster mode (launched from
+        # the ImageWindow context menu); when launched from the MainWindow menu
+        # there is no source raster, so the option is disabled and greyed out.
+        self.include_annotations_checkbox = QCheckBox(
+            "Include annotations (re-create on imported frames)"
+        )
+        in_video_mode = self.video_raster is not None
+        self.include_annotations_checkbox.setChecked(in_video_mode)
+        self.include_annotations_checkbox.setEnabled(in_video_mode)
+        buttons_layout.addWidget(self.include_annotations_checkbox)
+
+        action_buttons_layout = QHBoxLayout()
 
         self.extract_button = QPushButton("Extract")
         self.extract_import_button = QPushButton("Extract and Import")
@@ -336,9 +413,11 @@ class ImportFrames(QDialog):
         self.extract_import_button.clicked.connect(lambda: self.import_frames(import_after=True))
         self.cancel_button.clicked.connect(self.reject)
 
-        buttons_layout.addWidget(self.extract_button)
-        buttons_layout.addWidget(self.extract_import_button)
-        buttons_layout.addWidget(self.cancel_button)
+        action_buttons_layout.addWidget(self.extract_button)
+        action_buttons_layout.addWidget(self.extract_import_button)
+        action_buttons_layout.addWidget(self.cancel_button)
+
+        buttons_layout.addLayout(action_buttons_layout)
 
         return buttons_layout
 
@@ -381,6 +460,112 @@ class ImportFrames(QDialog):
             QMessageBox.warning(self, "Error Loading Video", f"Error: {e}")
         finally:
             QApplication.restoreOverrideCursor()
+
+    def _load_video_raster(self):
+        """Pre-fill the dialog from a supplied VideoRaster (video-raster mode).
+
+        The video file field is populated and locked, frame/fps metadata is read
+        directly from the raster (no extra cv2 open), and the Keyframes summary
+        is filled in.
+        """
+        raster = self.video_raster
+        self.video_file = raster.image_path
+        self.video_file_edit.setText(raster.image_path)
+        self.video_file_edit.setEnabled(False)
+        self.video_file_button.setEnabled(False)
+
+        self.total_frames = int(raster.frame_count)
+        self.fps = raster.fps or 30.0
+
+        # Default the prefix to the video stem so output names are sensible.
+        if not self.frame_prefix_edit.text().strip():
+            self.frame_prefix_edit.setText(os.path.splitext(os.path.basename(raster.image_path))[0])
+
+        self._update_keyframes_label()
+        self._update_annotated_label()
+        self.update_range_slider()
+        self.update_calculated_frames()
+
+    def _frame_idx_from_key(self, key):
+        """Extract the integer frame index from a ``...::frame_N`` virtual path."""
+        try:
+            return int(key.split('::frame_', 1)[1])
+        except (ValueError, IndexError):
+            return None
+
+    def _get_annotated_frame_indices(self):
+        """Return a sorted list of frame indices that have annotations on the video.
+
+        Covers both vector annotations (keyed under ``<video_path>::frame_<idx>``
+        in image_annotations_dict) and per-frame semantic mask overlays (stored in
+        the annotation window's batch_results_cache).
+        """
+        if self.video_raster is None:
+            return []
+
+        annotation_window = self.main_window.annotation_window
+        prefix = self.video_raster.image_path + '::frame_'
+        indices = set()
+
+        # Vector annotations
+        for key, annotations in annotation_window.image_annotations_dict.items():
+            if key.startswith(prefix) and annotations:
+                idx = self._frame_idx_from_key(key)
+                if idx is not None:
+                    indices.add(idx)
+
+        # Per-frame semantic mask overlays
+        cache = getattr(annotation_window, 'batch_results_cache', None) or {}
+        for key, cached in cache.items():
+            if not (isinstance(key, str) and key.startswith(prefix) and cached):
+                continue
+            mask_arr = cached.get('mask_arr') if isinstance(cached, dict) else None
+            if mask_arr is not None and np.any(mask_arr):
+                idx = self._frame_idx_from_key(key)
+                if idx is not None:
+                    indices.add(idx)
+
+        return sorted(indices)
+
+    def _update_annotated_label(self):
+        """Refresh the Annotated Frames tab summary."""
+        if self.video_raster is None:
+            self.annotated_label.setText("No annotated frames available.")
+            return
+
+        annotated = self._get_annotated_frame_indices()
+        if not annotated:
+            self.annotated_label.setText("No annotated frames for this video.")
+            return
+
+        n = len(annotated)
+        if n <= 12:
+            preview = ", ".join(str(i) for i in annotated)
+        else:
+            first = ", ".join(str(i) for i in annotated[:6])
+            last = ", ".join(str(i) for i in annotated[-6:])
+            preview = f"{first}, ... ({n - 12} more) ..., {last}"
+        self.annotated_label.setText(f"{n} annotated frames: {preview}")
+
+    def _update_keyframes_label(self):
+        """Refresh the Keyframes tab summary from the raster's starred frames."""
+        if self.video_raster is None:
+            self.keyframes_label.setText("No keyframes available.")
+            return
+
+        keyframes = sorted(self.video_raster.get_keyframes())
+        if not keyframes:
+            self.keyframes_label.setText("No keyframes starred for this video.")
+            return
+
+        n = len(keyframes)
+        if n <= 12:
+            preview = ", ".join(str(i) for i in keyframes)
+        else:
+            first = ", ".join(str(i) for i in keyframes[:6])
+            last = ", ".join(str(i) for i in keyframes[-6:])
+            preview = f"{first}, ... ({n - 12} more) ..., {last}"
+        self.keyframes_label.setText(f"{n} keyframes: {preview}")
 
     # Playback control helpers removed (preview disabled)
 
@@ -469,6 +654,13 @@ class ImportFrames(QDialog):
             if indices and indices[-1] != end:
                 indices.append(end)
 
+        elif self.current_tab == "keyframes":
+            if self.video_raster is not None:
+                indices = list(self.video_raster.get_keyframes())
+
+        elif self.current_tab == "annotated":
+            indices = self._get_annotated_frame_indices()
+
         else:  # specific
             text = self.specific_frames_edit.text().strip()
             if text:
@@ -548,26 +740,57 @@ class ImportFrames(QDialog):
         video_stem = os.path.splitext(os.path.basename(video_file))[0]
         output_dir = os.path.join(output_dir, video_stem)
 
+        # Capture extraction parameters so extraction_completed can rebuild the
+        # per-frame output paths (needed for annotation cloning).
+        self.output_dir = output_dir
+        self.frame_prefix = frame_prefix
+        self.frame_ext = frame_ext
+        self.last_frame_indices = frame_indices
+
+        # Skip frames whose output file already exists on disk — re-extracting
+        # them is wasted work. They are still imported/cloned below (those steps
+        # are idempotent and keyed on the full target path set).
+        all_target_paths = [
+            os.path.join(output_dir, f"{frame_prefix}_{idx}.{frame_ext}")
+            for idx in frame_indices
+        ]
+        self.all_target_paths = all_target_paths
+        indices_to_extract = [
+            idx for idx, path in zip(frame_indices, all_target_paths)
+            if not os.path.exists(path)
+        ]
+        skipped_existing = len(frame_indices) - len(indices_to_extract)
+
         # Confirm
+        confirm_msg = f"Extract {len(indices_to_extract)} frames from the video?\n\n"
+        if skipped_existing:
+            confirm_msg += f"({skipped_existing} already exist on disk and will be reused.)\n\n"
+        confirm_msg += f"Files will be named: {frame_prefix}_[frame_number].{frame_ext}"
         reply = QMessageBox.question(
             self, "Confirm Extraction",
-            f"Extract {len(frame_indices)} frames from the video?\n\n"
-            f"Files will be named: {frame_prefix}_[frame_number].{frame_ext}",
+            confirm_msg,
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.Yes,
         )
         if reply != QMessageBox.Yes:
             return
 
+        # All frames already exist — skip extraction entirely and go straight to
+        # import / annotation cloning. Pass an empty "newly extracted" list so the
+        # summary reflects that everything was reused from disk.
+        if not indices_to_extract:
+            self.extraction_completed([], import_after)
+            return
+
         # Show progress and start worker thread
         self.progress = ProgressBar(self.main_window.annotation_window, "Extracting Frames")
         self.progress.show()
-        self.progress.start_progress(len(frame_indices))
+        self.progress.start_progress(len(indices_to_extract))
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
         self.extractor_thread = FrameExtractorThread(
-            video_file, output_dir, frame_prefix, frame_ext, frame_indices
+            video_file, output_dir, frame_prefix, frame_ext, indices_to_extract
         )
         self.extractor_thread.progress_updated.connect(self.progress.set_value)
         self.extractor_thread.extraction_completed.connect(
@@ -576,20 +799,157 @@ class ImportFrames(QDialog):
         self.extractor_thread.extraction_error.connect(self.on_extraction_error)
         self.extractor_thread.start()
 
-    def extraction_completed(self, frame_paths, import_after):
+    def extraction_completed(self, newly_extracted_paths, import_after):
         self._close_progress()
         QApplication.restoreOverrideCursor()
 
-        QMessageBox.information(
-            self, "Extraction Complete",
-            f"Successfully extracted {len(frame_paths)} frames."
+        # Import the full target set (newly extracted + pre-existing on disk);
+        # _process_image_files is idempotent and skips paths already imported.
+        import_paths = getattr(self, 'all_target_paths', None) or newly_extracted_paths
+        self.frame_paths = import_paths
+
+        cloned_count = 0
+        if import_after and import_paths:
+            self.accept()
+            self.main_window.import_images._process_image_files(import_paths)
+
+            # In video-raster mode, optionally re-create the source video-frame
+            # annotations on the newly imported still images.
+            if (self.video_raster is not None and
+                    self.include_annotations_checkbox.isChecked()):
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+                try:
+                    cloned_count = self._clone_annotations_to_frames(self.last_frame_indices)
+                finally:
+                    QApplication.restoreOverrideCursor()
+
+        # Single summary dialog covering both extraction and annotation cloning.
+        reused = len(import_paths) - len(newly_extracted_paths)
+        message = f"Extracted {len(newly_extracted_paths)} frames"
+        if reused > 0:
+            message += f" ({reused} reused from disk)"
+        message += "."
+        if cloned_count:
+            message += f"\nRe-created {cloned_count} annotation(s) on the imported frames."
+        QMessageBox.information(self, "Extraction Complete", message)
+
+    def _clone_annotations_to_frames(self, frame_indices):
+        """Re-create source video-frame annotations on the imported still frames.
+
+        Handles both vector annotations (keyed as ``video.mp4::frame_N`` in
+        image_annotations_dict) and per-frame semantic mask overlays (stored in
+        the annotation window's batch_results_cache). Each is cloned onto the
+        corresponding extracted image (``<output_dir>/<prefix>_<idx>.<ext>``).
+        """
+        annotation_window = self.main_window.annotation_window
+        label_window = self.main_window.label_window
+        raster_manager = self.main_window.image_window.raster_manager
+        video_path = self.video_raster.image_path
+        cache = getattr(annotation_window, 'batch_results_cache', None) or {}
+
+        type_map = {
+            'PatchAnnotation': PatchAnnotation,
+            'RectangleAnnotation': RectangleAnnotation,
+            'PolygonAnnotation': PolygonAnnotation,
+            'MultiPolygonAnnotation': MultiPolygonAnnotation,
+        }
+
+        # Per-image progress feedback.
+        progress = ProgressBar(self.main_window.annotation_window, "Cloning Annotations")
+        progress.show()
+        progress.start_progress(len(frame_indices))
+
+        cloned_count = 0
+        try:
+            for idx in frame_indices:
+                src_path = VideoRaster.make_frame_path(video_path, idx)
+                target_path = os.path.join(self.output_dir, f"{self.frame_prefix}_{idx}.{self.frame_ext}")
+
+                # Skip if the target image was not actually imported.
+                if target_path not in raster_manager.image_paths:
+                    progress.update_progress()
+                    continue
+
+                # --- Vector annotations ---
+                for annotation in annotation_window.image_annotations_dict.get(src_path, []):
+                    try:
+                        # Dispatch on the live object's class: to_dict() does not emit
+                        # a 'type' field, so the class name is the reliable key.
+                        cls = type_map.get(type(annotation).__name__)
+                        if cls is None:
+                            continue
+                        data = annotation.to_dict()
+                        data['image_path'] = target_path
+                        data['id'] = str(uuid.uuid4())  # fresh id; do not collide with source
+                        new_annotation = cls.from_dict(data, label_window)
+                        annotation_window.add_annotation(new_annotation, record_action=False)
+                        cloned_count += 1
+                    except Exception as e:
+                        print(f"[ExtractFrames] Failed to clone annotation on frame {idx}: {e}")
+
+                # --- Per-frame semantic mask overlay ---
+                # Masks are NOT registered via add_annotation (that would put them
+                # in image_annotations_dict and make them selectable like vector
+                # annotations, which crashes create_cropped_image). Instead attach
+                # to the raster the same way project-load does, then refresh counts.
+                cached = cache.get(src_path)
+                mask_arr = cached.get('mask_arr') if isinstance(cached, dict) else None
+                if mask_arr is not None and np.any(mask_arr):
+                    try:
+                        new_mask = self._build_mask_annotation(mask_arr, target_path, label_window)
+                        if new_mask is not None:
+                            target_raster = raster_manager.get_raster(target_path)
+                            if target_raster is not None:
+                                target_raster.mask_annotation = new_mask
+                            annotation_window.annotation_manager.register_mask_annotation(new_mask)
+                            self.main_window.image_window.update_image_annotations(
+                                target_path, update_counts=False
+                            )
+                            cloned_count += 1
+                    except Exception as e:
+                        print(f"[ExtractFrames] Failed to clone mask on frame {idx}: {e}")
+
+                progress.update_progress()
+        finally:
+            progress.finish_progress()
+            progress.stop_progress()
+            progress.close()
+
+        return cloned_count
+
+    def _build_mask_annotation(self, mask_arr, target_path, label_window):
+        """Build a MaskAnnotation for ``target_path`` from a cached class-id array.
+
+        The cached video-frame mask stores raw class ids but not the class->label
+        mapping. That mapping is canonical on the source video raster's live
+        MaskAnnotation (shared across all frames), so it is copied here to
+        translate class ids back to project labels.
+        """
+        all_labels = list(label_window.labels)
+        if not all_labels:
+            return None
+
+        new_mask = MaskAnnotation(
+            image_path=target_path,
+            mask_data=np.ascontiguousarray(mask_arr.astype(np.uint8)),
+            initial_labels=all_labels,
         )
 
-        self.frame_paths = frame_paths
+        # Copy the canonical class-id -> label map from the source raster's mask.
+        src_mask = getattr(self.video_raster, 'mask_annotation', None)
+        if src_mask is not None and getattr(src_mask, 'class_id_to_label_map', None):
+            new_mask.class_id_to_label_map.clear()
+            new_mask.label_id_to_class_id_map.clear()
+            max_id = 0
+            for class_id, label in src_mask.class_id_to_label_map.items():
+                new_mask.class_id_to_label_map[class_id] = label
+                new_mask.label_id_to_class_id_map[label.id] = class_id
+                max_id = max(max_id, class_id)
+            new_mask.next_class_id = max_id + 1
+            new_mask.visible_label_ids = set(new_mask.label_id_to_class_id_map.keys())
+            new_mask.invalidate_color_map()
 
-        if import_after and frame_paths:
-            self.accept()
-            self.main_window.import_images._process_image_files(frame_paths)
+        return new_mask
 
     def on_extraction_error(self, error_msg):
         self._close_progress()
