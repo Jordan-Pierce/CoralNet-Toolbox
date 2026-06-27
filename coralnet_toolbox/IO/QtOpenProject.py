@@ -62,16 +62,18 @@ class OpenProject(QDialog):
         layout = QVBoxLayout()
         group_box = QGroupBox("Open Project")
         form_layout = QFormLayout()
-        
+
         # Create horizontal layout for path and browse button
         path_layout = QHBoxLayout()
         self.file_path_edit = QLineEdit()
         self.file_path_edit.setReadOnly(True)
+        self.file_path_edit.setToolTip("Path to the project file (.bin or .json).")
         path_layout.addWidget(self.file_path_edit)
-        
+
         # Add browse button
         self.browse_button = QPushButton("Browse")
         self.browse_button.clicked.connect(self.browse_file)
+        self.browse_button.setToolTip("Browse for a project file to open.")
         path_layout.addWidget(self.browse_button)
         
         # Add to form layout
@@ -87,20 +89,22 @@ class OpenProject(QDialog):
     def setup_buttons_layout(self):
         """Setup the layout for the buttons."""
         layout = self.layout()
-        
+
         # Create horizontal layout for buttons
         button_layout = QHBoxLayout()
-        
+
         # Add open button
         self.open_button = QPushButton("Open")
         self.open_button.clicked.connect(self.load_selected_project)
+        self.open_button.setToolTip("Load the selected project file into the application.")
         button_layout.addWidget(self.open_button)
-        
+
         # Add cancel button
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.reject)
+        self.cancel_button.setToolTip("Close this dialog without opening a project.")
         button_layout.addWidget(self.cancel_button)
-        
+
         layout.addLayout(button_layout)
 
     def browse_file(self):

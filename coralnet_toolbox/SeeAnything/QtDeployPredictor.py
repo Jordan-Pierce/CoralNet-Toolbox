@@ -141,6 +141,7 @@ class DeployPredictorDialog(QDialog):
 
         # Set the default model
         self.model_combo.setCurrentIndex(standard_models.index('yoloe-11s-seg.pt'))
+        self.model_combo.setToolTip("Choose a See Anything (YOLOE) model variant.\nSmall: Faster inference, lower accuracy.\nLarge: Slower, higher accuracy.\nRecommended: 11s or 11m for balanced performance.")
         model_select_layout.addRow("Model:", self.model_combo)
 
         tab_widget.addTab(model_select_tab, "Select Model")
@@ -185,6 +186,7 @@ class DeployPredictorDialog(QDialog):
         # Task dropdown
         self.task_dropdown = QComboBox()
         self.task_dropdown.addItems(["detect", "segment"])
+        self.task_dropdown.setToolTip("Task mode for See Anything.\nDetect: Object detection with bounding boxes.\nSegment: Instance segmentation with masks.")
         layout.addRow("Task", self.task_dropdown)
 
         # Resize image dropdown
@@ -192,6 +194,7 @@ class DeployPredictorDialog(QDialog):
         self.resize_image_dropdown.addItems(["True", "False"])
         self.resize_image_dropdown.setCurrentIndex(0)
         self.resize_image_dropdown.setEnabled(False)
+        self.resize_image_dropdown.setToolTip("(Automatic) Resize image to match model input requirements.")
         layout.addRow("Resize Image", self.resize_image_dropdown)
 
         # Image size control
@@ -199,6 +202,7 @@ class DeployPredictorDialog(QDialog):
         self.imgsz_spinbox.setRange(512, 65536)
         self.imgsz_spinbox.setSingleStep(1024)
         self.imgsz_spinbox.setValue(self.imgsz)
+        self.imgsz_spinbox.setToolTip("Input image size for the model.\nLarger sizes improve accuracy but consume more GPU memory.")
         layout.addRow("Image Size (imgsz)", self.imgsz_spinbox)
 
         group_box.setLayout(layout)
@@ -213,6 +217,7 @@ class DeployPredictorDialog(QDialog):
         self.use_sam_dropdown = QComboBox()
         self.use_sam_dropdown.addItems(["False", "True"])
         self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
+        self.use_sam_dropdown.setToolTip("Use SAM to refine See Anything detections into high-quality polygons.\nRequires SAM model to be deployed first.")
         layout.addRow("Use SAM Polygons:", self.use_sam_dropdown)
 
         group_box.setLayout(layout)
@@ -242,10 +247,12 @@ class DeployPredictorDialog(QDialog):
 
         load_button = QPushButton("Load Model")
         load_button.clicked.connect(self.load_model)
+        load_button.setToolTip("Load the selected See Anything (YOLOE) model for inference.")
         layout.addWidget(load_button)
 
         deactivate_button = QPushButton("Deactivate Model")
         deactivate_button.clicked.connect(self.deactivate_model)
+        deactivate_button.setToolTip("Unload the current See Anything model and free GPU memory.")
         layout.addWidget(deactivate_button)
 
         group_box.setLayout(layout)

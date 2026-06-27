@@ -94,18 +94,21 @@ class AuthenticateDialog(QDialog):
 
         # Username input
         self.username_input = QLineEdit()
+        self.username_input.setToolTip("Your CoralNet username.\nRequired to authenticate with the CoralNet API.")
         form_layout.addRow("Username:", self.username_input)
 
         # Password input with toggle button
         password_layout = QHBoxLayout()
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.Password)
+        self.password_input.setToolTip("Your CoralNet password.\nRequired to authenticate with the CoralNet API.\nNever shared outside this application.")
         password_layout.addWidget(self.password_input)
 
         # Add toggle button for password
         self.toggle_password_button = QPushButton("Show")
         self.toggle_password_button.setFixedWidth(50)
         self.toggle_password_button.clicked.connect(self.toggle_password_visibility)
+        self.toggle_password_button.setToolTip("Toggle password visibility.\nClick to show or hide the password.")
         password_layout.addWidget(self.toggle_password_button)
 
         form_layout.addRow("Password:", password_layout)
@@ -126,12 +129,14 @@ class AuthenticateDialog(QDialog):
         token_layout = QHBoxLayout()
         self.token_display = QLineEdit()
         self.token_display.setReadOnly(True)  # Makes the field read-only but still selectable/copyable
+        self.token_display.setToolTip("Your authentication token for API requests.\nDisplayed after successful login. Click 'Show' to view.\nKeep this secure and never share it.")
         token_layout.addWidget(self.token_display)
 
         # Add toggle button for token
         self.toggle_token_button = QPushButton("Show")
         self.toggle_token_button.setFixedWidth(50)
         self.toggle_token_button.clicked.connect(self.toggle_token_visibility)
+        self.toggle_token_button.setToolTip("Toggle token visibility.\nClick to show or hide the authentication token.")
         token_layout.addWidget(self.toggle_token_button)
 
         form_layout.addRow("Authentication Token:", token_layout)
@@ -139,6 +144,7 @@ class AuthenticateDialog(QDialog):
         # Status information in a read-only QLineEdit
         self.status_display = QLineEdit("Not authenticated")
         self.status_display.setReadOnly(True)  # Makes the field read-only but still selectable/copyable
+        self.status_display.setToolTip("Shows your username if authenticated, or 'Not authenticated' if logged out.")
         form_layout.addRow("Logged in as:", self.status_display)
 
         # Set the form layout to the group box
@@ -153,13 +159,16 @@ class AuthenticateDialog(QDialog):
 
         self.login_button = QPushButton("Login")
         self.login_button.clicked.connect(self.login)
+        self.login_button.setToolTip("Authenticate with CoralNet using your username and password.\nRequired to access CoralNet sources and labelsets.")
 
         self.logout_button = QPushButton("Logout")
         self.logout_button.clicked.connect(self.logout)
         self.logout_button.setEnabled(False)
+        self.logout_button.setToolTip("Log out and clear authentication information.\nYou will need to log in again to access CoralNet features.")
 
         self.exit_button = QPushButton("Exit")
         self.exit_button.clicked.connect(self.reject)
+        self.exit_button.setToolTip("Close this dialog.")
 
         button_layout.addWidget(self.login_button)
         button_layout.addWidget(self.logout_button)

@@ -46,8 +46,11 @@ class TransformInputDialog(QDialog):
 
         button_layout = QHBoxLayout()
         reset_btn = QPushButton("Reset to Identity")
+        reset_btn.setToolTip("Reset the matrix to identity (no transformation).")
         ok_btn = QPushButton("Apply")
+        ok_btn.setToolTip("Apply the entered 4x4 transformation matrix.")
         cancel_btn = QPushButton("Cancel")
+        cancel_btn.setToolTip("Close this dialog without applying the matrix.")
 
         reset_btn.clicked.connect(self._reset_to_identity)
         ok_btn.clicked.connect(self.accept)

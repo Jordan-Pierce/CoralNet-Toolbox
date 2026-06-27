@@ -75,8 +75,10 @@ class ExportViscoreAnnotations(QDialog):
         output_layout = QFormLayout()
 
         self.csv_file_edit = QLineEdit()
+        self.csv_file_edit.setToolTip("Path where the Viscore CSV file will be saved.")
         self.csv_file_button = QPushButton("Browse...")
         self.csv_file_button.clicked.connect(lambda: self.save_file(self.csv_file_edit, "CSV File (*.csv)"))
+        self.csv_file_button.setToolTip("Browse for the output CSV file location.")
         file_layout = QHBoxLayout()
         file_layout.addWidget(self.csv_file_edit)
         file_layout.addWidget(self.csv_file_button)
@@ -106,7 +108,9 @@ class ExportViscoreAnnotations(QDialog):
         multi_info.setWordWrap(True)
 
         self.single_voting = QRadioButton("SingleVoting")
+        self.single_voting.setToolTip("Export annotations exactly as they are in the project.")
         self.multi_voting = QRadioButton("MultiVoting")
+        self.multi_voting.setToolTip("Calculate consensus label for each point from multiple annotations.")
         self.single_voting.setChecked(True)
 
         single_layout.addWidget(single_info)
@@ -132,16 +136,20 @@ class ExportViscoreAnnotations(QDialog):
 
         # JSON file choosers
         self.label_json_edit = QLineEdit()
+        self.label_json_edit.setToolTip("Path to labelset JSON file containing label definitions and IDs.")
         self.label_json_button = QPushButton("Browse...")
         self.label_json_button.clicked.connect(lambda: self.browse_file(self.label_json_edit, "JSON Files (*.json)"))
+        self.label_json_button.setToolTip("Browse for the labelset JSON file.")
         label_json_layout = QHBoxLayout()
         label_json_layout.addWidget(self.label_json_edit)
         label_json_layout.addWidget(self.label_json_button)
         input_form.addRow("Labelset File (JSON):", label_json_layout)
 
         self.user_json_edit = QLineEdit()
+        self.user_json_edit.setToolTip("Optional path to user JSON file containing annotator information.")
         self.user_json_button = QPushButton("Browse...")
         self.user_json_button.clicked.connect(lambda: self.browse_file(self.user_json_edit, "JSON Files (*.json)"))
+        self.user_json_button.setToolTip("Browse for the user JSON file.")
         user_json_layout = QHBoxLayout()
         user_json_layout.addWidget(self.user_json_edit)
         user_json_layout.addWidget(self.user_json_button)
@@ -156,7 +164,9 @@ class ExportViscoreAnnotations(QDialog):
 
         # Output directory chooser
         self.output_dir_edit = QLineEdit()
+        self.output_dir_edit.setToolTip("Directory where the Viscore CSV file will be saved.")
         self.output_dir_button = QPushButton("Browse...")
+        self.output_dir_button.setToolTip("Browse for the output directory.")
         self.output_dir_button.clicked.connect(self.browse_directory)
         dir_layout = QHBoxLayout()
         dir_layout.addWidget(self.output_dir_edit)
@@ -165,6 +175,7 @@ class ExportViscoreAnnotations(QDialog):
 
         # Username field
         self.username_edit = QLineEdit()
+        self.username_edit.setToolTip("Optional: Username or annotator ID to associate with this export.")
         output_form.addRow("User Name:", self.username_edit)
 
         output_group.setLayout(output_form)
@@ -178,7 +189,9 @@ class ExportViscoreAnnotations(QDialog):
         buttons_layout = QHBoxLayout()
 
         self.export_button = QPushButton("Export")
+        self.export_button.setToolTip("Export annotations to Viscore CSV format.")
         self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.setToolTip("Close this dialog without exporting.")
 
         self.export_button.clicked.connect(self.export_annotations)
         self.cancel_button.clicked.connect(self.reject)

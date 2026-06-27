@@ -254,8 +254,10 @@ class ExportSpatialMetrics(QDialog):
         layout = QFormLayout()
 
         self.file_path_edit = QLineEdit()
+        self.file_path_edit.setToolTip("Path where the spatial metrics CSV file will be saved.")
         self.browse_button = QPushButton("Browse...")
         self.browse_button.clicked.connect(self.browse_file_path)
+        self.browse_button.setToolTip("Browse for the output CSV file location.")
 
         file_layout = QHBoxLayout()
         file_layout.addWidget(self.file_path_edit)
@@ -279,13 +281,16 @@ class ExportSpatialMetrics(QDialog):
 
         self.images_list = QListWidget()
         self.images_list.setSelectionMode(QListWidget.ExtendedSelection)
+        self.images_list.setToolTip("Select which images to include in the spatial metrics export.")
         images_layout.addWidget(self.images_list)
 
         images_buttons = QHBoxLayout()
         self.images_select_all_btn = QPushButton("Select All")
         self.images_select_all_btn.clicked.connect(self.select_all_images)
+        self.images_select_all_btn.setToolTip("Select all images.")
         self.images_deselect_all_btn = QPushButton("Deselect All")
         self.images_deselect_all_btn.clicked.connect(self.deselect_all_images)
+        self.images_deselect_all_btn.setToolTip("Deselect all images.")
         images_buttons.addWidget(self.images_select_all_btn)
         images_buttons.addWidget(self.images_deselect_all_btn)
         images_layout.addLayout(images_buttons)
@@ -298,13 +303,16 @@ class ExportSpatialMetrics(QDialog):
 
         self.labels_list = QListWidget()
         self.labels_list.setSelectionMode(QListWidget.ExtendedSelection)
+        self.labels_list.setToolTip("Select which annotation labels to include in the spatial metrics export.")
         labels_layout.addWidget(self.labels_list)
 
         labels_buttons = QHBoxLayout()
         self.labels_select_all_btn = QPushButton("Select All")
         self.labels_select_all_btn.clicked.connect(self.select_all_labels)
+        self.labels_select_all_btn.setToolTip("Select all labels.")
         self.labels_deselect_all_btn = QPushButton("Deselect All")
         self.labels_deselect_all_btn.clicked.connect(self.deselect_all_labels)
+        self.labels_deselect_all_btn.setToolTip("Deselect all labels.")
         labels_buttons.addWidget(self.labels_select_all_btn)
         labels_buttons.addWidget(self.labels_deselect_all_btn)
         labels_layout.addLayout(labels_buttons)
@@ -324,6 +332,7 @@ class ExportSpatialMetrics(QDialog):
             "MultiPolygonAnnotation"
         ])
         self.types_list.selectAll()
+        self.types_list.setToolTip("Select which annotation types to include.\nPatch: Point circles.\nRectangle: Bounding boxes.\nPolygon: Free-form shapes.\nMultiPolygon: Multiple connected polygons.")
         types_layout.addWidget(self.types_list)
 
         types_buttons = QHBoxLayout()

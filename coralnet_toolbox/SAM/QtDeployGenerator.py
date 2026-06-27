@@ -155,6 +155,7 @@ class DeployGeneratorDialog(QDialog):
         models_list = list(self.models.keys())
         if "MobileSAM" in models_list:
             self.model_combo.setCurrentIndex(models_list.index("SAM 2.1 Tiny"))
+        self.model_combo.setToolTip("Choose a SAM variant for segment-everything inference.\nFastSAM: Fastest, lower accuracy.\nSAM 2.1/3: Slower, higher quality segmentation.\nMobileSAM: Lightweight, good balance.")
 
         layout.addWidget(QLabel("Select Model:"))
         layout.addWidget(self.model_combo)
@@ -175,12 +176,14 @@ class DeployGeneratorDialog(QDialog):
             self.detect_as_combo.addItem(label.short_label_code, label.id)
         self.detect_as_combo.setCurrentIndex(0)
         self.detect_as_combo.currentIndexChanged.connect(self.update_class_mapping)
+        self.detect_as_combo.setToolTip("Label to assign to all segmentations produced by SAM.")
         layout.addRow("Detect as:", self.detect_as_combo)
-        
+
         # Task dropdown
         self.use_task_dropdown = QComboBox()
         self.use_task_dropdown.addItems(["detect", "segment"])
         self.use_task_dropdown.currentIndexChanged.connect(self.update_task)
+        self.use_task_dropdown.setToolTip("Task mode for SAM.\nDetect: Bounding boxes only.\nSegment: Full instance segmentation masks.")
         layout.addRow("Task:", self.use_task_dropdown)
 
         # Resize image dropdown
@@ -188,6 +191,7 @@ class DeployGeneratorDialog(QDialog):
         self.resize_image_dropdown.addItems(["True", "False"])
         self.resize_image_dropdown.setCurrentIndex(0)
         self.resize_image_dropdown.setEnabled(False)  # Grey out the dropdown
+        self.resize_image_dropdown.setToolTip("(Automatic) Resize image to match model input requirements.")
         layout.addRow("Resize Image:", self.resize_image_dropdown)
 
         # Image size control
@@ -195,6 +199,7 @@ class DeployGeneratorDialog(QDialog):
         self.imgsz_spinbox.setRange(640, 65536)
         self.imgsz_spinbox.setSingleStep(24)
         self.imgsz_spinbox.setValue(self.imgsz)
+        self.imgsz_spinbox.setToolTip("Input image size for SAM.\nLarger sizes improve segmentation quality but increase processing time.")
         layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
 
         group_box.setLayout(layout)
@@ -224,10 +229,12 @@ class DeployGeneratorDialog(QDialog):
 
         load_button = QPushButton("Load Model")
         load_button.clicked.connect(self.load_model)
+        load_button.setToolTip("Load the selected SAM model for segment-everything inference.")
         layout.addWidget(load_button)
 
         deactivate_button = QPushButton("Deactivate Model")
         deactivate_button.clicked.connect(self.deactivate_model)
+        deactivate_button.setToolTip("Unload the current SAM model and free GPU memory.")
         layout.addWidget(deactivate_button)
 
         group_box.setLayout(layout)

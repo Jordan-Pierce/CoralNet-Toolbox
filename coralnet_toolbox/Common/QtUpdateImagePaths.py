@@ -59,6 +59,7 @@ class UpdateImagePaths(QDialog):
         info_label = QLabel(f"The following {len(self.missing_images)} image(s) could not be found. "
                             "Please select a directory to search for these images.")
         info_label.setWordWrap(True)
+        info_label.setToolTip("Some images in the project cannot be located.\nSelect a directory to search for them by filename.")
         self.layout().addWidget(info_label)
     
     def setup_list_widget(self):
@@ -71,16 +72,18 @@ class UpdateImagePaths(QDialog):
     def setup_buttons_layout(self):
         """Create Update and Cancel buttons."""
         button_layout = QHBoxLayout()
-        
+
         self.update_button = QPushButton("Update")
         self.update_button.clicked.connect(self.update_image_paths)
-        
+        self.update_button.setToolTip("Search for missing images in a selected directory.\nImages will be matched by filename.")
+
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.reject)
-        
+        self.cancel_button.setToolTip("Close this dialog without updating image paths.")
+
         button_layout.addWidget(self.update_button)
         button_layout.addWidget(self.cancel_button)
-        
+
         self.layout().addLayout(button_layout)
     
     def open_file_dialog(self):

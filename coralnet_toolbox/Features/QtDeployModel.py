@@ -82,6 +82,7 @@ class FeaturesDeployModelDialog(QDialog):
 
         default_idx = self.model_combo.findText("DINOv2+reg (Small)")
         self.model_combo.setCurrentIndex(default_idx if default_idx >= 0 else 0)
+        self.model_combo.setToolTip("Choose a dense-capable backbone for feature extraction.\nDINOv2: Fast, strong general-purpose features.\nOpenCLIP/TIMM: Specialized vision models.")
 
         model_layout.addRow("Model:", self.model_combo)
 
@@ -180,17 +181,20 @@ class FeaturesDeployModelDialog(QDialog):
         button_layout = QHBoxLayout()
         self.load_button = QPushButton("Load Model")
         self.load_button.clicked.connect(self.load_model)
+        self.load_button.setToolTip("Load the selected feature extraction model into VRAM.")
         button_layout.addWidget(self.load_button)
 
         self.deactivate_button = QPushButton("Deactivate Model")
         self.deactivate_button.clicked.connect(self.deactivate_model)
         self.deactivate_button.setEnabled(False)
+        self.deactivate_button.setToolTip("Unload the current model and free GPU memory.")
         button_layout.addWidget(self.deactivate_button)
 
         button_layout.addStretch()
 
         self.close_button = QPushButton("Close")
         self.close_button.clicked.connect(self.accept)
+        self.close_button.setToolTip("Close this dialog.")
         button_layout.addWidget(self.close_button)
 
         layout.addLayout(button_layout)

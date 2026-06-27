@@ -64,10 +64,11 @@ class Base(QDialog):
         layout = QVBoxLayout()
 
         # Create a QLabel with explanatory text and hyperlink
-        info_label = QLabel("Select multiple Classification datasets to merge.")
+        info_label = QLabel("Select multiple Classification datasets to merge into a single combined dataset.\nProvide class mappings to handle class ID conflicts across datasets.")
 
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
+        info_label.setToolTip("Merge multiple datasets together with optional class remapping.\nUseful for combining data from different sources or annotation formats.")
         layout.addWidget(info_label)
 
         group_box.setLayout(layout)
@@ -80,12 +81,15 @@ class Base(QDialog):
 
         # Dataset Name Input
         self.dataset_name_edit = QLineEdit()
+        self.dataset_name_edit.setToolTip("Name for the merged output dataset.\nWill be created in the output directory.")
         layout.addRow("Dataset Name:", self.dataset_name_edit)
 
         # Output Directory Chooser
         self.output_dir_edit = QLineEdit()
         output_dir_button = QPushButton("Browse...")
         output_dir_button.clicked.connect(lambda: self.browse_output_directory(self.output_dir_edit))
+        self.output_dir_edit.setToolTip("Directory where the merged dataset will be saved.\nDataset Name subdirectory will be created here.")
+        output_dir_button.setToolTip("Browse for an output directory.")
         dir_layout = QHBoxLayout()
         dir_layout.addWidget(self.output_dir_edit)
         dir_layout.addWidget(output_dir_button)
@@ -114,6 +118,7 @@ class Base(QDialog):
         # Add button to add new dataset
         add_dataset_button = QPushButton("Add Dataset")
         add_dataset_button.clicked.connect(self.add_dataset_entry)
+        add_dataset_button.setToolTip("Add another dataset to merge.\nYou can add multiple datasets and specify how their classes map to the output.")
 
         layout.addWidget(scroll)
         layout.addWidget(add_dataset_button)
@@ -151,6 +156,8 @@ class Base(QDialog):
         dir_edit = QLineEdit()
         dir_button = QPushButton("Browse Directory...")
         dir_button.clicked.connect(lambda: self.browse_existing_directory(dir_edit, status_label))
+        dir_edit.setToolTip("Path to a classification dataset to include in the merge.")
+        dir_button.setToolTip("Browse for a dataset directory.")
         dir_layout = QHBoxLayout()
         dir_layout.addWidget(dir_edit)
         dir_layout.addWidget(dir_button)
@@ -161,6 +168,8 @@ class Base(QDialog):
         class_mapping_edit.setObjectName("class_mapping_edit")
         class_mapping_button = QPushButton("Select Class Mapping")
         class_mapping_button.clicked.connect(lambda: self.browse_class_mapping(class_mapping_edit, status_label))
+        class_mapping_edit.setToolTip("Optional JSON file mapping this dataset's class IDs to output class IDs.\nUsed to resolve class conflicts when merging.")
+        class_mapping_button.setToolTip("Browse for a class mapping JSON file.")
         mapping_layout = QHBoxLayout()
         mapping_layout.addWidget(class_mapping_edit)
         mapping_layout.addWidget(class_mapping_button)
@@ -169,6 +178,7 @@ class Base(QDialog):
         # Remove button row
         remove_button = QPushButton("Remove")
         remove_button.clicked.connect(lambda: self.remove_dataset_entry(group_box))
+        remove_button.setToolTip("Remove this dataset from the merge.")
         button_layout = QHBoxLayout()
         button_layout.addWidget(status_label)
         button_layout.addWidget(remove_button)

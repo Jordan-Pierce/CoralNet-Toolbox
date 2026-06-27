@@ -252,6 +252,7 @@ class AnnotationWindow(BaseCanvas):
         self.scale_unit_dropdown.setCurrentIndex(2)
         self.scale_unit_dropdown.setFixedWidth(app_theme.scale_int(72))
         self.scale_unit_dropdown.setEnabled(False)
+        self.scale_unit_dropdown.setToolTip("Unit of measurement for scaled annotation dimensions.\nChange to convert the display scale between metric and imperial units.")
         self.scale_unit_dropdown.currentTextChanged.connect(self.on_scale_unit_changed)
 
         # --- Z-Channel Controls ---
@@ -262,6 +263,7 @@ class AnnotationWindow(BaseCanvas):
         self.z_unit_dropdown.setCurrentIndex(2)
         self.z_unit_dropdown.setFixedWidth(app_theme.scale_int(72))
         self.z_unit_dropdown.setEnabled(False)
+        self.z_unit_dropdown.setToolTip("Unit for Z-channel depth values.\nMetric/imperial units or 'px' for pixel values.")
         self.z_unit_dropdown.currentTextChanged.connect(self.on_z_unit_changed)
 
         self.z_label = QLabel("Z: -----")
@@ -276,6 +278,7 @@ class AnnotationWindow(BaseCanvas):
         self.z_colormap_dropdown.setCurrentIndex(0)
         self.z_colormap_dropdown.setFixedWidth(app_theme.scale_int(100))
         self.z_colormap_dropdown.setEnabled(False)
+        self.z_colormap_dropdown.setToolTip("Colormap for Z-channel visualization.\n'None' shows no colorization; other options apply scientific colormaps based on depth values.")
         self.z_colormap_dropdown.currentTextChanged.connect(self.on_z_colormap_changed)
 
         self.z_transparency_widget = QSlider(Qt.Horizontal)

@@ -393,8 +393,10 @@ class DeployGeneratorDialog(QDialog):
 
         # Add VPE file selection to the first tab
         self.vpe_path_edit = QLineEdit()
+        self.vpe_path_edit.setToolTip("Path to a saved Visual Prompt Encoding (VPE) file for reference-free predictions.")
         browse_button = QPushButton("Browse...")
         browse_button.clicked.connect(self.browse_vpe_file)
+        browse_button.setToolTip("Browse for a VPE file to load.")
 
         vpe_path_layout = QHBoxLayout()
         vpe_path_layout.addWidget(self.vpe_path_edit)
@@ -445,6 +447,7 @@ class DeployGeneratorDialog(QDialog):
         self.use_task_dropdown = QComboBox()
         self.use_task_dropdown.addItems(["detect", "segment"])
         self.use_task_dropdown.currentIndexChanged.connect(self.update_task)
+        self.use_task_dropdown.setToolTip("Task mode for See Anything.\nDetect: Bounding boxes only.\nSegment: Full instance segmentation with masks.")
         layout.addRow("Task:", self.use_task_dropdown)
 
         # Resize image dropdown
@@ -452,6 +455,7 @@ class DeployGeneratorDialog(QDialog):
         self.resize_image_dropdown.addItems(["True", "False"])
         self.resize_image_dropdown.setCurrentIndex(0)
         self.resize_image_dropdown.setEnabled(False)  # Grey out the dropdown
+        self.resize_image_dropdown.setToolTip("(Automatic) Resize image to match model input requirements.")
         layout.addRow("Resize Image:", self.resize_image_dropdown)
 
         # Image size control
@@ -459,6 +463,7 @@ class DeployGeneratorDialog(QDialog):
         self.imgsz_spinbox.setRange(1024, 65536)
         self.imgsz_spinbox.setSingleStep(1024)
         self.imgsz_spinbox.setValue(self.imgsz)
+        self.imgsz_spinbox.setToolTip("Input image size for the See Anything model.\nLarger sizes improve accuracy but increase processing time and memory usage.")
         layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
 
         group_box.setLayout(layout)
@@ -473,6 +478,7 @@ class DeployGeneratorDialog(QDialog):
         self.use_sam_dropdown = QComboBox()
         self.use_sam_dropdown.addItems(["False", "True"])
         self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
+        self.use_sam_dropdown.setToolTip("Refine See Anything detections with SAM for higher-quality polygons.\nRequires SAM model to be deployed first.")
         layout.addRow("Use SAM Polygons:", self.use_sam_dropdown)
 
         group_box.setLayout(layout)
@@ -504,27 +510,32 @@ class DeployGeneratorDialog(QDialog):
         button_row = QHBoxLayout()
         load_button = QPushButton("Load Model")
         load_button.clicked.connect(self.load_model)
+        load_button.setToolTip("Load the selected See Anything model with VPE configuration.")
         button_row.addWidget(load_button)
 
         deactivate_button = QPushButton("Deactivate Model")
         deactivate_button.clicked.connect(self.deactivate_model)
+        deactivate_button.setToolTip("Unload the current model and clear all VPE data.")
         button_row.addWidget(deactivate_button)
 
         main_layout.addLayout(button_row)
 
         # Second row: VPE action buttons
         vpe_row = QHBoxLayout()
-        
+
         generate_vpe_button = QPushButton("Generate VPEs")
         generate_vpe_button.clicked.connect(self.generate_vpes_from_references)
+        generate_vpe_button.setToolTip("Generate Visual Prompt Encodings from the selected reference images.")
         vpe_row.addWidget(generate_vpe_button)
 
         save_vpe_button = QPushButton("Save VPE")
         save_vpe_button.clicked.connect(self.save_vpe)
+        save_vpe_button.setToolTip("Save the generated or imported VPE(s) to a file for reuse.")
         vpe_row.addWidget(save_vpe_button)
 
         show_vpe_button = QPushButton("Show VPE")
         show_vpe_button.clicked.connect(self.show_vpe)
+        show_vpe_button.setToolTip("Visualize VPE embeddings using PCA projection.")
         vpe_row.addWidget(show_vpe_button)
 
         main_layout.addLayout(vpe_row)
@@ -556,6 +567,7 @@ class DeployGeneratorDialog(QDialog):
         # Create the reference label combo box
         self.reference_label_combo_box = QComboBox()
         self.reference_label_combo_box.currentIndexChanged.connect(self.filter_images_by_label_and_type)
+        self.reference_label_combo_box.setToolTip("Select which label to use as the reference for See Anything generation.\nThe model will learn to detect and segment instances of this label type.")
         layout.addRow("Reference Label:", self.reference_label_combo_box)
         
         # Reference method is fixed to VPE only (Images pathway removed)

@@ -108,17 +108,20 @@ class TimerWindow(QWidget):
         self.start_button = QPushButton("Start")
         self.start_button.clicked.connect(self.start_timer)
         self.start_button.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        self.start_button.setToolTip("Start the timer to track work duration.")
         buttons_layout.addWidget(self.start_button)
 
         self.stop_button = QPushButton("Stop")
         self.stop_button.clicked.connect(self.stop_timer)
         self.stop_button.setEnabled(False)
         self.stop_button.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        self.stop_button.setToolTip("Stop the timer without resetting the elapsed time.")
         buttons_layout.addWidget(self.stop_button)
 
         self.reset_button = QPushButton("Reset")
         self.reset_button.clicked.connect(self.reset_timer)
         self.reset_button.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        self.reset_button.setToolTip("Reset the timer to zero and clear the duration.")
         buttons_layout.addWidget(self.reset_button)
 
         layout.addLayout(buttons_layout)

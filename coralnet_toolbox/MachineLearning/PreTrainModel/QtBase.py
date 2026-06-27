@@ -217,6 +217,7 @@ class Base(QDialog):
             "to ensure consistency. Inspired by 'Knowledge Distillation: A Good Teacher is Patient and Consistent'."
         )
         info_label.setWordWrap(True)
+        info_label.setToolTip("Learn powerful image representations from unlabeled data.\nUse pre-trained models as starting points for detection/segmentation tasks.")
         layout.addWidget(info_label)
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
@@ -230,10 +231,12 @@ class Base(QDialog):
         buttons_layout = QHBoxLayout()
         self.add_folder_btn = QPushButton("Add Folder...")
         self.add_folder_btn.clicked.connect(self.add_data_folder)
-        
+        self.add_folder_btn.setToolTip("Add a directory containing unlabeled images for pre-training.\nSupports: JPG, PNG, BMP, WebP, TIF, TIFF")
+
         self.remove_folder_btn = QPushButton("Remove Selected")
         self.remove_folder_btn.clicked.connect(self.remove_data_folder)
-        self.remove_folder_btn.setEnabled(False)  
+        self.remove_folder_btn.setEnabled(False)
+        self.remove_folder_btn.setToolTip("Remove the selected folder from the pre-training dataset.")  
 
         buttons_layout.addWidget(self.add_folder_btn)
         buttons_layout.addWidget(self.remove_folder_btn)
@@ -287,11 +290,13 @@ class Base(QDialog):
         ]
         self.model_combo.addItems(standard_models)
         self.model_combo.setCurrentText('yolo11n')
+        self.model_combo.setToolTip("Student model architecture for pre-training.\nSmaller models (n/s) train faster; larger models (l/x) learn richer features.")
         standard_layout.addRow("Base Architecture:", self.model_combo)
 
         # Initialization
         self.weights_combo = QComboBox()
         self.weights_combo.addItems(["Use Pre-trained Weights (.pt)", "Initialize from Scratch (.yaml)"])
+        self.weights_combo.setToolTip("Start from pre-trained weights for faster convergence, or from scratch for full learning.")
         standard_layout.addRow("Initialization:", self.weights_combo)
         
         tab_widget.addTab(standard_tab, "Standard")
@@ -303,8 +308,10 @@ class Base(QDialog):
         self.custom_model_edit = QLineEdit()
         self.custom_model_edit.setPlaceholderText("Optional path to custom .pt model")
         self.custom_model_edit.setReadOnly(True)
+        self.custom_model_edit.setToolTip("Path to a custom .pt model file to use instead of standard models.\nWill override the 'Base Architecture' selection above.")
         self.custom_model_button = QPushButton("Browse...")
         self.custom_model_button.clicked.connect(self.browse_custom_model)
+        self.custom_model_button.setToolTip("Browse for a custom model file.")
         
         custom_model_file_layout = QHBoxLayout()
         custom_model_file_layout.addWidget(self.custom_model_edit)
@@ -340,6 +347,7 @@ class Base(QDialog):
         self.ssl_method_combo.addItems(["Distillation", "SimCLR", "MAE", "DINO", "DINOv2", "BYOL", "MoCo"])
         self.ssl_method_combo.setCurrentText("Distillation")
         self.ssl_method_combo.currentTextChanged.connect(self.on_ssl_method_changed)
+        self.ssl_method_combo.setToolTip("Self-supervised learning method:\nDistillation: knowledge transfer from teacher. Others: contrastive or reconstruction-based learning.")
         layout.addRow("SSL Method:", self.ssl_method_combo)
 
         # Teacher Model (only for Distillation)
@@ -385,12 +393,15 @@ class Base(QDialog):
         self.project_edit = QLineEdit()
         self.project_button = QPushButton("Browse...")
         self.project_button.clicked.connect(self.browse_project_dir)
+        self.project_edit.setToolTip("Directory where pre-trained model results will be saved.\nResults organized in subdirectories by training name.")
+        self.project_button.setToolTip("Browse for a project directory.")
         project_layout = QHBoxLayout()
         project_layout.addWidget(self.project_edit)
         project_layout.addWidget(self.project_button)
         form_layout.addRow("Project:", project_layout)
 
         self.name_edit = QLineEdit()
+        self.name_edit.setToolTip("Name for this pre-training run (creates subdirectory in Project).\nDefault: timestamp if left empty.")
         form_layout.addRow("Name:", self.name_edit)
 
         group_box.setLayout(form_layout)
@@ -449,6 +460,7 @@ class Base(QDialog):
         self.workers_spinbox.setMinimum(0)
         self.workers_spinbox.setMaximum(64)
         self.workers_spinbox.setValue(4)
+        self.workers_spinbox.setToolTip("Number of parallel workers for data loading.\n0 = main thread. Higher = faster loading (if CPU-bound). Adjust based on CPU availability.")
         form_layout.addRow("Dataloader Workers:", self.workers_spinbox)
 
         # Resume Checkpoint
@@ -456,6 +468,8 @@ class Base(QDialog):
         self.resume_edit.setPlaceholderText("Optional path to .ckpt or .pt")
         self.resume_button = QPushButton("Browse...")
         self.resume_button.clicked.connect(self.browse_resume_checkpoint)
+        self.resume_edit.setToolTip("Resume from a checkpoint (.ckpt) or load model weights (.pt).\n.ckpt: continues training with saved optimizer state. .pt: fresh training from saved weights.")
+        self.resume_button.setToolTip("Browse for a checkpoint or model file.")
         resume_layout = QHBoxLayout()
         resume_layout.addWidget(self.resume_edit)
         resume_layout.addWidget(self.resume_button)
@@ -469,6 +483,7 @@ class Base(QDialog):
         
         self.add_param_button = QPushButton("Add Custom Parameter")
         self.add_param_button.clicked.connect(self.add_parameter_pair)
+        self.add_param_button.setToolTip("Add a custom LightlyTrain parameter not available in standard controls.\nAllows fine-tuning of advanced training options.")
         form_layout.addRow("", self.add_param_button)
 
         self.custom_params_layout = QVBoxLayout()
@@ -477,6 +492,7 @@ class Base(QDialog):
         self.remove_param_button = QPushButton("Remove Parameter")
         self.remove_param_button.clicked.connect(self.remove_parameter_pair)
         self.remove_param_button.setEnabled(False)
+        self.remove_param_button.setToolTip("Remove the most recently added custom parameter.")
         form_layout.addRow("", self.remove_param_button)
 
         return group_box
@@ -489,10 +505,12 @@ class Base(QDialog):
         buttons_layout = QHBoxLayout()
         self.ok_button = QPushButton("Start Pre-training")
         self.ok_button.clicked.connect(self.accept)
-        
+        self.ok_button.setToolTip("Start self-supervised pre-training with the configured parameters.\nTraining will run in the background.")
+
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.reject)
-        
+        self.cancel_button.setToolTip("Close this dialog without starting pre-training.")
+
         buttons_layout.addStretch()
         buttons_layout.addWidget(self.cancel_button)
         buttons_layout.addWidget(self.ok_button)

@@ -84,9 +84,10 @@ class Base(QDialog):
         self.info_group.setTitle("Information")
         layout = QVBoxLayout()
 
-        info_label = QLabel("Tile an existing YOLO dataset into smaller non / overlapping images.")
+        info_label = QLabel("Tile an existing YOLO dataset into smaller overlapping or non-overlapping images.\nUseful for handling large images or splitting datasets.")
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
+        info_label.setToolTip("Dataset tiling splits large images into smaller tiles with annotations.\nHelpful for training on high-resolution images or creating augmented datasets.")
         layout.addWidget(info_label)
 
         self.info_group.setLayout(layout)
@@ -116,6 +117,8 @@ class Base(QDialog):
         self.src_edit = QLineEdit()
         self.src_button = QPushButton("Browse...")
         self.src_button.clicked.connect(self.browse_src_dir)
+        self.src_edit.setToolTip("Path to the YOLO dataset to tile.\nMust contain a 'train' subdirectory with images and labels.")
+        self.src_button.setToolTip("Browse for a source dataset directory.")
         src_layout = QHBoxLayout()
         src_layout.addWidget(self.src_edit)
         src_layout.addWidget(self.src_button)
@@ -132,6 +135,8 @@ class Base(QDialog):
         self.dst_edit = QLineEdit()
         self.dst_button = QPushButton("Browse...")
         self.dst_button.clicked.connect(self.browse_dst_dir)
+        self.dst_edit.setToolTip("Directory where the tiled dataset will be saved.\nA new subdirectory will be created with the dataset name.")
+        self.dst_button.setToolTip("Browse for a destination directory.")
         dst_layout = QHBoxLayout()
         dst_layout.addWidget(self.dst_edit)
         dst_layout.addWidget(self.dst_button)
@@ -139,6 +144,7 @@ class Base(QDialog):
 
         # Name of Destination Dataset
         self.dst_name_edit = QLineEdit()
+        self.dst_name_edit.setToolTip("Name for the new tiled dataset directory.\nFinal location: Destination / Dataset Name /")
         layout.addRow("Destination Dataset Name:", self.dst_name_edit)
 
         self.output_dataset_group.setLayout(layout)
@@ -156,13 +162,15 @@ class Base(QDialog):
         self.output_ext_combo.addItems(["None", ".png", ".tif", ".jpeg", ".jpg"])
         self.output_ext_combo.setEditable(True)
         self.output_ext_combo.setCurrentText("None")
-        
+        self.output_ext_combo.setToolTip("File format for tiled images.\nNone: keep original format. PNG: lossless, larger. JPG: lossy, smaller.")
+
         # Add compression spinbox
         self.compression_spinbox = QSpinBox()
         self.compression_spinbox.setRange(0, 100)
         self.compression_spinbox.setValue(90)
         self.compression_spinbox.setSingleStep(5)
-        
+        self.compression_spinbox.setToolTip("Compression level for output images (0-100).\n0 = no compression (larger files), 100 = maximum compression (smaller files).")
+
         ext_form.addRow("Output Extension:", self.output_ext_combo)
         ext_form.addRow("Compression (0-100):", self.compression_spinbox)
         
@@ -176,16 +184,19 @@ class Base(QDialog):
         self.train_ratio_spinbox.setRange(0.0, 1.0)
         self.train_ratio_spinbox.setSingleStep(0.1)
         self.train_ratio_spinbox.setValue(0.7)
+        self.train_ratio_spinbox.setToolTip("Fraction of tiles for training (0.0 to 1.0).\nStandard: 0.7 (70%). Ratios should sum to 1.0")
 
         self.valid_ratio_spinbox = QDoubleSpinBox()
         self.valid_ratio_spinbox.setRange(0.0, 1.0)
         self.valid_ratio_spinbox.setSingleStep(0.1)
         self.valid_ratio_spinbox.setValue(0.2)
+        self.valid_ratio_spinbox.setToolTip("Fraction of tiles for validation (0.0 to 1.0).\nStandard: 0.2 (20%).")
 
         self.test_ratio_spinbox = QDoubleSpinBox()
         self.test_ratio_spinbox.setRange(0.0, 1.0)
         self.test_ratio_spinbox.setSingleStep(0.1)
         self.test_ratio_spinbox.setValue(0.1)
+        self.test_ratio_spinbox.setToolTip("Fraction of tiles for testing (0.0 to 1.0).\nStandard: 0.1 (10%).")
 
         ratios_form.addRow("Train Ratio:", self.train_ratio_spinbox)
         ratios_form.addRow("Validation Ratio:", self.valid_ratio_spinbox)
@@ -201,12 +212,14 @@ class Base(QDialog):
         self.densify_factor_spinbox.setRange(0.0, 1.0)
         self.densify_factor_spinbox.setSingleStep(0.1)
         self.densify_factor_spinbox.setValue(0.5)
-        
+        self.densify_factor_spinbox.setToolTip("Densify polygon boundaries for finer tiling (0.0 to 1.0).\nHigher values = more detailed polygon sampling = more precise tiles.")
+
         self.smoothing_tolerance_spinbox = QDoubleSpinBox()
         self.smoothing_tolerance_spinbox.setRange(0.0, 1.0)
         self.smoothing_tolerance_spinbox.setSingleStep(0.1)
         self.smoothing_tolerance_spinbox.setValue(0.1)
-        
+        self.smoothing_tolerance_spinbox.setToolTip("Polygon smoothing tolerance (0.0 to 1.0).\nHigher values = more smoothing = simpler polygons = faster processing.")
+
         advanced_form.addRow("Densify Factor:", self.densify_factor_spinbox)
         advanced_form.addRow("Smoothing Tolerance:", self.smoothing_tolerance_spinbox)
         
@@ -221,19 +234,22 @@ class Base(QDialog):
         self.include_negatives_combo.addItems(["True", "False"])
         self.include_negatives_combo.setEditable(False)
         self.include_negatives_combo.setCurrentIndex(0)
+        self.include_negatives_combo.setToolTip("Include tiles with no annotations.\nUseful for training models to recognize negative examples.")
         misc_form.addRow("Include Negative Samples:", self.include_negatives_combo)
-        
+
         # Copy source data
         self.copy_source_data_combo = QComboBox()
         self.copy_source_data_combo.addItems(["True", "False"])
         self.copy_source_data_combo.setEditable(False)
         self.copy_source_data_combo.setCurrentIndex(1)
+        self.copy_source_data_combo.setToolTip("Copy original source images alongside tiled versions.\nTrue = create both. False = tiles only (saves space).")
         misc_form.addRow("Copy Source Data:", self.copy_source_data_combo)
-        
+
         # Number of Visualization Samples
         self.num_viz_sample_spinbox = QSpinBox()
         self.num_viz_sample_spinbox.setRange(1, 10)
         self.num_viz_sample_spinbox.setValue(1)
+        self.num_viz_sample_spinbox.setToolTip("Number of example visualizations to generate showing tile boundaries.\nHelps verify tiling configuration (1-10).")
         misc_form.addRow("# Visualization Samples:", self.num_viz_sample_spinbox)
         
         layout.addRow(misc_group)

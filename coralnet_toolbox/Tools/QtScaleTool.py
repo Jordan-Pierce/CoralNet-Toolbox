@@ -84,14 +84,16 @@ class ScaleToolDialog(QDialog):
         self.units_combo = QComboBox()
         self.units_combo.addItems(["mm", "cm", "m", "km", "in", "ft", "yd", "mi"])
         self.units_combo.setCurrentText("m")
+        self.units_combo.setToolTip("Unit of measurement for the real-world distance.\nSelect the unit matching your known length.")
         scale_layout.addRow("Units:", self.units_combo)
-        
+
         # Known length
         self.known_length_input = QDoubleSpinBox()
         self.known_length_input.setRange(0.001, 1000000.0)
         self.known_length_input.setValue(1.0)
         self.known_length_input.setDecimals(3)
         self.known_length_input.valueChanged.connect(self.tool.calculate_scale)
+        self.known_length_input.setToolTip("Real-world distance of the object you'll draw across.\nUsed to calibrate pixel-to-distance conversion.")
         scale_layout.addRow("Known Length:", self.known_length_input)
 
         # Pixel length
@@ -107,6 +109,7 @@ class ScaleToolDialog(QDialog):
         # Clear Line button
         self.clear_line_button = QPushButton("Clear Line")
         self.clear_line_button.clicked.connect(self.clear_scale_line)
+        self.clear_line_button.setToolTip("Clear the drawn line and reset the pixel length measurement.")
         layout.addWidget(self.clear_line_button)
         
         # Danger Zone

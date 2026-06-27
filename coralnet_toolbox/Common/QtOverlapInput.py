@@ -28,27 +28,32 @@ class OverlapInput(QGroupBox):
         # Unit selection
         self.value_type = QComboBox()
         self.value_type.addItems(["Pixels", "Percentage"])
+        self.value_type.setToolTip("Pixels: Fixed pixel overlap amount.\nPercentage: Overlap as fraction of tile size (0.0-1.0).")
         layout.addRow("Unit:", self.value_type)
 
         # Width and height inputs
         self.width_spin = QSpinBox()
         self.width_spin.setRange(0, 10000)
         self.width_spin.setValue(0)
+        self.width_spin.setToolTip("Horizontal overlap between adjacent tiles in pixels.\nHigher values improve detection accuracy at boundaries but increase processing time.")
         self.width_double = QDoubleSpinBox()
         self.width_double.setRange(0, 1)
         self.width_double.setValue(0)
         self.width_double.setSingleStep(0.1)
         self.width_double.setDecimals(2)
+        self.width_double.setToolTip("Horizontal overlap between adjacent tiles as fraction of width (0.0-1.0).")
         self.width_double.hide()
 
         self.height_spin = QSpinBox()
         self.height_spin.setRange(0, 10000)
         self.height_spin.setValue(0)
+        self.height_spin.setToolTip("Vertical overlap between adjacent tiles in pixels.\nHigher values improve detection accuracy at boundaries but increase processing time.")
         self.height_double = QDoubleSpinBox()
         self.height_double.setRange(0, 1)
         self.height_double.setValue(0)
         self.height_double.setSingleStep(0.1)
         self.height_double.setDecimals(2)
+        self.height_double.setToolTip("Vertical overlap between adjacent tiles as fraction of height (0.0-1.0).")
         self.height_double.hide()
 
         # Instead of adding separate rows, create container widgets

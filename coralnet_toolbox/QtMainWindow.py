@@ -354,18 +354,22 @@ class MainWindow(QMainWindow):
         self.import_rasters_menu = self.import_menu.addMenu("Rasters")
         # Import Images
         self.import_images_action = QAction("Images", self)
+        self.import_images_action.setToolTip("Import images (PNG, JPG, etc.) to the project")
         self.import_images_action.triggered.connect(self.import_images.import_images)
         self.import_rasters_menu.addAction(self.import_images_action)
         # Import Videos
         self.import_videos_action = QAction("Videos", self)
+        self.import_videos_action.setToolTip("Import video files to the project")
         self.import_videos_action.triggered.connect(self.import_videos.import_videos)
         self.import_rasters_menu.addAction(self.import_videos_action)
         # Import Frames
         self.import_frames_action = QAction("Frames from Video", self)
+        self.import_frames_action.setToolTip("Extract and import frames from a video file")
         self.import_frames_action.triggered.connect(self.open_import_frames_dialog)
         self.import_rasters_menu.addAction(self.import_frames_action)
         # Import Orthomosaics
         self.import_orthomosaics_action = QAction("Orthomosaics", self)
+        self.import_orthomosaics_action.setToolTip("Import orthomosaic GeoTIFF files with geospatial metadata")
         self.import_orthomosaics_action.triggered.connect(self.import_images.import_orthomosaics)
         self.import_rasters_menu.addAction(self.import_orthomosaics_action)
         
@@ -373,14 +377,17 @@ class MainWindow(QMainWindow):
         self.import_labels_menu = self.import_menu.addMenu("Labels")
         # Import Labels
         self.import_labels_action = QAction("Labels (JSON)", self)
+        self.import_labels_action.setToolTip("Import label definitions from a JSON file")
         self.import_labels_action.triggered.connect(self.import_labels.import_labels)
         self.import_labels_menu.addAction(self.import_labels_action)
         # Import CoralNet Labels
         self.import_coralnet_labels_action = QAction("CoralNet Labels (CSV)", self)
+        self.import_coralnet_labels_action.setToolTip("Import labels from a CoralNet CSV export")
         self.import_coralnet_labels_action.triggered.connect(self.import_coralnet_labels.import_coralnet_labels)
         self.import_labels_menu.addAction(self.import_coralnet_labels_action)
         # Import TagLab Labels
         self.import_taglab_labels_action = QAction("TagLab Labels (JSON)", self)
+        self.import_taglab_labels_action.setToolTip("Import labels from a TagLab JSON file")
         self.import_taglab_labels_action.triggered.connect(self.import_taglab_labels.import_taglab_labels)
         self.import_labels_menu.addAction(self.import_taglab_labels_action)
 
@@ -388,26 +395,32 @@ class MainWindow(QMainWindow):
         self.import_annotations_menu = self.import_menu.addMenu("Annotations")
         # Import Annotations
         self.import_annotations_action = QAction("Annotations (JSON)", self)
+        self.import_annotations_action.setToolTip("Import annotations from a JSON file")
         self.import_annotations_action.triggered.connect(self.import_annotations.import_annotations)
         self.import_annotations_menu.addAction(self.import_annotations_action)
         # Import CoralNet Annotations
         self.import_coralnet_annotations_action = QAction("CoralNet (CSV)", self)
+        self.import_coralnet_annotations_action.setToolTip("Import annotations from CoralNet CSV export")
         self.import_coralnet_annotations_action.triggered.connect(self.import_coralnet_annotations.import_annotations)
         self.import_annotations_menu.addAction(self.import_coralnet_annotations_action)
         # Import Viscore Annotations
         self.import_viscore_annotations_action = QAction("Viscore (CSV)", self)
+        self.import_viscore_annotations_action.setToolTip("Import annotations from Viscore CSV format")
         self.import_viscore_annotations_action.triggered.connect(self.open_import_viscore_annotations_dialog)
         self.import_annotations_menu.addAction(self.import_viscore_annotations_action)
         # Import TagLab Annotations
         self.import_taglab_annotations_action = QAction("TagLab (JSON)", self)
+        self.import_taglab_annotations_action.setToolTip("Import annotations from TagLab JSON format")
         self.import_taglab_annotations_action.triggered.connect(self.import_taglab_annotations.import_annotations)
         self.import_annotations_menu.addAction(self.import_taglab_annotations_action)
         # Import Squidle Annotations
         self.import_squidle_annotations_action = QAction("Squidle (JSON)", self)
+        self.import_squidle_annotations_action.setToolTip("Import annotations from Squidle JSON format")
         self.import_squidle_annotations_action.triggered.connect(self.import_squidle_annotations.import_annotations)
         self.import_annotations_menu.addAction(self.import_squidle_annotations_action)
         # Import Mask Annotations
         self.import_mask_annotations_action = QAction("Masks (PNG)", self)
+        self.import_mask_annotations_action.setToolTip("Import mask annotations from PNG images")
         self.import_mask_annotations_action.triggered.connect(self.open_import_mask_annotations_dialog)
         self.import_annotations_menu.addAction(self.import_mask_annotations_action)
 
@@ -415,15 +428,18 @@ class MainWindow(QMainWindow):
         self.import_dataset_menu = self.import_menu.addMenu("Dataset")
         # Import Detection Dataset submenu
         self.import_detect_dataset_action = QAction("Detect", self)
+        self.import_detect_dataset_action.setToolTip("Import object detection dataset (YOLO format)")
         self.import_detect_dataset_action.triggered.connect(self.detect_import_dataset_dialog.exec_)
         self.import_dataset_menu.addAction(self.import_detect_dataset_action)
         # Import Segmentation Dataset submenu
         self.import_segment_dataset_action = QAction("Segment", self)
+        self.import_segment_dataset_action.setToolTip("Import segmentation dataset (YOLO format)")
         self.import_segment_dataset_action.triggered.connect(self.segment_import_dataset_dialog.exec_)
         self.import_dataset_menu.addAction(self.import_segment_dataset_action)
 
         # 3D Model
         self.import_model_action = QAction("3D Model", self)
+        self.import_model_action.setToolTip("Import a 3D model file (OBJ, PLY, etc.)")
         self.import_model_action.triggered.connect(self.import_model.import_model)
         self.import_menu.addAction(self.import_model_action)
 
@@ -434,10 +450,12 @@ class MainWindow(QMainWindow):
         self.export_labels_menu = self.export_menu.addMenu("Labels")
         # Export Labels
         self.export_labels_action = QAction("Labels (JSON)", self)
+        self.export_labels_action.setToolTip("Export labels to a JSON file")
         self.export_labels_action.triggered.connect(self.export_labels.export_labels)
         self.export_labels_menu.addAction(self.export_labels_action)
         # Export TagLab Labels
         self.export_taglab_labels_action = QAction("TagLab Labels (JSON)", self)
+        self.export_taglab_labels_action.setToolTip("Export labels in TagLab JSON format")
         self.export_taglab_labels_action.triggered.connect(self.export_taglab_labels.export_taglab_labels)
         self.export_labels_menu.addAction(self.export_taglab_labels_action)
 
@@ -445,26 +463,32 @@ class MainWindow(QMainWindow):
         self.export_annotations_menu = self.export_menu.addMenu("Annotations")
         # Export Annotations
         self.export_annotations_action = QAction("Annotations (JSON)", self)
+        self.export_annotations_action.setToolTip("Export annotations to a JSON file")
         self.export_annotations_action.triggered.connect(self.export_annotations.export_annotations)
         self.export_annotations_menu.addAction(self.export_annotations_action)
         # Export CoralNet Annotations
         self.export_coralnet_annotations_action = QAction("CoralNet (CSV)", self)
+        self.export_coralnet_annotations_action.setToolTip("Export annotations in CoralNet CSV format")
         self.export_coralnet_annotations_action.triggered.connect(self.export_coralnet_annotations.export_annotations)
         self.export_annotations_menu.addAction(self.export_coralnet_annotations_action)
         # Export Viscore Annotations
         self.export_viscore_annotations_action = QAction("Viscore (CSV, JSON)", self)
+        self.export_viscore_annotations_action.setToolTip("Export annotations in Viscore format (CSV or JSON)")
         self.export_viscore_annotations_action.triggered.connect(self.open_export_viscore_annotations_dialog)
         self.export_annotations_menu.addAction(self.export_viscore_annotations_action)
         # Export TagLab Annotations
         self.export_taglab_annotations_action = QAction("TagLab (JSON)", self)
+        self.export_taglab_annotations_action.setToolTip("Export annotations in TagLab JSON format")
         self.export_taglab_annotations_action.triggered.connect(self.export_taglab_annotations.export_annotations)
         self.export_annotations_menu.addAction(self.export_taglab_annotations_action)
         # Export GeoJSON Annotations
         self.export_geojson_annotations_action = QAction("GeoJSON (JSON)", self)
+        self.export_geojson_annotations_action.setToolTip("Export annotations as GeoJSON for mapping software")
         self.export_geojson_annotations_action.triggered.connect(self.export_geojson_annotations_dialog.exec_)
         self.export_annotations_menu.addAction(self.export_geojson_annotations_action)
         # Export Mask Annotations
         self.export_mask_annotations_action = QAction("Masks (PNG)", self)
+        self.export_mask_annotations_action.setToolTip("Export mask annotations as PNG images")
         self.export_mask_annotations_action.triggered.connect(self.open_export_mask_annotations_dialog)
         self.export_annotations_menu.addAction(self.export_mask_annotations_action)
 
@@ -472,26 +496,31 @@ class MainWindow(QMainWindow):
         self.export_dataset_menu = self.export_menu.addMenu("Dataset")
         # Export Classification Dataset
         self.export_classify_dataset_action = QAction("Classify", self)
+        self.export_classify_dataset_action.setToolTip("Export classification dataset (YOLO format)")
         self.export_classify_dataset_action.triggered.connect(self.open_classify_export_dataset_dialog)
         self.export_dataset_menu.addAction(self.export_classify_dataset_action)
         # Export Detection Dataset
         self.export_detect_dataset_action = QAction("Detect", self)
+        self.export_detect_dataset_action.setToolTip("Export object detection dataset (YOLO format)")
         self.export_detect_dataset_action.triggered.connect(self.open_detect_export_dataset_dialog)
         self.export_dataset_menu.addAction(self.export_detect_dataset_action)
         # Export Segmentation Dataset
         self.export_segment_dataset_action = QAction("Segment", self)
+        self.export_segment_dataset_action.setToolTip("Export instance segmentation dataset (YOLO format)")
         self.export_segment_dataset_action.triggered.connect(self.open_segment_export_dataset_dialog)
         self.export_dataset_menu.addAction(self.export_segment_dataset_action)
         # Export Semantic Segmentation Dataset
         self.export_semantic_dataset_action = QAction("Semantic", self)
+        self.export_semantic_dataset_action.setToolTip("Export semantic segmentation dataset")
         self.export_semantic_dataset_action.triggered.connect(self.open_semantic_export_dataset_dialog)
         self.export_dataset_menu.addAction(self.export_semantic_dataset_action)
 
         # Add a separator
         self.export_menu.addSeparator()
-        
+
         # Export Spatial Metrics (at Export menu level, not in Annotations submenu)
         self.export_spatial_metrics_action = QAction("Spatial Metrics", self)
+        self.export_spatial_metrics_action.setToolTip("Export spatial metrics and statistics")
         self.export_spatial_metrics_action.triggered.connect(self.open_export_spatial_metrics_dialog)
         self.export_menu.addAction(self.export_spatial_metrics_action)
         
@@ -500,15 +529,17 @@ class MainWindow(QMainWindow):
 
         # New Project
         self.new_project_action = QAction("New Project", self)
+        self.new_project_action.setToolTip("Create a new project")
         self.new_project_action.triggered.connect(self.open_new_project)
         self.file_menu.addAction(self.new_project_action)
         # Open Project
         self.open_project_action = QAction("Open Project", self)
+        self.open_project_action.setToolTip("Open an existing project file")
         self.open_project_action.triggered.connect(self.open_open_project_dialog)
         self.file_menu.addAction(self.open_project_action)
         # Save Project
         self.save_project_action = QAction("Save Project", self)
-        self.save_project_action.setToolTip("Ctrl + Shift + S")
+        self.save_project_action.setToolTip("Save the current project (Ctrl + S)")
         self.save_project_action.triggered.connect(self.open_save_project_dialog)
         self.file_menu.addAction(self.save_project_action)
         
@@ -534,11 +565,13 @@ class MainWindow(QMainWindow):
 
         # Sampling Annotations
         self.annotation_sampling_action = QAction("Sample Patches", self)
+        self.annotation_sampling_action.setToolTip("Randomly sample patches from annotations")
         self.annotation_sampling_action.triggered.connect(self.open_patch_sampling_dialog_dialog)
         self.utilities_menu.addAction(self.annotation_sampling_action)
 
         # Work Area Manager
         self.tile_manager_action = QAction("Work Areas", self)
+        self.tile_manager_action.setToolTip("Manage work areas for batch processing")
         self.tile_manager_action.triggered.connect(self.open_tile_manager_dialog)
         self.utilities_menu.addAction(self.tile_manager_action)
 
@@ -547,6 +580,7 @@ class MainWindow(QMainWindow):
 
         # Scale
         self.scale_action = QAction("Set Image Scale", self)
+        self.scale_action.setToolTip("Calibrate pixel-to-distance conversion by drawing a reference line")
         self.scale_action.triggered.connect(self.open_scale_dialog)
         self.utilities_menu.addAction(self.scale_action)
 
@@ -558,10 +592,12 @@ class MainWindow(QMainWindow):
         self.sam_menu = self.ai_assist_menu.addMenu("Segment Anything (SAM)")
         # Deploy Predictor
         self.sam_deploy_model_action = QAction("Deploy Predictor", self)
+        self.sam_deploy_model_action.setToolTip("Deploy SAM predictor for interactive segmentation")
         self.sam_deploy_model_action.triggered.connect(self.open_sam_deploy_predictor_dialog)
         self.sam_menu.addAction(self.sam_deploy_model_action)
         # Deploy Generator
         self.sam_deploy_generator_action = QAction("Deploy Generator", self)
+        self.sam_deploy_generator_action.setToolTip("Deploy SAM generator for automatic segmentation")
         self.sam_deploy_generator_action.triggered.connect(self.open_sam_deploy_generator_dialog)
         self.sam_menu.addAction(self.sam_deploy_generator_action)
 
@@ -569,16 +605,19 @@ class MainWindow(QMainWindow):
         self.see_anything_menu = self.ai_assist_menu.addMenu("See Anything (YOLOE)")
         # Train Model
         self.see_anything_train_model_action = QAction("Train Model", self)
+        self.see_anything_train_model_action.setToolTip("Train a See Anything (YOLOE) model")
         self.see_anything_train_model_action.triggered.connect(self.open_see_anything_train_model_dialog)
         self.see_anything_menu.addAction(self.see_anything_train_model_action)
         # Add separator
         self.see_anything_menu.addSeparator()
         # Deploy Predictor
         self.see_anything_deploy_predictor_action = QAction("Deploy Predictor", self)
+        self.see_anything_deploy_predictor_action.setToolTip("Deploy See Anything (YOLOE) predictor")
         self.see_anything_deploy_predictor_action.triggered.connect(self.open_see_anything_deploy_predictor_dialog)
         self.see_anything_menu.addAction(self.see_anything_deploy_predictor_action)
         # Deploy Generator
         self.see_anything_deploy_generator_action = QAction("Deploy Generator", self)
+        self.see_anything_deploy_generator_action.setToolTip("Deploy See Anything (YOLOE) generator")
         self.see_anything_deploy_generator_action.triggered.connect(self.open_see_anything_deploy_generator_dialog)
         self.see_anything_menu.addAction(self.see_anything_deploy_generator_action)
 
@@ -588,12 +627,14 @@ class MainWindow(QMainWindow):
         # Deploy Model — configure / load the dense feature extractor. Available
         # regardless of 3D scene state (the extractor is used in 2D too).
         self.feature_selector_deploy_action = QAction("Deploy Model", self)
+        self.feature_selector_deploy_action.setToolTip("Deploy feature selector model for dense feature extraction")
         self.feature_selector_deploy_action.triggered.connect(self.open_feature_deploy_model_dialog)
         self.feature_selector_menu.addAction(self.feature_selector_deploy_action)
         # Bake Features — build the Tier-2 scene feature mesh (moved here from the
         # context-matrix toolbar). Requires a loaded 3D scene, so it's gated on
         # the submenu opening (mirrors the old toolbar's scene-controls gating).
         self.feature_selector_bake_action = QAction("Bake Features", self)
+        self.feature_selector_bake_action.setToolTip("Bake dense features onto 3D mesh (requires loaded 3D scene)")
         self.feature_selector_bake_action.triggered.connect(self.open_bake_features_dialog)
         self.feature_selector_menu.addAction(self.feature_selector_bake_action)
         self.feature_selector_menu.aboutToShow.connect(self._update_features_menu_state)
@@ -606,6 +647,7 @@ class MainWindow(QMainWindow):
         self.ml_merge_datasets_menu = self.ml_menu.addMenu("Merge Datasets")
         # Merge Classification Datasets
         self.ml_classify_merge_datasets_action = QAction("Classify", self)
+        self.ml_classify_merge_datasets_action.setToolTip("Merge multiple classification datasets together")
         self.ml_classify_merge_datasets_action.triggered.connect(self.open_classify_merge_datasets_dialog)
         self.ml_merge_datasets_menu.addAction(self.ml_classify_merge_datasets_action)
         
@@ -613,23 +655,28 @@ class MainWindow(QMainWindow):
         self.tile_dataset_menu = self.ml_menu.addMenu("Tile Dataset")
         # Tile Classify Dataset
         self.classify_tile_dataset_action = QAction("Classify", self)
+        self.classify_tile_dataset_action.setToolTip("Split classification dataset into tiles")
         self.classify_tile_dataset_action.triggered.connect(self.open_classify_tile_dataset_dialog)
         self.tile_dataset_menu.addAction(self.classify_tile_dataset_action)
         # Tile Detect Dataset
         self.detect_tile_dataset_action = QAction("Detect", self)
+        self.detect_tile_dataset_action.setToolTip("Split detection dataset into tiles")
         self.detect_tile_dataset_action.triggered.connect(self.open_detect_tile_dataset_dialog)
         self.tile_dataset_menu.addAction(self.detect_tile_dataset_action)
         # Tile Segment Dataset
         self.segment_tile_dataset_action = QAction("Segment", self)
+        self.segment_tile_dataset_action.setToolTip("Split segmentation dataset into tiles")
         self.segment_tile_dataset_action.triggered.connect(self.open_segment_tile_dataset_dialog)
         self.tile_dataset_menu.addAction(self.segment_tile_dataset_action)
         # Tile Semantic Dataset
         self.semantic_tile_dataset_action = QAction("Semantic", self)
+        self.semantic_tile_dataset_action.setToolTip("Split semantic segmentation dataset into tiles")
         self.semantic_tile_dataset_action.triggered.connect(self.open_semantic_tile_dataset_dialog)
         self.tile_dataset_menu.addAction(self.semantic_tile_dataset_action)
         
         # Pre-Train Model
         self.ml_pretrain_model_action = QAction("Pre-Train Model", self)
+        self.ml_pretrain_model_action.setToolTip("Pre-train model encoder using self-supervised learning")
         self.ml_pretrain_model_action.triggered.connect(self.open_pretrain_model_dialog)
         self.ml_menu.addAction(self.ml_pretrain_model_action)
         
@@ -640,18 +687,22 @@ class MainWindow(QMainWindow):
         self.ml_train_model_menu = self.ml_menu.addMenu("Train Model")
         # Train Classification Model
         self.ml_classify_train_model_action = QAction("Classify", self)
+        self.ml_classify_train_model_action.setToolTip("Train classification model")
         self.ml_classify_train_model_action.triggered.connect(self.open_classify_train_model_dialog)
         self.ml_train_model_menu.addAction(self.ml_classify_train_model_action)
         # Train Detection Model
         self.ml_detect_train_model_action = QAction("Detect", self)
+        self.ml_detect_train_model_action.setToolTip("Train object detection model")
         self.ml_detect_train_model_action.triggered.connect(self.open_detect_train_model_dialog)
         self.ml_train_model_menu.addAction(self.ml_detect_train_model_action)
         # Train Segmentation Model
         self.ml_segment_train_model_action = QAction("Segment", self)
+        self.ml_segment_train_model_action.setToolTip("Train instance segmentation model")
         self.ml_segment_train_model_action.triggered.connect(self.open_segment_train_model_dialog)
         self.ml_train_model_menu.addAction(self.ml_segment_train_model_action)
         # Train Semantic Segmentation Model
         self.ml_semantic_train_model_action = QAction("Semantic", self)
+        self.ml_semantic_train_model_action.setToolTip("Train semantic segmentation model")
         self.ml_semantic_train_model_action.triggered.connect(self.open_semantic_train_model_dialog)
         self.ml_train_model_menu.addAction(self.ml_semantic_train_model_action)
 
@@ -659,23 +710,28 @@ class MainWindow(QMainWindow):
         self.ml_evaluate_model_menu = self.ml_menu.addMenu("Evaluate Model")
         # Evaluate Classification Model
         self.ml_classify_evaluate_model_action = QAction("Classify", self)
+        self.ml_classify_evaluate_model_action.setToolTip("Evaluate classification model performance")
         self.ml_classify_evaluate_model_action.triggered.connect(self.open_classify_evaluate_model_dialog)
         self.ml_evaluate_model_menu.addAction(self.ml_classify_evaluate_model_action)
         # Evaluate Detection Model
         self.ml_detect_evaluate_model_action = QAction("Detect", self)
+        self.ml_detect_evaluate_model_action.setToolTip("Evaluate object detection model performance")
         self.ml_detect_evaluate_model_action.triggered.connect(self.open_detect_evaluate_model_dialog)
         self.ml_evaluate_model_menu.addAction(self.ml_detect_evaluate_model_action)
         # Evaluate Segmentation Model
         self.ml_segment_evaluate_model_action = QAction("Segment", self)
+        self.ml_segment_evaluate_model_action.setToolTip("Evaluate segmentation model performance")
         self.ml_segment_evaluate_model_action.triggered.connect(self.open_segment_evaluate_model_dialog)
         self.ml_evaluate_model_menu.addAction(self.ml_segment_evaluate_model_action)
         # Evaluate Semantic Segmentation Model
         self.ml_semantic_evaluate_model_action = QAction("Semantic", self)
+        self.ml_semantic_evaluate_model_action.setToolTip("Evaluate semantic segmentation model performance")
         self.ml_semantic_evaluate_model_action.triggered.connect(self.open_semantic_evaluate_model_dialog)
         self.ml_evaluate_model_menu.addAction(self.ml_semantic_evaluate_model_action)
 
         # Optimize Model
         self.ml_optimize_model_action = QAction("Optimize Model", self)
+        self.ml_optimize_model_action.setToolTip("Export and optimize model for deployment (TensorRT, ONNX, etc.)")
         self.ml_optimize_model_action.triggered.connect(self.open_optimize_model_dialog)
         self.ml_menu.addAction(self.ml_optimize_model_action)
 
@@ -686,37 +742,44 @@ class MainWindow(QMainWindow):
         self.ml_deploy_model_menu = self.ml_menu.addMenu("Deploy Model")
         # Deploy Classification Model
         self.ml_classify_deploy_model_action = QAction("Classify", self)
+        self.ml_classify_deploy_model_action.setToolTip("Deploy classification model for inference")
         self.ml_classify_deploy_model_action.triggered.connect(self.open_classify_deploy_model_dialog)
         self.ml_deploy_model_menu.addAction(self.ml_classify_deploy_model_action)
         # Deploy Detection Model
         self.ml_detect_deploy_model_action = QAction("Detect", self)
+        self.ml_detect_deploy_model_action.setToolTip("Deploy object detection model for inference")
         self.ml_detect_deploy_model_action.triggered.connect(self.open_detect_deploy_model_dialog)
         self.ml_deploy_model_menu.addAction(self.ml_detect_deploy_model_action)
         # Deploy Segmentation Model
         self.ml_segment_deploy_model_action = QAction("Segment", self)
+        self.ml_segment_deploy_model_action.setToolTip("Deploy segmentation model for inference")
         self.ml_segment_deploy_model_action.triggered.connect(self.open_segment_deploy_model_dialog)
         self.ml_deploy_model_menu.addAction(self.ml_segment_deploy_model_action)
 
         # Deploy Semantic Segmentation Model
         self.ml_semantic_deploy_model_action = QAction("Semantic", self)
+        self.ml_semantic_deploy_model_action.setToolTip("Deploy semantic segmentation model for inference")
         self.ml_semantic_deploy_model_action.triggered.connect(self.open_semantic_deploy_model_dialog)
         self.ml_deploy_model_menu.addAction(self.ml_semantic_deploy_model_action)
 
-        # Batch Inference action 
+        # Batch Inference action
         self.ml_batch_inference_action = QAction("Batch Inference", self)
+        self.ml_batch_inference_action.setToolTip("Run inference on multiple selected images")
         self.ml_batch_inference_action.triggered.connect(self.open_batch_inference_dialog)
         self.ml_menu.addAction(self.ml_batch_inference_action)
 
         # ========== CORALNET MENU ==========
         # CoralNet menu
         self.coralnet_menu = self.menu_bar.addMenu("CoralNet")
-        
+
         # CoralNet Authenticate
         self.coralnet_authenticate_action = QAction("Authenticate", self)
+        self.coralnet_authenticate_action.setToolTip("Authenticate with CoralNet API")
         self.coralnet_authenticate_action.triggered.connect(self.open_coralnet_authenticate_dialog)
         self.coralnet_menu.addAction(self.coralnet_authenticate_action)
         # CoralNet Download
         self.coralnet_download_action = QAction("Download", self)
+        self.coralnet_download_action.setToolTip("Download images and annotations from CoralNet sources")
         self.coralnet_download_action.triggered.connect(self.open_coralnet_download_dialog)
         self.coralnet_menu.addAction(self.coralnet_download_action)
 
@@ -726,14 +789,17 @@ class MainWindow(QMainWindow):
 
         # Check for updates
         self.check_for_updates_action = QAction("Check for Updates", self)
+        self.check_for_updates_action.setToolTip("Check for new versions available")
         self.check_for_updates_action.triggered.connect(self.open_check_for_updates_dialog)
         self.help_menu.addAction(self.check_for_updates_action)
         # Usage
         self.usage_action = QAction("Usage / Hotkeys", self)
+        self.usage_action.setToolTip("View usage guides and keyboard shortcuts")
         self.usage_action.triggered.connect(self.open_usage_dialog)
         self.help_menu.addAction(self.usage_action)
         # Issues / Feature Requests
         self.create_issue_action = QAction("Issues / Feature Requests", self)
+        self.create_issue_action.setToolTip("Report bugs or request new features")
         self.create_issue_action.triggered.connect(self.open_create_new_issue_dialog)
         self.help_menu.addAction(self.create_issue_action)
         # Separator

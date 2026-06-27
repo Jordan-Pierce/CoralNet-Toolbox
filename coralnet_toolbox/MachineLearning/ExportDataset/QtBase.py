@@ -116,12 +116,15 @@ class Base(QDialog):
         self.output_dir_edit = QLineEdit()
         self.output_dir_button = QPushButton("Browse...")
         self.output_dir_button.clicked.connect(self.browse_output_dir)
+        self.output_dir_edit.setToolTip("Directory where the exported dataset will be saved.\nWill create subdirectories: images/, labels/, dataset.yaml")
+        self.output_dir_button.setToolTip("Browse for an output directory.")
         output_layout.addWidget(self.output_dir_edit)
         output_layout.addWidget(self.output_dir_button)
         layout.addRow("Output Directory:", output_layout)
-        
+
         # Dataset Name
         self.dataset_name_edit = QLineEdit()
+        self.dataset_name_edit.setToolTip("Name for the exported dataset.\nUsed for subdirectory naming and in the dataset.yaml file.")
         layout.addRow("Dataset Name:", self.dataset_name_edit)
 
         group_box.setLayout(layout)
@@ -137,16 +140,19 @@ class Base(QDialog):
         self.train_ratio_spinbox.setRange(0.0, 1.0)
         self.train_ratio_spinbox.setSingleStep(0.1)
         self.train_ratio_spinbox.setValue(0.7)
+        self.train_ratio_spinbox.setToolTip("Fraction of data for training set (0.0 to 1.0).\nStandard: 0.7 (70%). Used to train the model.")
 
         self.val_ratio_spinbox = QDoubleSpinBox()
         self.val_ratio_spinbox.setRange(0.0, 1.0)
         self.val_ratio_spinbox.setSingleStep(0.1)
         self.val_ratio_spinbox.setValue(0.2)
+        self.val_ratio_spinbox.setToolTip("Fraction of data for validation set (0.0 to 1.0).\nStandard: 0.2 (20%). Used to tune hyperparameters during training.")
 
         self.test_ratio_spinbox = QDoubleSpinBox()
         self.test_ratio_spinbox.setRange(0.0, 1.0)
         self.test_ratio_spinbox.setSingleStep(0.1)
         self.test_ratio_spinbox.setValue(0.1)
+        self.test_ratio_spinbox.setToolTip("Fraction of data for test set (0.0 to 1.0).\nStandard: 0.1 (10%). Used to evaluate final model performance.\nNote: ratios should sum to 1.0")
 
         layout.addWidget(QLabel("Train Ratio:"))
         layout.addWidget(self.train_ratio_spinbox)
@@ -182,8 +188,11 @@ class Base(QDialog):
         layout = QVBoxLayout()
 
         self.include_patches_checkbox = QCheckBox("Include Patch Annotations")
+        self.include_patches_checkbox.setToolTip("Include point-based patch annotations in the export.\nPatches are converted to label files for training.")
         self.include_rectangles_checkbox = QCheckBox("Include Rectangle Annotations")
+        self.include_rectangles_checkbox.setToolTip("Include bounding box rectangle annotations in the export.\nRectangles are converted to normalized YOLO format.")
         self.include_polygons_checkbox = QCheckBox("Include Polygon Annotations")
+        self.include_polygons_checkbox.setToolTip("Include polygon annotations in the export.\nPolygons are converted to normalized coordinate format for segmentation tasks.")
 
         layout.addWidget(self.include_patches_checkbox)
         layout.addWidget(self.include_rectangles_checkbox)
@@ -200,7 +209,9 @@ class Base(QDialog):
         self.image_options_group = QButtonGroup(self)
 
         self.all_images_radio = QRadioButton("All Images")
+        self.all_images_radio.setToolTip("Export all images in the project.\nIncludes all images regardless of annotations or filtering.")
         self.filtered_images_radio = QRadioButton("Filtered Images")
+        self.filtered_images_radio.setToolTip("Export only images that match the current table filters.\nUse table filters to select a subset of images before export.")
 
         self.image_options_group.addButton(self.all_images_radio)
         self.image_options_group.addButton(self.filtered_images_radio)
@@ -225,7 +236,9 @@ class Base(QDialog):
         self.negative_samples_group = QButtonGroup(self)
 
         self.include_negatives_radio = QRadioButton("Include Negatives")
+        self.include_negatives_radio.setToolTip("Include images with NO annotations.\nUseful for training models to recognize negative examples (background/non-objects).")
         self.exclude_negatives_radio = QRadioButton("Exclude Negatives")
+        self.exclude_negatives_radio.setToolTip("Exclude images with NO annotations.\nOnly export images that have at least one annotation.")
 
         self.negative_samples_group.addButton(self.include_negatives_radio)
         self.negative_samples_group.addButton(self.exclude_negatives_radio)
@@ -252,7 +265,8 @@ class Base(QDialog):
         self.split_by_source_checkbox = QCheckBox("Split by source video")
         self.split_by_source_checkbox.setChecked(True)
         self.split_by_source_checkbox.setToolTip(
-            "Keep frames from the same source video together when splitting train, val, and test."
+            "Keep frames from the same source video together when splitting train, val, and test.\n"
+            "Prevents the model from seeing different frames from the same video across splits."
         )
         self.split_by_source_checkbox.stateChanged.connect(self.update_summary_statistics)
         layout.addWidget(self.split_by_source_checkbox)
@@ -265,13 +279,13 @@ class Base(QDialog):
         stride_layout.setSpacing(6)
 
         stride_label = QLabel("Frame stride:")
-        stride_label.setToolTip("Only export every Nth frame from a video source.")
+        stride_label.setToolTip("Only export every Nth frame from a video source.\nReduces dataset size by skipping frames.\nExample: 2 = every other frame, 10 = every 10th frame.")
         stride_layout.addWidget(stride_label)
 
         self.frame_stride_spinbox = QSpinBox()
         self.frame_stride_spinbox.setRange(1, 999999)
         self.frame_stride_spinbox.setValue(1)
-        self.frame_stride_spinbox.setToolTip("Only export every Nth frame from a video source.")
+        self.frame_stride_spinbox.setToolTip("Extract every Nth frame (stride=1 means all frames).\nUseful to reduce redundancy in video-based datasets.")
         self.frame_stride_spinbox.valueChanged.connect(self.update_summary_statistics)
         stride_layout.addWidget(self.frame_stride_spinbox)
 
@@ -282,7 +296,8 @@ class Base(QDialog):
         self.export_unlabeled_video_frames_checkbox = QCheckBox("Export unlabeled video frames")
         self.export_unlabeled_video_frames_checkbox.setChecked(False)
         self.export_unlabeled_video_frames_checkbox.setToolTip(
-            "Also export video frames without annotations. Disabled for classification exports."
+            "Also export video frames without annotations in the export.\n"
+            "Useful for negative samples. Disabled for classification exports."
         )
         self.export_unlabeled_video_frames_checkbox.stateChanged.connect(self.update_summary_statistics)
         layout.addWidget(self.export_unlabeled_video_frames_checkbox)

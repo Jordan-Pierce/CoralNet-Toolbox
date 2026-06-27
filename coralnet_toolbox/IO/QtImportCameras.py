@@ -540,6 +540,8 @@ class ColmapTab(QWidget):
         self.cameras_file_edit = QLineEdit()
         self.cameras_browse_button = QPushButton("Browse...")
         self.cameras_browse_button.clicked.connect(self.browse_cameras_file)
+        self.cameras_file_edit.setToolTip("Path to COLMAP cameras.txt or cameras.bin file.\nContains intrinsic camera parameters.")
+        self.cameras_browse_button.setToolTip("Browse for a COLMAP cameras file.")
         cameras_layout = QHBoxLayout()
         cameras_layout.addWidget(self.cameras_file_edit)
         cameras_layout.addWidget(self.cameras_browse_button)
@@ -548,6 +550,8 @@ class ColmapTab(QWidget):
         self.images_file_edit = QLineEdit()
         self.images_browse_button = QPushButton("Browse...")
         self.images_browse_button.clicked.connect(self.browse_images_file)
+        self.images_file_edit.setToolTip("Path to COLMAP images.txt or images.bin file.\nContains camera poses (extrinsic parameters).")
+        self.images_browse_button.setToolTip("Browse for a COLMAP images file.")
         images_layout = QHBoxLayout()
         images_layout.addWidget(self.images_file_edit)
         images_layout.addWidget(self.images_browse_button)
@@ -779,7 +783,9 @@ class MetashapeTab(QWidget):
 
         layout = QFormLayout()
         self.xml_file_edit = QLineEdit()
+        self.xml_file_edit.setToolTip("Path to Metashape cameras.xml file.\nContains intrinsic and extrinsic camera parameters.")
         self.xml_browse_button = QPushButton("Browse...")
+        self.xml_browse_button.setToolTip("Browse for a Metashape cameras.xml file.")
         self.xml_browse_button.clicked.connect(self.browse_xml_file)
         xml_layout = QHBoxLayout()
         xml_layout.addWidget(self.xml_file_edit)
@@ -1029,6 +1035,7 @@ class ImportCameras(QDialog):
 
         # Unified Import button at the bottom of the dialog
         self.import_button = QPushButton("Import")
+        self.import_button.setToolTip("Import camera parameters from the selected file format.")
         self.import_button.clicked.connect(self._on_import_clicked)
 
         layout = QVBoxLayout()

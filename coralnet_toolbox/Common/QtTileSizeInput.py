@@ -29,11 +29,13 @@ class TileSizeInput(QGroupBox):
         self.width_spin = QSpinBox()
         self.width_spin.setRange(32, 10000)
         self.width_spin.setValue(1024)
+        self.width_spin.setToolTip("Tile width in pixels (32-10000).\nLarger tiles process more area per tile but require more GPU memory.")
 
         # Height input in pixels
         self.height_spin = QSpinBox()
         self.height_spin.setRange(32, 10000)
         self.height_spin.setValue(768)
+        self.height_spin.setToolTip("Tile height in pixels (32-10000).\nLarger tiles process more area per tile but require more GPU memory.")
 
         layout.addRow("Width:", self.width_spin)
         layout.addRow("Height:", self.height_spin)

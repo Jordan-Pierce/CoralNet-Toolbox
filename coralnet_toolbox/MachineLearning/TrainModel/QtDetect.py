@@ -33,6 +33,8 @@ class Detect(Base):
         self.dataset_edit = QLineEdit()
         self.dataset_button = QPushButton("Browse...")
         self.dataset_button.clicked.connect(self.browse_dataset_yaml)
+        self.dataset_edit.setToolTip("Path to detection dataset YAML file.\nYAML defines train/val/test paths and class mapping.")
+        self.dataset_button.setToolTip("Browse for a dataset YAML file.")
 
         dataset_yaml_layout = QHBoxLayout()
         dataset_yaml_layout.addWidget(self.dataset_edit)
@@ -43,6 +45,8 @@ class Detect(Base):
         self.mapping_edit = QLineEdit()
         self.mapping_button = QPushButton("Browse...")
         self.mapping_button.clicked.connect(self.browse_class_mapping_file)
+        self.mapping_edit.setToolTip("Optional YAML file mapping class IDs to class names.\nUsed during inference to label detections.")
+        self.mapping_button.setToolTip("Browse for a class mapping YAML file.")
 
         class_mapping_layout = QHBoxLayout()
         class_mapping_layout.addWidget(self.mapping_edit)
