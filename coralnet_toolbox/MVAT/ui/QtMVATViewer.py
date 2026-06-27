@@ -20,7 +20,7 @@ from pyvistaqt import QtInteractor
 from PyQt5.QtCore import Qt, QEvent, QTimer, QObject, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication, QFrame, QVBoxLayout,
-    QWidget, QHBoxLayout, QLabel, QSpinBox, QComboBox,
+    QWidget, QHBoxLayout, QLabel, QSpinBox, QComboBox, QDoubleSpinBox,
     QToolBar, QToolButton, QMenu, QAction, QActionGroup, QStackedLayout,
     QVBoxLayout, QLabel, QHBoxLayout
 )
@@ -33,7 +33,7 @@ from coralnet_toolbox.MVAT.core.Products import PointCloudProduct, MeshProduct, 
 from coralnet_toolbox.MVAT.core.SceneContext import SceneContext
 from coralnet_toolbox.MVAT.core.Products import AbstractSceneProduct
 from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED
-from coralnet_toolbox.MVAT.tools import BrushTool3D, EraseTool3D
+from coralnet_toolbox.MVAT.tools import BrushTool3D, EraseTool3D, FillTool3D, DropperTool3D
 from coralnet_toolbox.MVAT.ui.QtCameraAnimator import CameraAnimator
 
 from coralnet_toolbox.MVAT.utils.MVATLogger import get_visibility_logger
@@ -420,7 +420,12 @@ class MVATViewer(QFrame):
         self.scene_context = SceneContext()
         # Product actors keyed by product_id
         self._product_actors = {}
+        # Translucent label-overlay actors (labels shown over a non-Labels base
+        # array via the opacity slider), keyed by product_id.
+        self._label_paint_actors = {}
         self.point_size = point_size
+        self._splat_scale = 1.0          # Gaussian scale modifier (float, independent of point_size)
+        self._gaussian_shading_idx = 7   # SH:0~3 default (index into RENDER_MODES)
         self._show_rays_enabled = show_rays
         self._ray_visible = True
         self._ray_manager = BatchedRayManager()
@@ -430,6 +435,8 @@ class MVATViewer(QFrame):
         self._sphere_visible = False
         self._brush_3d_tool = None
         self._erase_3d_tool = None
+        self._fill_3d_tool = None
+        self._dropper_3d_tool = None
         self._active_3d_tool = None
         self._mouse_sphere_observer_id = None
         self._sphere_hover_observer_bound = False
@@ -661,18 +668,36 @@ class MVATViewer(QFrame):
     # --------------------------------------------------------------------------
     
     def create_top_toolbar(self) -> QToolBar:
-        """Create the top toolbar with array selector."""       
+        """Create the top toolbar with array selector and Gaussian splat controls."""
         toolbar = QToolBar("3D Viewer Tools")
         toolbar.setMovable(False)
-        
+
         # Array selection dropdown
         self.array_selector_combo = QComboBox()
         self.array_selector_combo.addItem("Labels")
         self.array_selector_combo.setMinimumWidth(150)
         self.array_selector_combo.currentTextChanged.connect(self._on_array_selected)
-        
         toolbar.addWidget(self.array_selector_combo)
-        
+
+        toolbar.addSeparator()
+
+        # Gaussian splat shading mode (disabled until a Gaussian product is loaded)
+        self._gaussian_shading_combo = QComboBox()
+        self._gaussian_shading_combo.addItems([
+            "Gaussian Ball", "Flat Ball", "Billboard",
+            "Depth", "SH:0", "SH:0~1", "SH:0~2", "SH:0~3",
+        ])
+        self._gaussian_shading_combo.setCurrentIndex(self._gaussian_shading_idx)
+        self._gaussian_shading_combo.setMinimumWidth(110)
+        self._gaussian_shading_combo.setToolTip(
+            "Gaussian splat shading / visualisation mode"
+        )
+        self._gaussian_shading_combo.setEnabled(False)
+        self._gaussian_shading_combo.currentIndexChanged.connect(
+            self._on_gaussian_shading_changed
+        )
+        toolbar.addWidget(self._gaussian_shading_combo)
+
         return toolbar
 
     def create_view_menu(self) -> QMenu:
@@ -812,22 +837,33 @@ class MVATViewer(QFrame):
         return toolbar
 
     def initialize_3d_tools(self, mvat_manager):
-        """Create the preview-only 3D brush and erase tools once the manager exists."""
+        """Create the preview-only 3D brush, erase, fill, dropper, and feature select tools once the manager exists."""
         if self._brush_3d_tool is not None or self._erase_3d_tool is not None:
             return
 
         self._brush_3d_tool = BrushTool3D(self, mvat_manager)
         self._erase_3d_tool = EraseTool3D(self, mvat_manager)
+        self._fill_3d_tool = FillTool3D(self, mvat_manager)
+        self._dropper_3d_tool = DropperTool3D(self, mvat_manager)
+        self._feature_3d_tool = None
+        try:
+            from coralnet_toolbox.MVAT.tools.FeatureSelectTool3D import FeatureSelectTool3D
+            self._feature_3d_tool = FeatureSelectTool3D(self, mvat_manager)
+        except Exception as e:
+            print(f"Warning: Failed to initialize FeatureSelectTool3D: {e}")
         self._active_3d_tool = None
 
     def get_selected_3d_tool(self):
         return self._active_3d_tool
 
     def set_selected_3d_tool(self, tool_name):
-        """Activate the BrushTool3D or EraseTool3D preview, or clear it."""
+        """Activate the BrushTool3D, EraseTool3D, FillTool3D, DropperTool3D, or FeatureSelectTool3D preview, or clear it."""
         tool_map = {
             'brush': self._brush_3d_tool,
             'erase': self._erase_3d_tool,
+            'fill': getattr(self, '_fill_3d_tool', None),
+            'dropper': getattr(self, '_dropper_3d_tool', None),
+            'feature': getattr(self, '_feature_3d_tool', None),
         }
         next_tool = tool_map.get(tool_name)
         current_tool = self._active_3d_tool
@@ -1006,26 +1042,152 @@ class MVATViewer(QFrame):
             self._cursor_preview.set_visibility(False)  # Hidden by default
             self._sync_sphere_hover_binding()
 
-    def _fast_hardware_pick(self):
+    def _scene_has_opaque_geometry(self) -> bool:
+        """True if the scene has depth-writing geometry (point clouds / meshes).
+
+        Splat-only scenes never populate the Z-buffer, so the neighborhood depth
+        probe would scan an empty buffer there — skip it in that case.
+        """
+        try:
+            return bool(self.scene_context.get_products_by_class(PointCloudProduct)
+                        or self.scene_context.get_products_by_class(MeshProduct))
+        except Exception:
+            return False
+
+    def _probe_depth_neighborhood(self, cx: int, cy: int, radius: int = 4):
+        """Find the nearest pixel to (cx, cy) whose Z-buffer holds opaque geometry.
+
+        Reads a small window of the depth buffer in one call and returns the
+        display coords of the closest valid (non-empty) pixel, or None. Lets a
+        point-cloud hover that lands in a gap between points snap to the nearest
+        rendered point instead of dropping the pick.
+        """
+        try:
+            import vtk
+            try:
+                from vtkmodules.util.numpy_support import vtk_to_numpy
+            except Exception:
+                from vtk.util.numpy_support import vtk_to_numpy
+        except Exception:
+            return None
+
+        renderer = self.plotter.renderer
+        win = renderer.GetRenderWindow()
+        size = renderer.GetSize()
+        w, h = max(int(size[0]), 1), max(int(size[1]), 1)
+        x0, y0 = max(0, cx - radius), max(0, cy - radius)
+        x1, y1 = min(w - 1, cx + radius), min(h - 1, cy + radius)
+        if x1 < x0 or y1 < y0:
+            return None
+        try:
+            zarr = vtk.vtkFloatArray()
+            win.GetZbufferData(x0, y0, x1, y1, zarr)
+            z = vtk_to_numpy(zarr)
+        except Exception:
+            return None
+
+        nx, ny = (x1 - x0 + 1), (y1 - y0 + 1)
+        if z is None or z.size != nx * ny:
+            return None
+        z = z.reshape(ny, nx)
+        valid = z < 0.9999
+        if not np.any(valid):
+            return None
+        ys, xs = np.nonzero(valid)
+        abs_x = x0 + xs
+        abs_y = y0 + ys
+        d2 = (abs_x - cx) ** 2 + (abs_y - cy) ** 2
+        k = int(np.argmin(d2))
+        return int(abs_x[k]), int(abs_y[k])
+
+    def _fast_hardware_pick(self, hover=False):
         import vtk
-        
+
         # 1. Get raw event position
         pos = self.plotter.interactor.GetEventPosition()
         vtk_x, vtk_y = int(pos[0]), int(pos[1])
-        
-        # Query the Z-buffer
+
+        # Z-buffer pick for opaque geometry (meshes, point clouds). A surface in
+        # front of splats correctly wins here because it writes real depth.
         z_val = self.plotter.renderer.GetZ(vtk_x, vtk_y)
-        
-        # Check if we hit the skybox
-        if z_val is None or np.isclose(z_val, 1.0):
+
+        if z_val is not None and not np.isclose(z_val, 1.0):
+            picker = vtk.vtkWorldPointPicker()
+            picker.Pick(vtk_x, vtk_y, 0, self.plotter.renderer)
+            return np.array(picker.GetPickPosition())
+
+        # Center pixel missed. For point clouds the cursor often lands in a
+        # screen-space gap between points (worse when zoomed in), dropping the
+        # pick and making the hover sphere jump. Snap to the nearest opaque pixel
+        # in a small neighborhood. Only worth it when depth-writing geometry
+        # exists (splats never populate the Z-buffer).
+        if self._scene_has_opaque_geometry():
+            probe = self._probe_depth_neighborhood(vtk_x, vtk_y)
+            if probe is not None:
+                picker = vtk.vtkWorldPointPicker()
+                picker.Pick(probe[0], probe[1], 0, self.plotter.renderer)
+                return np.array(picker.GetPickPosition())
+
+        # Z-buffer miss: Gaussian splats disable depth writes so they never
+        # populate the Z-buffer.
+        from coralnet_toolbox.MVAT.core.Products import GaussianSplattingProduct
+        gs_products = self.scene_context.get_products_by_class(GaussianSplattingProduct)
+        if not gs_products:
             return None
-            
-        # Use VTK's dedicated Z-buffer unprojector
-        picker = vtk.vtkWorldPointPicker()
-        picker.Pick(vtk_x, vtk_y, 0, self.plotter.renderer)
-        
-        picked_pos = np.array(picker.GetPickPosition())
-        return picked_pos
+
+        renderer = self.plotter.renderer
+
+        renderer.SetDisplayPoint(vtk_x, vtk_y, 0.0)
+        renderer.DisplayToWorld()
+        wp = renderer.GetWorldPoint()
+        w0 = wp[3] if wp[3] != 0 else 1.0
+        ray_origin = np.array([wp[0] / w0, wp[1] / w0, wp[2] / w0], dtype=np.float64)
+
+        renderer.SetDisplayPoint(vtk_x, vtk_y, 1.0)
+        renderer.DisplayToWorld()
+        wp = renderer.GetWorldPoint()
+        w1 = wp[3] if wp[3] != 0 else 1.0
+        ray_target = np.array([wp[0] / w1, wp[1] / w1, wp[2] / w1], dtype=np.float64)
+
+        ray_dir = ray_target - ray_origin
+        norm = np.linalg.norm(ray_dir)
+        if norm < 1e-12:
+            return None
+        ray_dir /= norm
+
+        # During hover (mouse-move), pick_gaussian uses a pre-built random subsample
+        # of Gaussian centres (fast=True) so it runs in O(K) rather than O(N).
+        # The same algorithm and tolerance are used for both hover and click, so
+        # the sphere preview and the actual paint land on the same Gaussian.
+        fovy_rad = np.radians(self.plotter.camera.view_angle)
+        _, window_height = self.plotter.window_size
+
+        # Size the pick gather to the brush sphere (world radius). This makes the
+        # gather zoom-invariant (stable hover) while keeping the picked point inside
+        # the region the brush paints, so paint coverage stays full. None when the
+        # brush sphere isn't active (the pick falls back to the bare angular cone).
+        min_radius = None
+        try:
+            cp = getattr(self, '_cursor_preview', None)
+            if cp is not None and getattr(self, '_sphere_visible', False):
+                r = float(getattr(cp, 'radius', 0.0))
+                if r > 0.0:
+                    min_radius = r
+        except Exception:
+            min_radius = None
+
+        for gs_prod in gs_products:
+            actor = self._product_actors.get(gs_prod.product_id)
+            if actor is not None and not actor.GetVisibility():
+                continue
+            hit_pos = gs_prod.gaussian_actor.pick_gaussian(
+                ray_origin, ray_dir, fovy_rad, window_height, fast=hover,
+                min_world_radius=min_radius,
+            )
+            if hit_pos is not None:
+                return hit_pos
+
+        return None
 
     def _bind_sphere_hover_observer(self):
         """Bind the sphere hover observer if sphere tracking is enabled."""
@@ -1194,6 +1356,16 @@ class MVATViewer(QFrame):
                                 self.pointSizeChanged.emit(new_size)
                             except Exception:
                                 pass
+                        # Also adjust Gaussian splat scale with float precision
+                        try:
+                            from coralnet_toolbox.MVAT.core.Products import GaussianSplattingProduct
+                            if self.scene_context.get_products_by_class(GaussianSplattingProduct):
+                                step_f = 0.1 if delta_y > 0 else -0.1
+                                new_scale = round(max(0.01, min(10.0, self._splat_scale + step_f)), 2)
+                                if new_scale != self._splat_scale:
+                                    self.set_splat_scale(new_scale)
+                        except Exception:
+                            pass
                 return True  # consumed
 
             # Regular wheel → zoom via inertia controller.
@@ -1242,7 +1414,29 @@ class MVATViewer(QFrame):
             pass
 
     def _on_right_press(self, obj, event):
-        """Handle Right Click to detect double-right-click focal-point picks."""
+        """Handle Right Click: forward to opt-in tools, else detect double-right focal pick."""
+        # Forward right-button presses only to tools that opt in (e.g. the
+        # FeatureSelectTool3D's Ctrl+right = negative). Other tools keep the
+        # normal right-button pan / double-click focal-point behavior.
+        active_tool = getattr(self, '_active_3d_tool', None)
+        if (active_tool is not None
+                and getattr(active_tool, 'wants_right_button', False)
+                and not bool(getattr(active_tool, 'preview_only', True))):
+            ctrl_held = False
+            try:
+                ctrl_held = bool(obj.GetControlKey())
+            except Exception:
+                ctrl_held = False
+            try:
+                world_pos = self._fast_hardware_pick()
+                active_tool.mousePressEvent(event, 1, world_pos)
+            except Exception:
+                pass
+            # A Ctrl+right is a query action (negative prototype) — don't let it
+            # also drive the double-right-click focal-point pick.
+            if ctrl_held:
+                return
+
         try:
             current_time = time.time() * 1000
             dc_interval = QApplication.doubleClickInterval()
@@ -1383,7 +1577,8 @@ class MVATViewer(QFrame):
             active_tool = getattr(self, '_active_3d_tool', None)
 
             # --- INSTANT HARDWARE PICK ---
-            world_pos = self._fast_hardware_pick()
+            # hover=True: focal-plane projection for O(1) Gaussian miss path
+            world_pos = self._fast_hardware_pick(hover=True)
 
             if active_tool is not None:
                 if self._cursor_preview is None or not self._sphere_visible:
@@ -1773,9 +1968,228 @@ class MVATViewer(QFrame):
                     product.set_selected_array(array_name)
                     needs_render = True
                     
+        # Phase-2: when switching away from the Similarity heatmap, tear the GPU
+        # shader off the live mesh actor first (render_scene rebuilds the actor
+        # clean, but this also covers the no-rebuild path and releases textures).
+        if array_name != "Similarity":
+            fmm = getattr(self.mvat_manager, 'feature_mesh_manager', None)
+            primary = self.scene_context.get_primary_target()
+            if fmm is not None and primary is not None:
+                actor = self._product_actors.get(getattr(primary, 'product_id', None))
+                if actor is not None:
+                    fmm.uninstall_shader(actor)
+
+        # The label-overlay shader's install is managed entirely by render_scene: it
+        # rebuilds each actor fresh and _sync_label_overlay_actor draws the paint
+        # shader (discard mode) over the base array when the opacity slider is open,
+        # and nothing on Similarity. An array switch always triggers render_scene
+        # below, so there's no separate uninstall to do here.
+
+        # The legacy floating paint overlays (LabelWorker fallback) are kept hidden;
+        # they only show on the retired "Labels" base array, which is never selected.
+        try:
+            self.mvat_manager.set_paint_overlays_visible(array_name == "Labels")
+        except Exception:
+            pass
+
         # Re-render the whole scene once all products are updated
         if needs_render:
             self.render_scene()
+
+    def _apply_paint_blend_opacity(self, opacity01: float):
+        """Set the label-over-array blend opacity (0..1), driven by the annotation
+        window's transparency slider.
+
+        Crossing the 0 boundary (un)installs the blend shader, which needs a fresh
+        actor → render_scene. Within (0, 1] we update the uniform live (no rebuild).
+        Replace mode (the Labels array) ignores this — labels are always fully shown.
+        """
+        psm = getattr(self.mvat_manager, 'paint_shader_manager', None)
+        if psm is None:
+            return
+        try:
+            crossed_zero = psm.set_paint_opacity(opacity01)
+        except Exception:
+            return
+        # The shared slider also fires during pure 2D work; skip 3D GPU work when the
+        # viewer is hidden or empty. The new opacity is stored either way and applied
+        # on the next MVAT render (e.g. array switch / load).
+        try:
+            if not self.isVisible() or not self.scene_context.has_any_product():
+                return
+        except Exception:
+            pass
+        # Splats render labels via their own GPU label channel (no overlay actor),
+        # so drive that boost straight from the same slider — live, no rebuild.
+        self._sync_splat_label_opacity(opacity01)
+        if crossed_zero:
+            # Crossing the 0 boundary (un)installs the translucent overlay actors.
+            # We do NOT call render_scene() here: that rebuilds every base actor via
+            # remove_actor() (which renders an empty frame with the mesh gone before
+            # add_mesh re-adds it), producing a one-frame blackout right at the
+            # ~1/255 slider position. Instead we add/remove ONLY the overlay actors
+            # and leave the base actors untouched, then render once.
+            self._sync_all_label_overlay_actors()
+            try:
+                self.plotter.render()
+            except Exception:
+                pass
+        else:
+            # Within (0, 1]: just retune each overlay actor's opacity in place.
+            for la in list(self._label_paint_actors.values()):
+                if la is not None:
+                    try:
+                        la.GetProperty().SetOpacity(opacity01)
+                    except Exception:
+                        pass
+            try:
+                self.plotter.render()
+            except Exception:
+                pass
+
+    def _sync_splat_label_opacity(self, opacity01: float):
+        """Push the shared label opacity into every Gaussian-splat product's GPU
+        label channel (their analogue of the mesh/point label-overlay actor)."""
+        try:
+            products = self.scene_context.get_products_by_class(GaussianSplattingProduct)
+        except Exception:
+            return
+        for p in products:
+            try:
+                p.apply_label_opacity(opacity01)
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------------
+    # Label visibility (per-class show/hide in 3D)
+    # ------------------------------------------------------------------
+
+    def update_label_visibility(self, label, is_visible: bool):
+        """Hide or show all 3D elements painted with a given label's class_id.
+
+        Uses the PropagationEngine's canonical class_id mapping (which excludes
+        the Review label with id='-1') to resolve the label to a class_id, then
+        toggles visibility in the labels cache of every product and re-renders.
+        """
+        if not hasattr(self, 'mvat_manager') or self.mvat_manager is None:
+            return
+
+        # Resolve class_id via the canonical mapping (skips Review, 1-indexed)
+        engine = getattr(self.mvat_manager, 'propagation_engine', None)
+        if engine is None:
+            return
+
+        label_id = getattr(label, 'id', None)
+        if label_id is None or label_id == '-1':
+            return
+
+        class_id = engine.canonical_class_id_for_label_id(label_id)
+        if class_id is None:
+            return
+
+        # Update hidden set on each product and refresh
+        needs_render = False
+        for product in self.scene_context:
+            hidden = getattr(product, '_hidden_class_ids', None)
+            if hidden is None:
+                product._hidden_class_ids = set()
+                hidden = product._hidden_class_ids
+
+            if is_visible:
+                if class_id in hidden:
+                    hidden.discard(class_id)
+                    self._restore_hidden_elements(product, class_id)
+                    needs_render = True
+            else:
+                if class_id not in hidden:
+                    hidden.add(class_id)
+                    self._hide_elements_by_class(product, class_id)
+                    needs_render = True
+
+        if needs_render:
+            try:
+                self.plotter.render()
+            except Exception:
+                pass
+
+    def _hide_elements_by_class(self, product, class_id: int):
+        """Set elements with the given class_id to white (255,255,255) in the
+        labels cache and flush to GPU, effectively hiding them."""
+        class_ids = getattr(product, 'class_ids', None)
+        if class_ids is None:
+            return
+
+        mask = class_ids == class_id
+        if not np.any(mask):
+            return
+
+        if isinstance(product, GaussianSplattingProduct):
+            cache = getattr(product, '_label_color_cache', None)
+            if cache is not None:
+                product._labels_dirty = True
+                product.flush_labels_to_gpu()
+                # After flush, re-tint hidden splats to pristine (erase the label tint)
+                try:
+                    product.gaussian_actor.reset_colors(np.flatnonzero(mask))
+                except Exception:
+                    pass
+        else:
+            cache = getattr(product, '_labels_cache', None)
+            if cache is None:
+                return
+            cache[mask] = (255, 255, 255)
+            product._labels_dirty = True
+            product.flush_labels_to_gpu()
+
+            # Also update the shader texture so overlay actors match
+            psm = getattr(self.mvat_manager, 'paint_shader_manager', None)
+            if psm is not None:
+                state = psm.get_state(product)
+                if state is not None:
+                    ids = np.flatnonzero(mask)
+                    state.update_class_ids_subset(ids, 0)
+
+    def _restore_hidden_elements(self, product, class_id: int):
+        """Restore the original label color for elements with the given class_id."""
+        class_ids = getattr(product, 'class_ids', None)
+        if class_ids is None:
+            return
+
+        mask = class_ids == class_id
+        if not np.any(mask):
+            return
+
+        # Look up the label color via the canonical mapping
+        engine = getattr(self.mvat_manager, 'propagation_engine', None)
+        if engine is None:
+            return
+        real_labels = engine._canonical_real_labels()
+        if class_id < 1 or class_id > len(real_labels):
+            return
+        label = real_labels[class_id - 1]
+        try:
+            color_rgb = (label.color.red(), label.color.green(), label.color.blue())
+        except Exception:
+            return
+
+        if isinstance(product, GaussianSplattingProduct):
+            product._labels_dirty = True
+            product.flush_labels_to_gpu()
+        else:
+            cache = getattr(product, '_labels_cache', None)
+            if cache is None:
+                return
+            cache[mask] = color_rgb
+            product._labels_dirty = True
+            product.flush_labels_to_gpu()
+
+            # Restore shader texture class_ids
+            psm = getattr(self.mvat_manager, 'paint_shader_manager', None)
+            if psm is not None:
+                state = psm.get_state(product)
+                if state is not None:
+                    ids = np.flatnonzero(mask)
+                    state.update_class_ids_subset(ids, class_id)
 
     # ------------------------------------------------------------------
     # Key event handling
@@ -1936,8 +2350,27 @@ class MVATViewer(QFrame):
                         print(f"MVAT-SAM launch error: {_e}")
                     event.accept()
                     return
+            # Otherwise forward Space to the active 3D tool (e.g. the
+            # FeatureSelectTool3D uses it to finalize the highlighted selection).
+            active_tool = getattr(self, '_active_3d_tool', None)
+            if active_tool is not None and hasattr(active_tool, 'keyPressEvent'):
+                try:
+                    active_tool.keyPressEvent(event)
+                    if event.isAccepted():
+                        return
+                except Exception:
+                    pass
             event.ignore()
         else:
+            # Forward to active 3D tool (e.g., FeatureSelectTool3D for Enter/Escape)
+            active_tool = getattr(self, '_active_3d_tool', None)
+            if active_tool is not None and hasattr(active_tool, 'keyPressEvent'):
+                try:
+                    active_tool.keyPressEvent(event)
+                    if event.isAccepted():
+                        return
+                except Exception:
+                    pass
             # Let the parent widget handle other keys
             event.ignore()
 
@@ -1985,133 +2418,6 @@ class MVATViewer(QFrame):
                 self.remove_product(p.product_id)
             self.add_product(value)
 
-    # --------------------------------------------------------------------------
-    # PLY Type Detection and Disambiguation
-    # --------------------------------------------------------------------------
-
-    @staticmethod
-    def _detect_ply_type(file_path: str) -> str:
-        """
-        Peek at the PLY header to choose a sensible default without loading
-        the full file.
-
-        Detection rules (in priority order):
-          1. Header contains ``element face`` → mesh
-          2. Header contains ``f_dc_0`` (3DGS DC spherical harmonic field) → gaussian
-          3. Otherwise → pointcloud
-
-        Returns one of ``'mesh'``, ``'gaussian'``, or ``'pointcloud'``.
-        """
-        try:
-            header_lines = []
-            with open(file_path, 'rb') as fh:
-                for raw_line in fh:
-                    line = raw_line.decode('ascii', errors='ignore').strip()
-                    header_lines.append(line)
-                    if line == 'end_header':
-                        break
-            header = '\n'.join(header_lines)
-            if 'element face' in header:
-                return 'mesh'
-            if 'f_dc_0' in header:
-                return 'gaussian'
-            return 'pointcloud'
-        except Exception:
-            return 'mesh'  # safe default
-
-    def _prompt_ply_type_dialog(self, file_path: str):
-        """
-        Show a modal dialog asking the user what type of data a .ply file
-        contains.
-
-        Returns ``(ply_type, calculate_kd_tree, sort_mesh, simplification_ratio)``
-        or ``None`` if cancelled.
-        """
-        from PyQt5.QtWidgets import (QDialog, QDialogButtonBox, QComboBox, QLabel,
-                                     QVBoxLayout, QFormLayout, QSlider, QHBoxLayout)
-        from PyQt5.QtCore import Qt as _Qt
-
-        detected = self._detect_ply_type(file_path)
-
-        options = ['Mesh', 'Point Cloud', '3D Gaussian Splatting']
-        default_index = {'mesh': 0, 'pointcloud': 1, 'gaussian': 2}.get(detected, 0)
-
-        dialog = QDialog(self.window())
-        dialog.setWindowTitle('PLY File Type')
-        dialog.setModal(True)
-        dialog.resize(460, 260)
-
-        layout = QVBoxLayout(dialog)
-        layout.addWidget(QLabel(f'<b>{os.path.basename(file_path)}</b>'))
-        layout.addWidget(QLabel('Select the data type contained in this PLY file:'))
-
-        form_layout = QFormLayout()
-
-        combo = QComboBox(dialog)
-        combo.addItems(options)
-        combo.setCurrentIndex(default_index)
-        form_layout.addRow('Product type:', combo)
-
-        kd_combo = QComboBox(dialog)
-        kd_combo.addItems(['True', 'False'])
-        kd_combo.setCurrentIndex(0)
-        form_layout.addRow('Calculate KD-Tree:', kd_combo)
-
-        # Sort Mesh
-        sort_combo = QComboBox(dialog)
-        sort_combo.addItems(['True', 'False'])
-        sort_combo.setCurrentIndex(0)  # default True
-        sort_combo.setToolTip(
-            'Spatially sort mesh faces using a Morton Z-order curve after loading.\n'
-            'Improves GPU cache coherence and index-map quality. Recommended.'
-        )
-        form_layout.addRow('Sort Mesh:', sort_combo)
-
-        # Simplification slider
-        slider_row = QHBoxLayout()
-        simplify_slider = QSlider(_Qt.Horizontal, dialog)
-        simplify_slider.setRange(0, 100)
-        simplify_slider.setValue(0)       # 0 = off by default
-        simplify_slider.setTickInterval(10)
-        simplify_slider.setTickPosition(QSlider.TicksBelow)
-        simplify_slider.setToolTip(
-            'Fraction of faces to remove before loading (0 = no simplification, '
-            '1.0 = maximum simplification).\n\n'
-            '0.0  — Full mesh; highest detail, slowest to render and rasterize.\n'
-            '0.5  — Remove 50 % of faces; good balance of speed vs. detail.\n'
-            '0.9  — Remove 90 % of faces; fastest, lowest detail.\n\n'
-            'Simplification is applied once at load time and produces a single\n'
-            '"proxy mesh" used for all visualization and index-map creation.\n'
-            'Requires the fast-simplification package; falls back to PyVista decimate.'
-        )
-        simplify_label = QLabel('0.00')
-        simplify_label.setMinimumWidth(36)
-
-        def _on_slider(val):
-            simplify_label.setText(f'{val / 100:.2f}')
-
-        simplify_slider.valueChanged.connect(_on_slider)
-        slider_row.addWidget(simplify_slider)
-        slider_row.addWidget(simplify_label)
-        form_layout.addRow('Simplification:', slider_row)
-
-        layout.addLayout(form_layout)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, dialog)
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
-
-        if dialog.exec_() != QDialog.Accepted:
-            return None
-
-        return (
-            combo.currentText(),
-            kd_combo.currentText() == 'True',
-            sort_combo.currentText() == 'True',
-            simplify_slider.value() / 100.0,
-        )
-
     def dragEnterEvent(self, event):
         """Accept drag if a single supported 3D file is being dragged."""
         if event.mimeData().hasUrls():
@@ -2132,99 +2438,23 @@ class MVATViewer(QFrame):
             event.ignore()
 
     def dropEvent(self, event):
-        """Load the dropped 3D file into the viewer."""
+        """Load the dropped 3D file via the shared ImportModel dialog."""
         file_path = event.mimeData().urls()[0].toLocalFile()
-        file_ext = os.path.splitext(file_path)[1].lower()
 
-        # For PLY files, ask the user which data type the file contains BEFORE
-        # setting the wait cursor so the dialog is fully interactive.
-        ply_type = None
-        calculate_kd_tree = True
-        sort_mesh = True
-        simplification_ratio = 0.0
-        if file_ext == '.ply':
-            dialog_result = self._prompt_ply_type_dialog(file_path)
-            if dialog_result is None:
-                event.ignore()
-                return
-            ply_type, calculate_kd_tree, sort_mesh, simplification_ratio = dialog_result
+        top = self.window()
+        import_model = getattr(top, 'import_model', None)
+        if import_model is None:
+            from coralnet_toolbox.IO.QtImportModel import ImportModel
+            import_model = ImportModel(top)
 
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        _t_total = perf_counter()
-        _t_parse = _t_geom = _t_kdtree = _t_render = 0.0
-        try:
-            try:
-                top = self.window()
-                if hasattr(top, 'status_bar'):
-                    top.status_bar.showMessage("Loading 3D data...", 0)
-            except Exception:
-                pass
-
-            _t0 = perf_counter()
-            product = self._create_product_from_file(
-                file_path, ply_type=ply_type,
-                sort_mesh=sort_mesh, simplification_ratio=simplification_ratio,
-            )
-            _t_parse = perf_counter() - _t0
-
-            if product is not None:
-                # Force GPU geometry extraction while the wait cursor is active.
-                if hasattr(product, 'prepare_geometry'):
-                    _t0 = perf_counter()
-                    product.prepare_geometry()
-                    _t_geom = perf_counter() - _t0
-
-                if calculate_kd_tree:
-                    # Build the KD-tree immediately so the first brush interaction
-                    # does not need to warm it up later.
-                    manager = getattr(self, 'mvat_manager', None)
-                    if manager is not None and hasattr(manager, '_prewarm_spatial_caches'):
-                        try:
-                            _t0 = perf_counter()
-                            manager._prewarm_spatial_caches(product)
-                            _t_kdtree = perf_counter() - _t0
-                        except Exception:
-                            pass
-
-                _t0 = perf_counter()
-                self.add_product(product)
-                self.render_scene()
-                _t_render = perf_counter() - _t0
-                event.acceptProposedAction()
-
-                # Trigger visibility filtering based on the model's current selections.
-                if self.parent() and hasattr(self.parent(), 'selection_model'):
-                    mvat_window = self.parent()
-                    model = mvat_window.selection_model
-                    selected = model.get_selected_list() if model else []
-                    if selected:
-                        mvat_window._update_visibility_filter(selected)
-            else:
-                print(f"Failed to create product from file: {file_path}")
-                event.ignore()
-
-        except Exception as e:
-            print(f"Failed to load 3D file: {e}")
-            import traceback
-            traceback.print_exc()
+        if import_model.import_model_file(file_path):
+            event.acceptProposedAction()
+        else:
             event.ignore()
-        finally:
-            _t_total = perf_counter() - _t_total
-            try:
-                top = self.window()
-                if hasattr(top, 'status_bar'):
-                    parts = [f"Total: {_t_total:.2f}s"]
-                    if _t_parse  > 0: parts.append(f"parse: {_t_parse:.2f}s")
-                    if _t_geom   > 0: parts.append(f"geometry: {_t_geom:.2f}s")
-                    if _t_kdtree > 0: parts.append(f"KD-tree: {_t_kdtree:.2f}s")
-                    if _t_render > 0: parts.append(f"render: {_t_render:.2f}s")
-                    top.status_bar.showMessage(f"3D data loaded — {' | '.join(parts)}", 6000)
-            except Exception:
-                pass
-            QApplication.restoreOverrideCursor()
 
     def _create_product_from_file(self, file_path: str, ply_type: str = None,
-                                  sort_mesh: bool = True, simplification_ratio: float = 0.0) -> 'AbstractSceneProduct':
+                                  sort_data: bool = True, simplification_ratio: float = 0.0,
+                                  load_texture: bool = True) -> 'AbstractSceneProduct':
         """
         Create the appropriate scene product for a 3D data file.
 
@@ -2236,6 +2466,12 @@ class MVATViewer(QFrame):
             file_path: Path to the 3D data file.
             ply_type:  Pre-resolved PLY type string from the disambiguation
                        dialog, or None for non-PLY files.
+            sort_data: When True, spatially sort mesh faces or point cloud points
+                       for improved GPU cache coherence and index-map compression.
+            simplification_ratio: Fraction of mesh faces or point cloud points to
+                       remove before loading (0.0 = no simplification, 1.0 = remove all).
+            load_texture: When True (default), attempt to load an associated texture
+                       image for mesh products. Only relevant for mesh products.
 
         Returns:
             A concrete AbstractSceneProduct instance, or None if the type
@@ -2243,7 +2479,12 @@ class MVATViewer(QFrame):
         """
         file_ext = os.path.splitext(file_path)[1].lower()
 
-        _mesh_kwargs = dict(sort_mesh=sort_mesh, simplification_ratio=simplification_ratio)
+        _mesh_kwargs = dict(sort_data=sort_data, 
+                            simplification_ratio=simplification_ratio,
+                            load_texture=load_texture)
+        # Point clouds mirror the mesh knobs: spatial sort + fractional decimation.
+        _cloud_kwargs = dict(point_size=self.point_size, sort_data=sort_data,
+                             simplification_ratio=simplification_ratio)
 
         # STL and OBJ are always meshes by format definition.
         if file_ext in ['.stl', '.obj']:
@@ -2253,7 +2494,7 @@ class MVATViewer(QFrame):
         # PCD is always a point cloud.
         if file_ext == '.pcd':
             print(f"☁️ PCD is a point-cloud-only format, creating PointCloudProduct")
-            return PointCloudProduct.from_file(file_path, point_size=self.point_size)
+            return PointCloudProduct.from_file(file_path, **_cloud_kwargs)
 
         # PLY: route based on the user-selected type from the dialog.
         if file_ext == '.ply':
@@ -2262,7 +2503,7 @@ class MVATViewer(QFrame):
                 return MeshProduct.from_file(file_path, **_mesh_kwargs)
             elif ply_type == 'Point Cloud':
                 print(f"☁️ PLY → PointCloudProduct (user selection)")
-                return PointCloudProduct.from_file(file_path, point_size=self.point_size)
+                return PointCloudProduct.from_file(file_path, **_cloud_kwargs)
             elif ply_type == '3D Gaussian Splatting':
                 print(f"✨ PLY → GaussianSplattingProduct (user selection)")
                 return GaussianSplattingProduct.from_file(file_path)
@@ -2279,7 +2520,7 @@ class MVATViewer(QFrame):
                 return MeshProduct.from_file(file_path, **_mesh_kwargs)
             else:
                 print(f"☁️ VTK detected as point cloud")
-                return PointCloudProduct.from_file(file_path, point_size=self.point_size)
+                return PointCloudProduct.from_file(file_path, **_cloud_kwargs)
 
         return None
 
@@ -2349,7 +2590,8 @@ class MVATViewer(QFrame):
                 pass
 
         self.scene_context.remove_product(product_id)
-        
+        self._update_splat_controls()
+
         # Show placeholder if scene is now empty
         if not self.scene_context.has_any_product():
             self._show_placeholder()
@@ -2395,6 +2637,7 @@ class MVATViewer(QFrame):
                 pass
         
         QApplication.setOverrideCursor(Qt.WaitCursor)
+        was_empty = not self._product_actors  # True when no actors yet (first load)
         try:
             for product in self.scene_context:
                 product_id = product.product_id
@@ -2404,24 +2647,39 @@ class MVATViewer(QFrame):
                 if mesh is None:
                     continue
 
+                # Deferred-paint barrier: sync the VTK Labels array from the
+                # Python cache before (re)building the actor. No-op unless the
+                # product's labels are dirty, so this is free in the common case.
+                flush_labels = getattr(product, 'flush_labels_to_gpu', None)
+                if callable(flush_labels):
+                    try:
+                        flush_labels()
+                    except Exception:
+                        pass
+
                 should_be_visible = self._get_visibility_for_product(product)
 
                 # ------------------------------------------------------------------
-                # GaussianSplattingProduct: the GaussianActor manages its own
-                # OpenGL rendering pipeline via a VTK end-event observer registered
-                # in bind_to_plotter().  We must NOT remove and re-add it on every
-                # render_scene() call because that would duplicate the observer.
-                # Instead, bind once on first encounter and only toggle visibility.
+                # GaussianSplattingProduct: bind_to_plotter() installs the
+                # VTK-native single-pass renderer (geometry shader + SSBOs) and
+                # registers a camera observer for depth sorting.  Call it only
+                # once; subsequent render_scene() calls only toggle visibility.
                 # ------------------------------------------------------------------
                 if isinstance(product, GaussianSplattingProduct):
                     if product_id not in self._product_actors:
                         product.gaussian_actor.bind_to_plotter(self.plotter)
                         try:
-                            product.gaussian_actor.scale_modifier = float(self.point_size)
+                            product.gaussian_actor.scale_modifier = self._splat_scale
+                            product.gaussian_actor.render_mode = self._gaussian_shading_idx
                         except Exception:
                             pass
                         self._product_actors[product_id] = product.gaussian_actor.actor
                     actor = self._product_actors[product_id]
+                    # Label-channel strength is left at the product's default
+                    # (visible) and only changed when the user actually moves the
+                    # transparency slider (_sync_splat_label_opacity). We do NOT
+                    # force it to paint_opacity here: that value can be 0 (slider
+                    # down / restored low), which would silently hide painted labels.
                     try:
                         actor.SetVisibility(should_be_visible)
                     except Exception:
@@ -2450,11 +2708,43 @@ class MVATViewer(QFrame):
 
                 self._product_actors[product_id] = actor
 
+                # Phase-2: (re)install the feature-similarity GPU shader on the
+                # freshly built actor when the Similarity array is active. The
+                # actor is rebuilt here on every full render, so the shader must
+                # be re-applied; the install is a no-op otherwise and falls back
+                # to the uint8 cell scalar on any failure.
+                fmm = getattr(self.mvat_manager, 'feature_mesh_manager', None)
+                if fmm is not None:
+                    try:
+                        fmm.maybe_install_shader(actor, product)
+                    except Exception:
+                        pass
+
+                # Label paint is rendered by the translucent label-overlay actor
+                # below (the paint shader in discard mode), not on the base actor —
+                # "Labels" is no longer a selectable base array. Rebuilt each render.
+                try:
+                    self._sync_label_overlay_actor(product, mesh, product_id,
+                                                    should_be_visible, style)
+                except Exception:
+                    pass
+
                 # Apply visibility setting
                 try:
                     actor.SetVisibility(should_be_visible)
                 except Exception:
                     pass
+
+            # Drop label-overlay actors for products no longer in the scene.
+            try:
+                current_ids = {getattr(p, 'product_id', None) for p in self.scene_context}
+                for pid in list(self._label_paint_actors.keys()):
+                    if pid not in current_ids:
+                        stale = self._label_paint_actors.pop(pid, None)
+                        if stale is not None:
+                            self.plotter.remove_actor(stale, render=False)
+            except Exception:
+                pass
 
             refresh_overlay = getattr(self.mvat_manager, 'refresh_primary_mesh_overlay', None)
             if callable(refresh_overlay):
@@ -2462,13 +2752,122 @@ class MVATViewer(QFrame):
                     refresh_overlay(force_recreate=True, render=False)
                 except Exception:
                     pass
-            
+
+            # Point clouds keep their painted labels in a separate point overlay actor.
+            refresh_point_overlay = getattr(self.mvat_manager, 'refresh_primary_point_overlay', None)
+            if callable(refresh_point_overlay):
+                try:
+                    refresh_point_overlay(force_recreate=True, render=False)
+                except Exception:
+                    pass
+
+            self._update_splat_controls()
             self.plotter.render()
             print(f"Rendered {len(self.scene_context)} scene products")
-            
+
+            # On first load (scene was empty), fit the camera to the new content.
+            if was_empty and self._product_actors:
+                try:
+                    self.fit_to_view()
+                except Exception:
+                    pass
+
         finally:
             QApplication.restoreOverrideCursor()
-    
+
+    def _sync_all_label_overlay_actors(self):
+        """Add/remove the translucent label-overlay actors for every product
+        without rebuilding the base actors.
+
+        Used when the transparency slider crosses the 0 opacity boundary: only the
+        overlay actors need to appear/disappear, so rebuilding the whole scene (and
+        flickering the base meshes) is both unnecessary and visually jarring.
+        """
+        for product in self.scene_context:
+            product_id = getattr(product, 'product_id', None)
+            if product_id is None:
+                continue
+            try:
+                mesh = product.get_render_mesh()
+                if mesh is None:
+                    continue
+                style = product.get_render_style()
+                visible = self._get_visibility_for_product(product)
+                self._sync_label_overlay_actor(product, mesh, product_id, visible, style)
+            except Exception:
+                pass
+
+    def _sync_label_overlay_actor(self, product, mesh, product_id, visible: bool, base_style: dict):
+        """Create/remove the translucent label-overlay actor for one product.
+
+        On a non-Labels array with the opacity slider open, a second actor sharing
+        the product's geometry is drawn over the base actor: it uses the paint shader
+        in discard mode (unpainted fragments discarded) so only painted faces show,
+        flat label colors blended over the base by the actor's opacity. This avoids
+        reading VTK's base color in-shader (unreliable for direct-RGB scalars) and
+        works uniformly for RGB / Texture / UV arrays.
+
+        The overlay is added with the SAME style (scalars / texture) as the base
+        actor: because the polydata is shared (copy_mesh=False), adding it with
+        different/no scalars would mutate the shared active-scalar state and corrupt
+        the base actor's coloring. The shader then does ScalarVisibilityOff, so the
+        overlay's own scalars are never actually drawn.
+        """
+        # The geometry is rebuilt with the base actor each render, so drop any prior
+        # overlay actor for this product first.
+        existing = self._label_paint_actors.pop(product_id, None)
+        if existing is not None:
+            try:
+                self.plotter.remove_actor(existing, render=False)
+            except Exception:
+                pass
+
+        psm = getattr(self.mvat_manager, 'paint_shader_manager', None)
+        if psm is None or not psm.should_show_label_overlay(product):
+            return
+
+        overlay_kwargs = dict(base_style)
+        overlay_kwargs.update(
+            render=False,
+            reset_camera=False,
+            copy_mesh=False,
+            lighting=False,
+            show_scalar_bar=False,
+            opacity=float(psm.paint_opacity),
+        )
+        try:
+            overlay_actor = self.plotter.add_mesh(mesh, **overlay_kwargs)
+        except Exception:
+            return
+
+        if not psm.install_label_overlay_shader(overlay_actor, product):
+            try:
+                self.plotter.remove_actor(overlay_actor, render=False)
+            except Exception:
+                pass
+            return
+
+        try:
+            overlay_actor.GetProperty().SetOpacity(float(psm.paint_opacity))
+            # Pull the coincident overlay slightly toward the camera so it wins the
+            # depth test over the base actor without z-fighting.
+            mapper = overlay_actor.GetMapper()
+            if mapper is not None:
+                mapper.SetResolveCoincidentTopologyToPolygonOffset()
+                try:
+                    mapper.SetRelativeCoincidentTopologyPolygonOffsetParameters(-2.0, -2.0)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        try:
+            overlay_actor.SetVisibility(bool(visible))
+        except Exception:
+            pass
+
+        self._label_paint_actors[product_id] = overlay_actor
+
     def _get_visibility_for_product(self, product: 'AbstractSceneProduct') -> bool:
         """
         Determine if a product should be visible based on its type.
@@ -2593,15 +2992,21 @@ class MVATViewer(QFrame):
         self.array_selector_combo.clear()
         
         if target is None or not hasattr(target, 'get_available_arrays'):
-            # No valid target or doesn't support arrays
-            self.array_selector_combo.addItem("Labels")
+            # No valid target or doesn't support arrays. "Labels" is no longer a
+            # selectable base array (labels are shown via the translucent overlay
+            # driven by the transparency slider), so fall back to RGB.
+            self.array_selector_combo.addItem("RGB")
         else:
-            # Add all available arrays from the target product
-            available = target.get_available_arrays()
+            # Add all available arrays from the target product, except "Labels":
+            # labels are rendered as a translucent overlay (opacity slider), not as
+            # a selectable base array, so there's nothing for the user to pick here.
+            available = [a for a in target.get_available_arrays() if a != "Labels"]
             for array_name in available:
                 self.array_selector_combo.addItem(array_name)
-            
-            # Select the currently selected array
+
+            # Select the currently selected array. If the product is somehow still
+            # on "Labels" (e.g. a legacy fallback), findText returns -1 and we leave
+            # the combo on its first entry without forcing a product change.
             selected = target.get_selected_array()
             index = self.array_selector_combo.findText(selected)
             if index >= 0:
@@ -2636,9 +3041,8 @@ class MVATViewer(QFrame):
             pass
 
     def set_point_size(self, size):
-        """Update the point size for point clouds and Gaussian splats."""
+        """Update the point size for point cloud products."""
         self.point_size = size
-        # Update all point-cloud actors' point size
         try:
             for p in self.scene_context.get_products_by_class(PointCloudProduct):
                 actor = self._product_actors.get(p.product_id)
@@ -2647,22 +3051,56 @@ class MVATViewer(QFrame):
                         actor.GetProperty().SetPointSize(size)
                     except Exception:
                         pass
-
-            for p in self.scene_context.get_products_by_class(GaussianSplattingProduct):
-                gaussian_actor = getattr(p, 'gaussian_actor', None)
-                if gaussian_actor is not None:
-                    try:
-                        gaussian_actor.scale_modifier = float(size)
-                    except Exception:
-                        pass
-
             try:
                 self.plotter.render()
             except Exception:
                 pass
         except Exception:
-            # Keep original behavior tolerant to failures
             pass
+
+    def set_splat_scale(self, value: float):
+        """Update the scale modifier for all Gaussian splat products."""
+        self._splat_scale = float(value)
+        try:
+            from coralnet_toolbox.MVAT.core.Products import GaussianSplattingProduct
+            for p in self.scene_context.get_products_by_class(GaussianSplattingProduct):
+                gaussian_actor = getattr(p, 'gaussian_actor', None)
+                if gaussian_actor is not None:
+                    try:
+                        gaussian_actor.scale_modifier = self._splat_scale
+                    except Exception:
+                        pass
+            self.plotter.render()
+        except Exception:
+            pass
+
+    def _on_gaussian_shading_changed(self, idx: int):
+        """Update the shading/visualisation mode for all Gaussian splat products."""
+        self._gaussian_shading_idx = idx
+        try:
+            from coralnet_toolbox.MVAT.core.Products import GaussianSplattingProduct
+            for p in self.scene_context.get_products_by_class(GaussianSplattingProduct):
+                gaussian_actor = getattr(p, 'gaussian_actor', None)
+                if gaussian_actor is not None:
+                    try:
+                        gaussian_actor.render_mode = idx
+                    except Exception:
+                        pass
+            self.plotter.render()
+        except Exception:
+            pass
+
+    def _update_splat_controls(self):
+        """Enable the shading combo when Gaussian products are present, grey it out when not."""
+        combo = getattr(self, '_gaussian_shading_combo', None)
+        if combo is None:
+            return
+        try:
+            from coralnet_toolbox.MVAT.core.Products import GaussianSplattingProduct
+            has_splats = bool(self.scene_context.get_products_by_class(GaussianSplattingProduct))
+        except Exception:
+            has_splats = False
+        combo.setEnabled(has_splats)
 
     def _on_point_size_spin_changed(self, value):
         """Handle spinbox changes: set internal point size and emit signal."""
@@ -2701,34 +3139,35 @@ class MVATViewer(QFrame):
     def show_rays(self, rays_with_colors: list):
         """
         Display multiple rays in the 3D viewer with distinct colors.
-        
+
         Uses BatchedRayManager for efficient rendering - all rays are merged
         into a single PolyData mesh with one draw call instead of 2*N calls.
-        
+        Pre-allocates ray slots to minimize actor churn when ray count varies.
+
         Args:
             rays_with_colors: List of (CameraRay, color_tuple) tuples.
                               Colors should be RGB tuples (0-255 or 0-1).
         """
         if not self._show_rays_enabled:
             return
-        
+
         if not rays_with_colors:
             self.clear_ray()
             return
-        
-        # Build or update batched ray geometry
-        if self._ray_manager.ray_actor is not None and self._ray_manager._num_rays == len(rays_with_colors):
-            # Update existing rays in-place for better performance
+
+        # Update or rebuild ray batch based on pre-allocated capacity
+        if self._ray_manager.ray_actor is not None and len(rays_with_colors) <= self._ray_manager._allocated_rays:
+            # Update existing rays in-place if they fit in allocated capacity
             self._ray_manager.update_ray_endpoints(rays_with_colors)
         else:
-            # Build new batched ray geometry
+            # Build new batched ray geometry with pre-allocation
             self._ray_manager.build_ray_batch(rays_with_colors)
             # Add to plotter (removes old actors first)
             self._ray_manager.add_to_plotter(self.plotter, line_width=3)
-        
+
         # Apply visibility state
         self._ray_manager.set_visibility(self._ray_visible)
-        
+
         # Update display
         self.plotter.render()
 
@@ -2912,58 +3351,35 @@ class MVATViewer(QFrame):
         if show_thumbnails is None:
             show_thumbnails = self._show_thumbnails_enabled
 
-        print(f"🔧 MVATViewer.add_frustums called:")
-        print(f"   - Cameras: {len(cameras)}")
-        print(f"   - Scale: {frustum_scale}")
-        print(f"   - Wireframes enabled: {self._show_wireframes_enabled}")
-        print(f"   - Thumbnails enabled: {show_thumbnails}")
-        print(f"   - Selected camera: {selected_camera.image_path if selected_camera else 'None'}")
-        print(f"   - Highlighted paths: {len(highlighted_paths) if highlighted_paths else 0}")
-
         # Remove old frustum actors from plotter before rebuilding
         try:
             self._frustum_manager.remove_from_plotter(self.plotter)
-            print(f"   ✅ Removed old frustum actors from plotter")
-        except Exception as e:
-            print(f"   ⚠️ Failed to remove old actors: {e}")
-        
+        except Exception:
+            pass
+
         # Clear frustum manager's internal state
         try:
             self._frustum_manager.clear()
-            print(f"   ✅ Cleared frustum manager state")
-        except Exception as e:
-            print(f"   ⚠️ Failed to clear manager: {e}")
-            
+        except Exception:
+            pass
+
         # Build merged mesh
         try:
             merged = self._frustum_manager.build_frustum_batch(cameras, scale=frustum_scale)
-            print(f"   - Built merged frustum mesh: {merged is not None}")
-            
-            if merged is not None:
-                print(f"   - Mesh stats: n_points={merged.n_points}, n_cells={merged.n_cells}")
-                
-                if self._show_wireframes_enabled:
-                    print(f"   - Adding frustums to plotter...")
-                    self._frustum_manager.add_to_plotter(self.plotter, line_width=1.5)
-                    selected_path = selected_camera.image_path if selected_camera else None
-                    highlighted_paths = highlighted_paths or []
-                    self._frustum_manager.update_camera_states(
-                        selected_path,
-                        highlighted_paths,
-                        hovered_camera,
-                        context_highlighted_paths=context_highlighted_paths,
-                    )
-                    self._frustum_manager.mark_modified()
-                    print(f"   ✅ Frustums added to plotter successfully")
-                else:
-                    print(f"   ⚠️ Frustums NOT added - wireframes disabled")
-            else:
-                print(f"   ⚠️ Merged mesh is None - no frustums to add")
-                
-        except Exception as e:
-            print(f"   ❌ Failed to build frustums: {e}")
-            import traceback
-            traceback.print_exc()
+
+            if merged is not None and self._show_wireframes_enabled:
+                self._frustum_manager.add_to_plotter(self.plotter, line_width=1.5)
+                selected_path = selected_camera.image_path if selected_camera else None
+                highlighted_paths = highlighted_paths or []
+                self._frustum_manager.update_camera_states(
+                    selected_path,
+                    highlighted_paths,
+                    hovered_camera,
+                    context_highlighted_paths=context_highlighted_paths,
+                )
+                self._frustum_manager.mark_modified()
+        except Exception:
+            pass
 
         # Thumbnails (lazy): add for selected and highlighted cameras
         # Clear previous thumbnails first
@@ -2972,7 +3388,6 @@ class MVATViewer(QFrame):
             # Add thumbnail for selected camera first
             if selected_camera is not None:
                 try:
-                    print(f"   - Adding thumbnail for selected camera")
                     self._add_thumbnail_for_camera(selected_camera, scale=frustum_scale)
                 except Exception:
                     pass
@@ -2994,9 +3409,8 @@ class MVATViewer(QFrame):
         # Render update
         try:
             self.plotter.render()
-            print(f"   ✅ Plotter rendered")
-        except Exception as e:
-            print(f"   ⚠️ Render failed: {e}")
+        except Exception:
+            pass
 
     def _add_thumbnail_for_camera(self, camera, scale: float = None):
         """Add a single image-plane thumbnail for the given camera."""
@@ -3238,12 +3652,14 @@ class MVATViewer(QFrame):
         """Enable/disable thumbnail image plane actors."""
         try:
             self._show_thumbnails_enabled = bool(enabled)
-            # Update visibility of existing thumbnail actors
-            for actor in getattr(self, 'thumbnail_actors', []):
-                try:
-                    actor.SetVisibility(bool(enabled))
-                except Exception:
-                    pass
+            if enabled:
+                # Build thumbnails from the frustum manager's current cameras
+                self.remove_thumbnails()
+                cameras = getattr(self._frustum_manager, 'cameras', {})
+                for cam in cameras.values():
+                    self._add_thumbnail_for_camera(cam)
+            else:
+                self.remove_thumbnails()
             try:
                 self.plotter.render()
             except Exception:
@@ -3388,6 +3804,7 @@ class MVATViewer(QFrame):
                         context_highlighted_paths=context_highlighted_paths,
                     )
                     self._frustum_manager.mark_modified()
+                    self.plotter.render()
                 except Exception:
                     pass
         except Exception:

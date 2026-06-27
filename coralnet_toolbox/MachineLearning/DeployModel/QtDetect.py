@@ -143,7 +143,12 @@ class Detect(Base):
                 imgsz = 640
 
             self.imgsz = imgsz
-            self.loaded_model(np.zeros((imgsz, imgsz, 3), dtype=np.uint8))
+            # Pass the same device/half the predict paths use: ultralytics
+            # fixes fp16 when the predictor is created and silently rebuilds
+            # the whole predictor on the first call whose device= differs, so
+            # the warmup must match or later half=True calls run in fp32.
+            self.loaded_model(np.zeros((imgsz, imgsz, 3), dtype=np.uint8),
+                              device=self.main_window.device, half=True)
             self.class_names = list(self.loaded_model.names.values())
 
             # Check for unmapped classes
@@ -231,7 +236,19 @@ class Detect(Base):
                     raster.has_work_areas()
                     and self.annotation_window.get_selected_tool() == "work_area"
                 )
-                work_areas = raster.get_work_areas() if use_tiles else [None]
+                if use_tiles:
+                    # A VideoRaster stores work areas for every frame in one flat
+                    # list keyed by the virtual frame path; restrict to the frame
+                    # being processed so we don't tile other frames' areas against
+                    # the current frame's pixels.
+                    work_areas = [
+                        wa for wa in raster.get_work_areas()
+                        if wa.image_path == image_path
+                    ]
+                    if not work_areas:
+                        work_areas = [None]
+                else:
+                    work_areas = [None]
 
                 progress_bar.set_title(
                     f"Image {idx + 1}/{len(image_paths)}: {os.path.basename(image_path)}"
@@ -294,6 +311,12 @@ class Detect(Base):
                                       else self.task,
                                 boundary_tolerance=self.thresholds_widget.get_boundary_tolerance(),
                             )
+                            # map_results_from_work_area resets result.path to the
+                            # bare raster.image_path; for a virtual video frame
+                            # (video.mp4::frame_N) that drops the frame suffix and
+                            # the baked annotations get keyed to the wrong path and
+                            # vanish on redraw. Restore the per-frame image_path.
+                            result.path = image_path
                             try:
                                 result.orig_img = None
                             except Exception:

@@ -1,6 +1,7 @@
 import os
 import glob
 import sqlite3
+import threading
 import warnings
 
 import faiss
@@ -33,6 +34,14 @@ class CacheManager:
         # Note: do NOT keep a long-lived sqlite3 connection here — sqlite3
         # connections are thread-affine. Open connections per-call instead.
         self._create_table()
+
+        # FAISS index files are read-modify-written on disk and FAISS objects
+        # are not thread-safe. Multiple pipeline workers (e.g. a superseded
+        # worker still draining plus a freshly started one) can call into the
+        # cache concurrently, which corrupts the read/add/write cycle and
+        # surfaces as opaque (empty-message) FAISS exceptions. Serialize all
+        # index access through a single lock.
+        self._index_lock = threading.Lock()
 
         # We do not keep in-memory FAISS indexes to avoid sharing
         # FAISS objects across threads. Index files are read from and
@@ -68,6 +77,25 @@ class CacheManager:
         # If not on disk, return None
         return None
 
+    def _drop_model_locked(self, model_key):
+        """Delete all cached data for a model_key (SQLite rows + index file).
+
+        Caller must hold self._index_lock. Used to discard a stale index whose
+        dimension no longer matches the current feature definition so it can be
+        rebuilt cleanly.
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM features WHERE model_key = ?", (model_key,))
+            conn.commit()
+
+        index_path = f"{self.index_path_base}_{model_key}.faiss"
+        if os.path.exists(index_path):
+            try:
+                os.remove(index_path)
+            except OSError as e:
+                print(f"Error removing stale index file {index_path}: {e}")
+
     def add_features(self, data_items, features, model_key):
         """
         Adds new features to the store for a specific model.
@@ -75,70 +103,92 @@ class CacheManager:
         if not len(features):
             return
 
-        # Get the specific index for this model, loading it if necessary
-        # Load index from disk if it exists, otherwise create a new index
-        index = self._get_or_load_index(model_key)
-        if index is None:
-            feature_dim = features.shape[1]
-            print(f"Creating new FAISS index for model '{model_key}' with dimension {feature_dim}.")
-            index = faiss.IndexFlatL2(feature_dim)
+        feature_dim = features.shape[1]
 
-        # Add vectors to the FAISS index
-        start_index = index.ntotal
-        index.add(features.astype('float32'))
+        # Serialize the whole read-modify-write so concurrent workers cannot
+        # interleave on the same on-disk index (see _index_lock in __init__).
+        with self._index_lock:
+            # Get the specific index for this model, loading it if necessary
+            # Load index from disk if it exists, otherwise create a new index
+            index = self._get_or_load_index(model_key)
 
-        # Add metadata to SQLite using a short-lived connection
-        with sqlite3.connect(self.db_path) as conn:
-            cur = conn.cursor()
-            for i, item in enumerate(data_items):
-                faiss_row_index = start_index + i
-                cur.execute(
-                    "INSERT OR REPLACE INTO features (annotation_id, model_key, faiss_index) VALUES (?, ?, ?)",
-                    (item.annotation.id, model_key, faiss_row_index)
+            # A stale on-disk index can have a different dimension than the
+            # features we're adding now (e.g. the feature definition for a
+            # fixed model_key like 'Color_Features' changed between versions).
+            # FAISS would assert forever in that case, so rebuild from scratch.
+            if index is not None and index.d != feature_dim:
+                print(
+                    f"FAISS index for '{model_key}' has dimension {index.d} but "
+                    f"features are {feature_dim}-d; rebuilding stale index."
                 )
-            conn.commit()
+                self._drop_model_locked(model_key)
+                index = None
 
-        # Persist FAISS index to disk immediately
-        index_path = f"{self.index_path_base}_{model_key}.faiss"
-        faiss.write_index(index, index_path)
+            if index is None:
+                print(f"Creating new FAISS index for model '{model_key}' with dimension {feature_dim}.")
+                index = faiss.IndexFlatL2(feature_dim)
+
+            # Add vectors to the FAISS index
+            start_index = index.ntotal
+            index.add(features.astype('float32'))
+
+            # Add metadata to SQLite using a short-lived connection
+            with sqlite3.connect(self.db_path) as conn:
+                cur = conn.cursor()
+                for i, item in enumerate(data_items):
+                    faiss_row_index = start_index + i
+                    cur.execute(
+                        "INSERT OR REPLACE INTO features (annotation_id, model_key, faiss_index) VALUES (?, ?, ?)",
+                        (item.annotation.id, model_key, faiss_row_index)
+                    )
+                conn.commit()
+
+            # Persist FAISS index to disk immediately
+            index_path = f"{self.index_path_base}_{model_key}.faiss"
+            faiss.write_index(index, index_path)
 
     def get_features(self, data_items, model_key):
         """
         Retrieves features for given data items and a specific model.
+        Chunks the query to avoid SQLite's SQLITE_MAX_VARIABLE_NUMBER limit (~999).
         """
-        # Get the specific index for this model
-        # Query SQLite using a short-lived connection to find faiss indices
         ids_to_query = [item.annotation.id for item in data_items]
         if not ids_to_query:
             return {}, []
 
-        placeholders = ','.join('?' for _ in ids_to_query)
-        query = (f"SELECT annotation_id, faiss_index FROM features "
-                 f"WHERE model_key=? AND annotation_id IN ({placeholders})")
-        params = [model_key] + ids_to_query
+        # Query in chunks to avoid SQLite bind parameter limits
+        max_bind_params = 900
+        rows = []
 
         with sqlite3.connect(self.db_path) as conn:
             cur = conn.cursor()
-            cur.execute(query, params)
-            rows = cur.fetchall()
+            for start in range(0, len(ids_to_query), max_bind_params):
+                chunk = ids_to_query[start:start + max_bind_params]
+                placeholders = ','.join('?' for _ in chunk)
+                query = (f"SELECT annotation_id, faiss_index FROM features "
+                         f"WHERE model_key=? AND annotation_id IN ({placeholders})")
+                params = [model_key] + chunk
+                cur.execute(query, params)
+                rows.extend(cur.fetchall())
 
         if not rows:
             return {}, data_items
 
         faiss_map = {ann_id: faiss_idx for ann_id, faiss_idx in rows}
 
-        # Load the FAISS index fresh from disk
-        index = self._get_or_load_index(model_key)
-        if index is None:
-            # Index file should exist for these rows; if not, treat as not found
-            return {}, data_items
+        # Load the FAISS index fresh from disk and reconstruct vectors under the
+        # lock so we never read an index file mid-write from a concurrent flush.
+        with self._index_lock:
+            index = self._get_or_load_index(model_key)
+            if index is None:
+                # Index file should exist for these rows; if not, treat as not found
+                return {}, data_items
+
+            faiss_indices = list(faiss_map.values())
+            retrieved_vectors = index.reconstruct_batch(faiss_indices)
 
         found_features = {}
         not_found_items = []
-
-        faiss_indices = list(faiss_map.values())
-
-        retrieved_vectors = index.reconstruct_batch(faiss_indices)
 
         id_to_vector = {ann_id: retrieved_vectors[i] for i, ann_id in enumerate(faiss_map.keys())}
 
@@ -225,17 +275,18 @@ class CacheManager:
         """
         self.close()
 
-        if os.path.exists(self.db_path):
-            try:
-                os.remove(self.db_path)
-                print(f"Deleted feature database: {self.db_path}")
-            except OSError as e:
-                print(f"Error removing database file {self.db_path}: {e}")
+        with self._index_lock:
+            if os.path.exists(self.db_path):
+                try:
+                    os.remove(self.db_path)
+                    print(f"Deleted feature database: {self.db_path}")
+                except OSError as e:
+                    print(f"Error removing database file {self.db_path}: {e}")
 
-        # Use glob to find and delete all matching index files
-        for index_file in glob.glob(f"{self.index_path_base}_*.faiss"):
-            try:
-                os.remove(index_file)
-                print(f"Deleted FAISS index: {index_file}")
-            except OSError as e:
-                print(f"Error removing index file {index_file}: {e}")
+            # Use glob to find and delete all matching index files
+            for index_file in glob.glob(f"{self.index_path_base}_*.faiss"):
+                try:
+                    os.remove(index_file)
+                    print(f"Deleted FAISS index: {index_file}")
+                except OSError as e:
+                    print(f"Error removing index file {index_file}: {e}")

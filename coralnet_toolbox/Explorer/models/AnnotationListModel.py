@@ -239,12 +239,16 @@ class AnnotationItemDelegate(QtWidgets.QStyledItemDelegate):
 
     def editorEvent(self, event, model, option, index):
         # Toggle group on header click
-        # Left-click on header toggles group
+        # Left-click on header toggles group; Ctrl+left-click selects all in group
         try:
             if event.type() == QtCore.QEvent.MouseButtonRelease and event.button() == QtCore.Qt.LeftButton:
                 data = index.data(AnnotationListModel.DataItemRole)
                 if data and data.get('type') == 'header':
                     group_key = data.get('key')
+                    modifiers = QtWidgets.QApplication.keyboardModifiers()
+                    if modifiers & QtCore.Qt.ControlModifier:
+                        self._select_group_annotations(model, group_key)
+                        return True
                     model._group_expanded[group_key] = not model._group_expanded.get(group_key, True)
                     # rebuild using stored grouped items
                     grouped_items = getattr(model, '_grouped_items', [])
@@ -304,3 +308,18 @@ class AnnotationItemDelegate(QtWidgets.QStyledItemDelegate):
         except Exception:
             pass
         return super().editorEvent(event, model, option, index)
+
+    def _select_group_annotations(self, model, group_key):
+        """Select all annotations belonging to the given group."""
+        viewer = getattr(model, 'parent', lambda: None)()
+        if viewer is None:
+            return
+        ids = []
+        for gk, _gc, items in getattr(model, '_grouped_items', []):
+            if gk == group_key:
+                ids.extend(it.annotation.id for it in items)
+                break
+        if ids and hasattr(viewer, 'render_selection_from_ids'):
+            viewer.render_selection_from_ids(set(ids))
+            if hasattr(viewer, 'selection_changed'):
+                viewer.selection_changed.emit(ids)

@@ -5,7 +5,7 @@ import torch
 
 from PyQt5.QtCore import Qt, QPointF, QRectF, QTimer
 from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush
-from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem, QApplication
+from PyQt5.QtWidgets import QGraphicsEllipseItem, QGraphicsRectItem, QApplication
 
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.Annotations.QtAnnotation import RenderMode
@@ -508,9 +508,8 @@ class SAMTool(Tool):
         Handle mouse press events.
         """
         if not self.annotation_window.selected_label:
-            QMessageBox.warning(self.annotation_window,
-                                "No Label Selected",
-                                "A label must be selected before adding an annotation.")
+            self.annotation_window.main_window.status_bar.showMessage(
+                "A label must be selected before adding an annotation.", 4000)
             return
 
         # Get position in scene coordinates
@@ -547,12 +546,8 @@ class SAMTool(Tool):
                 # Add positive point
                 self.positive_points.append(adjusted_pos)
 
-                # Create point graphic
-                point = QGraphicsEllipseItem(scene_pos.x() - 10, scene_pos.y() - 10, 20, 20)
-                pen = QPen(Qt.green)
-                pen.setCosmetic(True)
-                point.setPen(pen)
-                point.setBrush(QColor(Qt.green))
+                # Create point graphic scaled to current zoom level
+                point = self._create_point_graphic(scene_pos, Qt.green)
                 self.annotation_window.scene.addItem(point)
                 self.point_graphics.append(point)
 
@@ -566,12 +561,8 @@ class SAMTool(Tool):
                 # Add negative point
                 self.negative_points.append(adjusted_pos)
 
-                # Create point graphic
-                point = QGraphicsEllipseItem(scene_pos.x() - 10, scene_pos.y() - 10, 20, 20)
-                pen = QPen(Qt.red)
-                pen.setCosmetic(True)
-                point.setPen(pen)
-                point.setBrush(QColor(Qt.red))
+                # Create point graphic scaled to current zoom level
+                point = self._create_point_graphic(scene_pos, Qt.red)
                 self.annotation_window.scene.addItem(point)
                 self.point_graphics.append(point)
 
@@ -998,6 +989,22 @@ class SAMTool(Tool):
                 show_confidence=False
             )
             return annotation
+
+    def _create_point_graphic(self, scene_pos, color):
+        """Create a point graphic ellipse scaled to the current zoom level."""
+        view = self.annotation_window
+        transform = view.transform()
+        scale_factor = max(transform.m11(), transform.m22(), 0.01)
+        radius = 10.0 / scale_factor
+        point = QGraphicsEllipseItem(
+            scene_pos.x() - radius, scene_pos.y() - radius,
+            radius * 2, radius * 2
+        )
+        pen = QPen(color)
+        pen.setCosmetic(True)
+        point.setPen(pen)
+        point.setBrush(QColor(color))
+        return point
 
     def cancel_working_area(self):
         """

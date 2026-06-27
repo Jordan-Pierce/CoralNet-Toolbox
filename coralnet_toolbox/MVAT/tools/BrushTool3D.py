@@ -15,7 +15,6 @@ from time import perf_counter
 import numpy as np
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import QMessageBox
 
 from coralnet_toolbox.MVAT.tools.Tool3D import Tool3D
@@ -54,8 +53,11 @@ class BrushTool3D(Tool3D):
         self.painting:   bool  = False
         self._stroke_label = None
 
-        # Face IDs painted in the current stroke.
-        self._stroke_face_ids = np.empty(0, dtype=np.int32)
+        # Stroke membership mask + per-move chunks. The mask makes per-move
+        # dedupe O(brush chunk); the old setdiff1d/union1d pair re-sorted the
+        # whole accumulated stroke on the main thread every mouse move.
+        self._stroke_mask = None
+        self._stroke_chunks: list = []
         self._last_brush_volume_state = None
 
     # ------------------------------------------------------------------
@@ -104,9 +106,11 @@ class BrushTool3D(Tool3D):
             primary = self._get_primary_mesh()
             self.painting = True
             self._stroke_label = self._get_selected_label()
-            self._stroke_face_ids = np.empty(0, dtype=np.int32)
+            self._begin_stroke_tracking(primary)
             self._last_brush_volume_state = None
-            if primary is not None:
+            if primary is not None and not self._paint_shader_active():
+                # Only the overlay fallback needs the LabelWorker thread; under the
+                # GPU paint shader the stroke commits via the class-id texture write.
                 self.mvat_manager._ensure_label_painter(primary)
             self._apply_brush(world_pos)
         except Exception:
@@ -187,7 +191,11 @@ class BrushTool3D(Tool3D):
                 return
 
             face_ids_arr = np.asarray(face_ids, dtype=np.int32)
-            new_face_ids = np.setdiff1d(face_ids_arr, self._stroke_face_ids, assume_unique=False)
+            mask = self._stroke_mask
+            if mask is not None and face_ids_arr.size and face_ids_arr.max() < mask.size:
+                new_face_ids = face_ids_arr[~mask[face_ids_arr]]
+            else:
+                new_face_ids = face_ids_arr
             if new_face_ids.size == 0:
                 self._last_brush_volume_state = (
                     product_id,
@@ -198,11 +206,22 @@ class BrushTool3D(Tool3D):
                 )
                 return
 
-            self._stroke_face_ids = np.union1d(self._stroke_face_ids, new_face_ids).astype(np.int32, copy=False)
+            if mask is not None and new_face_ids.size and new_face_ids.max() < mask.size:
+                mask[new_face_ids] = True
+            self._stroke_chunks.append(new_face_ids)
 
-            submit_3d_face_paint = getattr(self.mvat_manager, 'submit_3d_face_paint', None)
-            if callable(submit_3d_face_paint):
-                submit_3d_face_paint(
+            # Route to the matching paint path: meshes paint faces, point clouds
+            # paint points. The IDs returned by the brush volume are element IDs
+            # for whichever product type is primary.
+            from coralnet_toolbox.MVAT.core.Products import PointCloudProduct, GaussianSplattingProduct
+            if isinstance(primary, GaussianSplattingProduct):
+                submit_paint = getattr(self.mvat_manager, 'submit_3d_splat_paint', None)
+            elif isinstance(primary, PointCloudProduct):
+                submit_paint = getattr(self.mvat_manager, 'submit_3d_point_paint', None)
+            else:
+                submit_paint = getattr(self.mvat_manager, 'submit_3d_face_paint', None)
+            if callable(submit_paint):
+                submit_paint(
                     new_face_ids,
                     color_rgb,
                     class_id,
@@ -250,6 +269,34 @@ class BrushTool3D(Tool3D):
             return None
         return np.asarray(face_ids, dtype=np.int32)
 
+    def _begin_stroke_tracking(self, primary):
+        """Reset stroke accumulation; (re)allocate the membership mask lazily."""
+        # Safety: clear bits left by an abandoned stroke before reusing the mask.
+        if self._stroke_mask is not None and self._stroke_chunks:
+            for chunk in self._stroke_chunks:
+                valid = chunk[chunk < self._stroke_mask.size]
+                self._stroke_mask[valid] = False
+        self._stroke_chunks = []
+        n_elements = 0
+        try:
+            if primary is not None:
+                n_elements = int(primary.get_element_count())
+        except Exception:
+            n_elements = 0
+
+        if n_elements <= 0:
+            self._stroke_mask = None
+        elif self._stroke_mask is None or self._stroke_mask.size != n_elements:
+            self._stroke_mask = np.zeros(n_elements, dtype=bool)
+        # else: reuse the existing mask — _finish_stroke cleared its set bits.
+
+    def _collect_stroke_face_ids(self) -> np.ndarray:
+        if not self._stroke_chunks:
+            return np.empty(0, dtype=np.int32)
+        if len(self._stroke_chunks) == 1:
+            return self._stroke_chunks[0]
+        return np.concatenate(self._stroke_chunks)
+
     def _finish_stroke(self):
         """
         Finalise the current stroke.  If multi-annotate is on, delegates to
@@ -259,9 +306,10 @@ class BrushTool3D(Tool3D):
         start_time = perf_counter()
         self.painting = False
         self._last_brush_volume_state = None
+        stroke_face_ids = self._collect_stroke_face_ids()
 
         try:
-            if self._stroke_face_ids.size > 0:
+            if stroke_face_ids.size > 0:
                 # 1. Reset the debounce timer instead of flushing instantly.
                 request_flush = getattr(self.mvat_manager, 'request_lazy_flush', None)
                 if callable(request_flush):
@@ -278,11 +326,16 @@ class BrushTool3D(Tool3D):
                     handler = getattr(self.mvat_manager, handler_name, None)
                     if callable(handler):
                         try:
-                            handler(self._stroke_face_ids, selected_label)
+                            handler(stroke_face_ids, selected_label)
                         except Exception as e:
                             pass
         finally:
-            self._stroke_face_ids = np.empty(0, dtype=np.int32)
+            # Clear only the touched mask bits (O(stroke), not O(N)) so the
+            # allocated mask can be reused by the next stroke.
+            if self._stroke_mask is not None and stroke_face_ids.size:
+                valid = stroke_face_ids[stroke_face_ids < self._stroke_mask.size]
+                self._stroke_mask[valid] = False
+            self._stroke_chunks = []
             self._stroke_label = None
             self._refresh_hover_overlay_after_stroke()
 
@@ -330,10 +383,19 @@ class BrushTool3D(Tool3D):
     # ------------------------------------------------------------------
 
     def _get_primary_mesh(self):
+        """Return the primary paintable target (mesh, point cloud OR splat), else None.
+
+        The brush-volume query, KD-tree, and hover overlay all operate on the
+        product's generic ``_element_centers_np`` (face centers for meshes, point
+        coordinates for clouds, splat centres for Gaussian splats), so all three
+        product types are paintable here.
+        """
         try:
-            from coralnet_toolbox.MVAT.core.Products import MeshProduct
+            from coralnet_toolbox.MVAT.core.Products import (
+                MeshProduct, PointCloudProduct, GaussianSplattingProduct
+            )
             product = self.mvat_viewer.scene_context.get_primary_target()
-            if isinstance(product, MeshProduct):
+            if isinstance(product, (MeshProduct, PointCloudProduct, GaussianSplattingProduct)):
                 return product
         except Exception:
             pass
@@ -347,29 +409,6 @@ class BrushTool3D(Tool3D):
             return self.mvat_manager.annotation_window.selected_label
         except Exception:
             return None
-
-    def _resolve_label(self, label):
-        try:
-            mask_annotation = (
-                self.mvat_manager.annotation_window.current_mask_annotation
-            )
-            if mask_annotation is None:
-                return None, None
-
-            class_id = mask_annotation.label_id_to_class_id_map.get(label.id)
-            if class_id is None:
-                mask_annotation.sync_label_map([label])
-                class_id = mask_annotation.label_id_to_class_id_map.get(label.id)
-
-            if class_id is None:
-                return None, None
-
-            from PyQt5.QtGui import QColor
-            c = QColor(label.color)
-            return class_id, (c.red(), c.green(), c.blue())
-
-        except Exception:
-            return None, None
 
     def _calibrate_brush_size(self):
         try:

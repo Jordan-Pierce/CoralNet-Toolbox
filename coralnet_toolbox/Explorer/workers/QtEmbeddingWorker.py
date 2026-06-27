@@ -37,17 +37,19 @@ class EmbeddingPipelineWorker(QThread):
     finished = pyqtSignal(object)  # Results dict
     error = pyqtSignal(str)  # Error message
     
-    def __init__(self, 
+    def __init__(self,
                  data_items,
                  model_name,
                  model_key,
                  embedding_params,
                  cache_manager,
                  feature_extractor_fn,
-                 dim_reduction_fn):
+                 dim_reduction_fn,
+                 on_batch=None,
+                 status_callback=None):
         """
         Initialize the worker.
-        
+
         Args:
             data_items: List of AnnotationDataItem objects
             model_name: Name/path of the feature extraction model
@@ -56,6 +58,9 @@ class EmbeddingPipelineWorker(QThread):
             cache_manager: CacheManager instance for feature caching
             feature_extractor_fn: Callable that extracts features (model_name, data_items) -> features, valid_items
             dim_reduction_fn: Callable that runs dimensionality reduction (features, params) -> embedded_features
+            on_batch: Optional callback fn(items, vectors) for incremental cache writes. If provided, skips
+                      the post-extraction add_features (assumes callback handles it).
+            status_callback: Optional callback fn() to call per-processed item for UI status updates.
         """
         super().__init__()
         self.data_items = data_items
@@ -65,11 +70,22 @@ class EmbeddingPipelineWorker(QThread):
         self.cache_manager = cache_manager
         self.feature_extractor_fn = feature_extractor_fn
         self.dim_reduction_fn = dim_reduction_fn
+        self.on_batch = on_batch
+        self.status_callback = status_callback
         self._cancelled = False
         
     def cancel(self):
         """Request cancellation of the pipeline."""
         self._cancelled = True
+
+    def is_cancelled(self):
+        """Return True if cancellation has been requested.
+
+        Passed into the feature extractor so its inner loops can bail out
+        promptly instead of running to completion (and flushing into the
+        wrong model's cache) after being superseded.
+        """
+        return self._cancelled
         
     def run(self):
         """Execute the pipeline in the background."""
@@ -90,17 +106,21 @@ class EmbeddingPipelineWorker(QThread):
             if items_to_process:
                 self.progress.emit(f"Extracting features for {len(items_to_process)} annotations...")
                 newly_extracted_features, valid_items = self.feature_extractor_fn(
-                    self.model_name, items_to_process
+                    self.model_name, items_to_process, on_batch=self.on_batch,
+                    status_callback=self.status_callback, cancel_check=self.is_cancelled
                 )
-                
+
                 if self._cancelled:
                     return
-                
+
                 if len(newly_extracted_features) > 0:
-                    self.progress.emit("Saving features to cache...")
-                    self.cache_manager.add_features(
-                        valid_items, newly_extracted_features, self.model_key
-                    )
+                    # Only write to cache here if not using incremental callback
+                    # (callback handles flushing if on_batch is provided)
+                    if not self.on_batch:
+                        self.progress.emit("Saving features to cache...")
+                        self.cache_manager.add_features(
+                            valid_items, newly_extracted_features, self.model_key
+                        )
                     for item, vec in zip(valid_items, newly_extracted_features):
                         cached_features[item.annotation.id] = vec
             

@@ -829,33 +829,45 @@ class ExportMaskAnnotations(QDialog):
             self.label_table.selectRow(current_row + 1)
 
     def swap_rows(self, row1, row2):
-        # Because widgets are complex to swap, we just repopulate the table
-        # while preserving the core data (label order). This is simpler and more robust.
-        
-        # Step 1: Extract the core data and checkbox state from the table
-        table_data = []
-        for r in range(self.label_table.rowCount()):
-            is_checked = self.label_table.cellWidget(r, 0).findChild(QCheckBox).isChecked()
-            label_code = self.label_table.item(r, 1).data(Qt.UserRole)
-            table_data.append({'code': label_code, 'checked': is_checked})
+        table = self.label_table
+        col_count = table.columnCount()
 
-        # Step 2: Swap the data for the two rows
-        table_data[row1], table_data[row2] = table_data[row2], table_data[row1]
+        # Extract all state from both rows
+        def extract_row(r):
+            checked = table.cellWidget(r, 0).findChild(QCheckBox).isChecked()
+            label_code = table.item(r, 1).data(Qt.UserRole)
+            label_text = table.item(r, 1).text()
 
-        # Step 3: Map old label order to new order
-        new_label_order = [data['code'] for data in table_data if data['code'] != 'background']
-        
-        def label_sort_key(x):
-            if x.short_label_code in new_label_order:
-                return new_label_order.index(x.short_label_code)
-            else:
-                return float('inf')
-        self.label_window.labels.sort(key=label_sort_key)
+            col2_value = None
+            if self.mask_mode in ['semantic', 'sfm']:
+                col2_value = table.cellWidget(r, 2).value()
+            elif self.mask_mode == 'rgb':
+                swatch = table.cellWidget(r, 2).findChild(ColorSwatchWidget)
+                if swatch:
+                    col2_value = QColor(swatch.color)
+            return {'checked': checked, 'code': label_code, 'text': label_text, 'col2': col2_value}
 
-        # Step 4: Repopulate and restore checkbox states
-        self.populate_label_table()
-        for r, data in enumerate(table_data):
-            self.label_table.cellWidget(r, 0).findChild(QCheckBox).setChecked(data['checked'])
+        data1 = extract_row(row1)
+        data2 = extract_row(row2)
+
+        def apply_row(r, data):
+            table.cellWidget(r, 0).findChild(QCheckBox).setChecked(data['checked'])
+
+            item = table.item(r, 1)
+            item.setText(data['text'])
+            item.setData(Qt.UserRole, data['code'])
+
+            if self.mask_mode in ['semantic', 'sfm']:
+                table.cellWidget(r, 2).setValue(data['col2'])
+            elif self.mask_mode == 'rgb' and data['col2'] is not None:
+                swatch = table.cellWidget(r, 2).findChild(ColorSwatchWidget)
+                if swatch:
+                    swatch.setColor(data['col2'])
+
+        table.blockSignals(True)
+        apply_row(row1, data2)
+        apply_row(row2, data1)
+        table.blockSignals(False)
 
     def update_georef_availability(self):
         """Update georeferencing availability based on file format."""

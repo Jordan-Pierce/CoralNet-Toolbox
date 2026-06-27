@@ -15,7 +15,11 @@ from coralnet_toolbox.MVAT.utils.MVATLogger import (
     label_for_path,
     log_cam_stage,
 )
-from coralnet_toolbox.MVAT.core.Products import MeshProduct, PointCloudProduct
+from coralnet_toolbox.MVAT.core.Products import (
+    MeshProduct,
+    PointCloudProduct,
+    GaussianSplattingProduct,
+)
 
 DEBUG_EXPORT_RGB_INDEX_MAPS = False
 
@@ -40,22 +44,32 @@ class VisibilityWorker(QObject):
     def __init__(self, primary_target, camera_params_dict, compute_depth_maps=True,
                  cache_manager=None, cache_keys_dict=None, target_file_path="", pixel_budget=None,
                  warp_callables_dict=None, dist_coeffs_bytes_dict=None, n_workers=4,
-                 distortion_vram_safety_factor=0.95, frag_face_id_dtype="rgb24", enable_cache=True):
+                 distortion_vram_safety_factor=0.95, enable_cache=True, enable_compression=True,
+                 splat_radius=1, splat_round=False, persistent_rasterizer=None):
         super().__init__()
         self.primary_target = primary_target
+        # Warm GL-context service. Owns the moderngl context on its own thread and
+        # keeps geometry uploaded across runs so incremental camera adds skip the
+        # full context rebuild + geometry re-upload. When None (e.g. standalone
+        # use), run() spins up a private one and shuts it down on exit.
+        self.persistent_rasterizer = persistent_rasterizer
         self.camera_params_dict = camera_params_dict
         self.compute_depth_maps = compute_depth_maps
         self.pixel_budget = pixel_budget
         self.upsample_to_native = True
+        # Point-cloud splatting (GL_POINTS sprite size, render-resolution pixels) and
+        # shape (square vs round disc). Ignored for meshes. Exposed via the visibility dialog.
+        self.splat_radius = splat_radius
+        self.splat_round = splat_round
         self.warp_callables_dict = warp_callables_dict or {}
         # path -> dist_coeffs.tobytes() for distorted cameras; used for cache-key disambiguation
         self.dist_coeffs_bytes_dict = dist_coeffs_bytes_dict or {}
         self.n_workers = n_workers
         self.distortion_vram_safety_factor = distortion_vram_safety_factor
 
-        # Debug: dtype and cache settings for experimentation
-        self.frag_face_id_dtype = frag_face_id_dtype or "rgb24"
+        # Debug: cache settings for experimentation
         self.enable_cache = enable_cache
+        self.enable_compression = enable_compression
 
         # Store cache dependencies
         self.cache_manager = cache_manager
@@ -83,23 +97,110 @@ class VisibilityWorker(QObject):
     def _cam_label(path: str, camera_labels=None, fallback: str = "cam") -> str:
         return label_for_path(path, camera_labels, fallback)
 
-    def _measure_actual_camera_footprint(self, primary_target, first_params, mgl_context):
+    def _build_warp_maps_list(self, paths):
+        """Per-path distortion warp maps for ``compute_batch_visibility_moderngl``.
+
+        Returns a list aligned with ``paths`` of ``(map_x, map_y)`` for distorted
+        cameras (``Raster._map_x/_map_y``) or ``None`` otherwise, so the manager can
+        fuse the warp into the render and skip the separate cv2.remap / grid_sample
+        round-trip. Returns ``None`` when no path is distorted (keeps the fast,
+        non-warp render path untouched).
+        """
+        if not self.warp_callables_dict:
+            return None
+        maps = []
+        any_warp = False
+        for p in paths:
+            fn = self.warp_callables_dict.get(p)
+            if fn is None:
+                maps.append(None)
+                continue
+            try:
+                raster = fn.__self__
+                raster._ensure_warp_maps()
+                maps.append((raster._map_x, raster._map_y))
+                any_warp = True
+            except Exception as e:
+                logger.warning(f"Warp maps unavailable for {self._cam_label(p)}; "
+                               f"rendering undistorted: {e}")
+                maps.append(None)
+        return maps if any_warp else None
+
+    def _compute_visible_indices(self, results: dict, paths: list) -> None:
+        """Populate ``results[p]['visible_indices']`` (sorted unique visible element IDs).
+
+        Used for distorted cameras, whose warp is fused into the render so the manager
+        leaves visible indices uncomputed (``compute_visible_indices=False``). A serial
+        ``np.unique`` over native-resolution maps is ~200 ms/cam (a multi-second
+        per-chunk lull on large batches), so this uses GPU ``torch.unique`` when CUDA
+        is available (~17 ms/cam incl. the re-upload — the same approach the old
+        grid_sample path used) and falls back to a thread-parallel ``np.unique``.
+
+        Note: the manager's GPU coverage pass is deliberately not used here — its
+        buffer scales with element count (~304 MB for a 76M-face mesh), which is
+        slower than unique on the visible pixels for large meshes.
+        """
+        if not paths:
+            return
+        try:
+            import torch
+            use_cuda = torch.cuda.is_available()
+        except Exception:
+            torch = None
+            use_cuda = False
+
+        if use_cuda:
+            try:
+                for p in paths:
+                    idx = results[p].get('index_map')
+                    if idx is None:
+                        continue
+                    t = torch.as_tensor(idx, device='cuda')
+                    results[p]['visible_indices'] = (
+                        torch.unique(t[t >= 0]).to(torch.int32).cpu().numpy()
+                    )
+                    del t
+                return
+            except Exception as e:
+                logger.warning(f"GPU visible-indices failed ({e}); using CPU fallback")
+
+        def _one(p):
+            idx = results[p].get('index_map')
+            if idx is not None:
+                results[p]['visible_indices'] = np.unique(idx[idx >= 0]).astype(np.int32)
+
+        with ThreadPoolExecutor(max_workers=min(8, max(1, len(paths)))) as pool:
+            list(pool.map(_one, paths))
+
+    def _measure_actual_camera_footprint(self, primary_target, first_params,
+                                         warp_map=None):
         """Render the first camera and measure its actual memory footprint.
 
         Returns tuple: (footprint_bytes, result_dict) so we can reuse the render.
+        ``warp_map`` is this camera's ``(map_x, map_y)`` (or None) so its distortion
+        is fused into the render exactly like the main chunk loop. This first
+        render also builds (and warms) the persistent GL context for the geometry.
         """
         import sys
         import gc
         try:
             gc.collect()
 
-            result = VisibilityManager.compute_batch_mesh_visibility_moderngl(
+            result = self.persistent_rasterizer.render(
                 primary_target, [first_params],
                 compute_depth_map=self.compute_depth_maps,
-                compute_visible_indices=False,
+                # When not caching to disk (aggressive recompute mode) the dense map
+                # isn't persisted, so visible_indices can't be re-derived later — we
+                # must compute them now for the context matrix (cheap coverage pass).
+                compute_visible_indices=(warp_map is not None) or (not self.enable_cache),
                 pixel_budget=self.pixel_budget,
-                mgl_context=mgl_context,
-                dtype_override=self.frag_face_id_dtype,
+                # This render is reused as the first camera's real result, so it
+                # must match the main loop — a sub-native map would otherwise be
+                # cached and later indexed with native pixel coords.
+                upsample_to_native=self.upsample_to_native,
+                warp_maps_list=[warp_map] if warp_map is not None else None,
+                splat_radius=self.splat_radius,
+                splat_round=self.splat_round,
             )
 
             if result and len(result) > 0:
@@ -205,12 +306,22 @@ class VisibilityWorker(QObject):
             return 32
 
     def run(self):
+        owns_rasterizer = False
         try:
             import time
             import gc
             import torch
             from collections import defaultdict
             from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            # Fall back to a private warm context if the caller didn't supply one
+            # (keeps the worker self-contained for standalone/test use). When the
+            # manager provides a shared rasterizer, the context survives across
+            # runs; the private one is torn down in finally below.
+            if self.persistent_rasterizer is None:
+                from coralnet_toolbox.MVAT.managers.PersistentRasterizer import PersistentRasterizer
+                self.persistent_rasterizer = PersistentRasterizer()
+                owns_rasterizer = True
 
             # Perspective cameras
             perspective_params = {}
@@ -231,6 +342,9 @@ class VisibilityWorker(QObject):
             # This will hold ONLY the tiny metadata payloads for all cameras
             lightweight_final_results = {}
             element_type = self.primary_target.get_element_type()
+            # Set early so the final wall-time log is always safe, even when a
+            # product type is unsupported or there are no perspective cameras.
+            total_cameras = 0
 
             def _export_mesh_sort_proof():
                 """Optional debug export of RGB index maps for visual proof of correct mesh sorting."""
@@ -288,6 +402,7 @@ class VisibilityWorker(QObject):
                         None,  # Depth maps are now handled lazily on the main thread
                         element_type=result_dict.get('element_type', 'point'),
                         inverted_index=None,
+                        compressed=self.enable_compression,
                         extra_hash_data=extra,
                         pixel_budget=pixel_budget,
                     )
@@ -310,17 +425,22 @@ class VisibilityWorker(QObject):
                                 # Log: cam name (count/total, +time) | batch N/total
                                 log_msg = f"({_cache_saved_count}/{_cache_total_count}, +{elapsed:.3f}s) batch {batch_num}/{total_batches}"
                                 log_cam_stage(self._cam_label(p, camera_labels), log_msg, 0, logger)
+                                self._status(f"Caching maps to disk... ({_cache_saved_count}/{_cache_total_count})")
                         except Exception as exc:
                             logger.warning(f"⚠️ Cache save failed for {self._cam_label(p, camera_labels)}: {exc}")
                 # Snapshot the end-of-saves wall time before any post-save work
                 _cache_wall_end = time.perf_counter()
 
             # ==========================================
-            # STRATEGY A: MESH PROCESSING (CHUNKED)
+            # PERSPECTIVE PIPELINE (meshes + point clouds, CHUNKED)
             # ==========================================
+            # Meshes (TRIANGLES) and point clouds (GL_POINTS) share the SAME chunked
+            # render → distortion → cache → payload loop below; only the moderngl
+            # context differs. Point clouds therefore inherit viewport cropping, the
+            # distortion warp, zero-PCIe CUDA-GL readback and disk caching for free.
             mesh_processing_start = time.perf_counter()
-            if isinstance(self.primary_target, MeshProduct):
-                _export_mesh_sort_proof()
+            if isinstance(self.primary_target, (MeshProduct, PointCloudProduct, GaussianSplattingProduct)):
+                _export_mesh_sort_proof()  # no-op for point clouds
 
                 if perspective_params:
                     paths = list(perspective_params.keys())
@@ -331,24 +451,24 @@ class VisibilityWorker(QObject):
                     sample_w = params_list[0][3]
                     sample_h = params_list[0][4]
 
-                    # Setup ModernGL context for batch rasterization
-                    try:
-                        mgl_context = VisibilityManager.setup_batch_moderngl_context(
-                            self.primary_target, self.pixel_budget, sample_w, sample_h,
-                            dtype_override=self.frag_face_id_dtype,
-                        )
-                        logger.debug("✅ Using moderngl rasterizer (zero-PCIe CUDA-GL path)")
-                    except Exception as _mgl_err:
-                        logger.error("❌ ModernGL unavailable (%s); cannot proceed (VTK removed in Phase 3)", _mgl_err)
-                        raise
+                    # The moderngl context (geometry upload, shader programs, FBO
+                    # cache, CUDA-GL interop) is owned by the PersistentRasterizer
+                    # and built lazily on its dedicated thread by the first render
+                    # below, then reused across chunks and subsequent passes. The
+                    # worker never touches the GL context directly — it submits
+                    # render jobs and receives CPU numpy results.
+                    mgl_context = None
+                    logger.debug("✅ Using moderngl rasterizer (persistent warm context)")
 
                     # Measure actual footprint from first camera to inform chunk size
                     measured_footprint = None
                     first_camera_result = None
                     try:
                         self._status("Measuring camera footprint...")
+                        _first_warp = self._build_warp_maps_list([paths[0]])
                         measured_footprint, first_camera_result = self._measure_actual_camera_footprint(
-                            self.primary_target, params_list[0], mgl_context
+                            self.primary_target, params_list[0],
+                            warp_map=(_first_warp[0] if _first_warp else None),
                         )
                     except Exception as e:
                         logger.warning(f"⚠️ Could not measure actual footprint, using estimation: {e}")
@@ -363,23 +483,24 @@ class VisibilityWorker(QObject):
                             element_type_val = element_type
                             res['element_type'] = element_type_val
 
-                            # Distortion step
+                            # Distortion step — the warp is fused into the render
+                            # (warp_maps_list), so the index map is already distorted
+                            # to native resolution here; we only derive visible indices.
                             if p in self.warp_callables_dict:
                                 try:
-                                    if torch.cuda.is_available():
-                                        # CUDA batch warp would need to be adapted for single result
-                                        # For now, use CPU path
-                                        warp_fn = self.warp_callables_dict[p]
-                                        if res.get('index_map') is not None:
-                                            warped = warp_fn(res['index_map'], border_value=-1)
-                                            res['index_map'] = warped
-                                            valid_mask = warped >= 0
-                                            res['visible_indices'] = np.unique(warped[valid_mask]).astype(np.int32)
-                                            VisibilityManager._normalize_result_dict(res, False)
+                                    idx = res.get('index_map')
+                                    raster = self.warp_callables_dict[p].__self__
+                                    if idx is not None and getattr(raster, '_map_x', None) is None:
+                                        # Rare: warp maps were unavailable at render time, so
+                                        # fusion was skipped — CPU warp, then recompute the
+                                        # visible indices on the warped map.
+                                        res['index_map'] = self.warp_callables_dict[p](idx, border_value=-1)
+                                        res['scale_factor'] = 1.0
+                                        self._compute_visible_indices({p: res}, [p])
+                                    # else: fused → manager already provided visible_indices.
                                 except Exception as e:
-                                    logger.warning(f"Distortion failed for {self._cam_label(p, camera_labels)}: {e}")
-                            else:
-                                VisibilityManager._normalize_result_dict(res, False)
+                                    logger.warning(f"Distortion finalize failed for {self._cam_label(p, camera_labels)}: {e}")
+                            VisibilityManager._normalize_result_dict(res, False)
 
                             # Caching step (can be disabled for debugging)
                             if self.enable_cache and self.cache_manager is not None and self.target_file_path:
@@ -390,6 +511,7 @@ class VisibilityWorker(QObject):
                                         self.dist_coeffs_bytes_dict.get(p), pixel_budget=self.pixel_budget
                                     )
                                     try:
+                                        self._status("Caching maps to disk... (1/1)")
                                         save_start = time.perf_counter()
                                         self.cache_manager.save_visibility(
                                             cache_key, self.target_file_path,
@@ -398,6 +520,7 @@ class VisibilityWorker(QObject):
                                             None,
                                             element_type=res.get('element_type', 'point'),
                                             inverted_index=None,
+                                            compressed=self.enable_compression,
                                             extra_hash_data=self.dist_coeffs_bytes_dict.get(p),
                                             pixel_budget=self.pixel_budget,
                                         )
@@ -406,11 +529,16 @@ class VisibilityWorker(QObject):
                                     except Exception as e:
                                         logger.warning(f"Cache save failed for {self._cam_label(p, camera_labels)}: {e}")
 
-                            # Add to lightweight results
+                            # Add to lightweight results. In aggressive mode (no disk)
+                            # we also ship the dense map so the main thread can seed it
+                            # into the just-computed on-screen camera — avoiding an
+                            # immediate recompute on first hover. cache_path stays None
+                            # so the raster falls through to the recompute provider.
                             lightweight_final_results[p] = {
                                 'cache_path': res.get('cache_path'),
                                 'element_type': res.get('element_type', 'point'),
-                                'visible_indices': res.get('visible_indices')
+                                'visible_indices': res.get('visible_indices'),
+                                'index_map': res.get('index_map') if not self.enable_cache else None,
                             }
 
                             if is_measured:
@@ -434,131 +562,67 @@ class VisibilityWorker(QObject):
                                 self._status(f"Computing 3D maps... (Chunk {i+current}/{total_cameras} at {budget_str})")
 
                             # --- A. RENDER THE CHUNK (ModernGL only) ---
-                            batch_results = VisibilityManager.compute_batch_mesh_visibility_moderngl(
+                            # Distortion is fused into the render. For distorted cameras
+                            # we also ask the manager for visible_indices: with CUDA-GL
+                            # interop these are a free torch.unique on the resident
+                            # readback tensor (no separate CPU pass). Non-distorted
+                            # scenes keep visible_indices off, matching prior behavior.
+                            chunk_warp = self._build_warp_maps_list(chunk_paths)
+                            batch_results = self.persistent_rasterizer.render(
                                 self.primary_target, chunk_params,
                                 compute_depth_map=self.compute_depth_maps,
-                                compute_visible_indices=False,
+                                # See _measure_actual_camera_footprint: aggressive mode
+                                # needs real visible_indices since maps aren't persisted.
+                                compute_visible_indices=(chunk_warp is not None) or (not self.enable_cache),
                                 pixel_budget=self.pixel_budget,
                                 upsample_to_native=self.upsample_to_native,
                                 progress_callback=update_status,
-                                mgl_context=mgl_context,
                                 camera_index_offset=i,
-                                dtype_override=self.frag_face_id_dtype,
+                                warp_maps_list=chunk_warp,
+                                splat_radius=self.splat_radius,
+                                splat_round=self.splat_round,
                             )
                             
                             for p, r in zip(chunk_paths, batch_results):
                                 r['element_type'] = element_type
                                 chunk_results[p] = r
 
-                            # --- B. DISTORTION & NORMALIZATION FOR THE CHUNK ---
+                            # --- B. FINALIZE DISTORTED CAMERAS ---
+                            # The warp is fused into the render above (warp_maps_list),
+                            # so distorted cameras already carry their native-resolution
+                            # warped index/depth maps. Here we only derive visible
+                            # indices; the rare case where fusion was skipped (warp maps
+                            # unavailable at render) falls back to a serial CPU warp.
                             distorted_paths = [p for p in chunk_results if p in self.warp_callables_dict]
                             if distorted_paths:
-                                self._status(f"Applying distortion corrections... (Chunk {i+len(chunk_paths)}/{total_cameras})")
-                                cuda_ok = False
-                                if torch.cuda.is_available():
-                                    try:
-                                        from coralnet_toolbox.Rasters.QtRaster import Raster
-
-                                        groups = defaultdict(list)
-                                        for path in distorted_paths:
-                                            key = self.dist_coeffs_bytes_dict.get(path, id(self.warp_callables_dict[path]))
-                                            groups[key].append(path)
-
-                                        for group_paths in groups.values():
-                                            rep_raster = self.warp_callables_dict[group_paths[0]].__self__
-                                            rep_raster._ensure_warp_maps()
-                                            if not hasattr(rep_raster, '_torch_grid_gpu'):
-                                                dummy = np.zeros((1, 1), dtype=np.float32)
-                                                rep_raster._warp_pytorch_cuda(dummy, 0)
-
-                                            grid_gpu  = rep_raster._torch_grid_gpu
-                                            oob_mask  = rep_raster._torch_oob_mask
-
-                                            # Measure actual VRAM cost using a small test batch
-                                            # This captures both fixed overhead (grid, masks) and per-map cost
-                                            test_paths = group_paths[:min(4, len(group_paths))]
-                                            test_maps = [chunk_results[p]['index_map'] for p in test_paths]
-
-                                            torch.cuda.synchronize()
-                                            torch.cuda.empty_cache()
-                                            vram_before, _ = torch.cuda.mem_get_info()
-
-                                            # Warp small batch to measure realistic VRAM cost
-                                            warped_test, _ = Raster.warp_batch_cuda(
-                                                test_maps, [-1] * len(test_maps), grid_gpu, oob_mask
-                                            )
-
-                                            torch.cuda.synchronize()
-                                            vram_after, _ = torch.cuda.mem_get_info()
-                                            total_vram_used = vram_before - vram_after
-                                            actual_vram_per_map = total_vram_used / len(test_maps)
-
-                                            # Calculate safe batch size based on actual measurement
-                                            free_vram, _ = torch.cuda.mem_get_info()
-                                            safe_vram = free_vram * self.distortion_vram_safety_factor
-                                            vram_batch_size = max(1, int(safe_vram / max(1, actual_vram_per_map)))
-
-                                            logger.debug(
-                                                f"🎯 [VRAM SCALING] Free VRAM: {free_vram / (1024**3):.1f} GB | "
-                                                f"Safe budget (×{self.distortion_vram_safety_factor}): {safe_vram / (1024**3):.1f} GB | "
-                                                f"Test batch: {len(test_maps)} maps = {total_vram_used / (1024**3):.2f} GB | "
-                                                f"Per-map avg: {actual_vram_per_map / (1024**2):.1f} MB | "
-                                                f"VRAM batch size: {vram_batch_size}"
-                                            )
-                                            
-                                            idx_paths = [p for p in group_paths if chunk_results[p].get('index_map') is not None]
-
-                                            for j in range(0, len(idx_paths), vram_batch_size):
-                                                vram_chunk = idx_paths[j:j + vram_batch_size]
-                                                maps = [chunk_results[p]['index_map'] for p in vram_chunk]
-
-                                                chunk_start = time.perf_counter()
-                                                # New API: returns maps AND unique visible indices directly from GPU
-                                                warped_maps, visible_indices_list = Raster.warp_batch_cuda(
-                                                    maps, [-1] * len(vram_chunk), grid_gpu, oob_mask
-                                                )
-                                                chunk_elapsed = time.perf_counter() - chunk_start
-                                                per_cam_elapsed = chunk_elapsed / max(1, len(vram_chunk))
-                                                
-                                                for idx, p in enumerate(vram_chunk):
-                                                    chunk_results[p]['index_map'] = warped_maps[idx]
-                                                    chunk_results[p]['visible_indices'] = visible_indices_list[idx]
-                                                    # Enforce canonical dtypes
-                                                    VisibilityManager._normalize_result_dict(chunk_results[p], False)
-                                                    
-                                                    cam_name = self._cam_label(p, camera_labels)
-                                                    log_cam_stage(cam_name, "Distortion & Normalize", per_cam_elapsed, logger)
-
-                                        cuda_ok = True
-                                    except Exception as e:
-                                        logger.warning(f"CUDA batch warp failed, falling back to CPU: {e}")
-
-                                if not cuda_ok:
-                                    # Fallback to CPU parallel remap and sort
-                                    def _cpu_warp_and_sort(p):
-                                        stage_start = time.perf_counter()
-                                        warp_fn = self.warp_callables_dict[p]
-                                        r = chunk_results[p]
-                                        if r.get('index_map') is not None:
-                                            warped = warp_fn(r['index_map'], border_value=-1)
-                                            r['index_map'] = warped
-                                            valid_mask = warped >= 0
-                                            r['visible_indices'] = np.unique(warped[valid_mask]).astype(np.int32)
-                                            VisibilityManager._normalize_result_dict(r, False)
-                                        elapsed = time.perf_counter() - stage_start
-                                        log_cam_stage(self._cam_label(p, camera_labels), "CPU Warp/Norm", elapsed, logger)
-
-                                    n_workers = min(8, len(distorted_paths))
-                                    with ThreadPoolExecutor(max_workers=n_workers) as pool:
-                                        futs = [pool.submit(_cpu_warp_and_sort, p) for p in distorted_paths]
-                                        for fut in as_completed(futs):
-                                            try:
-                                                fut.result()
-                                            except Exception:
-                                                pass
+                                self._status(f"Finalizing distortion... (Chunk {i+len(chunk_paths)}/{total_cameras})")
+                                # Fused cameras already carry the warped index map AND
+                                # visible_indices (computed in the render). Only the rare
+                                # un-fused case (warp maps unavailable at render time)
+                                # needs a CPU warp + a visible_indices recompute, since
+                                # the manager's were taken on the unwarped map.
+                                unfused = []
+                                for p in distorted_paths:
+                                    r = chunk_results[p]
+                                    idx = r.get('index_map')
+                                    raster = self.warp_callables_dict[p].__self__
+                                    if idx is not None and getattr(raster, '_map_x', None) is None:
+                                        try:
+                                            r['index_map'] = self.warp_callables_dict[p](idx, border_value=-1)
+                                            r['scale_factor'] = 1.0
+                                            unfused.append(p)
+                                        except Exception as e:
+                                            logger.warning(f"CPU warp fallback failed for {self._cam_label(p, camera_labels)}: {e}")
+                                if unfused:
+                                    self._compute_visible_indices(chunk_results, unfused)
+                                for p in distorted_paths:
+                                    VisibilityManager._normalize_result_dict(chunk_results[p], False)
 
                             # --- C. CACHE THE CHUNK ---
-                            if self.cache_manager is not None and self.target_file_path:
+                            # Gated on enable_cache: in aggressive (recompute) mode we
+                            # never touch disk during a session, so cache_path stays
+                            # None and the map is served from RAM / recomputed on demand.
+                            if self.enable_cache and self.cache_manager is not None and self.target_file_path:
                                 self._status(f"Caching chunk to disk...")
                                 for path, res in chunk_results.items():
                                     cache_key = self.cache_keys_dict.get(path)
@@ -575,11 +639,15 @@ class VisibilityWorker(QObject):
                                 )
 
                             # --- D. SAVE LIGHTWEIGHT PAYLOAD ---
+                            # In aggressive mode also ship the dense map (cache_path is
+                            # None) so the main thread can seed on-screen cameras; the
+                            # recompute provider regenerates them after eviction.
                             for path, res in chunk_results.items():
                                 lightweight_final_results[path] = {
                                     'cache_path': res.get('cache_path'),
                                     'element_type': res.get('element_type', 'point'),
-                                    'visible_indices': res.get('visible_indices')
+                                    'visible_indices': res.get('visible_indices'),
+                                    'index_map': res.get('index_map') if not self.enable_cache else None,
                                 }
 
                             # --- E. FLUSH SYSTEM RAM ---
@@ -589,7 +657,7 @@ class VisibilityWorker(QObject):
                             gc.collect()
 
                     except Exception as err:
-                        logger.warning(f"Mesh processing failed: {err}")
+                        logger.warning(f"Perspective visibility processing failed: {err}")
                         raise err
                     finally:
                         if vtk_context is not None:
@@ -597,13 +665,11 @@ class VisibilityWorker(QObject):
                                 vtk_context['plotter'].close()
                             except Exception:
                                 pass
-                        if mgl_context is not None:
-                            try:
-                                for fbo in mgl_context.get('_fbo_cache', {}).values():
-                                    fbo.release()
-                                mgl_context['ctx'].release()
-                            except Exception:
-                                pass
+                        # The GL context is owned by the PersistentRasterizer and
+                        # intentionally NOT released here — it stays warm for reuse
+                        # across chunks and later visibility passes. Lifecycle (LRU
+                        # eviction / shutdown) is handled by the rasterizer; the
+                        # per-call transient PBOs are freed inside the manager.
 
                     # Log the true total cache time after ALL chunks are saved.
                     # Use _cache_wall_end (set inside save_to_disk_task) so the
@@ -615,37 +681,23 @@ class VisibilityWorker(QObject):
                         )
 
             # ==========================================
-            # STRATEGY B: POINT CLOUD (NOT YET CHUNKED)
+            # UNSUPPORTED PRODUCTS (e.g. Gaussian splats)
             # ==========================================
+            # Meshes, point clouds and Gaussian splats are all handled above.
+            # Any other (future) product type that lacks an index-map path simply
+            # produces no maps here.
             else:
-                points_world, element_ids = self._extract_points(self.primary_target)
-
-                if points_world is not None and len(points_world) > 0:
-                    if perspective_params:
-                        paths = list(perspective_params.keys())
-                        params_list = list(perspective_params.values())
-
-                        batch_results = VisibilityManager.compute_batch_point_cloud_visibility(
-                            points_world=points_world,
-                            camera_params_list=params_list,
-                            point_ids=element_ids,
-                            compute_depth_map=False
-                        )
-                        
-                        # Populate lightweight results (Cache logic skipped here for brevity, 
-                        # but follows the same pattern as above)
-                        for p, r in zip(paths, batch_results):
-                            lightweight_final_results[p] = {
-                                'element_type': element_type,
-                                'visible_indices': r.get('visible_indices')
-                            }
+                logger.debug(
+                    f"⚠️ Index mapping not supported for product type "
+                    f"{type(self.primary_target).__name__}; skipping."
+                )
 
             # =================================================================
             # FINAL: Log wall-clock time and emit results
             # =================================================================
             mesh_processing_elapsed = time.perf_counter() - mesh_processing_start
             logger.info(
-                f"⏱️  [MESH PROCESSING WALL TIME] {mesh_processing_elapsed:.2f}s "
+                f"⏱️  [VISIBILITY PROCESSING WALL TIME] {mesh_processing_elapsed:.2f}s "
                 f"({total_cameras} cameras, {mesh_processing_elapsed/max(1, total_cameras):.3f}s per camera avg)"
             )
 
@@ -655,30 +707,18 @@ class VisibilityWorker(QObject):
         except Exception as e:
             self.signals.error.emit(f"{e}\n{traceback.format_exc()}")
         finally:
+            # Tear down a privately-owned rasterizer (releases its warm context on
+            # the owner thread). A manager-provided rasterizer is left alive so its
+            # context stays warm for the next pass.
+            if owns_rasterizer and self.persistent_rasterizer is not None:
+                try:
+                    self.persistent_rasterizer.shutdown()
+                except Exception:
+                    pass
             # Ensure VRAM is cleared if a failure occurred mid-loop
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
-    def _extract_points(self, target):
-        """Helper to extract point arrays for targets."""
-        if isinstance(target, PointCloudProduct):
-            return target.get_points_array(), None
-
-        # Treat mesh products as solid surfaces for face extraction
-        if isinstance(target, MeshProduct):
             try:
-                mesh = target.get_render_mesh()
-
-                if mesh is None:
-                    logger.warning(f"Warning: Geometry not loaded for {target.product_id}")
-                    return None, None
-
-                face_centers = mesh.cell_centers().points
-                face_ids = np.arange(len(face_centers), dtype=np.int32)
-                return face_centers, face_ids
-
-            except Exception as e:
-                logger.warning(f"Warning: Could not extract face centers from {target.product_id}: {e}")
-                return None, None
-
-        return None, None
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass

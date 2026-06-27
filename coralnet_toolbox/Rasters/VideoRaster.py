@@ -305,8 +305,16 @@ class VideoRaster(Raster):
         self._video_width = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self._video_height = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
+        # Next frame index the capture will return without seeking.
+        self._cap_next_idx = 0
+
         self._shim = VideoRasterioShim(self._video_width, self._video_height)
         self._current_frame_idx: int = 0
+
+        # Set of frame indices the user has "starred" as keyframes. Persisted
+        # via to_dict/from_dict so other processes (import, batch inference)
+        # can filter on them.
+        self._keyframes: set = set()
 
         # Thumbnail cache (populated on first call to get_thumbnail)
         self._video_thumbnail: Optional[QImage] = None
@@ -366,22 +374,87 @@ class VideoRaster(Raster):
         return self._video_frame_count
 
     # ------------------------------------------------------------------
+    # Keyframes ("starred" frames)
+    # ------------------------------------------------------------------
+
+    def _clamp_frame_idx(self, frame_idx: int) -> int:
+        """Clamp a frame index into the valid range for this video."""
+        if self._video_frame_count > 0:
+            return max(0, min(int(frame_idx), self._video_frame_count - 1))
+        return max(0, int(frame_idx))
+
+    def add_keyframe(self, frame_idx: int) -> None:
+        """Mark a frame as a keyframe."""
+        self._keyframes.add(self._clamp_frame_idx(frame_idx))
+
+    def remove_keyframe(self, frame_idx: int) -> None:
+        """Unmark a frame as a keyframe (no-op if not set)."""
+        self._keyframes.discard(self._clamp_frame_idx(frame_idx))
+
+    def toggle_keyframe(self, frame_idx: int) -> bool:
+        """Toggle a frame's keyframe state. Returns the new state (True if now starred)."""
+        idx = self._clamp_frame_idx(frame_idx)
+        if idx in self._keyframes:
+            self._keyframes.discard(idx)
+            return False
+        self._keyframes.add(idx)
+        return True
+
+    def is_keyframe(self, frame_idx: int) -> bool:
+        """Return True if the given frame is a keyframe."""
+        return self._clamp_frame_idx(frame_idx) in self._keyframes
+
+    def get_keyframes(self) -> set:
+        """Return a copy of the set of keyframe indices."""
+        return set(self._keyframes)
+
+    # ------------------------------------------------------------------
     # Frame access
     # ------------------------------------------------------------------
+
+    def _read_bgr_at(self, frame_idx: int):
+        """Read one BGR frame, avoiding cv2 seeks when access is sequential.
+
+        cv2.VideoCapture.set(CAP_PROP_POS_FRAMES) forces a keyframe seek and
+        GOP re-decode on most codecs.  Sequential reads (N then N+1) read
+        directly; small forward gaps are skipped with grab(), which decodes
+        but skips the colour-convert/copy; large gaps fall back to a seek.
+        """
+        if not self._cap or not self._cap.isOpened():
+            return None
+
+        next_idx = getattr(self, '_cap_next_idx', None)
+        gap = None if next_idx is None else frame_idx - next_idx
+
+        try:
+            if gap is None or gap < 0 or gap > 30:
+                self._cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+            elif gap > 0:
+                for _ in range(gap):
+                    if not self._cap.grab():
+                        self._cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                        break
+            ret, bgr = self._cap.read()
+        except Exception:
+            self._cap_next_idx = None
+            return None
+
+        if not ret or bgr is None:
+            self._cap_next_idx = None
+            return None
+
+        self._cap_next_idx = frame_idx + 1
+        return bgr
 
     def get_frame(self, frame_idx: int) -> Optional[QImage]:
         """
         Seek to frame_idx, read BGR, update the shim, and return a QImage.
         Returns None on failure.
         """
-        if not self._cap or not self._cap.isOpened():
-            return None
-
         frame_idx = max(0, min(frame_idx, self._video_frame_count - 1))
 
-        self._cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-        ret, bgr = self._cap.read()
-        if not ret or bgr is None:
+        bgr = self._read_bgr_at(frame_idx)
+        if bgr is None:
             return None
 
         self._shim._current_bgr = bgr
@@ -391,13 +464,9 @@ class VideoRaster(Raster):
 
     def get_bgr_frame(self, frame_idx: int) -> Optional[np.ndarray]:
         """Return a raw BGR numpy array for the given frame index."""
-        if not self._cap or not self._cap.isOpened():
-            return None
-
         frame_idx = max(0, min(frame_idx, self._video_frame_count - 1))
-        self._cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-        ret, bgr = self._cap.read()
-        if not ret or bgr is None:
+        bgr = self._read_bgr_at(frame_idx)
+        if bgr is None:
             return None
 
         self._shim._current_bgr = bgr
@@ -543,13 +612,9 @@ class VideoRaster(Raster):
 
     def update_shim_for_frame(self, frame_idx: int):
         """Update the shim's current BGR data without returning a QImage."""
-        if not self._cap or not self._cap.isOpened():
-            return
-
         frame_idx = max(0, min(frame_idx, self._video_frame_count - 1))
-        self._cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-        ret, bgr = self._cap.read()
-        if ret and bgr is not None:
+        bgr = self._read_bgr_at(frame_idx)
+        if bgr is not None:
             self._shim._current_bgr = bgr
             self._current_frame_idx = frame_idx
 
@@ -657,6 +722,7 @@ class VideoRaster(Raster):
         data['raster_type'] = 'VideoRaster'
         data['fps'] = self._video_fps
         data['frame_count'] = self._video_frame_count
+        data['keyframes'] = sorted(self._keyframes)
         return data
 
     @classmethod
@@ -673,6 +739,12 @@ class VideoRaster(Raster):
             # Fallback: at least restore simple state if update_from_dict fails
             state = raster_dict.get('state', {})
             raster.checkbox_state = state.get('checkbox_state', False)
+
+        # Restore keyframes (base update_from_dict does not know about them)
+        try:
+            raster._keyframes = {int(i) for i in raster_dict.get('keyframes', [])}
+        except Exception:
+            raster._keyframes = set()
         return raster
 
     # ------------------------------------------------------------------

@@ -1,7 +1,7 @@
 import warnings
 
 from PyQt5.QtCore import Qt, QPointF
-from PyQt5.QtWidgets import QMessageBox, QApplication
+from PyQt5.QtWidgets import QApplication
 
 from coralnet_toolbox.QtActions import MaskEditAction
 from coralnet_toolbox.Tools.QtTool import Tool
@@ -40,9 +40,8 @@ class FillTool(Tool):
             return
             
         if not self.annotation_window.selected_label:
-            QMessageBox.warning(self.annotation_window,
-                                "No Label Selected",
-                                "A label must be selected before using the fill tool.")
+            self.annotation_window.main_window.status_bar.showMessage(
+                "A label must be selected before using the fill tool.", 4000)
             return
         
         if not self.annotation_window.cursorInWindow(event.pos()):

@@ -37,12 +37,12 @@ def test_single_camera_moderngl():
     t = np.array([0., 0., 3.])
 
     mesh = FakeMesh(n_cells=1024)
-    mgl_ctx = vm.VisibilityManager.setup_batch_moderngl_context(mesh, None, W, H)
+    mgl_ctx = vm.VisibilityManager.setup_batch_mesh_moderngl_context(mesh, None, W, H)
 
     print(f"Mesh faces: {mgl_ctx['n_cells']:,}")
 
     t0 = time.perf_counter()
-    results = vm.VisibilityManager.compute_batch_mesh_visibility_moderngl(
+    results = vm.VisibilityManager.compute_batch_visibility_moderngl(
         mesh, [(K, R, t, W, H)],
         compute_depth_map=True, pixel_budget=None, mgl_context=mgl_ctx,
     )
@@ -90,7 +90,7 @@ def test_batch_rendering():
 
     mesh = FakeMesh(n_cells=1024)
     t0 = time.perf_counter()
-    results = vm.VisibilityManager.compute_batch_mesh_visibility_moderngl(
+    results = vm.VisibilityManager.compute_batch_visibility_moderngl(
         mesh, cameras,
         compute_depth_map=False, pixel_budget=None,
     )
@@ -124,10 +124,10 @@ def test_dual_pass_encoding():
     single_rendered = single_mesh.get_mesh()
     print(f"Mesh: {single_rendered.n_cells} faces")
 
-    single_ctx = vm.VisibilityManager.setup_batch_moderngl_context(single_mesh, None, W, H)
+    single_ctx = vm.VisibilityManager.setup_batch_mesh_moderngl_context(single_mesh, None, W, H)
     print("✅ Using 32-bit integer rendering (single-pass)")
 
-    single_results = vm.VisibilityManager.compute_batch_mesh_visibility_moderngl(
+    single_results = vm.VisibilityManager.compute_batch_visibility_moderngl(
         single_mesh, [(K, R, t, W, H)],
         compute_depth_map=False, pixel_budget=None, mgl_context=single_ctx,
     )
@@ -161,10 +161,10 @@ def test_dual_pass_encoding():
 
     dual_mesh = DualPassMesh(high_res)
 
-    dual_ctx = vm.VisibilityManager.setup_batch_moderngl_context(dual_mesh, None, W, H)
+    dual_ctx = vm.VisibilityManager.setup_batch_mesh_moderngl_context(dual_mesh, None, W, H)
     print(f"ℹ️  Mesh has {n_faces_dual:,} faces (32-bit int rendering supports unlimited face count)")
 
-    dual_results = vm.VisibilityManager.compute_batch_mesh_visibility_moderngl(
+    dual_results = vm.VisibilityManager.compute_batch_visibility_moderngl(
         dual_mesh, [(K, R, t, W, H)],
         compute_depth_map=False, pixel_budget=None, mgl_context=dual_ctx,
     )
@@ -208,7 +208,7 @@ def test_pixel_budget_downsampling():
 
     # Full resolution
     print(f"Full resolution: {W}x{H} = {W*H:,} pixels")
-    results_full = vm.VisibilityManager.compute_batch_mesh_visibility_moderngl(
+    results_full = vm.VisibilityManager.compute_batch_visibility_moderngl(
         mesh, [(K, R, t, W, H)],
         compute_depth_map=False, pixel_budget=None,
     )
@@ -216,7 +216,7 @@ def test_pixel_budget_downsampling():
     # Downsampled (0.25x pixels)
     budget = W * H // 4  # 0.5x linear scale
     print(f"With pixel budget: {budget:,} pixels")
-    results_budget = vm.VisibilityManager.compute_batch_mesh_visibility_moderngl(
+    results_budget = vm.VisibilityManager.compute_batch_visibility_moderngl(
         mesh, [(K, R, t, W, H)],
         compute_depth_map=False, pixel_budget=budget,
     )
@@ -524,14 +524,14 @@ def test_gpu_tensor_readback():
     t = np.array([0., 0., 3.])
 
     mesh = FakeMesh(n_cells=4096)
-    mgl_ctx = vm.VisibilityManager.setup_batch_moderngl_context(mesh, None, W, H)
+    mgl_ctx = vm.VisibilityManager.setup_batch_mesh_moderngl_context(mesh, None, W, H)
 
     print(f"\nMesh: {mesh.get_mesh().n_cells:,} faces")
     print(f"Resolution: {W}×{H} pixels")
     print(f"Cameras: 5 (for averaging)\n")
 
     # Render once to get an FBO
-    results = vm.VisibilityManager.compute_batch_mesh_visibility_moderngl(
+    results = vm.VisibilityManager.compute_batch_visibility_moderngl(
         mesh, [(K, R, t, W, H)],
         compute_depth_map=False, pixel_budget=None, mgl_context=mgl_ctx
     )
@@ -645,7 +645,7 @@ def test_gpu_tensor_scaling(width=4000, height=3000, num_cameras=100):
     t = np.array([0., 0., 5.])
 
     mesh = FakeMesh(n_cells=16384)  # Large mesh
-    mgl_ctx = vm.VisibilityManager.setup_batch_moderngl_context(mesh, None, W, H)
+    mgl_ctx = vm.VisibilityManager.setup_batch_mesh_moderngl_context(mesh, None, W, H)
 
     print(f"\nMesh: {mesh.get_mesh().n_cells:,} faces")
     print(f"Resolution: {W}×{H} pixels ({W*H:,} pixels per camera = {W*H/1e6:.1f}MP)")
@@ -653,7 +653,7 @@ def test_gpu_tensor_scaling(width=4000, height=3000, num_cameras=100):
     print(f"Total data: {W*H*num_cameras/1e9:.2f}GB\n")
 
     # Render once to get a realistic FBO
-    results = vm.VisibilityManager.compute_batch_mesh_visibility_moderngl(
+    results = vm.VisibilityManager.compute_batch_visibility_moderngl(
         mesh, [(K, R, t, W, H)],
         compute_depth_map=False, pixel_budget=None, mgl_context=mgl_ctx
     )
@@ -799,10 +799,10 @@ def test_decode_bottleneck_diagnostic():
     print("📊 Test 1: CUDA-GL Interop (Current Path)")
     print("-" * 70)
     try:
-        mgl_ctx = vm.VisibilityManager.setup_batch_moderngl_context(mesh, None, W, H)
+        mgl_ctx = vm.VisibilityManager.setup_batch_mesh_moderngl_context(mesh, None, W, H)
 
         t0 = time.perf_counter()
-        results = vm.VisibilityManager.compute_batch_mesh_visibility_moderngl(
+        results = vm.VisibilityManager.compute_batch_visibility_moderngl(
             mesh, [(K, R, t, W, H)],
             compute_depth_map=False, pixel_budget=None, mgl_context=mgl_ctx
         )
@@ -834,7 +834,7 @@ def test_moderngl_vs_vtk_speed():
     print("🚀 ModernGL Pathway (32-bit Integer Rendering)")
     print("-" * 70)
     try:
-        mgl_ctx = vm.VisibilityManager.setup_batch_moderngl_context(mesh, None, W, H)
+        mgl_ctx = vm.VisibilityManager.setup_batch_mesh_moderngl_context(mesh, None, W, H)
 
         mgl_times = []
         cameras = [
@@ -847,7 +847,7 @@ def test_moderngl_vs_vtk_speed():
 
         for i, cam in enumerate(cameras, 1):
             t0 = time.perf_counter()
-            mgl_results = vm.VisibilityManager.compute_batch_mesh_visibility_moderngl(
+            mgl_results = vm.VisibilityManager.compute_batch_visibility_moderngl(
                 mesh, [cam], compute_depth_map=False, pixel_budget=None, mgl_context=mgl_ctx
             )
             elapsed = time.perf_counter() - t0

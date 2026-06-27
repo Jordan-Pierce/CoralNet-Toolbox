@@ -33,8 +33,13 @@ def _get_work_areas(raster) -> list:
 
 
 def build_inference_items(image_paths: Iterable[str], raster_manager, inference_type: str,
-                          video_start=0, video_end=None, video_stride=1) -> list[InferenceItem]:
-    """Build a flat list of worker items from selected image or video paths."""
+                          video_start=0, video_end=None, video_stride=1,
+                          keyframes_only=False) -> list[InferenceItem]:
+    """Build a flat list of worker items from selected image or video paths.
+
+    When ``keyframes_only`` is True, video frames are restricted to the
+    raster's keyframe set (still intersected with the start/end/stride range).
+    """
     items: list[InferenceItem] = []
     if raster_manager is None:
         return items
@@ -49,6 +54,10 @@ def build_inference_items(image_paths: Iterable[str], raster_manager, inference_
 
             is_video_raster = getattr(raster, "raster_type", "") == "VideoRaster"
 
+            # Video is always processed per-frame, never tiled: this branch is
+            # checked first so that any per-frame work areas a user drew with the
+            # WorkAreaTool are intentionally ignored for inference. Tiled video
+            # inference is not supported (the shim holds only one frame).
             if is_video_raster:
                 frame_count = int(getattr(raster, "frame_count", 1))
                 start = max(0, int(video_start))
@@ -58,7 +67,17 @@ def build_inference_items(image_paths: Iterable[str], raster_manager, inference_
                 )
                 stride = max(1, int(video_stride))
 
-                for frame_idx in range(start, end + 1, stride):
+                frame_range = range(start, end + 1, stride)
+                if keyframes_only:
+                    try:
+                        keyframes = raster.get_keyframes()
+                    except Exception:
+                        keyframes = set()
+                    frame_iter = sorted(f for f in frame_range if f in keyframes)
+                else:
+                    frame_iter = frame_range
+
+                for frame_idx in frame_iter:
                     virtual_path = make_video_frame_path(raster.image_path, frame_idx)
                     items.append(InferenceItem(
                         batch_key=virtual_path,

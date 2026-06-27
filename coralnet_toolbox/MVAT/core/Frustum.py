@@ -68,7 +68,7 @@ class Frustum:
         self._image_plane_mesh = None
         self._current_scale = None
     
-    def _create_geometry(self, scale=0.1):
+    def _create_geometry(self, scale=0.3):
         """
         Create the geometric meshes (wireframe and image plane) based on camera parameters.
         
@@ -146,21 +146,21 @@ class Frustum:
             [0, 1]   # Top-Left
         ])
 
-    def get_mesh(self, scale=0.1):
+    def get_mesh(self, scale=0.3):
         """Get the geometric frustum wireframe mesh."""
         if self._frustum_mesh is None or self._current_scale != scale:
             self._create_geometry(scale)
             self._current_scale = scale
         return self._frustum_mesh
     
-    def get_image_plane_mesh(self, scale=0.1):
+    def get_image_plane_mesh(self, scale=0.3):
         """Get the geometric image plane mesh with UV coordinates."""
         if self._image_plane_mesh is None or self._current_scale != scale:
             self._create_geometry(scale)
             self._current_scale = scale
         return self._image_plane_mesh
 
-    def create_actor(self, plotter, scale=0.1):
+    def create_actor(self, plotter, scale=0.3):
         """
         Create the wireframe actor for the frustum.
         
@@ -183,7 +183,7 @@ class Frustum:
             
         return self.actors[plotter]
 
-    def create_image_plane_actor(self, plotter, scale=0.1, opacity=0.8):
+    def create_image_plane_actor(self, plotter, scale=0.3, opacity=0.8):
         """
         Create the textured image plane actor.
         
@@ -396,6 +396,10 @@ class BatchedFrustumManager:
         # Current scale for geometry generation
         self._current_scale = None
 
+        # Base (unscaled) points snapshot for hover-scale revert
+        self._base_points: Optional[np.ndarray] = None
+        self._hover_scaled_path: Optional[str] = None
+
     def build_frustum_batch(self,
                             cameras: Dict[str, 'Camera'],
                             scale: float = 0.1) -> Optional[pv.PolyData]:
@@ -410,10 +414,7 @@ class BatchedFrustumManager:
             pv.PolyData: Merged wireframe mesh with 'state' scalar array, or None if empty
         """
         if not cameras:
-            print(f"   🐛 build_frustum_batch: No cameras provided")
             return None
-
-        print(f"   🐛 build_frustum_batch: Processing {len(cameras)} cameras")
 
         self.cameras = cameras
         self.camera_indices.clear()
@@ -429,7 +430,6 @@ class BatchedFrustumManager:
             self.camera_indices[path] = idx
             self.camera_paths.append(path)
 
-            # Get wireframe mesh from frustum (geometry only, no actor creation)
             mesh = camera.frustum.get_mesh(scale)
 
             if mesh is not None:
@@ -440,16 +440,12 @@ class BatchedFrustumManager:
                     self.point_ranges.append((point_offset, point_offset + n_points))
                     point_offset += n_points
                     meshes.append(wireframe_mesh)
-                    print(f"   🐛   Camera {idx}: Created wireframe ({n_points} points)")
                 else:
-                    print(f"   🐛   Camera {idx}: _frustum_to_wireframe_polydata returned None")
                     self.point_ranges.append((point_offset, point_offset))
             else:
-                print(f"   🐛   Camera {idx}: camera.frustum.get_mesh returned None")
                 self.point_ranges.append((point_offset, point_offset))
 
         if not meshes:
-            print(f"   🐛 build_frustum_batch: No meshes generated - returning None")
             self.merged_wireframe = None
             return None
 
@@ -462,6 +458,9 @@ class BatchedFrustumManager:
         # Initialize state array (all default/white)
         n_points = self.merged_wireframe.n_points
         self.merged_wireframe['state'] = np.zeros(n_points, dtype=np.uint8)
+
+        self._base_points = self.merged_wireframe.points.copy()
+        self._hover_scaled_path = None
 
         return self.merged_wireframe
 
@@ -631,6 +630,39 @@ class BatchedFrustumManager:
                 if start < end:
                     self.merged_wireframe['state'][start:end] = STATE_HOVER
 
+        self._apply_hover_scale(hovered_path)
+
+    def _apply_hover_scale(self, hovered_path: Optional[str], scale_factor: float = 2.0):
+        """Scale one camera's frustum corners away from its center for hover emphasis."""
+        if self.merged_wireframe is None or self._base_points is None:
+            return
+
+        if hovered_path == self._hover_scaled_path:
+            return
+
+        # Revert previous hover
+        self.merged_wireframe.points[:] = self._base_points
+
+        self._hover_scaled_path = hovered_path
+        if not hovered_path or hovered_path not in self.camera_indices:
+            return
+
+        idx = self.camera_indices[hovered_path]
+        if idx >= len(self.point_ranges):
+            return
+
+        start, end = self.point_ranges[idx]
+        n = end - start
+        if n < 5:
+            return
+
+        # Each frustum has 5 points: 4 corners then 1 center.
+        # The center is the last point in the group.
+        pts = self.merged_wireframe.points
+        center = pts[start + n - 1].copy()
+        for i in range(start, start + n - 1):
+            pts[i] = center + (pts[i] - center) * scale_factor
+
     def mark_modified(self):
         """Mark the merged mesh as modified to trigger re-render."""
         if self.merged_wireframe is not None:
@@ -659,3 +691,5 @@ class BatchedFrustumManager:
         self.merged_wireframe = None
         self.wireframe_actor = None
         self._current_scale = None
+        self._base_points = None
+        self._hover_scaled_path = None

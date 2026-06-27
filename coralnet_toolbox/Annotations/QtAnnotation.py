@@ -265,7 +265,11 @@ class Annotation(QObject):
         # combination of is_selected + graphics_item_group is None.
         self.render_mode = RenderMode.PHANTOM
         self._signals_connected = False
-        
+        # Cached QPainterPath for the phantom renderer. Invalidated whenever the
+        # graphics item is rebuilt (every geometry mutation funnels through
+        # update_graphics_item in all subclasses).
+        self._cached_painter_path = None
+
     def contains_point(self, point: QPointF) -> bool:
         """Check if the annotation contains a given point."""
         raise NotImplementedError("Subclasses must implement this method.")
@@ -790,6 +794,20 @@ class Annotation(QObject):
         """Get the QPainterPath representation of this annotation."""
         raise NotImplementedError("Subclasses must implement this method.")
 
+    def get_cached_painter_path(self):
+        """Return a cached QPainterPath, building it on first request.
+
+        Consumers that only *read* the shape (the phantom layer) should use this
+        instead of get_painter_path() to avoid rebuilding the path from points on
+        every layer refresh.
+        """
+        if self._cached_painter_path is None:
+            self._cached_painter_path = self.get_painter_path()
+        return self._cached_painter_path
+
+    def invalidate_painter_path(self):
+        self._cached_painter_path = None
+
     def get_rasterization_geometry(self):
         """Get a shapely geometry suitable for rasterizing the annotation.
 
@@ -1142,6 +1160,7 @@ class Annotation(QObject):
 
     def update_graphics_item(self):
         """Update the graphical representation of the annotation."""
+        self.invalidate_painter_path()
         # Try to get the scene from the current group, else do nothing
         scene = None
         try:

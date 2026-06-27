@@ -2,7 +2,7 @@ import warnings
 
 from PyQt5.QtCore import Qt, QRectF
 from PyQt5.QtGui import QMouseEvent, QPen, QColor, QBrush
-from PyQt5.QtWidgets import (QGraphicsRectItem, QMessageBox, QGraphicsPixmapItem)
+from PyQt5.QtWidgets import (QGraphicsRectItem, QGraphicsPixmapItem)
 
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.WorkArea import WorkArea
@@ -394,10 +394,8 @@ class WorkAreaTool(Tool):
         
         # Check if the work area is too small
         if rect.width() < 10 or rect.height() < 10:
-            QMessageBox.warning(
-                self.annotation_window,
-                "Work Area Too Small",
-                "Work area is too small. Please create a larger area."
+            self.annotation_window.main_window.status_bar.showMessage(
+                "Work area is too small. Please create a larger area.", 4000
             )
             self.cancel_drawing()
             return
@@ -468,10 +466,8 @@ class WorkAreaTool(Tool):
         
         # Check if the constrained rectangle is too small
         if viewport_rect.width() < 10 or viewport_rect.height() < 10:
-            QMessageBox.information(
-                self.annotation_window,
-                "Work Area Too Small",
-                "The visible area within the image is too small to create a work area."
+            self.annotation_window.main_window.status_bar.showMessage(
+                "The visible area within the image is too small to create a work area.", 4000
             )
             return
             

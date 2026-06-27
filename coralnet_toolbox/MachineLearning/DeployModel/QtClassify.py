@@ -102,7 +102,12 @@ class Classify(Base):
                 imgsz = 256
 
             self.imgsz = imgsz
-            self.loaded_model(np.zeros((imgsz, imgsz, 3), dtype=np.uint8))
+            # Pass the same device/half the predict paths use: ultralytics
+            # fixes fp16 when the predictor is created and silently rebuilds
+            # the whole predictor on the first call whose device= differs, so
+            # the warmup must match or later half=True calls run in fp32.
+            self.loaded_model(np.zeros((imgsz, imgsz, 3), dtype=np.uint8),
+                              device=self.main_window.device, half=True)
             self.class_names = list(self.loaded_model.names.values())
 
             # Check for unmapped classes

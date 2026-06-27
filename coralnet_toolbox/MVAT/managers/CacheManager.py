@@ -9,11 +9,15 @@ import json
 import hashlib
 import functools
 import numpy as np
-from typing import Optional, Tuple, Dict
+from typing import Optional, Tuple, Dict, Any
 
 from coralnet_toolbox.MVAT.utils.IndexMapCodec import (
     load_index_map_archive,
     save_index_map_archive,
+)
+from coralnet_toolbox.MVAT.utils.FeatureBufferCodec import (
+    load_feature_buffer,
+    save_feature_buffer,
 )
 
 
@@ -56,6 +60,27 @@ def _cached_ortho_md5(ortho_path: str, mesh_path: str,
     if proj_mat_bytes is not None:
         h.update(proj_mat_bytes)
     h.update(native_size_bytes)
+    h.update(element_type.encode('utf-8'))
+    return h.hexdigest()
+
+
+@functools.lru_cache(maxsize=256)
+def _cached_feature_buffer_md5(mesh_path: str, camera_set_bytes: bytes,
+                                model_id: str, compressor_kind: str,
+                                compressor_dim: int, weighting_flags_bytes: bytes,
+                                element_type: str) -> str:
+    """Return the hex MD5 digest for a feature buffer cache key.
+
+    Key components: mesh path, sorted camera extrinsics, feature model_id,
+    compressor kind+dim, weighting flags, and element type.
+    """
+    h = hashlib.md5()
+    h.update(mesh_path.encode('utf-8'))
+    h.update(camera_set_bytes)
+    h.update(model_id.encode('utf-8'))
+    h.update(compressor_kind.encode('utf-8'))
+    h.update(str(compressor_dim).encode('utf-8'))
+    h.update(weighting_flags_bytes)
     h.update(element_type.encode('utf-8'))
     return h.hexdigest()
 
@@ -282,7 +307,6 @@ class CacheManager:
                 index_map,
                 visible_indices,
                 element_type=element_type,
-                depth_map=None,
                 scale_factor=float(scale_factor),
             )
             return cache_path
@@ -330,7 +354,7 @@ class CacheManager:
                         depth_map: Optional[np.ndarray] = None,
                         element_type: str = 'point',
                         inverted_index: Optional[Dict] = None,
-                        compressed: bool = False,
+                        compressed: bool = True,
                         extra_hash_data: Optional[bytes] = None,
                         pixel_budget: Optional[int] = None) -> str:
         """
@@ -350,7 +374,9 @@ class CacheManager:
             extra_hash_data (bytes, optional): Additional bytes mixed into the hash
                 (see _generate_cache_key).
             pixel_budget (int, optional): Render pixel budget that produced this map.
-                See _generate_cache_key for backward-compatibility semantics.
+                Ignored by the cache key (see _generate_cache_key) but persisted in
+                the archive metadata (0 = Native) so later sessions can recover the
+                quality the map was rendered at.
 
         Returns:
             str: Path to the saved cache file
@@ -379,15 +405,27 @@ class CacheManager:
                 index_map,
                 visible_indices,
                 element_type=element_type,
-                depth_map=depth_map,
+                compress=compressed,
+                # Render quality that produced this map. 0 = Native (no budget);
+                # absent in legacy archives, which loaders treat as unknown.
+                pixel_budget=int(pixel_budget) if pixel_budget else 0,
             )
             return cache_path
         except Exception as e:
             print(f"Warning: Failed to save visibility cache to {cache_path}: {e}")
             return None
     
+    def get_features_cache_dir(self) -> str:
+        """Return the directory for per-image feature map caches.
+
+        Sibling of the mvat cache: ``<project_root>/.cache/features/``.
+        """
+        d = os.path.join(self.project_root, '.cache', 'features')
+        os.makedirs(d, exist_ok=True)
+        return d
+
     def clear_cache(self):
-        """Clear all cached visibility data (both .npz and new .npy / .json formats)."""
+        """Clear all cached visibility and feature buffer data."""
         _CACHE_EXTS = ('.npz', '.idx.npy', '.vis.npy', '.dep.npy', '.meta.json')
         if os.path.exists(self.cache_dir):
             for filename in os.listdir(self.cache_dir):
@@ -418,3 +456,117 @@ class CacheManager:
                 total_size += os.path.getsize(file_path)
 
         return file_count, total_size
+
+    def get_feature_buffer_cache_path(self,
+                                       mesh_path: str,
+                                       camera_set_bytes: bytes,
+                                       model_id: str,
+                                       compressor_kind: str,
+                                       compressor_dim: int,
+                                       weighting_flags_bytes: bytes,
+                                       element_type: str = 'face') -> str:
+        """
+        Get the cache path for a feature buffer.
+
+        Args:
+            mesh_path: Path to the 3D mesh file.
+            camera_set_bytes: Concatenated extrinsics from participating cameras.
+            model_id: Feature model identifier (e.g. "facebook/dinov3-vits16-...").
+            compressor_kind: Compressor type ("nn", "pca", etc.).
+            compressor_dim: Output dimensionality D.
+            weighting_flags_bytes: Serialized weighting config (e.g. angle|dist|edge).
+            element_type: Element type ('face' or 'point').
+
+        Returns:
+            str: Full path to the feature buffer cache archive.
+        """
+        cache_key = _cached_feature_buffer_md5(
+            mesh_path,
+            camera_set_bytes,
+            model_id,
+            compressor_kind,
+            compressor_dim,
+            weighting_flags_bytes,
+            element_type,
+        )
+        return os.path.join(self.cache_dir, f"featbuf_{cache_key}.npz")
+
+    def save_feature_buffer(self,
+                            mesh_path: str,
+                            camera_set_bytes: bytes,
+                            model_id: str,
+                            compressor_kind: str,
+                            compressor_dim: int,
+                            weighting_flags_bytes: bytes,
+                            buffer,
+                            element_type: str = 'face') -> Optional[str]:
+        """
+        Save a feature buffer to cache.
+
+        Args:
+            mesh_path, camera_set_bytes, model_id, compressor_kind, compressor_dim,
+                weighting_flags_bytes, element_type: Cache key components.
+            buffer: FeatureBuffer instance.
+
+        Returns:
+            str: Path to the saved cache file, or None on error.
+        """
+        cache_path = self.get_feature_buffer_cache_path(
+            mesh_path,
+            camera_set_bytes,
+            model_id,
+            compressor_kind,
+            compressor_dim,
+            weighting_flags_bytes,
+            element_type,
+        )
+
+        try:
+            os.makedirs(self.cache_dir, exist_ok=True)
+        except Exception as e:
+            print(f"Warning: Failed to create cache directory {self.cache_dir}: {e}")
+            return None
+
+        try:
+            save_feature_buffer(cache_path, buffer, compress=True)
+            return cache_path
+        except Exception as e:
+            print(f"Warning: Failed to save feature buffer cache to {cache_path}: {e}")
+            return None
+
+    def load_feature_buffer(self,
+                             mesh_path: str,
+                             camera_set_bytes: bytes,
+                             model_id: str,
+                             compressor_kind: str,
+                             compressor_dim: int,
+                             weighting_flags_bytes: bytes,
+                             element_type: str = 'face') -> Optional[Any]:
+        """
+        Load a feature buffer from cache if present.
+
+        Args:
+            mesh_path, camera_set_bytes, model_id, compressor_kind, compressor_dim,
+                weighting_flags_bytes, element_type: Cache key components.
+
+        Returns:
+            FeatureBuffer instance if found, None otherwise.
+        """
+        cache_path = self.get_feature_buffer_cache_path(
+            mesh_path,
+            camera_set_bytes,
+            model_id,
+            compressor_kind,
+            compressor_dim,
+            weighting_flags_bytes,
+            element_type,
+        )
+
+        if not os.path.exists(cache_path):
+            return None
+
+        try:
+            return load_feature_buffer(cache_path)
+        except Exception as e:
+            print(f"Warning: Failed to load feature buffer from {cache_path}: {e}")
+            return None

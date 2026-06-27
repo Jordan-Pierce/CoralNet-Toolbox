@@ -1,13 +1,17 @@
 import time
+import threading
 import warnings
 
 import os
+from concurrent.futures import ThreadPoolExecutor
+
+import cv2
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QMutex, QMutexLocker
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QVBoxLayout,
                              QLabel, QDialog, QDialogButtonBox, QGroupBox,
-                             QFormLayout, QComboBox, QHBoxLayout, QCheckBox, QButtonGroup,
-                             QSpinBox, QPushButton)
+                             QFormLayout, QComboBox, QHBoxLayout,
+                             QSpinBox, QPushButton, QTabWidget, QWidget)
 
 from coralnet_toolbox.Icons import get_icon, get_window_icon
 from coralnet_toolbox.Common import ThresholdsWidget
@@ -49,13 +53,17 @@ class BatchInferenceWorker(QThread):
     # Signals
     itemProcessed = pyqtSignal(object)      # emits InferenceResult
     progressUpdated = pyqtSignal(int, int)  # current, total
+    stageChanged = pyqtSignal(str)          # emits a short human-readable status message
     timingSummary = pyqtSignal(object)      # emits aggregate timing dict
     finished = pyqtSignal()
     error = pyqtSignal(str)
 
     def __init__(self, model, items, initial_thresholds,
                  device=None, task='detect', batch_size=16, imgsz=None,
-                 is_semantic=False, sam_enabled=False, parent=None):
+                 is_semantic=False, sam_enabled=False, live_preview=True,
+                 model_call_overrides=None, collapse_classes=False,
+                 result_names=None, supports_tensor_input=True,
+                 parent=None):
         super().__init__(parent)
         self.model = model
         self.items = list(items)
@@ -64,13 +72,33 @@ class BatchInferenceWorker(QThread):
         self._batch_size = max(1, int(batch_size))
         self._imgsz = imgsz
         self._is_semantic = is_semantic
+        # Per-task tweaks for non-YOLO ultralytics models (SAM, YOLOE).  These
+        # all still produce Results objects, so the worker pipeline is shared:
+        #   - model_call_overrides: merged over the default predict() kwargs
+        #     (e.g. visual_prompts=[] for YOLOE, half=False for MobileSAM).
+        #   - collapse_classes: collapse every detected class id to 0 (the
+        #     single-class generators output one logical class).
+        #   - result_names: dict assigned to result.names after inference.
+        #   - supports_tensor_input: SAM/YOLOE preprocess pixels themselves, so
+        #     they take BGR frames rather than the preprocessed BCHW tensor the
+        #     live-preview video path builds for plain YOLO.
+        self._model_call_overrides = dict(model_call_overrides or {})
+        self._collapse_classes = bool(collapse_classes)
+        self._result_names = dict(result_names) if result_names else None
+        self._supports_tensor_input = bool(supports_tensor_input)
         # When SAM is enabled, skip tile→full-image remap in the worker so
         # _apply_sam_to_cache can run SAM on the tile crop (tile-space boxes
         # + tile orig_img) and then remap boxes and masks together afterwards.
         self._sam_enabled = bool(sam_enabled)
+        # Live preview gates the worker on each painted video frame.  When
+        # off, video frames batch like images and previews are throttled.
+        self._live_preview = bool(live_preview)
+        self._last_preview_time = 0.0
         self._is_running = True
         self._waiting_for_ui = False
         self._mutex = QMutex()
+        # Serialises rasterio work-area reads from the decode pool.
+        self._rasterio_lock = threading.Lock()
         self._thresholds = InferenceThresholds.from_mapping(initial_thresholds)
         self._timing = BatchInferenceTiming()
 
@@ -116,6 +144,39 @@ class BatchInferenceWorker(QThread):
             return item.raster.get_work_area_data(item.source, as_format='BGR')
         except Exception:
             return np.zeros((640, 640, 3), dtype=np.uint8)
+
+    def _decode_source_eager(self, item):
+        """Pool-side decode of one NON-VIDEO item to a BGR array.
+
+        Decoding file paths here (instead of inside YOLO's predictor) lets
+        several images decode in parallel and overlap the GPU call for the
+        previous batch.  rasterio handles are not thread-safe, so work-area
+        reads are serialised; they still overlap GPU work.
+        """
+        try:
+            if isinstance(item.source, str):
+                img = cv2.imread(item.source)
+                # Fallback: let YOLO try the path itself (e.g. exotic TIFFs).
+                return img if img is not None else item.source
+            with self._rasterio_lock:
+                return item.raster.get_work_area_data(item.source, as_format='BGR')
+        except Exception:
+            return np.zeros((640, 640, 3), dtype=np.uint8)
+
+    def _batch_bounds(self, i, total):
+        """Exclusive end index of the batch starting at items[i].
+
+        Video items run one at a time (per-frame UI gate); consecutive
+        non-video items batch up to _batch_size.
+        """
+        if self.items[i].is_video and self._live_preview:
+            return i + 1
+        end = i
+        is_video = self.items[i].is_video
+        while (end < min(i + self._batch_size, total)
+               and self.items[end].is_video == is_video):
+            end += 1
+        return max(end, i + 1)
 
     def _decode_video_source(self, item):
         """Decode a video frame into a model-ready tensor and preview QImage."""
@@ -234,9 +295,30 @@ class BatchInferenceWorker(QThread):
 
         return video_input
 
+    def _warmup_model(self):
+        """Run one tiny inference so fuse/compile/cudnn-autotune cost lands
+        before the progress bar starts instead of inside the first batch."""
+        try:
+            kwargs = dict(device=self.device, half=True, verbose=False)
+            if self._imgsz is not None:
+                kwargs["imgsz"] = self._imgsz
+            dummy = np.zeros((32, 32, 3), dtype=np.uint8)
+            list(self.model(dummy, **kwargs))
+        except Exception:
+            pass
+
     def run(self):
         """Inference loop executed on the worker thread."""
         try:
+            # NOTE: do NOT set torch.backends.cudnn.benchmark here.  Ultralytics
+            # predicts with rect=True, so the input tensor shape changes with
+            # every image aspect ratio and batch size; cuDNN then re-runs its
+            # exhaustive autotune per new shape (~10-17 s each on an RTX 5090),
+            # which made batch runs ~200x slower than single-image inference.
+            self._warmup_model()
+            decode_pool = ThreadPoolExecutor(
+                max_workers=min(8, (os.cpu_count() or 4)))
+            prefetch = None  # (start_idx, end_idx, [futures]) for the next batch
             total = len(self.items)
             processed = 0
             i = 0
@@ -264,46 +346,100 @@ class BatchInferenceWorker(QThread):
                 finally:
                     del locker
 
-                # Determine the batch boundary:
-                # - Video items process one at a time (gated) for smooth playback.
-                # - Consecutive non-video items are batched up to _batch_size for throughput.
-                if self.items[i].is_video:
-                    batch_end = i + 1
-                else:
-                    batch_end = i
-                    while (batch_end < min(i + self._batch_size, total)
-                           and not self.items[batch_end].is_video):
-                        batch_end += 1
-                    if batch_end == i:
-                        batch_end = i + 1
-
+                batch_end = self._batch_bounds(i, total)
                 batch = self.items[i:batch_end]
 
-                # Decode each source in the batch (file path, frame, or tile)
+                # Let the UI know what's about to happen, since progressUpdated
+                # only fires once this batch's decode+inference finishes — for
+                # the first batch (or a slow batch) that would otherwise leave
+                # the progress dialog looking stuck at 0.
+                try:
+                    start_name = os.path.basename(batch[0].image_path)
+                except Exception:
+                    start_name = ""
+                self.stageChanged.emit(
+                    f"Running inference {i + 1}-{batch_end} of {total}: {start_name}")
+
+                # Decode the batch.  Non-video batches may already be in
+                # flight from last iteration's prefetch; video frames decode
+                # synchronously here (the VideoCapture is not thread-safe).
                 inputs = []
                 video_q_images = []
                 decode_start = time.perf_counter()
-                for item in batch:
-                    try:
-                        if item.is_video:
+                if batch[0].is_video and self._live_preview and self._supports_tensor_input:
+                    for item in batch:
+                        try:
                             model_input, q_image = self._decode_video_source(item)
                             inputs.append(model_input)
                             video_q_images.append(q_image)
-                        else:
-                            inputs.append(self._decode_source(item))
+                        except Exception:
+                            inputs.append(np.zeros((640, 640, 3), dtype=np.uint8))
                             video_q_images.append(None)
-                    except Exception:
-                        inputs.append(np.zeros((640, 640, 3), dtype=np.uint8))
+                elif batch[0].is_video:
+                    # Fast mode: sequential BGR decode on this thread (the
+                    # capture is not thread-safe), preview at most ~10 Hz.
+                    for item in batch:
+                        bgr = None
+                        try:
+                            bgr = item.raster.get_bgr_frame(item.source)
+                        except Exception:
+                            bgr = None
+                        if bgr is None:
+                            bgr = np.zeros((640, 640, 3), dtype=np.uint8)
+                        inputs.append(bgr)
+                        now = time.monotonic()
+                        if now - self._last_preview_time >= 0.1:
+                            self._last_preview_time = now
+                            try:
+                                from coralnet_toolbox.Rasters.VideoRaster import VideoRaster
+                                video_q_images.append(VideoRaster._bgr_to_qimage(bgr))
+                            except Exception:
+                                video_q_images.append(None)
+                        else:
+                            video_q_images.append(None)
+                else:
+                    futures = None
+                    if (prefetch is not None
+                            and prefetch[0] == i and prefetch[1] == batch_end):
+                        futures = prefetch[2]
+                    if futures is None:
+                        futures = [decode_pool.submit(self._decode_source_eager, item)
+                                   for item in batch]
+                    for future in futures:
+                        try:
+                            inputs.append(future.result())
+                        except Exception:
+                            inputs.append(np.zeros((640, 640, 3), dtype=np.uint8))
                         video_q_images.append(None)
+                prefetch = None
+
+                # Kick off decode of the next batch so it overlaps this
+                # batch's GPU call.
+                if batch_end < total and not self.items[batch_end].is_video:
+                    next_end = self._batch_bounds(batch_end, total)
+                    prefetch = (
+                        batch_end, next_end,
+                        [decode_pool.submit(self._decode_source_eager, item)
+                         for item in self.items[batch_end:next_end]],
+                    )
                 decode_seconds = time.perf_counter() - decode_start
 
                 # Run YOLO on the mini-batch
-                model_source = self._prepare_video_input(inputs[0]) if len(batch) == 1 and batch[0].is_video else inputs
+                # The BCHW tensor path expects RGB from get_frame_for_inference;
+                # fast-mode video uses BGR ndarrays, which YOLO handles itself.
+                use_tensor_path = (len(batch) == 1 and batch[0].is_video
+                                   and self._live_preview
+                                   and self._supports_tensor_input)
+                model_source = self._prepare_video_input(inputs[0]) if use_tensor_path else inputs
                 inference_start = time.perf_counter()
                 _model_kwargs = dict(
                     conf=conf,
                     iou=iou,
                     max_det=max_det,
+                    # Ultralytics defaults to batch=1, which turns a list of N
+                    # images into N sequential inferences; pass the real batch
+                    # size so the GPU sees one batched forward pass.
+                    batch=len(batch),
                     device=self.device,
                     retina_masks=self._is_semantic,
                     half=True,
@@ -313,6 +449,10 @@ class BatchInferenceWorker(QThread):
                 )
                 if self._imgsz is not None:
                     _model_kwargs["imgsz"] = self._imgsz
+                # Per-task overrides last so they win (e.g. YOLOE visual_prompts,
+                # MobileSAM half=False, segment-task retina_masks).
+                if self._model_call_overrides:
+                    _model_kwargs.update(self._model_call_overrides)
                 try:
                     results = list(self.model(model_source, **_model_kwargs))
                 except Exception as e:
@@ -338,6 +478,24 @@ class BatchInferenceWorker(QThread):
                     try:
                         result.path = item.image_path
 
+                        # Single-class generators (SAM, See Anything) emit one
+                        # logical class; collapse every detected class id to 0
+                        # and stamp the project label name.  Done before the
+                        # tile remap / SAM pass so downstream stages see class 0.
+                        if self._collapse_classes:
+                            try:
+                                if result.boxes is not None and len(result.boxes):
+                                    new_data = result.boxes.data.clone()
+                                    new_data[:, 5] = 0
+                                    result.boxes.data = new_data
+                            except Exception:
+                                pass
+                        if self._result_names is not None:
+                            try:
+                                result.names = dict(self._result_names)
+                            except Exception:
+                                pass
+
                         # Remap tile coordinates to full-image space (pure math — thread-safe).
                         # Skipped for semantic: we paint the tile-sized mask at the offset
                         # ourselves in on_item_processed, so orig_shape and masks.data must
@@ -358,6 +516,18 @@ class BatchInferenceWorker(QThread):
                                 task=self._task,
                                 boundary_tolerance=boundary_tolerance,
                             )
+
+                        # Release the full-resolution source pixels unless the
+                        # SAM post-pass needs them.  SAM skips video frames, so
+                        # those can always be freed.  Semantic results are
+                        # consumed immediately in on_item_processed and are
+                        # left untouched here out of caution.
+                        if (not self._is_semantic
+                                and (not self._sam_enabled or item.is_video)):
+                            try:
+                                result.orig_img = None
+                            except Exception:
+                                pass
 
                         # Build a QImage from the raw BGR frame (video items only)
                         q_img = None
@@ -382,7 +552,7 @@ class BatchInferenceWorker(QThread):
                         ))
 
                         # Gate after video frames to prevent queue buildup
-                        if item.is_video:
+                        if item.is_video and self._live_preview:
                             self._waiting_for_ui = True
 
                     except Exception as e:
@@ -407,6 +577,10 @@ class BatchInferenceWorker(QThread):
             import traceback
             traceback.print_exc()
         finally:
+            try:
+                decode_pool.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
             try:
                 self.timingSummary.emit(self._timing.summary())
             except Exception:
@@ -443,7 +617,7 @@ class BatchInferenceDialog(QDialog):
 
         self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowTitle("Batch Inference")
-        self.resize(500, 400)
+        self.resize(500, 500)
         # Keep this dialog on top so users can update highlights while it is open
         try:
             self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
@@ -468,11 +642,32 @@ class BatchInferenceDialog(QDialog):
 
         self.layout = QVBoxLayout(self)
 
-        # Setup layouts in order
+        # Short, lightweight intro line (no heavyweight group box).
         self.setup_info_layout()
+
+        # Two-tab layout: "Settings" holds the model/source-dependent controls
+        # (sections are shown/hidden by _update_visible_sections rather than
+        # greyed out); "Thresholds" holds the threshold widget.
+        self.tabs = QTabWidget()
+
+        self.settings_tab = QWidget()
+        self.settings_layout = QVBoxLayout(self.settings_tab)
+        self.thresholds_tab = QWidget()
+        self.thresholds_layout = QVBoxLayout(self.thresholds_tab)
+
+        self.tabs.addTab(self.settings_tab, "Settings")
+        self.tabs.addTab(self.thresholds_tab, "Thresholds")
+        # Stretch factor 1 so the tab area absorbs extra height; the button
+        # row below keeps its natural size instead of the tabs being truncated.
+        self.layout.addWidget(self.tabs, 1)
+
+        # Setup sections into their respective tabs
         self.setup_options_layout()
         self.setup_task_specific_layout()
         self.setup_thresholds_layout()
+        self.settings_layout.addStretch()
+        self.thresholds_layout.addStretch()
+
         self.setup_buttons_layout()
 
     def _refresh_model_dialog_references(self):
@@ -484,6 +679,7 @@ class BatchInferenceDialog(QDialog):
         self.sam_dialog = getattr(self.main_window, 'sam_deploy_generator_dialog', None)
         self.see_anything_dialog = getattr(self.main_window, 'see_anything_deploy_generator_dialog', None)
         self.z_dialog = getattr(self.main_window, 'z_deploy_model_dialog', None)
+        self.feature_dialog = getattr(self.main_window, 'feature_deploy_model_dialog', None)
 
     def _update_worker_thresholds(self, *args):
         """Safely pass updated global thresholds from MainWindow to the active worker.
@@ -600,20 +796,12 @@ class BatchInferenceDialog(QDialog):
 
     def setup_info_layout(self):
         """
-        Set up the info layout with explanatory text.
+        Set up a single-line intro label (no group box) to keep the dialog compact.
         """
-        group_box = QGroupBox("Information")
-        layout = QVBoxLayout()
-
-        info_label = QLabel(
-            "Perform batch inferencing on the selected images. "
-        )
+        info_label = QLabel("Perform batch inferencing on the selected rasters.")
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
-        layout.addWidget(info_label)
-
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
+        self.layout.addWidget(info_label)
 
     def setup_options_layout(self):
         """
@@ -657,24 +845,14 @@ class BatchInferenceDialog(QDialog):
         )
         form_layout.addRow("Batch Size:", self.batch_size_spin)
 
-        group_box.setLayout(form_layout)
-        self.layout.addWidget(group_box)
-
-    def setup_inference_layout(self):
-        """
-        Set up the inference type selection dropdown.
-        """
-        group_box = QGroupBox("Inference Type")
-        form_layout = QFormLayout()
-
-        self.inference_type_combo = QComboBox()
-        self.inference_type_combo.addItem("Standard")
-        self.inference_type_combo.addItem("Tiled")
-        self.inference_type_combo.currentTextChanged.connect(self.on_inference_type_changed)
-        form_layout.addRow("Type:", self.inference_type_combo)
+        # Keep handles on the rows that are hidden for some models so
+        # _update_visible_sections can show/hide them per task.
+        self._options_form = form_layout
+        self.save_annotations_combo_label = form_layout.labelForField(self.save_annotations_combo)
+        self.batch_size_spin_label = form_layout.labelForField(self.batch_size_spin)
 
         group_box.setLayout(form_layout)
-        self.layout.addWidget(group_box)
+        self.settings_layout.addWidget(group_box)
 
     def setup_thresholds_layout(self):
         """
@@ -692,7 +870,7 @@ class BatchInferenceDialog(QDialog):
             show_area=True,
             title="Thresholds"
         )
-        self.layout.addWidget(self.thresholds_widget)
+        self.thresholds_layout.addWidget(self.thresholds_widget)
 
     def setup_task_specific_layout(self):
         """
@@ -702,29 +880,28 @@ class BatchInferenceDialog(QDialog):
         """
         # Create a group box for Classify-specific annotation options
         group_box = QGroupBox("Classify Options")
-        layout = QVBoxLayout()
+        layout = QFormLayout()
 
-        # Create a button group for the annotation checkboxes
-        annotation_options_group = QButtonGroup(self)
+        # Mutually-exclusive True/False dropdowns (replaces the old radio checkboxes)
+        self.review_combo = QComboBox()
+        self.review_combo.addItems(["True", "False"])
+        self.review_combo.setCurrentText("True")
+        self.review_combo.setToolTip("Run Classify on Review annotations")
+        layout.addRow("Predict Review Annotations:", self.review_combo)
 
-        # Add the checkboxes to the button group
-        self.review_checkbox = QCheckBox("Predict Review Annotation")
-        self.all_checkbox = QCheckBox("Predict All Annotations")
-        annotation_options_group.addButton(self.review_checkbox)
-        annotation_options_group.addButton(self.all_checkbox)
+        self.all_combo = QComboBox()
+        self.all_combo.addItems(["True", "False"])
+        self.all_combo.setCurrentText("False")
+        self.all_combo.setToolTip("Run Classify on all annotations")
+        layout.addRow("Predict All Annotations:", self.all_combo)
 
-        # Ensure only one checkbox can be checked at a time
-        annotation_options_group.setExclusive(True)
-        # Set the default checkbox
-        self.review_checkbox.setChecked(True)
-
-        # Build the annotation layout
-        layout.addWidget(self.review_checkbox)
-        layout.addWidget(self.all_checkbox)
+        # Keep the two options mutually exclusive, like the old radio checkboxes
+        self.review_combo.currentTextChanged.connect(self._on_review_combo_changed)
+        self.all_combo.currentTextChanged.connect(self._on_all_combo_changed)
 
         group_box.setLayout(layout)
         self.task_specific_group = group_box
-        self.layout.addWidget(group_box)
+        self.settings_layout.addWidget(group_box)
 
         # --- Video-specific options (Start / End / Stride) ---
         video_box = QGroupBox("Video Options")
@@ -759,17 +936,35 @@ class BatchInferenceDialog(QDialog):
         self.video_stride_spin.setValue(1)
         stride_h.addWidget(self.video_stride_spin)
 
+        # Live preview toggle — False trades the per-frame canvas
+        # preview for batched GPU inference (much faster on long ranges).
+        self.live_preview_combo = QComboBox()
+        self.live_preview_combo.addItems(["True", "False"])
+        self.live_preview_combo.setCurrentText("True")
+        self.live_preview_combo.setToolTip("Set to False for max speed (no per-frame preview)")
+
+        # Keyframes-only filter: restrict inference to frames the user starred
+        self.video_keyframes_combo = QComboBox()
+        self.video_keyframes_combo.addItems(["True", "False"])
+        self.video_keyframes_combo.setCurrentText("False")
+        self.video_keyframes_combo.setToolTip(
+            "Set to True to restrict inference to frames marked as keyframes "
+            "(within the range/stride above)"
+        )
+
         # Reset button
         self.reset_video_range_btn = QPushButton("Reset to Full Video")
 
         video_layout.addRow("Start Frame:", start_h)
         video_layout.addRow("End Frame:", end_h)
         video_layout.addRow("Every N Frames:", stride_h)
+        video_layout.addRow("Keyframes Only:", self.video_keyframes_combo)
+        video_layout.addRow("Live Preview:", self.live_preview_combo)
         video_layout.addRow("", self.reset_video_range_btn)
 
         video_box.setLayout(video_layout)
         self.video_group = video_box
-        self.layout.addWidget(video_box)
+        self.settings_layout.addWidget(video_box)
 
         # Connect handlers
         try:
@@ -877,6 +1072,8 @@ class BatchInferenceDialog(QDialog):
             self.model_dialogs["See Anything"] = self.see_anything_dialog
         if self.z_dialog and getattr(self.z_dialog, "loaded_model", None):
             self.model_dialogs["Z-Inference"] = self.z_dialog
+        if self.feature_dialog and getattr(self.feature_dialog, "loaded_model", None):
+            self.model_dialogs["Feature"] = self.feature_dialog
 
         self.update_model_combo()
 
@@ -951,27 +1148,54 @@ class BatchInferenceDialog(QDialog):
             # Save the selected model for later
             self.current_selected_model = selected_model
             self.update_thresholds_for_model(selected_model)
-            
-            # Enable only for Classify; otherwise keep the group visible but
-            # disabled so users can see options but not interact with them.
-            if selected_model == "Classify":
-                self.task_specific_group.setVisible(True)
-                self.task_specific_group.setEnabled(True)
-                # Disable inference type dropdown for Classify model
-                self.inference_type_combo.setEnabled(False)
+
+            # Drive section visibility and the Type combo from (task x source).
+            self._update_visible_sections()
+
+    def _update_visible_sections(self):
+        """Show only the controls that apply to the current model and source.
+
+        Sections are shown/hidden (not greyed) based on:
+          - the selected model (Classify / Detect / Semantic / ...), and
+          - whether any highlighted raster is a VideoRaster.
+
+        This is the single place that decides dialog layout, so it is safe to
+        call from both on_model_changed and update_highlighted_images.
+        """
+        model = getattr(self, 'current_selected_model', None)
+
+        # --- Task-specific (Classify) block: only relevant for Classify ---
+        is_classify = (model == "Classify")
+        if hasattr(self, 'task_specific_group'):
+            self.task_specific_group.setVisible(is_classify)
+            self.task_specific_group.setEnabled(is_classify)
+
+        # --- Save Annotations / Batch Size: hidden for models that ignore them ---
+        # Z-Inference and Feature manage their own output; Classify writes
+        # directly, so the worker-oriented controls don't apply to them.
+        wants_worker_opts = model in ("Detect", "Segment", "Semantic", "SAM", "See Anything")
+        if hasattr(self, 'save_annotations_combo'):
+            self.save_annotations_combo.setVisible(wants_worker_opts)
+            if getattr(self, 'save_annotations_combo_label', None):
+                self.save_annotations_combo_label.setVisible(wants_worker_opts)
+        if hasattr(self, 'batch_size_spin'):
+            self.batch_size_spin.setVisible(wants_worker_opts)
+            if getattr(self, 'batch_size_spin_label', None):
+                self.batch_size_spin_label.setVisible(wants_worker_opts)
+
+        # --- Video block: only when at least one highlighted raster is video ---
+        has_video = self._highlighted_has_video()
+        if hasattr(self, 'video_group'):
+            self.video_group.setVisible(has_video)
+
+        # --- Type combo: tiling only applies to image rasters on tiling models.
+        # VideoRaster has no "Tiled" option, so force Standard and grey it out.
+        model_supports_tiling = model not in ("Classify", "Z-Inference", "Feature")
+        type_enabled = model_supports_tiling and not has_video
+        if hasattr(self, 'inference_type_combo'):
+            if not type_enabled and self.inference_type_combo.currentText() != "Standard":
                 self.inference_type_combo.setCurrentText("Standard")
-            elif selected_model == "Z-Inference":
-                # Keep annotation/classify options visible but disabled for Z-Inference
-                self.task_specific_group.setVisible(True)
-                self.task_specific_group.setEnabled(False)
-                self.inference_type_combo.setEnabled(False)
-                self.inference_type_combo.setCurrentText("Standard")
-            else:
-                # Show group but grey it out for non-Classify models
-                self.task_specific_group.setVisible(True)
-                self.task_specific_group.setEnabled(False)
-                # Enable inference type dropdown for other models
-                self.inference_type_combo.setEnabled(True)
+            self.inference_type_combo.setEnabled(type_enabled)
     
     def on_inference_type_changed(self, inference_type):
         """
@@ -1014,8 +1238,8 @@ class BatchInferenceDialog(QDialog):
                 enable_iou=True,
                 enable_area=True
             )
-        # Z-Inference doesn't use any thresholds
-        elif model_name == "Z-Inference":
+        # Z-Inference and Feature don't use any thresholds
+        elif model_name in ("Z-Inference", "Feature"):
             self.configure_thresholds(
                 enable_max_detections=False,
                 enable_uncertainty=False,
@@ -1116,6 +1340,23 @@ class BatchInferenceDialog(QDialog):
         # Return the highlighted images provided at initialization
         return self.highlighted_images
 
+    def _highlighted_has_video(self):
+        """Return True if any highlighted raster is a VideoRaster."""
+        try:
+            raster_manager = getattr(self.image_window, 'raster_manager', None)
+            if raster_manager is None:
+                return False
+            for p in self.highlighted_images:
+                try:
+                    raster = raster_manager.get_raster(p)
+                except Exception:
+                    continue
+                if raster is not None and getattr(raster, 'raster_type', '') == 'VideoRaster':
+                    return True
+        except Exception:
+            pass
+        return False
+
     def update_highlighted_images(self, image_paths):
         """Update the dialog's highlighted image list and refresh the status label.
 
@@ -1149,7 +1390,8 @@ class BatchInferenceDialog(QDialog):
                     pass
                 else:
                     if vcount == 0:
-                        self.video_group.setEnabled(False)
+                        # Group is hidden entirely by _update_visible_sections.
+                        pass
                     elif vcount == 1:
                         self.video_group.setEnabled(True)
                         # enable controls
@@ -1189,6 +1431,9 @@ class BatchInferenceDialog(QDialog):
                 self.update_status_label_for_tiled()
             else:
                 self.update_status_label()
+
+            # Source changed → re-evaluate which sections apply (e.g. Video).
+            self._update_visible_sections()
         except Exception:
             # Swallow errors to avoid noisy exceptions from signal handlers
             pass
@@ -1202,6 +1447,16 @@ class BatchInferenceDialog(QDialog):
             self.video_start_spin.setValue(int(idx))
         except Exception:
             pass
+
+    def _on_review_combo_changed(self, text):
+        """Keep the Review/All annotation dropdowns mutually exclusive."""
+        if text == "True" and self.all_combo.currentText() == "True":
+            self.all_combo.setCurrentText("False")
+
+    def _on_all_combo_changed(self, text):
+        """Keep the Review/All annotation dropdowns mutually exclusive."""
+        if text == "True" and self.review_combo.currentText() == "True":
+            self.review_combo.setCurrentText("False")
 
     def _on_save_annotations_changed(self, text):
         """Handler for the Save Annotations combobox.
@@ -1377,7 +1632,8 @@ class BatchInferenceDialog(QDialog):
                     pass
 
     def _build_inference_items(self, image_paths, inference_type,
-                               video_start=0, video_end=None, video_stride=1):
+                               video_start=0, video_end=None, video_stride=1,
+                               keyframes_only=False):
         """Build a flat list of InferenceItem objects from the selected image paths.
 
         Handles three source types:
@@ -1396,6 +1652,7 @@ class BatchInferenceDialog(QDialog):
             video_start=video_start,
             video_end=video_end,
             video_stride=video_stride,
+            keyframes_only=keyframes_only,
         )
 
     def _start_worker_task(self, task_runner, progress_bar):
@@ -1450,6 +1707,7 @@ class BatchInferenceDialog(QDialog):
 
         self._batch_worker.itemProcessed.connect(self.on_item_processed)
         self._batch_worker.progressUpdated.connect(self._on_worker_progress)
+        self._batch_worker.stageChanged.connect(self._on_worker_stage)
         self._batch_worker.timingSummary.connect(self._on_worker_timing_summary)
         self._batch_worker.error.connect(
             lambda msg: print(f"BatchInferenceWorker error: {msg}"))
@@ -1503,6 +1761,15 @@ class BatchInferenceDialog(QDialog):
 
         self._active_model_dialog = model_dialog
 
+        # The progress bar runs modally on the main thread; hide this dialog so
+        # only the progress bar (and the live canvas preview) are visible while
+        # processing. Every completion path calls accept()/cleanup(), so the
+        # dialog never needs to be re-shown.
+        try:
+            self.hide()
+        except Exception:
+            pass
+
         try:
             from coralnet_toolbox.Results import ResultsProcessor
             self._results_processor = ResultsProcessor(
@@ -1526,9 +1793,40 @@ class BatchInferenceDialog(QDialog):
         self._active_batch_task = task_runner
         worker_started = False
 
+        # Let the task finalize model-dialog state (class_mapping, task, imgsz,
+        # VPE prompts) before the results processor / worker are built.  A
+        # False return aborts cleanly (e.g. See Anything without a reference).
         try:
-            # ── Detect / Segment → unified async worker ───────────────────────
-            if selected_model in ("Detect", "Segment"):
+            setup_ok = task_runner.setup_model_dialog()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Model setup failed: {str(e)}")
+            setup_ok = False
+        if not setup_ok:
+            QApplication.restoreOverrideCursor()
+            try:
+                progress_bar.close()
+            except Exception:
+                pass
+            try:
+                self.show()
+            except Exception:
+                pass
+            return
+
+        # Rebuild the results processor now that class_mapping is finalized
+        # (SAM / See Anything set theirs in setup_model_dialog above).
+        try:
+            from coralnet_toolbox.Results import ResultsProcessor
+            self._results_processor = ResultsProcessor(
+                self.main_window,
+                getattr(model_dialog, 'class_mapping', {}) or {},
+            )
+        except Exception:
+            pass
+
+        try:
+            # ── Detect / Segment / Semantic / SAM / See Anything → unified async worker ──
+            if selected_model in ("Detect", "Segment", "Semantic", "SAM", "See Anything"):
                 worker_started = self._start_worker_task(task_runner, progress_bar)
                 return  # _on_worker_finished drives everything from here
 
@@ -1540,22 +1838,6 @@ class BatchInferenceDialog(QDialog):
                     except Exception:
                         pass
                     return
-
-            # ── Semantic → unified async worker (same path as Detect/Segment) ───
-            elif selected_model == "Semantic":
-                worker_started = self._start_worker_task(task_runner, progress_bar)
-                return  # _on_worker_finished drives everything from here
-
-            # ── SAM / See Anything ────────────────────────────────────────────
-            elif selected_model in ("SAM", "See Anything"):
-                # These dialogs manage their own progress bars; close the batch one first
-                try:
-                    progress_bar.finish_progress()
-                    progress_bar.stop_progress()
-                    progress_bar.close()
-                except Exception:
-                    pass
-                model_dialog.predict(self.image_paths)
 
             # ── Z-Inference ───────────────────────────────────────────────────
             elif selected_model == "Z-Inference":
@@ -1571,6 +1853,15 @@ class BatchInferenceDialog(QDialog):
                     self.image_paths, progress_bar,
                     overwrite_mode=overwrite_mode, show_dialog=False,
                 )
+
+            # ── Feature ───────────────────────────────────────────────────────
+            elif selected_model == "Feature":
+                if not task_runner.run(progress_bar):
+                    try:
+                        progress_bar.close()
+                    except Exception:
+                        pass
+                    return
 
             else:
                 raise ValueError(f"Unknown model type: {selected_model}")
@@ -1592,6 +1883,12 @@ class BatchInferenceDialog(QDialog):
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Batch inference failed: {str(e)}")
+            # The dialog was hidden before processing; re-show it on failure so
+            # the user isn't left with an orphaned hidden window.
+            try:
+                self.show()
+            except Exception:
+                pass
         finally:
             QApplication.restoreOverrideCursor()
             if not worker_started:
@@ -1612,6 +1909,16 @@ class BatchInferenceDialog(QDialog):
             if getattr(pb, 'max_value', None) != total:
                 pb.start_progress(total)
             pb.set_value(current)
+        except Exception:
+            pass
+
+    def _on_worker_stage(self, text):
+        """Update the progress dialog's message label with the current stage (main thread)."""
+        try:
+            pb = getattr(self, '_progress_bar', None)
+            if pb is not None and hasattr(pb, 'message_label'):
+                pb.message_label.setText(text)
+                QApplication.processEvents()
         except Exception:
             pass
 
@@ -1686,6 +1993,29 @@ class BatchInferenceDialog(QDialog):
                         # Video frames: create a temporary MaskAnnotation to produce a colored QImage,
                         # store it in the annotation window cache keyed by the virtual path.
                         if inf_result.is_video:
+                            # The live-preview decode path runs the model on a
+                            # preprocessed (e.g. 1024x1024) tensor, so retina_masks /
+                            # results.orig_shape yield a mask at MODEL resolution, not
+                            # the native frame size. The shared per-frame edit buffer
+                            # (vr.mask_annotation.mask_data) is native-resolution, so a
+                            # mismatched mask_arr is silently dropped by the shape guard
+                            # in _restore_video_frame_mask_data — the cached prediction
+                            # never becomes editable and the first brush stroke wipes it.
+                            # Resize to native frame size so cache, overlay and edit
+                            # buffer all agree. (Fast/BGR mode already matches.)
+                            if (reconstructed is not None and reconstructed.size
+                                    and raster is not None):
+                                try:
+                                    target_h = int(raster.height)
+                                    target_w = int(raster.width)
+                                    if reconstructed.shape[:2] != (target_h, target_w):
+                                        import cv2 as _cv2
+                                        reconstructed = _cv2.resize(
+                                            reconstructed, (target_w, target_h),
+                                            interpolation=_cv2.INTER_NEAREST,
+                                        )
+                                except Exception:
+                                    pass
                             if save and reconstructed is not None and reconstructed.size:
                                 try:
                                     if MaskAnnotation is not None:
@@ -1697,6 +2027,7 @@ class BatchInferenceDialog(QDialog):
                                             rasterio_src=None,
                                         )
                                         # Make a deep copy of the QImage so we can drop tmp_mask safely
+                                        tmp_mask._ensure_canvas()
                                         qimg_copy = tmp_mask.qimage.copy() if tmp_mask.qimage is not None else None
                                         opacity = tmp_mask.get_current_transparency() / 255.0 if tmp_mask.qimage is not None else 1.0
                                     else:
@@ -1802,7 +2133,10 @@ class BatchInferenceDialog(QDialog):
                 # _prepare_scene_for_streaming cleared the scene.  They reload
                 # correctly via _display_video_frame when inference pauses/stops.
                 try:
-                    if getattr(aw, '_base_image_item', None) is not None:
+                    live = (getattr(self, 'live_preview_combo', None) is None
+                            or self.live_preview_combo.currentText() == "True")
+                    if ((live or inf_result.q_image is not None)
+                            and getattr(aw, '_base_image_item', None) is not None):
                         paths_data = []
                         if inf_result.yolo_result is not None:
                             model_type = getattr(self._active_model_dialog, 'task', 'detect')
@@ -1942,7 +2276,13 @@ class BatchInferenceDialog(QDialog):
         sam_pb.start_progress(len(image_paths_for_sam))
         QApplication.processEvents()
 
+        images_since_cleanup = 0
         for path in image_paths_for_sam:
+            try:
+                sam_pb.message_label.setText(f"Applying SAM: {os.path.basename(str(path))}")
+            except Exception:
+                pass
+
             cached = cache.get(path) or []
             if not cached:
                 sam_pb.update_progress()
@@ -2034,12 +2374,19 @@ class BatchInferenceDialog(QDialog):
                 # make a second attempt; do not lose data on a failure path.
                 cache[path] = updated
             finally:
-                _gc.collect()
-                _empty_cache()
+                # Full GC + CUDA allocator flush are expensive (each forces a
+                # device sync); amortise them instead of paying per image.
+                images_since_cleanup += 1
+                if images_since_cleanup >= 25:
+                    images_since_cleanup = 0
+                    _gc.collect()
+                    _empty_cache()
 
             sam_pb.update_progress()
             QApplication.processEvents()
 
+        _gc.collect()
+        _empty_cache()
         sam_pb.close()
 
     def _bake_cached_annotations(self):
@@ -2143,6 +2490,11 @@ class BatchInferenceDialog(QDialog):
             _last_pump = time.monotonic()
 
             for path, cached_results in cache.items():
+                try:
+                    bake_pb.message_label.setText(f"Saving annotations: {os.path.basename(str(path))}")
+                except Exception:
+                    pass
+
                 # Skip non-Results overlay entries (e.g., dict overlays for masks)
                 if not isinstance(cached_results, dict):
                     # Normalise: images store lists, video frames store single Results objects

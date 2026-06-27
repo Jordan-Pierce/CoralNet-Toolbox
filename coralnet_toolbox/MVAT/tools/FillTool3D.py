@@ -1,0 +1,255 @@
+"""
+FillTool3D — flood-fill tool for 3D mesh UV segments.
+
+Uses pre-computed UV texture segments (superpixels) to instantly fill entire
+connected regions with a single click. Segments are computed via PyVista's
+connectivity filter over vertices that share UV coordinates — the UV seams
+create natural segment boundaries.
+"""
+
+import numpy as np
+from PyQt5.QtCore import Qt
+
+from coralnet_toolbox.MVAT.tools.Tool3D import Tool3D
+
+
+class FillTool3D(Tool3D):
+    """
+    Fill tool for UV texture segments on a 3D mesh.
+
+    A single left-click floods the entire connected UV segment at the clicked
+    position with the currently active label color and class ID. Segments are
+    pre-computed by connectivity analysis during mesh load when a texture is
+    present.
+
+    Attributes:
+        tool_kind (str): 'fill' — identifies this as the fill tool.
+    """
+
+    _PREVIEW_COLOR = 'yellow'
+    _PREVIEW_OPACITY = 0.5
+    tool_kind = 'fill'
+
+    # The Fill tool floods UV islands, so it only operates while the user is
+    # actively viewing the "UV Segments" array (the island view whose boundaries
+    # define the fill regions). On any other array the click/scroll is ignored.
+    _REQUIRED_ARRAY = "UV Segments"
+
+    def __init__(self, mvat_viewer, mvat_manager):
+        super().__init__(mvat_viewer, mvat_manager)
+        self.preview_only = False
+
+    def _is_on_required_array(self, primary_target) -> bool:
+        """True when the primary target is currently showing the UV Segments array."""
+        try:
+            getter = getattr(primary_target, 'get_selected_array', None)
+            selected = getter() if callable(getter) else getattr(primary_target, 'selected_array', None)
+            return selected == self._REQUIRED_ARRAY
+        except Exception:
+            return False
+
+    def activate(self):
+        """Activate the fill tool with a tiny aiming sphere."""
+        super().activate()
+        # Shrink the cursor preview to a dot for aiming
+        cursor = getattr(self.mvat_viewer, '_cursor_preview', None)
+        if cursor is not None:
+            try:
+                cursor.update_transform(
+                    center=np.asarray(self.mvat_viewer.plotter.camera.focal_point),
+                    radius=0.02,
+                    shape='circle',
+                    color_rgb_float=self._preview_color_rgb_float(),
+                    opacity=self._PREVIEW_OPACITY,
+                )
+            except Exception:
+                pass
+
+    def mousePressEvent(self, event, _face_id: int, world_pos):
+        """
+        Handle a left-click by finding the clicked UV segment and filling it.
+
+        Args:
+            event:     The original QMouseEvent.
+            face_id:   VTK cell ID under the cursor, or -1 if no mesh face.
+            world_pos: np.ndarray (3,) world coordinate of the pick, or None.
+        """
+        button = Qt.LeftButton
+        try:
+            event_button = getattr(event, 'button', None)
+            if callable(event_button):
+                button = event_button()
+        except Exception:
+            button = Qt.LeftButton
+
+        if button != Qt.LeftButton or world_pos is None:
+            return
+
+        if self.preview_only:
+            return
+
+        # Fill operates on mesh UV islands only. Point clouds and Gaussian splats
+        # have no UV segments, so the tool is a no-op there — tell the user why
+        # instead of silently doing nothing.
+        from coralnet_toolbox.MVAT.core.Products import (
+            PointCloudProduct, GaussianSplattingProduct
+        )
+        real_primary = self.mvat_viewer.scene_context.get_primary_target()
+        if isinstance(real_primary, (PointCloudProduct, GaussianSplattingProduct)):
+            status_bar = getattr(self.mvat_manager.main_window, 'status_bar', None)
+            if status_bar is not None:
+                status_bar.showMessage(
+                    "Fill tool is only available for meshes "
+                    "(not point clouds or Gaussian splats).",
+                    3000
+                )
+            return
+
+        primary_target = self.mvat_manager._get_primary_mesh_target()
+        if primary_target is None:
+            return
+
+        # Gate: only fill while the user is actively on the UV Segments array.
+        if not self._is_on_required_array(primary_target):
+            status_bar = getattr(self.mvat_manager.main_window, 'status_bar', None)
+            if status_bar is not None:
+                status_bar.showMessage(
+                    f"Switch to the '{self._REQUIRED_ARRAY}' array to use the Fill tool.",
+                    3000
+                )
+            return
+
+        # Check if the mesh has pre-computed texture segments
+        texture_segment_ids = getattr(primary_target, 'texture_segment_ids', None)
+        if texture_segment_ids is None:
+            status_bar = getattr(self.mvat_manager.main_window, 'status_bar', None)
+            if status_bar is not None:
+                status_bar.showMessage(
+                    "Fill tool requires a mesh with textures/UV coordinates.", 3000
+                )
+            return
+
+        tree = getattr(primary_target, '_hover_face_kdtree', None)
+        if tree is None:
+            return
+
+        # Find the closest face centroid to the clicked world position
+        try:
+            _, closest_idx = tree.query(world_pos, k=1)
+        except Exception:
+            return
+
+        clicked_face_id = closest_idx
+
+        # Get all faces in the same UV segment
+        segment_id = texture_segment_ids[clicked_face_id]
+        faces_in_segment = np.flatnonzero(texture_segment_ids == segment_id)
+
+        if len(faces_in_segment) == 0:
+            return
+
+        # Get the active semantic label and resolve it to a mesh class_id/color
+        selected_label = self._get_selected_label()
+        if selected_label is None:
+            status_bar = getattr(self.mvat_manager.main_window, 'status_bar', None)
+            if status_bar is not None:
+                status_bar.showMessage("Select a label first.", 2000)
+            return
+
+        class_id, color_rgb = self._resolve_label(selected_label)
+
+        if class_id is None or color_rgb is None:
+            return
+
+        # Paint the entire segment instantly
+        self.mvat_manager.submit_3d_face_paint(
+            faces_in_segment,
+            color_rgb,
+            class_id,
+            primary_target=primary_target
+        )
+
+        # Trigger the visual update. Under the GPU paint shader, submit_3d_face_paint
+        # already pushed the texture write and rendered; the lazy-flush debounce only
+        # drives the (now-fallback) overlay commit, so skip it when the shader renders.
+        if not self._paint_shader_active():
+            self.mvat_manager.request_lazy_flush()
+
+        # Multi-annotate sync: propagate the filled faces to all visible context
+        # cameras, mirroring the brush/erase 3D stroke handlers. A fill is purely
+        # additive, so it routes through the brush (paint) handler.
+        if getattr(self.mvat_manager, 'multi_annotate_enabled', False):
+            handler = getattr(self.mvat_manager, '_on_3d_brush_stroke_applied', None)
+            if callable(handler):
+                try:
+                    handler(faces_in_segment, selected_label)
+                except Exception:
+                    pass
+
+        # Provide visual feedback
+        status_bar = getattr(self.mvat_manager.main_window, 'status_bar', None)
+        if status_bar is not None:
+            status_bar.showMessage(
+                f"Filled {len(faces_in_segment):,} faces in UV segment {segment_id}.",
+                2000
+            )
+
+    def mouseMoveEvent(self, event, face_id: int, world_pos):
+        """Allow the aiming dot to follow the mouse."""
+        if not self.active:
+            return
+
+        if world_pos is not None:
+            self._last_hover_world_pos = np.asarray(world_pos, dtype=np.float64)
+            self._update_preview_sphere(world_pos)
+        else:
+            self._last_hover_world_pos = None
+            self._hide_preview_sphere()
+
+    def wheelEvent(self, event, delta_y: int):
+        """Ctrl+wheel adjusts UV-segment granularity for filling.
+
+        Scrolling up refines toward the original (finest) UV islands; scrolling
+        down merges neighboring islands into coarser fill regions. The finest
+        level is exactly the segmentation computed at mesh load.
+        """
+        if delta_y == 0:
+            return
+
+        primary_target = self.mvat_manager._get_primary_mesh_target()
+        if primary_target is None:
+            return
+
+        status_bar = getattr(self.mvat_manager.main_window, 'status_bar', None)
+
+        # Coarsening only makes sense (and is only visible) while viewing UV Segments.
+        if not self._is_on_required_array(primary_target):
+            return
+
+        if getattr(primary_target, 'texture_segment_ids', None) is None:
+            if status_bar is not None:
+                status_bar.showMessage(
+                    "Coarsening requires a mesh with textures/UV coordinates.", 2000
+                )
+            return
+
+        setter = getattr(primary_target, 'set_segment_granularity', None)
+        if not callable(setter):
+            return
+
+        direction = 1 if delta_y > 0 else -1
+        new_count = setter(direction)
+        if new_count is None:
+            if status_bar is not None:
+                status_bar.showMessage("This mesh has no mergeable UV segments.", 2000)
+            return
+
+        # The recolor was applied in place; just flush a frame.
+        try:
+            self.mvat_viewer.plotter.render()
+        except Exception:
+            pass
+
+        if status_bar is not None:
+            verb = "Refined" if direction > 0 else "Coarsened"
+            status_bar.showMessage(f"{verb} UV segments: {new_count:,} fill regions.", 2000)

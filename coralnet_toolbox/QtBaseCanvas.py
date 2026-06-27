@@ -13,7 +13,7 @@ import numpy as np
 
 import pyqtgraph as pg
 from PyQt5.QtGui import (QMouseEvent, QPixmap, QImage, QBrush, QColor, QPen,
-                         QTransform, QPainter, QPainterPath)
+                         QTransform, QPainter, QPainterPath, qRgba)
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QSize, QObject
 from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, 
                              QGraphicsItemGroup, QGraphicsEllipseItem, QGraphicsLineItem,
@@ -179,6 +179,25 @@ class FastImageItem(QGraphicsItem):
                 painter.drawImage(0, 0, self._readonly_cache)
 
 
+class PhantomGroupItem(QGraphicsPathItem):
+    """Merged phantom-layer path with a level-of-detail short-cut.
+
+    Below LOD_PEN_CUTOFF (scene px -> screen px scale) the cosmetic outline is
+    invisible anyway, but stroking thousands of subpaths dominates paint time —
+    so skip the pen entirely and draw fill only.
+    """
+    LOD_PEN_CUTOFF = 0.25
+
+    def paint(self, painter, option, widget=None):
+        lod = option.levelOfDetailFromTransform(painter.worldTransform())
+        if lod < self.LOD_PEN_CUTOFF:
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(self.brush())
+            painter.drawPath(self.path())
+        else:
+            super().paint(painter, option, widget)
+
+
 class BaseCanvas(QGraphicsView):
     """
     Lightweight viewport for image display with native zoom/pan navigation.
@@ -236,7 +255,12 @@ class BaseCanvas(QGraphicsView):
         # Z-channel visualization state
         self.z_item = None  # QGraphicsPixmapItem for Z-channel layer
         self.z_data_raw = None  # Raw Z-channel data
-        self.z_data_normalized = None  # Normalized to 0-255
+        # Indexed visualization: a single-byte palette index per pixel (0 = nodata,
+        # transparent; 1..255 = normalized value). Colormap changes only swap the
+        # color table — no per-pixel numpy LUT expansion, ¼ the pixmap upload.
+        self.z_index = None        # uint8 [h, w] palette indices
+        self.z_colormap_name = None  # currently applied colormap ('None' = hidden)
+        self._z_color_table = None   # cached list[QRgb] palette
         self.z_data_min = None  # Min value in valid data
         self.z_data_max = None  # Max value in valid data
         self.z_data_shape = None  # Shape of Z-channel array
@@ -252,6 +276,7 @@ class BaseCanvas(QGraphicsView):
         self._dynamic_marker = None
         self._cursor_preview_item = None  # Preview rect for tool cursor propagation
         self._mask_overlay_item = None    # Read-only MaskAnnotation overlay for brush propagation
+        self._feature_heatmap_item = None # Feature-similarity heatmap overlay (FeatureSelectTool)
         self._perimeter_overlay = None    # Viewport border overlay
 
         # Read-only annotation overlays (Phase 6).
@@ -292,7 +317,18 @@ class BaseCanvas(QGraphicsView):
             QPainter.TextAntialiasing |
             QPainter.SmoothPixmapTransform
         )
-    
+
+        # During pan/zoom/rotate, drop expensive render hints; restore shortly
+        # after the interaction goes idle.
+        self._quality_hints = (QPainter.Antialiasing |
+                               QPainter.TextAntialiasing |
+                               QPainter.SmoothPixmapTransform)
+        self._fast_hints_active = False
+        self._interaction_idle_timer = QTimer(self)
+        self._interaction_idle_timer.setSingleShot(True)
+        self._interaction_idle_timer.setInterval(150)
+        self._interaction_idle_timer.timeout.connect(self._restore_quality_hints)
+
     # ==================== Navigation Events ====================
     
     def wheelEvent(self, event: QMouseEvent):
@@ -302,6 +338,8 @@ class BaseCanvas(QGraphicsView):
     def _wheel_event_impl(self, event: QMouseEvent):
         if not self.active_image:
             return
+
+        self._enter_fast_paint_mode()
 
         # Determine zoom direction
         if event.angleDelta().y() > 0:
@@ -375,6 +413,7 @@ class BaseCanvas(QGraphicsView):
     def _mouse_move_event_impl(self, event: QMouseEvent):
         # Handle rotation
         if self._rotate_active and self.active_image:
+            self._enter_fast_paint_mode()
             center = self.viewport().rect().center()
             dx = event.pos().x() - center.x()
             dy = event.pos().y() - center.y()
@@ -395,7 +434,9 @@ class BaseCanvas(QGraphicsView):
             if not self.active_image:
                 self._pan_active = False
                 return
-            
+
+            self._enter_fast_paint_mode()
+
             delta = event.pos() - self._pan_start
             self._pan_start = event.pos()
             
@@ -542,7 +583,9 @@ class BaseCanvas(QGraphicsView):
         
         # Clear Z-channel data
         self.z_data_raw = None
-        self.z_data_normalized = None
+        self.z_index = None
+        self.z_colormap_name = None
+        self._z_color_table = None
         self.z_data_min = None
         self.z_data_max = None
         self.z_data_shape = None
@@ -781,7 +824,19 @@ class BaseCanvas(QGraphicsView):
         if self.active_image:
             center = self.mapToScene(self.viewport().rect().center())
             self.viewNavigated.emit(center.x(), center.y(), self.zoom_factor)
-    
+
+    def _enter_fast_paint_mode(self):
+        """Temporarily disable AA / smooth sampling for fluid interaction."""
+        if not self._fast_hints_active:
+            self._fast_hints_active = True
+            self.setRenderHints(QPainter.TextAntialiasing)
+        self._interaction_idle_timer.start()
+
+    def _restore_quality_hints(self):
+        self._fast_hints_active = False
+        self.setRenderHints(self._quality_hints)
+        self.viewport().update()
+
     # ==================== Read-Only Annotation Overlays (Phase 6) ====================
     
     def _render_annotations_readonly(self, annotations):
@@ -818,7 +873,7 @@ class BaseCanvas(QGraphicsView):
             if isinstance(annotation, MaskAnnotation):
                 continue
             try:
-                path = annotation.get_painter_path()
+                path = annotation.get_cached_painter_path()
             except (NotImplementedError, AttributeError):
                 continue
             if path is None or path.isEmpty():
@@ -827,7 +882,13 @@ class BaseCanvas(QGraphicsView):
             c = annotation.label.color
             is_sel = bool(annotation.is_selected)
             key = (c.red(), c.green(), c.blue(), annotation.transparency, is_sel)
-            groups[key].addPath(path)
+            # Convert to a filled polygon before merging.  Different annotation
+            # sources (SAM, YOLOE, manual) produce vertices in arbitrary winding
+            # order.  addPath preserves raw subpaths, so opposite-wound subpaths
+            # cancel under WindingFill, creating visual "cutout" artifacts.
+            # toFillPolygon applies Qt's rewinding technique, producing a single
+            # polygon with consistent winding that merges cleanly.
+            groups[key].addPolygon(path.toFillPolygon())
             if key not in group_styles:
                 group_styles[key] = (QColor(c), annotation.transparency, is_sel)
 
@@ -849,9 +910,13 @@ class BaseCanvas(QGraphicsView):
             # WindingFill prevents overlapping shapes from cancelling each other
             # (the default even-odd rule punches holes where annotations overlap)
             merged_path.setFillRule(Qt.WindingFill)
-            item = QGraphicsPathItem(merged_path)
+            item = PhantomGroupItem(merged_path)
             item.setBrush(QBrush(fill_color))
             item.setPen(pen)
+            # Cache the rendered group at device resolution: panning then blits a
+            # pixmap instead of re-stroking/re-filling every subpath per frame.
+            # Qt invalidates the cache automatically on zoom/rotation.
+            item.setCacheMode(QGraphicsItem.DeviceCoordinateCache)
             item.setFlag(QGraphicsItem.ItemIsSelectable, False)
             item.setFlag(QGraphicsItem.ItemIsMovable, False)
             item.setAcceptHoverEvents(False)
@@ -872,7 +937,69 @@ class BaseCanvas(QGraphicsView):
             except Exception:
                 pass
         self._readonly_annotation_items = {}
-    
+
+    def update_readonly_group(self, key, annotations):
+        """Rebuild ONE phantom group item in place.
+
+        Args:
+            key: (r, g, b, transparency, is_selected) group key.
+            annotations: the full current set of annotations belonging to that
+                group (may be empty, which removes the item).
+
+        Only valid once the layer has been built by _render_annotations_readonly;
+        callers must fall back to a full refresh otherwise.
+        """
+        from coralnet_toolbox.Annotations.QtAnnotation import create_pen
+
+        # Remove the existing item for this key
+        old_item = self._readonly_annotation_items.pop(key, None)
+        if old_item is not None:
+            try:
+                if old_item.scene() is not None:
+                    old_item.scene().removeItem(old_item)
+            except Exception:
+                pass
+
+        if not annotations:
+            self.viewport().update()
+            return
+
+        r, g, b, transparency, is_selected = key
+        merged_path = QPainterPath()
+        for annotation in annotations:
+            try:
+                path = annotation.get_cached_painter_path()
+            except (NotImplementedError, AttributeError):
+                continue
+            if path is None or path.isEmpty():
+                continue
+            merged_path.addPath(path)
+
+        if merged_path.isEmpty():
+            self.viewport().update()
+            return
+
+        color = QColor(r, g, b)
+        fill_color = QColor(color)
+        fill_color.setAlpha(transparency)
+        if is_selected:
+            pen = create_pen(color, is_selected=True)
+        else:
+            pen = QPen(color, 1)
+            pen.setCosmetic(True)
+
+        merged_path.setFillRule(Qt.WindingFill)
+        item = QGraphicsPathItem(merged_path)
+        item.setBrush(QBrush(fill_color))
+        item.setPen(pen)
+        item.setCacheMode(QGraphicsItem.DeviceCoordinateCache)
+        item.setFlag(QGraphicsItem.ItemIsSelectable, False)
+        item.setFlag(QGraphicsItem.ItemIsMovable, False)
+        item.setAcceptHoverEvents(False)
+        item.setZValue(10)
+        self.scene.addItem(item)
+        self._readonly_annotation_items[key] = item
+        self.viewport().update()
 
     def _highlight_readonly_annotation(self, annotation_id, highlighted):
         """Highlight or un-highlight a read-only annotation overlay.
@@ -894,10 +1021,49 @@ class BaseCanvas(QGraphicsView):
     
     # ==================== Z-Channel Visualization ====================
     
+    @staticmethod
+    def _normalize_to_index(data, vmin, vmax, nodata_mask):
+        """Map ``data`` to a uint8 palette-index array.
+
+        Index 0 is reserved for nodata (rendered transparent via the color
+        table); valid values are scaled into 1..255. Building this one-byte
+        array (instead of an expanded RGBA image) is what lets a colormap change
+        be a cheap color-table swap.
+        """
+        index = np.ones(data.shape, dtype=np.uint8)
+        if vmin is not None and vmax is not None and vmax > vmin:
+            scaled = np.clip((data - vmin) / (vmax - vmin), 0.0, 1.0)
+            index = (1 + scaled * 254).astype(np.uint8)
+        index[nodata_mask] = 0
+        return np.ascontiguousarray(index)
+
+    def _build_z_color_table(self, colormap_name):
+        """Return a 256-entry ARGB color table; index 0 is transparent (nodata)."""
+        lut = pg.colormap.get(colormap_name).getLookupTable(nPts=256, alpha=True)
+        table = [0]  # index 0 -> 0x00000000 (fully transparent nodata)
+        for i in range(1, 256):
+            r, g, b, a = (int(v) for v in lut[i])
+            table.append(qRgba(r, g, b, a))
+        return table
+
+    def _apply_z_image(self):
+        """Blit the current palette indices through the current color table.
+
+        Builds a one-byte ``Format_Indexed8`` QImage and lets Qt expand it
+        through ``setColorTable`` in C++ — no per-pixel numpy LUT, and the source
+        buffer is ¼ the size of the previous RGBA image.
+        """
+        if self.z_item is None or self.z_index is None or self._z_color_table is None:
+            return
+        h, w = self.z_index.shape
+        q_img = QImage(self.z_index.data, w, h, w, QImage.Format_Indexed8)
+        q_img.setColorTable(self._z_color_table)
+        self.z_item.setPixmap(QPixmap.fromImage(q_img))
+
     def _load_z_channel_visualization(self, raster):
         """
         Load and initialize the Z-channel visualization.
-        
+
         Args:
             raster: The Raster object containing Z-channel data
         """
@@ -906,115 +1072,88 @@ class BaseCanvas(QGraphicsView):
             if self.z_item.scene() == self.scene:
                 self.scene.removeItem(self.z_item)
             self.z_item = None
-        
+
         # Check if Z-channel data is available
         if raster.z_channel_lazy is None:
             return
-        
+
         try:
             z_data = raster.z_channel_lazy
-            
+
             # Store raw Z-channel data
             self.z_data_raw = z_data.copy()
             self.z_data_shape = z_data.shape
-            
+
             # Create mask for NaN and nodata values
             nodata_mask = np.isnan(z_data)
             if raster.z_nodata is not None:
                 nodata_mask |= (z_data == raster.z_nodata)
-            
-            # Normalize Z-channel data to 0-255
-            if z_data.dtype == np.float32:
-                valid_data = z_data[~nodata_mask]
-                if len(valid_data) > 0:
-                    self.z_data_min = np.min(valid_data)
-                    self.z_data_max = np.max(valid_data)
-                else:
-                    self.z_data_min = 0.0
-                    self.z_data_max = 1.0
-                
-                if self.z_data_min == self.z_data_max:
-                    z_norm = np.zeros_like(z_data, dtype=np.uint8)
-                else:
-                    z_diff = self.z_data_max - self.z_data_min
-                    z_norm = ((z_data - self.z_data_min) / z_diff * 255).astype(np.uint8)
-                    z_norm[nodata_mask] = 0
+
+            # Full-range min/max over valid data
+            valid_data = z_data[~nodata_mask]
+            if len(valid_data) > 0:
+                self.z_data_min = np.min(valid_data)
+                self.z_data_max = np.max(valid_data)
             else:
-                valid_data = z_data[~nodata_mask]
-                if len(valid_data) > 0:
-                    self.z_data_min = np.min(valid_data)
-                    self.z_data_max = np.max(valid_data)
-                else:
-                    self.z_data_min = 0.0
-                    self.z_data_max = 1.0
-                
-                if self.z_data_min == self.z_data_max:
-                    z_norm = np.zeros_like(z_data, dtype=np.uint8)
-                else:
-                    z_diff = self.z_data_max - self.z_data_min
-                    z_norm = ((z_data - self.z_data_min) / z_diff * 255).astype(np.uint8)
-                    z_norm[nodata_mask] = 0
-            
-            # Store normalized data and nodata mask
+                self.z_data_min = 0.0
+                self.z_data_max = 1.0
+
+            # Build the palette-index array (full range) once.
             self.z_nodata_mask = nodata_mask
-            self.z_data_normalized = z_norm
-            
-            # Create QImage and QPixmap
-            h, w = z_norm.shape
-            z_copy = np.ascontiguousarray(z_norm)
-            q_img = QImage(z_copy.data, w, h, w, QImage.Format_Grayscale8)
-            pixmap = QPixmap.fromImage(q_img)
-            
+            self.z_index = self._normalize_to_index(
+                z_data, self.z_data_min, self.z_data_max, nodata_mask
+            )
+            self.z_colormap_name = None
+            # Placeholder grayscale palette so the (hidden) item has a valid pixmap
+            # until a real colormap is selected via update_z_colormap().
+            self._z_color_table = [0] + [qRgba(i, i, i, 255) for i in range(1, 256)]
+
+            h, w = self.z_index.shape
+            q_img = QImage(self.z_index.data, w, h, w, QImage.Format_Indexed8)
+            q_img.setColorTable(self._z_color_table)
+
             # Create graphics item
-            self.z_item = QGraphicsPixmapItem(pixmap)
+            self.z_item = QGraphicsPixmapItem(QPixmap.fromImage(q_img))
             self.z_item.setTransformationMode(Qt.SmoothTransformation)
             self.z_item.setPos(0, 0)
             self.z_item.setZValue(-5)  # Between base image (-10) and annotations (0+)
             self.z_item.setOpacity(0.5)  # Default opacity
             self.scene.addItem(self.z_item)
             self.z_item.hide()  # Hide until colormap is selected
-            
+
         except Exception:
             traceback.print_exc()
             self.z_item = None
-    
+
     def update_z_colormap(self, colormap_name):
         """
         Update the Z-channel visualization colormap.
-        
+
         Args:
             colormap_name (str): Name of the colormap (e.g., 'Viridis', 'Plasma')
         """
-        if self.z_item is None or self.z_data_normalized is None:
+        if self.z_item is None or self.z_index is None:
             return
-        
+
         try:
+            self.z_colormap_name = colormap_name
             if colormap_name == 'None':
                 self.z_item.hide()
+                return
+
+            # A colormap change is just a palette swap on the existing indices.
+            self._z_color_table = self._build_z_color_table(colormap_name)
+
+            # Dynamic scaling re-derives the indices for the visible range; for the
+            # full range we can blit the cached indices straight through the table.
+            if self.dynamic_z_scaling:
+                self.update_dynamic_range()
             else:
-                # Get colormap and apply to normalized data
-                colormap = pg.colormap.get(colormap_name)
-                lut = colormap.getLookupTable(nPts=256, alpha=True)
-                z_colored = lut[self.z_data_normalized]
-                
-                # Apply nodata mask (set alpha to 0)
-                if self.z_nodata_mask is not None:
-                    z_colored[self.z_nodata_mask, 3] = 0
-                
-                # Create QImage and update pixmap
-                h, w = z_colored.shape[:2]
-                z_copy = np.ascontiguousarray(z_colored)
-                q_img = QImage(z_copy.data, w, h, w * 4, QImage.Format_RGBA8888)
-                pixmap = QPixmap.fromImage(q_img)
-                self.z_item.setPixmap(pixmap)
-                self.z_item.show()
-                
-                # Update dynamic range if enabled
-                if self.dynamic_z_scaling:
-                    self.update_dynamic_range()
+                self._apply_z_image()
+            self.z_item.show()
         except Exception:
             traceback.print_exc()
-    
+
     def set_z_opacity(self, opacity):
         """
         Set the opacity of the Z-channel visualization.
@@ -1084,60 +1223,49 @@ class BaseCanvas(QGraphicsView):
                 dynamic_min = self.z_data_min
                 dynamic_max = self.z_data_max
             
-            # Normalize visible range to 0-255
-            if dynamic_min == dynamic_max:
-                z_norm = np.zeros_like(self.z_data_raw, dtype=np.uint8)
-            else:
-                z_diff = dynamic_max - dynamic_min
-                z_norm = ((self.z_data_raw - dynamic_min) / z_diff * 255).astype(np.uint8)
-                z_norm[np.isnan(self.z_data_raw)] = 0
-            
-            # Update pixmap with remapped visualization
-            if self.z_item is not None:
-                colormap_name = 'Viridis'  # Default; override in subclass if needed
-                colormap = pg.colormap.get(colormap_name)
-                lut = colormap.getLookupTable(nPts=256, alpha=True)
-                z_colored = lut[z_norm]
-                
-                if self.z_nodata_mask is not None:
-                    z_colored[self.z_nodata_mask, 3] = 0
-                
-                h, w = z_colored.shape[:2]
-                z_copy = np.ascontiguousarray(z_colored)
-                q_img = QImage(z_copy.data, w, h, w * 4, QImage.Format_RGBA8888)
-                pixmap = QPixmap.fromImage(q_img)
-                self.z_item.setPixmap(pixmap)
-        
+            # Re-derive palette indices for the visible (dynamic) range. The
+            # color table is left untouched, so the user's selected colormap is
+            # preserved (the old path hard-coded Viridis here).
+            nodata_mask = self.z_nodata_mask
+            if nodata_mask is None:
+                nodata_mask = np.isnan(self.z_data_raw)
+            self.z_index = self._normalize_to_index(
+                self.z_data_raw, dynamic_min, dynamic_max, nodata_mask
+            )
+
+            # Ensure a color table exists (default to Plasma if none applied yet).
+            if self._z_color_table is None:
+                self._z_color_table = self._build_z_color_table('Plasma')
+            self._apply_z_image()
+
         except Exception:
             traceback.print_exc()
-    
+
     def _reset_z_channel_to_full_range(self, colormap_name):
         """
         Reset Z-channel visualization to full data range.
-        
+
         Args:
-            colormap_name (str, optional): Colormap to apply. If None, uses 'Viridis'.
+            colormap_name (str, optional): Colormap to apply. If None, uses 'Plasma'.
         """
         if colormap_name is None:
-            colormap_name = 'Viridis'
-        
-        if self.z_item is None or self.z_data_normalized is None:
+            colormap_name = 'Plasma'
+
+        if self.z_item is None or self.z_data_raw is None:
             return
-        
+
         try:
             if colormap_name != 'None':
-                colormap = pg.colormap.get(colormap_name)
-                lut = colormap.getLookupTable(nPts=256, alpha=True)
-                z_colored = lut[self.z_data_normalized]
-                
-                if self.z_nodata_mask is not None:
-                    z_colored[self.z_nodata_mask, 3] = 0
-                
-                h, w = z_colored.shape[:2]
-                z_copy = np.ascontiguousarray(z_colored)
-                q_img = QImage(z_copy.data, w, h, w * 4, QImage.Format_RGBA8888)
-                pixmap = QPixmap.fromImage(q_img)
-                self.z_item.setPixmap(pixmap)
+                # Rebuild full-range indices and swap to the requested palette.
+                nodata_mask = self.z_nodata_mask
+                if nodata_mask is None:
+                    nodata_mask = np.isnan(self.z_data_raw)
+                self.z_index = self._normalize_to_index(
+                    self.z_data_raw, self.z_data_min, self.z_data_max, nodata_mask
+                )
+                self.z_colormap_name = colormap_name
+                self._z_color_table = self._build_z_color_table(colormap_name)
+                self._apply_z_image()
         except Exception:
             traceback.print_exc()
     
@@ -1158,12 +1286,14 @@ class BaseCanvas(QGraphicsView):
         
         # Clear cached data
         self.z_data_raw = None
-        self.z_data_normalized = None
+        self.z_index = None
+        self.z_colormap_name = None
+        self._z_color_table = None
         self.z_data_min = None
         self.z_data_max = None
         self.z_data_shape = None
         self.z_nodata_mask = None
-    
+
     # ==================== Marker Slots (Phase 4) ====================
 
     def update_static_marker(self, x, y, color=None):
@@ -1292,6 +1422,8 @@ class BaseCanvas(QGraphicsView):
             self._cursor_preview_item = None
             # Mask overlay item (created lazily; reset reference on scene rebuild)
             self._mask_overlay_item = None
+            # Feature-similarity heatmap overlay (created lazily; reset on rebuild)
+            self._feature_heatmap_item = None
         except Exception:
             traceback.print_exc()
 
@@ -1384,3 +1516,77 @@ class BaseCanvas(QGraphicsView):
             except Exception:
                 pass
             self._mask_overlay_item = None
+
+    # ==================== Feature Heatmap Overlay (FeatureSelectTool) ====================
+
+    def set_feature_heatmap(self, rgba_array, rect=None, opacity=0.6):
+        """Display a feature-similarity heatmap as a read-only overlay.
+
+        The heatmap is supplied at feature-grid resolution ``[gh, gw, 4]`` (uint8
+        RGBA) and scaled with smooth interpolation to fill ``rect`` (scene/image
+        coordinates). When ``rect`` is None it fills the whole image. The item
+        sits above the base image (-10) and Z-channel (-5) but below annotations
+        (>= 0), mirroring the Z-channel overlay pattern.
+
+        Scaling/positioning the grid to ``rect`` (e.g. a work-area rectangle) uses
+        the SAME proportional mapping a caller should use to map a pixel back to a
+        grid cell, so the cursor and the lit region stay aligned regardless of the
+        image (or grid) aspect ratio.
+
+        Args:
+            rgba_array: ``[gh, gw, 4]`` uint8 array (colormap-colored similarity).
+            rect: Target QRectF in scene coordinates; None = full image.
+            opacity: Overlay opacity from 0.0 (transparent) to 1.0 (opaque).
+        """
+        if rgba_array is None:
+            self.clear_feature_heatmap()
+            return
+
+        try:
+            arr = np.ascontiguousarray(rgba_array.astype(np.uint8, copy=False))
+            gh, gw = arr.shape[:2]
+            if gh <= 0 or gw <= 0:
+                self.clear_feature_heatmap()
+                return
+
+            q_img = QImage(arr.data, gw, gh, gw * 4, QImage.Format_RGBA8888)
+            pixmap = QPixmap.fromImage(q_img.copy())
+
+            if self._feature_heatmap_item is None or self._feature_heatmap_item.scene() is None:
+                self.clear_feature_heatmap()
+                self._feature_heatmap_item = QGraphicsPixmapItem()
+                self._feature_heatmap_item.setTransformationMode(Qt.SmoothTransformation)
+                self._feature_heatmap_item.setZValue(-4)
+                self._feature_heatmap_item.setAcceptHoverEvents(False)
+                self.scene.addItem(self._feature_heatmap_item)
+
+            self._feature_heatmap_item.setPixmap(pixmap)
+
+            # Target the supplied rect (or the whole image if None).
+            if rect is None:
+                image_w, image_h = self.get_image_dimensions()
+                target_left, target_top = 0.0, 0.0
+                target_w, target_h = float(image_w or gw), float(image_h or gh)
+            else:
+                target_left, target_top = float(rect.left()), float(rect.top())
+                target_w, target_h = float(rect.width()), float(rect.height())
+
+            if target_w > 0 and target_h > 0:
+                self._feature_heatmap_item.setTransform(
+                    QTransform().scale(target_w / float(gw), target_h / float(gh))
+                )
+            self._feature_heatmap_item.setOpacity(max(0.0, min(1.0, opacity)))
+            self._feature_heatmap_item.setPos(target_left, target_top)
+            self._feature_heatmap_item.show()
+        except Exception:
+            traceback.print_exc()
+
+    def clear_feature_heatmap(self):
+        """Remove the feature heatmap overlay from the scene."""
+        if self._feature_heatmap_item is not None:
+            try:
+                if self._feature_heatmap_item.scene() is not None:
+                    self._feature_heatmap_item.scene().removeItem(self._feature_heatmap_item)
+            except Exception:
+                pass
+            self._feature_heatmap_item = None

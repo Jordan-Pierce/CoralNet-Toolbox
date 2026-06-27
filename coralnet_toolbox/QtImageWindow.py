@@ -1378,6 +1378,16 @@ class ImageWindow(QWidget):
         has_ortho = any(getattr(raster, 'raster_type', '') == 'OrthoRaster' for raster in highlighted_rasters if raster is not None)
         _single_ortho = count == 1 and has_ortho
 
+        # Single VideoRaster: offer frame extraction (and annotation re-creation).
+        _single_video = (count == 1 and highlighted_rasters[0] is not None and
+                         getattr(highlighted_rasters[0], 'raster_type', '') == 'VideoRaster')
+        if _single_video:
+            extract_frames_action = context_menu.addAction("Extract Frames...")
+            extract_frames_action.triggered.connect(
+                lambda checked=False, p=highlighted_paths[0]: self._open_extract_frames_dialog(p)
+            )
+            context_menu.addSeparator()
+
         if _single_ortho:
             transforms_menu = context_menu.addMenu("Transforms...")
             _ortho_path = highlighted_paths[0]
@@ -1436,6 +1446,15 @@ class ImageWindow(QWidget):
             lambda: self.remove_z_channel_highlighted_images()
         )
 
+        # Create Features sub-menu (Tier-1 dense feature maps)
+        feature_menu = context_menu.addMenu("Features...")
+        remove_feature_action = feature_menu.addAction(
+            f"Remove from {count} Highlighted Raster{'s' if count > 1 else ''}"
+        )
+        remove_feature_action.triggered.connect(
+            lambda: self.remove_feature_map_highlighted_images()
+        )
+
         context_menu.addSeparator()
 
         # Add delete actions
@@ -1449,6 +1468,20 @@ class ImageWindow(QWidget):
         )
 
         context_menu.exec_(self.tableView.viewport().mapToGlobal(position))
+
+    def _open_extract_frames_dialog(self, video_path: str):
+        """Open the Extract Frames dialog pre-loaded with a VideoRaster.
+
+        The dialog runs in video-raster mode: the video file is locked, the
+        Keyframes selection mode is available, and the user may opt to re-create
+        the video frames' annotations on the imported still images.
+        """
+        raster = self.raster_manager.get_raster(video_path)
+        if raster is None or getattr(raster, 'raster_type', '') != 'VideoRaster':
+            return
+        from coralnet_toolbox.IO.QtImportFrames import ImportFrames
+        dialog = ImportFrames(self.main_window, parent=self, video_raster=raster)
+        dialog.exec_()
 
     def _set_ortho_projection_matrix(self, path: str):
         """
@@ -1823,6 +1856,64 @@ class ImageWindow(QWidget):
                 progress_bar.stop_progress()
                 progress_bar.close()
                 QApplication.restoreOverrideCursor()
+
+    def remove_feature_map_highlighted_images(self):
+        """Remove dense feature maps from the highlighted images."""
+        highlighted_paths = self.table_model.get_highlighted_paths()
+
+        if not highlighted_paths:
+            return
+
+        # Only act on rasters that actually have a feature map.
+        targets = []
+        for path in highlighted_paths:
+            raster = self.raster_manager.get_raster(path)
+            if raster is not None and getattr(raster, "has_feature_map", lambda: False)():
+                targets.append((path, raster))
+
+        if not targets:
+            QMessageBox.information(
+                self,
+                "No Feature Maps",
+                "None of the highlighted rasters have a feature map to remove.",
+            )
+            return
+
+        count = len(targets)
+        plural = 's' if count > 1 else ''
+        reply = QMessageBox.question(
+            self,
+            "Confirm Feature Map Removal",
+            f"Are you sure you want to remove the feature map from {count} raster{plural}?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+
+        if reply != QMessageBox.Yes:
+            return
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        progress_bar = ProgressBar(self, title="Removing Feature Maps")
+        progress_bar.show()
+        progress_bar.start_progress(count)
+
+        try:
+            for path, raster in targets:
+                try:
+                    raster.clear_feature_map()
+                    self.raster_manager.rasterUpdated.emit(path)
+                except Exception as e:
+                    print(f"Failed to remove feature map for {path}: {e}")
+                progress_bar.update_progress()
+
+            QMessageBox.information(
+                self,
+                "Feature Maps Removed",
+                f"Feature map removed from {count} raster{plural}."
+            )
+        finally:
+            progress_bar.stop_progress()
+            progress_bar.close()
+            QApplication.restoreOverrideCursor()
 
     def remove_cameras_highlighted_images(self):
         """Remove camera intrinsics/extrinsics from the highlighted images."""

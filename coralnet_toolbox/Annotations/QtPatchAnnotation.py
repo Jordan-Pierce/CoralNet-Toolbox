@@ -237,7 +237,7 @@ class PatchAnnotation(Annotation):
         """Create a cropped image from the rasterio source based on the annotation's bounding box."""
         # Clear cached graphic when creating new cropped image
         self._cached_cropped_image_graphic = None
-        
+
         self.rasterio_src = rasterio_src
 
         # Calculate the half size of the annotation

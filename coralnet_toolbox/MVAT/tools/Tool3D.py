@@ -47,6 +47,10 @@ class Tool3D:
     _PREVIEW_COLOR = 'white'
     _PREVIEW_OPACITY = 0.35
     tool_kind = None
+    # Tools that need right-button presses (e.g. for a negative prototype) set
+    # this True; the viewer only forwards right-clicks to opt-in tools so the
+    # others keep normal right-button pan/double-click behavior.
+    wants_right_button = False
 
     def __init__(self, mvat_viewer, mvat_manager):
         """
@@ -294,9 +298,29 @@ class Tool3D:
                 except Exception:
                     pass
 
+    def keyPressEvent(self, event):
+        """
+        Handle a key press in the 3D viewport.
+
+        Args:
+            event: QKeyEvent from MVATViewer.eventFilter.
+        """
+        pass
+
     # ------------------------------------------------------------------
     # Shared preview / hover / highlight behavior
     # ------------------------------------------------------------------
+
+    def _paint_shader_active(self) -> bool:
+        """True when the GPU paint shader is the active label renderer.
+
+        When it is, painting commits through the shader's O(painted) texture write
+        (see MVATManager.submit_3d_face_paint / submit_3d_point_paint), so the
+        LabelWorker overlay and the lazy-flush commit are dead work and the tools
+        skip them. Falls back to False (overlay path) if the manager is missing.
+        """
+        psm = getattr(self.mvat_manager, 'paint_shader_manager', None)
+        return psm is not None and getattr(psm, 'shader_enabled', False)
 
     def _use_active_label_preview_color(self) -> bool:
         return True
@@ -306,6 +330,48 @@ class Tool3D:
             return self.mvat_manager.annotation_window.selected_label
         except Exception:
             return None
+
+    def _resolve_label(self, label):
+        """Resolve a label widget to its (class_id, color_rgb) for mesh painting.
+
+        class_id is the canonical mesh class-id (project order, 'Review' excluded)
+        resolved through PropagationEngine.canonical_class_id_for_label_id, so a
+        direct brush/fill stroke and a multi-annotate projection paint the same
+        label with the same id. Without this the two paths use different integer
+        schemes and can collide (one label's faces get recolored to another's).
+        Falls back to the mask annotation's discovery-order map only if the
+        canonical resolver is unavailable.
+        """
+        try:
+            label_id = getattr(label, 'id', None)
+
+            class_id = None
+            engine = getattr(self.mvat_manager, 'propagation_engine', None)
+            if engine is not None and label_id is not None:
+                try:
+                    class_id = engine.canonical_class_id_for_label_id(label_id)
+                except Exception:
+                    class_id = None
+
+            if class_id is None:
+                # Legacy fallback: the mask annotation's discovery-order map.
+                mask_annotation = (
+                    self.mvat_manager.annotation_window.current_mask_annotation
+                )
+                if mask_annotation is not None:
+                    class_id = mask_annotation.label_id_to_class_id_map.get(label_id)
+                    if class_id is None:
+                        mask_annotation.sync_label_map([label])
+                        class_id = mask_annotation.label_id_to_class_id_map.get(label_id)
+
+            if class_id is None:
+                return None, None
+
+            c = QColor(label.color)
+            return class_id, (c.red(), c.green(), c.blue())
+
+        except Exception:
+            return None, None
 
     def _preview_color_rgb_float(self):
         """Return (r, g, b) in [0.0, 1.0] for the preview sphere."""

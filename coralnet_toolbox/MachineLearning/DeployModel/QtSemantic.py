@@ -241,8 +241,13 @@ class Semantic(Base):
                 imgsz = 640
 
             self.imgsz = imgsz
-            # Warm up the model
-            self.loaded_model(np.zeros((imgsz, imgsz, 3), dtype=np.uint8))
+            # Warm up the model.  Pass the same device/half the predict paths
+            # use: ultralytics fixes fp16 when the predictor is created and
+            # silently rebuilds the whole predictor on the first call whose
+            # device= differs, so the warmup must match or later half=True
+            # calls run in fp32.
+            self.loaded_model(np.zeros((imgsz, imgsz, 3), dtype=np.uint8),
+                              device=self.main_window.device, half=True)
 
             if self.loaded_model.task != 'semantic':
                 # Force the task to semantic if the model was loaded with a different task (e.g., due to old YOLO version)
@@ -368,7 +373,15 @@ class Semantic(Base):
                         # If the image being processed is the one currently displayed,
                         # ensure the graphics_item is registered in the scene now so
                         # tile repaints are immediately visible.
-                        if image_path == self.annotation_window.current_image_path:
+                        #
+                        # Skip this for video frames: their mask is drawn via the
+                        # per-frame overlay, not a graphics_item, and
+                        # load_mask_annotation would restore the frame's OLD cached
+                        # mask back over the slate we just zeroed — corrupting the
+                        # fresh full-image prediction. The displayed frame is
+                        # reloaded once after the whole batch (see finally block).
+                        if (not _is_video_frame
+                                and image_path == self.annotation_window.current_image_path):
                             self.annotation_window.load_mask_annotation()
                     except Exception:
                         pass
@@ -394,9 +407,19 @@ class Semantic(Base):
                         else:
                             # For work-area mode, update the shim to point at this frame
                             raster.update_shim_for_frame(frame_idx)
-                            work_areas = raster.get_work_areas()
+                            # A VideoRaster stores work areas for every frame in
+                            # one flat list keyed by the virtual frame path;
+                            # restrict to this frame so other frames' areas are
+                            # not cropped from (and applied to) the current frame.
+                            work_areas = [
+                                wa for wa in raster.get_work_areas()
+                                if wa.image_path == image_path
+                            ]
                             # Request BGR arrays to match cv2.imread behavior
-                            work_items_data = raster.get_work_areas_data(as_format='BGR')  # List of np.ndarray
+                            work_items_data = [
+                                raster.get_work_area_data(wa, as_format='BGR')
+                                for wa in work_areas
+                            ]  # List of np.ndarray
                     else:
                         # Fallback to normal handling if raster isn't a VideoRaster
                         if is_full_image:
@@ -553,12 +576,15 @@ class Semantic(Base):
                 # This is called *after* all tiles for an image are done
                 mask_annotation.recalculate_class_statistics()
 
-                # For video frames: lift the deferral and do one final cache sync
-                # so load_mask_annotation can find the result when navigating frames.
+                # For video frames: lift the deferral and sync THIS frame's mask
+                # into the per-frame cache under its own path. The VideoRaster
+                # shares one mask_annotation across all frames and the next loop
+                # iteration zeroes mask_data, so the result must be captured here,
+                # keyed to image_path (not the displayed current_image_path).
                 if _is_video_frame:
                     try:
                         self.annotation_window._deferring_video_cache_sync = False
-                        self.annotation_window._sync_video_mask_to_cache()
+                        self.annotation_window._sync_video_mask_to_cache(frame_path=image_path)
                     except Exception:
                         pass
 
@@ -588,6 +614,16 @@ class Semantic(Base):
             # predict still sync immediately.
             try:
                 self.annotation_window._deferring_video_cache_sync = False
+            except Exception:
+                pass
+            # For video: the shared mask_data now holds whichever frame was
+            # processed last, which may not be the displayed frame. Reload the
+            # displayed frame from its per-frame cache so the live mask_data and
+            # overlay match what is on screen (and so a subsequent brush stroke
+            # edits the correct frame's pixels rather than a stale prediction).
+            try:
+                if '::frame_' in str(self.annotation_window.current_image_path):
+                    self.annotation_window.load_mask_annotation()
             except Exception:
                 pass
             # --- 6. Final Cleanup ---

@@ -237,18 +237,18 @@ class Classify(Base):
 
         # Group annotations by image path
         sorted_annotations = sorted(annotations, key=attrgetter('image_path'))
-        grouped_annotations = list(groupby(sorted_annotations, key=attrgetter('image_path')))
-        
+        grouped_annotations = [(key, list(group)) for key, group in groupby(sorted_annotations, key=attrgetter('image_path'))]
+
         cropped_annotations = []
-        
+
         try:
             if has_video_frames:
-                for image_path, group in grouped_annotations:
-                    image_annotations = list(group)
+                for image_path, image_annotations in grouped_annotations:
+                    image_annotations_list = image_annotations if isinstance(image_annotations, list) else list(image_annotations)
                     try:
                         cropped = self.annotation_window.crop_annotations(
                             image_path,
-                            image_annotations,
+                            image_annotations_list,
                             verbose=False,
                         )
                         cropped_annotations.extend(cropped)
@@ -261,12 +261,9 @@ class Classify(Base):
                 with ThreadPoolExecutor(max_workers=max(1, (os.cpu_count() or 1) // 2)) as executor:
                     # Dictionary to track futures and their corresponding image paths
                     futures = {}
-                    
+
                     # Process each group of annotations by image path
-                    for image_path, group in grouped_annotations:
-                        # Convert group iterator to list for reuse
-                        image_annotations = list(group)
-                        
+                    for image_path, image_annotations in grouped_annotations:
                         # Submit cropping task asynchronously for each image
                         future = executor.submit(
                             self.annotation_window.crop_annotations,
@@ -274,7 +271,7 @@ class Classify(Base):
                             image_annotations,
                             verbose=False,
                         )
-                        
+
                         # Store image path for each future for error reporting
                         futures[future] = image_path
 

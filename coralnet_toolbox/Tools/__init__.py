@@ -8,11 +8,11 @@ from .QtFillTool import FillTool
 from .QtDropperTool import DropperTool
 
 from .QtSAMTool import SAMTool
+from .QtFeatureSelectTool import FeatureSelectTool
 from .QtSeeAnythingTool import SeeAnythingTool
 from .QtSelectTool import SelectTool 
 from .QtWorkAreaTool import WorkAreaTool
 from .QtScaleTool import ScaleTool
-from .QtRugosityTool import RugosityTool
 from .QtPatchSamplingTool import PatchSamplingTool
 
 from .QtCutSubTool import CutSubTool
@@ -30,11 +30,11 @@ __all__ = [
     'FillTool',
     'DropperTool',
     'SAMTool',
+    'FeatureSelectTool',
     'SeeAnythingTool',
     'SelectTool',
     'WorkAreaTool',
     'ScaleTool',
-    'RugosityTool',
     'PatchSamplingTool',
     'CutSubTool',
     'MoveSubTool',
