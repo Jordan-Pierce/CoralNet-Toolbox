@@ -19,9 +19,9 @@ per-patch similarity as a live heatmap overlay. The interaction mirrors SAMTool:
       * Space              : finalize → create a Polygon or Mask annotation.
       * Backspace          : clear prompts / cancel the work area.
 
-The cosine / linear-head scoring is reused as-is from the 3D pipeline's
-``QueryEngine`` (coralnet_toolbox/MVAT/managers/FeatureMeshManager.py); the tool
-owns the prototype lists and treats the engine as a stateless compute kernel.
+The cosine / linear-head scoring is reused as-is from the shared
+``QueryEngine`` (coralnet_toolbox/Features/QueryEngine.py); the tool owns the
+prototype lists and treats the engine as a stateless compute kernel.
 """
 
 import warnings
@@ -259,7 +259,7 @@ class FeatureSelectTool(Tool):
 
     def _build_query_engine(self, crop_fmap):
         """Construct a QueryEngine over the [h, w, C] crop feature map."""
-        from coralnet_toolbox.MVAT.managers.FeatureMeshManager import QueryEngine
+        from coralnet_toolbox.Features.QueryEngine import QueryEngine
 
         self.feat_h, self.feat_w = int(crop_fmap.shape[0]), int(crop_fmap.shape[1])
         features = np.asarray(crop_fmap).reshape(-1, crop_fmap.shape[2])
@@ -309,15 +309,8 @@ class FeatureSelectTool(Tool):
             resampled = (resampled / norms).astype(np.float16)
             full[gy0:gy1, gx0:gx1, :] = resampled
 
-            cache_dir = None
-            try:
-                cm = getattr(getattr(self.main_window, 'mvat_manager', None), 'cache_manager', None)
-                if cm is not None:
-                    cache_dir = cm.get_features_cache_dir()
-            except Exception:
-                pass
-            if cache_dir is None:
-                cache_dir = os.path.join(os.path.dirname(raster.image_path), ".cache", "features")
+            # Persist the feature map under a project-local cache beside the image.
+            cache_dir = os.path.join(os.path.dirname(raster.image_path), ".cache", "features")
             basename = os.path.splitext(os.path.basename(raster.image_path))[0]
             npy_path = os.path.join(cache_dir, f"{basename}_features.npy")
             save_feature_map(npy_path, full, model_id=extractor.model_id,
