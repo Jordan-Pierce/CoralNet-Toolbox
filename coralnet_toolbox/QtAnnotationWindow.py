@@ -1801,14 +1801,13 @@ class AnnotationWindow(BaseCanvas):
         # (Mode switching always clears selection, even if preserve_selection=True)
         if is_entering_mask_mode or is_leaving_mask_mode:
             self.unselect_annotations()
+        # Otherwise, unselect annotations unless we are in select mode or preserve_selection is True
+        elif self.selected_tool != "select" and not preserve_selection:
+            self.unselect_annotations()
         # --------------------------------------------------------
-        
+
         if self.selected_tool:
             self.tools[self.selected_tool].activate()
-        
-        # Unselect annotations unless we are in select mode or preserve_selection is True
-        if self.selected_tool != "select" and not preserve_selection:
-            self.unselect_annotations()
 
         self.toggle_cursor_annotation()
         

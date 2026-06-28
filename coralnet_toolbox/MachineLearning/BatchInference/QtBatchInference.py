@@ -75,7 +75,7 @@ class BatchInferenceWorker(QThread):
         # Per-task tweaks for non-YOLO ultralytics models (SAM, YOLOE).  These
         # all still produce Results objects, so the worker pipeline is shared:
         #   - model_call_overrides: merged over the default predict() kwargs
-        #     (e.g. visual_prompts=[] for YOLOE, half=False for MobileSAM).
+        #     (e.g. visual_prompts=[] for YOLOE, quantize=32 for MobileSAM).
         #   - collapse_classes: collapse every detected class id to 0 (the
         #     single-class generators output one logical class).
         #   - result_names: dict assigned to result.names after inference.
@@ -299,7 +299,7 @@ class BatchInferenceWorker(QThread):
         """Run one tiny inference so fuse/compile/cudnn-autotune cost lands
         before the progress bar starts instead of inside the first batch."""
         try:
-            kwargs = dict(device=self.device, half=True, verbose=False)
+            kwargs = dict(device=self.device, quantize=16, verbose=False)
             if self._imgsz is not None:
                 kwargs["imgsz"] = self._imgsz
             dummy = np.zeros((32, 32, 3), dtype=np.uint8)
@@ -442,7 +442,7 @@ class BatchInferenceWorker(QThread):
                     batch=len(batch),
                     device=self.device,
                     retina_masks=self._is_semantic,
-                    half=True,
+                    quantize=16,
                     agnostic_nms=True,
                     stream=True,
                     verbose=False,
@@ -450,7 +450,7 @@ class BatchInferenceWorker(QThread):
                 if self._imgsz is not None:
                     _model_kwargs["imgsz"] = self._imgsz
                 # Per-task overrides last so they win (e.g. YOLOE visual_prompts,
-                # MobileSAM half=False, segment-task retina_masks).
+                # MobileSAM quantize=32, segment-task retina_masks).
                 if self._model_call_overrides:
                     _model_kwargs.update(self._model_call_overrides)
                 try:
