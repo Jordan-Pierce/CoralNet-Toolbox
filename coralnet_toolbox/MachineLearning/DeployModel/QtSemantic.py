@@ -244,10 +244,10 @@ class Semantic(Base):
             # Warm up the model.  Pass the same device/quantize the predict paths
             # use: ultralytics fixes fp16 when the predictor is created and
             # silently rebuilds the whole predictor on the first call whose
-            # device= differs, so the warmup must match or later quantize=True
+            # device= differs, so the warmup must match or later quantize=16
             # calls run in fp32.
             self.loaded_model(np.zeros((imgsz, imgsz, 3), dtype=np.uint8),
-                              device=self.main_window.device, quantize=True)
+                              device=self.main_window.device, quantize=16)
 
             if self.loaded_model.task != 'semantic':
                 # Force the task to semantic if the model was loaded with a different task (e.g., due to old YOLO version)
@@ -633,7 +633,7 @@ class Semantic(Base):
             device=self.main_window.device,
             imgsz=self.imgsz,
             retina_masks=True,
-            quantize=True,
+            quantize=16,
             stream=True,
         )
 

@@ -149,9 +149,9 @@ class Segment(Base):
             # Pass the same device/quantize the predict paths use: ultralytics
             # fixes fp16 when the predictor is created and silently rebuilds
             # the whole predictor on the first call whose device= differs, so
-            # the warmup must match or later quantize=True calls run in fp32.
+            # the warmup must match or later quantize=16 calls run in fp32.
             self.loaded_model(np.zeros((imgsz, imgsz, 3), dtype=np.uint8),
-                              device=self.main_window.device, quantize=True)
+                              device=self.main_window.device, quantize=16)
             self.class_names = list(self.loaded_model.names.values())
 
             # Check for unmapped classes
@@ -450,7 +450,7 @@ class Segment(Base):
                                               device=self.main_window.device,
                                               imgsz=self.imgsz,
                                               retina_masks=self.task == "segment",
-                                              quantize=True,
+                                              quantize=16,
                                               stream=True)  # memory efficient inference
 
         results_list = []

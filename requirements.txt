@@ -6,7 +6,7 @@ rasterio
 geopandas
 pyogrio
 pycocotools
-ultralytics
+ultralytics>=8.4.80
 lightly-train[ultralytics]
 open-clip-torch>=2.20.0
 scikit-learn

@@ -200,9 +200,9 @@ class Base(QDialog):
         # --- Replaced Checkboxes with ComboBoxes ---
 
         self.quantize_combo = QComboBox()
-        self.quantize_combo.addItems(["False", "True"])
-        self.quantize_combo.setToolTip("Enable FP16 (quantized) quantization for smaller, faster model.\nReduces model size by ~50%, slight accuracy tradeoff.\nRequires GPU support.")
-        general_layout.addRow("FP16 (quantized):", self.quantize_combo)
+        self.quantize_combo.addItems(["32", "16"])
+        self.quantize_combo.setToolTip("Quantization mode: 32=FP32 (full precision), 16=FP16 (half-precision).\nFP16 reduces model size by ~50% with slight accuracy tradeoff.\nRequires GPU support.")
+        general_layout.addRow("Quantize:", self.quantize_combo)
 
         self.dynamic_combo = QComboBox()
         self.dynamic_combo.addItems(["False", "True"])
@@ -343,7 +343,7 @@ class Base(QDialog):
         params['batch'] = self.batch_spinbox.value()
         
         # --- Read values from ComboBoxes ---
-        params['quantize'] = self.quantize_combo.currentText() == "True"
+        params['quantize'] = int(self.quantize_combo.currentText())
         params['dynamic'] = self.dynamic_combo.currentText() == "True"
         params['simplify'] = self.simplify_combo.currentText() == "True"
         params['nms'] = self.nms_combo.currentText() == "True"

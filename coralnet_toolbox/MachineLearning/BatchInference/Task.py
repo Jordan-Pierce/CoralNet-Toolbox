@@ -535,7 +535,7 @@ class SamBatchInferenceTask(AsyncYoloBatchInferenceTask):
         # MobileSAM crashes in FP16; force FP32 for it (others stay FP16).
         try:
             if "MobileSAM" in md.model_combo.currentText():
-                overrides["quantize"] = False
+                overrides["quantize"] = 32
         except Exception:
             pass
         return overrides
@@ -645,7 +645,7 @@ class SeeAnythingBatchInferenceTask(AsyncYoloBatchInferenceTask):
         return {
             "visual_prompts": [],
             "agnostic_nms": False,
-            "quantize": False,
+            "quantize": 32,
             "retina_masks": task == "segment",
         }
 

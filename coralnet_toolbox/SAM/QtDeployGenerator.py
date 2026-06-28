@@ -612,9 +612,9 @@ class DeployGeneratorDialog(QDialog):
         
         # MobileSAM precision constraint: prevent FP16 crash by using FP32
         if "MobileSAM" in self.model_combo.currentText():
-            kwargs['quantize'] = False  # FP32 mode for MobileSAM
+            kwargs['quantize'] = 32  # FP32 mode for MobileSAM
         else:
-            kwargs['quantize'] = True   # FP16 mode for others (faster)
+            kwargs['quantize'] = 16   # FP16 mode for others (faster)
         
         results_list = []
         import cv2
