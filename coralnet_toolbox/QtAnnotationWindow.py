@@ -1721,11 +1721,6 @@ class AnnotationWindow(BaseCanvas):
 
         # Handle both valid labels and None (no label selected)
         if label is not None:
-            _t0_label_loop = time.perf_counter()
-            _t_uconf = 0.0
-            _t_crop = 0.0
-            _t_conf = 0.0
-
             # Track the last annotation that actually changed so we can update the
             # confidence window exactly once at the end instead of N times.
             _last_changed_annotation = None
@@ -1747,7 +1742,6 @@ class AnnotationWindow(BaseCanvas):
             for annotation in target_annotations:
                 if annotation.label.id != label.id:
                     old_label = annotation.label
-                    _tc0 = time.perf_counter()
                     _is_on_canvas = (annotation.image_path == self.current_image_path)
                     if _is_on_canvas:
                         _n_on_canvas += 1
@@ -1784,7 +1778,6 @@ class AnnotationWindow(BaseCanvas):
                         annotation.update_user_confidence(self.selected_label)
                         annotation.blockSignals(False)
 
-                    _t_uconf += time.perf_counter() - _tc0
                     _last_changed_annotation = annotation
                     changes.append((annotation.id, old_label, self.selected_label))
 
@@ -1807,29 +1800,16 @@ class AnnotationWindow(BaseCanvas):
             # Crop and display ONLY for the last changed annotation (confidence window only
             # shows one at a time anyway, and create_cropped_image is expensive per annotation).
             if _last_changed_annotation is not None:
-                _tc0 = time.perf_counter()
                 raster_source = _get_raster_cached(_last_changed_annotation)
                 if raster_source is not None:
                     try:
                         _last_changed_annotation.create_cropped_image(raster_source)
                     except Exception:
                         pass
-                _t_crop += time.perf_counter() - _tc0
-                _tc0 = time.perf_counter()
                 try:
                     self.main_window.confidence_window.display_cropped_image(_last_changed_annotation)
                 except Exception:
                     pass
-                _t_conf += time.perf_counter() - _tc0
-
-            _t_total_loop = time.perf_counter() - _t0_label_loop
-            if len(target_annotations) > 1 or _t_total_loop > 0.05:
-                print(f"[PERF] set_selected_label: N={len(target_annotations)} changed={len(changes)}"
-                      f" on_canvas={_n_on_canvas}"
-                      f" | update_user_confidence={_t_uconf*1000:.1f}ms"
-                      f" | create_cropped_image={_t_crop*1000:.1f}ms"
-                      f" | display_cropped_image={_t_conf*1000:.1f}ms"
-                      f" | total={_t_total_loop*1000:.1f}ms")
 
             if self.cursor_annotation:
                 if self.cursor_annotation.label.id != label.id:
@@ -1840,16 +1820,12 @@ class AnnotationWindow(BaseCanvas):
                 self.toggle_cursor_annotation()
 
         # Record action(s)
-        _t_push = 0.0
-        _t_emit = 0.0
         try:
             if changes:
                 if len(changes) == 1:
                     ann_id, old_label, new_label = changes[0]
-                    _tp = time.perf_counter()
                     action = ChangeLabelAction(self, ann_id, old_label, new_label)
                     self.action_stack.push(action)
-                    _t_push = time.perf_counter() - _tp
                     try:
                         self.annotationLabelChanged.emit(
                             ann_id,
@@ -1858,21 +1834,14 @@ class AnnotationWindow(BaseCanvas):
                     except Exception:
                         pass
                 else:
-                    _tp = time.perf_counter()
                     action = ChangeLabelsAction(self, changes)
                     self.action_stack.push(action)
-                    _t_push = time.perf_counter() - _tp
-                    _te = time.perf_counter()
                     try:
                         self.annotationsLabelsChanged.emit(changes)
                     except Exception:
                         pass
-                    _t_emit = time.perf_counter() - _te
         except Exception:
             pass
-        if _t_push + _t_emit > 0.02:
-            print(f"[PERF] set_selected_label: action_push={_t_push*1000:.1f}ms"
-                  f" | signal_emit={_t_emit*1000:.1f}ms")
 
         # Make cursor normal again
         QApplication.restoreOverrideCursor()
@@ -2890,6 +2859,9 @@ class AnnotationWindow(BaseCanvas):
                     self.refresh_mask_annotation_view(mask_annotation)
                 except Exception:
                     pass
+
+                if _has_suspend:
+                    _context_matrix.resume_annotation_updates()
 
             if clear_action is None or clear_action.is_empty():
                 try:
