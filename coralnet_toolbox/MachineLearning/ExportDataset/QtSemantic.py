@@ -465,6 +465,13 @@ class Semantic(Base):
         val_counts = _label_counts_from(self.val_annotations)
         test_counts = _label_counts_from(self.test_annotations)
 
+        # Unique images per label from the filtered selection, so the "Images"
+        # column tracks the chosen Image Source (All vs Filtered).
+        selected_image_counts = {}
+        for anno in self.selected_annotations:
+            for lbl in self._stats_cache.get(anno.id, {}):
+                selected_image_counts.setdefault(lbl, set()).add(anno.image_path)
+
         red = QColor(255, 220, 220)
         green = QColor(220, 255, 220)
 
@@ -490,6 +497,7 @@ class Semantic(Base):
             self.label_counts_table.item(row, 3).setText(str(train_count))
             self.label_counts_table.item(row, 4).setText(str(val_count))
             self.label_counts_table.item(row, 5).setText(str(test_count))
+            self.label_counts_table.item(row, 6).setText(str(len(selected_image_counts.get(label, ()))))
 
             if include_checkbox.isChecked():
                 if allow_unlabeled_video_export:

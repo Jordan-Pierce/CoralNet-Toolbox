@@ -831,6 +831,12 @@ class Base(QDialog):
         train_counts = Counter(a.label.short_label_code for a in self.train_annotations)
         val_counts = Counter(a.label.short_label_code for a in self.val_annotations)
         test_counts = Counter(a.label.short_label_code for a in self.test_annotations)
+
+        # Unique images per label from the currently filtered selection, so the
+        # "Images" column reflects the chosen Image Source (All vs Filtered).
+        selected_image_counts = {}
+        for a in self.selected_annotations:
+            selected_image_counts.setdefault(a.label.short_label_code, set()).add(a.image_path)
         unlabeled_video_export = self.allows_unlabeled_video_export() and self.include_negatives_radio.isChecked()
 
         red = QColor(255, 220, 220)
@@ -856,6 +862,7 @@ class Base(QDialog):
             self.label_counts_table.item(row, 3).setText(str(train_count))
             self.label_counts_table.item(row, 4).setText(str(val_count))
             self.label_counts_table.item(row, 5).setText(str(test_count))
+            self.label_counts_table.item(row, 6).setText(str(len(selected_image_counts.get(label, ()))))
 
             if include_checkbox.isChecked():
                 if unlabeled_video_export:
