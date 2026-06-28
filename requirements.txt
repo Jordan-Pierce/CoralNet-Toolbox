@@ -15,12 +15,14 @@ faiss-cpu
 transformers>=5.0.0
 timm>=1.0.0
 yolo-tiling>=0.0.28
-pynvvideocodec==1.0.2; sys_platform != 'darwin'
 requests
 selenium>=4.15.2
 beautifulsoup4>=4.12.2
 webdriver_manager
 dill
 seaborn
-GPUtil
 psutil
+
+# --- Hardware-Specific Conditionals ---
+pynvvideocodec==1.0.2; sys_platform != 'darwin'
+GPUtil; sys_platform != 'darwin'
