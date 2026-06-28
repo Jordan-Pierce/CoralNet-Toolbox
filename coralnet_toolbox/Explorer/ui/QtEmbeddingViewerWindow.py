@@ -1618,7 +1618,7 @@ class EmbeddingViewerWindow(QWidget):
         kwargs = {
             'stream': True,
             'imgsz': self.imgsz,
-            'half': self.device == 'cuda',
+            'quantize': self.device == 'cuda',
             'device': self.device,
             'verbose': False
         }

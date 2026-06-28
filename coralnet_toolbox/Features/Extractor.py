@@ -638,7 +638,7 @@ class YOLOExtractor(BaseExtractor):
         try:
             kwargs = {
                 "imgsz": 224,
-                "half": self.device == "cuda",
+                "quantize": self.device == "cuda",
                 "device": self.device if self.device != "cpu" else "cpu",
                 "verbose": False,
             }

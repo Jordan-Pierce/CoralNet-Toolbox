@@ -264,7 +264,7 @@ class DeployPredictorDialog(QDialog):
                 conf=conf,
                 device=self.main_window.device,
                 retina_masks=False,
-                half=True if selected_model_name != "MobileSAM" else False,  # MobileSAM doesn't support half precision
+                quantize=True if selected_model_name != "MobileSAM" else False,  # MobileSAM doesn't support quantization
                 save=False, 
                 show=False, 
                 save_txt=False
