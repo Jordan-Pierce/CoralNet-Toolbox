@@ -222,7 +222,6 @@ class RasterManager(QObject):
                            require_predictions: bool = False,
                            allowed_raster_types: Optional[Set[str]] = None,
                            require_z_channel: bool = False,
-                           require_transform: bool = False,
                            selected_paths: List[str] = None) -> List[str]:
         """
         Get a filtered list of image paths based on criteria.
@@ -256,7 +255,6 @@ class RasterManager(QObject):
                 require_predictions=require_predictions,
                 allowed_raster_types=allowed_raster_types,
                 require_z_channel=require_z_channel,
-                require_transform=require_transform,
             ):
                 filtered_paths.append(path)
                 

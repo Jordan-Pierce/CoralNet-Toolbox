@@ -2,7 +2,6 @@ import warnings
 
 import os
 import gc
-import threading
 from collections import defaultdict
 from typing import Optional, Set, List
 
@@ -10,7 +9,6 @@ import cv2
 import numpy as np
 
 import rasterio
-import zipfile
 from rasterio.crs import CRS
 from rasterio.warp import calculate_default_transform
 
@@ -18,7 +16,6 @@ from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from coralnet_toolbox.Annotations import MaskAnnotation
-from coralnet_toolbox.MVAT.utils.IndexMapCodec import load_index_map_archive, INDEX_MAP_LRU
 from coralnet_toolbox.Features.FeatureMapCodec import load_feature_map, FEATURE_MAP_LRU
 
 from coralnet_toolbox.WorkArea import WorkArea
@@ -33,22 +30,6 @@ from coralnet_toolbox.utilities import normalize_z_unit
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
-
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Module-level warp-grid cache (opt 5)
-# Cameras sharing the same lens model (K + dist_coeffs + image size) share one
-# GPU tensor and one pair of CPU flow maps instead of each allocating their own.
-# ----------------------------------------------------------------------------------------------------------------------
-
-_WARP_GRID_CACHE: dict = {}          # key -> {'map_x', 'map_y', 'grid_gpu', 'oob_mask'}
-_WARP_GRID_LOCK  = threading.Lock()  # guards both reads and writes
-
-
-def _warp_grid_cache_key(intrinsics, dist_coeffs, h, w):
-    K_bytes   = intrinsics.tobytes()  if intrinsics  is not None else b''
-    d_bytes   = dist_coeffs.tobytes() if dist_coeffs is not None else b''
-    return (K_bytes, d_bytes, h, w)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -129,36 +110,6 @@ class Raster(QObject):
         self.z_nodata: Optional[float] = None  # Nodata value for z_channel (NULL/missing data indicator)
         self.z_data_type: Optional[str] = None  # Type of z-channel data: 'depth', or 'elevation'
         
-        # Camera calibration information
-        self.intrinsics: Optional[np.ndarray] = None  # Camera intrinsic parameters as numpy array
-        self.extrinsics: Optional[np.ndarray] = None  # Camera extrinsic parameters as numpy array
-        # Lens distortion information
-        self.is_distorted: bool = False  # True if the source image has uncorrected lens distortion
-        self.dist_coeffs: Optional[np.ndarray] = None  # OpenCV layout [k1,k2,p1,p2,k3,k4,k5,k6] float64
-        self.intrinsics_undistorted: Optional[np.ndarray] = None  # K_new: linear camera matrix (wider FOV)
-        # Visibility/Index map information (for MultiView Annotation)
-        self._index_map: Optional[np.ndarray] = None  # 2D array mapping pixels to element IDs (H x W int32)
-        # When True, keep _index_map RAM-resident (bypass LRU eviction). Set for
-        # context cameras the user is actively viewing so the per-hover occlusion
-        # loop never pays a synchronous LRU/disk reload (see pin_index_map).
-        self._index_map_pinned: bool = False
-        # Optional zero-arg callable that recomputes and returns this raster's
-        # dense index map (H x W int32) on demand. Set by MVAT's aggressive
-        # (no-disk) mode so a map that isn't resident is regenerated from the warm
-        # GL context instead of read from disk. When None (2D rasters, disk mode)
-        # the index_map machinery behaves exactly as before.
-        self._index_map_provider = None
-        self.index_map_path: Optional[str] = None  # Path to index_map file if saved separately
-        self.visible_indices: Optional[np.ndarray] = None  # 1D array of visible element IDs
-        self.index_element_type: Optional[str] = None  # Element type: 'point', 'face', or 'cell'
-        # Render pixel budget that produced the index map: 0 = Native quality,
-        # None = unknown (e.g. legacy cache archives without the metadata key)
-        self.index_map_pixel_budget: Optional[int] = None
-        # CSR inverted index (element_id -> flat pixel indices)
-        self.inv_ids: Optional[np.ndarray] = None      # int32: sorted unique element IDs
-        self.inv_offsets: Optional[np.ndarray] = None  # int64: offsets into inv_pixels
-        self.inv_pixels: Optional[np.ndarray] = None   # int32: flat pixel indices
-
         # Feature map information (dense per-image feature vectors)
         self._feature_map: Optional[np.ndarray] = None  # [h, w, C] float16 at patch-grid resolution
         self.feature_map_path: Optional[str] = None  # Path to feature map file if saved separately
@@ -203,88 +154,6 @@ class Raster(QObject):
             self.display_name = self.basename[:max_length - 3] + "..."
         else:
             self.display_name = self.basename
-
-    @property
-    def index_map(self) -> Optional[np.ndarray]:
-        """Lazy-load index_map from disk cache on first access via LRU.
-
-        If _index_map is in memory, return it. Otherwise, if index_map_path is set,
-        load from disk via the bounded LRU cache. Avoids keeping all maps resident.
-        """
-        if self._index_map is not None:
-            return self._index_map
-        if self.index_map_path:
-            return INDEX_MAP_LRU.get(self.index_map_path)
-        # Aggressive (no-disk) mode: regenerate from the warm GL context. Hold the
-        # result only while pinned, so RAM stays bounded to the on-screen working
-        # set; off-screen reads recompute transiently and are GC'd. Pinned reads
-        # recompute at most once per pin (the hover loop then hits _index_map).
-        if self._index_map_provider is not None:
-            arr = self._index_map_provider()
-            if arr is not None and self._index_map_pinned:
-                self._index_map = arr
-            return arr
-        return None
-
-    @index_map.setter
-    def index_map(self, value: Optional[np.ndarray]) -> None:
-        """Set index_map, routing to LRU cache if disk-backed, else retaining in memory."""
-        if value is None:
-            self._index_map = None
-            if self.index_map_path:
-                INDEX_MAP_LRU.discard(self.index_map_path)
-            return
-
-        if self.index_map_path:
-            INDEX_MAP_LRU.put(self.index_map_path, value)
-            # Keep a RAM-resident reference while pinned so a freshly (re)computed
-            # map for an on-screen camera stays hot for the hover loop.
-            self._index_map = value if self._index_map_pinned else None
-        elif self._index_map_provider is not None:
-            # Provider-backed (recompute) map: hold only while pinned, mirroring the
-            # disk-backed branch, so a seeded on-screen map stays hot but RAM is
-            # bounded to the pinned set (the provider regenerates after eviction).
-            self._index_map = value if self._index_map_pinned else None
-        else:
-            self._index_map = value
-
-    def pin_index_map(self) -> bool:
-        """Keep this raster's index map RAM-resident, bypassing the LRU.
-
-        The per-hover occlusion loop reads each visible context camera's
-        index_map every frame. Backed by the bounded ``INDEX_MAP_LRU``, that read
-        silently reloads from disk (tens of ms each) whenever the visible working
-        set exceeds the cache budget — which freezes interaction once ~20+
-        cameras can see the cursor. Pinning the on-screen cameras promotes their
-        maps to a held reference so the reads become O(1), bounding RAM to what is
-        actually displayed.
-
-        Idempotent: a no-op (no reload) when already resident. Returns True if a
-        map is resident afterwards.
-        """
-        self._index_map_pinned = True
-        if self._index_map is not None:
-            return True
-        if self.index_map_path:
-            arr = INDEX_MAP_LRU.get(self.index_map_path)
-            if arr is not None:
-                self._index_map = arr
-                return True
-        return False
-
-    def unpin_index_map(self) -> None:
-        """Release a RAM-pinned index map, freeing memory immediately.
-
-        Drops both the held ``_index_map`` reference and the LRU entry so the
-        array can be GC'd. The map is still on disk (``index_map_path``) and
-        will be reloaded on demand if this camera becomes visible again.
-        """
-        if not self._index_map_pinned:
-            return
-        self._index_map_pinned = False
-        if self.index_map_path:
-            INDEX_MAP_LRU.discard(self.index_map_path)
-        self._index_map = None
 
     @property
     def feature_map(self) -> Optional[np.ndarray]:
@@ -446,642 +315,6 @@ class Raster(QObject):
         self.metadata.pop('scale_y', None)
         self.metadata.pop('original_crs', None)  # Also remove derived crs
     
-    def add_intrinsics(self, intrinsics: np.ndarray):
-        """
-        Add or update camera intrinsic parameters.
-        
-        Args:
-            intrinsics (np.ndarray): Camera intrinsic matrix (typically 3x3 or 3x4)
-                                    Standard format for camera calibration matrix
-        """
-        if not isinstance(intrinsics, np.ndarray):
-            raise ValueError("Intrinsics must be a numpy array")
-        self.intrinsics = intrinsics.copy()
-        
-    def update_intrinsics(self, intrinsics: np.ndarray):
-        """
-        Update camera intrinsic parameters.
-        
-        Args:
-            intrinsics (np.ndarray): New camera intrinsic matrix
-        """
-        self.add_intrinsics(intrinsics)  # Same validation as add
-        
-    def remove_intrinsics(self):
-        """Remove all camera intrinsic parameters."""
-        self.intrinsics = None
-        
-    def add_extrinsics(self, extrinsics: np.ndarray):
-        """
-        Add or update camera extrinsic parameters.
-        
-        Args:
-            extrinsics (np.ndarray): Camera extrinsic matrix (typically 4x4 transformation matrix
-                                    or 3x4 [R|T] matrix combining rotation and translation)
-        """
-        if not isinstance(extrinsics, np.ndarray):
-            raise ValueError("Extrinsics must be a numpy array")
-        self.extrinsics = extrinsics.copy()
-        
-    def update_extrinsics(self, extrinsics: np.ndarray):
-        """
-        Update camera extrinsic parameters.
-        
-        Args:
-            extrinsics (np.ndarray): New camera extrinsic matrix
-        """
-        self.add_extrinsics(extrinsics)  # Same validation as add
-        
-    def remove_extrinsics(self):
-        """Remove all camera extrinsic parameters."""
-        self.extrinsics = None
-
-    def add_distortion(self, dist_coeffs: np.ndarray, is_distorted: bool = True, is_fisheye: bool = False):
-        """
-        Store lens distortion coefficients and optionally compute the linear camera
-        matrix (K_new) via cv2.getOptimalNewCameraMatrix.
-
-        Args:
-            dist_coeffs: OpenCV distortion array, shape (4,), (5,), or (8,).
-                         Layout: [k1, k2, p1, p2, k3, k4, k5, k6] (zero-padded).
-            is_distorted: True if the source image is raw / has uncorrected distortion.
-        """
-        if not isinstance(dist_coeffs, np.ndarray):
-            dist_coeffs = np.asarray(dist_coeffs, dtype=np.float64)
-        self.dist_coeffs = dist_coeffs.astype(np.float64)
-        self.is_distorted = is_distorted
-        # Save fisheye flag for downstream projection/warping decisions
-        self.is_fisheye = bool(is_fisheye)
-
-        if is_distorted:
-            # Keep linear intrinsics identical to original intrinsics to avoid
-            # unintended focal length / principal point shifts.
-            self.intrinsics_undistorted = self.intrinsics.copy() if self.intrinsics is not None else None
-        else:
-            self.intrinsics_undistorted = None
-
-    def compute_undistorted_intrinsics(self):
-        """
-        Set the linear camera matrix. By keeping it identical to the original 
-        intrinsics, we prevent OpenCV from artificially shifting or scaling the 
-        focal length/principal point, eliminating alignment mismatches.
-        """
-        if self.intrinsics is None or self.dist_coeffs is None:
-            return
-            
-        self.intrinsics_undistorted = self.intrinsics.copy()
-        self._undistorted_offset = (0, 0)
-        self._undistorted_size = (self.width, self.height)
-
-    def _cache_warp_maps(self):
-        """Pre-computes the pixel flow maps for blazing fast remapping later."""
-        import cv2
-        import numpy as np
-
-        h, w = self.height, self.width
-        grid_y, grid_x = np.mgrid[0:h, 0:w].astype(np.float32)
-        distorted_pixels = np.stack([grid_x, grid_y], axis=-1).reshape(-1, 1, 2)
-
-        # Fisheye branch uses cv2.fisheye API which expects 4 distortion params
-        if getattr(self, 'is_fisheye', False):
-            try:
-                D = self.dist_coeffs[:4]
-                linear_coords = cv2.fisheye.undistortPoints(
-                    distorted_pixels,
-                    self.intrinsics.astype(np.float64),
-                    D,
-                    P=self.intrinsics_undistorted.astype(np.float64),
-                )
-            except Exception:
-                # Fallback to non-fisheye undistort if fisheye module is unavailable
-                linear_coords = cv2.undistortPoints(
-                    distorted_pixels,
-                    self.intrinsics.astype(np.float64),
-                    self.dist_coeffs,
-                    P=self.intrinsics_undistorted.astype(np.float64),
-                )
-        else:
-            strict_criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_MAX_ITER, 100, 1e-5)
-            R_eye = np.eye(3, dtype=np.float64)
-            try:
-                # Try the more accurate iterative API first when available
-                linear_coords = cv2.undistortPointsIter(
-                    distorted_pixels,
-                    self.intrinsics.astype(np.float64),
-                    self.dist_coeffs,
-                    R_eye,
-                    self.intrinsics_undistorted.astype(np.float64),
-                    strict_criteria,
-                )
-            except AttributeError:
-                # Fallback to standard undistortPoints
-                linear_coords = cv2.undistortPoints(
-                    distorted_pixels,
-                    self.intrinsics.astype(np.float64),
-                    self.dist_coeffs,
-                    P=self.intrinsics_undistorted.astype(np.float64),
-                )
-
-        self._map_x = linear_coords[:, 0, 0].reshape(h, w)
-        self._map_y = linear_coords[:, 0, 1].reshape(h, w)
-
-        # Populate the module-level cache so sibling cameras with the same lens
-        # skip this expensive computation entirely (opt 5).
-        cache_key = _warp_grid_cache_key(self.intrinsics, self.dist_coeffs, h, w)
-        with _WARP_GRID_LOCK:
-            entry = _WARP_GRID_CACHE.setdefault(cache_key, {})
-            entry.setdefault('map_x', self._map_x)
-            entry.setdefault('map_y', self._map_y)
-
-    def _ensure_warp_maps(self):
-        """Idempotent: populate CPU warp maps, pulling from module cache when possible."""
-        if hasattr(self, '_map_x'):
-            return
-        cache_key = _warp_grid_cache_key(self.intrinsics, self.dist_coeffs,
-                                          self.height, self.width)
-        with _WARP_GRID_LOCK:
-            entry = _WARP_GRID_CACHE.get(cache_key)
-        if entry and 'map_x' in entry:
-            self._map_x = entry['map_x']
-            self._map_y = entry['map_y']
-        else:
-            self._cache_warp_maps()
-
-    def warp_linear_map_to_distorted(self, linear_map, border_value=-1):
-        """
-        Warp a perfectly linear VTK render back into the distorted photo space.
-        Uses CUDA via PyTorch if available, falling back to cached cv2.remap.
-        """
-        self._ensure_warp_maps()
-
-        # Try CUDA path first
-        import torch
-        if torch.cuda.is_available():
-            try:
-                return self._warp_pytorch_cuda(linear_map, border_value)
-            except Exception as e:
-                print(f"CUDA warp failed, falling back to CPU: {e}")
-
-        # Fallback to CPU cv2.remap (already 100x faster than before due to caching)
-        import cv2
-        return cv2.remap(
-            linear_map,
-            self._map_x,
-            self._map_y,
-            interpolation=cv2.INTER_NEAREST,
-            borderMode=cv2.BORDER_CONSTANT,
-            borderValue=border_value
-        )
-
-    def _warp_pytorch_cuda(self, linear_map, border_value):
-        import torch
-        import torch.nn.functional as F
-        import numpy as np
-
-        h, w = self.height, self.width
-
-        # Lazily initialize and cache the PyTorch grid and out-of-bounds mask on the GPU.
-        # Pull from module-level cache first so all cameras with the same lens share
-        # one GPU tensor (opt 5).
-        if not hasattr(self, '_torch_grid_gpu'):
-            cache_key = _warp_grid_cache_key(self.intrinsics, self.dist_coeffs, h, w)
-            with _WARP_GRID_LOCK:
-                entry = _WARP_GRID_CACHE.get(cache_key, {})
-                if 'grid_gpu' in entry:
-                    self._torch_grid_gpu = entry['grid_gpu']
-                    self._torch_oob_mask = entry['oob_mask']
-                else:
-                    # F.grid_sample expects coordinates normalized to [-1, 1]
-                    norm_map_x = (self._map_x / (w - 1)) * 2.0 - 1.0
-                    norm_map_y = (self._map_y / (h - 1)) * 2.0 - 1.0
-                    grid = np.stack([norm_map_x, norm_map_y], axis=-1)
-                    # Send to GPU: shape (1, H, W, 2)
-                    self._torch_grid_gpu = torch.tensor(
-                        grid, device='cuda', dtype=torch.float32).unsqueeze(0)
-                    # Pre-compute out-of-bounds mask
-                    self._torch_oob_mask = (
-                        (self._torch_grid_gpu[0, ..., 0] < -1.0) |
-                        (self._torch_grid_gpu[0, ..., 0] > 1.0)  |
-                        (self._torch_grid_gpu[0, ..., 1] < -1.0) |
-                        (self._torch_grid_gpu[0, ..., 1] > 1.0)
-                    )
-                    # Store back so sibling cameras share this tensor
-                    entry['grid_gpu'] = self._torch_grid_gpu
-                    entry['oob_mask'] = self._torch_oob_mask
-                    _WARP_GRID_CACHE[cache_key] = entry
-
-                    tensor_mb = (self._torch_grid_gpu.element_size() * self._torch_grid_gpu.nelement()) / (1024 * 1024)
-                    print(f"🚨 [VRAM DEBUG] Cached new grid! Unique models in cache: {len(_WARP_GRID_CACHE)}. This grid: {tensor_mb:.1f} MB")
-
-        # F.grid_sample requires float32 tensors, shape (N, C, H, W)
-        is_int = linear_map.dtype in [np.int32, np.int64]
-        map_tensor = torch.tensor(linear_map, device='cuda', dtype=torch.float32).unsqueeze(0).unsqueeze(0)
-
-        # Execute warp on GPU
-        warped_tensor = F.grid_sample(
-            map_tensor,
-            self._torch_grid_gpu,
-            mode='nearest',
-            padding_mode='zeros', 
-            align_corners=True
-        )
-
-        # Apply the border value to pixels that fell outside the linear image bounds
-        if border_value != 0:
-            warped_tensor[0, 0, self._torch_oob_mask] = border_value
-
-        warped_np = warped_tensor.squeeze().cpu().numpy()
-
-        if is_int:
-            return warped_np.astype(np.int32)
-        return warped_np
-
-    @staticmethod
-    def _estimate_batch_warp_bytes(maps, grid_gpu=None):
-        """Estimate temporary memory required to warp a batch of 2D maps.
-
-        ``maps`` elements may be numpy arrays (CPU) or CUDA tensors (already in VRAM).
-        """
-        if not maps:
-            return 0
-
-        import torch
-        m0 = maps[0]
-        first_shape = tuple(m0.shape) if torch.is_tensor(m0) else np.asarray(m0).shape
-        if len(first_shape) != 2:
-            raise ValueError("warp_batch_cuda expects 2D maps")
-
-        height, width = first_shape
-        batch_size = len(maps)
-
-        # CPU staging only applies to numpy inputs; CUDA tensors already live in VRAM.
-        any_cpu = any(not torch.is_tensor(m) for m in maps)
-        cpu_bytes = batch_size * height * width * 4 if any_cpu else 0
-
-        # GPU tensor staging plus expanded sampling grid.
-        gpu_bytes = batch_size * height * width * 4
-        gpu_bytes += batch_size * height * width * 2 * 4
-
-        if grid_gpu is not None:
-            try:
-                gpu_bytes += int(grid_gpu.element_size() * grid_gpu.nelement())
-            except Exception:
-                pass
-
-        return cpu_bytes + gpu_bytes
- 
-    @classmethod
-    def warp_batch_cuda(cls, maps, border_values, grid_gpu, oob_mask):
-        """
-        Warp N maps in a single F.grid_sample call (opt 4).
-
-        All maps must share the same (H, W) and the same lens model (same grid).
-
-        Args:
-            maps          : list of np.ndarray (CPU) or CUDA int32 tensors, each shape (H, W).
-                            Tensor inputs are consumed in-place from VRAM (no PCIe upload).
-                            Maps may be lower resolution than the grid; grid_sample upsamples.
-            border_values : list of scalars — border fill per map (-1 for index, nan for depth)
-            grid_gpu      : torch.Tensor shape (1, H, W, 2) already on CUDA
-            oob_mask      : bool torch.Tensor shape (H, W) — out-of-bounds pixels
-
-        Returns:
-            tuple: (warped_maps, visible_indices_list)
-                warped_maps: list of np.ndarray, same dtypes as inputs
-                visible_indices_list: list of 1D np.ndarray (int32) containing unique visible IDs
-        """
-        import torch
-        import torch.nn.functional as F
-
-        if not maps:
-            return [], []
-
-        def _shape(m):
-            return tuple(m.shape) if torch.is_tensor(m) else np.asarray(m).shape
-
-        def _is_int_map(m):
-            if torch.is_tensor(m):
-                return m.dtype in (torch.int32, torch.int64)
-            return m.dtype in (np.int32, np.int64)
-
-        shapes = {_shape(m) for m in maps}
-        if len(shapes) != 1:
-            raise ValueError("All maps passed to warp_batch_cuda must have the same shape")
-
-        estimated_bytes = cls._estimate_batch_warp_bytes(maps, grid_gpu)
-        try:
-            free_vram, _ = torch.cuda.mem_get_info(
-                grid_gpu.device.index if grid_gpu is not None and getattr(grid_gpu, 'is_cuda', False) else None
-            )
-            safe_limit = int(free_vram * 0.8)
-            if estimated_bytes > safe_limit:
-                raise ValueError(
-                    f"Batch warp estimate ({estimated_bytes / 1_073_741_824:.2f} GiB) exceeds safe CUDA budget ({safe_limit / 1_073_741_824:.2f} GiB)"
-                )
-        except Exception:
-            # If mem_get_info is unavailable or fails, keep the structural checks above
-            # and let the actual CUDA call decide.
-            pass
-
-        is_int = [_is_int_map(m) for m in maps]
-        n = len(maps)
-
-        def _nbytes(m):
-            return m.element_size() * m.nelement() if torch.is_tensor(m) else m.nbytes
-        total_size_mb = sum(_nbytes(m) for m in maps) / (1024 * 1024)
-        import time
-        stream_start = time.perf_counter()
-
-        # 1. Pre-allocate the final, empty tensor directly on the GPU
-        h, w = _shape(maps[0])
-        tensor = torch.empty((n, 1, h, w), dtype=torch.float32, device=grid_gpu.device)
-
-        # 2. Stream each map into VRAM. CUDA tensors are a GPU→GPU copy + cast (no
-        #    PCIe); numpy arrays transfer from the CPU. Both cast to float32 on assign.
-        for i, m in enumerate(maps):
-            tensor[i, 0] = m if torch.is_tensor(m) else torch.from_numpy(m)
-
-        stream_time = time.perf_counter() - stream_start
-
-        # Expand grid: (1, H, W, 2) → (N, H, W, 2)
-        grid_n = grid_gpu.expand(n, -1, -1, -1)
-
-        warped = F.grid_sample(tensor, grid_n, mode='nearest', padding_mode='zeros', align_corners=True)
-        # warped: (N, 1, H, W)
-
-        # Apply per-map border values to OOB pixels
-        for i, bv in enumerate(border_values):
-            if bv != 0 and not (isinstance(bv, float) and bv == 0.0):
-                warped[i, 0, oob_mask] = float(bv)
-
-        # ---> Extract unique indices on the GPU instantly <---
-        visible_indices_list = []
-        for i in range(n):
-            valid_mask = warped[i, 0] >= 0
-            # GPU unique sort -> pull tiny 1D array to CPU
-            unq = torch.unique(warped[i, 0][valid_mask]).cpu().numpy().astype(np.int32)
-            visible_indices_list.append(unq)
-
-        # Move maps back to CPU and convert dtypes
-        warped_cpu = warped.squeeze(1).cpu().numpy()   # (N, H, W)
-        warped_maps = [
-            row.astype(np.int32) if flag else row
-            for row, flag in zip(warped_cpu, is_int)
-        ]
-        
-        return warped_maps, visible_indices_list
-
-    def add_index_map(self, index_map: Optional[np.ndarray], index_map_path: Optional[str] = None,
-                      visible_indices: Optional[np.ndarray] = None,
-                      element_type: Optional[str] = 'point',
-                      inverted_index: Optional[dict] = None):
-        """
-        Add or update index map and visible indices data.
-
-        When index_map is None but index_map_path is provided, registers a lazy disk-backed
-        map (data is loaded on first access via LRU). This avoids eager decompression and
-        keeps dense maps out of memory until needed.
-
-        Args:
-            index_map (np.ndarray, optional): 2D array mapping pixels to element IDs (H x W int32),
-                or None for lazy (disk-backed) registration.
-            index_map_path (str, optional): Path to the index_map file if saved separately
-            visible_indices (np.ndarray, optional): 1D array of visible element IDs
-            element_type (str, optional): Type of element IDs in the index map.
-                One of 'point' (point cloud), 'face' (mesh faces), or 'cell' (DEM grid).
-                Defaults to 'point' for backward compatibility.
-            inverted_index (dict, optional): CSR inverted index with keys
-                'inv_ids', 'inv_offsets', 'inv_pixels'.
-        """
-        # Validate element_type
-        valid_element_types = {'point', 'face', 'cell', 'splat'}
-        if element_type is not None and element_type not in valid_element_types:
-            raise ValueError(f"element_type must be one of {valid_element_types}, got '{element_type}'")
-
-        # Validate and prepare index_map if provided
-        if index_map is not None:
-            if not isinstance(index_map, np.ndarray):
-                raise ValueError("Index map must be a numpy array")
-            if index_map.ndim != 2:
-                raise ValueError("Index map must be a 2D array")
-            if index_map.dtype != np.int32:
-                raise ValueError("Index map must be int32 dtype")
-
-            # Resize index_map if dimensions don't match
-            if index_map.shape != (self.height, self.width):
-                index_map = cv2.resize(
-                    index_map,
-                    (self.width, self.height),
-                    interpolation=cv2.INTER_NEAREST
-                )
-
-        # Set path BEFORE index_map so the property setter can route correctly to LRU
-        self.index_map_path = index_map_path
-        self.index_map = index_map
-        self.index_element_type = element_type
-
-        # Store CSR inverted index
-        if inverted_index is not None:
-            self.inv_ids     = inverted_index['inv_ids']
-            self.inv_offsets = inverted_index['inv_offsets']
-            self.inv_pixels  = inverted_index['inv_pixels']
-        else:
-            # No prebuilt index supplied (common on cache-hit loads). Defer the
-            # build to the first pixel query (ensure_inverted_index) instead of
-            # eagerly building one per camera — at thousands of cameras that
-            # retained an inverted index in RAM for every map and spawned a
-            # daemon-thread burst.
-            self.inv_ids = self.inv_offsets = self.inv_pixels = None
-
-        # Set visible_indices if provided
-        if visible_indices is not None:
-            if not isinstance(visible_indices, np.ndarray):
-                raise ValueError("Visible indices must be a numpy array")
-            if visible_indices.ndim != 1:
-                raise ValueError("Visible indices must be a 1D array")
-            self.visible_indices = visible_indices
-    
-    # ------------------------------------------------------------------
-    # Inverted-index background build
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _build_inverted_index(index_map: np.ndarray) -> Optional[dict]:
-        """
-        Build a CSR-style inverted index mapping each visible element ID to the
-        flat pixel positions (row-major) where it appears.
-
-        Returns a dict with keys 'inv_ids', 'inv_offsets', 'inv_pixels', or
-        None when the index_map contains no valid elements.
-        """
-        flat = index_map.ravel()
-        flat_pixel_positions = np.where(flat >= 0)[0].astype(np.int32)
-        if len(flat_pixel_positions) == 0:
-            return None
-        element_ids_at_pixels = flat[flat_pixel_positions].astype(np.int32)
-        sort_order   = np.argsort(element_ids_at_pixels, kind='stable')
-        sorted_ids   = element_ids_at_pixels[sort_order]
-        sorted_pixels = flat_pixel_positions[sort_order]
-        unique_ids, start_positions, _ = np.unique(
-            sorted_ids, return_index=True, return_counts=True
-        )
-        offsets = np.empty(len(unique_ids) + 1, dtype=np.int64)
-        offsets[:-1] = start_positions
-        offsets[-1]  = len(sorted_pixels)
-        return {
-            'inv_ids':     unique_ids.astype(np.int32),
-            'inv_offsets': offsets,
-            'inv_pixels':  sorted_pixels,
-        }
-
-    def ensure_inverted_index(self) -> bool:
-        """Build the CSR inverted index on demand (first pixel query).
-
-        Bounded to this raster: only cameras that are actually queried pay the
-        build cost and retain the index in RAM, rather than eagerly building one
-        for every loaded camera. Idempotent; returns True if a usable index is
-        present afterward.
-        """
-        if (isinstance(self.inv_ids, np.ndarray)
-                and isinstance(self.inv_offsets, np.ndarray)
-                and isinstance(self.inv_pixels, np.ndarray)):
-            return True
-        index_map = self.index_map
-        if index_map is None:
-            return False
-        inv = self._build_inverted_index(index_map)
-        if inv is None:
-            return False
-        self.inv_ids     = inv['inv_ids']
-        self.inv_offsets = inv['inv_offsets']
-        self.inv_pixels  = inv['inv_pixels']
-        return True
-
-    def update_index_map(self, index_map: np.ndarray, index_map_path: Optional[str] = None,
-                         visible_indices: Optional[np.ndarray] = None,
-                         element_type: Optional[str] = None):
-        """
-        Update the index map and visible indices data.
-        
-        Args:
-            index_map (np.ndarray): 2D array mapping pixels to element IDs
-            index_map_path (str, optional): Path to the index_map file if saved separately
-            visible_indices (np.ndarray, optional): 1D array of visible element IDs
-            element_type (str, optional): Type of element IDs. If None, preserves existing type.
-        """
-        # Preserve existing element_type if not specified
-        if element_type is None:
-            element_type = self.index_element_type or 'point'
-        # Same validation as add
-        self.add_index_map(index_map, index_map_path, visible_indices, element_type)
-    
-    def set_index_map_path(self, index_map_path: str, auto_load: bool = True):
-        """
-        Set the path to the index_map file and optionally auto-load it.
-        
-        Args:
-            index_map_path (str): Path to the index_map file
-            auto_load (bool): Whether to automatically attempt loading the index map data
-        """
-        self.index_map_path = index_map_path
-        
-        # Automatically attempt to load index map data if requested and file exists
-        if auto_load and index_map_path and os.path.exists(index_map_path):
-            try:
-                self._load_index_map_from_path(index_map_path)
-            except Exception as e:
-                try:
-                    if isinstance(e, zipfile.BadZipFile) or 'File is not a zip file' in str(e):
-                        return
-                except Exception:
-                    pass
-                print(f"Warning: Failed to auto-load index map from {index_map_path}: {e}")
-    
-    def has_index_map(self) -> bool:
-        """Check if the raster currently has an index map loaded."""
-        return self.index_map is not None
-    
-    def remove_index_map(self):
-        """Remove the index map and visible indices data."""
-        if self.index_map_path:
-            INDEX_MAP_LRU.discard(self.index_map_path)
-        # Drop any recompute provider so a removed map stays removed (no silent
-        # regeneration on the next index_map read).
-        self._index_map_provider = None
-        self.index_map = None
-        self.index_map_path = None
-        self.visible_indices = None
-        self.index_element_type = None
-        self.inv_ids = self.inv_offsets = self.inv_pixels = None
-        self.index_map_pixel_budget = None
-        if hasattr(self, 'index_map_scale_factor'):
-            self.index_map_scale_factor = None
-
-    def _load_index_map_from_path(self, index_map_path: str):
-        """Load the cached index-map archive and populate in-memory state."""
-        data = load_index_map_archive(index_map_path)
-
-        self.index_map = data['index_map']
-        self.visible_indices = data.get('visible_indices')
-        self.index_element_type = data.get('element_type', self.index_element_type)
-
-        if 'pixel_budget' in data:
-            try:
-                self.index_map_pixel_budget = int(data['pixel_budget'])
-            except Exception:
-                pass
-
-        if hasattr(self, 'index_map_scale_factor') and 'scale_factor' in data:
-            try:
-                self.index_map_scale_factor = float(data['scale_factor'])
-            except Exception:
-                pass
-
-        inverted_index = data.get('inverted_index')
-        if isinstance(inverted_index, dict):
-            self.inv_ids = inverted_index.get('inv_ids')
-            self.inv_offsets = inverted_index.get('inv_offsets')
-            self.inv_pixels = inverted_index.get('inv_pixels')
-        else:
-            # Deferred: built lazily on the first pixel query via ensure_inverted_index.
-            self.inv_ids = self.inv_offsets = self.inv_pixels = None
-
-        return self.index_map
-        
-    @property
-    def index_map_lazy(self):
-        """
-        Get the index_map with lazy loading.
-        If index_map is None but index_map_path exists, attempt to load it.
-        
-        Returns:
-            numpy.ndarray or None: The index map data, or None if not available
-        """
-        # If index_map is already loaded, return it
-        if self.index_map is not None:
-            return self.index_map
-            
-        # If we have a path but no loaded data, try to load it
-        if self.index_map_path and os.path.exists(self.index_map_path):
-            try:
-                return self._load_index_map_from_path(self.index_map_path)
-            except Exception as e:
-                # If the cache file is still being written, numpy will raise a
-                # zipfile.BadZipFile / "File is not a zip file" error when trying
-                # to open the .npz. This is a transient race and noisy on the UI
-                # thread — treat it as 'not ready' and return None silently.
-                try:
-                    if isinstance(e, zipfile.BadZipFile) or 'File is not a zip file' in str(e):
-                        return None
-                except Exception:
-                    pass
-                # For other unexpected errors, fall back to a warning so we
-                # still surface real problems.
-                print(f"Warning: Failed to lazy-load index map from {self.index_map_path}: {e}")
-        
-        # Return None if no index map is available
-        return None
-
     # ------------------------------------------------------------------
     # Feature Map management
     # ------------------------------------------------------------------
@@ -1378,10 +611,6 @@ class Raster(QObject):
         """Check if the raster has any z-channel metadata attached or cached."""
         return self.z_channel is not None or self.z_channel_path is not None
 
-    def has_transform_metadata(self) -> bool:
-        """Check if the raster has transform metadata attached."""
-        return self.intrinsics is not None and self.extrinsics is not None
-        
     def remove_z_channel(self):
         """Remove the depth/elevation channel data and path."""
         self.z_channel = None
@@ -1689,8 +918,7 @@ class Raster(QObject):
                        require_no_annotations=False,
                        require_predictions=False,
                        allowed_raster_types: Optional[Set[str]] = None,
-                       require_z_channel: bool = False,
-                       require_transform: bool = False) -> bool:
+                       require_z_channel: bool = False) -> bool:
         """
         Check if this raster matches the given filter criteria
         
@@ -1703,8 +931,7 @@ class Raster(QObject):
             require_predictions (bool): If True, must have predictions
             allowed_raster_types (Set[str], optional): Allowed canonical raster types.
             require_z_channel (bool): If True, require z-channel metadata.
-            require_transform (bool): If True, require transform metadata.
-            
+
         Returns:
             bool: True if this raster matches all filter criteria
         """
@@ -1761,9 +988,6 @@ class Raster(QObject):
         if require_z_channel and not self.has_z_channel_metadata():
             return False
 
-        if require_transform and not self.has_transform_metadata():
-            return False
-            
         return True
     
     def get_mask_annotation(self, project_labels: list) -> MaskAnnotation:
@@ -1975,22 +1199,6 @@ class Raster(QObject):
                 'scale_units': self.scale_units
             }
         
-        # Include camera calibration information if available
-        if self.intrinsics is not None:
-            raster_data['intrinsics'] = self.intrinsics.tolist()  # Convert numpy array to list for JSON
-            
-        if self.extrinsics is not None:
-            raster_data['extrinsics'] = self.extrinsics.tolist()  # Convert numpy array to list for JSON
-
-        # Include lens distortion information if available
-        if self.dist_coeffs is not None:
-            raster_data['dist_coeffs'] = self.dist_coeffs.tolist()
-        raster_data['is_distorted'] = self.is_distorted
-            
-        # Include index_map path and visible_indices if available
-        if self.index_map_path is not None:
-            raster_data['index_map_path'] = self.index_map_path
-        
         # Include z_channel path if available
         if self.z_channel_path is not None:
             raster_data['z_channel_path'] = self.z_channel_path
@@ -2067,46 +1275,6 @@ class Raster(QObject):
             except Exception as e:
                 print(f"Error loading scale information for {self.image_path}: {str(e)}")
 
-        # Camera intrinsics
-        intrinsics_data = raster_dict.get('intrinsics')
-        if intrinsics_data:
-            try:
-                self.add_intrinsics(np.array(intrinsics_data))
-            except Exception as e:
-                print(f"Error loading intrinsics for {self.image_path}: {str(e)}")
-
-        # Camera extrinsics
-        extrinsics_data = raster_dict.get('extrinsics')
-        if extrinsics_data:
-            try:
-                self.add_extrinsics(np.array(extrinsics_data))
-            except Exception as e:
-                print(f"Error loading extrinsics for {self.image_path}: {str(e)}")
-
-        # Lens distortion
-        dist_data = raster_dict.get('dist_coeffs')
-        is_distorted = raster_dict.get('is_distorted', False)
-        if dist_data is not None:
-            try:
-                self.add_distortion(np.array(dist_data, dtype=np.float64), is_distorted=is_distorted)
-            except Exception as e:
-                print(f"Error loading distortion for {self.image_path}: {str(e)}")
-        else:
-            self.is_distorted = is_distorted
-
-        # Index map path (lazy — do not load data yet)
-        index_map_path = raster_dict.get('index_map_path')
-        if index_map_path:
-            self.index_map_path = index_map_path
-
-        # Visible indices
-        visible_indices_data = raster_dict.get('visible_indices')
-        if visible_indices_data:
-            try:
-                self.visible_indices = np.array(visible_indices_data, dtype=np.int32)
-            except Exception as e:
-                print(f"Error loading visible_indices for {self.image_path}: {str(e)}")
-
         # Z-channel path (lazy — do not load data yet)
         z_channel_path = raster_dict.get('z_channel_path')
         if z_channel_path:
@@ -2177,20 +1345,12 @@ class Raster(QObject):
         # Clear mask annotation if it exists
         self.delete_mask_annotation()
         
-        # Clear camera calibration and z channel data
-        self.intrinsics = None
-        self.extrinsics = None
-        
+        # Clear z channel data
         self.z_channel = None
         self.z_channel_path = None
         self.z_unit = None
         self.z_data_type = None
-        
-        # Clear index map and visibility data
-        self.index_map = None
-        self.index_map_path = None
-        self.visible_indices = None
-        
+
         # Force garbage collection when requested. Batch callers can defer this
         # to avoid paying the cost once per raster.
         if collect_garbage:

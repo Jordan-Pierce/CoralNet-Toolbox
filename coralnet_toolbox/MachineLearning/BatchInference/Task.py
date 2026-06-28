@@ -417,23 +417,10 @@ class FeatureBatchInferenceTask(BatchInferenceTask):
                         except Exception:
                             feature_vector = None
 
-                    # Save feature map to the shared MVAT cache when available,
-                    # falling back to a per-image-directory cache otherwise.
-                    cache_dir = None
-                    try:
-                        cm = getattr(
-                            getattr(
-                                getattr(self.dialog, 'main_window', None),
-                                'mvat_manager', None),
-                            'cache_manager', None)
-                        if cm is not None:
-                            cache_dir = cm.get_features_cache_dir()
-                    except Exception:
-                        pass
-                    if cache_dir is None:
-                        cache_dir = os.path.join(
-                            os.path.dirname(image_path), ".cache", "features"
-                        )
+                    # Save feature map to a per-image-directory cache.
+                    cache_dir = os.path.join(
+                        os.path.dirname(image_path), ".cache", "features"
+                    )
                     os.makedirs(cache_dir, exist_ok=True)
 
                     basename = os.path.splitext(os.path.basename(image_path))[0]

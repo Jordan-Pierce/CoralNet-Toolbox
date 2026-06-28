@@ -141,7 +141,6 @@ class BrushTool(Tool):
         self.brush_mask = self._create_brush_mask()
         self.painting = False
 
-        self.post_stroke_callback = None
         self._accumulated_points = []
         self._stroke_history_action = None
         self._stroke_mask_annotation = None
@@ -239,8 +238,7 @@ class BrushTool(Tool):
         if (cursor_in_window and self.active and self.annotation_window.selected_label):
             self.update_cursor_annotation(scene_pos)
 
-            mvat_manager = getattr(self.main_window, 'mvat_manager', None)
-            if mvat_manager and getattr(mvat_manager, 'multi_annotate_enabled', False):
+            if self.cursor_move_callback:
                 self._schedule_cursor_preview_update(scene_pos)
             else:
                 self._cursor_update_timer.stop()
@@ -269,13 +267,6 @@ class BrushTool(Tool):
 
         if self.cursor_annotation:
             self.update_cursor_annotation(scene_pos)
-
-        manager = getattr(self.main_window, 'mvat_manager', None)
-        if manager is not None:
-            try:
-                manager.on_2d_tool_size_changed(self, scene_pos)
-            except Exception:
-                pass
 
     def set_brush_size(self, size, propagate: bool = True):
         """Set brush diameter (in image pixels) and mirror it to the sibling tool.
@@ -343,13 +334,6 @@ class BrushTool(Tool):
 
             scene_pos = self.annotation_window.mapToScene(event.pos())
             self.update_cursor_annotation(scene_pos)
-
-            manager = getattr(self.main_window, 'mvat_manager', None)
-            if manager is not None:
-                try:
-                    manager.on_2d_tool_size_changed(self, scene_pos)
-                except Exception:
-                    pass
 
     def create_cursor_preview_item(self, u: float, v: float, radius: float = None):
         if not self.annotation_window.selected_label:
@@ -459,31 +443,6 @@ class BrushTool(Tool):
         if not self._accumulated_points:
             # Safely cleanup if we are waiting to finish and no workers are running
             if self._is_finishing_stroke and self._active_workers == 0:
-                if self._stroke_accumulated_indices and self.post_stroke_callback:
-                    combined_flat = np.unique(np.concatenate(self._stroke_accumulated_indices))
-
-                    if len(combined_flat) > 0:
-                        mask_annotation = self._stroke_mask_annotation or self.annotation_window.current_mask_annotation
-                        h, w = mask_annotation.mask_data.shape
-
-                        y_coords, x_coords = np.divmod(combined_flat, w)
-                        min_x, max_x = int(x_coords.min()), int(x_coords.max())
-                        min_y, max_y = int(y_coords.min()), int(y_coords.max())
-
-                        crop_w = (max_x - min_x) + 1
-                        crop_h = (max_y - min_y) + 1
-
-                        cropped_mask = np.zeros((crop_h, crop_w), dtype=bool)
-                        local_y = y_coords - min_y
-                        local_x = x_coords - min_x
-                        cropped_mask[local_y, local_x] = True
-
-                        final_center = QPointF(min_x + crop_w / 2.0, min_y + crop_h / 2.0)
-
-                        # Use the active tool's label ID
-                        selected_label_id = self.annotation_window.selected_label.id
-                        self.post_stroke_callback(final_center, selected_label_id, cropped_mask)
-
                 self._cleanup_scratchpad()
                 self._last_scratchpad_pos = None
                 self._stroke_accumulated_indices.clear()
@@ -546,38 +505,10 @@ class BrushTool(Tool):
             # Accumulate the flat indices for deferred global propagation
             self._stroke_accumulated_indices.append(flat_indices)
 
-        # CLEANUP & DEFERRED GLOBAL PROPAGATION
-        # Only trigger the heavy 3D math when the user has released the stroke
-        # AND all background workers have finished computing the arrays.
+        # CLEANUP
+        # Only finalize when the user has released the stroke AND all background
+        # workers have finished computing the arrays.
         if self._is_finishing_stroke and self._active_workers == 0:
-
-            # Did we actually paint anything?
-            if self._stroke_accumulated_indices and self.post_stroke_callback:
-                # 1. Flatten all painted pixels across the entire stroke into one array
-                combined_flat = np.unique(np.concatenate(self._stroke_accumulated_indices))
-
-                if len(combined_flat) > 0:
-                    h, w = mask_annotation.mask_data.shape
-
-                    # 2. Find the tight bounding box of the entire stroke
-                    y_coords, x_coords = np.divmod(combined_flat, w)
-                    min_x, max_x = int(x_coords.min()), int(x_coords.max())
-                    min_y, max_y = int(y_coords.min()), int(y_coords.max())
-
-                    crop_w = (max_x - min_x) + 1
-                    crop_h = (max_y - min_y) + 1
-
-                    # 3. Create a compact boolean mask of just the painted area
-                    cropped_mask = np.zeros((crop_h, crop_w), dtype=bool)
-                    local_y = y_coords - min_y
-                    local_x = x_coords - min_x
-                    cropped_mask[local_y, local_x] = True
-
-                    # 4. Fire ONE heavy payload to the MVAT Manager
-                    final_center = QPointF(min_x + crop_w / 2.0, min_y + crop_h / 2.0)
-                    self.post_stroke_callback(final_center, selected_label_id, cropped_mask)
-
-            # Final Cleanup
             self._cleanup_scratchpad()
             self._last_scratchpad_pos = None
             self._stroke_accumulated_indices.clear()

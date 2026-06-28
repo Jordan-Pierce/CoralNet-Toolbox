@@ -596,11 +596,11 @@ class BatchInferenceWorker(QThread):
 class BatchInferenceDialog(QDialog):
     """
     Consolidated batch inference dialog for all models.
-    Supports: Classify, Detect, Segment, Semantic, SAM, SeeAnything, Z-Inference.
+    Supports: Classify, Detect, Segment, Semantic, SAM, SeeAnything, Feature.
 
     Detect and Segment tasks (including video and tiled variants) are routed
     through the async BatchInferenceWorker for maximum throughput.
-    Classify, Semantic, SAM, SeeAnything, and Z-Inference use their own
+    Classify, Semantic, SAM, and SeeAnything use their own
     synchronous predict() paths.
 
     Images are selected through the ImageWindow context menu (right-click).
@@ -678,7 +678,6 @@ class BatchInferenceDialog(QDialog):
         self.semantic_dialog = getattr(self.main_window, 'semantic_deploy_model_dialog', None)
         self.sam_dialog = getattr(self.main_window, 'sam_deploy_generator_dialog', None)
         self.see_anything_dialog = getattr(self.main_window, 'see_anything_deploy_generator_dialog', None)
-        self.z_dialog = getattr(self.main_window, 'z_deploy_model_dialog', None)
         self.feature_dialog = getattr(self.main_window, 'feature_deploy_model_dialog', None)
 
     def _update_worker_thresholds(self, *args):
@@ -1074,8 +1073,6 @@ class BatchInferenceDialog(QDialog):
             self.model_dialogs["SAM"] = self.sam_dialog
         if self.see_anything_dialog and getattr(self.see_anything_dialog, "loaded_model", None):
             self.model_dialogs["See Anything"] = self.see_anything_dialog
-        if self.z_dialog and getattr(self.z_dialog, "loaded_model", None):
-            self.model_dialogs["Z-Inference"] = self.z_dialog
         if self.feature_dialog and getattr(self.feature_dialog, "loaded_model", None):
             self.model_dialogs["Feature"] = self.feature_dialog
 
@@ -1090,26 +1087,10 @@ class BatchInferenceDialog(QDialog):
         self.model_combo.clear()
         self.model_keys = []
 
-        # Separate Z-Inference from other models
-        z_inference_dialog = None
-        other_models = {}
-        
-        for key, dialog in self.model_dialogs.items():
-            if key == "Z-Inference":
-                z_inference_dialog = dialog
-            else:
-                other_models[key] = dialog
-        
-        # Add sorted models (excluding Z-Inference)
-        for key in sorted(other_models.keys()):
+        # Add sorted models
+        for key in sorted(self.model_dialogs.keys()):
             self.model_combo.addItem(key)
             self.model_keys.append(key)
-        
-        # Add separator and Z-Inference at the bottom
-        if z_inference_dialog:
-            self.model_combo.insertSeparator(self.model_combo.count())
-            self.model_combo.addItem("Z-Inference")
-            self.model_keys.append("Z-Inference")
 
         # Try to restore the current selected model, otherwise default to index 0
         selected_index = 0
@@ -1175,8 +1156,8 @@ class BatchInferenceDialog(QDialog):
             self.task_specific_group.setEnabled(is_classify)
 
         # --- Save Annotations / Batch Size: hidden for models that ignore them ---
-        # Z-Inference and Feature manage their own output; Classify writes
-        # directly, so the worker-oriented controls don't apply to them.
+        # Feature manages its own output; Classify writes directly, so the
+        # worker-oriented controls don't apply to them.
         wants_worker_opts = model in ("Detect", "Segment", "Semantic", "SAM", "See Anything")
         if hasattr(self, 'save_annotations_combo'):
             self.save_annotations_combo.setVisible(wants_worker_opts)
@@ -1194,7 +1175,7 @@ class BatchInferenceDialog(QDialog):
 
         # --- Type combo: tiling only applies to image rasters on tiling models.
         # VideoRaster has no "Tiled" option, so force Standard and grey it out.
-        model_supports_tiling = model not in ("Classify", "Z-Inference", "Feature")
+        model_supports_tiling = model not in ("Classify", "Feature")
         type_enabled = model_supports_tiling and not has_video
         if hasattr(self, 'inference_type_combo'):
             if not type_enabled and self.inference_type_combo.currentText() != "Standard":
@@ -1242,8 +1223,8 @@ class BatchInferenceDialog(QDialog):
                 enable_iou=True,
                 enable_area=True
             )
-        # Z-Inference and Feature don't use any thresholds
-        elif model_name in ("Z-Inference", "Feature"):
+        # Feature doesn't use any thresholds
+        elif model_name in ("Feature",):
             self.configure_thresholds(
                 enable_max_detections=False,
                 enable_uncertainty=False,
@@ -1748,7 +1729,7 @@ class BatchInferenceDialog(QDialog):
 
         Detect, Segment, and Semantic tasks (all input types: full images,
         tiled images, and video frames) are routed through the unified async
-        BatchInferenceWorker. Classify, SAM, SeeAnything, and Z-Inference use
+        BatchInferenceWorker. Classify, SAM, SeeAnything, and Feature use
         synchronous predict() paths.
         """
         self._refresh_model_dialog_references()
@@ -1842,21 +1823,6 @@ class BatchInferenceDialog(QDialog):
                     except Exception:
                         pass
                     return
-
-            # ── Z-Inference ───────────────────────────────────────────────────
-            elif selected_model == "Z-Inference":
-                overwrite_mode = self.z_dialog._show_overwrite_dialog(is_batch=True)
-                if overwrite_mode is None:
-                    QApplication.restoreOverrideCursor()
-                    try:
-                        progress_bar.close()
-                    except Exception:
-                        pass
-                    return
-                model_dialog.predict(
-                    self.image_paths, progress_bar,
-                    overwrite_mode=overwrite_mode, show_dialog=False,
-                )
 
             # ── Feature ───────────────────────────────────────────────────────
             elif selected_model == "Feature":

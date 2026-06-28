@@ -18,8 +18,6 @@ from coralnet_toolbox.Rasters import ImageFilter
 from coralnet_toolbox.Rasters import RasterTableModel
 
 from coralnet_toolbox.Z import ZImportDialog
-from coralnet_toolbox.Z import ZExportDialog
-from coralnet_toolbox.IO import ImportCameras
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -271,7 +269,6 @@ class ImageWindow(QWidget):
         self.filter_combo.addItem("Ortho")
         self.filter_combo.addItem("Video")
         self.filter_combo.addItem("Has Z-Channel")
-        self.filter_combo.addItem("has Transform")
         self.filter_combo.addItem("Has Predictions")
         self.filter_combo.addItem("Has Annotations")
         self.filter_combo.addItem("No Annotations")
@@ -1112,7 +1109,6 @@ class ImageWindow(QWidget):
             allowed_raster_types = None
 
         require_z_channel = "Has Z-Channel" in checked_filters
-        require_transform = "has Transform" in checked_filters
         has_predictions = "Has Predictions" in checked_filters
         has_annotations = "Has Annotations" in checked_filters
         no_annotations = "No Annotations" in checked_filters
@@ -1131,7 +1127,6 @@ class ImageWindow(QWidget):
             require_predictions=has_predictions,
             allowed_raster_types=allowed_raster_types,
             require_z_channel=require_z_channel,
-            require_transform=require_transform,
             selected_paths=highlighted_paths,
             use_threading=use_threading
         )
@@ -1166,11 +1161,7 @@ class ImageWindow(QWidget):
         highlighted_paths = self.table_model.get_highlighted_paths()
         count = len(highlighted_paths)
         self.highlighted_count_label.setText(f"Highlighted: {count}")
-        
-        # Update Z-Deploy dialog with current highlighted images
-        if hasattr(self.main_window, 'z_deploy_model_dialog') and self.main_window.z_deploy_model_dialog:
-            self.main_window.z_deploy_model_dialog.update_highlighted_images(highlighted_paths)
-        
+
     def show_image_preview(self):
         """Show image preview tooltip for the current hover row."""
         if self.hover_row < 0 or self.hover_row >= len(self.table_model.filtered_paths):
@@ -1378,8 +1369,6 @@ class ImageWindow(QWidget):
         context_menu.addSeparator()
 
         highlighted_rasters = [self.raster_manager.get_raster(path) for path in highlighted_paths]
-        has_ortho = any(getattr(raster, 'raster_type', '') == 'OrthoRaster' for raster in highlighted_rasters if raster is not None)
-        _single_ortho = count == 1 and has_ortho
 
         # Single VideoRaster: offer frame extraction (and annotation re-creation).
         _single_video = (count == 1 and highlighted_rasters[0] is not None and
@@ -1391,35 +1380,6 @@ class ImageWindow(QWidget):
             )
             context_menu.addSeparator()
 
-        if _single_ortho:
-            transforms_menu = context_menu.addMenu("Transforms...")
-            _ortho_path = highlighted_paths[0]
-            set_proj_action = transforms_menu.addAction("Set Projection Matrix")
-            set_proj_action.triggered.connect(
-                lambda checked=False, p=_ortho_path: self._set_ortho_projection_matrix(p)
-            )
-
-            set_chunk_action = transforms_menu.addAction("Set Chunk Tranform")
-            set_chunk_action.triggered.connect(
-                lambda checked=False, p=_ortho_path: self._set_ortho_chunk_transform(p)
-            )
-        elif not has_ortho:
-            cameras_menu = context_menu.addMenu("Cameras...")
-            # Normal perspective images: import / remove camera calibration
-            import_cameras_action = cameras_menu.addAction(
-                f"Import Cameras for {count} Highlighted Raster{'s' if count > 1 else ''}"
-            )
-            import_cameras_action.triggered.connect(
-                lambda: self._open_import_cameras_for_highlighted(highlighted_paths)
-            )
-
-            cameras_menu.addSeparator()
-
-            remove_cameras_action = cameras_menu.addAction(
-                f"Remove Cameras from {count} Highlighted Raster{'s' if count > 1 else ''}"
-            )
-            remove_cameras_action.triggered.connect(lambda: self.remove_cameras_highlighted_images())
-
         # Create Z-Channel sub-menu
         z_channel_menu = context_menu.addMenu("Z-Channel...")
 
@@ -1429,14 +1389,6 @@ class ImageWindow(QWidget):
         )
         import_z_channel_action.triggered.connect(
             lambda: self.import_z_channel_highlighted_images()
-        )
-
-        # Add export z-channel action
-        export_z_channel_action = z_channel_menu.addAction(
-            f"Export for {count} Highlighted Raster{'s' if count > 1 else ''}"
-        )
-        export_z_channel_action.triggered.connect(
-            lambda: self.export_z_channel_highlighted_images()
         )
 
         z_channel_menu.addSeparator()
@@ -1485,85 +1437,6 @@ class ImageWindow(QWidget):
         from coralnet_toolbox.IO.QtImportFrames import ImportFrames
         dialog = ImportFrames(self.main_window, parent=self, video_raster=raster)
         dialog.exec_()
-
-    def _set_ortho_projection_matrix(self, path: str):
-        """
-        Show a 4×4 matrix dialog so the user can supply the Metashape orthomosaic
-        projection matrix for a local-coordinate-system project.
-
-        The matrix is stored on the OrthoRaster and, if an OrthoCamera has already
-        been built by MVATManager, its inverse is updated immediately so that
-        subsequent mouse-move events use the new projection.
-        """
-        from PyQt5.QtWidgets import QDialog
-        from coralnet_toolbox.Common.QtTransformInput import TransformInputDialog
-
-        raster = self.raster_manager.get_raster(path)
-        if raster is None or getattr(raster, 'raster_type', '') != 'OrthoRaster':
-            return
-
-        dialog = TransformInputDialog(
-            self,
-            title="Ortho Projection Matrix",
-            prompt_text=(
-                "Enter the 4x4 orthomosaic projection matrix:\n"
-                "(Leave as identity for local coordinate systems without a separate projection)"
-            ),
-        )
-
-        existing = getattr(raster, 'ortho_projection_matrix', None)
-        if existing is not None:
-            dialog.set_matrix(existing)
-
-        if dialog.exec_() == QDialog.Accepted:
-            mat = dialog.get_matrix()
-            raster.ortho_projection_matrix = mat
-            # Propagate to live OrthoCamera if available
-            mvat_manager = getattr(self.main_window, 'mvat_manager', None)
-            if mvat_manager is not None and mvat_manager.ortho_camera is not None:
-                if mvat_manager.ortho_camera.image_path == path:
-                    mvat_manager.ortho_camera.update_ortho_projection_matrix(mat)
-            try:
-                self.raster_manager.rasterUpdated.emit(path)
-            except Exception:
-                pass
-
-    def _set_ortho_chunk_transform(self, path: str):
-        """Show a 4x4 matrix dialog for the OrthoRaster chunk transform."""
-        from PyQt5.QtWidgets import QDialog
-        from coralnet_toolbox.Common.QtTransformInput import TransformInputDialog
-
-        raster = self.raster_manager.get_raster(path)
-        if raster is None or getattr(raster, 'raster_type', '') != 'OrthoRaster':
-            return
-
-        dialog = TransformInputDialog(
-            self,
-            title="Metashape Chunk Transform",
-            prompt_text=(
-                "Enter the 4x4 chunk transform matrix:\n"
-                "(Leave as identity for local coordinate systems without a chunk transform)"
-            ),
-        )
-
-        existing = getattr(raster, 'chunk_transform_matrix', None)
-        if existing is not None:
-            dialog.set_matrix(existing)
-
-        if dialog.exec_() == QDialog.Accepted:
-            mat = dialog.get_matrix()
-            raster.chunk_transform_matrix = mat
-
-            mvat_manager = getattr(self.main_window, 'mvat_manager', None)
-            if mvat_manager is not None:
-                mvat_manager._chunk_transform = mat
-                if mvat_manager.ortho_camera is not None and mvat_manager.ortho_camera.image_path == path:
-                    mvat_manager.ortho_camera.update_chunk_transform(mat)
-
-            try:
-                self.raster_manager.rasterUpdated.emit(path)
-            except Exception:
-                pass
 
     def open_batch_inference_dialog(self, highlighted_image_paths):
         """
@@ -1641,28 +1514,6 @@ class ImageWindow(QWidget):
         batch_dialog.raise_()
         batch_dialog.activateWindow()
 
-    def _open_import_cameras_for_highlighted(self, highlighted_paths: list):
-        """
-        Open the Import Cameras dialog and set it to operate on the highlighted images.
-        """
-        if not highlighted_paths:
-            QMessageBox.warning(self, "No Images Selected", "Please highlight one or more images before importing cameras.")
-            return
-
-        # Use the main window's ImportCameras dialog instance if available
-        try:
-            dialog = self.main_window.import_cameras_dialog
-        except Exception:
-            dialog = None
-
-        if dialog is None:
-            # Fallback - instantiate a temporary dialog
-            dialog = ImportCameras(self.main_window)
-
-        # Provide the highlighted images to the dialog so it restricts matching
-        dialog.highlighted_images = highlighted_paths
-        dialog.exec_()
-    
     def import_z_channel_highlighted_images(self):
         """Open file dialog and ZImportDialog to import z-channel files for highlighted images."""
         # Get all highlighted paths
@@ -1918,77 +1769,6 @@ class ImageWindow(QWidget):
             progress_bar.close()
             QApplication.restoreOverrideCursor()
 
-    def remove_cameras_highlighted_images(self):
-        """Remove camera intrinsics/extrinsics from the highlighted images."""
-        highlighted_paths = self.table_model.get_highlighted_paths()
-        if not highlighted_paths:
-            return
-
-        count = len(highlighted_paths)
-        plural = 's' if count > 1 else ''
-        reply = QMessageBox.question(
-            self,
-            "Confirm Camera Parameter Removal",
-            f"Are you sure you want to remove cameras from {count} raster{plural}?",
-            QMessageBox.Yes | QMessageBox.No
-        )
-
-        if reply != QMessageBox.Yes:
-            return
-
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        progress_bar = ProgressBar(self, title="Removing Cameras")
-        progress_bar.show()
-        progress_bar.start_progress(len(highlighted_paths))
-
-        try:
-            removed_count = 0
-            for path in highlighted_paths:
-                raster = self.raster_manager.get_raster(path)
-                if raster:
-                    raster.remove_intrinsics()
-                    raster.remove_extrinsics()
-                    # Notify raster manager/UI of update
-                    self.raster_manager.rasterUpdated.emit(path)
-                    removed_count += 1
-                progress_bar.update_progress()
-
-            # If current image is affected, refresh viewer tools
-            if self.selected_image_path in highlighted_paths:
-                self.annotation_window.update_scene()
-
-            QMessageBox.information(
-                self,
-                "Cameras Removed",
-                f"Cameras removed from {removed_count} image{plural}."
-            )
-        finally:
-            progress_bar.stop_progress()
-            progress_bar.close()
-            QApplication.restoreOverrideCursor()
-    
-    def export_z_channel_highlighted_images(self):
-        """Export z-channels from the highlighted images."""
-        # Get all highlighted paths
-        highlighted_paths = self.table_model.get_highlighted_paths()
-        
-        if not highlighted_paths:
-            return
-        
-        # Get rasters for highlighted images
-        highlighted_rasters = []
-        for path in highlighted_paths:
-            raster = self.raster_manager.get_raster(path)
-            if raster:
-                highlighted_rasters.append(raster)
-        
-        if not highlighted_rasters:
-            return
-        
-        # Create and show ZExportDialog
-        self.export_dialog = ZExportDialog(highlighted_rasters, parent=self)
-        self.export_dialog.exec_()
-        
     def delete_highlighted_images(self):
         """Delete the highlighted images."""
         # Get all highlighted paths, the same way we do in filter_images

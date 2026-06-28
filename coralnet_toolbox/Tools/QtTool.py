@@ -22,7 +22,7 @@ class Tool:
         self.default_cursor = Qt.ArrowCursor
         self.cursor_annotation = None
 
-        # Optional callbacks for cursor preview propagation (set by MVATManager or any consumer).
+        # Optional callbacks for cursor preview propagation (set by any consumer).
         # Subclasses that support live cursor previews should call these in their mouseMoveEvent.
         # cursor_move_callback(scene_pos: QPointF, item_factory: callable)
         #   item_factory(u: float, v: float) -> QGraphicsItem  (positioned at image coords u,v)
@@ -30,7 +30,7 @@ class Tool:
         # cursor_clear_callback()
         self.cursor_clear_callback = None
 
-        # Debounce timer — throttle MVAT context-canvas projection to ~10 Hz.
+        # Debounce timer — throttle cursor-preview projection to ~10 Hz.
         # Subclasses call _schedule_cursor_preview_update(scene_pos) in mouseMoveEvent;
         # the base deactivate() and _fire_cursor_preview_update() handle the rest.
         self._cursor_update_timer = QTimer()
@@ -94,18 +94,14 @@ class Tool:
         pass
         
     def _schedule_cursor_preview_update(self, scene_pos: QPointF):
-        """Queue a debounced MVAT context-canvas update (call from mouseMoveEvent when Multi-Annotate is on)."""
+        """Queue a debounced cursor-preview update (call from mouseMoveEvent when a consumer is registered)."""
         self._pending_cursor_pos = scene_pos
         if not self._cursor_update_timer.isActive():
             self._cursor_update_timer.start(100)  # ~10 Hz throttle
 
     def _fire_cursor_preview_update(self):
-        """Timer callback — fire cursor_move_callback if Multi-Annotate is still enabled."""
-        mvat_manager = getattr(self.main_window, 'mvat_manager', None)
-        if (self._pending_cursor_pos is not None
-                and self.cursor_move_callback
-                and mvat_manager
-                and getattr(mvat_manager, 'multi_annotate_enabled', False)):
+        """Timer callback — fire cursor_move_callback if a consumer is registered."""
+        if self._pending_cursor_pos is not None and self.cursor_move_callback:
             self.cursor_move_callback(self._pending_cursor_pos, self.create_cursor_preview_item)
 
     def stop_current_drawing(self):
@@ -128,8 +124,8 @@ class Tool:
     def create_cursor_preview_item(self, u: float, v: float):
         """
         Create a QGraphicsItem representing this tool's cursor at image pixel (u, v).
-        Used by the MVAT cursor preview propagation system to display the cursor
-        on context canvases at the projected position.
+        Used by the cursor preview propagation system to display the cursor
+        on consumer canvases at the projected position.
 
         Subclasses that participate in cursor preview propagation should override
         this method and return a fully styled, positioned QGraphicsItem.

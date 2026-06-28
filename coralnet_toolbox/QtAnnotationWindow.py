@@ -18,8 +18,6 @@ from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QMessa
 
 from coralnet_toolbox.QtBaseCanvas import BaseCanvas
 
-from coralnet_toolbox.MVAT.core.Ray import CameraRay
-
 from coralnet_toolbox.Annotations import (
     PatchAnnotation,
     PolygonAnnotation,
@@ -556,11 +554,7 @@ class AnnotationWindow(BaseCanvas):
     def on_z_colormap_changed(self, colormap_name):
         """Handle z-colormap dropdown changes by updating the annotation window."""
         self.update_z_colormap(colormap_name)
-        
-        # Sync to all context matrix canvases
-        if hasattr(self.main_window, 'context_matrix') and self.main_window.context_matrix:
-            self.main_window.context_matrix.sync_z_colormap_to_all_canvases(colormap_name)
-        
+
         # Enable/disable z_transparency_widget based on colormap selection
         if colormap_name == "None":
             self.z_transparency_widget.setEnabled(False)
@@ -584,18 +578,10 @@ class AnnotationWindow(BaseCanvas):
         
         # Update the annotation window's z-channel opacity
         self.set_z_opacity(opacity)
-        
-        # Sync to all context matrix canvases
-        if hasattr(self.main_window, 'context_matrix') and self.main_window.context_matrix:
-            self.main_window.context_matrix.sync_z_opacity_to_all_canvases(opacity)
 
     def on_z_dynamic_toggled(self, checked):
         """Handle z-dynamic scaling button toggle."""
         self.toggle_dynamic_z_scaling(checked)
-
-        # Sync to all context matrix canvases
-        if hasattr(self.main_window, 'context_matrix') and self.main_window.context_matrix:
-            self.main_window.context_matrix.sync_z_dynamic_scaling_to_all_canvases(checked)
 
     def _on_transparency_slider_changed(self, value):
         """Debounced slider handler; the heavy apply runs after the drag pauses."""
@@ -632,10 +618,6 @@ class AnnotationWindow(BaseCanvas):
                 self.main_window.label_window.set_mask_transparency(transparency)
         except Exception as e:
             pass
-
-        # Sync transparency to all context matrix canvases
-        if hasattr(self.main_window, 'context_matrix') and self.main_window.context_matrix:
-            self.main_window.context_matrix.sync_annotations_to_all_canvases()
 
         # Video frames render the mask overlay via FastImageItem._mask_opacity
         # (a baked-in value), not via MaskGraphicsItem's render-time transparency.
@@ -855,15 +837,6 @@ class AnnotationWindow(BaseCanvas):
                 except Exception:
                     pass
 
-    def set_incoming_marker(self, u, v, color):
-        """Set the incoming marker (focal point) position and color from MVAT.
-        
-        Routes to the unified BaseCanvas static marker system so AnnotationWindow
-        displays the focal point using the same marker as all other viewports.
-        """
-        # Use BaseCanvas's unified static marker (crosshair) instead of a separate marker
-        self.update_static_marker(int(u), int(v), color=color)
-            
     def showEvent(self, event):
         """Handle show events to fit the view to the image."""
         super().showEvent(event)
@@ -967,121 +940,6 @@ class AnnotationWindow(BaseCanvas):
         # Let BaseCanvas handle native pan/zoom via super()
         super().mouseReleaseEvent(event)
 
-    def mouseDoubleClickEvent(self, event: QMouseEvent):
-        """Handle mouse double-click events to set focal point in MVATViewer."""
-        # Only process right double-clicks
-        if event.button() != Qt.RightButton:
-            super().mouseDoubleClickEvent(event)
-            return
-
-        self._pan_active = False
-        self._pan_start = None
-        self._rotate_active = False
-        try:
-            self.setCursor(Qt.ArrowCursor)
-        except Exception:
-            pass
-        
-        # Check if MVAT manager exists and is accessible
-        mvat_manager = getattr(self.main_window, 'mvat_manager', None)
-        if mvat_manager is None:
-            super().mouseDoubleClickEvent(event)
-            return
-
-        ortho_camera = getattr(mvat_manager, 'ortho_camera', None)
-        is_ortho_image = ortho_camera is not None and self.current_image_path == ortho_camera.image_path
-        
-        # Check if current image has camera data
-        if not self.current_image_path or (self.current_image_path not in mvat_manager.cameras and not is_ortho_image):
-            super().mouseDoubleClickEvent(event)
-            return
-        
-        # Get scene position
-        scene_pos = self.mapToScene(event.pos())
-        x, y = int(scene_pos.x()), int(scene_pos.y())
-        
-        # Check if position is within image bounds
-        camera = mvat_manager.cameras.get(self.current_image_path)
-        if camera is not None and not (0 <= x < camera.width and 0 <= y < camera.height):
-            super().mouseDoubleClickEvent(event)
-            return
-        
-        terminal_point = None
-
-        if is_ortho_image:
-            try:
-                if not (0 <= x < ortho_camera.width and 0 <= y < ortho_camera.height):
-                    super().mouseDoubleClickEvent(event)
-                    return
-
-                X, Y = ortho_camera.pixel_to_geo(x, y)
-                Z = ortho_camera._raster.get_z_value(x, y)
-                if Z is None:
-                    super().mouseDoubleClickEvent(event)
-                    return
-
-                terminal_point = ortho_camera.geo_to_world(X, Y, Z)
-            except Exception as e:
-                print(f"Warning: Could not set ortho focal point from double-click: {e}")
-                super().mouseDoubleClickEvent(event)
-                return
-        else:
-            camera = mvat_manager.cameras[self.current_image_path]
-
-            # --- PLAN A: Index Map (Flawless 3D Coordinate) ---
-            try:
-                primary_target = mvat_manager.viewer.scene_context.get_primary_target()
-                if primary_target is not None:
-                    candidate_id = camera.get_index_at_pixel(x, y)
-                    if candidate_id is not None and int(candidate_id) > -1:
-                        raw_coord = primary_target.get_element_coordinate(int(candidate_id))
-                        if raw_coord is not None:
-                            # ---> Safely cast PyTorch Tensor to NumPy! <---
-                            if hasattr(raw_coord, 'cpu'):
-                                terminal_point = raw_coord.cpu().numpy().astype(np.float64)
-                            else:
-                                terminal_point = np.asarray(raw_coord, dtype=np.float64)
-            except Exception:
-                pass
-
-            # --- PLAN B: Depth Map / Scene Median Fallback ---
-            if terminal_point is None:
-                raster = camera._raster
-                depth = None
-                
-                if raster.z_channel is not None and raster.z_data_type == 'depth':
-                    try:
-                        depth = raster.get_z_value(x, y)
-                    except Exception:
-                        pass
-                
-                # Get default depth from scene if no depth available
-                if depth is None or depth <= 0 or np.isnan(depth):
-                    try:
-                        default_depth = mvat_manager.viewer.get_scene_median_depth(camera.position)
-                    except Exception:
-                        default_depth = 10.0
-                else:
-                    default_depth = depth
-                
-                # Create ray from pixel position to get 3D world point
-                try:
-                    ray = CameraRay.from_pixel_and_camera(
-                        pixel_xy=(x, y),
-                        camera=camera,
-                        depth=depth,
-                        default_depth=default_depth
-                    )
-                    terminal_point = ray.terminal_point
-                except Exception as e:
-                    print(f"Warning: Could not set focal point from double-click: {e}")
-        
-        # Trigger projection to all context cameras
-        if terminal_point is not None:
-            mvat_manager.viewer.set_focal_point(terminal_point)
-        
-        super().mouseDoubleClickEvent(event)
-        
     def keyPressEvent(self, event):
         """Handle keyboard press events including undo/redo and deletion of selected annotations."""
         # Handle Ctrl+H or Home to reset the scene view and clear static markers
@@ -2351,28 +2209,16 @@ class AnnotationWindow(BaseCanvas):
             pass
     
     def reset_scene_view(self):
-        """Resets the scene view, rotation, and 3D perspective (if MVAT is active)"""
+        """Resets the scene view and rotation."""
         # Fit the image to the view and recalculate zoom constraints
         self.fit_to_image()
         # Reset rotation to default
         self.rotation_angle = 0.0
         self._set_absolute_rotation(self.rotation_angle)  # Apply the rotation transform reset
         self.viewChanged.emit(*self.get_image_dimensions())
-        
+
         # Clear own static marker (focal-point crosshair)
         self.clear_static_marker()
-
-        # If MVAT viewer is active, sync 3D view to current image's perspective
-        if hasattr(self.main_window, 'mvat_manager') and self.main_window.mvat_manager:
-            mvat_manager = self.main_window.mvat_manager
-            # Find and select the camera corresponding to the current image
-            if self.current_image_path:
-                for camera in mvat_manager.cameras.values():
-                    if camera.image_path == self.current_image_path:
-                        mvat_manager.viewer.match_camera_perspective(camera, animate=True)
-                        break
-            # Reset focal-point lock so ContextMatrix resumes following the AnnotationWindow
-            mvat_manager.reset_focal_lock()
 
         # Process events
         QApplication.processEvents()
@@ -2525,20 +2371,6 @@ class AnnotationWindow(BaseCanvas):
             except Exception:
                 pass
         
-        # Sync z-channel state to all ContextMatrix BaseCanvases when image changes
-        try:
-            context_matrix = getattr(self.main_window, 'context_matrix', None)
-            if context_matrix:
-                if current_colormap != "None":
-                    context_matrix.sync_z_colormap_to_all_canvases(current_colormap)
-                    current_opacity = self.main_window.z_transparency_widget.value() / 255.0
-                    context_matrix.sync_z_opacity_to_all_canvases(current_opacity)
-                # Also sync dynamic scaling state
-                is_dynamic_enabled = self.main_window.z_dynamic_scaling_checkbox.isChecked()
-                context_matrix.sync_z_dynamic_scaling_to_all_canvases(is_dynamic_enabled)
-        except Exception:
-            pass
-
         # Automatically mark this image as checked when viewed
         raster.checkbox_state = True
         self.main_window.image_window.table_model.update_raster_data(image_path)
@@ -2562,7 +2394,7 @@ class AnnotationWindow(BaseCanvas):
         self.imageLoaded.emit(self.pixmap_image.width(), self.pixmap_image.height())
         self.viewChanged.emit(self.pixmap_image.width(), self.pixmap_image.height())
         
-        # Show loaded message in status bar (centralized here per MVAT convention)
+        # Show loaded message in status bar
         try:
             self.main_window.status_bar.showMessage(f"Loaded image: {os.path.basename(image_path)}", 2000)
         except Exception:
@@ -2914,25 +2746,18 @@ class AnnotationWindow(BaseCanvas):
         try:
             # Block signals at the source for the entire bake + delete operation.
             #
-            # Signal blocking + ContextMatrix suspension prevent every mid-bake
-            # canvas refresh from firing.  We intentionally do NOT call
-            # clear_all_annotation_overlays() here: calling scene.removeItem() on
-            # QGraphicsPathItem objects that carry a QGraphicsDropShadowEffect
-            # schedules a deferred paint pass for the effect's source region.  When
-            # Qt services that repaint (after this function returns but before the
-            # QTimer.singleShot(0) fires), it accesses rendering state that has
-            # already been partially torn down → C-level crash.  Leaving the overlay
-            # items in their scenes is safe because no signal can rebuild or destroy
-            # them during the blocked/suspended window, and _deferred_refresh_all_canvases
-            # will cleanly replace them once the event loop is fully settled.
-            _context_matrix = getattr(getattr(self, 'main_window', None), 'context_matrix', None)
+            # Signal blocking prevents every mid-bake canvas refresh from firing.
+            # We intentionally do NOT call clear_all_annotation_overlays() here:
+            # calling scene.removeItem() on QGraphicsPathItem objects that carry a
+            # QGraphicsDropShadowEffect schedules a deferred paint pass for the
+            # effect's source region.  When Qt services that repaint (after this
+            # function returns but before the QTimer.singleShot(0) fires), it
+            # accesses rendering state that has already been partially torn down →
+            # C-level crash.  Leaving the overlay items in their scenes is safe
+            # because no signal can rebuild or destroy them during the blocked
+            # window, and _deferred_refresh_all_canvases will cleanly replace them
+            # once the event loop is fully settled.
             _annotation_manager = getattr(self, 'annotation_manager', None)
-            _has_suspend = _context_matrix is not None and hasattr(
-                _context_matrix, 'suspend_annotation_updates'
-            )
-
-            if _has_suspend:
-                _context_matrix.suspend_annotation_updates()
 
             mask_annotation.blockSignals(True)
             if _annotation_manager is not None:
@@ -2973,9 +2798,6 @@ class AnnotationWindow(BaseCanvas):
                     self.refresh_mask_annotation_view(mask_annotation)
                 except Exception:
                     pass
-
-                if _has_suspend:
-                    _context_matrix.resume_annotation_updates()
 
             compound_action = CompoundAction(
                 [history_action, delete_action],
@@ -3042,14 +2864,7 @@ class AnnotationWindow(BaseCanvas):
         try:
             QApplication.setOverrideCursor(Qt.WaitCursor)
 
-            _context_matrix = getattr(getattr(self, 'main_window', None), 'context_matrix', None)
             _annotation_manager = getattr(self, 'annotation_manager', None)
-            _has_suspend = _context_matrix is not None and hasattr(
-                _context_matrix, 'suspend_annotation_updates'
-            )
-
-            if _has_suspend:
-                _context_matrix.suspend_annotation_updates()
 
             mask_annotation.blockSignals(True)
             if _annotation_manager is not None:
@@ -3075,9 +2890,6 @@ class AnnotationWindow(BaseCanvas):
                     self.refresh_mask_annotation_view(mask_annotation)
                 except Exception:
                     pass
-
-                if _has_suspend:
-                    _context_matrix.resume_annotation_updates()
 
             if clear_action is None or clear_action.is_empty():
                 try:
@@ -3835,7 +3647,7 @@ class AnnotationWindow(BaseCanvas):
                 #
                 # CRITICAL: do NOT zero mask_data here. _restore can be invoked
                 # transiently for frames that are not actually being displayed
-                # (e.g. MVAT propagation reload tasks, mid-batch reloads) while
+                # (e.g. mid-batch reloads) while
                 # the shared mask_data legitimately holds an in-progress result
                 # for another frame. Zeroing on a cache-miss destroys that work.
                 #

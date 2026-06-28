@@ -938,14 +938,6 @@ class LabelWindow(QWidget):
                 # Update the mask
                 mask.update_visible_labels(current_visible_ids)
 
-            # Sync to context matrix canvases
-            context_matrix = getattr(self.main_window, 'context_matrix', None)
-            if context_matrix is not None:
-                try:
-                    context_matrix.sync_label_visibility_to_all_canvases(label, is_visible)
-                except Exception:
-                    pass
-
         finally:
             # Restore cursor and unblock signals
             QApplication.restoreOverrideCursor()
@@ -1679,15 +1671,6 @@ class LabelWindow(QWidget):
                 mask = self.annotation_window.current_mask_annotation
                 if mask:
                     mask.update_visible_labels(set())
-
-            # Sync to context matrix canvases
-            context_matrix = getattr(self.main_window, 'context_matrix', None)
-            if context_matrix is not None:
-                try:
-                    for label in self.labels:
-                        context_matrix.sync_label_visibility_to_all_canvases(label, new_state)
-                except Exception:
-                    pass
 
             # Update the scene once
             self.annotation_window.update_scene()

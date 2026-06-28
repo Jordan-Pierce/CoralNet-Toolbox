@@ -111,27 +111,13 @@ class ScaleToolDialog(QDialog):
         self.clear_line_button.clicked.connect(self.clear_scale_line)
         self.clear_line_button.setToolTip("Clear the drawn line and reset the pixel length measurement.")
         layout.addWidget(self.clear_line_button)
-        
-        # Danger Zone
-        self.danger_zone_group_box = QGroupBox("Danger Zone")
-        self.danger_zone_group_box.setCheckable(True)
-        self.danger_zone_group_box.setChecked(False)
 
-        danger_zone_container = QWidget()
-        danger_zone_layout = QVBoxLayout(danger_zone_container)
-        danger_zone_layout.setContentsMargins(0, 0, 0, 0)
-
+        # Remove Scale button
         self.remove_highlighted_button = QPushButton("Remove Scale from Highlighted Images")
-        self.remove_highlighted_button.setStyleSheet("background-color: #D9534F; color: white; font-weight: bold;")
-        danger_zone_layout.addWidget(self.remove_highlighted_button)
+        self.remove_highlighted_button.setToolTip("Permanently remove scale calibration from highlighted images.")
+        self.remove_highlighted_button.setStyleSheet("QPushButton { color: #d32f2f; }")
+        layout.addWidget(self.remove_highlighted_button)
 
-        group_layout = QVBoxLayout()
-        group_layout.addWidget(danger_zone_container)
-        self.danger_zone_group_box.setLayout(group_layout)
-        self.danger_zone_group_box.toggled.connect(danger_zone_container.setVisible)
-        danger_zone_container.setVisible(False)
-
-        layout.addWidget(self.danger_zone_group_box)
         layout.addStretch()
         
         return tab
@@ -388,10 +374,25 @@ class ScaleTool(Tool):
     def remove_scale_highlighted(self):
         """Remove scale from highlighted."""
         highlighted_paths = self.dialog.get_selected_image_paths()
-        if not highlighted_paths: 
+        if not highlighted_paths:
             return
-        
-        if QMessageBox.question(self.dialog, "Confirm", "Remove scale?") != QMessageBox.Yes: 
+
+        count = len(highlighted_paths)
+        message = (
+            f"Are you sure you want to remove scale from {count} highlighted image{'s' if count != 1 else ''}?\n\n"
+            "This cannot be undone.\n\n"
+            "Note: This only applies to scale set within the application."
+        )
+
+        reply = QMessageBox.question(
+            self.dialog,
+            "Remove Scale",
+            message,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if reply != QMessageBox.Yes:
             return
         
         raster_manager = self.main_window.image_window.raster_manager
@@ -406,8 +407,11 @@ class ScaleTool(Tool):
         if current_path in highlighted_paths:
             w, h = self.annotation_window.get_image_dimensions()
             self.annotation_window.update_view_dimensions(w, h)
-        
+
         self.load_existing_scale()
+
+        QMessageBox.information(self.dialog, "Scale Removed", f"Successfully removed scale from {len(highlighted_paths)} image{'s' if len(highlighted_paths) != 1 else ''}.")
+        self.dialog.accept()
 
     def on_image_changed(self):
         """Handle image change events to update UI state."""

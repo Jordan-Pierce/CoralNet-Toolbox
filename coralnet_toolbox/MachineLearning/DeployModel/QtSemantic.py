@@ -350,7 +350,6 @@ class Semantic(Base):
                 # Snapshot the mask state before any modification so the entire
                 # prediction can be undone/redone as a single action.
                 _before_mask_snapshot = mask_annotation.mask_data.copy()
-                semantic_regions = []
 
                 # Suppress per-tile video cache syncs during the tile loop; we do
                 # one efficient sync after all tiles are done (see below).
@@ -498,7 +497,6 @@ class Semantic(Base):
                                 reconstructed_mask,
                                 top_left=offset,
                             )
-                            semantic_regions.append((reconstructed_mask, offset))
                             progress_bar.update_progress()
 
                         if not is_full_image:
@@ -587,23 +585,6 @@ class Semantic(Base):
                         self.annotation_window._sync_video_mask_to_cache(frame_path=image_path)
                     except Exception:
                         pass
-
-                # --- 6. Multi-annotate propagation ---
-                # When MVAT multi-annotate is active, propagate the predicted mask to
-                # all visible target cameras (perspective ↔ orthomosaic) using the same
-                # 3D index-map pipeline as brush strokes.
-                try:
-                    mvat_manager = getattr(self.main_window, 'mvat_manager', None)
-                    if (mvat_manager is not None and
-                            getattr(mvat_manager, 'multi_annotate_enabled', False)):
-                        if semantic_regions:
-                            mvat_manager._on_semantic_prediction_applied(
-                                image_path,
-                                mask_annotation,
-                                prediction_regions=semantic_regions,
-                            )
-                except Exception:
-                    pass
 
         except Exception as e:
             print(f"A fatal error occurred during the prediction workflow: {e}")

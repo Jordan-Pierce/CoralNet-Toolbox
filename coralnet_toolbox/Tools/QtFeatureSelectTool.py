@@ -1,7 +1,7 @@
 """
 FeatureSelectTool — 2D feature-similarity query tool for the annotation window.
 
-The 2D counterpart of MVAT's FeatureSelectTool3D. Instead of SAM, it queries a
+A 2D feature-similarity selection tool. Instead of SAM, it queries a
 dense feature map (DINOv2/v3, TIMM, ...) with cosine similarity and shows the
 per-patch similarity as a live heatmap overlay. The interaction mirrors SAMTool:
 
@@ -85,8 +85,8 @@ class FeatureSelectTool(Tool):
         self.output_type = "Polygon"
         self.allow_holes = False
 
-        # Multi-Annotate: final-mask propagation callback, wired by the MVAT
-        # PropagationEngine (same contract as SAMTool.post_prediction_callback).
+        # Optional final-mask propagation callback, wired by any consumer
+        # (same contract as SAMTool.post_prediction_callback).
         # Signature: callback(anchor: QPointF, label_id: str, binary_mask: np.ndarray)
         self.post_prediction_callback = None
 

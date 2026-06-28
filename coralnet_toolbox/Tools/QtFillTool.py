@@ -25,12 +25,8 @@ class FillTool(Tool):
         
         # You can set a specific cursor for this tool
         self.cursor = Qt.CrossCursor
-        
-        # Optional callback fired after each successful fill operation:
-        # callback(scene_pos: QPointF, label_id: str)
-        self.post_stroke_callback = None
-        
-        # Optional callbacks for Multi-Annotate cursor preview propagation
+
+        # Optional callbacks for cursor preview propagation
         self.cursor_move_callback = None
         self.cursor_clear_callback = None
 
@@ -138,18 +134,13 @@ class FillTool(Tool):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         history_action = MaskEditAction(mask_annotation, description="Fill region")
         
-        # Call the fill_region method on the MaskAnnotation object and get the fill mask
-        fill_mask = mask_annotation.fill_region(scene_pos, new_class_id, history_action=history_action)
+        # Call the fill_region method on the MaskAnnotation object
+        mask_annotation.fill_region(scene_pos, new_class_id, history_action=history_action)
 
         # Ensure the label is visible in the mask (even if checkbox is unchecked)
         if selected_label_id not in mask_annotation.visible_label_ids:
             mask_annotation.visible_label_ids.add(selected_label_id)
             mask_annotation.update_graphics_item()
-        
-        # Notify any registered propagation callback (e.g., MVAT multi-annotate)
-        # Pass all the filled pixels (like BrushTool does) instead of just the single point
-        if self.post_stroke_callback and fill_mask is not None:
-            self.post_stroke_callback(scene_pos, selected_label_id, fill_mask)
 
         if not history_action.is_empty():
             self.annotation_window.action_stack.push(history_action)

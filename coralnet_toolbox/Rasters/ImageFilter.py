@@ -43,7 +43,6 @@ class ImageFilter(QObject):
                       require_predictions: bool = False,
                       allowed_raster_types: Optional[Set[str]] = None,
                       require_z_channel: bool = False,
-                      require_transform: bool = False,
                       selected_paths: List[str] = None,
                       use_threading: bool = False,
                       callback: Callable = None) -> List[str]:
@@ -71,7 +70,6 @@ class ImageFilter(QObject):
             require_no_annotations,
             require_predictions,
             require_z_channel,
-            require_transform,
             allowed_raster_types is not None,
             selected_paths,
         ]):
@@ -88,14 +86,14 @@ class ImageFilter(QObject):
                 search_text, search_label, require_annotations,
                 require_no_annotations, require_predictions,
                 allowed_raster_types, require_z_channel,
-                require_transform, selected_paths, callback
+                selected_paths, callback
             )
         else:
             return self._filter_images_sync(
-                search_text, search_label, require_annotations, 
+                search_text, search_label, require_annotations,
                 require_no_annotations, require_predictions,
                 allowed_raster_types, require_z_channel,
-                require_transform, selected_paths, callback
+                selected_paths, callback
             )
     
     def _filter_images_sync(self, 
@@ -106,7 +104,6 @@ class ImageFilter(QObject):
                             require_predictions: bool,
                             allowed_raster_types: Optional[Set[str]],
                             require_z_channel: bool,
-                            require_transform: bool,
                             selected_paths: List[str],
                             callback: Callable = None) -> List[str]:
         """
@@ -129,7 +126,6 @@ class ImageFilter(QObject):
             require_predictions=require_predictions,
             allowed_raster_types=allowed_raster_types,
             require_z_channel=require_z_channel,
-            require_transform=require_transform,
             selected_paths=selected_paths
         )
         
@@ -152,7 +148,6 @@ class ImageFilter(QObject):
                                require_predictions: bool,
                                allowed_raster_types: Optional[Set[str]],
                                require_z_channel: bool,
-                               require_transform: bool,
                                selected_paths: List[str],
                                callback: Callable = None) -> List[str]:
         """
@@ -196,7 +191,6 @@ class ImageFilter(QObject):
                     require_predictions=require_predictions,
                     allowed_raster_types=allowed_raster_types,
                     require_z_channel=require_z_channel,
-                    require_transform=require_transform,
                 )
                 futures[future] = path
             

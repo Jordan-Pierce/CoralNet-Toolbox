@@ -5,8 +5,7 @@ A stateless compute kernel over a dense [N, D] feature buffer: the caller adds
 positive / negative prototypes (clicked patches) and the engine returns per-element
 similarity, display colors/scalars, and threshold selections.
 
-Originally part of the 3D pipeline; relocated here so the 2D FeatureSelectTool can
-reuse it without depending on the MVAT package. Self-contained — numpy on CPU,
+Used by the 2D FeatureSelectTool. Self-contained — numpy on CPU,
 torch on GPU when available.
 """
 

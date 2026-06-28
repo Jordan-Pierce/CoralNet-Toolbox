@@ -40,11 +40,6 @@ from coralnet_toolbox.Explorer import EmbeddingViewerWindow
 from coralnet_toolbox.Explorer import SelectionManager
 from coralnet_toolbox.Features.ModelRegistry import LIVE_YOLO_MODEL_PREFIX
 
-# MVAT Windows
-from coralnet_toolbox.MVAT import MVATViewer
-from coralnet_toolbox.MVAT import MVATManager
-from coralnet_toolbox.MVAT import ContextMatrixWidget
-
 # Other Dialogs
 from coralnet_toolbox.WorkArea import WorkAreaManager as WorkAreaManagerDialog
 
@@ -63,7 +58,6 @@ from coralnet_toolbox.IO import (
     ImportTagLabAnnotations,
     ImportSquidleAnnotations,
     ImportMaskAnnotations,
-    ImportModel,
     ExportLabels,
     ExportTagLabLabels,
     ExportAnnotations,
@@ -231,18 +225,8 @@ class MainWindow(QMainWindow):
         self.label_window = LabelWindow(self)
         self.confidence_window = ConfidenceWindow(self)     
         self.timer_window = TimerWindow(self)   
-        self.performance_window = PerformanceWindow(self) 
-         
-        # Create ContextMatrixWidget for multi-viewport context viewing
-        # (must be created BEFORE MVATManager so the manager can find it via getattr)
-        self.context_matrix = ContextMatrixWidget(parent=None)
-        self.context_matrix.set_raster_manager(self.image_window.raster_manager)
-        self.context_matrix.set_annotation_manager(self.annotation_manager)
-        
-        # Create dock-based mvat windows
-        self.mvat_viewer = MVATViewer(self)
-        self.mvat_manager = MVATManager(self, self.mvat_viewer)
-        
+        self.performance_window = PerformanceWindow(self)
+
         # Create dock-based explorer windows
         self.annotation_viewer_window = AnnotationViewerWindow(self)
         self.embedding_viewer_window = EmbeddingViewerWindow(self)
@@ -282,7 +266,6 @@ class MainWindow(QMainWindow):
         self.export_spatial_metrics_dialog = ExportSpatialMetrics(self)
         self.import_frames_dialog = ImportFrames(self)
         self.import_videos = ImportVideos(self)
-        self.import_model = ImportModel(self)
         self.open_project_dialog = OpenProject(self)
         self.save_project_dialog = SaveProject(self)
 
@@ -381,12 +364,12 @@ class MainWindow(QMainWindow):
         self.import_labels_action.triggered.connect(self.import_labels.import_labels)
         self.import_labels_menu.addAction(self.import_labels_action)
         # Import CoralNet Labels
-        self.import_coralnet_labels_action = QAction("CoralNet Labels (CSV)", self)
+        self.import_coralnet_labels_action = QAction("CoralNet (CSV)", self)
         self.import_coralnet_labels_action.setToolTip("Import labels from a CoralNet CSV export")
         self.import_coralnet_labels_action.triggered.connect(self.import_coralnet_labels.import_coralnet_labels)
         self.import_labels_menu.addAction(self.import_coralnet_labels_action)
         # Import TagLab Labels
-        self.import_taglab_labels_action = QAction("TagLab Labels (JSON)", self)
+        self.import_taglab_labels_action = QAction("TagLab (JSON)", self)
         self.import_taglab_labels_action.setToolTip("Import labels from a TagLab JSON file")
         self.import_taglab_labels_action.triggered.connect(self.import_taglab_labels.import_taglab_labels)
         self.import_labels_menu.addAction(self.import_taglab_labels_action)
@@ -437,12 +420,6 @@ class MainWindow(QMainWindow):
         self.import_segment_dataset_action.triggered.connect(self.segment_import_dataset_dialog.exec_)
         self.import_dataset_menu.addAction(self.import_segment_dataset_action)
 
-        # 3D Model
-        self.import_model_action = QAction("3D Model", self)
-        self.import_model_action.setToolTip("Import a 3D model file (OBJ, PLY, etc.)")
-        self.import_model_action.triggered.connect(self.import_model.import_model)
-        self.import_menu.addAction(self.import_model_action)
-
         # Export menu
         self.export_menu = self.file_menu.addMenu("Export")
 
@@ -454,7 +431,7 @@ class MainWindow(QMainWindow):
         self.export_labels_action.triggered.connect(self.export_labels.export_labels)
         self.export_labels_menu.addAction(self.export_labels_action)
         # Export TagLab Labels
-        self.export_taglab_labels_action = QAction("TagLab Labels (JSON)", self)
+        self.export_taglab_labels_action = QAction("TagLab (JSON)", self)
         self.export_taglab_labels_action.setToolTip("Export labels in TagLab JSON format")
         self.export_taglab_labels_action.triggered.connect(self.export_taglab_labels.export_taglab_labels)
         self.export_labels_menu.addAction(self.export_taglab_labels_action)
@@ -544,7 +521,7 @@ class MainWindow(QMainWindow):
         self.file_menu.addAction(self.save_project_action)
         
         # ========== VIEW MENU ==========
-        # View menu groups Windows, Layout, and 3D Viewer submenus.
+        # View menu groups Windows, Layout, and Scale submenus.
         self.view_menu = self.menu_bar.addMenu("View")
         self.dock_toggle_actions = {}
         self.scale_actions = {}
@@ -553,11 +530,6 @@ class MainWindow(QMainWindow):
         self.layout_menu = self.view_menu.addMenu("Layout")
         self.scale_menu = self.view_menu.addMenu("Scale")
         self.view_menu.addSeparator()
-        
-        # 3D Viewer submenu
-        # Fetch the fully encapsulated menu from the MVAT Viewer and add it under View.
-        self.viewer_menu = self.mvat_viewer.create_view_menu()
-        self.view_menu.addMenu(self.viewer_menu)
 
         # ========== UTILITIES MENU ==========
         # Utilities menu
@@ -621,23 +593,14 @@ class MainWindow(QMainWindow):
         self.see_anything_deploy_generator_action.triggered.connect(self.open_see_anything_deploy_generator_dialog)
         self.see_anything_menu.addAction(self.see_anything_deploy_generator_action)
 
-        # Features submenu (at the very top): Deploy Model + Bake Features
+        # Features submenu: Deploy Model
         self.feature_selector_menu = self.ai_assist_menu.addMenu("Feature Selector")
         self.feature_selector_menu.setToolTipsVisible(True)
-        # Deploy Model — configure / load the dense feature extractor. Available
-        # regardless of 3D scene state (the extractor is used in 2D too).
+        # Deploy Model — configure / load the dense feature extractor (used in 2D).
         self.feature_selector_deploy_action = QAction("Deploy Model", self)
         self.feature_selector_deploy_action.setToolTip("Deploy feature selector model for dense feature extraction")
         self.feature_selector_deploy_action.triggered.connect(self.open_feature_deploy_model_dialog)
         self.feature_selector_menu.addAction(self.feature_selector_deploy_action)
-        # Bake Features — build the Tier-2 scene feature mesh (moved here from the
-        # context-matrix toolbar). Requires a loaded 3D scene, so it's gated on
-        # the submenu opening (mirrors the old toolbar's scene-controls gating).
-        self.feature_selector_bake_action = QAction("Bake Features", self)
-        self.feature_selector_bake_action.setToolTip("Bake dense features onto 3D mesh (requires loaded 3D scene)")
-        self.feature_selector_bake_action.triggered.connect(self.open_bake_features_dialog)
-        self.feature_selector_menu.addAction(self.feature_selector_bake_action)
-        self.feature_selector_menu.aboutToShow.connect(self._update_features_menu_state)
 
         # ========== MACHINE LEARNING MENU ==========
         # Machine Learning menu
@@ -860,14 +823,14 @@ class MainWindow(QMainWindow):
             
             "brush": ("Brush Tool\n\n"
                       "Create freehand brush annotations by clicking and dragging.\n"
-                      "• Left-click and drag to paint brush strokes on the canvas.\n"
+                      "• Left-click to start; drag to paint brush strokes on the canvas; left-click again to finish.\n"
                       "• Hold Ctrl and use the mouse wheel to adjust brush size.\n"
                       "• Press Ctrl + Shift to switch between a circle and square brush shape.\n"
                       "• A semi-transparent preview shows the brush stroke while drawing."),
 
             "erase": ("Erase Tool\n\n"
                       "Erase pixels from mask annotations.\n"
-                      "• Left-click and drag to erase pixels.\n"
+                      "• Left-click to start; drag to erase pixels; left-click again to finish.\n"
                       "• Hold Ctrl and use the mouse wheel to adjust eraser size.\n"
                       "• Press Ctrl + Shift to switch between a circle and square eraser shape.\n"
                       "• Press Ctrl + (Backspace or Delete) to clear the mask annotation on the current image.\n"
@@ -905,14 +868,12 @@ class MainWindow(QMainWindow):
                              "• A See Anything (YOLOE) predictor must be deployed first."),
 
             "feature_select": ("Feature Select Tool\n\n"
-                                "Click-to-query dense-feature semantic similarity. Works on the 2D image\n"
-                                "(heatmap overlay) and, in the 3D viewer, on the baked feature mesh.\n"
+                                "Click-to-query dense-feature semantic similarity (heatmap overlay).\n"
                                 "• Ctrl+Left-click to add a positive prototype.\n"
                                 "• Ctrl+Right-click to add a negative prototype.\n"
                                 "• Hold Ctrl and use the mouse wheel to adjust the similarity threshold.\n"
-                                "• 2D: Space to define a work area.\n"
-                                "• 2D & 3D: Press Space to finalize: 2D creates a Polygon/Mask annotation; 3D paints\n"
-                                "  the highlighted faces (and propagates them when Multi-Annotate is on).\n"
+                                "• Press Spacebar to define a work area.\n"
+                                "• Press Spacebar again to confirm; creates Polygon/Mask annotation.\n"
                                 "• Press Backspace to clear the current query.\n"
                                 "Requires a deployed feature model to be deployed first.\n"),
             
@@ -925,7 +886,6 @@ class MainWindow(QMainWindow):
                           "• Hold Ctrl+Alt to temporarily view a work area of the current view.\n"
                           "• Work areas can be used with Tile Batch Inference and other batch operations.\n"
                           "• All work areas are automatically saved with the image in a Project (JSON) file."),
-
 
         }
     
@@ -1274,20 +1234,6 @@ class MainWindow(QMainWindow):
         if hasattr(self.embedding_viewer_window, 'create_bottom_toolbar'):
             self.embeddings_dock.add_toolbar(self.embedding_viewer_window.create_bottom_toolbar(), Qt.BottomToolBarArea)
 
-        # Setup MVAT Viewer Dock (Bottom-left) using DockWrapper
-        self.mvat_dock = DockWrapper("3D Viewer", "3DViewerDock", self.mvat_viewer, self)
-
-        if hasattr(self.mvat_viewer, 'create_top_toolbar'):
-            self.mvat_dock.add_toolbar(self.mvat_viewer.create_top_toolbar())
-
-        # Setup Context Matrix Dock (bottom-right, replaces legacy Camera Grid)
-        self.context_dock = DockWrapper("Context", "ContextDock", self.context_matrix, self)
-        
-        if hasattr(self.context_matrix, 'create_top_toolbar'):
-            self.context_dock.add_toolbar(self.context_matrix.create_top_toolbar())
-        if hasattr(self.context_matrix, 'create_bottom_toolbar'):
-            self.context_dock.add_toolbar(self.context_matrix.create_bottom_toolbar(), Qt.BottomToolBarArea)
-
         # --------------------------------------------------
         # 3. Explicitly arrange the docks using PyQtADS
         # --------------------------------------------------
@@ -1316,12 +1262,6 @@ class MainWindow(QMainWindow):
         # 7. Add Embedding Viewer to the Right of the Annotation Gallery
         embed_area = self.dock_manager.addDockWidget(ads.RightDockWidgetArea, self.embeddings_dock, gallery_area)
 
-        # 8. Place the MVAT Viewer below the Annotation Gallery
-        mvat_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.mvat_dock, gallery_area)
-
-        # 9. Place Context Matrix below Embedding Viewer (replaces legacy Camera Grid)
-        context_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.context_dock, embed_area)
-        
         # Populate the Windows menu with dock toggle actions
         dock_windows = [
             ("Annotation", self.annotation_dock, False),
@@ -1330,8 +1270,6 @@ class MainWindow(QMainWindow):
             ("Confidence", self.confidence_dock, True),
             ("Gallery", self.gallery_dock, False),
             ("Embeddings", self.embeddings_dock, True),
-            ("3D Viewer", self.mvat_dock, False),
-            ("Context", self.context_dock, True),
             ("Performance", self.performance_dock, False),
             ("Timer", self.timer_dock, False),
         ]
@@ -1773,7 +1711,7 @@ class MainWindow(QMainWindow):
         self.showMaximized()
 
     def closeEvent(self, event):
-        """Ensure special windows (explorer, mvat) and Performance Window are closed when the main window closes."""
+        """Ensure special windows (explorer) and Performance Window are closed when the main window closes."""
         
         # Save layout configuration before closing
         if hasattr(self, 'dock_manager'):
@@ -1788,10 +1726,7 @@ class MainWindow(QMainWindow):
                     self.performance_window.worker.stop(wait=True)
             except Exception:
                 pass
-        
-        if hasattr(self, 'mvat_manager') and self.mvat_manager:
-            self.mvat_manager.cleanup()
-        
+
         # Stop timer threads properly
         if hasattr(self, 'timer_window') and self.timer_window:
             self.timer_window.stop_threads()
@@ -1821,23 +1756,9 @@ class MainWindow(QMainWindow):
             file_names = [url.toLocalFile() for url in urls if url.isLocalFile()]
 
             # Accept if any of the files is a project file (.json or .bin)
-            # Route MVAT-compatible files to the MVAT viewer so they are
-            # not treated as images by ImageWindow/AnnotationWindow.
-            try:
-                mvat_exts = set(getattr(self.mvat_viewer, '_POINT_CLOUD_EXTENSIONS', []) +
-                                getattr(self.mvat_viewer, '_MESH_EXTENSIONS', []))
-            except Exception:
-                mvat_exts = set()
-
             lower_names = [fn.lower() for fn in file_names]
             if any(fn.endswith(('.json', '.bin')) for fn in lower_names):
                 event.acceptProposedAction()
-            elif any(any(fn.endswith(ext) for ext in mvat_exts) for fn in lower_names):
-                # Let MVAT viewer handle this drag
-                if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
-                    self.mvat_viewer.dragEnterEvent(event)
-                else:
-                    event.ignore()
             else:
                 # Route video files to the video importer if present
                 video_exts = ('.mp4', '.avi', '.mov', '.mkv', '.webm')
@@ -1868,29 +1789,16 @@ class MainWindow(QMainWindow):
                 self.current_project_path = self.open_project_dialog.current_project_path
                 self.update_project_label()
             else:
-                # If any file matches MVAT-supported extensions, route to MVAT viewer
-                try:
-                    mvat_exts = set(getattr(self.mvat_viewer, '_POINT_CLOUD_EXTENSIONS', []) +
-                                    getattr(self.mvat_viewer, '_MESH_EXTENSIONS', []))
-                except Exception:
-                    mvat_exts = set()
-
-                if any(any(fn.endswith(ext) for ext in mvat_exts) for fn in lower_names):
-                    if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
-                        self.mvat_viewer.dropEvent(event)
+                # If any dropped file is a video, route to ImportVideos
+                video_exts = ('.mp4', '.avi', '.mov', '.mkv', '.webm')
+                if any(fn.endswith(video_exts) for fn in lower_names):
+                    if hasattr(self, 'import_videos') and self.import_videos:
+                        self.import_videos.dropEvent(event)
                     else:
                         event.ignore()
                 else:
-                    # If any dropped file is a video, route to ImportVideos
-                    video_exts = ('.mp4', '.avi', '.mov', '.mkv', '.webm')
-                    if any(fn.endswith(video_exts) for fn in lower_names):
-                        if hasattr(self, 'import_videos') and self.import_videos:
-                            self.import_videos.dropEvent(event)
-                        else:
-                            event.ignore()
-                    else:
-                        # Handle as image imports
-                        self.import_images.dropEvent(event)
+                    # Handle as image imports
+                    self.import_images.dropEvent(event)
 
     def dragMoveEvent(self, event):
         """Handle drag move event for drag-and-drop."""
@@ -1903,19 +1811,8 @@ class MainWindow(QMainWindow):
             # Accept if any of the files is a project file (.json or .bin)
             lower_names = [fn.lower() for fn in file_names]
 
-            try:
-                mvat_exts = set(getattr(self.mvat_viewer, '_POINT_CLOUD_EXTENSIONS', []) +
-                                getattr(self.mvat_viewer, '_MESH_EXTENSIONS', []))
-            except Exception:
-                mvat_exts = set()
-
             if any(fn.endswith(('.json', '.bin')) for fn in lower_names):
                 event.acceptProposedAction()
-            elif any(any(fn.endswith(ext) for ext in mvat_exts) for fn in lower_names):
-                if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
-                    self.mvat_viewer.dragMoveEvent(event)
-                else:
-                    event.ignore()
             else:
                 # Route video drags to ImportVideos when applicable
                 video_exts = ('.mp4', '.avi', '.mov', '.mkv', '.webm')
@@ -1984,37 +1881,6 @@ class MainWindow(QMainWindow):
         # Set the tool in the annotation window
         self.annotation_window.set_selected_tool(tool, preserve_selection=preserve_selection)
 
-        self._sync_mvat_3d_tool_selection()
-
-    def _sync_mvat_3d_tool_selection(self):
-        """Keep the MVAT viewer aligned with the final annotation tool state."""
-        if not hasattr(self, 'mvat_viewer') or not self.mvat_viewer:
-            return
-
-        try:
-            selected_tool = None
-            selected_tool_object = None
-            if hasattr(self, 'annotation_window') and self.annotation_window is not None:
-                selected_tool = self.annotation_window.get_selected_tool()
-                tool_map = getattr(self.annotation_window, 'tools', None)
-                if isinstance(tool_map, dict):
-                    selected_tool_object = tool_map.get(selected_tool)
-            mapped_tool = selected_tool if selected_tool in ('brush', 'erase', 'fill', 'dropper') else None
-            if mapped_tool is None and getattr(self, 'feature_tool_action', None) is not None \
-                    and self.feature_tool_action.isChecked():
-                mapped_tool = 'feature'
-            self.mvat_viewer.set_selected_3d_tool(mapped_tool)
-
-            if selected_tool in ('brush', 'erase') and selected_tool_object is not None:
-                manager = getattr(self, 'mvat_manager', None)
-                if manager is not None:
-                    try:
-                        manager.on_2d_tool_size_changed(selected_tool_object)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-        
     def toggle_tool(self, state):
         """Toggle the selected tool and emit the toolChanged signal."""
         if not self.image_window.raster_manager.image_paths:
@@ -2115,18 +1981,8 @@ class MainWindow(QMainWindow):
                 self.feature_tool_action.setChecked(False)
 
                 self.toolChanged.emit("brush")
-                if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
-                    try:
-                        self.mvat_viewer.set_selected_3d_tool("brush")
-                    except Exception:
-                        pass
             else:
                 self.toolChanged.emit(None)
-                if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
-                    try:
-                        self.mvat_viewer.set_selected_3d_tool(None)
-                    except Exception:
-                        pass
 
         elif action == self.erase_tool_action:
             if state:
@@ -2143,18 +1999,8 @@ class MainWindow(QMainWindow):
                 self.feature_tool_action.setChecked(False)
 
                 self.toolChanged.emit("erase")
-                if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
-                    try:
-                        self.mvat_viewer.set_selected_3d_tool("erase")
-                    except Exception:
-                        pass
             else:
                 self.toolChanged.emit(None)
-                if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
-                    try:
-                        self.mvat_viewer.set_selected_3d_tool(None)
-                    except Exception:
-                        pass
 
         elif action == self.dropper_tool_action:
             if state:
@@ -2171,18 +2017,8 @@ class MainWindow(QMainWindow):
                 self.feature_tool_action.setChecked(False)
 
                 self.toolChanged.emit("dropper")
-                if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
-                    try:
-                        self.mvat_viewer.set_selected_3d_tool("dropper")
-                    except Exception:
-                        pass
             else:
                 self.toolChanged.emit(None)
-                if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
-                    try:
-                        self.mvat_viewer.set_selected_3d_tool(None)
-                    except Exception:
-                        pass
 
         elif action == self.fill_tool_action:
             if state:
@@ -2199,18 +2035,8 @@ class MainWindow(QMainWindow):
                 self.feature_tool_action.setChecked(False)
 
                 self.toolChanged.emit("fill")
-                if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
-                    try:
-                        self.mvat_viewer.set_selected_3d_tool("fill")
-                    except Exception:
-                        pass
             else:
                 self.toolChanged.emit(None)
-                if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
-                    try:
-                        self.mvat_viewer.set_selected_3d_tool(None)
-                    except Exception:
-                        pass
 
         elif action == self.sam_tool_action:
             if not self.sam_deploy_predictor_dialog.loaded_model:
@@ -2300,22 +2126,8 @@ class MainWindow(QMainWindow):
 
                 # 2D: activate the FeatureSelectTool in the annotation window.
                 self.toolChanged.emit("feature_select")
-
-                # 3D: mirror to the mesh feature tool (parity with brush/erase/etc).
-                if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
-                    try:
-                        self.mvat_viewer.set_selected_3d_tool('feature')
-                    except Exception:
-                        pass
             else:
                 self.toolChanged.emit(None)
-                if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
-                    try:
-                        self.mvat_viewer.set_selected_3d_tool(None)
-                    except Exception:
-                        pass
-
-        self._sync_mvat_3d_tool_selection()
 
     def untoggle_all_tools(self):
         """Untoggle all tool actions and unlock the label lock."""
@@ -2338,7 +2150,6 @@ class MainWindow(QMainWindow):
 
         # Emit to reset the tool
         self.toolChanged.emit(None)
-        self._sync_mvat_3d_tool_selection()
 
     def set_video_playback_tools_enabled(self, enabled: bool):
         """Enable or disable tools that are incompatible with live video playback."""
@@ -2366,7 +2177,6 @@ class MainWindow(QMainWindow):
             self.feature_tool_action.setChecked(False)
             if needs_reset:
                 self.toolChanged.emit(None)
-                self._sync_mvat_3d_tool_selection()
 
     def handle_tool_changed(self, tool):
         """Update the toolbar UI to reflect the currently selected tool."""
@@ -2570,8 +2380,6 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
             self.feature_tool_action.setChecked(False)
-
-        self._sync_mvat_3d_tool_selection()
 
     def get_available_devices(self):
         """Get a list of available devices for PyTorch."""
@@ -3018,8 +2826,6 @@ class MainWindow(QMainWindow):
             self.timer_dock,
             self.gallery_dock,
             self.embeddings_dock,
-            self.mvat_dock,
-            self.context_dock,
         ]
 
         for dock_wrapper in dock_wrappers:
@@ -3036,8 +2842,6 @@ class MainWindow(QMainWindow):
             self.timer_window,
             self.annotation_viewer_window,
             self.embedding_viewer_window,
-            self.mvat_viewer,
-            self.context_matrix,
         ]
 
         for target in refresh_targets:
@@ -3269,25 +3073,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
     
-    def _update_features_menu_state(self):
-        """Enable 'Bake Features' only when a 3D scene is loaded (a mesh/point cloud)."""
-        has_scene = False
-        try:
-            scene_context = getattr(self.mvat_viewer, 'scene_context', None)
-            has_scene = bool(scene_context is not None and scene_context.has_any_product())
-        except Exception:
-            has_scene = False
-
-        self.feature_selector_bake_action.setEnabled(has_scene)
-
-    def open_bake_features_dialog(self):
-        """Open the Tier-2 Bake Features dialog (moved from the context-matrix toolbar)."""
-        try:
-            self.untoggle_all_tools()
-            self.mvat_manager._on_bake_features_requested()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-
     def open_classify_merge_datasets_dialog(self):
         """Open the Classify Merge Datasets dialog to merge datasets."""
         try:
@@ -3508,6 +3293,15 @@ class MainWindow(QMainWindow):
             # Ensure the dialog knows about current model availability
             batch_dialog = self.batch_inference_dialog
             batch_dialog.update_model_availability()
+
+            # Check if any models are available
+            if not batch_dialog.model_dialogs:
+                QMessageBox.warning(
+                    self,
+                    "No Models Available",
+                    "Please load a model before opening batch inference."
+                )
+                return
 
             # Initialize with currently highlighted image paths so the dialog
             # can reflect selection state even when opened from the Main menu

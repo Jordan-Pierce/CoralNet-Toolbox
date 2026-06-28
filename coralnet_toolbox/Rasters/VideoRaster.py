@@ -19,12 +19,45 @@ from coralnet_toolbox.Rasters.QtRaster import Raster
 try:
     from PyNvVideoCodec import SimpleDecoder, OutputColorType
     HAS_PYNVVIDEO_CODEC = True
-except ImportError:
+except Exception:
+    # Catch ImportError as well as DLL / shared-library load failures (often
+    # surfaced as OSError or a bare Exception) that occur when the NVIDIA
+    # runtime is installed-but-broken or missing entirely.
     SimpleDecoder = None  # type: ignore[assignment]
     OutputColorType = None  # type: ignore[assignment]
     HAS_PYNVVIDEO_CODEC = False
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# PyNvVideoCodec runtime availability
+# ----------------------------------------------------------------------------------------------------------------------
+#
+# PyNvVideoCodec can import successfully yet still fail at runtime when the
+# NVIDIA driver / NVDEC stack is missing or incompatible (e.g. CUDA context
+# creation or hardware decode fails). The first such failure trips this
+# process-wide flag so every VideoRaster transparently falls back to the cv2
+# CPU decoder for the rest of the session instead of re-failing once per video.
+_NVCODEC_RUNTIME_DISABLED = False
+_NVCODEC_FALLBACK_WARNED = False
+
+
+def _nvcodec_available() -> bool:
+    """True only if PyNvVideoCodec imported AND has not failed at runtime."""
+    return HAS_PYNVVIDEO_CODEC and not _NVCODEC_RUNTIME_DISABLED
+
+
+def _disable_nvcodec_runtime(reason: str) -> None:
+    """Permanently disable the GPU decode path for this process (warns once)."""
+    global _NVCODEC_RUNTIME_DISABLED, _NVCODEC_FALLBACK_WARNED
+    _NVCODEC_RUNTIME_DISABLED = True
+    if not _NVCODEC_FALLBACK_WARNED:
+        _NVCODEC_FALLBACK_WARNED = True
+        print(
+            "[VideoRaster] GPU video decode (PyNvVideoCodec) is unavailable; "
+            f"falling back to CPU decoding for this session. Reason: {reason}"
+        )
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -483,7 +516,7 @@ class VideoRaster(Raster):
 
     def _resolve_nvcodec_output_color_type(self):
         """Pick the most useful PyNvVideoCodec output color type for PyTorch."""
-        if not HAS_PYNVVIDEO_CODEC:
+        if not _nvcodec_available():
             return None, False
 
         for attr_name in ("RGBP", "RGB_PLANAR"):
@@ -495,26 +528,33 @@ class VideoRaster(Raster):
         return color_type, False
 
     def _get_nvcodec_decoder(self):
-        """Return a cached SimpleDecoder when the NVIDIA fast path is available."""
-        if not HAS_PYNVVIDEO_CODEC or getattr(self, "_nvcodec_disabled", False):
+        """Return a cached SimpleDecoder when the NVIDIA fast path is available.
+
+        Any failure to construct the decoder (almost always a missing or
+        incompatible driver / NVDEC stack) disables the GPU path process-wide so
+        subsequent videos skip it entirely and use the cv2 CPU decoder.
+        """
+        if not _nvcodec_available() or getattr(self, "_nvcodec_disabled", False):
             return None
 
         decoder = getattr(self, "_nvcodec_decoder", None)
         if decoder is not None:
             return decoder
 
-        output_color_type, is_planar = self._resolve_nvcodec_output_color_type()
-        if output_color_type is None:
-            return None
-
         try:
+            output_color_type, is_planar = self._resolve_nvcodec_output_color_type()
+            if output_color_type is None:
+                self._nvcodec_disabled = True
+                return None
+
             decoder = SimpleDecoder(
                 self.image_path,
                 use_device_memory=True,
                 output_color_type=output_color_type,
             )
-        except Exception:
+        except Exception as e:
             self._nvcodec_disabled = True
+            _disable_nvcodec_runtime(f"decoder init failed: {e}")
             return None
 
         self._nvcodec_decoder = decoder
@@ -540,13 +580,19 @@ class VideoRaster(Raster):
         else:
             frame_idx = max(0, frame_idx)
 
-        use_nvcodec = (
+        use_nvcodec = False
+        if (
             torch is not None
             and torch_device is not None
             and torch_device.type == "cuda"
-            and HAS_PYNVVIDEO_CODEC
-            and torch.cuda.is_available()
-        )
+            and _nvcodec_available()
+        ):
+            try:
+                use_nvcodec = torch.cuda.is_available()
+            except Exception:
+                # A broken CUDA/driver install can raise here rather than
+                # returning False — treat that as "no GPU".
+                use_nvcodec = False
 
         if use_nvcodec:
             decoder = self._get_nvcodec_decoder()
@@ -568,9 +614,12 @@ class VideoRaster(Raster):
                         self._shim._current_bgr = np.ascontiguousarray(rgb_cpu[:, :, ::-1])
                     self._current_frame_idx = frame_idx
                     return inference_tensor, q_image
-                except Exception:
+                except Exception as e:
+                    # GPU decode failed at runtime — disable the path (this
+                    # instance, and process-wide) and fall through to cv2.
                     self._nvcodec_disabled = True
-                    pass
+                    self._nvcodec_decoder = None
+                    _disable_nvcodec_runtime(f"GPU decode failed: {e}")
 
         bgr = self.get_bgr_frame(frame_idx)
         if bgr is None:
@@ -731,7 +780,7 @@ class VideoRaster(Raster):
         video_path = raster_dict['path']
         raster = cls(video_path)
         # Let the base class restore common properties (work areas, scale,
-        # intrinsics, z-channel, etc.) while preserving the subclass's
+        # z-channel, etc.) while preserving the subclass's
         # `raster_type` (see Raster.update_from_dict for conditional logic).
         try:
             raster.update_from_dict(raster_dict)
@@ -812,8 +861,6 @@ class VideoRaster(Raster):
             self.annotations = []
             self.work_areas = []
             self.delete_mask_annotation()
-            self.intrinsics = None
-            self.extrinsics = None
             self.z_channel = None
             if collect_garbage:
                 gc.collect()

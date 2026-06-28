@@ -32,25 +32,6 @@ class GlobalEventFilter(QObject):
         try:
             # Handle keyboard events
             if event.type() == QEvent.KeyPress:
-                # Context Matrix Conveyor Belt (Ctrl+Shift+Arrow)
-                if event.modifiers() == (Qt.ControlModifier | Qt.ShiftModifier):
-                    context_matrix = getattr(self.main_window, 'context_matrix', None)
-                    if context_matrix is not None:
-                        if event.key() == Qt.Key_Right:
-                            context_matrix.shift_offset(1)
-                            return True
-                        if event.key() == Qt.Key_Left:
-                            context_matrix.shift_offset(-1)
-                            return True
-                        if event.key() == Qt.Key_Down:
-                            N = context_matrix._get_visible_capacity()
-                            context_matrix.shift_offset(N)
-                            return True
-                        if event.key() == Qt.Key_Up:
-                            N = context_matrix._get_visible_capacity()
-                            context_matrix.shift_offset(-N)
-                            return True
-
                 if event.modifiers() & Qt.ControlModifier and not (event.modifiers() & Qt.ShiftModifier):
 
                     # Handle Ctrl+Up and Ctrl+Down for cycling labels

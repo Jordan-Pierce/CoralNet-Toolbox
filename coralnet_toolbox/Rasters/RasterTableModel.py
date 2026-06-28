@@ -1,7 +1,5 @@
 import warnings
 
-import numpy as np
-
 from typing import Any, Dict, List, Optional, Set
 
 from PyQt5.QtCore import Qt, QAbstractTableModel, QModelIndex, QVariant, pyqtSignal
@@ -152,42 +150,6 @@ class RasterTableModel(QAbstractTableModel):
                     if raster.z_nodata is not None:
                         z_info_parts.append(f"NoData: {raster.z_nodata}")
                     tooltip_parts.append(" | ".join(z_info_parts))
-
-                # Add camera / ortho transform information if it exists
-                if getattr(raster, 'raster_type', '') == 'OrthoRaster':
-                    projection_matrix = getattr(raster, 'ortho_projection_matrix', None)
-                    chunk_transform = getattr(raster, 'chunk_transform_matrix', None)
-
-                    def _matrix_is_set(matrix) -> bool:
-                        if matrix is None:
-                            return False
-                        try:
-                            matrix_array = np.asarray(matrix, dtype=np.float64)
-                        except Exception:
-                            return False
-                        if matrix_array.shape != (4, 4):
-                            return False
-                        return not np.allclose(matrix_array, np.eye(4, dtype=np.float64))
-
-                    if _matrix_is_set(projection_matrix):
-                        tooltip_parts.append(f"<b>Projection:</b> Yes")
-                    else:
-                        tooltip_parts.append(f"<b>Projection:</b> No")
-
-                    if _matrix_is_set(chunk_transform):
-                        tooltip_parts.append(f"<b>Transform:</b> Yes")
-                    else:
-                        tooltip_parts.append(f"<b>Transform:</b> No")
-                else:
-                    if getattr(raster, 'intrinsics', None) is not None:
-                        tooltip_parts.append(f"<b>Has Intrinsics:</b> Yes")
-                    else:
-                        tooltip_parts.append(f"<b>Has Intrinsics:</b> No")
-
-                    if getattr(raster, 'extrinsics', None) is not None:
-                        tooltip_parts.append(f"<b>Has Extrinsics:</b> Yes")
-                    else:
-                        tooltip_parts.append(f"<b>Has Extrinsics:</b> No")
 
                 # Add feature map information if it exists
                 if raster.has_feature_map():

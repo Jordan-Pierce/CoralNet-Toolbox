@@ -116,38 +116,8 @@ class EraseTool(BrushTool):
             # Show erased pixels in real time
             mask_annotation.refresh_graphics()
 
-        # CLEANUP & DEFERRED GLOBAL PROPAGATION
+        # CLEANUP
         if self._is_finishing_stroke and self._active_workers == 0:
-
-            # Did we actually erase anything?
-            if self._stroke_accumulated_indices and self.post_stroke_callback:
-                # 1. Flatten all erased pixels across the entire stroke
-                combined_flat = np.unique(np.concatenate(self._stroke_accumulated_indices))
-
-                if len(combined_flat) > 0:
-                    h, w = mask_annotation.mask_data.shape
-
-                    # 2. Find the tight bounding box
-                    y_coords, x_coords = np.divmod(combined_flat, w)
-                    min_x, max_x = int(x_coords.min()), int(x_coords.max())
-                    min_y, max_y = int(y_coords.min()), int(y_coords.max())
-
-                    crop_w = (max_x - min_x) + 1
-                    crop_h = (max_y - min_y) + 1
-
-                    # 3. Create a compact boolean mask
-                    cropped_mask = np.zeros((crop_h, crop_w), dtype=bool)
-                    local_y = y_coords - min_y
-                    local_x = x_coords - min_x
-                    cropped_mask[local_y, local_x] = True
-
-                    # 4. Fire ONE heavy payload to the MVAT Manager
-                    final_center = QPointF(min_x + crop_w / 2.0, min_y + crop_h / 2.0)
-                    # Note: We still pass selected_label_id for context routing,
-                    # even though the value written to the array was 0
-                    self.post_stroke_callback(final_center, selected_label_id, cropped_mask)
-
-            # Final Cleanup
             self._cleanup_scratchpad()
             self.annotation_window.viewport().update()
             self._commit_stroke_history_action()
