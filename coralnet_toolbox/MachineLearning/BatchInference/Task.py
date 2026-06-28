@@ -548,7 +548,7 @@ class SamBatchInferenceTask(AsyncYoloBatchInferenceTask):
         # MobileSAM crashes in FP16; force FP32 for it (others stay FP16).
         try:
             if "MobileSAM" in md.model_combo.currentText():
-                overrides["half"] = False
+                overrides["quantize"] = 32
         except Exception:
             pass
         return overrides
@@ -653,12 +653,12 @@ class SeeAnythingBatchInferenceTask(AsyncYoloBatchInferenceTask):
         md = self.model_dialog
         task = getattr(md, "task", "detect")
         # YOLOE prompts are embedded in the model; pass an empty prompt list.
-        # half=False matches the interactive path and avoids dtype mismatches
+        # quantize=32 matches the interactive path and avoids dtype mismatches
         # with the FP32 VPE prompt embeddings.
         return {
             "visual_prompts": [],
             "agnostic_nms": False,
-            "half": False,
+            "quantize": 32,
             "retina_masks": task == "segment",
         }
 

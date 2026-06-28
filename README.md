@@ -54,6 +54,25 @@ uv pip install coralnet-toolbox
 coralnet-toolbox
 ```
 
+To remove a problematic package, type the following:
+
+```bash
+uv pip uninstall package-name-here
+```
+
+To delete an old environment and restart, type the following:
+
+```bash
+# Deactivate if already in the environment
+conda deactivate coralnet10
+
+# Delete by name
+conda env remove --name coralnet10
+
+# Confirm when prompted
+y
+```
+
 *See the [Installation Guide](https://jordan-pierce.github.io/CoralNet-Toolbox/installation) for details on other versions.*
 
 
@@ -70,6 +89,8 @@ coralnet-toolbox
 # When updates are available
 uv pip install -U coralnet-toolbox==[latest_version]
 ```
+
+> **Note**: If you have `torch` installed with `CUDA`, adding `-U` may trigger an regression to the CPU version. If this occurs, use `pip` to uninstall `torch` and `torchvision`, and re-install `CUDA` version.
 
 -----
 

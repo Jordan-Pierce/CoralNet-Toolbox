@@ -3509,6 +3509,15 @@ class MainWindow(QMainWindow):
             batch_dialog = self.batch_inference_dialog
             batch_dialog.update_model_availability()
 
+            # Check if any models are available
+            if not batch_dialog.model_dialogs:
+                QMessageBox.warning(
+                    self,
+                    "No Models Available",
+                    "Please load a model before opening batch inference."
+                )
+                return
+
             # Initialize with currently highlighted image paths so the dialog
             # can reflect selection state even when opened from the Main menu
             try:

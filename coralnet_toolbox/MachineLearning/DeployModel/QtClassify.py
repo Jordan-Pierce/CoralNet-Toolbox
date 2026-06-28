@@ -102,12 +102,12 @@ class Classify(Base):
                 imgsz = 256
 
             self.imgsz = imgsz
-            # Pass the same device/half the predict paths use: ultralytics
+            # Pass the same device/quantize the predict paths use: ultralytics
             # fixes fp16 when the predictor is created and silently rebuilds
             # the whole predictor on the first call whose device= differs, so
-            # the warmup must match or later half=True calls run in fp32.
+            # the warmup must match or later quantize=16 calls run in fp32.
             self.loaded_model(np.zeros((imgsz, imgsz, 3), dtype=np.uint8),
-                              device=self.main_window.device, half=True)
+                              device=self.main_window.device, quantize=16)
             self.class_names = list(self.loaded_model.names.values())
 
             # Check for unmapped classes
@@ -273,7 +273,7 @@ class Classify(Base):
                 images_np,
                 conf=self.thresholds_widget.get_uncertainty_thresh(),
                 device=self.main_window.device,
-                half=True,
+                quantize=16,
                 stream=True,
                 verbose=False,
             )

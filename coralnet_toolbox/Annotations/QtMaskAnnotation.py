@@ -931,85 +931,87 @@ class MaskAnnotation(Annotation):
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            height, width = self.mask_data.shape
 
-        height, width = self.mask_data.shape
+            # Section 1: Build geometries list AND filter annotations that actually need processing
+            geometries = []
+            annotations_to_process = []
+            all_bounds = []
 
-        # Section 1: Build geometries list AND filter annotations that actually need processing
-        geometries = []
-        annotations_to_process = []
-        all_bounds = []
+            for annotation in all_annotations:
+                if getattr(annotation, 'is_mask_annotation', False):
+                    continue
+                try:
+                    geometry = self._get_annotation_rasterization_geometry(annotation)
+                    if geometry is None or getattr(geometry, 'is_empty', False):
+                        continue
 
-        for annotation in all_annotations:
-            if getattr(annotation, 'is_mask_annotation', False):
-                continue
-            try:
-                geometry = self._get_annotation_rasterization_geometry(annotation)
-                if geometry is None or getattr(geometry, 'is_empty', False):
+                    # Get the class ID for this annotation's label
+                    class_id = self.label_id_to_class_id_map.get(annotation.label.id)
+                    if class_id is None:
+                        continue  # Skip if label not in mask
+
+                    geometries.append(geometry)
+                    annotations_to_process.append(annotation)
+                    all_bounds.append(geometry.bounds)
+
+                except Exception as e:
+                    print(f"Warning: Could not process annotation {annotation.id}: {e}")
                     continue
 
-                # Get the class ID for this annotation's label
-                class_id = self.label_id_to_class_id_map.get(annotation.label.id)
-                if class_id is None:
-                    continue  # Skip if label not in mask
+            if not geometries:
+                # No valid geometries to rasterize
+                return
 
-                geometries.append(geometry)
-                annotations_to_process.append(annotation)
-                all_bounds.append(geometry.bounds)
+            # Section 2: Rasterize geometries
+            annotation_mask = self._fast_rasterize(geometries, width, height, mode="rasterio")
+            flat_indices = np.flatnonzero(annotation_mask.ravel())
+            before_values = self.mask_data.ravel()[flat_indices].copy()
 
-            except Exception as e:
-                print(f"Warning: Could not process annotation {annotation.id}: {e}")
-                continue
+            # Section 3: Clear mask pixels under annotations FIRST
+            if np.any(annotation_mask):
+                # Clear mask pixels under annotations (set to 0)
+                self.mask_data[annotation_mask] = 0
 
-        if not geometries:
-            # No valid geometries to rasterize
+            # Section 4: Apply locking to the cleared areas
+            # Only lock pixels that are NOT already locked
+            to_lock = annotation_mask & (self.mask_data < self.LOCK_BIT)
+            if np.any(to_lock):
+                self.mask_data[to_lock] += self.LOCK_BIT
+
+            # Invalidate the cache since we modified the mask data
+            if np.any(annotation_mask) or np.any(to_lock):
+                self._invalidate_stats_cache()
+
+            # Calculate smart combined bounding box
+            if all_bounds:
+                min_x = min(b[0] for b in all_bounds)
+                min_y = min(b[1] for b in all_bounds)
+                max_x = max(b[2] for b in all_bounds)
+                max_y = max(b[3] for b in all_bounds)
+
+                # Add padding (5 pixels) to handle anti-aliasing edges
+                x_min = max(0, int(min_x) - 5)
+                y_min = max(0, int(min_y) - 5)
+                x_max = min(width, int(max_x) + 6)  # +1 for inclusive, +5 for padding
+                y_max = min(height, int(max_y) + 6)
+
+                update_rect = (x_min, y_min, x_max, y_max)
+            else:
+                update_rect = None
+
+            if history_action is not None and flat_indices.size > 0:
+                after_values = self.mask_data.ravel()[flat_indices].copy()
+                history_action.add_change(
+                    flat_indices,
+                    before_values,
+                    after_values,
+                    update_rect=update_rect,
+                )
+        finally:
+            # Always restore the cursor, even on early return / exception.
             QApplication.restoreOverrideCursor()
-            return
-
-        # Section 2: Rasterize geometries
-        annotation_mask = self._fast_rasterize(geometries, width, height, mode="rasterio")
-        flat_indices = np.flatnonzero(annotation_mask.ravel())
-        before_values = self.mask_data.ravel()[flat_indices].copy()
-
-        # Section 3: Clear mask pixels under annotations FIRST
-        if np.any(annotation_mask):
-            # Clear mask pixels under annotations (set to 0)
-            self.mask_data[annotation_mask] = 0
-
-        # Section 4: Apply locking to the cleared areas
-        # Only lock pixels that are NOT already locked
-        to_lock = annotation_mask & (self.mask_data < self.LOCK_BIT)
-        if np.any(to_lock):
-            self.mask_data[to_lock] += self.LOCK_BIT
-
-        # Invalidate the cache since we modified the mask data
-        if np.any(annotation_mask) or np.any(to_lock):
-            self._invalidate_stats_cache()
-
-        # Calculate smart combined bounding box
-        if all_bounds:
-            min_x = min(b[0] for b in all_bounds)
-            min_y = min(b[1] for b in all_bounds)
-            max_x = max(b[2] for b in all_bounds)
-            max_y = max(b[3] for b in all_bounds)
-
-            # Add padding (5 pixels) to handle anti-aliasing edges
-            x_min = max(0, int(min_x) - 5)
-            y_min = max(0, int(min_y) - 5)
-            x_max = min(width, int(max_x) + 6)  # +1 for inclusive, +5 for padding
-            y_max = min(height, int(max_y) + 6)
-
-            update_rect = (x_min, y_min, x_max, y_max)
-        else:
-            update_rect = None
-
-        if history_action is not None and flat_indices.size > 0:
-            after_values = self.mask_data.ravel()[flat_indices].copy()
-            history_action.add_change(
-                flat_indices,
-                before_values,
-                after_values,
-                update_rect=update_rect,
-            )
 
     def bake_annotations(self, all_annotations: list, history_action=None):
         """Bake vector annotations into the semantic mask and return a summary.
