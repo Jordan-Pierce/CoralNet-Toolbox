@@ -9,6 +9,7 @@ pycocotools
 ultralytics>=8.4.80
 lightly-train[ultralytics]
 open-clip-torch>=2.20.0
+pynvvideocodec
 scikit-learn
 umap-learn
 faiss-cpu
@@ -22,7 +23,4 @@ webdriver_manager
 dill
 seaborn
 psutil
-
-# --- Hardware-Specific Conditionals ---
-pynvvideocodec==1.0.2; sys_platform != 'darwin'
-GPUtil; sys_platform != 'darwin'
+GPUtil

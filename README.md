@@ -92,6 +92,10 @@ uv pip install -U coralnet-toolbox==[latest_version]
 
 > **Note**: If you have `torch` installed with `CUDA`, adding `-U` may trigger an regression to the CPU version. If this occurs, use `pip` to uninstall `torch` and `torchvision`, and re-install `CUDA` version.
 
+### MacOS Users
+
+Version `1.0.0` and greater relies heavily relies on a package (`PyQtADS`) that cannot be installed on your operating system. Please do not upgrade from `0.0.105` until this is resolved.
+ 
 -----
 
 ## 📚 Resources & Advanced Details
