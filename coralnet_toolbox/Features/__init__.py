@@ -15,6 +15,7 @@ from coralnet_toolbox.Features.ModelRegistry import (
     is_openclip_model,
     is_yolo_model,
 )
+from coralnet_toolbox.Features.QueryEngine import QueryEngine
 
 __all__ = [
     'TRANSFORMER_MODELS',
@@ -25,4 +26,5 @@ __all__ = [
     'is_timm_model',
     'is_openclip_model',
     'is_yolo_model',
+    'QueryEngine',
 ]
