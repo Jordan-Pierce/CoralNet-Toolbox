@@ -2074,16 +2074,16 @@ class ContextMatrixWidget(QWidget):
             )
             if not annotation_window:
                 return
-            current_colormap = getattr(annotation_window.main_window, 'z_colormap_dropdown', None)
+            current_colormap = getattr(annotation_window.main_window, 'colormap_dropdown', None)
             if not current_colormap:
                 return
             colormap_name = current_colormap.currentText()
             if colormap_name != 'None':
-                canvas.update_z_colormap(colormap_name)
-                z_transparency = getattr(annotation_window.main_window, 'z_transparency_widget', None)
-                if z_transparency:
-                    opacity = z_transparency.value() / 255.0
-                    canvas.set_z_opacity(opacity)
+                canvas.update_overlay_colormap(colormap_name)
+                colormap_opacity = getattr(annotation_window.main_window, 'colormap_opacity_slider', None)
+                if colormap_opacity:
+                    opacity = colormap_opacity.value() / 255.0
+                    canvas.set_overlay_opacity(opacity)
                 z_dynamic = getattr(annotation_window.main_window, 'z_dynamic_scaling_checkbox', None)
                 if z_dynamic:
                     is_dynamic = z_dynamic.isChecked()
@@ -2092,16 +2092,16 @@ class ContextMatrixWidget(QWidget):
         except Exception:
             pass
 
-    def sync_z_colormap_to_all_canvases(self, colormap_name):
-        """Broadcast z-channel colormap changes to all visible canvases."""
+    def sync_overlay_colormap_to_all_canvases(self, colormap_name):
+        """Broadcast colormap-overlay changes to all visible canvases."""
         for canvas in self._canvas_pool:
-            canvas.update_z_colormap(colormap_name)
+            canvas.update_overlay_colormap(colormap_name)
 
-    def sync_z_opacity_to_all_canvases(self, opacity):
-        """Broadcast z-channel opacity changes to all visible canvases."""
+    def sync_overlay_opacity_to_all_canvases(self, opacity):
+        """Broadcast colormap-overlay opacity changes to all visible canvases."""
         opacity = max(0.0, min(1.0, opacity))
         for canvas in self._canvas_pool:
-            canvas.set_z_opacity(opacity)
+            canvas.set_overlay_opacity(opacity)
 
     def sync_annotations_to_all_canvases(self):
         """Re-render readonly annotation overlays on all visible canvases (e.g., after transparency change)."""

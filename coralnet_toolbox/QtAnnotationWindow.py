@@ -222,6 +222,13 @@ class AnnotationWindow(BaseCanvas):
         self.transparency_slider.setValue(128)
         # Let the annotation transparency slider naturally expand
         self.transparency_slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.transparency_slider.setToolTip(
+            "Annotation transparency\n"
+            "\n"
+            "Sets the fill opacity of all annotations on\n"
+            "the current image.\n"
+            "Left = transparent, right = opaque."
+        )
         self.transparency_slider.valueChanged.connect(self._on_transparency_slider_changed)
         # Debounce: applying transparency is O(N annotations) + full phantom rebuild,
         # so coalesce rapid slider ticks into one apply ~75 ms after the last tick.
@@ -271,28 +278,44 @@ class AnnotationWindow(BaseCanvas):
         self.z_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.z_label.setEnabled(False)
 
-        self.z_colormap_dropdown = ColorComboBox()
-        delegate = ColormapDelegate(self.z_colormap_dropdown)
-        self.z_colormap_dropdown.setItemDelegate(delegate)
-        self.z_colormap_dropdown.addItems(['None', 'Viridis', 'Plasma', 'Inferno', 'Magma', 'Cividis', 'Turbo'])
-        self.z_colormap_dropdown.setCurrentIndex(0)
-        self.z_colormap_dropdown.setFixedWidth(app_theme.scale_int(100))
-        self.z_colormap_dropdown.setEnabled(False)
-        self.z_colormap_dropdown.setToolTip("Colormap for Z-channel visualization.\n'None' shows no colorization; other options apply scientific colormaps based on depth values.")
-        self.z_colormap_dropdown.currentTextChanged.connect(self.on_z_colormap_changed)
+        self.colormap_dropdown = ColorComboBox()
+        delegate = ColormapDelegate(self.colormap_dropdown)
+        self.colormap_dropdown.setItemDelegate(delegate)
+        self.colormap_dropdown.addItems(['None', 'Viridis', 'Plasma', 'Inferno', 'Magma', 'Cividis', 'Turbo'])
+        self.colormap_dropdown.setCurrentIndex(0)
+        self.colormap_dropdown.setFixedWidth(app_theme.scale_int(100))
+        self.colormap_dropdown.setEnabled(False)
+        self.colormap_dropdown.setToolTip("Colormap for overlay visualization.\n'None' shows no colorization; other options apply scientific colormaps to the active overlay (Z-channel depth, or feature similarity when the Feature Select tool is active).")
+        self.colormap_dropdown.currentTextChanged.connect(self.on_colormap_changed)
 
-        self.z_transparency_widget = QSlider(Qt.Horizontal)
-        self.z_transparency_widget.setRange(0, 255)
-        self.z_transparency_widget.setValue(128)
-        # Allow the Z transparency slider to naturally expand like the main transparency slider
-        self.z_transparency_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.z_transparency_widget.setEnabled(False)
-        self.z_transparency_widget.valueChanged.connect(self.update_z_transparency)
+        self.colormap_opacity_slider = QSlider(Qt.Horizontal)
+        self.colormap_opacity_slider.setRange(0, 255)
+        self.colormap_opacity_slider.setValue(128)
+        # Allow the overlay opacity slider to naturally expand like the main transparency slider
+        self.colormap_opacity_slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.colormap_opacity_slider.setEnabled(False)
+        self.colormap_opacity_slider.setToolTip(
+            "Overlay opacity\n"
+            "\n"
+            "Sets the opacity of the active colormap overlay:\n"
+            "the Z-channel depth map, or the feature-similarity\n"
+            "heatmap while the Feature Select tool is active.\n"
+            "Left = transparent, right = opaque."
+        )
+        self.colormap_opacity_slider.valueChanged.connect(self.update_colormap_opacity)
 
         self.z_dynamic_button = QToolButton()
         self.z_dynamic_button.setCheckable(True)
         self.z_dynamic_button.setIcon(get_icon("dynamic.svg"))
         self.z_dynamic_button.setEnabled(False)
+        self.z_dynamic_button.setToolTip(
+            "Dynamic Z-range scaling\n"
+            "\n"
+            "Rescales the depth colormap to the min/max of the\n"
+            "currently visible area instead of the whole image,\n"
+            "so depth contrast adapts as you pan and zoom.\n"
+            "Applies to the Z-channel overlay only."
+        )
         self.z_dynamic_button.toggled.connect(self.on_z_dynamic_toggled)
 
         # --- Internal Signal Connections ---
@@ -432,9 +455,9 @@ class AnnotationWindow(BaseCanvas):
                     # Enable the z_label and dropdown since we have valid data
                     self.z_label.setEnabled(True)
                     self.z_unit_dropdown.setEnabled(True)
-                    self.z_colormap_dropdown.setEnabled(True)
+                    self.colormap_dropdown.setEnabled(True)
                     # Only enable dynamic button if colormap is not set to "None"
-                    if self.z_colormap_dropdown.currentText() != "None":
+                    if self.colormap_dropdown.currentText() != "None":
                         self.z_dynamic_button.setEnabled(True)
                     
                 except (IndexError, ValueError):
@@ -449,11 +472,11 @@ class AnnotationWindow(BaseCanvas):
         """
         self.z_label.setEnabled(enabled)
         self.z_unit_dropdown.setEnabled(enabled)
-        self.z_colormap_dropdown.setEnabled(enabled)
-        self.z_transparency_widget.setEnabled(enabled)
+        self.colormap_dropdown.setEnabled(enabled)
+        self.colormap_opacity_slider.setEnabled(enabled)
         
         # Dynamic button is only enabled when a colormap is active (not "None")
-        if enabled and self.z_colormap_dropdown.currentText() != "None":
+        if enabled and self.colormap_dropdown.currentText() != "None":
             self.z_dynamic_button.setEnabled(True)
         else:
             self.z_dynamic_button.setEnabled(False)
@@ -470,7 +493,7 @@ class AnnotationWindow(BaseCanvas):
         if raster and raster.z_channel is None:
             # Image has no z-channel, disable UI elements
             self.z_label.setText("Z: -----")
-            self.z_colormap_dropdown.setCurrentText("None")
+            self.colormap_dropdown.setCurrentText("None")
             self.enable_z_visualization_controls(False)
         elif raster and raster.z_channel is not None:
             # Image has z-channel, enable UI elements
@@ -491,7 +514,7 @@ class AnnotationWindow(BaseCanvas):
         # clear the z-label in the status bar and disable the dropdown
         if image_path == self.current_image_path:
             self.z_label.setText("Z: -----")
-            self.z_colormap_dropdown.setCurrentText("None")
+            self.colormap_dropdown.setCurrentText("None")
             self.enable_z_visualization_controls(False)
 
     def on_scale_unit_changed(self, to_unit, refresh_confidence=True):
@@ -553,41 +576,52 @@ class AnnotationWindow(BaseCanvas):
         if self.main_window.confidence_window.annotation:
             self.main_window.confidence_window.refresh_display()
 
-    def on_z_colormap_changed(self, colormap_name):
-        """Handle z-colormap dropdown changes by updating the annotation window."""
-        self.update_z_colormap(colormap_name)
-        
-        # Sync to all context matrix canvases
-        if hasattr(self.main_window, 'context_matrix') and self.main_window.context_matrix:
-            self.main_window.context_matrix.sync_z_colormap_to_all_canvases(colormap_name)
-        
-        # Enable/disable z_transparency_widget based on colormap selection
+    def on_colormap_changed(self, colormap_name):
+        """Handle colormap dropdown changes for the active overlay.
+
+        Drives whichever overlay is active (Z-channel depth by default, or the
+        feature-similarity overlay while the Feature Select tool is active). The
+        context-matrix sync and dynamic-range button only apply to the Z overlay.
+        """
+        self.update_overlay_colormap(colormap_name)
+
+        feature_active = self._active_colormap_overlay is self._feature_overlay
+
+        # Sync to all context matrix canvases (depth overlay only).
+        if not feature_active and hasattr(self.main_window, 'context_matrix') and self.main_window.context_matrix:
+            self.main_window.context_matrix.sync_overlay_colormap_to_all_canvases(colormap_name)
+
+        # Enable/disable the opacity slider based on colormap selection.
         if colormap_name == "None":
-            self.z_transparency_widget.setEnabled(False)
-            self.z_dynamic_button.setEnabled(False)
-            self.z_dynamic_button.setChecked(False)
+            self.colormap_opacity_slider.setEnabled(False)
+            if not feature_active:
+                self.z_dynamic_button.setEnabled(False)
+                self.z_dynamic_button.setChecked(False)
         else:
-            # Enable the transparency slider and dynamic range button if Z data is available
-            if self.z_data_raw is not None:
-                self.z_transparency_widget.setEnabled(True)
+            if feature_active:
+                # Feature overlay has no depth data / dynamic range; just the slider.
+                self.colormap_opacity_slider.setEnabled(True)
+            elif self.z_data_raw is not None:
+                self.colormap_opacity_slider.setEnabled(True)
                 self.z_dynamic_button.setEnabled(True)
 
-    def update_z_transparency(self, value):
+    def update_colormap_opacity(self, value):
         """
-        Update the Z-channel visualization opacity.
-        
+        Update the active overlay's opacity from the slider.
+
         Args:
             value (int): Slider value from 0-255
         """
         # Convert slider value (0-255) to opacity (0.0-1.0)
         opacity = value / 255.0
-        
-        # Update the annotation window's z-channel opacity
-        self.set_z_opacity(opacity)
-        
-        # Sync to all context matrix canvases
-        if hasattr(self.main_window, 'context_matrix') and self.main_window.context_matrix:
-            self.main_window.context_matrix.sync_z_opacity_to_all_canvases(opacity)
+
+        # Update the active overlay (Z-channel depth or feature similarity).
+        self.set_overlay_opacity(opacity)
+
+        # Sync to all context matrix canvases (depth overlay only).
+        if (self._active_colormap_overlay is not self._feature_overlay
+                and hasattr(self.main_window, 'context_matrix') and self.main_window.context_matrix):
+            self.main_window.context_matrix.sync_overlay_opacity_to_all_canvases(opacity)
 
     def on_z_dynamic_toggled(self, checked):
         """Handle z-dynamic scaling button toggle."""
@@ -699,8 +733,8 @@ class AnnotationWindow(BaseCanvas):
         z_layout.setContentsMargins(4, 0, 4, 0)
         # Order: dynamic range button, z transparency slider, then colormap combo (swapped)
         z_layout.addWidget(self.z_dynamic_button)
-        z_layout.addWidget(self.z_transparency_widget)
-        z_layout.addWidget(self.z_colormap_dropdown)
+        z_layout.addWidget(self.colormap_opacity_slider)
+        z_layout.addWidget(self.colormap_dropdown)
         toolbar.addWidget(z_widget)
 
         toolbar.addSeparator()
@@ -2514,24 +2548,24 @@ class AnnotationWindow(BaseCanvas):
         self.load_visuals(q_image, image_path, raster)
 
         # Apply the current colormap selection and preserve UI opacity
-        current_colormap = self.main_window.z_colormap_dropdown.currentText()
+        current_colormap = self.main_window.colormap_dropdown.currentText()
         if current_colormap != "None":
-            self.update_z_colormap(current_colormap)
-        if self.z_item is not None:
+            self.update_overlay_colormap(current_colormap)
+        if self._z_overlay.item is not None:
             try:
-                current_opacity = self.main_window.z_transparency_widget.value() / 255.0
-                self.z_item.setOpacity(current_opacity)
+                current_opacity = self.main_window.colormap_opacity_slider.value() / 255.0
+                self._z_overlay.set_opacity(current_opacity)
             except Exception:
                 pass
-        
+
         # Sync z-channel state to all ContextMatrix BaseCanvases when image changes
         try:
             context_matrix = getattr(self.main_window, 'context_matrix', None)
             if context_matrix:
                 if current_colormap != "None":
-                    context_matrix.sync_z_colormap_to_all_canvases(current_colormap)
-                    current_opacity = self.main_window.z_transparency_widget.value() / 255.0
-                    context_matrix.sync_z_opacity_to_all_canvases(current_opacity)
+                    context_matrix.sync_overlay_colormap_to_all_canvases(current_colormap)
+                    current_opacity = self.main_window.colormap_opacity_slider.value() / 255.0
+                    context_matrix.sync_overlay_opacity_to_all_canvases(current_opacity)
                 # Also sync dynamic scaling state
                 is_dynamic_enabled = self.main_window.z_dynamic_scaling_checkbox.isChecked()
                 context_matrix.sync_z_dynamic_scaling_to_all_canvases(is_dynamic_enabled)
@@ -2573,28 +2607,29 @@ class AnnotationWindow(BaseCanvas):
     def _load_z_channel_visualization(self, raster):
         """Override to set opacity from main_window widget after BaseCanvas loads."""
         super()._load_z_channel_visualization(raster)
-        
+
         # Set opacity from current slider value (preserves user's transparency preference)
-        if self.z_item is not None:
+        if self._z_overlay.item is not None:
             try:
-                current_opacity = self.main_window.z_transparency_widget.value() / 255.0
-                self.z_item.setOpacity(current_opacity)
+                current_opacity = self.main_window.colormap_opacity_slider.value() / 255.0
+                self._z_overlay.set_opacity(current_opacity)
             except Exception:
                 pass
 
-    def update_z_colormap(self, colormap_name):
+    def update_overlay_colormap(self, colormap_name):
         # Delegate to BaseCanvas and keep opacity in sync with the UI widget
-        super().update_z_colormap(colormap_name)
-        if self.z_item is not None:
-            try:
-                self.z_item.setOpacity(self.main_window.z_transparency_widget.value() / 255.0)
-            except Exception:
-                pass
+        super().update_overlay_colormap(colormap_name)
+        try:
+            self._active_colormap_overlay.set_opacity(
+                self.main_window.colormap_opacity_slider.value() / 255.0
+            )
+        except Exception:
+            pass
 
     def _reset_z_channel_to_full_range(self, colormap_name=None):
         """Override to fetch colormap from main_window and pass to BaseCanvas."""
         if colormap_name is None:
-            colormap_name = self.main_window.z_colormap_dropdown.currentText()
+            colormap_name = self.main_window.colormap_dropdown.currentText()
         super()._reset_z_channel_to_full_range(colormap_name)
     
     def update_current_image_path(self, image_path):
@@ -2631,10 +2666,10 @@ class AnnotationWindow(BaseCanvas):
                 # Reload the z-channel visualization
                 self._load_z_channel_visualization(raster)
                 
-                # Apply the current colormap selection to the newly loaded z_item
-                current_colormap = self.main_window.z_colormap_dropdown.currentText()
-                # Always call update_z_colormap to handle visibility correctly
-                self.update_z_colormap(current_colormap)
+                # Apply the current colormap selection to the newly loaded overlay
+                current_colormap = self.main_window.colormap_dropdown.currentText()
+                # Always call update_overlay_colormap to handle visibility correctly
+                self.update_overlay_colormap(current_colormap)
                 
                 # Force scene update to ensure visual changes are immediately reflected
                 self.scene.update()

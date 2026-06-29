@@ -673,9 +673,9 @@ class DeployModelDialog(CollapsibleSection):
                         self.main_window.enable_z_visualization_controls(True)
                         
                         # Set colormap to Turbo
-                        turbo_index = self.main_window.z_colormap_dropdown.findText("Turbo")
+                        turbo_index = self.main_window.colormap_dropdown.findText("Turbo")
                         if turbo_index >= 0:
-                            self.main_window.z_colormap_dropdown.setCurrentIndex(turbo_index)
+                            self.main_window.colormap_dropdown.setCurrentIndex(turbo_index)
                             
                     progress_bar.update_progress()
                     

@@ -910,10 +910,13 @@ class MainWindow(QMainWindow):
             "feature_select": ("Feature Select Tool\n\n"
                                 "Click-to-query dense-feature semantic similarity. Works on the 2D image\n"
                                 "(heatmap overlay) and, in the 3D viewer, on the baked feature mesh.\n"
+                                "• 2D: Space (or Left-click, Left-click) to define a work area first.\n"
                                 "• Ctrl+Left-click to add a positive prototype.\n"
                                 "• Ctrl+Right-click to add a negative prototype.\n"
                                 "• Hold Ctrl and use the mouse wheel to adjust the similarity threshold.\n"
-                                "• 2D: Space to define a work area.\n"
+                                "• Once a work area is set, the toolbar colormap dropdown and opacity slider\n"
+                                "  control the similarity heatmap (defaults to Plasma); the Z-channel\n"
+                                "  overlay is hidden while the tool is active and is re-selected manually.\n"
                                 "• 2D & 3D: Press Space to finalize: 2D creates a Polygon/Mask annotation; 3D paints\n"
                                 "  the highlighted faces (and propagates them when Multi-Annotate is on).\n"
                                 "• Press Backspace to clear the current query.\n"
@@ -1652,16 +1655,16 @@ class MainWindow(QMainWindow):
         return self.annotation_window.scale_unit_dropdown
 
     @property
-    def z_colormap_dropdown(self):
+    def colormap_dropdown(self):
         if not hasattr(self, 'annotation_window') or self.annotation_window is None:
             return None
-        return self.annotation_window.z_colormap_dropdown
+        return self.annotation_window.colormap_dropdown
 
     @property
-    def z_transparency_widget(self):
+    def colormap_opacity_slider(self):
         if not hasattr(self, 'annotation_window') or self.annotation_window is None:
             return None
-        return self.annotation_window.z_transparency_widget
+        return self.annotation_window.colormap_opacity_slider
             
     def update_project_label(self):
         """Update the project label in the status bar"""

@@ -198,6 +198,129 @@ class PhantomGroupItem(QGraphicsPathItem):
             super().paint(painter, option, widget)
 
 
+class ColorMapOverlay:
+    """A reusable indexed-8 colormap overlay layer for a QGraphicsScene.
+
+    Renders a ``uint8`` index field through a 256-entry color table as a single
+    QGraphicsPixmapItem. Recoloring is a cheap color-table swap (no per-pixel
+    numpy LUT); opacity is a single ``item.setOpacity()``. The index grid is
+    scaled with smooth interpolation to fill a target scene rect, so the SAME
+    overlay serves both a full-resolution field (Z-channel depth) and a small
+    upsampled grid (feature similarity).
+
+    Palette convention:
+        index 0     -> fully transparent (nodata / invalid / off)
+        index 1..N  -> colormap ramp (N = 255, or 254 when a scrim is reserved)
+        index 255   -> optional scrim color (e.g. below-threshold dimming)
+    """
+
+    def __init__(self, z_value=-5, smooth=True):
+        self._z_value = z_value
+        self._smooth = smooth
+        self.item = None
+        self._index = None          # uint8 [h, w] palette indices
+        self._color_table = None    # list[QRgb], 256 entries
+        self.colormap_name = None
+        self._opacity = 0.5
+        self._target_rect = None
+        self._scrim_rgba = None
+
+    def _ensure_item(self, scene):
+        """Create (or re-create on a new scene) the backing pixmap item."""
+        if self.item is None or self.item.scene() is not scene:
+            self.item = QGraphicsPixmapItem()
+            if self._smooth:
+                self.item.setTransformationMode(Qt.SmoothTransformation)
+            self.item.setZValue(self._z_value)
+            self.item.setOpacity(self._opacity)
+            self.item.setAcceptHoverEvents(False)
+            scene.addItem(self.item)
+        return self.item
+
+    @staticmethod
+    def _build_color_table(colormap_name, scrim_rgba=None):
+        """Return a 256-entry ARGB table; index 0 transparent, 255 optional scrim."""
+        n_levels = 254 if scrim_rgba is not None else 255
+        lut = pg.colormap.get(colormap_name).getLookupTable(nPts=n_levels, alpha=True)
+        table = [0]  # index 0 -> 0x00000000 (fully transparent)
+        for i in range(n_levels):
+            r, g, b, a = (int(v) for v in lut[i])
+            table.append(qRgba(r, g, b, a))
+        # Pad to 256 (when a scrim is reserved we stopped at 1..254).
+        while len(table) < 256:
+            table.append(table[-1])
+        if scrim_rgba is not None:
+            sr, sg, sb, sa = scrim_rgba
+            table[255] = qRgba(int(sr), int(sg), int(sb), int(sa))
+        return table
+
+    def set_colormap(self, colormap_name, scrim_rgba=None):
+        """Swap the colormap (and optional scrim) and re-blit the existing field."""
+        self.colormap_name = colormap_name
+        self._scrim_rgba = scrim_rgba
+        self._color_table = self._build_color_table(colormap_name, scrim_rgba)
+        self._reblit()
+
+    def set_indices(self, scene, index_array, target_rect=None):
+        """Store a new uint8 index field and (re)build the pixmap on ``scene``."""
+        self._index = np.ascontiguousarray(index_array.astype(np.uint8, copy=False))
+        if target_rect is not None:
+            self._target_rect = target_rect
+        if self._color_table is None:
+            self._color_table = self._build_color_table('Plasma', self._scrim_rgba)
+        self._ensure_item(scene)
+        self._reblit()
+        self.item.show()
+
+    def _reblit(self):
+        """Rebuild the pixmap from the cached index field + color table."""
+        if self.item is None or self._index is None or self._color_table is None:
+            return
+        h, w = self._index.shape
+        q_img = QImage(self._index.data, w, h, w, QImage.Format_Indexed8)
+        q_img.setColorTable(self._color_table)
+        # .copy() detaches the pixmap from the live numpy buffer.
+        self.item.setPixmap(QPixmap.fromImage(q_img.copy()))
+
+        rect = self._target_rect
+        if rect is not None and rect.width() > 0 and rect.height() > 0:
+            self.item.setTransform(
+                QTransform().scale(rect.width() / float(w), rect.height() / float(h))
+            )
+            self.item.setPos(rect.left(), rect.top())
+        else:
+            self.item.setTransform(QTransform())
+            self.item.setPos(0, 0)
+
+    def set_opacity(self, opacity):
+        """Set overlay opacity in [0, 1]."""
+        self._opacity = max(0.0, min(1.0, opacity))
+        if self.item is not None:
+            self.item.setOpacity(self._opacity)
+
+    def show(self):
+        if self.item is not None:
+            self.item.show()
+
+    def hide(self):
+        if self.item is not None:
+            self.item.hide()
+
+    def is_visible(self):
+        return self.item is not None and self.item.isVisible()
+
+    def clear(self):
+        """Remove the overlay item from its scene and drop the cached field."""
+        if self.item is not None:
+            try:
+                if self.item.scene() is not None:
+                    self.item.scene().removeItem(self.item)
+            except Exception:
+                pass
+        self.item = None
+        self._index = None
+
+
 class BaseCanvas(QGraphicsView):
     """
     Lightweight viewport for image display with native zoom/pan navigation.
@@ -252,15 +375,20 @@ class BaseCanvas(QGraphicsView):
         self._pan_active = False
         self._pan_start = None
         
-        # Z-channel visualization state
-        self.z_item = None  # QGraphicsPixmapItem for Z-channel layer
+        # Z-channel (depth) data state. The depth *data* keeps its z_ names; the
+        # *rendering* is delegated to a generic ColorMapOverlay so the same
+        # indexed-8 path also serves the feature-similarity overlay.
+        self._z_overlay = ColorMapOverlay(z_value=-5, smooth=True)
+        # The colormap dropdown / opacity slider drive whichever overlay is the
+        # active target; the Z (depth) overlay is the default. The FeatureSelect
+        # tool repoints this at the feature overlay while it is active.
+        self._active_colormap_overlay = self._z_overlay
         self.z_data_raw = None  # Raw Z-channel data
         # Indexed visualization: a single-byte palette index per pixel (0 = nodata,
         # transparent; 1..255 = normalized value). Colormap changes only swap the
         # color table — no per-pixel numpy LUT expansion, ¼ the pixmap upload.
         self.z_index = None        # uint8 [h, w] palette indices
         self.z_colormap_name = None  # currently applied colormap ('None' = hidden)
-        self._z_color_table = None   # cached list[QRgb] palette
         self.z_data_min = None  # Min value in valid data
         self.z_data_max = None  # Max value in valid data
         self.z_data_shape = None  # Shape of Z-channel array
@@ -276,7 +404,9 @@ class BaseCanvas(QGraphicsView):
         self._dynamic_marker = None
         self._cursor_preview_item = None  # Preview rect for tool cursor propagation
         self._mask_overlay_item = None    # Read-only MaskAnnotation overlay for brush propagation
-        self._feature_heatmap_item = None # Feature-similarity heatmap overlay (FeatureSelectTool)
+        # Feature-similarity heatmap overlay (FeatureSelectTool). Same indexed-8
+        # ColorMapOverlay machinery as the Z layer; sits just above it.
+        self._feature_overlay = ColorMapOverlay(z_value=-4, smooth=True)
         self._perimeter_overlay = None    # Viewport border overlay
 
         # Read-only annotation overlays (Phase 6).
@@ -575,17 +705,21 @@ class BaseCanvas(QGraphicsView):
         
         # Reset image references
         self._base_image_item = None
-        self.z_item = None
         self._image_dimensions = None
-        
+
+        # The scene-clearing loop above already removed the overlay items; reset
+        # the overlay wrappers (keeps colormap/opacity so they persist across
+        # image loads).
+        self._z_overlay.clear()
+        self._feature_overlay.clear()
+
         # Clear read-only annotation overlay references
         self._readonly_annotation_items = {}
-        
+
         # Clear Z-channel data
         self.z_data_raw = None
         self.z_index = None
         self.z_colormap_name = None
-        self._z_color_table = None
         self.z_data_min = None
         self.z_data_max = None
         self.z_data_shape = None
@@ -1037,41 +1171,15 @@ class BaseCanvas(QGraphicsView):
         index[nodata_mask] = 0
         return np.ascontiguousarray(index)
 
-    def _build_z_color_table(self, colormap_name):
-        """Return a 256-entry ARGB color table; index 0 is transparent (nodata)."""
-        lut = pg.colormap.get(colormap_name).getLookupTable(nPts=256, alpha=True)
-        table = [0]  # index 0 -> 0x00000000 (fully transparent nodata)
-        for i in range(1, 256):
-            r, g, b, a = (int(v) for v in lut[i])
-            table.append(qRgba(r, g, b, a))
-        return table
-
-    def _apply_z_image(self):
-        """Blit the current palette indices through the current color table.
-
-        Builds a one-byte ``Format_Indexed8`` QImage and lets Qt expand it
-        through ``setColorTable`` in C++ — no per-pixel numpy LUT, and the source
-        buffer is ¼ the size of the previous RGBA image.
-        """
-        if self.z_item is None or self.z_index is None or self._z_color_table is None:
-            return
-        h, w = self.z_index.shape
-        q_img = QImage(self.z_index.data, w, h, w, QImage.Format_Indexed8)
-        q_img.setColorTable(self._z_color_table)
-        self.z_item.setPixmap(QPixmap.fromImage(q_img))
-
     def _load_z_channel_visualization(self, raster):
         """
-        Load and initialize the Z-channel visualization.
+        Load and initialize the Z-channel (depth) visualization.
 
         Args:
             raster: The Raster object containing Z-channel data
         """
-        # Clean up old z_item if it exists
-        if self.z_item is not None:
-            if self.z_item.scene() == self.scene:
-                self.scene.removeItem(self.z_item)
-            self.z_item = None
+        # Clean up any previous depth overlay.
+        self._z_overlay.clear()
 
         # Check if Z-channel data is available
         if raster.z_channel_lazy is None:
@@ -1104,139 +1212,148 @@ class BaseCanvas(QGraphicsView):
                 z_data, self.z_data_min, self.z_data_max, nodata_mask
             )
             self.z_colormap_name = None
-            # Placeholder grayscale palette so the (hidden) item has a valid pixmap
-            # until a real colormap is selected via update_z_colormap().
-            self._z_color_table = [0] + [qRgba(i, i, i, 255) for i in range(1, 256)]
 
-            h, w = self.z_index.shape
-            q_img = QImage(self.z_index.data, w, h, w, QImage.Format_Indexed8)
-            q_img.setColorTable(self._z_color_table)
-
-            # Create graphics item
-            self.z_item = QGraphicsPixmapItem(QPixmap.fromImage(q_img))
-            self.z_item.setTransformationMode(Qt.SmoothTransformation)
-            self.z_item.setPos(0, 0)
-            self.z_item.setZValue(-5)  # Between base image (-10) and annotations (0+)
-            self.z_item.setOpacity(0.5)  # Default opacity
-            self.scene.addItem(self.z_item)
-            self.z_item.hide()  # Hide until colormap is selected
+            # Hand the index field to the overlay (full-image rect), default
+            # opacity, then hide until a colormap is selected via
+            # update_overlay_colormap()/_update_z_colormap().
+            self._z_overlay.set_indices(self.scene, self.z_index,
+                                        target_rect=self.get_image_rect())
+            self._z_overlay.set_opacity(0.5)
+            self._z_overlay.hide()
 
         except Exception:
             traceback.print_exc()
-            self.z_item = None
+            self._z_overlay.clear()
 
-    def update_z_colormap(self, colormap_name):
-        """
-        Update the Z-channel visualization colormap.
+    # ---- Generic colormap-overlay dispatch (drives the active overlay) ----
+
+    def set_active_colormap_overlay(self, which):
+        """Point the colormap dropdown / opacity slider at an overlay.
 
         Args:
-            colormap_name (str): Name of the colormap (e.g., 'Viridis', 'Plasma')
+            which (str): 'z' for the depth overlay (default) or 'feature' for the
+                feature-similarity overlay.
         """
-        if self.z_item is None or self.z_index is None:
+        self._active_colormap_overlay = (
+            self._feature_overlay if which == 'feature' else self._z_overlay
+        )
+
+    def update_overlay_colormap(self, colormap_name):
+        """Apply a colormap to the active overlay ('None' hides it)."""
+        if self._active_colormap_overlay is self._z_overlay:
+            self._update_z_colormap(colormap_name)
+            return
+        # Feature overlay: a colormap change is a pure table swap. Reserve the
+        # top index as a below-threshold scrim so the thresholded preview reads
+        # as dimmed rather than fully exposed.
+        try:
+            if colormap_name == 'None':
+                self._feature_overlay.hide()
+                return
+            self._feature_overlay.set_colormap(colormap_name, scrim_rgba=(0, 0, 0, 200))
+            self._feature_overlay.show()
+        except Exception:
+            traceback.print_exc()
+
+    def set_overlay_opacity(self, opacity):
+        """Set the opacity of the active colormap overlay."""
+        self._active_colormap_overlay.set_opacity(opacity)
+
+    # ---- Z-channel (depth) specifics ----
+
+    def _update_z_colormap(self, colormap_name):
+        """Apply a colormap to the depth overlay ('None' hides it)."""
+        if self.z_index is None or self._z_overlay.item is None:
             return
 
         try:
             self.z_colormap_name = colormap_name
             if colormap_name == 'None':
-                self.z_item.hide()
+                self._z_overlay.hide()
                 return
 
             # A colormap change is just a palette swap on the existing indices.
-            self._z_color_table = self._build_z_color_table(colormap_name)
+            self._z_overlay.set_colormap(colormap_name)
 
             # Dynamic scaling re-derives the indices for the visible range; for the
-            # full range we can blit the cached indices straight through the table.
+            # full range the cached indices blit straight through the new table.
             if self.dynamic_z_scaling:
                 self.update_dynamic_range()
-            else:
-                self._apply_z_image()
-            self.z_item.show()
+            self._z_overlay.show()
         except Exception:
             traceback.print_exc()
 
-    def set_z_opacity(self, opacity):
-        """
-        Set the opacity of the Z-channel visualization.
-        
-        Args:
-            opacity (float): Opacity value from 0.0 (transparent) to 1.0 (opaque)
-        """
-        opacity = max(0.0, min(1.0, opacity))
-        if self.z_item is not None:
-            self.z_item.setOpacity(opacity)
-    
     def toggle_dynamic_z_scaling(self, enabled):
         """
         Toggle dynamic Z-range scaling based on visible area.
-        
+
         Args:
             enabled (bool): Whether to enable dynamic scaling
         """
         self.dynamic_z_scaling = enabled
-        
-        if enabled and self.z_item is not None:
+
+        if self._z_overlay.item is None:
+            return
+        if enabled:
             self.update_dynamic_range()
-        elif not enabled and self.z_item is not None:
+        else:
             self._reset_z_channel_to_full_range(None)
-    
+
     def schedule_dynamic_range_update(self):
         """Schedule a debounced dynamic range update."""
         if not self.dynamic_z_scaling:
             return
-        
+
         self._dynamic_range_timer.stop()
         self._dynamic_range_timer.start(self.dynamic_range_update_delay)
-    
+
     def update_dynamic_range(self):
         """Update Z-channel visualization for visible viewport range."""
-        if not self.dynamic_z_scaling or self.z_item is None or self.z_data_raw is None:
+        if not self.dynamic_z_scaling or self._z_overlay.item is None or self.z_data_raw is None:
             return
-        
+
         try:
             # Get visible area in scene coordinates
             visible_rect = self.viewportToScene()
-            
+
             # Clamp to image bounds
             image_rect = self.get_image_rect()
             visible_rect = visible_rect.intersected(image_rect)
-            
+
             if visible_rect.isEmpty():
                 return
-            
+
             # Get pixel coordinates
             x1, y1 = int(visible_rect.left()), int(visible_rect.top())
             x2, y2 = int(visible_rect.right()), int(visible_rect.bottom())
-            
+
             # Clamp to array bounds
             h, w = self.z_data_shape
             x1, y1 = max(0, min(x1, w - 1)), max(0, min(y1, h - 1))
             x2, y2 = max(x1 + 1, min(x2, w)), max(y1 + 1, min(y2, h))
-            
+
             # Calculate dynamic range from visible data
             visible_data = self.z_data_raw[y1:y2, x1:x2]
             valid_mask = ~np.isnan(visible_data)
-            
+
             if np.any(valid_mask):
                 dynamic_min = np.min(visible_data[valid_mask])
                 dynamic_max = np.max(visible_data[valid_mask])
             else:
                 dynamic_min = self.z_data_min
                 dynamic_max = self.z_data_max
-            
+
             # Re-derive palette indices for the visible (dynamic) range. The
-            # color table is left untouched, so the user's selected colormap is
-            # preserved (the old path hard-coded Viridis here).
+            # overlay's color table is left untouched, so the user's selected
+            # colormap is preserved.
             nodata_mask = self.z_nodata_mask
             if nodata_mask is None:
                 nodata_mask = np.isnan(self.z_data_raw)
             self.z_index = self._normalize_to_index(
                 self.z_data_raw, dynamic_min, dynamic_max, nodata_mask
             )
-
-            # Ensure a color table exists (default to Plasma if none applied yet).
-            if self._z_color_table is None:
-                self._z_color_table = self._build_z_color_table('Plasma')
-            self._apply_z_image()
+            self._z_overlay.set_indices(self.scene, self.z_index,
+                                        target_rect=self.get_image_rect())
 
         except Exception:
             traceback.print_exc()
@@ -1251,7 +1368,7 @@ class BaseCanvas(QGraphicsView):
         if colormap_name is None:
             colormap_name = 'Plasma'
 
-        if self.z_item is None or self.z_data_raw is None:
+        if self._z_overlay.item is None or self.z_data_raw is None:
             return
 
         try:
@@ -1264,31 +1381,28 @@ class BaseCanvas(QGraphicsView):
                     self.z_data_raw, self.z_data_min, self.z_data_max, nodata_mask
                 )
                 self.z_colormap_name = colormap_name
-                self._z_color_table = self._build_z_color_table(colormap_name)
-                self._apply_z_image()
+                self._z_overlay.set_colormap(colormap_name)
+                self._z_overlay.set_indices(self.scene, self.z_index,
+                                            target_rect=self.get_image_rect())
         except Exception:
             traceback.print_exc()
-    
+
     def clear_z_channel_visualization(self, image_path):
         """
         Clear Z-channel visualization for a specific image.
-        
+
         Args:
             image_path (str): Path of the image with removed Z-channel
         """
         if image_path != self.current_image_path:
             return
-        
-        if self.z_item is not None:
-            if self.z_item.scene() == self.scene:
-                self.scene.removeItem(self.z_item)
-            self.z_item = None
-        
+
+        self._z_overlay.clear()
+
         # Clear cached data
         self.z_data_raw = None
         self.z_index = None
         self.z_colormap_name = None
-        self._z_color_table = None
         self.z_data_min = None
         self.z_data_max = None
         self.z_data_shape = None
@@ -1422,8 +1536,8 @@ class BaseCanvas(QGraphicsView):
             self._cursor_preview_item = None
             # Mask overlay item (created lazily; reset reference on scene rebuild)
             self._mask_overlay_item = None
-            # Feature-similarity heatmap overlay (created lazily; reset on rebuild)
-            self._feature_heatmap_item = None
+            # The Z and feature ColorMapOverlays persist across scene rebuilds;
+            # clear_scene() resets their item references, so nothing to do here.
         except Exception:
             traceback.print_exc()
 
@@ -1517,76 +1631,51 @@ class BaseCanvas(QGraphicsView):
                 pass
             self._mask_overlay_item = None
 
-    # ==================== Feature Heatmap Overlay (FeatureSelectTool) ====================
+    # ==================== Feature Similarity Overlay (FeatureSelectTool) ====================
 
-    def set_feature_heatmap(self, rgba_array, rect=None, opacity=0.6):
-        """Display a feature-similarity heatmap as a read-only overlay.
+    def set_feature_overlay(self, index_array, rect=None):
+        """Display a feature-similarity field as an indexed colormap overlay.
 
-        The heatmap is supplied at feature-grid resolution ``[gh, gw, 4]`` (uint8
-        RGBA) and scaled with smooth interpolation to fill ``rect`` (scene/image
-        coordinates). When ``rect`` is None it fills the whole image. The item
-        sits above the base image (-10) and Z-channel (-5) but below annotations
-        (>= 0), mirroring the Z-channel overlay pattern.
+        ``index_array`` is a ``uint8 [gh, gw]`` palette-index field at
+        feature-grid / preview resolution:
+            0       -> transparent (invalid / off)
+            1..254  -> colormap ramp (normalized similarity)
+            255     -> below-threshold scrim
+        It is scaled with smooth interpolation to fill ``rect`` (scene coords;
+        None = whole image). The overlay's colormap and opacity are owned by the
+        active colormap controls (see ``set_active_colormap_overlay``), so a
+        colormap or opacity change is a cheap table swap / ``setOpacity`` with no
+        recompute here. The item sits above the base image (-10) and Z-channel
+        (-5) but below annotations (>= 0).
 
-        Scaling/positioning the grid to ``rect`` (e.g. a work-area rectangle) uses
-        the SAME proportional mapping a caller should use to map a pixel back to a
-        grid cell, so the cursor and the lit region stay aligned regardless of the
-        image (or grid) aspect ratio.
-
-        Args:
-            rgba_array: ``[gh, gw, 4]`` uint8 array (colormap-colored similarity).
-            rect: Target QRectF in scene coordinates; None = full image.
-            opacity: Overlay opacity from 0.0 (transparent) to 1.0 (opaque).
+        Scaling/positioning the grid to ``rect`` uses the SAME proportional
+        mapping a caller should use to map a pixel back to a grid cell, so the
+        cursor and the lit region stay aligned regardless of aspect ratio.
         """
-        if rgba_array is None:
-            self.clear_feature_heatmap()
+        if index_array is None:
+            self.clear_feature_overlay()
             return
 
         try:
-            arr = np.ascontiguousarray(rgba_array.astype(np.uint8, copy=False))
+            arr = np.ascontiguousarray(index_array.astype(np.uint8, copy=False))
             gh, gw = arr.shape[:2]
             if gh <= 0 or gw <= 0:
-                self.clear_feature_heatmap()
+                self.clear_feature_overlay()
                 return
 
-            q_img = QImage(arr.data, gw, gh, gw * 4, QImage.Format_RGBA8888)
-            pixmap = QPixmap.fromImage(q_img.copy())
-
-            if self._feature_heatmap_item is None or self._feature_heatmap_item.scene() is None:
-                self.clear_feature_heatmap()
-                self._feature_heatmap_item = QGraphicsPixmapItem()
-                self._feature_heatmap_item.setTransformationMode(Qt.SmoothTransformation)
-                self._feature_heatmap_item.setZValue(-4)
-                self._feature_heatmap_item.setAcceptHoverEvents(False)
-                self.scene.addItem(self._feature_heatmap_item)
-
-            self._feature_heatmap_item.setPixmap(pixmap)
-
-            # Target the supplied rect (or the whole image if None).
             if rect is None:
                 image_w, image_h = self.get_image_dimensions()
-                target_left, target_top = 0.0, 0.0
-                target_w, target_h = float(image_w or gw), float(image_h or gh)
-            else:
-                target_left, target_top = float(rect.left()), float(rect.top())
-                target_w, target_h = float(rect.width()), float(rect.height())
+                rect = QRectF(0, 0, float(image_w or gw), float(image_h or gh))
 
-            if target_w > 0 and target_h > 0:
-                self._feature_heatmap_item.setTransform(
-                    QTransform().scale(target_w / float(gw), target_h / float(gh))
-                )
-            self._feature_heatmap_item.setOpacity(max(0.0, min(1.0, opacity)))
-            self._feature_heatmap_item.setPos(target_left, target_top)
-            self._feature_heatmap_item.show()
+            # Ensure a colormap table exists (Plasma + scrim) before the first
+            # blit, in case the tool hasn't pushed one through the dropdown yet.
+            if self._feature_overlay._color_table is None:
+                self._feature_overlay.set_colormap('Plasma', scrim_rgba=(0, 0, 0, 200))
+
+            self._feature_overlay.set_indices(self.scene, arr, target_rect=rect)
         except Exception:
             traceback.print_exc()
 
-    def clear_feature_heatmap(self):
-        """Remove the feature heatmap overlay from the scene."""
-        if self._feature_heatmap_item is not None:
-            try:
-                if self._feature_heatmap_item.scene() is not None:
-                    self._feature_heatmap_item.scene().removeItem(self._feature_heatmap_item)
-            except Exception:
-                pass
-            self._feature_heatmap_item = None
+    def clear_feature_overlay(self):
+        """Remove the feature similarity overlay from the scene."""
+        self._feature_overlay.clear()
