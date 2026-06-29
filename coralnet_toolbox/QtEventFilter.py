@@ -49,6 +49,12 @@ class GlobalEventFilter(QObject):
 
                     # Handle hotkey for image classification prediction
                     if event.key() == Qt.Key_1:
+                        # If PatchTool is active and model is loaded, toggle live classify
+                        if (self.annotation_window.selected_tool == "patch" and
+                                self.classify_deploy_model_dialog.loaded_model is not None):
+                            self.annotation_window.tools["patch"].toggle_live_classify()
+                            return True
+
                         if self.classify_deploy_model_dialog.loaded_model is not None:
                             self.classify_deploy_model_dialog.predict()
                         else:

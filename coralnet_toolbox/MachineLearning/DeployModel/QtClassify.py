@@ -290,3 +290,67 @@ class Classify(Base):
         QApplication.restoreOverrideCursor()
         gc.collect()
         empty_cache()
+
+    def predict_patch(self, image_np):
+        """
+        Fast single-patch classification for live preview (no Results objects,
+        no QApplication cursor changes, no gc).
+
+        Bypasses the high-level ``model(...)`` streaming pipeline by calling the
+        warmed predictor's transforms + backend directly, which avoids the
+        per-call dataset/Results allocation overhead. Falls back to the
+        high-level API if the predictor internals are unavailable.
+
+        Args:
+            image_np: HxWx3 uint8 array. Channel order must match the batch
+                ``predict`` path (RGB read from rasterio) so live predictions
+                agree with batch predictions.
+
+        Returns:
+            List of (class_name, confidence) tuples sorted descending, or [].
+        """
+        model = self.loaded_model
+        if model is None or image_np is None:
+            return []
+
+        # Fast path: reuse the warmed predictor's transforms + backend directly.
+        try:
+            import torch
+            from PIL import Image
+
+            predictor = getattr(model, 'predictor', None)
+            transforms = getattr(predictor, 'transforms', None) if predictor else None
+            backend = getattr(predictor, 'model', None) if predictor else None
+
+            if transforms is not None and backend is not None:
+                # ultralytics applies cv2.COLOR_BGR2RGB internally; replicate the
+                # same channel reversal so results match the batch path exactly.
+                swapped = np.ascontiguousarray(image_np[..., ::-1])
+                im = transforms(Image.fromarray(swapped)).unsqueeze(0).to(backend.device)
+                im = im.half() if backend.fp16 else im.float()
+                with torch.no_grad():
+                    out = backend(im)
+                # Classification head output is already softmaxed (sums to 1).
+                probs = (out[0] if isinstance(out, (list, tuple)) else out)[0]
+                probs = probs.detach().float().cpu()
+                names = model.names
+                topk = min(5, probs.numel())
+                confs, idxs = probs.topk(topk)
+                return [(names[int(i)], float(c)) for c, i in zip(confs, idxs)]
+        except Exception as e:
+            print(f"Fast patch inference failed, falling back to high-level API: {e}")
+
+        # Fallback: high-level API (slower, but robust).
+        try:
+            results = model([image_np],
+                            device=self.main_window.device,
+                            quantize=16,
+                            stream=True,
+                            verbose=False)
+            for r in results:
+                names = r.names
+                return [(names[int(i)], float(c))
+                        for i, c in zip(r.probs.top5, r.probs.top5conf)]
+        except Exception as e:
+            print(f"Patch inference failed: {e}")
+        return []
