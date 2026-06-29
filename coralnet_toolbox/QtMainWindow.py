@@ -841,7 +841,10 @@ class MainWindow(QMainWindow):
                       "Create point (patch) annotations centered at the cursor.\n"
                       "• Left-click to place a patch at the mouse location.\n"
                       "• Hold Ctrl and use the mouse wheel or use the Patch Size box to adjust patch size.\n"
-                      "• A semi-transparent preview shows the patch before placing it."),
+                      "• A semi-transparent preview shows the patch before placing it.\n"
+                      "• Press Ctrl+1 to toggle Live Classification mode (requires a loaded classification model).\n"
+                      "  In Live Classification mode, hover to see real-time predicted labels and confidence scores.\n"
+                      "  This is useful for identifying areas where the current model is uncertain (edge cases)."),
             
             "rectangle": ("Rectangle Tool\n\n"
                           "Create rectangular annotations by clicking and dragging.\n"
