@@ -28,7 +28,6 @@ import warnings
 
 import numpy as np
 
-import pyqtgraph as pg
 from PyQt5.QtCore import Qt, QPointF, QRectF, QTimer
 from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush
 from PyQt5.QtWidgets import QGraphicsEllipseItem, QGraphicsRectItem, QApplication
@@ -97,29 +96,20 @@ class FeatureSelectTool(Tool):
 
         self.hover_pos = None
 
-        # Debounce hover heatmap refresh so a flood of move events can't back up.
+        # Debounce hover refresh so a flood of move events can't back up.
         self.hover_timer = QTimer()
         self.hover_timer.setSingleShot(True)
         self.hover_timer.timeout.connect(self._on_hover_timeout)
         self.debounce_ms = 30
 
-        # Colormap lookup table [256, 4] uint8 for the similarity heatmap, built once.
-        self._lut = self._build_colormap_lut()
+        # Whether the shared colormap controls have been handed to the feature
+        # overlay. Engaged only once a work area exists (not on tool activation),
+        # so deactivate() only tears them down if we actually took them over.
+        self._colormap_controls_engaged = False
 
+    # The similarity overlay's colormap is now owned by the shared ColorMapOverlay
+    # (driven by the colormap dropdown); the tool only emits palette indices.
     DEFAULT_COLORMAP = "Plasma"
-
-    @staticmethod
-    def _build_colormap_lut():
-        """Build a [256, 4] uint8 RGBA LUT from the default colormap."""
-        for name in (FeatureSelectTool.DEFAULT_COLORMAP, FeatureSelectTool.DEFAULT_COLORMAP.lower()):
-            try:
-                cmap = pg.colormap.get(name)
-                if cmap is not None:
-                    return cmap.getLookupTable(nPts=256, alpha=True)
-            except Exception:
-                continue
-        ramp = np.linspace(0, 255, 256).astype(np.uint8)
-        return np.stack([ramp, ramp, ramp, np.full(256, 255, np.uint8)], axis=1)
 
     # ==================== Activation ====================
 
@@ -129,6 +119,65 @@ class FeatureSelectTool(Tool):
         self.annotation_window.setCursor(self.cursor)
         self.feature_dialog = getattr(self.main_window, 'feature_deploy_model_dialog', None)
         self.sync_settings_from_dialog()
+        # NOTE: the colormap controls are NOT engaged here. They are handed to the
+        # feature overlay only once the user actually creates a work area (see
+        # _setup_working_area), so simply selecting the tool button doesn't yet
+        # flip the dropdown to Plasma or hide the Z-channel.
+
+    def _engage_colormap_controls(self):
+        """Hand the colormap dropdown + opacity slider to the feature overlay.
+
+        Called once a work area exists (not on tool activation). Hides any depth
+        (Z-channel) overlay — the user re-selects it manually on exit — points the
+        shared controls at the feature overlay, defaults the colormap to Plasma,
+        and enables the controls so opacity/colormap can be tuned live.
+        """
+        if self._colormap_controls_engaged:
+            return
+        aw = self.annotation_window
+        try:
+            aw._z_overlay.hide()
+            aw.set_active_colormap_overlay('feature')
+            # The dynamic-range button is depth-specific; disable it so it can't
+            # drive the (hidden) Z overlay while the feature overlay is active.
+            if hasattr(aw, 'z_dynamic_button'):
+                aw.z_dynamic_button.setChecked(False)
+                aw.z_dynamic_button.setEnabled(False)
+            aw.colormap_dropdown.setEnabled(True)
+            aw.colormap_opacity_slider.setEnabled(True)
+            if aw.colormap_dropdown.currentText() == self.DEFAULT_COLORMAP:
+                # Already Plasma: setCurrentText won't fire, so apply directly so
+                # the feature overlay picks up the table.
+                aw.update_overlay_colormap(self.DEFAULT_COLORMAP)
+            else:
+                aw.colormap_dropdown.setCurrentText(self.DEFAULT_COLORMAP)
+            aw.set_overlay_opacity(aw.colormap_opacity_slider.value() / 255.0)
+            self._colormap_controls_engaged = True
+        except Exception:
+            pass
+
+    def _release_colormap_controls(self):
+        """Return the colormap controls to the (still-hidden) depth overlay.
+
+        Per design the Z-channel overlay is left hidden; setting the dropdown to
+        'None' reflects that and disables the opacity slider. Controls are fully
+        disabled when the image has no depth data. No-op if the controls were
+        never engaged (the user selected the tool but never made a work area).
+        """
+        if not self._colormap_controls_engaged:
+            return
+        self._colormap_controls_engaged = False
+        aw = self.annotation_window
+        try:
+            aw.set_active_colormap_overlay('z')
+            if aw.colormap_dropdown.currentText() != 'None':
+                aw.colormap_dropdown.setCurrentText('None')
+            else:
+                aw.update_overlay_colormap('None')
+            if getattr(aw, 'z_data_raw', None) is None:
+                aw.enable_z_visualization_controls(False)
+        except Exception:
+            pass
 
     def sync_settings_from_dialog(self):
         """Pull output settings from the feature deploy dialog when available."""
@@ -147,7 +196,10 @@ class FeatureSelectTool(Tool):
 
         self.cancel_working_area_creation()
         self.cancel_working_area()
-        self.annotation_window.clear_feature_heatmap()
+        self.annotation_window.clear_feature_overlay()
+
+        # Return the colormap controls to the depth overlay (left hidden).
+        self._release_colormap_controls()
 
         # If we were painting into the mask, drop the rasterization lock.
         if self.output_type == "Mask":
@@ -247,6 +299,10 @@ class FeatureSelectTool(Tool):
                 return
             self._build_query_engine(crop_fmap)
             self._persist_to_full_map(crop_fmap, left, top, right, bottom, extractor)
+            # The query is now armed: hand the colormap controls to the feature
+            # overlay (defaults to Plasma, hides the Z-channel). Deferred to here
+            # so selecting the tool button alone doesn't change the dropdown.
+            self._engage_colormap_controls()
             self._status("Feature Select: Ctrl+click patches to query similarity, "
                          "Space to finalize.", 5000)
         except Exception as e:
@@ -365,7 +421,7 @@ class FeatureSelectTool(Tool):
     def cancel_working_area(self):
         """Tear down the work area, query, prompts, and heatmap."""
         self.clear_prompts()
-        self.annotation_window.clear_feature_heatmap()
+        self.annotation_window.clear_feature_overlay()
         if self.working_area is not None:
             try:
                 self.working_area.remove_from_scene()
@@ -418,35 +474,40 @@ class FeatureSelectTool(Tool):
         return qe.similarity()
 
     def update_heatmap(self, hover_id=None):
-        """Recompute similarity and refresh the work-area heatmap overlay."""
+        """Recompute similarity and refresh the work-area overlay (indexed)."""
         if self.query_engine is None or self.working_area is None:
             return
         sim = self._compute_similarity(hover_id=hover_id)
         if sim is None:
-            self.annotation_window.clear_feature_heatmap()
+            self.annotation_window.clear_feature_overlay()
             return
-        rgba = self._colorize(sim)
-        if rgba is None:
-            self.annotation_window.clear_feature_heatmap()
+        idx = self._build_index_field(sim)
+        if idx is None:
+            self.annotation_window.clear_feature_overlay()
             return
-        self.annotation_window.set_feature_heatmap(rgba, rect=self.working_area.rect, opacity=0.6)
+        # Colormap + opacity are owned by the shared overlay controls (engaged in
+        # _setup_working_area); we only hand over the uint8 index field + rect.
+        self.annotation_window.set_feature_overlay(idx, rect=self.working_area.rect)
 
-    def _colorize(self, sim):
-        """Build a colormap RGBA preview from sim [N].
+    def _build_index_field(self, sim):
+        """Build a uint8 palette-index field from sim [N].
 
-        The scalar field is bilinearly upsampled to (a capped fraction of) the
-        work-area pixel resolution BEFORE coloring and thresholding, so the
-        thresholded scrim edge follows the same smooth contour the commit path
-        produces — instead of the coarse per-patch grid steps. The render size is
-        capped (PREVIEW_MAX_EDGE) so the per-hover RGBA rebuild stays cheap.
+        Palette: 0 = transparent (invalid), 1..254 = colormap ramp (normalized
+        similarity), 255 = below-threshold scrim. The scalar field is bilinearly
+        upsampled to (a capped fraction of) the work-area pixel resolution BEFORE
+        indexing/thresholding, so the thresholded scrim edge follows the same
+        smooth contour the commit path produces — instead of the coarse per-patch
+        grid steps. The render size is capped (PREVIEW_MAX_EDGE) so the per-hover
+        rebuild stays cheap. Recoloring/opacity are now free table swaps on the
+        ColorMapOverlay, so this no longer bakes RGBA.
         """
         grid = np.asarray(sim, dtype=np.float32).reshape(self.feat_h, self.feat_w)
         finite = np.isfinite(grid)
         if not finite.any():
             return None
 
-        # Color normalization uses the committed grid's finite range, so the
-        # gradient is stable regardless of the preview render resolution.
+        # Normalization uses the committed grid's finite range, so the gradient is
+        # stable regardless of the preview render resolution.
         vals = grid[finite]
         vmin, vmax = float(vals.min()), float(vals.max())
 
@@ -462,21 +523,20 @@ class FeatureSelectTool(Tool):
         else:
             norm = np.ones_like(up)
 
-        idx = np.clip((norm * 255).astype(np.int32), 0, 255)
-        rgba = self._lut[idx].astype(np.uint8)
+        # 1..254 colormap ramp (index 0 and 255 are reserved by the overlay).
+        idx = (1 + np.clip(norm * 253.0, 0.0, 253.0)).astype(np.uint8)
 
         # Regions interpolated from masked cells stay transparent.
         invalid = up < -1.0e8
-        rgba[invalid, 3] = 0
+        idx[invalid] = 0
         if self.threshold_active:
-            # Inverted thresholded view: keep the colormap highlight where the
-            # (upsampled) similarity PASSES the threshold, and lay a dark scrim
-            # over the filtered-out region so it reads as dimmed rather than
-            # clearly exposed. Thresholding the upsampled field gives a smooth
-            # edge that matches the committed polygon/mask.
+            # Below-threshold (but valid) cells map to the scrim index so the
+            # filtered-out region reads as dimmed rather than clearly exposed.
+            # Thresholding the upsampled field gives a smooth edge matching the
+            # committed polygon/mask.
             below = (~invalid) & (up < self.threshold)
-            rgba[below] = (0, 0, 0, 200)
-        return rgba
+            idx[below] = 255
+        return idx
 
     # Cap the preview render resolution (long edge, px) so the per-hover RGBA
     # rebuild stays cheap even for large work areas. The canvas scales whatever
@@ -592,7 +652,7 @@ class FeatureSelectTool(Tool):
                 self.cancel_working_area_creation()
             elif self.positive_ids or self.negative_ids:
                 self.clear_prompts()
-                self.annotation_window.clear_feature_heatmap()
+                self.annotation_window.clear_feature_overlay()
             else:
                 self.cancel_working_area()
             self.annotation_window.scene.update()
@@ -657,7 +717,7 @@ class FeatureSelectTool(Tool):
 
         # Clear prompts but keep the work area for further queries.
         self.clear_prompts()
-        self.annotation_window.clear_feature_heatmap()
+        self.annotation_window.clear_feature_overlay()
 
     @staticmethod
     def _upsample_similarity(grid, out_h, out_w):
