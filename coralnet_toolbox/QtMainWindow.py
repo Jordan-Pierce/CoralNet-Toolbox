@@ -927,7 +927,7 @@ class MainWindow(QMainWindow):
                                 "• A yellow crosshair suggests the most informative next point to\n"
                                 "  label; it updates after each click (or press N to refresh).\n"
                                 "• Space finalizes (2D: Polygon/Mask; 3D: paints faces); Backspace clears.\n"
-                                "Requires a deployed feature model.\n"),
+                                "• A Feature model must be deployed first."),
             
             "work_area": ("Work Area Tool\n\n"
                           "Defines regions for detection and segmentation models to run predictions on.\n"
