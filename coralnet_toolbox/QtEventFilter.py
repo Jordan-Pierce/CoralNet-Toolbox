@@ -44,6 +44,12 @@ class GlobalEventFilter(QObject):
 
                     # Handle Alt key for switching between Select and Annotation tools
                     if event.key() == Qt.Key_Alt:
+                        # Ctrl+Alt toggles multi-class mode when the Feature Select
+                        # tool is active; otherwise it falls back to tool-switching.
+                        if (self.annotation_window.selected_tool == "feature_select"
+                                and "feature_select" in self.annotation_window.tools):
+                            self.annotation_window.tools["feature_select"]._toggle_multiclass_mode()
+                            return True
                         self.main_window.switch_back_to_tool()
                         return True
 

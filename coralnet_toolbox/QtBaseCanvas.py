@@ -407,6 +407,11 @@ class BaseCanvas(QGraphicsView):
         # Feature-similarity heatmap overlay (FeatureSelectTool). Same indexed-8
         # ColorMapOverlay machinery as the Z layer; sits just above it.
         self._feature_overlay = ColorMapOverlay(z_value=-4, smooth=True)
+        # Multi-class label overlay (FeatureSelectTool multi-class mode). Reuses
+        # the indexed-8 ColorMapOverlay, but its table maps index k+1 -> a label
+        # color (0 = unlabeled, transparent). Nearest scaling keeps class regions
+        # crisp; sits just above the feature overlay, still below annotations.
+        self._label_overlay = ColorMapOverlay(z_value=-3, smooth=False)
         self._perimeter_overlay = None    # Viewport border overlay
 
         # Read-only annotation overlays (Phase 6).
@@ -712,6 +717,7 @@ class BaseCanvas(QGraphicsView):
         # image loads).
         self._z_overlay.clear()
         self._feature_overlay.clear()
+        self._label_overlay.clear()
 
         # Clear read-only annotation overlay references
         self._readonly_annotation_items = {}
@@ -1679,3 +1685,44 @@ class BaseCanvas(QGraphicsView):
     def clear_feature_overlay(self):
         """Remove the feature similarity overlay from the scene."""
         self._feature_overlay.clear()
+
+    def set_label_overlay(self, index_array, colors, rect=None, alpha=160):
+        """Display a multi-class label field as an indexed color overlay.
+
+        ``index_array`` is ``uint8 [gh, gw]``: 0 = unlabeled (transparent),
+        ``k + 1`` = class k. ``colors[k]`` is the ``(r, g, b)`` for class k. The
+        grid is scaled to fill ``rect`` (scene coords; None = whole image) using
+        the SAME proportional mapping as the feature overlay, so the cursor and
+        the painted regions stay aligned. Reuses the indexed-8 ColorMapOverlay;
+        only the color table differs (label colors instead of a colormap ramp).
+        """
+        if index_array is None:
+            self.clear_label_overlay()
+            return
+        try:
+            arr = np.ascontiguousarray(index_array.astype(np.uint8, copy=False))
+            gh, gw = arr.shape[:2]
+            if gh <= 0 or gw <= 0:
+                self.clear_label_overlay()
+                return
+
+            if rect is None:
+                image_w, image_h = self.get_image_dimensions()
+                rect = QRectF(0, 0, float(image_w or gw), float(image_h or gh))
+
+            table = [0] * 256  # index 0 -> fully transparent (unlabeled)
+            for k, rgb in enumerate(colors):
+                if k + 1 > 255:
+                    break
+                r, g, b = (int(v) for v in rgb)
+                table[k + 1] = qRgba(r, g, b, int(alpha))
+
+            self._label_overlay._color_table = table
+            self._label_overlay.set_opacity(1.0)
+            self._label_overlay.set_indices(self.scene, arr, target_rect=rect)
+        except Exception:
+            traceback.print_exc()
+
+    def clear_label_overlay(self):
+        """Remove the multi-class label overlay from the scene."""
+        self._label_overlay.clear()

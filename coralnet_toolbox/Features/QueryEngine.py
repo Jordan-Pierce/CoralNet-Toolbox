@@ -412,6 +412,76 @@ class QueryEngine:
 
         return selected_ids
 
+    def class_scores(self, prototypes_by_class) -> Tuple[np.ndarray, list]:
+        """Per-class max-pool cosine similarity over the feature buffer.
+
+        The multi-class counterpart of the binary ``_best_pos`` field: for each
+        class, the max cosine of every element to ANY of that class's clicked
+        prototypes (the paper's FAISS ``k=1`` nearest-prototype, per class).
+
+        Args:
+            prototypes_by_class: mapping ``class_key -> list[element_id]``. Empty
+                lists and out-of-range ids are ignored; a class with no surviving
+                ids is dropped from the result.
+
+        Returns:
+            (best, keys): ``best`` is ``[C, N]`` float32 where row k is the
+            similarity field for ``keys[k]``; ``keys`` is the class-key list in
+            row order. Both empty when no class has prototypes.
+        """
+        N = self.features_np.shape[0]
+        keys = []
+        rows = []
+        for key, ids in prototypes_by_class.items():
+            valid_ids = [int(i) for i in ids if 0 <= int(i) < N]
+            if not valid_ids:
+                continue
+            keys.append(key)
+            if self.use_torch:
+                idx = torch.as_tensor(valid_ids, dtype=torch.long, device=self.device)
+                protos = self.features_cuda[idx]            # [P, D]
+                sims = self.features_cuda @ protos.t()       # [N, P]
+                rows.append(sims.max(dim=1).values)          # [N]
+            else:
+                protos = self.features_np[valid_ids]         # [P, D]
+                sims = self.features_np @ protos.T           # [N, P]
+                rows.append(sims.max(axis=1))                # [N]
+
+        if not keys:
+            return np.zeros((0, N), dtype=np.float32), []
+        if self.use_torch:
+            best = torch.stack(rows, dim=0).detach().cpu().numpy()
+        else:
+            best = np.stack(rows, axis=0)
+        return best.astype(np.float32, copy=False), keys
+
+    def classify(self, prototypes_by_class, threshold: Optional[float] = None
+                 ) -> Tuple[np.ndarray, np.ndarray, list]:
+        """Nearest-prototype multi-class labeling over the feature buffer.
+
+        Each element is assigned the class with the highest max-pool cosine
+        similarity (see :meth:`class_scores`). Uncovered (``~valid``) elements,
+        and elements whose winning similarity is below ``threshold``, map to
+        label index ``-1`` (unlabeled).
+
+        Returns:
+            (label_field, conf, keys): ``label_field`` [N] int32 indexes into
+            ``keys`` (-1 = unlabeled); ``conf`` [N] float32 is the winning
+            similarity (0 where unlabeled); ``keys`` is the class-key list.
+        """
+        best, keys = self.class_scores(prototypes_by_class)
+        N = self.features_np.shape[0]
+        if not keys:
+            return np.full(N, -1, dtype=np.int32), np.zeros(N, dtype=np.float32), []
+        label_field = np.argmax(best, axis=0).astype(np.int32)
+        conf = np.max(best, axis=0).astype(np.float32)
+        reject = ~np.asarray(self.valid, dtype=bool)
+        if threshold is not None:
+            reject = reject | (conf < float(threshold))
+        label_field[reject] = -1
+        conf[reject] = 0.0
+        return label_field, conf, keys
+
     def prototypes(self) -> Tuple[np.ndarray, np.ndarray]:
         """
         Return the clicked prototype feature vectors for the GPU shader path.
