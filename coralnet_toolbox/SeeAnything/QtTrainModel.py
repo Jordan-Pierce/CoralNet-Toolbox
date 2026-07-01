@@ -6,10 +6,10 @@ import yaml
 import datetime
 import traceback
 import ujson as json
-from pathlib import Path
+from copy import deepcopy
 
 from ultralytics import YOLOE
-from ultralytics.models.yolo.yoloe import YOLOETrainerFromScratch
+from ultralytics.models.yolo.yoloe import YOLOEVPTrainer, YOLOESegVPTrainer
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
@@ -17,8 +17,6 @@ from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QCheckBox, Q
                              QFormLayout, QTabWidget, QDoubleSpinBox, QGroupBox, QFrame)
 
 from torch.cuda import empty_cache
-
-from coralnet_toolbox.MachineLearning.EvaluateModel.QtBase import EvaluateModelWorker
 
 from coralnet_toolbox.Icons import get_icon, get_window_icon
 
@@ -66,48 +64,52 @@ class TrainModelWorker(QThread):
         try:
             # Extract model path and task
             self.model_path = self.params.pop('model', None)
-            task = self.params.get('task', 'segment')
-            training_mode = self.params.pop('training_mode', 'linear-probing')
+            self.task = self.params.get('task', 'segment')
+            training_mode = self.params.pop('training_mode', 'linear-probe')
 
             # Load the model based on task
-            if task == 'detect':
-                # For detection: initialize from YAML config
+            if self.task == 'detect':
+                # Detect-task training builds a detection-shaped model (faster: skips mask loss)
+                # but only ever updates savpe, so we need to know the matching pretrained
+                # segmentation checkpoint to graft that savpe back onto after training (post_run).
+                # This requires starting from one of the standard scale YAMLs.
+                if not self.model_path.endswith('.yaml'):
+                    raise ValueError(
+                        "Detect-task training requires selecting a model YAML (e.g. 'yoloe-11s.yaml') "
+                        "from the 'Select Model' tab, so a matching pretrained segmentation checkpoint "
+                        "can be identified for post-training conversion."
+                    )
+
                 self.model = YOLOE(self.model_path)
-                # Load pretrained weights from segmentation checkpoint (same scale)
-                # Extract the scale (e.g., 's', 'm', 'l') from the YAML filename
-                if 'v8' in self.model_path:
-                    scale = self.model_path.split('-')[1].replace('.yaml', '')
-                    pretrained_weights = f"yoloe-v8{scale}-seg.pt"
-                else:  # v11
-                    scale = self.model_path.split('-')[1].replace('.yaml', '')
-                    pretrained_weights = f"yoloe-{scale}-seg.pt"
-                
+                # Extract the scale (e.g., 's', 'v8s', '26n') from the YAML filename
+                scale = os.path.basename(self.model_path).split('-')[1].replace('.yaml', '')
+                self.pretrained_seg_weights = f"yoloe-{scale}-seg.pt"
+
                 try:
-                    self.model.load(pretrained_weights)
+                    self.model.load(self.pretrained_seg_weights)
                 except Exception as e:
-                    print(f"Warning: Could not load pretrained weights from {pretrained_weights}: {e}")
+                    raise RuntimeError(
+                        f"Could not load pretrained segmentation weights "
+                        f"'{self.pretrained_seg_weights}' for detect-task training: {e}"
+                    ) from e
             else:
                 # For segmentation: load pretrained model directly
                 self.model = YOLOE(self.model_path)
 
-            freeze = []
-            if training_mode == 'linear-probing':
-                head_index = len(self.model.model.model) - 1
-                freeze = [str(f) for f in range(0, head_index)]
+            # CoralNet-Toolbox only performs visual-prompted (SAVPE) inference, so training must
+            # keep the savpe module intact and actually being updated (per YOLOE docs' Visual
+            # Prompt training recipe: "only the SAVPE module needs to be updated").
+            head_index = len(self.model.model.model) - 1
+            if training_mode == 'linear-probe':
+                # Freeze everything except savpe, matching the doc's Visual Prompt recipe exactly.
+                freeze = list(range(0, head_index))
                 for name, child in self.model.model.model[-1].named_children():
-                    if "cv3" not in name:
+                    if "savpe" not in name:
                         freeze.append(f"{head_index}.{name}")
-
-                freeze.extend(
-                    [
-                        f"{head_index}.cv3.0.0",
-                        f"{head_index}.cv3.0.1",
-                        f"{head_index}.cv3.1.0",
-                        f"{head_index}.cv3.1.1",
-                        f"{head_index}.cv3.2.0",
-                        f"{head_index}.cv3.2.1",
-                    ]
-                )
+            else:
+                # Fine-tune: only freeze the backbone, leaving neck/head (incl. savpe) trainable.
+                backbone_len = len(self.model.model.yaml['backbone'])
+                freeze = list(range(0, backbone_len))
 
             self.params['freeze'] = freeze
             
@@ -137,8 +139,9 @@ class TrainModelWorker(QThread):
             # Set up the model and parameters
             self.pre_run()
 
-            # Select the appropriate trainer based on task
-            trainer = YOLOETrainerFromScratch
+            # Select the visual-prompt trainer based on task (adds LoadVisualPrompt to the
+            # dataset and trains/preserves the savpe module, unlike the plain PE/text trainers)
+            trainer = YOLOESegVPTrainer if self.task == 'segment' else YOLOEVPTrainer
 
             # Train the model with the correct trainer
             self.model.train(**self.params,
@@ -147,9 +150,6 @@ class TrainModelWorker(QThread):
 
             # Post-run cleanup
             self.post_run()
-
-            # Evaluate the model after training
-            self.evaluate_model()
 
             # Emit signal to indicate training has completed
             self.training_completed.emit()
@@ -162,54 +162,27 @@ class TrainModelWorker(QThread):
 
     def post_run(self):
         """
-        Clean up resources after training.
-        """
-        pass
+        Convert a detect-task trained model back into a segmentation-capable checkpoint.
 
-    def evaluate_model(self):
+        Detect-task training only ever updates the savpe module (every other layer is frozen
+        to its pretrained value), so we graft the trained savpe onto a freshly loaded
+        segmentation checkpoint and overwrite the saved weights on disk. SeeAnything only ever
+        deploys YOLOE models through the segmentation (YOLOEVPSegPredictor) pipeline, so a raw
+        detect-shaped checkpoint left on disk would not be usable for deployment.
         """
-        Evaluate the model after training.
-        """
-        try:
-            # Create an instance of EvaluateModelWorker and start it
-            eval_params = {
-                'data': self.data,
-                'imgsz': self.params['imgsz'],
-                'split': 'test',  # Evaluate on the test set only
-                'save_dir': Path(self.params['project']) / self.params['name'] / 'test',
-                'load_vp': True,
-            }
+        if self.task != 'detect':
+            return
 
-            # Create and start the worker thread
-            eval_worker = EvaluateModelWorker(model=self.model,
-                                              params=eval_params)
+        seg_model = YOLOE(self.pretrained_seg_weights)
+        seg_model.model.model[-1].savpe = deepcopy(self.model.model.model[-1].savpe)
+        seg_model.eval()
 
-            eval_worker.evaluation_error.connect(self.on_evaluation_error)
-            eval_worker.run()  # Run the evaluation synchronously (same thread)
-        except Exception as e:
-            print(f"Error during evaluation: {e}\n\nTraceback:\n{traceback.format_exc()}")
-            self.training_error.emit(f"Error during evaluation: {e} (see console log)")
+        trainer = self.model.trainer
+        for ckpt_path in (trainer.best, trainer.last):
+            if ckpt_path.exists():
+                seg_model.save(str(ckpt_path))
 
-    def on_evaluation_started(self):
-        """
-        Handle the event when the evaluation starts.
-        """
-        pass
-
-    def on_evaluation_completed(self):
-        """
-        Handle the event when the evaluation completes.
-        """
-        pass
-
-    def on_evaluation_error(self, error_message):
-        """
-        Handle the event when an error occurs during evaluation.
-
-        Args:
-            error_message (str): The error message.
-        """
-        self.training_error.emit(error_message)
+        self.model = seg_model
 
     def _cleanup(self):
         """
@@ -827,7 +800,7 @@ class TrainModelDialog(QDialog):
                                                    "",
                                                    "Model Files (*.pt *.pth);;All Files (*)")
         if file_path:
-            self.model_path_edit.setText(file_path)
+            self.model_edit.setText(file_path)
 
     def accept(self):
         """
