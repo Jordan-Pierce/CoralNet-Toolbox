@@ -166,8 +166,12 @@ def _disp_grid(n_faces: int) -> Tuple[int, int, int]:
 DEFAULT_COLORMAP = "plasma"
 
 
-def build_colormap_texture(colormap_name: str = None):
-    """Build a 256x1 RGBA8 LUT texture for the given matplotlib colormap."""
+def colormap_lut(colormap_name: str = None) -> np.ndarray:
+    """[256, 4] uint8 RGBA rows for a matplotlib colormap (alpha = 255).
+
+    Shared by the mesh shader LUT texture and the Gaussian-splat display LUT so
+    every product type colors the same display value identically.
+    """
     if colormap_name is None:
         colormap_name = DEFAULT_COLORMAP
     try:
@@ -180,8 +184,17 @@ def build_colormap_texture(colormap_name: str = None):
         except Exception as e:  # pragma: no cover
             raise ShaderUnavailable(f"{colormap_name} colormap unavailable: {e}")
     lut = (np.asarray(cmap(np.linspace(0.0, 1.0, 256))) * 255.0).round()
-    lut = lut.astype(np.uint8).reshape(1, 256, 4)
-    tex, _img, _flat = _make_uint8_texture(lut)
+    return lut.astype(np.uint8).reshape(256, 4)
+
+
+def build_colormap_texture(colormap_name: str = None):
+    """Build a 256x1 RGBA8 LUT texture for the given matplotlib colormap.
+
+    Built with a SHALLOW numpy wrap (deep=False) so the LUT can be recolored in
+    place later (set_lut/set_colormap on the state) without a texture rebuild.
+    """
+    lut = colormap_lut(colormap_name).reshape(1, 256, 4)
+    tex, _img, _flat = _make_uint8_texture(lut, deep=False)
     return tex
 
 
@@ -199,6 +212,27 @@ class SimilarityShaderState:
         # Shallow wrap: update_disp writes ``disp_np`` in place each click.
         self.disp_tex, self.disp_img, self.disp_np = _make_uint8_texture(buf, deep=False)
         self.cmap_tex = build_colormap_texture()
+
+    def set_lut(self, rgba: np.ndarray) -> None:
+        """Overwrite the 256-entry colormap LUT texture in place.
+
+        Accepts [K, 3] or [K, 4] uint8 rows (K <= 256); missing alpha is set
+        opaque. This is how both the on-demand colormap switch AND the
+        multi-class label palette are applied — a 1 KB write, no reinstall.
+        """
+        rows = np.asarray(rgba, dtype=np.uint8)
+        if rows.ndim != 2 or rows.shape[1] not in (3, 4):
+            return
+        k = min(rows.shape[0], 256)
+        lut = self.cmap_tex._np  # [256, 4] shallow view into the texture image
+        lut[:k, :3] = rows[:k, :3]
+        lut[:k, 3] = rows[:k, 3] if rows.shape[1] == 4 else 255
+        self.cmap_tex._img.GetPointData().GetScalars().Modified()
+        self.cmap_tex._img.Modified()
+
+    def set_colormap(self, colormap_name: str) -> None:
+        """Point the LUT at a matplotlib colormap (binary-similarity mode)."""
+        self.set_lut(colormap_lut(colormap_name))
 
     def update_disp(self, disp_uint8: np.ndarray) -> None:
         """Pack the per-face display values [N] uint8 into the disp texture."""
@@ -306,15 +340,27 @@ def install_similarity_shader(actor, state: "SimilarityShaderState", element_typ
         raise
     except Exception as e:
         try:
-            uninstall_similarity_shader(actor)
+            uninstall_similarity_shader(actor, force=True)
         except Exception:
             pass
         raise ShaderUnavailable(f"install failed: {e}")
 
 
-def uninstall_similarity_shader(actor) -> None:
-    """Remove the colormap shader + textures and restore normal rendering."""
+def uninstall_similarity_shader(actor, force: bool = False) -> None:
+    """Remove the colormap shader + textures and restore normal rendering.
+
+    No-op unless OUR shader was actually installed on this actor (unless
+    ``force``, used by install's own failure cleanup). This guard is critical:
+    on VTK 9.6 ``ClearAllFragmentShaderReplacements()`` also NULLS the full
+    ``SetFragmentShaderCode`` override — calling it on an actor that owns a
+    complete custom program (the Gaussian-splat actor: vert+geom+frag set via
+    SetXXXShaderCode) destroys its fragment stage. VTK then links the splat's
+    custom geometry shader against its own default fragment shader, and every
+    splat renders as an opaque white billboard quad for the rest of the session.
+    """
     if actor is None:
+        return
+    if not force and not getattr(actor, "_sim_shader_installed", False):
         return
     sp = getattr(actor, "_sim_shader_sp", None)
     if sp is None:

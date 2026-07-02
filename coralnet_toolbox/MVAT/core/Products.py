@@ -1935,6 +1935,13 @@ class GaussianSplattingProduct(AbstractSceneProduct):
     # >0 so painted labels are visible immediately; 0 hides them (e.g. similarity).
     LABEL_BOOST_DEFAULT = 0.9
 
+    # Display channel (feature similarity / multi-class preview): how strongly
+    # the LUT colour blends over the SH colour, and how much opacity is lifted
+    # for readability. mix < 1 keeps the spherical-harmonics shading visible
+    # under the heatmap (the splat no longer goes flat while querying).
+    DISP_MIX_DEFAULT = 0.85
+    DISP_BOOST_DEFAULT = 0.85
+
     def __init__(self, file_path: str, product_id: Optional[str] = None):
         """
         Load a 3DGS PLY file and initialise the GaussianActor.
@@ -1973,14 +1980,19 @@ class GaussianSplattingProduct(AbstractSceneProduct):
         self.selected_array = "RGB"
         self.available_arrays = ["RGB"]
 
-        # Tier-2 feature views. Splats have no VTK scalar array — both the
-        # similarity heatmap and the feature-RGB view are pushed straight into the
-        # splat SH (set_colors). We cache the latest similarity colours (seeded to
-        # the colormap baseline at attach) and the precomputed PCA-RGB so the array
-        # dropdown can re-display either view on demand. Populated by
+        # Tier-2 feature views. "Similarity" renders through the GaussianActor's
+        # display channel: per-splat uint8 LUT indices + a 256-entry LUT in the
+        # geometry shader (the splat analogue of the mesh SimilarityShader). A
+        # recolor uploads N ints — the SH is never rewritten, so the shading
+        # stays visible and switching views is instant. "Features (RGB)" is a
+        # static per-splat PCA-RGB view and still goes through set_colors (an
+        # arbitrary-RGB image can't be LUT-indexed). Populated by
         # attach_feature_arrays; cleared by clear_feature_arrays.
-        self._similarity_colors = None  # [N, 3] uint8 or None
+        self._similarity_disp = None    # [N] uint8 LUT indices, or None
+        self._similarity_colors = None  # legacy [N, 3] uint8 fallback cache
         self._pca_rgb = None            # [N, 3] uint8 or None
+        # True while a set_colors() SH override (Features (RGB)) is displayed.
+        self._sh_overridden = False
 
         # Label-channel strength, driven by the shared transparency slider via
         # apply_label_opacity(); seeded to the default until the viewer syncs it.
@@ -2154,14 +2166,15 @@ class GaussianSplattingProduct(AbstractSceneProduct):
             print(f"⚠️ _push_class_ids_full (Gaussian) failed: {e}")
 
     def _restore_label_visual(self) -> None:
-        """Undo a similarity SH-DC override and re-show labels via the class
-        channel: restore pristine SH, re-enable the label boost, and re-push the
-        full class-id array."""
+        """Undo any SH override and re-show labels via the class channel:
+        restore pristine SH, re-enable the label boost, and re-push the full
+        class-id array."""
         try:
             self.gaussian_actor.reset_colors()
             self.gaussian_actor.set_label_boost(self._label_opacity)
         except Exception as e:
             print(f"⚠️ _restore_label_visual (Gaussian) failed: {e}")
+        self._sh_overridden = False
         self._labels_dirty = True
         self._push_class_ids_full()
         self._labels_dirty = False
@@ -2216,32 +2229,59 @@ class GaussianSplattingProduct(AbstractSceneProduct):
         """Select a visualization array.
 
         Splats render through their own geometry shader (colour from SH), not a
-        VTK scalar mapper, so there is no mapper to rebind. The "Similarity" and
-        "Features (RGB)" data views push their colours straight into the splat SH
-        (set_colors); switching back to "RGB"/"Labels" restores the pristine SH
-        and the label channel that those overrides replaced.
+        VTK scalar mapper, so there is no mapper to rebind. "Similarity" toggles
+        the display channel (LUT-indexed overlay blended over the SH shading);
+        "Features (RGB)" pushes the static PCA colours into the SH (set_colors);
+        switching back to "RGB"/"Labels" restores the pristine view and the
+        label channel that those views replaced.
         """
         if array_name not in self.available_arrays:
             print(f"⚠️ Array '{array_name}' not available in {self.label}")
             return False
         self.selected_array = array_name
         if array_name == "Similarity":
-            # Hide the label channel so the similarity SH colours are unobscured,
-            # then (re)display the latest similarity colours. Without this push the
-            # splat would keep its pristine scene SH and selecting "Similarity"
-            # would appear to do nothing until the next hover/query.
-            self._show_feature_colors(self._similarity_colors)
+            # Hide the label channel so the heatmap is unobscured, undo any SH
+            # override, and light the display channel with the cached values.
+            self._undo_sh_override()
+            try:
+                self.gaussian_actor.set_label_boost(0.0)
+                if self._similarity_disp is not None:
+                    self.gaussian_actor.set_display_values(self._similarity_disp)
+                self._set_display_active(True)
+            except Exception as e:
+                print(f"⚠️ set_selected_array Similarity (Gaussian) failed: {e}")
         elif array_name == "Features (RGB)":
-            # Same path for the per-splat PCA-RGB "colourful features" view.
+            # Static per-splat PCA-RGB view — an absolute SH recolour.
+            self._set_display_active(False)
             self._show_feature_colors(self._pca_rgb)
         else:
             # Restore pristine SH (undo any feature override) and re-show labels.
+            self._set_display_active(False)
             self._restore_label_visual()
         return True
 
+    def _set_display_active(self, active: bool) -> None:
+        """Enable/disable the display-channel overlay (similarity heatmap)."""
+        try:
+            ga = self.gaussian_actor
+            ga.set_display_mix(self.DISP_MIX_DEFAULT if active else 0.0)
+            ga.set_display_boost(self.DISP_BOOST_DEFAULT if active else 0.0)
+        except Exception as e:
+            print(f"⚠️ _set_display_active (Gaussian) failed: {e}")
+
+    def _undo_sh_override(self) -> None:
+        """Restore pristine SH if a set_colors() view (Features (RGB)) is up."""
+        if not self._sh_overridden:
+            return
+        try:
+            self.gaussian_actor.reset_colors()
+        except Exception:
+            pass
+        self._sh_overridden = False
+
     def _show_feature_colors(self, colors) -> None:
         """Drop the label channel and push an absolute per-splat colour array
-        (similarity or PCA-RGB) into the SH. No-op if no colours are cached yet."""
+        (PCA-RGB) into the SH. No-op if no colours are cached yet."""
         try:
             self.gaussian_actor.set_label_boost(0.0)
         except Exception:
@@ -2250,6 +2290,7 @@ class GaussianSplattingProduct(AbstractSceneProduct):
             return
         try:
             self.gaussian_actor.set_colors(colors)
+            self._sh_overridden = True
         except Exception as e:
             print(f"⚠️ _show_feature_colors (Gaussian) failed: {e}")
 
@@ -2267,26 +2308,50 @@ class GaussianSplattingProduct(AbstractSceneProduct):
             except Exception:
                 pass
 
-    def set_similarity_colors(self, colors: np.ndarray) -> None:
-        """Display per-splat similarity colours by overwriting the splat SH
-        (single partial GPU upload via the GaussianActor).
+    def set_similarity_scalars(self, disp: np.ndarray) -> None:
+        """Update the per-splat similarity/class display VALUES (never visibility).
 
-        The colours are also cached so re-selecting "Similarity" from the array
-        dropdown can re-display the latest query without recomputing it.
+        ``disp`` is the same [N] uint8 field the mesh SimilarityShader consumes
+        (0..255 gradient index in binary mode, class index in multi-class mode).
+        Cost per update: one N-int upload — the SH is never touched.
+
+        Visibility is owned by the array dropdown: the display channel is only
+        mixed in while "Similarity" is the selected array (set_selected_array),
+        exactly mirroring the mesh path where the colormap shader is only
+        installed then. So the Feature Select tool can stream values on hover
+        without ever flipping what the actor shows.
         """
+        try:
+            self._similarity_disp = np.asarray(disp, dtype=np.uint8).ravel()
+            self.gaussian_actor.set_display_values(self._similarity_disp)
+        except Exception as e:
+            print(f"⚠️ set_similarity_scalars (Gaussian) failed: {e}")
+
+    def apply_feature_colormap(self, lut_rgb: np.ndarray) -> None:
+        """Swap the display-channel LUT ([K<=256, 3|4] uint8) — colormap change
+        or multi-class label palette. A 1 KB upload; the values stay put."""
+        try:
+            self.gaussian_actor.set_display_lut(lut_rgb)
+        except Exception as e:
+            print(f"⚠️ apply_feature_colormap (Gaussian) failed: {e}")
+
+    def set_similarity_colors(self, colors: np.ndarray) -> None:
+        """Legacy fallback: display similarity colours by overwriting the splat
+        SH (used only if the display-channel path is unavailable)."""
         try:
             self._similarity_colors = np.asarray(colors, dtype=np.uint8)
             self.gaussian_actor.set_colors(self._similarity_colors)
+            self._sh_overridden = True
         except Exception as e:
             print(f"⚠️ set_similarity_colors (Gaussian) failed: {e}")
 
     def attach_feature_arrays(self, buffer) -> None:
         """Register the Tier-2 feature buffer for the splat data views.
 
-        Unlike meshes / point clouds there is no VTK scalar array to populate —
-        both views are pushed straight to the splat SH (set_colors) — so this
-        caches the colour arrays and exposes "Similarity" (always) and
-        "Features (RGB)" (when the buffer carries PCA-RGB) as selectable arrays.
+        "Similarity" renders through the display channel — this seeds the
+        per-splat display values to 0 (colormap baseline) and installs the
+        default colormap LUT. "Features (RGB)" (when the buffer carries PCA-RGB)
+        remains a static SH recolour.
         """
         if buffer is None:
             return
@@ -2296,19 +2361,17 @@ class GaussianSplattingProduct(AbstractSceneProduct):
                 print(f"⚠️ Buffer size {buffer.features.shape[0]} != splats {N}")
                 return
 
-            # Seed the similarity colours to the colormap baseline (plasma(0)) so
-            # selecting "Similarity" before any query shows the same flat baseline
-            # the mesh / point-cloud Similarity array initialises to, not the bare
-            # scene. Overwritten on the first hover/query via set_similarity_colors.
+            # Seed the display values to the colormap baseline (index 0) and
+            # install the default colormap LUT, so selecting "Similarity" before
+            # any query shows the same flat baseline the mesh / point-cloud
+            # Similarity array initialises to. Overwritten on the first
+            # hover/query via set_similarity_scalars.
+            self._similarity_disp = np.zeros(N, dtype=np.uint8)
             try:
-                import matplotlib
-                cmap = matplotlib.colormaps["plasma"]
-                base_rgb = (np.asarray(cmap(0.0))[:3] * 255).round().astype(np.uint8)
+                from coralnet_toolbox.MVAT.shaders.SimilarityShader import colormap_lut
+                self.gaussian_actor.set_display_lut(colormap_lut())
             except Exception:
-                base_rgb = np.array([13, 8, 135], dtype=np.uint8)  # plasma(0)
-            sim = np.empty((N, 3), dtype=np.uint8)
-            sim[:] = base_rgb
-            self._similarity_colors = sim
+                pass
             if "Similarity" not in self.available_arrays:
                 self.available_arrays.append("Similarity")
 
@@ -2324,8 +2387,10 @@ class GaussianSplattingProduct(AbstractSceneProduct):
     def clear_feature_arrays(self) -> None:
         """Drop the feature data views and restore the label/pristine colours."""
         try:
+            self._similarity_disp = None
             self._similarity_colors = None
             self._pca_rgb = None
+            self._set_display_active(False)
             for key in ("Similarity", "Features (RGB)"):
                 if key in self.available_arrays:
                     self.available_arrays.remove(key)

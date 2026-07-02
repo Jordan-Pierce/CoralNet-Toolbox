@@ -6,7 +6,7 @@ splats (per-point/per-splat). The query is element-agnostic; only the recolor
 sink differs (FeatureMeshManager.recolor_by_similarity dispatches to the
 product). "face"/"mesh" wording below applies equally to points/splats.
 
-Interaction:
+Interaction (mirrors the 2D FeatureSelectTool):
   - Hover over the scene: live preview of similarity to the element under the
     cursor (unioned with any committed prototypes), updated on the fly.
   - Ctrl + left-click on an element: commit a positive prototype
@@ -14,6 +14,16 @@ Interaction:
   - Ctrl + wheel: adjust the selection threshold (live thresholded preview)
   - Space: finalize — paint the scene (and propagate to cameras if multi-annotate)
   - Backspace: clear query
+  - Ctrl + Alt: toggle MULTI-CLASS mode (same gesture as the 2D tool). There a
+    Ctrl+click assigns the element to the CURRENTLY selected label (switch
+    labels to add more classes; Ctrl+right-click removes the selected label's
+    last prototype), Ctrl+wheel adjusts the reject floor, and Space commits one
+    paint per label (nearest-prototype argmax over the whole scene).
+
+Both modes render through the same LUT-indexed display paths (mesh
+SimilarityShader disp texture / splat display channel), so a preview tick is
+always "C matvecs on the GPU + an [N]-byte upload" — multi-class costs the
+same as the binary gradient.
 """
 
 import numpy as np
@@ -51,6 +61,20 @@ class FeatureSelectTool3D(Tool3D):
         # gradient. Reset on clear/commit.
         self._threshold_active = False
 
+        # ---- Multi-class mode (toggled with Ctrl+Alt while the tool is active) ----
+        # In "multiclass" mode a Ctrl+click assigns the element to the CURRENTLY
+        # selected label instead of a fixed positive/negative bucket; Space
+        # classifies the whole scene (nearest-prototype argmax + reject floor)
+        # and paints one label per class. Mirrors the 2D FeatureSelectTool.
+        self.mode = "binary"            # "binary" | "multiclass"
+        self.class_prototypes = {}      # label_id -> list[element_id]
+        self.class_labels = {}          # label_id -> Label (resolved at commit)
+        self.class_colors = {}          # label_id -> (r, g, b) (LUT palette rows)
+        # Reject floor on raw cosine similarity: elements whose best-class score
+        # is below this render the scrim and stay unlabeled at commit (separate
+        # from the binary `_threshold`, which lives on the same raw scale here).
+        self.multiclass_threshold = 0.5
+
         # Live-hover state. mouseMoveEvent just records the latest cursor world
         # position and marks dirty; the timer coalesces those into one recolor
         # per tick so a flood of move events can't back up the render thread.
@@ -61,14 +85,22 @@ class FeatureSelectTool3D(Tool3D):
         self._hover_dirty = False
 
     def activate(self):
-        """Activate the tool and switch to Similarity array if available."""
+        """Activate the tool. Nothing changes visually until the user engages.
+
+        Mirrors the 2D FeatureSelectTool: selecting the tool button alone never
+        flips what the actor displays. The similarity view appears only when the
+        user selects the "Similarity" array in the viewer dropdown (the 3D
+        analogue of the 2D work-area engagement) — the tool merely streams
+        display VALUES, which stay invisible until that array is chosen.
+        """
         super().activate()
         # No brush sphere for this tool — hover drives the similarity preview.
         self._hide_preview_sphere()
-        # Save the previously selected array so we can restore it on deactivate
+        # Save the previously selected array so deactivate can restore it
+        # (through the dropdown, keeping UI and display in sync).
         primary_target = self.mvat_viewer.scene_context.get_primary_target()
         if primary_target:
-            self._previous_array = getattr(primary_target, 'selected_array', 'Labels')
+            self._previous_array = getattr(primary_target, 'selected_array', 'RGB')
         self._pending_hover_world = None
         self._hover_dirty = False
         self._hover_timer.start()
@@ -92,14 +124,67 @@ class FeatureSelectTool3D(Tool3D):
                 fmm.uninstall_shader(actor)
 
         # Clear any active query so the similarity array resets to baseline.
+        # Multi-class prototypes are dropped and the LUT returns to the colormap
+        # (it may hold the label palette when deactivating from multiclass).
+        self._clear_class_prototypes()
         if fmm is not None and fmm.query_engine is not None:
             fmm.query_engine.clear()
             self._threshold_active = False
+            fmm.apply_colormap()
             fmm.recolor_by_similarity()
 
+        # Restore the array the user was on before the tool session, THROUGH
+        # the viewer's dropdown so the combo and the actor display change
+        # together (mirrors the 2D tool releasing the colormap controls on
+        # deactivate). No-op when the array never changed, so simply toggling
+        # the tool on/off causes zero visual churn.
         if self._previous_array:
-            if primary_target and hasattr(primary_target, 'set_selected_array'):
-                primary_target.set_selected_array(self._previous_array)
+            combo = getattr(self.mvat_viewer, 'array_selector_combo', None)
+            try:
+                if combo is not None:
+                    if combo.currentText() != self._previous_array:
+                        combo.setCurrentText(self._previous_array)
+                elif primary_target and hasattr(primary_target, 'set_selected_array'):
+                    primary_target.set_selected_array(self._previous_array)
+            except Exception:
+                pass
+
+    def _clear_class_prototypes(self):
+        """Drop all committed multi-class prototypes (bookkeeping only)."""
+        self.class_prototypes = {}
+        self.class_labels = {}
+        self.class_colors = {}
+
+    def _status(self, message, msecs=4000):
+        status_bar = getattr(self.mvat_manager.main_window, 'status_bar', None)
+        if status_bar is not None:
+            status_bar.showMessage(message, msecs)
+
+    def _toggle_multiclass_mode(self):
+        """Ctrl+Alt: switch between binary pos/neg and multi-class labeling.
+
+        Clears any in-progress prompts so the two interaction models never
+        bleed into each other (same policy as the 2D tool); the feature buffer
+        and threshold values are preserved.
+        """
+        feature_manager = getattr(self.mvat_manager, 'feature_mesh_manager', None)
+        if feature_manager is None or feature_manager.query_engine is None:
+            return
+        self.mode = "multiclass" if self.mode == "binary" else "binary"
+        feature_manager.query_engine.clear()
+        self._clear_class_prototypes()
+        self._threshold_active = False
+        if self.mode == "multiclass":
+            self._update_class_display()
+            self._status("Feature Select 3D: MULTI-CLASS mode — Ctrl+click assigns "
+                         "the selected label; switch labels to add more classes. "
+                         "Space to commit, Ctrl+Alt to exit.", 6000)
+        else:
+            # Restore the colormap LUT (the class palette may be loaded).
+            feature_manager.apply_colormap()
+            self._update_similarity_display()
+            self._status("Feature Select 3D: BINARY mode — Ctrl+click positive, "
+                         "Ctrl+right-click negative. Ctrl+Alt for multi-class.", 4000)
 
     def mousePressEvent(self, event, _face_id: int, world_pos):
         """
@@ -151,6 +236,10 @@ class FeatureSelectTool3D(Tool3D):
         if element_id < 0:
             return
 
+        if self.mode == "multiclass":
+            self._handle_multiclass_click(event, element_id)
+            return
+
         if self._is_right_button(event):
             # Ctrl + right-click: add negative prototype.
             feature_manager.query_engine.add_negative(element_id)
@@ -161,6 +250,31 @@ class FeatureSelectTool3D(Tool3D):
         # Preserve the thresholded preview across point additions once the
         # user has started thresholding (don't snap back to the full gradient).
         self._update_similarity_display(thresholded=self._threshold_active)
+
+    def _handle_multiclass_click(self, event, element_id: int):
+        """Ctrl+click in multi-class mode: (de)assign an element prototype to the
+        currently selected label (left adds, right removes the label's last)."""
+        label = self._get_selected_label()
+        if label is None:
+            self._status("Select a label before adding a class prototype.")
+            return
+
+        if self._is_right_button(event):
+            ids = self.class_prototypes.get(label.id)
+            if ids:
+                ids.pop()
+                if not ids:
+                    # Drop empty bookkeeping so the class leaves the palette.
+                    self.class_prototypes.pop(label.id, None)
+                    self.class_labels.pop(label.id, None)
+                    self.class_colors.pop(label.id, None)
+        else:
+            self.class_prototypes.setdefault(label.id, []).append(element_id)
+            self.class_labels[label.id] = label
+            color = QColor(label.color)
+            self.class_colors[label.id] = (color.red(), color.green(), color.blue())
+
+        self._update_class_display()
 
     def mouseMoveEvent(self, event, face_id: int, world_pos):
         """
@@ -207,8 +321,11 @@ class FeatureSelectTool3D(Tool3D):
                     hover_id = None
 
         # Off-mesh (hover_id None) falls back to the committed query view.
-        self._update_similarity_display(thresholded=self._threshold_active,
-                                        hover_id=hover_id)
+        if self.mode == "multiclass":
+            self._update_class_display(hover_id=hover_id)
+        else:
+            self._update_similarity_display(thresholded=self._threshold_active,
+                                            hover_id=hover_id)
 
     def _is_right_button(self, event) -> bool:
         """Return True for a right-button press across the Qt and VTK paths."""
@@ -257,6 +374,17 @@ class FeatureSelectTool3D(Tool3D):
             delta_y: Wheel delta in pixels.
         """
         step = 0.02
+        if self.mode == "multiclass":
+            # Adjust the reject floor and refresh the class preview.
+            if delta_y > 0:
+                self.multiclass_threshold = min(1.0, self.multiclass_threshold + step)
+            else:
+                self.multiclass_threshold = max(0.0, self.multiclass_threshold - step)
+            self._update_class_display()
+            self._status(f"Feature select reject threshold: "
+                         f"{self.multiclass_threshold:.2f}", 2000)
+            return
+
         if delta_y > 0:
             self._threshold = min(1.0, self._threshold + step)
         else:
@@ -268,9 +396,7 @@ class FeatureSelectTool3D(Tool3D):
         # Live thresholded preview: highlight exactly what Space would commit.
         self._update_similarity_display(thresholded=True)
 
-        status_bar = getattr(self.mvat_manager.main_window, 'status_bar', None)
-        if status_bar is not None:
-            status_bar.showMessage(f"Feature select threshold: {self._threshold:.2f}", 2000)
+        self._status(f"Feature select threshold: {self._threshold:.2f}", 2000)
 
     def keyPressEvent(self, event):
         """
@@ -282,12 +408,19 @@ class FeatureSelectTool3D(Tool3D):
         if event.key() == Qt.Key_Space:
             # Space: finalize the highlighted selection — paint the mesh (and,
             # when multi-annotate is on, propagate to the context cameras).
-            self._commit_selection_to_label()
+            if self.mode == "multiclass":
+                self._commit_multiclass()
+            else:
+                self._commit_selection_to_label()
             event.accept()
         elif event.key() == Qt.Key_Backspace:
-            # Clear query and reset back to the gradient view.
+            # Clear query / class prototypes and reset the preview.
             feature_manager = self.mvat_manager.feature_mesh_manager
-            if feature_manager.query_engine is not None:
+            if self.mode == "multiclass":
+                self._clear_class_prototypes()
+                if feature_manager.query_engine is not None:
+                    self._update_class_display()
+            elif feature_manager.query_engine is not None:
                 feature_manager.query_engine.clear()
                 self._threshold_active = False
                 self._update_similarity_display()
@@ -381,3 +514,96 @@ class FeatureSelectTool3D(Tool3D):
         feature_manager.query_engine.clear()
         self._threshold_active = False
         self._update_similarity_display()
+
+    # ==================== Multi-class mode ====================
+
+    def _update_class_display(self, hover_id: int = None) -> None:
+        """Recolor the scene by nearest-prototype class (multi-class preview).
+
+        The element under the cursor is folded into the CURRENTLY selected
+        label's prototype set so hovering previews "what would this click do",
+        mirroring the binary hover union. Renders through the same LUT paths as
+        the gradient view, so per-tick cost is unchanged.
+        """
+        feature_manager = self.mvat_manager.feature_mesh_manager
+        if feature_manager.buffer is None or feature_manager.query_engine is None:
+            return
+
+        label = self._get_selected_label()
+        hover_key = None
+        colors = dict(self.class_colors)
+        if hover_id is not None and label is not None:
+            hover_key = label.id
+            if hover_key not in colors:
+                color = QColor(label.color)
+                colors[hover_key] = (color.red(), color.green(), color.blue())
+
+        proto = {k: v for k, v in self.class_prototypes.items() if v}
+        feature_manager.recolor_by_class(
+            proto, colors, reject_threshold=self.multiclass_threshold,
+            hover_key=hover_key, hover_id=hover_id)
+        self.mvat_viewer.plotter.render()
+
+    def _commit_multiclass(self) -> None:
+        """Finalize the multi-class preview: paint one label per class.
+
+        Classifies every element (nearest-prototype argmax + reject floor —
+        exactly the preview field, no hover) and paints each class's elements
+        with its label, then propagates per label when multi-annotate is on.
+        """
+        feature_manager = self.mvat_manager.feature_mesh_manager
+        if feature_manager.buffer is None or feature_manager.query_engine is None:
+            return
+
+        proto = {k: v for k, v in self.class_prototypes.items() if v}
+        if not proto:
+            self._status("Feature Select: add at least one class prototype to commit.")
+            return
+
+        primary_target = self.mvat_viewer.scene_context.get_primary_target()
+        if primary_target is None:
+            return
+
+        disp, keys = feature_manager.query_engine.class_display_scalars(
+            proto, reject_threshold=self.multiclass_threshold)
+        if not keys or not (disp > 0).any():
+            self._status("Feature Select: nothing above the reject threshold to commit.")
+            return
+
+        committed = []  # (face_ids, label) per class, for propagation
+        for k, key in enumerate(keys):
+            label = self.class_labels.get(key)
+            if label is None:
+                continue
+            class_id, color_rgb = self._resolve_label(label)
+            if class_id is None or color_rgb is None:
+                continue
+            ids = np.flatnonzero(disp == (k + 1)).astype(np.int32)
+            if ids.size == 0:
+                continue
+            if hasattr(primary_target, 'apply_labels'):
+                primary_target.apply_labels(ids, class_id, color_rgb)
+                committed.append((ids, label))
+
+        if not committed:
+            return
+
+        if hasattr(primary_target, 'flush_labels_to_gpu'):
+            primary_target.flush_labels_to_gpu()
+        if hasattr(self.mvat_manager, '_universal_repaint_signal'):
+            self.mvat_manager._universal_repaint_signal.emit([])
+
+        # Multi-annotate sync — one propagation per label, mirroring the
+        # binary commit path.
+        if getattr(self.mvat_manager, 'multi_annotate_enabled', False):
+            handler = getattr(self.mvat_manager, '_on_3d_brush_stroke_applied', None)
+            if callable(handler):
+                for ids, label in committed:
+                    try:
+                        handler(ids, label)
+                    except Exception as e:
+                        print(f"[FeatureSelectTool3D] propagation failed: {e}")
+
+        # Clear the prototypes for the next selection (keep multiclass mode).
+        self._clear_class_prototypes()
+        self._update_class_display()

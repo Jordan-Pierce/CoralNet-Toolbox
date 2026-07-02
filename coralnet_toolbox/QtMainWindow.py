@@ -1404,6 +1404,15 @@ class MainWindow(QMainWindow):
         self.annotation_window.toolChanged.connect(self.handle_tool_changed)
 
         # ---------------------------------------------------------------------
+        # Shared overlay colormap -> 3D feature-similarity view
+        # - The annotation window's colormap dropdown is the single colormap
+        #   control; mirror its choice into the MVAT similarity LUT so the 2D
+        #   heatmap and the 3D Feature Select view always color alike.
+        # ---------------------------------------------------------------------
+        self.annotation_window.overlayColormapChanged.connect(
+            self._on_overlay_colormap_changed)
+
+        # ---------------------------------------------------------------------
         # Label and annotation selection flows
         # - When AnnotationWindow reports a label was selected, forward that
         #   selection to the LabelWindow so its UI reflects the selection.
@@ -2380,6 +2389,26 @@ class MainWindow(QMainWindow):
             if needs_reset:
                 self.toolChanged.emit(None)
                 self._sync_mvat_3d_tool_selection()
+
+    def _on_overlay_colormap_changed(self, colormap_name: str):
+        """Mirror the shared 2D overlay colormap into the 3D feature view.
+
+        'None' means "no 2D overlay colorization" and has no 3D meaning — the
+        similarity LUT keeps its last real colormap in that case. A real
+        colormap is a live 256-entry LUT swap on the mesh similarity shader /
+        splat display channel, so the recolor is instant.
+        """
+        if not colormap_name or colormap_name == "None":
+            return
+        try:
+            manager = getattr(self, 'mvat_manager', None)
+            fmm = getattr(manager, 'feature_mesh_manager', None) if manager else None
+            if fmm is not None:
+                fmm.set_colormap(colormap_name.lower())
+                if getattr(self, 'mvat_viewer', None) is not None:
+                    self.mvat_viewer.plotter.render()
+        except Exception:
+            pass
 
     def handle_tool_changed(self, tool):
         """Update the toolbar UI to reflect the currently selected tool."""

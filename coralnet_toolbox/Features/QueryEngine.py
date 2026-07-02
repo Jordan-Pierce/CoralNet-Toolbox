@@ -331,16 +331,30 @@ class QueryEngine:
 
     DEFAULT_COLORMAP = "plasma"
 
+    def set_colormap(self, colormap_name: str) -> None:
+        """Switch the colormap used by display_colors (CPU/fallback color path).
+
+        The GPU LUT paths (mesh SimilarityShaderState / splat display LUT) are
+        recolored by their owners; this keeps the baked-color fallback in sync.
+        """
+        name = str(colormap_name or self.DEFAULT_COLORMAP)
+        if name == getattr(self, "_cmap_name", None):
+            return
+        self._cmap_name = name
+        self._cmap_np = None
+        self._cmap_dev = None
+
     def _ensure_colormap_lut(self) -> None:
         """Build the colormap LUT [256,3] uint8 once (numpy + device tensor)."""
         if getattr(self, "_cmap_np", None) is not None:
             return
+        name = getattr(self, "_cmap_name", None) or self.DEFAULT_COLORMAP
         try:
             import matplotlib
-            cmap = matplotlib.colormaps[self.DEFAULT_COLORMAP]
+            cmap = matplotlib.colormaps[name]
         except Exception:
             import matplotlib.cm as cm
-            cmap = cm.get_cmap(self.DEFAULT_COLORMAP)
+            cmap = cm.get_cmap(name)
         lut = (np.asarray(cmap(np.linspace(0.0, 1.0, 256)))[:, :3] * 255.0)
         self._cmap_np = lut.round().astype(np.uint8)  # [256, 3]
         self._cmap_dev = (
@@ -482,6 +496,75 @@ class QueryEngine:
         label_field[reject] = -1
         conf[reject] = 0.0
         return label_field, conf, keys
+
+    def class_display_scalars(self, prototypes_by_class,
+                              reject_threshold: Optional[float] = None,
+                              hover_key=None,
+                              hover_id: Optional[int] = None
+                              ) -> Tuple[np.ndarray, list]:
+        """Multi-class display values for the LUT-indexed GPU paths.
+
+        The multi-class counterpart of :meth:`display_scalars`: assigns every
+        element ``k + 1`` for the winning class ``keys[k]`` (nearest-prototype
+        max-pool cosine) or ``0`` when uncovered / below ``reject_threshold``.
+        The values feed the SAME disp texture / SSBO the binary gradient uses —
+        only the LUT semantics change (class palette instead of colormap ramp).
+
+        The argmax + reject run on-device (torch) so only the final uint8 [N]
+        crosses to the host — per-tick cost stays at "C matvecs + N bytes".
+
+        Args:
+            prototypes_by_class: mapping ``class_key -> list[element_id]``.
+            reject_threshold: raw-cosine floor; below it elements stay 0.
+            hover_key / hover_id: optional transient prototype folded into
+                ``hover_key``'s class for live hover preview (not committed).
+
+        Returns:
+            (disp, keys): ``disp`` [N] uint8 (0 = unlabeled, k+1 = keys[k]);
+            ``keys`` in LUT-row order. Classes are capped at 254.
+        """
+        proto = {k: list(v) for k, v in prototypes_by_class.items() if v}
+        if hover_id is not None and hover_key is not None:
+            proto.setdefault(hover_key, [])
+            proto[hover_key] = proto[hover_key] + [int(hover_id)]
+
+        N = self.features_np.shape[0]
+        keys = []
+        rows = []
+        for key, ids in list(proto.items())[:254]:
+            valid_ids = [int(i) for i in ids if 0 <= int(i) < N]
+            if not valid_ids:
+                continue
+            keys.append(key)
+            if self.use_torch:
+                idx = torch.as_tensor(valid_ids, dtype=torch.long, device=self.device)
+                sims = self.features_cuda @ self.features_cuda[idx].t()   # [N, P]
+                rows.append(sims.max(dim=1).values)                       # [N]
+            else:
+                sims = self.features_np @ self.features_np[valid_ids].T
+                rows.append(sims.max(axis=1))
+
+        if not keys:
+            return np.zeros(N, dtype=np.uint8), []
+
+        if self.use_torch:
+            best = torch.stack(rows, dim=0)               # [C, N] on device
+            conf, arg = best.max(dim=0)
+            disp = (arg + 1).to(torch.uint8)
+            keep = self.valid_dev.clone()
+            if reject_threshold is not None:
+                keep &= conf >= float(reject_threshold)
+            disp = torch.where(keep, disp, torch.zeros_like(disp))
+            return disp.detach().cpu().numpy(), keys
+
+        best = np.stack(rows, axis=0)
+        conf = best.max(axis=0)
+        disp = (best.argmax(axis=0) + 1).astype(np.uint8)
+        keep = np.asarray(self.valid, dtype=bool)
+        if reject_threshold is not None:
+            keep = keep & (conf >= float(reject_threshold))
+        disp[~keep] = 0
+        return disp, keys
 
     def prototypes(self) -> Tuple[np.ndarray, np.ndarray]:
         """

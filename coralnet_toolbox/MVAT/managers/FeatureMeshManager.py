@@ -64,6 +64,11 @@ class FeatureMeshManager:
         self.shader_enabled = True
         self.shader_state = None
 
+        # Colormap for the binary similarity view (the multi-class view colors
+        # by label palette instead). Changing it is a 256-entry LUT swap on the
+        # mesh shader texture / splat display LUT — instant, no recompute.
+        self._colormap_name = "plasma"
+
         self._weighting_config = {
             "use_angle": True,
             "use_inv_dist": True,
@@ -327,6 +332,10 @@ class FeatureMeshManager:
             primary_target = self.viewer.scene_context.get_primary_target()
             primary_target.attach_feature_arrays(buffer)
 
+            # Sync the freshly built LUT sinks with the shared colormap choice.
+            self._sync_colormap_from_ui()
+            self.apply_colormap()
+
             # Repopulate the array dropdown
             self.viewer._update_array_selector()
 
@@ -429,6 +438,8 @@ class FeatureMeshManager:
             self.query_engine = QueryEngine(buffer.features, buffer.valid)
             self._build_shader_state(buffer)
             primary_target.attach_feature_arrays(buffer)
+            self._sync_colormap_from_ui()
+            self.apply_colormap()
             self.viewer._update_array_selector()
 
             return True
@@ -465,11 +476,12 @@ class FeatureMeshManager:
         """
         Recolor the primary target by similarity in place.
 
-        Works across product types: meshes write a per-face "Similarity" RGB
-        array (or drive the GPU colormap shader), point clouds write a per-point
-        "Similarity" RGB array, and Gaussian splats push the colours straight to
-        the splat SH. The per-element display colours are identical in every
-        case — only the sink differs (``product.set_similarity_colors``).
+        Works across product types with ONE display representation: an [N]
+        uint8 value colored through a 256-entry LUT. Meshes / point clouds
+        write it into the SimilarityShader's disp texture; Gaussian splats
+        write it into their display-channel SSBO (``set_similarity_scalars``)
+        and blend the LUT color over the SH shading. Only when neither LUT
+        path exists are RGB colors baked on the CPU (``set_similarity_colors``).
 
         Args:
             sim: [N] float32 similarity scores, or None to use query_engine.similarity().
@@ -488,20 +500,18 @@ class FeatureMeshManager:
             return
 
         element_type = getattr(primary_target, "get_element_type", lambda: None)()
-        # Only meshes (gl_PrimitiveID) and point clouds (injected gl_VertexID) are
-        # rendered through a VTK mapper the colormap shader can replace. Gaussian
-        # splats are drawn by their own ModernGL geometry shader (no VTK mapper to
-        # patch — maybe_install_shader is never even called for them), so they MUST
-        # take the direct-RGB path below, which pushes the colours into the splat
-        # SH via set_similarity_colors. Routing splats through the shader path
-        # silently no-ops (the disp texture nothing reads gets updated), which is
-        # why similarity never appeared on splats.
+        # Meshes (gl_PrimitiveID) and point clouds (injected gl_VertexID) are
+        # rendered through a VTK mapper the colormap shader can replace; their
+        # disp values go into the shader's value texture. Gaussian splats render
+        # through their own geometry-shader program, so the SAME [N] uint8 disp
+        # values go to the product's display channel (set_similarity_scalars —
+        # an N-int SSBO upload, never an SH rewrite). Only when neither LUT path
+        # exists do we fall back to baking RGB colors on the CPU.
         is_shader_capable = element_type in ("face", "point")
 
-        # Both meshes and point clouds use the GPU colormap shader path:
-        # push the [N] uint8 display value into the shader's value texture (raw
-        # upload). ScalarVisibilityOff means VTK never rebuilds the color
-        # buffer — the render stays ~5 ms. Splats take the direct-RGB path below.
+        # Mesh / point-cloud GPU colormap shader path: push the [N] uint8
+        # display value into the shader's value texture (raw upload).
+        # ScalarVisibilityOff means VTK never rebuilds the color buffer.
         if sim is None and is_shader_capable and self._shader_in_play():
             try:
                 disp = self.query_engine.display_scalars(threshold, hover_id=hover_id)
@@ -512,7 +522,15 @@ class FeatureMeshManager:
                 return
             # On failure the shader is disabled → fall through to the RGB path.
 
-        # Direct-RGB path: used by Gaussian Splats (straight to SH) or as a fallback.
+        # Splat display channel: same scalars, product-side LUT.
+        scalar_sink = getattr(primary_target, "set_similarity_scalars", None)
+        if sim is None and callable(scalar_sink):
+            disp = self.query_engine.display_scalars(threshold, hover_id=hover_id)
+            scalar_sink(disp)
+            return
+
+        # Direct-RGB fallback: bake colors on the CPU and hand them to the
+        # product's color sink (e.g. shader-less point clouds).
         if sim is None:
             colors = self.query_engine.display_colors(threshold, hover_id=hover_id)
         else:
@@ -522,11 +540,123 @@ class FeatureMeshManager:
             ci = np.clip(np.rint(disp * 255.0), 0, 255).astype(np.int64)
             colors = self.query_engine._cmap_np[ci]
 
-        # Dispatch to the product's similarity sink (mesh cell_data / point_data
-        # in place, or the splat SH push).
         sink = getattr(primary_target, "set_similarity_colors", None)
         if callable(sink):
             sink(colors)
+
+    # Below-reject-floor elements in the multi-class view map to LUT row 0 —
+    # a dark scrim so the unassigned region reads as dimmed, not exposed.
+    MULTICLASS_SCRIM_RGB = (45, 45, 45)
+
+    def recolor_by_class(self, prototypes_by_class, class_colors,
+                         reject_threshold: Optional[float] = None,
+                         hover_key=None, hover_id: Optional[int] = None) -> list:
+        """Recolor the primary target by nearest-prototype class (multi-class).
+
+        Reuses the exact binary-similarity display plumbing: the per-element
+        value becomes a class index (0 = below the reject floor / uncovered)
+        and the 256-entry LUT becomes the label palette, so the per-tick cost
+        is identical to the gradient view (C matvecs + an [N]-byte upload).
+
+        Args:
+            prototypes_by_class: ``label_id -> [element_ids]`` committed clicks.
+            class_colors: ``label_id -> (r, g, b)`` for the palette rows.
+            reject_threshold: raw-cosine floor; below it elements show the scrim.
+            hover_key / hover_id: transient hover prototype folded into
+                ``hover_key``'s class for the live preview.
+
+        Returns:
+            keys: class keys in LUT-row order (row k+1 == keys[k]).
+        """
+        if self.buffer is None or self.query_engine is None:
+            return []
+        primary_target = self.viewer.scene_context.get_primary_target()
+        if primary_target is None:
+            return []
+
+        disp, keys = self.query_engine.class_display_scalars(
+            prototypes_by_class, reject_threshold, hover_key=hover_key,
+            hover_id=hover_id)
+
+        # Build and push the label palette (row 0 = scrim, row k+1 = class k).
+        lut = np.zeros((256, 3), dtype=np.uint8)
+        lut[0] = self.MULTICLASS_SCRIM_RGB
+        for k, key in enumerate(keys):
+            lut[k + 1] = class_colors.get(key, (255, 255, 255))
+        self._push_display_lut(lut, primary_target)
+
+        element_type = getattr(primary_target, "get_element_type", lambda: None)()
+        if element_type in ("face", "point") and self._shader_in_play():
+            try:
+                self.shader_state.update_disp(disp)
+                return keys
+            except Exception as e:
+                self._disable_shader(f"class disp update failed: {e}")
+
+        scalar_sink = getattr(primary_target, "set_similarity_scalars", None)
+        if callable(scalar_sink):
+            scalar_sink(disp)
+            return keys
+
+        # CPU fallback: bake the palette directly.
+        sink = getattr(primary_target, "set_similarity_colors", None)
+        if callable(sink):
+            sink(lut[disp])
+        return keys
+
+    # ------------------------------------------------------------------ #
+    # On-demand colormap (binary similarity view)
+    # ------------------------------------------------------------------ #
+    def set_colormap(self, colormap_name: str) -> None:
+        """Switch the similarity colormap live (mesh LUT texture + splat LUT +
+        CPU fallback). A 256-entry write — the display values stay put, so the
+        view recolors instantly without recomputing anything."""
+        name = str(colormap_name or "plasma").lower()
+        self._colormap_name = name
+        if self.query_engine is not None:
+            self.query_engine.set_colormap(name)
+        self.apply_colormap()
+
+    def _sync_colormap_from_ui(self) -> None:
+        """Seed the colormap from the shared annotation-window dropdown.
+
+        The 3D similarity LUT mirrors the 2D overlay colormap dropdown (bridged
+        live via AnnotationWindow.overlayColormapChanged in QtMainWindow); this
+        picks up its current value when a buffer is freshly baked/loaded.
+        'None' has no 3D meaning — keep the current colormap then.
+        """
+        try:
+            name = self.main_window.annotation_window.colormap_dropdown.currentText()
+        except Exception:
+            return
+        if name and name != "None":
+            self._colormap_name = name.lower()
+            if self.query_engine is not None:
+                self.query_engine.set_colormap(self._colormap_name)
+
+    def apply_colormap(self) -> None:
+        """(Re)push the current colormap into every LUT sink (binary mode)."""
+        try:
+            from coralnet_toolbox.MVAT.shaders.SimilarityShader import colormap_lut
+            lut = colormap_lut(self._colormap_name)
+        except Exception as e:
+            print(f"[FeatureMeshManager] colormap '{self._colormap_name}' unavailable: {e}")
+            return
+        self._push_display_lut(lut)
+
+    def _push_display_lut(self, lut: np.ndarray, primary_target=None) -> None:
+        """Write a [K<=256, 3|4] uint8 LUT into the mesh shader texture and the
+        primary product's display-channel LUT (splats), whichever exist."""
+        if self.shader_state is not None:
+            try:
+                self.shader_state.set_lut(lut)
+            except Exception:
+                pass
+        if primary_target is None:
+            primary_target = self.viewer.scene_context.get_primary_target()
+        sink = getattr(primary_target, "apply_feature_colormap", None)
+        if callable(sink):
+            sink(lut)
 
     # ------------------------------------------------------------------ #
     # Phase-2 shader plumbing

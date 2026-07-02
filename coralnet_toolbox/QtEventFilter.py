@@ -68,6 +68,15 @@ class GlobalEventFilter(QObject):
                         if (self.annotation_window.selected_tool == "feature_select"
                                 and "feature_select" in self.annotation_window.tools):
                             self.annotation_window.tools["feature_select"]._toggle_multiclass_mode()
+                            # Mirror the toggle onto the 3D FeatureSelectTool3D so
+                            # the shared toolbar button drives one mode everywhere.
+                            try:
+                                viewer = getattr(self.main_window, 'mvat_viewer', None)
+                                tool_3d = getattr(viewer, '_feature_3d_tool', None)
+                                if tool_3d is not None and getattr(tool_3d, 'active', False):
+                                    tool_3d._toggle_multiclass_mode()
+                            except Exception:
+                                pass
                             return True
                         self.main_window.switch_back_to_tool()
                         return True

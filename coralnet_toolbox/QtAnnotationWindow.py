@@ -102,6 +102,7 @@ class AnnotationWindow(BaseCanvas):
     annotationSplit = pyqtSignal(str, object)  # original_annotation_id, [new_annotations]
     annotationGeometryEdited = pyqtSignal(str, object)  # annotation_id, {'old_geom':..., 'new_geom':...}
     annotationSelectionChanged = pyqtSignal(object)  # list of annotation IDs when selection changes
+    overlayColormapChanged = pyqtSignal(str)  # colormap name when the shared overlay dropdown changes
 
     def __init__(self, main_window, parent=None):
         """Initialize the annotation window with the main window and parent widget."""
@@ -584,6 +585,10 @@ class AnnotationWindow(BaseCanvas):
         context-matrix sync and dynamic-range button only apply to the Z overlay.
         """
         self.update_overlay_colormap(colormap_name)
+
+        # Broadcast so other views can mirror the choice (e.g. the MVAT 3D
+        # feature-similarity LUT — wired in QtMainWindow).
+        self.overlayColormapChanged.emit(colormap_name)
 
         feature_active = self._active_colormap_overlay is self._feature_overlay
 

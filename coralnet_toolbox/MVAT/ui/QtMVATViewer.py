@@ -699,6 +699,11 @@ class MVATViewer(QFrame):
         )
         toolbar.addWidget(self._gaussian_shading_combo)
 
+        # NOTE: the feature-similarity colormap deliberately has NO dropdown
+        # here — it mirrors the annotation window's shared colormap dropdown
+        # via AnnotationWindow.overlayColormapChanged (wired in QtMainWindow),
+        # so the 2D heatmap and the 3D similarity view always color alike.
+
         return toolbar
 
     def create_view_menu(self) -> QMenu:
@@ -3012,7 +3017,7 @@ class MVATViewer(QFrame):
             index = self.array_selector_combo.findText(selected)
             if index >= 0:
                 self.array_selector_combo.setCurrentIndex(index)
-        
+
         self.array_selector_combo.blockSignals(False)
 
     def add_point_cloud(self):
