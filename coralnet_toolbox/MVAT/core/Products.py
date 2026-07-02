@@ -2207,18 +2207,19 @@ class GaussianSplattingProduct(AbstractSceneProduct):
     def set_display_engaged(self, engaged: bool, mix01: float = None) -> None:
         """Engage/disengage the similarity display overlay (Feature Select).
 
-        Engaged: hide the label channel (the heatmap is unobscured), undo any
-        SH override, re-push the cached display values, and blend the display
-        LUT over the SH shading at ``mix01`` (the shared colormap-opacity
-        slider; defaults to DISP_MIX_DEFAULT). Disengaged: mix off, label
-        channel restored at its stored opacity.
+        Engaged: undo any SH override, re-push the cached display values, and
+        blend the display LUT over the SH shading at ``mix01`` (the shared
+        colormap-opacity slider; defaults to DISP_MIX_DEFAULT). Disengaged:
+        mix off. The LABEL channel is untouched either way — the geometry
+        shader draws painted labels ON TOP of the heatmap, still governed by
+        the label transparency slider (apply_label_opacity), so committed
+        annotations stay visible while querying.
         """
         self._display_engaged = bool(engaged)
         try:
             ga = self.gaussian_actor
             if engaged:
                 self._undo_sh_override()
-                ga.set_label_boost(0.0)
                 if self._similarity_disp is not None:
                     ga.set_display_values(self._similarity_disp)
                 ga.set_display_mix(self.DISP_MIX_DEFAULT if mix01 is None
@@ -2227,7 +2228,6 @@ class GaussianSplattingProduct(AbstractSceneProduct):
             else:
                 ga.set_display_mix(0.0)
                 ga.set_display_boost(0.0)
-                ga.set_label_boost(self._label_opacity)
         except Exception as e:
             print(f"⚠️ set_display_engaged (Gaussian) failed: {e}")
 
@@ -2259,16 +2259,15 @@ class GaussianSplattingProduct(AbstractSceneProduct):
     def apply_label_opacity(self, value: float) -> None:
         """Set the label-channel strength from the shared transparency slider.
 
-        Stored so paint / array-restore reuse the same value; suppressed (the
-        actor boost stays 0) while the similarity overlay is ENGAGED so the
-        heatmap is unobscured.
+        Always forwarded — painted labels render on top of every base view
+        (scene SH, similarity heatmap, data view) in the geometry shader, so
+        the slider works while the Feature Select overlay is engaged too.
         """
         self._label_opacity = float(max(0.0, min(1.0, value)))
-        if not self._display_engaged:
-            try:
-                self.gaussian_actor.set_label_boost(self._label_opacity)
-            except Exception:
-                pass
+        try:
+            self.gaussian_actor.set_label_boost(self._label_opacity)
+        except Exception:
+            pass
 
     def set_similarity_scalars(self, disp: np.ndarray) -> None:
         """Update the per-splat similarity/class display VALUES (never visibility).

@@ -2710,20 +2710,22 @@ class MVATViewer(QFrame):
 
                 self._product_actors[product_id] = actor
 
+                # Similarity overlay (Feature Select engagement): rebuilt with
+                # the base actor whenever engaged; self-gating no-op otherwise.
+                # Added BEFORE the label overlay so painted labels draw on top
+                # of the heatmap in the translucent pass (2D stacking parity).
+                try:
+                    self._sync_similarity_overlay_actor(product, mesh, product_id,
+                                                        should_be_visible, style)
+                except Exception:
+                    pass
+
                 # Label paint is rendered by the translucent label-overlay actor
-                # below (the paint shader in discard mode), not on the base actor —
+                # (the paint shader in discard mode), not on the base actor —
                 # "Labels" is no longer a selectable base array. Rebuilt each render.
                 try:
                     self._sync_label_overlay_actor(product, mesh, product_id,
                                                     should_be_visible, style)
-                except Exception:
-                    pass
-
-                # Similarity overlay (Feature Select engagement): rebuilt with
-                # the base actor whenever engaged; self-gating no-op otherwise.
-                try:
-                    self._sync_similarity_overlay_actor(product, mesh, product_id,
-                                                        should_be_visible, style)
                 except Exception:
                     pass
 

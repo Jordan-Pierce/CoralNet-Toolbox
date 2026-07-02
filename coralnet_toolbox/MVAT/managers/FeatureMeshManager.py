@@ -881,7 +881,10 @@ class FeatureMeshManager:
             self.apply_mode_colormap(mode)
             self.apply_colormap()
 
-            # Light the sinks.
+            # Light the sinks. The label overlays are re-synced AFTER the
+            # similarity actor is added so painted labels draw on top of the
+            # heatmap in the translucent pass (2D stacking parity); their
+            # opacity stays on the label transparency slider.
             if element_type in ("face", "point"):
                 sync = getattr(self.viewer, "_sync_similarity_overlay_actor", None)
                 if callable(sync):

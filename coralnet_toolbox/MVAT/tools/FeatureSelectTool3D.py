@@ -424,7 +424,12 @@ class FeatureSelectTool3D(Tool3D):
             #   engaged + prototypes   → commit (stays engaged for the next query)
             #   engaged, no prototypes → disengage (overlay off, controls back)
             if not self._engaged():
-                if feature_manager.engage_overlay(mode=self.mode):
+                if (feature_manager is None or feature_manager.buffer is None
+                        or feature_manager.query_engine is None):
+                    # No baked features yet — say so instead of doing nothing.
+                    self._status("Feature Select 3D: no baked features for this "
+                                 "model — run 'Bake Mesh Features' first.", 6000)
+                elif feature_manager.engage_overlay(mode=self.mode):
                     self._status("Feature Select 3D: overlay engaged — Ctrl+click "
                                  "to query, Space to commit, Backspace to clear. "
                                  "Colormap + opacity: annotation-window controls.",
@@ -478,6 +483,36 @@ class FeatureSelectTool3D(Tool3D):
         feature_manager.recolor_by_similarity(threshold=threshold, hover_id=hover_id)
         self.mvat_viewer.plotter.render()
 
+    def _paint_elements(self, primary_target, element_ids, class_id,
+                        color_rgb, label) -> None:
+        """Commit painted elements through the SAME pipeline the 3D brush uses.
+
+        Meshes / point clouds go through MVATManager.submit_3d_face_paint /
+        submit_3d_point_paint — that path updates the paint-shader class-id
+        texture (what the label-overlay actor actually renders), so committed
+        labels are visible immediately. A bare apply_labels + flush only
+        updates the product caches / VTK array, which the overlay shader never
+        reads. Splats keep the direct product path (their GPU label channel is
+        the render path).
+        """
+        element_ids = np.asarray(element_ids, dtype=np.int32).ravel()
+        element_type = getattr(primary_target, 'get_element_type', lambda: None)()
+        label_id = getattr(label, 'id', None)
+        if element_type == 'face':
+            self.mvat_manager.submit_3d_face_paint(
+                element_ids, color_rgb, int(class_id),
+                primary_target=primary_target, label_id=label_id)
+        elif element_type == 'point':
+            self.mvat_manager.submit_3d_point_paint(
+                element_ids, color_rgb, int(class_id),
+                primary_target=primary_target, label_id=label_id)
+        else:
+            # Splats: the product's label channel IS the render path.
+            if hasattr(primary_target, 'apply_labels'):
+                primary_target.apply_labels(element_ids, int(class_id), color_rgb)
+            if hasattr(primary_target, 'flush_labels_to_gpu'):
+                primary_target.flush_labels_to_gpu()
+
     def _commit_selection_to_label(self) -> None:
         """
         Finalize the highlighted (thresholded) selection.
@@ -509,13 +544,13 @@ class FeatureSelectTool3D(Tool3D):
         if selected_ids.size == 0:
             return
 
-        # 1. Paint the mesh with the selection. The overlay stays engaged — the
-        # paint is flushed to the GPU so it shows through the label overlay /
-        # Labels views, while the query view is preserved here.
+        # 1. Paint the selection through the brush pipeline so it shows up in
+        # the label overlay immediately (labels draw on top of the heatmap;
+        # the overlay stays engaged for the next query).
         primary_target = self.mvat_viewer.scene_context.get_primary_target()
-        if primary_target and hasattr(primary_target, 'apply_labels'):
-            primary_target.apply_labels(selected_ids, class_id, color_rgb)
-            primary_target.flush_labels_to_gpu()
+        if primary_target is not None:
+            self._paint_elements(primary_target, selected_ids, class_id,
+                                 color_rgb, label)
 
             # Emit repaint signal to update the viewer
             if hasattr(self.mvat_manager, '_universal_repaint_signal'):
@@ -603,15 +638,14 @@ class FeatureSelectTool3D(Tool3D):
             ids = np.flatnonzero(disp == (k + 1)).astype(np.int32)
             if ids.size == 0:
                 continue
-            if hasattr(primary_target, 'apply_labels'):
-                primary_target.apply_labels(ids, class_id, color_rgb)
-                committed.append((ids, label))
+            # Brush-pipeline paint so each class shows in the label overlay
+            # immediately (see _paint_elements).
+            self._paint_elements(primary_target, ids, class_id, color_rgb, label)
+            committed.append((ids, label))
 
         if not committed:
             return
 
-        if hasattr(primary_target, 'flush_labels_to_gpu'):
-            primary_target.flush_labels_to_gpu()
         if hasattr(self.mvat_manager, '_universal_repaint_signal'):
             self.mvat_manager._universal_repaint_signal.emit([])
 
