@@ -377,7 +377,7 @@ class QueryEngine:
             hover_id: optional transient prototype to fold in for hover preview.
 
         Returns:
-            [N, 3] uint8, ready to write into the mesh's "Similarity" cell array.
+            [N, 3] uint8 direct colors (CPU-baked fallback path).
         """
         self._ensure_colormap_lut()
         sim = self._effective_sim_device(hover_id)
