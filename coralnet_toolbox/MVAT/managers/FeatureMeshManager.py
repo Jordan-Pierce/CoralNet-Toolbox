@@ -54,6 +54,16 @@ class FeatureMeshManager:
         self.buffer: Optional[FeatureBuffer] = None
         self.query_engine: Optional[QueryEngine] = None
         self.bake_worker_thread: Optional[QThread] = None
+        # Bake parameters parked while the pre-bake index-map pass runs.
+        self._pending_bake: Optional[dict] = None
+
+        # Similarity-overlay engagement (the 3D analogue of the 2D tool's work
+        # area): while engaged, the viewer draws the similarity overlay actor
+        # (mesh/point cloud) or the splat display channel is mixed in, and the
+        # shared annotation-window colormap dropdown + opacity slider drive it.
+        # Mutually exclusive with the 2D tool's work-area engagement.
+        self.overlay_engaged = False
+        self._engaging = False  # reentrancy guard
 
         # Phase-2 GPU colormap shader (SimilarityShader). Bypasses VTK's per-change
         # color-buffer rebuild (the ~125 ms-at-4M / seconds-at-76M cost — confirmed
@@ -99,33 +109,12 @@ class FeatureMeshManager:
 
         eligible = []
 
-        # Collect cameras
-        if scope == "selected":
-            cameras_to_check = [
-                (p, self.mvat_manager.cameras[p])
-                for p in getattr(self.mvat_manager, "selected_camera_paths", [])
-                if p in self.mvat_manager.cameras
-            ]
-        elif scope == "visible":
-            cameras_to_check = list(self.mvat_manager.cameras.items())  # TODO: filter by visibility
-        else:  # "all"
-            cameras_to_check = list(self.mvat_manager.cameras.items())
-
-        for path, camera in cameras_to_check:
+        for path, camera in self._collect_scope_cameras(scope):
             raster = getattr(camera, "_raster", None)
             if raster is None:
                 continue
 
-            # Existence check ONLY — do NOT touch raster.has_feature_map() /
-            # raster.index_map here: those read the lazy properties, which pull
-            # every map off disk through the LRU (decompressing all N cameras'
-            # maps just to count them — the dialog-open lag). The in-memory
-            # array OR a configured disk path is sufficient to mark eligibility;
-            # the bake worker loads the actual data later, on its own thread.
-            has_fm = (getattr(raster, "_feature_map", None) is not None
-                      or bool(getattr(raster, "feature_map_path", None)))
-            has_im = (getattr(raster, "_index_map", None) is not None
-                      or bool(getattr(raster, "index_map_path", None)))
+            has_fm, has_im = self._camera_map_presence(raster)
 
             if has_fm:
                 stats["with_feature_map"] += 1
@@ -143,11 +132,78 @@ class FeatureMeshManager:
 
         return eligible, stats
 
+    def _collect_scope_cameras(self, scope: str) -> List[Tuple[str, Any]]:
+        """(path, Camera) list for a bake scope: "all" | "selected" | "visible"."""
+        if scope == "selected":
+            return [
+                (p, self.mvat_manager.cameras[p])
+                for p in getattr(self.mvat_manager, "selected_camera_paths", [])
+                if p in self.mvat_manager.cameras
+            ]
+        if scope == "visible":
+            try:
+                visible = set(self.mvat_manager._get_visible_context_camera_paths())
+            except Exception:
+                visible = set()
+            return [(p, c) for p, c in self.mvat_manager.cameras.items()
+                    if p in visible]
+        return list(self.mvat_manager.cameras.items())
+
+    @staticmethod
+    def _camera_map_presence(raster) -> Tuple[bool, bool]:
+        """(has_feature_map, has_index_map) — existence checks ONLY.
+
+        Never touch raster.has_feature_map() / raster.index_map here: those read
+        the lazy properties, which pull every map off disk through the LRU
+        (decompressing all N cameras' maps just to count them — the dialog-open
+        lag). An index map counts as present when it is RESIDENT, on DISK, or
+        RECOVERABLE via the aggressive-mode recompute provider — the last case
+        is what lets scope="all" bake cameras that are not currently visible in
+        the ContextMatrix (their dense map was dropped on unpin, but the bake
+        worker's lazy ``raster.index_map`` read regenerates it on demand).
+        """
+        has_fm = (getattr(raster, "_feature_map", None) is not None
+                  or bool(getattr(raster, "feature_map_path", None)))
+        has_im = (getattr(raster, "_index_map", None) is not None
+                  or bool(getattr(raster, "index_map_path", None))
+                  or getattr(raster, "_index_map_provider", None) is not None)
+        return has_fm, has_im
+
+    def _collect_missing_index_cameras(self, scope: str) -> List[Any]:
+        """Cameras in scope that HAVE a feature map but NO recoverable index map.
+
+        These are the cameras the pre-bake pass must compute visibility for
+        (typically: never shown in the ContextMatrix, so no index map was ever
+        rendered)."""
+        missing = []
+        for path, camera in self._collect_scope_cameras(scope):
+            raster = getattr(camera, "_raster", None)
+            if raster is None:
+                continue
+            has_fm, has_im = self._camera_map_presence(raster)
+            if has_fm and not has_im:
+                missing.append(camera)
+        return missing
+
+    # Pre-bake index-map computation is chained in slices so the aggressive-mode
+    # VisibilityWorker (which ships every camera's DENSE map in one finished
+    # payload) never holds more than this many native-res maps at once.
+    PREBAKE_SLICE = 16
+
     def bake(self, compressor_kind: str = "nn", compressor_dim: int = 32,
              scope: str = "all", interpolation: str = "nearest",
              nn_params: dict = None) -> None:
         """
-        Launch the bake worker on a background thread.
+        Bake entry point: complete missing index maps, then launch the worker.
+
+        Cameras in scope that have a feature map but no index map (never shown
+        in the ContextMatrix, so visibility was never rendered for them) first
+        get their index maps computed via the existing visibility machinery, in
+        chained slices of PREBAKE_SLICE with status-bar progress. Only then is
+        the actual bake launched (_launch_bake). Trade-off, accepted: in
+        aggressive (no-disk) mode each pre-computed map is dropped on unpin and
+        regenerated lazily by the bake worker (~25-40 ms/camera) — two renders
+        per missing camera, but RAM stays flat.
 
         Args:
             compressor_kind: "nn" | "pca".
@@ -158,6 +214,72 @@ class FeatureMeshManager:
             nn_params: optional dict of NN autoencoder hyperparameters
                 (hidden_dim, epochs, lr, beta) when compressor_kind == "nn".
         """
+        status_bar = self.mvat_manager.main_window.status_bar
+        if self.bake_worker_thread is not None:
+            status_bar.showMessage("Bake already running.", 4000)
+            return
+        if getattr(self.mvat_manager, "_is_computing_visibility", False):
+            status_bar.showMessage(
+                "Bake: a visibility computation is already running — retry shortly.",
+                5000)
+            return
+
+        self._pending_bake = {
+            "compressor_kind": compressor_kind,
+            "compressor_dim": compressor_dim,
+            "scope": scope,
+            "interpolation": interpolation,
+            "nn_params": nn_params,
+        }
+
+        primary_target = self.viewer.scene_context.get_primary_target()
+        missing = self._collect_missing_index_cameras(scope)
+        if not missing or primary_target is None:
+            self._launch_bake()
+            return
+
+        status_bar.showMessage(
+            f"Bake: computing index maps for {len(missing)} camera(s) first…", 0)
+        slices = [missing[i:i + self.PREBAKE_SLICE]
+                  for i in range(0, len(missing), self.PREBAKE_SLICE)]
+        self._run_prebake_slice(slices, 0, primary_target)
+
+    def _run_prebake_slice(self, slices: List[List[Any]], idx: int,
+                           primary_target) -> None:
+        """Compute index maps for slice ``idx``, then chain to the next / bake."""
+        total = sum(len(s) for s in slices)
+        done = sum(len(s) for s in slices[:idx])
+        self.mvat_manager.main_window.status_bar.showMessage(
+            f"Bake: index maps {done}/{total} cameras…", 0)
+
+        def _on_slice_done(_ok: bool):
+            # A failed slice is not fatal — its cameras simply stay missing and
+            # are counted in the bake's skip report.
+            if primary_target is not self.viewer.scene_context.get_primary_target():
+                self.mvat_manager.main_window.status_bar.showMessage(
+                    "Bake aborted: 3D model changed during index-map computation.",
+                    5000)
+                self._pending_bake = None
+                return
+            nxt = idx + 1
+            if nxt < len(slices):
+                self._run_prebake_slice(slices, nxt, primary_target)
+            else:
+                self._launch_bake()
+
+        self.mvat_manager._compute_visibility_async(
+            primary_target, slices[idx], on_complete=_on_slice_done)
+
+    def _launch_bake(self) -> None:
+        """Launch the bake worker for the stored pending-bake parameters."""
+        params = self._pending_bake or {}
+        self._pending_bake = None
+        compressor_kind = params.get("compressor_kind", "nn")
+        compressor_dim = params.get("compressor_dim", 32)
+        scope = params.get("scope", "all")
+        interpolation = params.get("interpolation", "nearest")
+        nn_params = params.get("nn_params")
+
         self._interpolation = str(interpolation or "nearest").lower()
         eligible, stats = self.prepare(scope)
 
@@ -211,6 +333,18 @@ class FeatureMeshManager:
         # _on_bake_error; restored here too if launch fails before then.
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
+            # Warp maps for distorted cameras must be FIRST-built on the main
+            # thread (the bake worker's lazy index-map recompute would otherwise
+            # first-touch them off-thread — see cache_index_maps_to_disk).
+            for _p, camera in eligible:
+                raster = getattr(camera, "_raster", None)
+                if (raster is not None and getattr(camera, "is_distorted", False)
+                        and getattr(raster, "intrinsics_undistorted", None) is not None):
+                    try:
+                        raster._ensure_warp_maps()
+                    except Exception:
+                        pass
+
             # Fit compressor on sampled patches
             self._fit_compressor(compressor, eligible)
 
@@ -339,10 +473,17 @@ class FeatureMeshManager:
             # Repopulate the array dropdown
             self.viewer._update_array_selector()
 
-            # Status
+            # Status — include how many cameras contributed and how many were
+            # skipped (no feature/index map even after the pre-bake pass).
             n_valid = int(np.sum(buffer.valid))
-            msg = f"Baked {n_valid}/{buffer.features.shape[0]} elements. Query ready."
-            self.mvat_manager.main_window.status_bar.showMessage(msg, 5000)
+            skipped = list(buffer.provenance.get("skipped_cameras", []))
+            n_cams = int(buffer.provenance.get("num_cameras", 0))
+            msg = (f"Baked {n_valid}/{buffer.features.shape[0]} elements from "
+                   f"{n_cams - len(skipped)} camera(s).")
+            if skipped:
+                msg += f" Skipped {len(skipped)} (no feature/index map)."
+            msg += " Query ready."
+            self.mvat_manager.main_window.status_bar.showMessage(msg, 8000)
         finally:
             self.bake_worker_thread = None
             QApplication.restoreOverrideCursor()
@@ -449,16 +590,15 @@ class FeatureMeshManager:
 
     def clear(self) -> None:
         """Clear the current buffer and detach from the mesh."""
+        # Tear down the similarity overlay first (it references shader_state).
+        self.disengage_overlay()
+
         self.buffer = None
         self.query_engine = None
         self.shader_state = None
 
         primary_target = self.viewer.scene_context.get_primary_target()
         if primary_target:
-            # Tear the shader off the live mesh actor before the array detaches.
-            actor = self._get_mesh_actor(primary_target)
-            if actor is not None:
-                self.uninstall_shader(actor)
             primary_target.clear_feature_arrays()
             self.viewer._update_array_selector()
 
@@ -470,21 +610,19 @@ class FeatureMeshManager:
                 feature_tool_action.setChecked(False)
                 self.viewer.set_selected_3d_tool(None)
                 
-    def recolor_by_similarity(self, sim: Optional[np.ndarray] = None,
-                              threshold: Optional[float] = None,
+    def recolor_by_similarity(self, threshold: Optional[float] = None,
                               hover_id: Optional[int] = None) -> None:
         """
-        Recolor the primary target by similarity in place.
+        Recolor the similarity overlay in place.
 
-        Works across product types with ONE display representation: an [N]
-        uint8 value colored through a 256-entry LUT. Meshes / point clouds
-        write it into the SimilarityShader's disp texture; Gaussian splats
-        write it into their display-channel SSBO (``set_similarity_scalars``)
-        and blend the LUT color over the SH shading. Only when neither LUT
-        path exists are RGB colors baked on the CPU (``set_similarity_colors``).
+        ONE display representation for every product type: an [N] uint8 value
+        colored through a 256-entry LUT. Meshes / point clouds write it into
+        the SimilarityShader's disp texture (rendered by the engaged overlay
+        actor); Gaussian splats write it into their display-channel SSBO
+        (``set_similarity_scalars``). There is NO CPU color fallback — the
+        similarity view requires the GPU LUT path (see engage_overlay).
 
         Args:
-            sim: [N] float32 similarity scores, or None to use query_engine.similarity().
             threshold: When provided, render a live preview of the thresholded
                 selection — only elements with raw similarity >= threshold (exactly
                 what QueryEngine.select() would pick) are lit. When None, render
@@ -492,7 +630,7 @@ class FeatureMeshManager:
             hover_id: optional transient prototype (element under the cursor) to
                 fold into the query for live hover preview, without committing it.
         """
-        if self.buffer is None or (sim is None and self.query_engine is None):
+        if self.buffer is None or self.query_engine is None:
             return
 
         primary_target = self.viewer.scene_context.get_primary_target()
@@ -500,49 +638,25 @@ class FeatureMeshManager:
             return
 
         element_type = getattr(primary_target, "get_element_type", lambda: None)()
-        # Meshes (gl_PrimitiveID) and point clouds (injected gl_VertexID) are
-        # rendered through a VTK mapper the colormap shader can replace; their
-        # disp values go into the shader's value texture. Gaussian splats render
-        # through their own geometry-shader program, so the SAME [N] uint8 disp
-        # values go to the product's display channel (set_similarity_scalars —
-        # an N-int SSBO upload, never an SH rewrite). Only when neither LUT path
-        # exists do we fall back to baking RGB colors on the CPU.
-        is_shader_capable = element_type in ("face", "point")
 
         # Mesh / point-cloud GPU colormap shader path: push the [N] uint8
-        # display value into the shader's value texture (raw upload).
-        # ScalarVisibilityOff means VTK never rebuilds the color buffer.
-        if sim is None and is_shader_capable and self._shader_in_play():
+        # display value into the shader's value texture (raw upload). The
+        # overlay actor's fragment shader reads it — VTK never rebuilds colors.
+        if element_type in ("face", "point"):
+            if not self._shader_in_play():
+                return
             try:
                 disp = self.query_engine.display_scalars(threshold, hover_id=hover_id)
                 self.shader_state.update_disp(disp)
             except Exception as e:
                 self._disable_shader(f"disp update failed: {e}")
-            else:
-                return
-            # On failure the shader is disabled → fall through to the RGB path.
+            return
 
         # Splat display channel: same scalars, product-side LUT.
         scalar_sink = getattr(primary_target, "set_similarity_scalars", None)
-        if sim is None and callable(scalar_sink):
+        if callable(scalar_sink):
             disp = self.query_engine.display_scalars(threshold, hover_id=hover_id)
             scalar_sink(disp)
-            return
-
-        # Direct-RGB fallback: bake colors on the CPU and hand them to the
-        # product's color sink (e.g. shader-less point clouds).
-        if sim is None:
-            colors = self.query_engine.display_colors(threshold, hover_id=hover_id)
-        else:
-            self.query_engine._ensure_colormap_lut()
-            disp = QueryEngine._disp_unit01_numpy(np.asarray(sim, dtype=np.float32),
-                                                  threshold)
-            ci = np.clip(np.rint(disp * 255.0), 0, 255).astype(np.int64)
-            colors = self.query_engine._cmap_np[ci]
-
-        sink = getattr(primary_target, "set_similarity_colors", None)
-        if callable(sink):
-            sink(colors)
 
     # Below-reject-floor elements in the multi-class view map to LUT row 0 —
     # a dark scrim so the unassigned region reads as dimmed, not exposed.
@@ -586,22 +700,17 @@ class FeatureMeshManager:
         self._push_display_lut(lut, primary_target)
 
         element_type = getattr(primary_target, "get_element_type", lambda: None)()
-        if element_type in ("face", "point") and self._shader_in_play():
-            try:
-                self.shader_state.update_disp(disp)
-                return keys
-            except Exception as e:
-                self._disable_shader(f"class disp update failed: {e}")
+        if element_type in ("face", "point"):
+            if self._shader_in_play():
+                try:
+                    self.shader_state.update_disp(disp)
+                except Exception as e:
+                    self._disable_shader(f"class disp update failed: {e}")
+            return keys
 
         scalar_sink = getattr(primary_target, "set_similarity_scalars", None)
         if callable(scalar_sink):
             scalar_sink(disp)
-            return keys
-
-        # CPU fallback: bake the palette directly.
-        sink = getattr(primary_target, "set_similarity_colors", None)
-        if callable(sink):
-            sink(lut[disp])
         return keys
 
     # ------------------------------------------------------------------ #
@@ -666,10 +775,23 @@ class FeatureMeshManager:
         return bool(self.shader_enabled and self.shader_state is not None)
 
     def _disable_shader(self, reason: str) -> None:
-        """Permanently fall back to the uint8 path for this session."""
-        print(f"[FeatureMeshManager] shader disabled → uint8 fallback: {reason}")
+        """Disable the GPU colormap shader for this session.
+
+        There is no CPU fallback anymore — the similarity view requires the
+        shader, so a failure also tears down any engaged overlay and tells the
+        user why the heatmap disappeared.
+        """
+        print(f"[FeatureMeshManager] similarity shader disabled: {reason}")
         self.shader_enabled = False
         self.shader_state = None
+        if self.overlay_engaged:
+            self.disengage_overlay()
+            try:
+                self.main_window.status_bar.showMessage(
+                    "Feature Select: GPU similarity shader failed — view disabled.",
+                    6000)
+            except Exception:
+                pass
 
     def _build_shader_state(self, buffer: FeatureBuffer) -> None:
         """Build the GPU colormap textures once per bake / cache-load (best-effort)."""
@@ -684,54 +806,228 @@ class FeatureMeshManager:
             print(f"[FeatureMeshManager] shader artifacts unavailable: {e}")
             self.shader_state = None
 
-    def _get_mesh_actor(self, primary_target):
-        """Resolve the live VTK actor for the primary mesh product, if any."""
+    # ------------------------------------------------------------------ #
+    # Similarity-overlay engagement (3D analogue of the 2D work area)
+    # ------------------------------------------------------------------ #
+    def engage_overlay(self, mode: str = "binary") -> bool:
+        """Engage the similarity overlay (Space in the 3D viewer).
+
+        Mirrors the 2D tool's work-area engagement: creates the overlay actor
+        (mesh/point cloud) or lights the splat display channel, and hands the
+        shared annotation-window colormap dropdown + opacity slider to the 3D
+        view (2D `_engage_colormap_controls` parity). Mutually exclusive with
+        the 2D tool's work area — engaging here cancels it.
+
+        Returns True when engaged (already-engaged counts as success).
+        """
+        if self._engaging:
+            return self.overlay_engaged
+        if self.overlay_engaged:
+            return True
+        if self.buffer is None or self.query_engine is None:
+            try:
+                self.main_window.status_bar.showMessage(
+                    "Feature Select: bake mesh features first (Bake Mesh Features).",
+                    5000)
+            except Exception:
+                pass
+            return False
+
+        primary_target = self.viewer.scene_context.get_primary_target()
+        if primary_target is None:
+            return False
+        element_type = getattr(primary_target, "get_element_type", lambda: None)()
+        if element_type in ("face", "point") and not self._shader_in_play():
+            try:
+                self.main_window.status_bar.showMessage(
+                    "Feature Select: similarity view unavailable — the GPU "
+                    "colormap shader failed to initialize.", 6000)
+            except Exception:
+                pass
+            return False
+
+        self._engaging = True
         try:
-            product_actors = getattr(self.viewer, "_product_actors", {})
-            return product_actors.get(getattr(primary_target, "product_id", None))
+            # Either/or with the 2D tool: cancel its work area (and release the
+            # shared controls) BEFORE we take them over.
+            self._cancel_2d_engagement()
+
+            self.overlay_engaged = True
+
+            # Take over the shared colormap controls (2D-engage parity). The
+            # dropdown is parked on the (empty) 2D feature overlay so changing
+            # it can never re-show the hidden Z overlay.
+            aw = getattr(self.main_window, "annotation_window", None)
+            slider_opacity = 0.5
+            if aw is not None:
+                try:
+                    aw._z_overlay.hide()
+                    aw.set_active_colormap_overlay('feature')
+                    if hasattr(aw, 'z_dynamic_button'):
+                        aw.z_dynamic_button.setChecked(False)
+                        aw.z_dynamic_button.setEnabled(False)
+                    aw.colormap_dropdown.setEnabled(True)
+                    aw.colormap_opacity_slider.setEnabled(True)
+                    slider_opacity = aw.colormap_opacity_slider.value() / 255.0
+                except Exception:
+                    pass
+
+            # Adopt whatever real colormap the dropdown already shows, then
+            # point it at the mode's target ('None' in multiclass; the current
+            # colormap in binary — first engage defaults to Plasma). Finally
+            # push the LUT explicitly, covering the no-signal case where the
+            # dropdown text didn't change.
+            self._sync_colormap_from_ui()
+            self.apply_mode_colormap(mode)
+            self.apply_colormap()
+
+            # Light the sinks.
+            if element_type in ("face", "point"):
+                sync = getattr(self.viewer, "_sync_similarity_overlay_actor", None)
+                if callable(sync):
+                    sync()
+                resync_labels = getattr(self.viewer, "_sync_all_label_overlay_actors", None)
+                if callable(resync_labels):
+                    resync_labels()
+            else:
+                engage_sink = getattr(primary_target, "set_display_engaged", None)
+                if callable(engage_sink):
+                    engage_sink(True, mix01=slider_opacity)
+
+            if not self.overlay_engaged:
+                # A shader failure during the actor sync disengaged us.
+                return False
+
+            # Baseline / committed view.
+            self.recolor_by_similarity()
+            try:
+                self.viewer.plotter.render()
+            except Exception:
+                pass
+            return True
+        finally:
+            self._engaging = False
+
+    def disengage_overlay(self, release_controls: bool = True) -> None:
+        """Tear the similarity overlay down (Space/Backspace with no prompts,
+        tool deactivate, buffer clear, or the 2D tool engaging).
+
+        ``release_controls=False`` skips returning the shared colormap controls
+        (used when the 2D tool is about to immediately take them over).
+        """
+        if not self.overlay_engaged:
+            return
+        self.overlay_engaged = False
+
+        remove = getattr(self.viewer, "_remove_similarity_overlay_actor", None)
+        if callable(remove):
+            try:
+                remove()
+            except Exception:
+                pass
+        resync_labels = getattr(self.viewer, "_sync_all_label_overlay_actors", None)
+        if callable(resync_labels):
+            try:
+                resync_labels()
+            except Exception:
+                pass
+
+        primary_target = self.viewer.scene_context.get_primary_target()
+        disengage_sink = getattr(primary_target, "set_display_engaged", None)
+        if callable(disengage_sink):
+            try:
+                disengage_sink(False)
+            except Exception:
+                pass
+
+        if release_controls:
+            # Mirror the 2D tool's _release_colormap_controls: back to the Z
+            # overlay (left hidden by design), dropdown to 'None', controls
+            # disabled when the image has no depth data.
+            aw = getattr(self.main_window, "annotation_window", None)
+            if aw is not None:
+                try:
+                    aw.set_active_colormap_overlay('z')
+                    if aw.colormap_dropdown.currentText() != 'None':
+                        aw.colormap_dropdown.setCurrentText('None')
+                    else:
+                        aw.update_overlay_colormap('None')
+                    if getattr(aw, 'z_data_raw', None) is None:
+                        aw.enable_z_visualization_controls(False)
+                except Exception:
+                    pass
+
+        try:
+            self.viewer.plotter.render()
         except Exception:
-            return None
+            pass
 
-    def maybe_install_shader(self, actor, product) -> None:
+    def set_overlay_opacity(self, opacity01: float) -> None:
+        """Live opacity for the engaged overlay (shared colormap slider bridge).
+
+        Mesh/point cloud: the overlay actor's opacity. Splat: the display-
+        channel mix over the SH shading. No-op when not engaged.
         """
-        Install the similarity shader on a freshly built actor.
+        if not self.overlay_engaged:
+            return
+        opacity01 = float(max(0.0, min(1.0, opacity01)))
 
-        Called from the viewer after add_mesh()/add_points() whenever the
-        Similarity array is active. No-op unless the shader is in play. Any
-        failure flips to the uint8 fallback for the rest of the session.
+        actor = getattr(self.viewer, "_similarity_overlay_actor", None)
+        if actor is not None:
+            try:
+                actor.GetProperty().SetOpacity(opacity01)
+            except Exception:
+                pass
+        else:
+            primary_target = self.viewer.scene_context.get_primary_target()
+            ga = getattr(primary_target, "gaussian_actor", None)
+            if ga is not None:
+                try:
+                    ga.set_display_mix(opacity01)
+                except Exception:
+                    pass
+        try:
+            self.viewer.plotter.render()
+        except Exception:
+            pass
+
+    def apply_mode_colormap(self, mode: str) -> None:
+        """Point the shared dropdown at 'None' (multiclass) or the colormap
+        (binary) — the 3D analogue of the 2D tool's _apply_mode_colormap.
+
+        In multiclass the LUT holds the label palette, so the dropdown reads
+        'None'; back in binary it shows the similarity colormap again. No-op
+        when the overlay isn't engaged.
         """
-        if actor is None or not self._shader_in_play():
+        if not self.overlay_engaged:
             return
-
-        element_type = getattr(product, "get_element_type", lambda: None)()
-        # Splats are excluded: they have no VTK mapper for the colormap shader to
-        # replace (they recolor via the SH direct-RGB path), and render_scene
-        # short-circuits them before this is ever called.
-        if element_type not in ("face", "point"):
+        aw = getattr(self.main_window, "annotation_window", None)
+        if aw is None:
             return
+        target = 'None' if mode == "multiclass" else self._colormap_name.capitalize()
+        try:
+            if aw.colormap_dropdown.currentText() != target:
+                aw.colormap_dropdown.setCurrentText(target)
+        except Exception:
+            pass
 
-        sa = getattr(product, "selected_array", None)
-        if sa != "Similarity":
+    def _cancel_2d_engagement(self) -> None:
+        """Cancel the 2D FeatureSelectTool's work area + release its controls
+        (either/or exclusivity — the 3D overlay is about to engage)."""
+        try:
+            tool2d = self.main_window.annotation_window.tools.get('feature_select')
+        except Exception:
+            tool2d = None
+        if tool2d is None:
             return
         try:
-            from coralnet_toolbox.MVAT.shaders.SimilarityShader import (
-                install_similarity_shader,
-            )
-            install_similarity_shader(actor, self.shader_state, element_type=element_type)
-        except Exception as e:
-            self._disable_shader(f"install failed: {e}")
-
-    def uninstall_shader(self, actor) -> None:
-        """Remove the shader from a mesh actor (tool deactivate / array switch)."""
-        if actor is None:
-            return
-        try:
-            from coralnet_toolbox.MVAT.shaders.SimilarityShader import (
-                uninstall_similarity_shader,
-            )
-            uninstall_similarity_shader(actor)
-        except Exception as e:
-            print(f"[FeatureMeshManager] shader uninstall failed: {e}")
+            if getattr(tool2d, 'working_area', None) is not None:
+                tool2d.cancel_working_area()
+            release = getattr(tool2d, '_release_colormap_controls', None)
+            if callable(release):
+                release()
+        except Exception:
+            pass
 
 
 class BakeFeatureDialog(QDialog):
@@ -745,17 +1041,19 @@ class BakeFeatureDialog(QDialog):
 
         layout = QVBoxLayout()
 
-        # Precondition check
+        # Precondition check. Missing index maps are no longer blocking — the
+        # bake computes them automatically in a pre-pass — so only cameras
+        # without FEATURE maps are truly out.
         eligible, stats = feature_mesh_manager.prepare()
         precond_label = QLabel(
             f"Cameras: {stats['both']}/{stats['with_feature_map']} have both feature & index maps\n"
             f"Missing feature maps: {stats['missing_feature']}\n"
-            f"Missing index maps: {stats['missing_index']}"
+            f"Missing index maps: {stats['missing_index']} (computed automatically at bake)"
         )
         layout.addWidget(precond_label)
 
-        if stats["both"] == 0:
-            reject_label = QLabel("Cannot proceed: no cameras have both maps loaded.")
+        if stats["with_feature_map"] == 0:
+            reject_label = QLabel("Cannot proceed: no cameras have feature maps loaded.")
             layout.addWidget(reject_label)
             self.setMinimumHeight(200)
             cancel_btn = QPushButton("Close")

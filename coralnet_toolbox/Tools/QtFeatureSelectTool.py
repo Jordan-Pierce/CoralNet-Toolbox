@@ -166,9 +166,20 @@ class FeatureSelectTool(Tool):
         (Z-channel) overlay — the user re-selects it manually on exit — points the
         shared controls at the feature overlay, defaults the colormap to Plasma,
         and enables the controls so opacity/colormap can be tuned live.
+
+        2D and 3D feature engagement are either/or: engaging here first tears
+        down the MVAT similarity overlay (without releasing the shared controls
+        — we are about to take them over).
         """
         if self._colormap_controls_engaged:
             return
+        try:
+            fmm = getattr(getattr(self.main_window, 'mvat_manager', None),
+                          'feature_mesh_manager', None)
+            if fmm is not None and getattr(fmm, 'overlay_engaged', False):
+                fmm.disengage_overlay(release_controls=False)
+        except Exception:
+            pass
         aw = self.annotation_window
         try:
             aw._z_overlay.hide()

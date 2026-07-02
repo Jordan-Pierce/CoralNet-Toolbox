@@ -7,23 +7,31 @@ sink differs (FeatureMeshManager.recolor_by_similarity dispatches to the
 product). "face"/"mesh" wording below applies equally to points/splats.
 
 Interaction (mirrors the 2D FeatureSelectTool):
-  - Hover over the scene: live preview of similarity to the element under the
-    cursor (unioned with any committed prototypes), updated on the fly.
-  - Ctrl + left-click on an element: commit a positive prototype
-  - Ctrl + right-click: commit a negative prototype
-  - Ctrl + wheel: adjust the selection threshold (live thresholded preview)
-  - Space: finalize — paint the scene (and propagate to cameras if multi-annotate)
-  - Backspace: clear query
-  - Ctrl + Alt: toggle MULTI-CLASS mode (same gesture as the 2D tool). There a
-    Ctrl+click assigns the element to the CURRENTLY selected label (switch
-    labels to add more classes; Ctrl+right-click removes the selected label's
-    last prototype), Ctrl+wheel adjusts the reject floor, and Space commits one
-    paint per label (nearest-prototype argmax over the whole scene).
+  - Selecting the tool button does NOTHING visually. Press **Space** in the 3D
+    viewer to ENGAGE the similarity overlay (the 3D analogue of creating a 2D
+    work area): the heatmap appears over the current base array, and the
+    shared annotation-window colormap dropdown + opacity slider drive it.
+  - While engaged:
+      * Hover: live preview of similarity to the element under the cursor
+        (unioned with any committed prototypes).
+      * Ctrl + left-click: commit a positive prototype.
+      * Ctrl + right-click: commit a negative prototype.
+      * Ctrl + wheel: adjust the selection threshold (live thresholded preview).
+      * Space with prototypes: finalize — paint the scene (and propagate to
+        cameras if multi-annotate); stays engaged for the next query.
+      * Space with no prototypes: DISENGAGE (overlay off, controls released).
+      * Backspace: clear prototypes; with none, disengage.
+      * Ctrl + Alt: toggle MULTI-CLASS mode (same gesture as the 2D tool):
+        Ctrl+click assigns the element to the CURRENTLY selected label (switch
+        labels to add more classes; Ctrl+right-click removes the selected
+        label's last prototype), Ctrl+wheel adjusts the reject floor, Space
+        commits one paint per label (nearest-prototype argmax).
 
+Engagement is mutually exclusive with the 2D tool's work area (either/or).
 Both modes render through the same LUT-indexed display paths (mesh
-SimilarityShader disp texture / splat display channel), so a preview tick is
-always "C matvecs on the GPU + an [N]-byte upload" — multi-class costs the
-same as the binary gradient.
+SimilarityShader disp texture on the overlay actor / splat display channel),
+so a preview tick is always "C matvecs on the GPU + an [N]-byte upload" —
+multi-class costs the same as the binary gradient.
 """
 
 import numpy as np
@@ -54,7 +62,6 @@ class FeatureSelectTool3D(Tool3D):
         super().__init__(mvat_viewer, mvat_manager)
         self._preview_color = 'cyan'
         self._threshold = 0.5
-        self._previous_array = None
         # Once the user engages the threshold (Ctrl+wheel), keep showing the
         # thresholded preview as they add more points — adding a point should
         # refine the existing thresholded view, not reset it back to the full
@@ -88,66 +95,54 @@ class FeatureSelectTool3D(Tool3D):
         """Activate the tool. Nothing changes visually until the user engages.
 
         Mirrors the 2D FeatureSelectTool: selecting the tool button alone never
-        flips what the actor displays. The similarity view appears only when the
-        user selects the "Similarity" array in the viewer dropdown (the 3D
-        analogue of the 2D work-area engagement) — the tool merely streams
-        display VALUES, which stay invisible until that array is chosen.
+        flips what the viewer displays. The similarity overlay appears only
+        when the user presses Space (engage_overlay — the 3D analogue of
+        creating a 2D work area).
         """
         super().activate()
         # No brush sphere for this tool — hover drives the similarity preview.
         self._hide_preview_sphere()
-        # Save the previously selected array so deactivate can restore it
-        # (through the dropdown, keeping UI and display in sync).
-        primary_target = self.mvat_viewer.scene_context.get_primary_target()
-        if primary_target:
-            self._previous_array = getattr(primary_target, 'selected_array', 'RGB')
         self._pending_hover_world = None
         self._hover_dirty = False
         self._hover_timer.start()
 
     def deactivate(self):
-        """Deactivate and restore the previous array."""
+        """Deactivate: disengage the overlay and clear the query."""
         self._hover_timer.stop()
         self._pending_hover_world = None
         self._hover_dirty = False
         super().deactivate()
-        primary_target = self.mvat_viewer.scene_context.get_primary_target()
 
-        # Phase-2: tear the similarity GPU shader off the mesh actor so the mesh
-        # renders normally under the restored array / other tools.
         fmm = getattr(self.mvat_manager, 'feature_mesh_manager', None)
-        if fmm is not None and primary_target is not None:
-            actor = getattr(self.mvat_viewer, '_product_actors', {}).get(
-                getattr(primary_target, 'product_id', None)
-            )
-            if actor is not None:
-                fmm.uninstall_shader(actor)
 
-        # Clear any active query so the similarity array resets to baseline.
-        # Multi-class prototypes are dropped and the LUT returns to the colormap
-        # (it may hold the label palette when deactivating from multiclass).
+        # Drop the query and multi-class prototypes; the LUT returns to the
+        # colormap (it may hold the label palette when leaving multiclass).
         self._clear_class_prototypes()
         if fmm is not None and fmm.query_engine is not None:
             fmm.query_engine.clear()
             self._threshold_active = False
             fmm.apply_colormap()
-            fmm.recolor_by_similarity()
 
-        # Restore the array the user was on before the tool session, THROUGH
-        # the viewer's dropdown so the combo and the actor display change
-        # together (mirrors the 2D tool releasing the colormap controls on
-        # deactivate). No-op when the array never changed, so simply toggling
-        # the tool on/off causes zero visual churn.
-        if self._previous_array:
-            combo = getattr(self.mvat_viewer, 'array_selector_combo', None)
-            try:
-                if combo is not None:
-                    if combo.currentText() != self._previous_array:
-                        combo.setCurrentText(self._previous_array)
-                elif primary_target and hasattr(primary_target, 'set_selected_array'):
-                    primary_target.set_selected_array(self._previous_array)
-            except Exception:
-                pass
+        # Tear the overlay down and release the shared colormap controls
+        # (mirrors the 2D tool's deactivate → _release_colormap_controls).
+        if fmm is not None:
+            fmm.disengage_overlay()
+
+    def _engaged(self) -> bool:
+        """True while the similarity overlay is engaged (Space was pressed)."""
+        fmm = getattr(self.mvat_manager, 'feature_mesh_manager', None)
+        return bool(fmm is not None and getattr(fmm, 'overlay_engaged', False))
+
+    def _has_prompts(self) -> bool:
+        """Whether any prompt exists in the active mode (gates commit vs
+        disengage on Space/Backspace — 2D `_has_prompts` parity)."""
+        if self.mode == "multiclass":
+            return any(self.class_prototypes.values())
+        feature_manager = getattr(self.mvat_manager, 'feature_mesh_manager', None)
+        qe = getattr(feature_manager, 'query_engine', None)
+        if qe is None:
+            return False
+        return bool(qe.positive_ids or qe.negative_ids)
 
     def _clear_class_prototypes(self):
         """Drop all committed multi-class prototypes (bookkeeping only)."""
@@ -174,15 +169,20 @@ class FeatureSelectTool3D(Tool3D):
         feature_manager.query_engine.clear()
         self._clear_class_prototypes()
         self._threshold_active = False
+        # Shared dropdown → 'None' (multiclass) / colormap (binary); no-op
+        # while not engaged (2D _apply_mode_colormap parity).
+        feature_manager.apply_mode_colormap(self.mode)
         if self.mode == "multiclass":
-            self._update_class_display()
+            if self._engaged():
+                self._update_class_display()
             self._status("Feature Select 3D: MULTI-CLASS mode — Ctrl+click assigns "
                          "the selected label; switch labels to add more classes. "
                          "Space to commit, Ctrl+Alt to exit.", 6000)
         else:
             # Restore the colormap LUT (the class palette may be loaded).
             feature_manager.apply_colormap()
-            self._update_similarity_display()
+            if self._engaged():
+                self._update_similarity_display()
             self._status("Feature Select 3D: BINARY mode — Ctrl+click positive, "
                          "Ctrl+right-click negative. Ctrl+Alt for multi-class.", 4000)
 
@@ -208,6 +208,10 @@ class FeatureSelectTool3D(Tool3D):
             world_pos: World position [3]
         """
         if world_pos is None:
+            return
+
+        # No querying without engagement (2D parity: no work area → no clicks).
+        if not self._engaged():
             return
 
         # Only Ctrl-modified clicks drive the query; plain clicks fall through
@@ -304,6 +308,10 @@ class FeatureSelectTool3D(Tool3D):
             return
         self._hover_dirty = False
 
+        # No live preview until the overlay is engaged (Space).
+        if not self._engaged():
+            return
+
         feature_manager = self.mvat_manager.feature_mesh_manager
         if feature_manager.buffer is None or feature_manager.query_engine is None:
             return
@@ -373,6 +381,9 @@ class FeatureSelectTool3D(Tool3D):
             event: QWheelEvent (real Qt event on this path).
             delta_y: Wheel delta in pixels.
         """
+        if not self._engaged():
+            return
+
         step = 0.02
         if self.mode == "multiclass":
             # Adjust the reject floor and refresh the class preview.
@@ -405,36 +416,54 @@ class FeatureSelectTool3D(Tool3D):
         Args:
             event: QKeyEvent
         """
+        feature_manager = self.mvat_manager.feature_mesh_manager
+
         if event.key() == Qt.Key_Space:
-            # Space: finalize the highlighted selection — paint the mesh (and,
-            # when multi-annotate is on, propagate to the context cameras).
-            if self.mode == "multiclass":
-                self._commit_multiclass()
+            # Space state machine (2D work-area parity):
+            #   not engaged            → engage the similarity overlay
+            #   engaged + prototypes   → commit (stays engaged for the next query)
+            #   engaged, no prototypes → disengage (overlay off, controls back)
+            if not self._engaged():
+                if feature_manager.engage_overlay(mode=self.mode):
+                    self._status("Feature Select 3D: overlay engaged — Ctrl+click "
+                                 "to query, Space to commit, Backspace to clear. "
+                                 "Colormap + opacity: annotation-window controls.",
+                                 5000)
+            elif self._has_prompts():
+                if self.mode == "multiclass":
+                    self._commit_multiclass()
+                else:
+                    self._commit_selection_to_label()
             else:
-                self._commit_selection_to_label()
+                feature_manager.disengage_overlay()
             event.accept()
         elif event.key() == Qt.Key_Backspace:
-            # Clear query / class prototypes and reset the preview.
-            feature_manager = self.mvat_manager.feature_mesh_manager
-            if self.mode == "multiclass":
-                self._clear_class_prototypes()
-                if feature_manager.query_engine is not None:
-                    self._update_class_display()
-            elif feature_manager.query_engine is not None:
-                feature_manager.query_engine.clear()
-                self._threshold_active = False
-                self._update_similarity_display()
+            # Backspace: clear prototypes; with none, disengage (2D parity).
+            if not self._engaged():
+                event.accept()
+                return
+            if self._has_prompts():
+                if self.mode == "multiclass":
+                    self._clear_class_prototypes()
+                    if feature_manager.query_engine is not None:
+                        self._update_class_display()
+                elif feature_manager.query_engine is not None:
+                    feature_manager.query_engine.clear()
+                    self._threshold_active = False
+                    self._update_similarity_display()
+            else:
+                feature_manager.disengage_overlay()
             event.accept()
         else:
             super().keyPressEvent(event)
 
     def _update_similarity_display(self, thresholded: bool = False,
                                    hover_id: int = None) -> None:
-        """Recolor the mesh by similarity and ensure the Similarity array is shown.
+        """Refresh the engaged similarity overlay (binary gradient/threshold view).
 
         Args:
             thresholded: When True, show a live preview of the thresholded
-                selection (only faces that Enter would commit are lit). When
+                selection (only faces that Space would commit are lit). When
                 False, show the raw similarity gradient.
             hover_id: optional transient prototype (face under the cursor) folded
                 into the query for live hover preview, without committing it.
@@ -443,16 +472,10 @@ class FeatureSelectTool3D(Tool3D):
         if feature_manager.buffer is None or feature_manager.query_engine is None:
             return
 
-        # Write the (optionally thresholded) similarity scalars into the mesh.
+        # Write the (optionally thresholded) display values; the overlay actor's
+        # shader (or the splat display channel) picks them up on the render.
         threshold = self._threshold if thresholded else None
         feature_manager.recolor_by_similarity(threshold=threshold, hover_id=hover_id)
-
-        # The mesh actor's mapper is only bound to the Similarity scalar (with
-        # the similarity colormap) when the viewer rebuilds the actor via
-        # get_render_style() — set_selected_array() alone just stores an
-        # attribute. So the first time we show similarity we must drive the
-        # viewer's array-selection path (render_scene); afterwards the in-place
-        # scalar write + a cheap render() is enough.
         self.mvat_viewer.plotter.render()
 
     def _commit_selection_to_label(self) -> None:
@@ -486,10 +509,9 @@ class FeatureSelectTool3D(Tool3D):
         if selected_ids.size == 0:
             return
 
-        # 1. Paint the mesh with the selection. We deliberately stay on the
-        # current array (Similarity) rather than switching to Labels — the
-        # paint is flushed to the GPU so it shows the moment the user switches
-        # the dropdown to Labels, but the query view is preserved here.
+        # 1. Paint the mesh with the selection. The overlay stays engaged — the
+        # paint is flushed to the GPU so it shows through the label overlay /
+        # Labels views, while the query view is preserved here.
         primary_target = self.mvat_viewer.scene_context.get_primary_target()
         if primary_target and hasattr(primary_target, 'apply_labels'):
             primary_target.apply_labels(selected_ids, class_id, color_rgb)

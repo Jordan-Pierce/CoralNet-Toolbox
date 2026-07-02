@@ -147,13 +147,28 @@ class PaintShaderManager:
     # ------------------------------------------------------------------
     def should_show_label_overlay(self, product) -> bool:
         """True when a translucent label-overlay actor should be drawn over the
-        product's base array (slider open, not the Labels/Similarity array)."""
+        product's base array (slider open, not the Labels array).
+
+        Suppressed on the primary target while the Feature Select similarity
+        overlay is engaged: the heatmap should be unobscured (matching the
+        splat path, which zeroes the label boost), and two coincident
+        translucent overlays would z-fight.
+        """
         if not self.shader_enabled or self.paint_opacity <= 0.0:
             return False
         if not self._is_paintable(product):
             return False
         sa = getattr(product, "selected_array", None)
-        return sa not in ("Labels", "Similarity")
+        if sa == "Labels":
+            return False
+        fmm = getattr(self.mvat_manager, 'feature_mesh_manager', None)
+        if fmm is not None and getattr(fmm, 'overlay_engaged', False):
+            try:
+                if product is self.viewer.scene_context.get_primary_target():
+                    return False
+            except Exception:
+                pass
+        return True
 
     def install_label_overlay_shader(self, actor, product) -> bool:
         """Install the replace+discard shader on a translucent overlay actor that

@@ -103,6 +103,7 @@ class AnnotationWindow(BaseCanvas):
     annotationGeometryEdited = pyqtSignal(str, object)  # annotation_id, {'old_geom':..., 'new_geom':...}
     annotationSelectionChanged = pyqtSignal(object)  # list of annotation IDs when selection changes
     overlayColormapChanged = pyqtSignal(str)  # colormap name when the shared overlay dropdown changes
+    overlayOpacityChanged = pyqtSignal(float)  # overlay opacity 0..1 when the shared slider moves
 
     def __init__(self, main_window, parent=None):
         """Initialize the annotation window with the main window and parent widget."""
@@ -622,6 +623,10 @@ class AnnotationWindow(BaseCanvas):
 
         # Update the active overlay (Z-channel depth or feature similarity).
         self.set_overlay_opacity(opacity)
+
+        # Broadcast so other views can mirror the value (e.g. the MVAT 3D
+        # similarity overlay — wired in QtMainWindow, gated on 3D engagement).
+        self.overlayOpacityChanged.emit(opacity)
 
         # Sync to all context matrix canvases (depth overlay only).
         if (self._active_colormap_overlay is not self._feature_overlay

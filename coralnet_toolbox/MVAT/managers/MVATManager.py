@@ -2416,11 +2416,19 @@ class MVATManager(QObject):
             self.main_window.status_bar.showMessage("Index maps ready.", 3000)
             QApplication.restoreOverrideCursor()
 
-    def _compute_visibility_async(self, primary_target, cameras):
+    def _compute_visibility_async(self, primary_target, cameras, on_complete=None):
         """
         Asynchronously compute visibility for a set of cameras using a worker thread.
         Supports both orthographic and perspective cameras, and leverages caching
         to avoid redundant computations.
+
+        Args:
+            on_complete: optional ``callable(ok: bool)`` invoked on the main
+                thread AFTER the results have been processed (queued signals
+                deliver in connect order, so ``_on_visibility_computed`` /
+                ``_on_visibility_error`` — which install providers and reset the
+                busy state — run first). Used by the feature-bake pre-pass to
+                chain slices of index-map computation.
         """
         # Prepare camera parameters and cache keys for asynchronous visibility computation.
         camera_params_dict = {}
@@ -2481,6 +2489,11 @@ class MVATManager(QObject):
             worker.signals.finished.connect(self._on_visibility_computed)
             worker.signals.error.connect(self._on_visibility_error)
 
+            # Chained-completion hook (fires after the handlers above).
+            if on_complete is not None:
+                worker.signals.finished.connect(lambda _r: on_complete(True))
+                worker.signals.error.connect(lambda _e: on_complete(False))
+
             # Both finished and error must quit the thread so it can be cleaned up
             worker.signals.finished.connect(thread.quit)
             worker.signals.error.connect(thread.quit)
@@ -2519,6 +2532,13 @@ class MVATManager(QObject):
             print(f"Failed to start visibility worker: {e}")
             self._is_computing_visibility = False
             QApplication.restoreOverrideCursor()
+            # A failed LAUNCH must still resolve the chain, or the bake
+            # pre-pass would stall waiting for a callback that never comes.
+            if on_complete is not None:
+                try:
+                    on_complete(False)
+                except Exception:
+                    pass
 
     # --- Label painter management ------------------------------------------------
     def submit_3d_face_paint(self, face_ids, color_rgb, class_id: int, primary_target=None, label_id=None):

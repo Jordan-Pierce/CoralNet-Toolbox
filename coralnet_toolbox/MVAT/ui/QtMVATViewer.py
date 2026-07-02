@@ -420,6 +420,10 @@ class MVATViewer(QFrame):
         self.scene_context = SceneContext()
         # Product actors keyed by product_id
         self._product_actors = {}
+        # Similarity-overlay actor (Feature Select engagement) — at most one,
+        # always on the primary target. See _sync_similarity_overlay_actor.
+        self._similarity_overlay_actor = None
+        self._similarity_overlay_product_id = None
         # Translucent label-overlay actors (labels shown over a non-Labels base
         # array via the opacity slider), keyed by product_id.
         self._label_paint_actors = {}
@@ -1974,16 +1978,8 @@ class MVATViewer(QFrame):
                     product.set_selected_array(array_name)
                     needs_render = True
                     
-        # Phase-2: when switching away from the Similarity heatmap, tear the GPU
-        # shader off the live mesh actor first (render_scene rebuilds the actor
-        # clean, but this also covers the no-rebuild path and releases textures).
-        if array_name != "Similarity":
-            fmm = getattr(self.mvat_manager, 'feature_mesh_manager', None)
-            primary = self.scene_context.get_primary_target()
-            if fmm is not None and primary is not None:
-                actor = self._product_actors.get(getattr(primary, 'product_id', None))
-                if actor is not None:
-                    fmm.uninstall_shader(actor)
+        # (Similarity is no longer a selectable array — the heatmap lives on
+        # its own engaged overlay actor, unaffected by array switches.)
 
         # The label-overlay shader's install is managed entirely by render_scene: it
         # rebuilds each actor fresh and _sync_label_overlay_actor draws the paint
@@ -2714,24 +2710,20 @@ class MVATViewer(QFrame):
 
                 self._product_actors[product_id] = actor
 
-                # Phase-2: (re)install the feature-similarity GPU shader on the
-                # freshly built actor when the Similarity array is active. The
-                # actor is rebuilt here on every full render, so the shader must
-                # be re-applied; the install is a no-op otherwise and falls back
-                # to the uint8 cell scalar on any failure.
-                fmm = getattr(self.mvat_manager, 'feature_mesh_manager', None)
-                if fmm is not None:
-                    try:
-                        fmm.maybe_install_shader(actor, product)
-                    except Exception:
-                        pass
-
                 # Label paint is rendered by the translucent label-overlay actor
                 # below (the paint shader in discard mode), not on the base actor —
                 # "Labels" is no longer a selectable base array. Rebuilt each render.
                 try:
                     self._sync_label_overlay_actor(product, mesh, product_id,
                                                     should_be_visible, style)
+                except Exception:
+                    pass
+
+                # Similarity overlay (Feature Select engagement): rebuilt with
+                # the base actor whenever engaged; self-gating no-op otherwise.
+                try:
+                    self._sync_similarity_overlay_actor(product, mesh, product_id,
+                                                        should_be_visible, style)
                 except Exception:
                     pass
 
@@ -2749,6 +2741,9 @@ class MVATViewer(QFrame):
                         stale = self._label_paint_actors.pop(pid, None)
                         if stale is not None:
                             self.plotter.remove_actor(stale, render=False)
+                if (self._similarity_overlay_actor is not None
+                        and self._similarity_overlay_product_id not in current_ids):
+                    self._remove_similarity_overlay_actor()
             except Exception:
                 pass
 
@@ -2873,6 +2868,127 @@ class MVATViewer(QFrame):
             pass
 
         self._label_paint_actors[product_id] = overlay_actor
+
+    # --------------------------------------------------------------------------
+    # Similarity overlay actor (Feature Select engagement)
+    # --------------------------------------------------------------------------
+    def _sync_similarity_overlay_actor(self, product=None, mesh=None,
+                                       product_id=None, visible=None,
+                                       base_style=None):
+        """Create/remove the similarity-overlay actor for the primary product.
+
+        The 3D analogue of the 2D feature heatmap: while the Feature Select
+        overlay is ENGAGED (FeatureMeshManager.overlay_engaged), a second actor
+        sharing the primary mesh/point-cloud geometry is drawn over the base
+        actor with the SimilarityShader installed (per-element disp texture +
+        256-LUT), at the shared colormap-opacity slider's opacity. Splats don't
+        use an actor — their display channel is engaged on the product instead.
+
+        Mirrors _sync_label_overlay_actor: same style dict as the base actor
+        (shared polydata, copy_mesh=False — different scalars would corrupt the
+        base coloring; the shader does ScalarVisibilityOff so they never draw),
+        polygon offset to win the depth test. Args default to the primary
+        target when omitted (the engage path calls this with no args).
+        """
+        # The geometry is rebuilt with the base actor each render, so drop any
+        # prior overlay actor first.
+        self._remove_similarity_overlay_actor()
+
+        fmm = getattr(self.mvat_manager, 'feature_mesh_manager', None)
+        if (fmm is None or not getattr(fmm, 'overlay_engaged', False)
+                or fmm.shader_state is None):
+            return
+
+        primary = self.scene_context.get_primary_target()
+        if primary is None:
+            return
+        if product is None:
+            product = primary
+        elif product is not primary:
+            return  # the overlay only ever exists on the primary target
+        element_type = getattr(product, 'get_element_type', lambda: None)()
+        if element_type not in ('face', 'point'):
+            return
+
+        if mesh is None:
+            mesh = product.get_render_mesh()
+        if mesh is None:
+            return
+        if product_id is None:
+            product_id = getattr(product, 'product_id', None)
+        if base_style is None:
+            base_style = product.get_render_style()
+        if visible is None:
+            visible = self._get_visibility_for_product(product)
+
+        # Opacity comes from the shared annotation-window colormap slider.
+        opacity01 = 0.5
+        try:
+            aw = self.mvat_manager.main_window.annotation_window
+            opacity01 = aw.colormap_opacity_slider.value() / 255.0
+        except Exception:
+            pass
+
+        overlay_kwargs = dict(base_style)
+        overlay_kwargs.update(
+            render=False,
+            reset_camera=False,
+            copy_mesh=False,
+            lighting=False,
+            show_scalar_bar=False,
+            opacity=opacity01,
+        )
+        try:
+            overlay_actor = self.plotter.add_mesh(mesh, **overlay_kwargs)
+        except Exception:
+            return
+
+        try:
+            from coralnet_toolbox.MVAT.shaders.SimilarityShader import (
+                install_similarity_shader,
+            )
+            install_similarity_shader(overlay_actor, fmm.shader_state,
+                                      element_type=element_type)
+        except Exception as e:
+            try:
+                self.plotter.remove_actor(overlay_actor, render=False)
+            except Exception:
+                pass
+            fmm._disable_shader(f"overlay install failed: {e}")
+            return
+
+        try:
+            overlay_actor.GetProperty().SetOpacity(opacity01)
+            # Stronger polygon offset than the label overlay (-2) so the
+            # similarity view wins the depth test if both ever coexist.
+            mapper = overlay_actor.GetMapper()
+            if mapper is not None:
+                mapper.SetResolveCoincidentTopologyToPolygonOffset()
+                try:
+                    mapper.SetRelativeCoincidentTopologyPolygonOffsetParameters(-4.0, -4.0)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        try:
+            overlay_actor.SetVisibility(bool(visible))
+        except Exception:
+            pass
+
+        self._similarity_overlay_actor = overlay_actor
+        self._similarity_overlay_product_id = product_id
+
+    def _remove_similarity_overlay_actor(self):
+        """Remove the similarity-overlay actor from the scene, if present."""
+        actor = getattr(self, '_similarity_overlay_actor', None)
+        self._similarity_overlay_actor = None
+        self._similarity_overlay_product_id = None
+        if actor is not None:
+            try:
+                self.plotter.remove_actor(actor, render=False)
+            except Exception:
+                pass
 
     def _get_visibility_for_product(self, product: 'AbstractSceneProduct') -> bool:
         """

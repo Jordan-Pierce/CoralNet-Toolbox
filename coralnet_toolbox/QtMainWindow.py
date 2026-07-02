@@ -1404,13 +1404,16 @@ class MainWindow(QMainWindow):
         self.annotation_window.toolChanged.connect(self.handle_tool_changed)
 
         # ---------------------------------------------------------------------
-        # Shared overlay colormap -> 3D feature-similarity view
-        # - The annotation window's colormap dropdown is the single colormap
-        #   control; mirror its choice into the MVAT similarity LUT so the 2D
-        #   heatmap and the 3D Feature Select view always color alike.
+        # Shared overlay controls -> 3D feature-similarity overlay
+        # - The annotation window's colormap dropdown and opacity slider are the
+        #   single overlay controls; mirror them into the MVAT similarity view
+        #   while (and only while) the 3D overlay is engaged. Engagement is
+        #   either/or with the 2D tool's work area, so exactly one view listens.
         # ---------------------------------------------------------------------
         self.annotation_window.overlayColormapChanged.connect(
             self._on_overlay_colormap_changed)
+        self.annotation_window.overlayOpacityChanged.connect(
+            self._on_overlay_opacity_changed)
 
         # ---------------------------------------------------------------------
         # Label and annotation selection flows
@@ -2329,6 +2332,20 @@ class MainWindow(QMainWindow):
                         self.mvat_viewer.set_selected_3d_tool('feature')
                     except Exception:
                         pass
+
+                # The ONE immediate visual effect of the button press: hide the
+                # 2D z-channel overlay so it can't be confused with the feature
+                # heatmap. One-way (the tool's release path leaves Z hidden by
+                # design); nothing else changes until the user ENGAGES — a work
+                # area in the 2D window, or Space in the 3D viewer.
+                try:
+                    aw = self.annotation_window
+                    aw._z_overlay.hide()
+                    if hasattr(aw, 'z_dynamic_button'):
+                        aw.z_dynamic_button.setChecked(False)
+                        aw.z_dynamic_button.setEnabled(False)
+                except Exception:
+                    pass
             else:
                 self.toolChanged.emit(None)
                 if hasattr(self, 'mvat_viewer') and self.mvat_viewer:
@@ -2390,23 +2407,45 @@ class MainWindow(QMainWindow):
                 self.toolChanged.emit(None)
                 self._sync_mvat_3d_tool_selection()
 
+    def _feature_mesh_manager(self):
+        """The MVAT FeatureMeshManager, or None."""
+        manager = getattr(self, 'mvat_manager', None)
+        return getattr(manager, 'feature_mesh_manager', None) if manager else None
+
     def _on_overlay_colormap_changed(self, colormap_name: str):
         """Mirror the shared 2D overlay colormap into the 3D feature view.
 
-        'None' means "no 2D overlay colorization" and has no 3D meaning — the
-        similarity LUT keeps its last real colormap in that case. A real
-        colormap is a live 256-entry LUT swap on the mesh similarity shader /
-        splat display channel, so the recolor is instant.
+        Only while the 3D similarity overlay is ENGAGED (either/or with the 2D
+        tool — whichever side is engaged owns the shared controls). 'None'
+        means "no 2D overlay colorization" and has no 3D meaning — the
+        similarity LUT keeps its last real colormap (the multiclass palette
+        LUT also lives under a 'None' dropdown). A real colormap is a live
+        256-entry LUT swap on the mesh similarity shader / splat display
+        channel, so the recolor is instant.
         """
         if not colormap_name or colormap_name == "None":
             return
         try:
-            manager = getattr(self, 'mvat_manager', None)
-            fmm = getattr(manager, 'feature_mesh_manager', None) if manager else None
-            if fmm is not None:
+            fmm = self._feature_mesh_manager()
+            if fmm is not None and getattr(fmm, 'overlay_engaged', False):
                 fmm.set_colormap(colormap_name.lower())
                 if getattr(self, 'mvat_viewer', None) is not None:
                     self.mvat_viewer.plotter.render()
+        except Exception:
+            pass
+
+    def _on_overlay_opacity_changed(self, opacity01: float):
+        """Mirror the shared overlay-opacity slider into the 3D feature view.
+
+        Drives the similarity overlay actor's opacity (mesh/point cloud) or
+        the splat display-channel mix. FeatureMeshManager.set_overlay_opacity
+        self-gates on engagement, so this is a no-op while the 2D tool (or
+        nothing) owns the controls.
+        """
+        try:
+            fmm = self._feature_mesh_manager()
+            if fmm is not None:
+                fmm.set_overlay_opacity(float(opacity01))
         except Exception:
             pass
 

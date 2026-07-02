@@ -65,6 +65,9 @@ class FeatureBakeWorker(QObject):
         # never be interpolated).
         self.interpolation = str(interpolation or "nearest").lower()
         self._cancelled = False
+        # Cameras skipped during the bake (missing/unloadable maps or a
+        # per-camera failure) — surfaced via provenance for the status report.
+        self._skipped_cameras: list = []
 
     def cancel(self):
         """Request cancellation."""
@@ -119,10 +122,14 @@ class FeatureBakeWorker(QObject):
                 raise RuntimeError("Worker cancelled")
 
             try:
-                self._process_camera(
+                processed = self._process_camera(
                     camera, feature_sum, weight_sum, N, device, use_torch,
                     centers, normals, centers_gpu, normals_gpu,
                 )
+                if not processed:
+                    print(f"[FeatureBake] Camera {path} skipped: missing feature/index map")
+                    self._skipped_cameras.append(path)
+                    continue
                 if C is None:
                     # Infer C from the first successful map
                     fm = camera._raster.feature_map
@@ -130,6 +137,7 @@ class FeatureBakeWorker(QObject):
                         C = fm.shape[-1]
             except Exception as e:
                 print(f"[FeatureBake] Camera {path} failed: {e}")
+                self._skipped_cameras.append(path)
                 continue
 
             if (cam_idx + 1) % max(1, total_cams // 10) == 0:
@@ -200,6 +208,7 @@ class FeatureBakeWorker(QObject):
             "element_count": N,
             "num_valid": int(np.sum(valid_np)),
             "num_cameras": len(self.eligible_cameras),
+            "skipped_cameras": list(self._skipped_cameras),
         }
 
         self.signals.progress.emit(total_cams, total_cams, "Finalizing buffer…")
@@ -229,8 +238,11 @@ class FeatureBakeWorker(QObject):
     def _process_camera(self, camera: Any, feature_sum, weight_sum, N: int,
                         device: str, use_torch: bool,
                         centers, normals,
-                        centers_gpu, normals_gpu) -> None:
+                        centers_gpu, normals_gpu) -> bool:
         """Lift, compress, weight, and scatter one camera's features.
+
+        Returns False when the camera has to be skipped (missing feature or
+        index map — the caller records it for the bake's skip report).
 
         The feature grid is tiny (e.g. 14×14) relative to the full-resolution
         index_map (e.g. 3310×5104). Downsampling the index_map to the patch grid
@@ -246,9 +258,14 @@ class FeatureBakeWorker(QObject):
         raster = camera._raster
         feature_map = raster.feature_map  # [h, w, C] fp16 via LRU
         index_map = raster.index_map      # [H, W] int32, -1 = background
+        # NOTE: raster.index_map is the lazy property — for aggressive-mode
+        # cameras whose dense map was dropped on unpin, this regenerates it via
+        # the recompute provider (thread-safe; the rasterizer marshals GL work
+        # to its owner thread). That is what lets scope="all" bake cameras that
+        # are not currently visible in the ContextMatrix.
 
         if feature_map is None or index_map is None:
-            return
+            return False
 
         feature_map = np.asarray(feature_map, dtype=np.float32)  # [h, w, C]
         h_feat, w_feat, C = feature_map.shape
@@ -392,6 +409,7 @@ class FeatureBakeWorker(QObject):
 
                 total_kept += int(ids.size)
 
+        return True
 
     @staticmethod
     def _sample_grid_bilinear(F_grid: np.ndarray, rr: np.ndarray,
