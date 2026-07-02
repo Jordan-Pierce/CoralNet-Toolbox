@@ -44,11 +44,23 @@ class GlobalEventFilter(QObject):
 
                     # Handle Alt key for switching between Select and Annotation tools
                     if event.key() == Qt.Key_Alt:
+                        # Ctrl+Alt toggles multi-class mode when the Feature Select
+                        # tool is active; otherwise it falls back to tool-switching.
+                        if (self.annotation_window.selected_tool == "feature_select"
+                                and "feature_select" in self.annotation_window.tools):
+                            self.annotation_window.tools["feature_select"]._toggle_multiclass_mode()
+                            return True
                         self.main_window.switch_back_to_tool()
                         return True
 
                     # Handle hotkey for image classification prediction
                     if event.key() == Qt.Key_1:
+                        # If PatchTool is active and model is loaded, toggle live classify
+                        if (self.annotation_window.selected_tool == "patch" and
+                                self.classify_deploy_model_dialog.loaded_model is not None):
+                            self.annotation_window.tools["patch"].toggle_live_classify()
+                            return True
+
                         if self.classify_deploy_model_dialog.loaded_model is not None:
                             self.classify_deploy_model_dialog.predict()
                         else:

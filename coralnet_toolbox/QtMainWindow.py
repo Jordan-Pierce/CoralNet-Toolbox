@@ -804,7 +804,10 @@ class MainWindow(QMainWindow):
                       "Create point (patch) annotations centered at the cursor.\n"
                       "• Left-click to place a patch at the mouse location.\n"
                       "• Hold Ctrl and use the mouse wheel or use the Patch Size box to adjust patch size.\n"
-                      "• A semi-transparent preview shows the patch before placing it."),
+                      "• A semi-transparent preview shows the patch before placing it.\n"
+                      "• Press Ctrl+1 to toggle Live Classification mode (requires a loaded classification model).\n"
+                      "  In Live Classification mode, hover to see real-time predicted labels and confidence scores.\n"
+                      "  This is useful for identifying areas where the current model is uncertain (edge cases)."),
             
             "rectangle": ("Rectangle Tool\n\n"
                           "Create rectangular annotations by clicking and dragging.\n"
@@ -869,13 +872,24 @@ class MainWindow(QMainWindow):
 
             "feature_select": ("Feature Select Tool\n\n"
                                 "Click-to-query dense-feature semantic similarity (heatmap overlay).\n"
-                                "• Ctrl+Left-click to add a positive prototype.\n"
-                                "• Ctrl+Right-click to add a negative prototype.\n"
-                                "• Hold Ctrl and use the mouse wheel to adjust the similarity threshold.\n"
-                                "• Press Spacebar to define a work area.\n"
-                                "• Press Spacebar again to confirm; creates Polygon/Mask annotation.\n"
-                                "• Press Backspace to clear the current query.\n"
-                                "Requires a deployed feature model to be deployed first.\n"),
+                                "• Space (or Left-click, Left-click) to define a work area first.\n"
+                                "• Ctrl+Alt toggles between Binary and Multi-class mode.\n"
+                                "\n"
+                                "Binary mode (one object):\n"
+                                "• Ctrl+Left-click adds a positive prototype, Ctrl+Right-click a negative.\n"
+                                "• Ctrl+wheel adjusts the similarity threshold; the toolbar colormap\n"
+                                "  dropdown / opacity slider control the heatmap (defaults to Plasma).\n"
+                                "\n"
+                                "Multi-class mode (one blob per label):\n"
+                                "• Ctrl+Left-click assigns the patch to the selected label; switch labels\n"
+                                "  to add more classes. Ctrl+Right-click undoes that label's last point.\n"
+                                "• Ctrl+wheel adjusts the reject threshold; the preview is colored per\n"
+                                "  label and tracks the annotation transparency slider.\n"
+                                "\n"
+                                "• A yellow crosshair suggests the most informative next point to\n"
+                                "  label; it updates after each click (or press N to refresh).\n"
+                                "• Space finalizes: creates a Polygon/Mask annotation; Backspace clears.\n"
+                                "• A Feature model must be deployed first.\n"),
             
             "work_area": ("Work Area Tool\n\n"
                           "Defines regions for detection and segmentation models to run predictions on.\n"
@@ -1587,16 +1601,16 @@ class MainWindow(QMainWindow):
         return self.annotation_window.scale_unit_dropdown
 
     @property
-    def z_colormap_dropdown(self):
+    def colormap_dropdown(self):
         if not hasattr(self, 'annotation_window') or self.annotation_window is None:
             return None
-        return self.annotation_window.z_colormap_dropdown
+        return self.annotation_window.colormap_dropdown
 
     @property
-    def z_transparency_widget(self):
+    def colormap_opacity_slider(self):
         if not hasattr(self, 'annotation_window') or self.annotation_window is None:
             return None
-        return self.annotation_window.z_transparency_widget
+        return self.annotation_window.colormap_opacity_slider
             
     def update_project_label(self):
         """Update the project label in the status bar"""

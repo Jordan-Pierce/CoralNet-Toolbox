@@ -33,7 +33,7 @@ pip install uv
 ```
 
 **2. (Optional) GPU Acceleration**
-If you have an NVIDIA GPU with CUDA, install PyTorch with CUDA support for full acceleration.
+If you have an NVIDIA GPU with `CUDA`, install `PyTorch` with `CUDA` support for full acceleration.
 
 ```bash
 # Example for CUDA 12.8; use your version of CUDA
@@ -94,7 +94,7 @@ uv pip install -U coralnet-toolbox==[latest_version]
 
 ### MacOS Users
 
-Version `1.0.0` and greater relies heavily relies on a package (`PyQtADS`) that cannot be installed on your operating system. Please do not upgrade from `0.0.105` until this is resolved.
+Version `1.0.0` and greater relies heavily on a package (`PyQtADS`) that cannot be installed on your operating system. Please do not upgrade from `0.0.105` until this is resolved.
  
 -----
 

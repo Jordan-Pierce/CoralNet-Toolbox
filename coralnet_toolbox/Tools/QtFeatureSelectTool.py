@@ -1,9 +1,9 @@
 """
 FeatureSelectTool — 2D feature-similarity query tool for the annotation window.
 
-A 2D feature-similarity selection tool. Instead of SAM, it queries a
-dense feature map (DINOv2/v3, TIMM, ...) with cosine similarity and shows the
-per-patch similarity as a live heatmap overlay. The interaction mirrors SAMTool:
+Instead of SAM, it queries a dense feature map (DINOv2/v3, TIMM, ...) with
+cosine similarity and shows the per-patch similarity as a live heatmap overlay.
+The interaction mirrors SAMTool:
 
   - The tool requires a deployed feature model (gated at the toolbar button).
   - On activation nothing is shown; the user first defines a **work area** — a
@@ -28,7 +28,6 @@ import warnings
 
 import numpy as np
 
-import pyqtgraph as pg
 from PyQt5.QtCore import Qt, QPointF, QRectF, QTimer
 from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush
 from PyQt5.QtWidgets import QGraphicsEllipseItem, QGraphicsRectItem, QApplication
@@ -81,12 +80,40 @@ class FeatureSelectTool(Tool):
         self.threshold = 0.5
         self.threshold_active = False
 
+        # ---- Multi-class mode (toggled with Ctrl+Alt while the tool is active) ----
+        # In "multiclass" mode a Ctrl+click assigns the patch to the CURRENTLY
+        # selected label instead of a fixed positive/negative bucket; commit
+        # classifies the work area (nearest-prototype) and writes one blob per
+        # label. Binary pos/neg stays the default for single-object extraction.
+        self.mode = "binary"            # "binary" | "multiclass"
+        self.class_prototypes = {}      # label_id -> list[element_id]
+        self.class_point_graphics = {}  # label_id -> list[QGraphicsItem]
+        self.class_labels = {}          # label_id -> Label (resolved at commit)
+        self.class_colors = {}          # label_id -> (r, g, b) (for the overlay)
+        # Reject floor on raw cosine similarity: pixels whose best-class score is
+        # below this stay unlabeled (separate from the binary `threshold`, which
+        # lives on the mapped [0,1] scale).
+        self.multiclass_threshold = 0.5
+        # Cached last preview (index field + colors) so a transparency-slider
+        # drag can re-blit the overlay without re-running classification.
+        self._last_label_idx = None
+        self._last_label_colors = []
+
+        # ---- Active-learning point suggestion (press N) ----------------------
+        # Recommend where to click next by combining model uncertainty (1 - best
+        # similarity to any labeled prototype) with spatial distance from the
+        # existing clicks, after Raine et al. 2024. lambda weights uncertainty
+        # vs. distance; sigma controls the distance falloff (in feature-grid
+        # cells, derived per work area in suggest_next_point).
+        self.suggest_lambda = 2.2
+        self.suggestion_graphics = []
+
         # Output settings — synced from the feature deploy dialog.
         self.output_type = "Polygon"
         self.allow_holes = False
 
-        # Optional final-mask propagation callback, wired by any consumer
-        # (same contract as SAMTool.post_prediction_callback).
+        # Optional final-mask propagation callback (same contract as
+        # SAMTool.post_prediction_callback). Unused in 2D-only builds.
         # Signature: callback(anchor: QPointF, label_id: str, binary_mask: np.ndarray)
         self.post_prediction_callback = None
 
@@ -97,29 +124,20 @@ class FeatureSelectTool(Tool):
 
         self.hover_pos = None
 
-        # Debounce hover heatmap refresh so a flood of move events can't back up.
+        # Debounce hover refresh so a flood of move events can't back up.
         self.hover_timer = QTimer()
         self.hover_timer.setSingleShot(True)
         self.hover_timer.timeout.connect(self._on_hover_timeout)
         self.debounce_ms = 30
 
-        # Colormap lookup table [256, 4] uint8 for the similarity heatmap, built once.
-        self._lut = self._build_colormap_lut()
+        # Whether the shared colormap controls have been handed to the feature
+        # overlay. Engaged only once a work area exists (not on tool activation),
+        # so deactivate() only tears them down if we actually took them over.
+        self._colormap_controls_engaged = False
 
+    # The similarity overlay's colormap is now owned by the shared ColorMapOverlay
+    # (driven by the colormap dropdown); the tool only emits palette indices.
     DEFAULT_COLORMAP = "Plasma"
-
-    @staticmethod
-    def _build_colormap_lut():
-        """Build a [256, 4] uint8 RGBA LUT from the default colormap."""
-        for name in (FeatureSelectTool.DEFAULT_COLORMAP, FeatureSelectTool.DEFAULT_COLORMAP.lower()):
-            try:
-                cmap = pg.colormap.get(name)
-                if cmap is not None:
-                    return cmap.getLookupTable(nPts=256, alpha=True)
-            except Exception:
-                continue
-        ramp = np.linspace(0, 255, 256).astype(np.uint8)
-        return np.stack([ramp, ramp, ramp, np.full(256, 255, np.uint8)], axis=1)
 
     # ==================== Activation ====================
 
@@ -129,6 +147,96 @@ class FeatureSelectTool(Tool):
         self.annotation_window.setCursor(self.cursor)
         self.feature_dialog = getattr(self.main_window, 'feature_deploy_model_dialog', None)
         self.sync_settings_from_dialog()
+        # Live-refresh the multi-class preview alpha when the annotation
+        # transparency slider moves (so the preview reads like an annotation).
+        try:
+            self.annotation_window.transparency_slider.valueChanged.connect(
+                self._refresh_label_overlay_alpha)
+        except Exception:
+            pass
+        # NOTE: the colormap controls are NOT engaged here. They are handed to the
+        # feature overlay only once the user actually creates a work area (see
+        # _setup_working_area), so simply selecting the tool button doesn't yet
+        # flip the dropdown to Plasma or hide the Z-channel.
+
+    def _engage_colormap_controls(self):
+        """Hand the colormap dropdown + opacity slider to the feature overlay.
+
+        Called once a work area exists (not on tool activation). Hides any depth
+        (Z-channel) overlay — the user re-selects it manually on exit — points the
+        shared controls at the feature overlay, defaults the colormap to Plasma,
+        and enables the controls so opacity/colormap can be tuned live.
+        """
+        if self._colormap_controls_engaged:
+            return
+        aw = self.annotation_window
+        try:
+            aw._z_overlay.hide()
+            aw.set_active_colormap_overlay('feature')
+            # The dynamic-range button is depth-specific; disable it so it can't
+            # drive the (hidden) Z overlay while the feature overlay is active.
+            if hasattr(aw, 'z_dynamic_button'):
+                aw.z_dynamic_button.setChecked(False)
+                aw.z_dynamic_button.setEnabled(False)
+            aw.colormap_dropdown.setEnabled(True)
+            aw.colormap_opacity_slider.setEnabled(True)
+            if aw.colormap_dropdown.currentText() == self.DEFAULT_COLORMAP:
+                # Already Plasma: setCurrentText won't fire, so apply directly so
+                # the feature overlay picks up the table.
+                aw.update_overlay_colormap(self.DEFAULT_COLORMAP)
+            else:
+                aw.colormap_dropdown.setCurrentText(self.DEFAULT_COLORMAP)
+            aw.set_overlay_opacity(aw.colormap_opacity_slider.value() / 255.0)
+            self._colormap_controls_engaged = True
+            # In multi-class mode the feature colormap ramp is unused (colors come
+            # from the dedicated label overlay), so reflect that in the dropdown.
+            self._apply_mode_colormap()
+        except Exception:
+            pass
+
+    def _apply_mode_colormap(self):
+        """Point the colormap dropdown at None (multi-class) or Plasma (binary).
+
+        Multi-class colors come from the label overlay, not the feature colormap
+        ramp, so the dropdown reads 'None' there; toggling back to binary restores
+        Plasma so the similarity heatmap is colored again. No-op until the colormap
+        controls have been engaged (i.e. a work area exists).
+        """
+        if not self._colormap_controls_engaged:
+            return
+        aw = self.annotation_window
+        target = 'None' if self.mode == "multiclass" else self.DEFAULT_COLORMAP
+        try:
+            if aw.colormap_dropdown.currentText() == target:
+                # setCurrentText won't fire when unchanged; apply directly.
+                aw.update_overlay_colormap(target)
+            else:
+                aw.colormap_dropdown.setCurrentText(target)
+        except Exception:
+            pass
+
+    def _release_colormap_controls(self):
+        """Return the colormap controls to the (still-hidden) depth overlay.
+
+        Per design the Z-channel overlay is left hidden; setting the dropdown to
+        'None' reflects that and disables the opacity slider. Controls are fully
+        disabled when the image has no depth data. No-op if the controls were
+        never engaged (the user selected the tool but never made a work area).
+        """
+        if not self._colormap_controls_engaged:
+            return
+        self._colormap_controls_engaged = False
+        aw = self.annotation_window
+        try:
+            aw.set_active_colormap_overlay('z')
+            if aw.colormap_dropdown.currentText() != 'None':
+                aw.colormap_dropdown.setCurrentText('None')
+            else:
+                aw.update_overlay_colormap('None')
+            if getattr(aw, 'z_data_raw', None) is None:
+                aw.enable_z_visualization_controls(False)
+        except Exception:
+            pass
 
     def sync_settings_from_dialog(self):
         """Pull output settings from the feature deploy dialog when available."""
@@ -139,15 +247,49 @@ class FeatureSelectTool(Tool):
             except Exception:
                 pass
 
+    def _toggle_multiclass_mode(self):
+        """Ctrl+Alt: switch between binary pos/neg and multi-class labeling.
+
+        Clears any in-progress prompts and overlays so the two interaction
+        models never bleed into each other; the work area (and its extracted
+        features) is preserved so the user can keep querying the same crop.
+        """
+        self.clear_prompts()
+        self.annotation_window.clear_feature_overlay()
+        self.annotation_window.clear_label_overlay()
+        self.mode = "multiclass" if self.mode == "binary" else "binary"
+        self.threshold_active = False
+        self._last_label_idx = None
+        # Dropdown -> None in multi-class, Plasma when back in binary.
+        self._apply_mode_colormap()
+        if self.mode == "multiclass":
+            self._status("Feature Select: MULTI-CLASS mode — Ctrl+click assigns the "
+                         "selected label; switch labels to add more classes. "
+                         "Space to commit, Ctrl+Alt to exit.", 6000)
+        else:
+            self._status("Feature Select: BINARY mode — Ctrl+click positive, "
+                         "Ctrl+right-click negative. Ctrl+Alt for multi-class.", 4000)
+        self.annotation_window.scene.update()
+
     def deactivate(self):
         """Deactivate, clearing the query, heatmap, prompts, and any work area."""
         self.active = False
         self.hover_timer.stop()
         self.annotation_window.setCursor(self.default_cursor)
 
+        try:
+            self.annotation_window.transparency_slider.valueChanged.disconnect(
+                self._refresh_label_overlay_alpha)
+        except Exception:
+            pass
+
         self.cancel_working_area_creation()
         self.cancel_working_area()
-        self.annotation_window.clear_feature_heatmap()
+        self.annotation_window.clear_feature_overlay()
+        self.annotation_window.clear_label_overlay()
+
+        # Return the colormap controls to the depth overlay (left hidden).
+        self._release_colormap_controls()
 
         # If we were painting into the mask, drop the rasterization lock.
         if self.output_type == "Mask":
@@ -247,6 +389,10 @@ class FeatureSelectTool(Tool):
                 return
             self._build_query_engine(crop_fmap)
             self._persist_to_full_map(crop_fmap, left, top, right, bottom, extractor)
+            # The query is now armed: hand the colormap controls to the feature
+            # overlay (defaults to Plasma, hides the Z-channel). Deferred to here
+            # so selecting the tool button alone doesn't change the dropdown.
+            self._engage_colormap_controls()
             self._status("Feature Select: Ctrl+click patches to query similarity, "
                          "Space to finalize.", 5000)
         except Exception as e:
@@ -365,7 +511,8 @@ class FeatureSelectTool(Tool):
     def cancel_working_area(self):
         """Tear down the work area, query, prompts, and heatmap."""
         self.clear_prompts()
-        self.annotation_window.clear_feature_heatmap()
+        self.annotation_window.clear_feature_overlay()
+        self.annotation_window.clear_label_overlay()
         if self.working_area is not None:
             try:
                 self.working_area.remove_from_scene()
@@ -418,35 +565,43 @@ class FeatureSelectTool(Tool):
         return qe.similarity()
 
     def update_heatmap(self, hover_id=None):
-        """Recompute similarity and refresh the work-area heatmap overlay."""
+        """Recompute similarity and refresh the work-area overlay (indexed)."""
         if self.query_engine is None or self.working_area is None:
+            return
+        if self.mode == "multiclass":
+            self._update_label_overlay(hover_id=hover_id)
             return
         sim = self._compute_similarity(hover_id=hover_id)
         if sim is None:
-            self.annotation_window.clear_feature_heatmap()
+            self.annotation_window.clear_feature_overlay()
             return
-        rgba = self._colorize(sim)
-        if rgba is None:
-            self.annotation_window.clear_feature_heatmap()
+        idx = self._build_index_field(sim)
+        if idx is None:
+            self.annotation_window.clear_feature_overlay()
             return
-        self.annotation_window.set_feature_heatmap(rgba, rect=self.working_area.rect, opacity=0.6)
+        # Colormap + opacity are owned by the shared overlay controls (engaged in
+        # activate()); we only hand over the uint8 index field + target rect.
+        self.annotation_window.set_feature_overlay(idx, rect=self.working_area.rect)
 
-    def _colorize(self, sim):
-        """Build a colormap RGBA preview from sim [N].
+    def _build_index_field(self, sim):
+        """Build a uint8 palette-index field from sim [N].
 
-        The scalar field is bilinearly upsampled to (a capped fraction of) the
-        work-area pixel resolution BEFORE coloring and thresholding, so the
-        thresholded scrim edge follows the same smooth contour the commit path
-        produces — instead of the coarse per-patch grid steps. The render size is
-        capped (PREVIEW_MAX_EDGE) so the per-hover RGBA rebuild stays cheap.
+        Palette: 0 = transparent (invalid), 1..254 = colormap ramp (normalized
+        similarity), 255 = below-threshold scrim. The scalar field is bilinearly
+        upsampled to (a capped fraction of) the work-area pixel resolution BEFORE
+        indexing/thresholding, so the thresholded scrim edge follows the same
+        smooth contour the commit path produces — instead of the coarse per-patch
+        grid steps. The render size is capped (PREVIEW_MAX_EDGE) so the per-hover
+        rebuild stays cheap. Recoloring/opacity are now free table swaps on the
+        ColorMapOverlay, so this no longer bakes RGBA.
         """
         grid = np.asarray(sim, dtype=np.float32).reshape(self.feat_h, self.feat_w)
         finite = np.isfinite(grid)
         if not finite.any():
             return None
 
-        # Color normalization uses the committed grid's finite range, so the
-        # gradient is stable regardless of the preview render resolution.
+        # Normalization uses the committed grid's finite range, so the gradient is
+        # stable regardless of the preview render resolution.
         vals = grid[finite]
         vmin, vmax = float(vals.min()), float(vals.max())
 
@@ -462,21 +617,20 @@ class FeatureSelectTool(Tool):
         else:
             norm = np.ones_like(up)
 
-        idx = np.clip((norm * 255).astype(np.int32), 0, 255)
-        rgba = self._lut[idx].astype(np.uint8)
+        # 1..254 colormap ramp (index 0 and 255 are reserved by the overlay).
+        idx = (1 + np.clip(norm * 253.0, 0.0, 253.0)).astype(np.uint8)
 
         # Regions interpolated from masked cells stay transparent.
         invalid = up < -1.0e8
-        rgba[invalid, 3] = 0
+        idx[invalid] = 0
         if self.threshold_active:
-            # Inverted thresholded view: keep the colormap highlight where the
-            # (upsampled) similarity PASSES the threshold, and lay a dark scrim
-            # over the filtered-out region so it reads as dimmed rather than
-            # clearly exposed. Thresholding the upsampled field gives a smooth
-            # edge that matches the committed polygon/mask.
+            # Below-threshold (but valid) cells map to the scrim index so the
+            # filtered-out region reads as dimmed rather than clearly exposed.
+            # Thresholding the upsampled field gives a smooth edge matching the
+            # committed polygon/mask.
             below = (~invalid) & (up < self.threshold)
-            rgba[below] = (0, 0, 0, 200)
-        return rgba
+            idx[below] = 255
+        return idx
 
     # Cap the preview render resolution (long edge, px) so the per-hover RGBA
     # rebuild stays cheap even for large work areas. The canvas scales whatever
@@ -492,6 +646,281 @@ class FeatureSelectTool(Tool):
             return wa_h, wa_w
         scale = self.PREVIEW_MAX_EDGE / float(long_edge)
         return max(1, int(wa_h * scale)), max(1, int(wa_w * scale))
+
+    # ==================== Multi-class mode ====================
+
+    def _handle_multiclass_click(self, event, scene_pos, element_id):
+        """Ctrl+click in multi-class mode: (de)assign a patch to the selected label.
+
+        Left-click adds the patch as a prototype of the currently selected label;
+        right-click undoes the most recent prototype of that label.
+        """
+        label = self.annotation_window.selected_label
+        if label is None:
+            self._status("Select a label before adding a class prototype.")
+            return
+
+        if event.button() == Qt.LeftButton:
+            self.class_prototypes.setdefault(label.id, []).append(element_id)
+            self.class_labels[label.id] = label
+            self.class_colors[label.id] = (label.color.red(),
+                                           label.color.green(),
+                                           label.color.blue())
+            self._add_class_point_graphic(scene_pos, label)
+            self.update_heatmap()
+        elif event.button() == Qt.RightButton:
+            ids = self.class_prototypes.get(label.id)
+            if ids:
+                ids.pop()
+                graphics = self.class_point_graphics.get(label.id)
+                if graphics:
+                    item = graphics.pop()
+                    try:
+                        self.annotation_window.scene.removeItem(item)
+                    except Exception:
+                        pass
+                    if item in self.point_graphics:
+                        self.point_graphics.remove(item)
+                if not ids:
+                    # Drop empty bookkeeping so the class disappears from queries.
+                    self.class_prototypes.pop(label.id, None)
+            self.update_heatmap()
+
+    def _add_class_point_graphic(self, scene_pos, label):
+        """Prototype dot drawn in the label's own color (black outline)."""
+        point = QGraphicsEllipseItem(scene_pos.x() - 10, scene_pos.y() - 10, 20, 20)
+        pen = QPen(QColor("black"))
+        pen.setCosmetic(True)
+        point.setPen(pen)
+        point.setBrush(QColor(label.color))
+        self.annotation_window.scene.addItem(point)
+        self.class_point_graphics.setdefault(label.id, []).append(point)
+        # Also track in the generic list so clear_prompts() tears it down.
+        self.point_graphics.append(point)
+
+    def _effective_class_prototypes(self, hover_id=None):
+        """Committed class prototypes, optionally folding a transient hover cell
+        into the selected label's set (for the live hover preview)."""
+        proto = {k: list(v) for k, v in self.class_prototypes.items() if v}
+        if hover_id is not None:
+            label = self.annotation_window.selected_label
+            if label is not None:
+                proto.setdefault(label.id, [])
+                proto[label.id] = proto[label.id] + [int(hover_id)]
+        return proto
+
+    def _compute_multiclass_label_map(self, proto, out_h, out_w):
+        """Classify ``proto`` into a per-pixel label map at (out_h, out_w).
+
+        Bilinearly upsamples EACH class's similarity field to the target size,
+        then argmaxes + applies the reject floor there — so the boundary follows
+        a smooth contour at full resolution. Shared by the live preview and the
+        commit so the two are pixel-identical.
+
+        Returns (label_map [out_h, out_w] int32 with -1 = unlabeled, keys).
+        """
+        best, keys = self.query_engine.class_scores(proto)
+        if not keys:
+            return None, []
+        ups = np.stack(
+            [self._upsample_similarity(
+                best[c].reshape(self.feat_h, self.feat_w).astype(np.float32), out_h, out_w)
+             for c in range(len(keys))],
+            axis=0,
+        )  # [C, out_h, out_w]
+        arg = np.argmax(ups, axis=0)
+        conf = np.max(ups, axis=0)
+        label_map = np.where(conf >= self.multiclass_threshold, arg, -1)
+        return label_map, keys
+
+    def _update_label_overlay(self, hover_id=None):
+        """Multi-class live preview: classify at full work-area res, color by label.
+
+        Rendered at the same resolution as the commit (the reject floor is always
+        applied) so the preview and the finalized blobs match exactly.
+        """
+        proto = self._effective_class_prototypes(hover_id)
+        if not proto:
+            self._last_label_idx = None
+            self.annotation_window.clear_label_overlay()
+            return
+        wa = self.working_area.rect
+        out_h = max(1, int(round(wa.height())))
+        out_w = max(1, int(round(wa.width())))
+        label_map, keys = self._compute_multiclass_label_map(proto, out_h, out_w)
+        if label_map is None:
+            self._last_label_idx = None
+            self.annotation_window.clear_label_overlay()
+            return
+        idx, colors = self._build_label_index_field_from_map(label_map, keys)
+        # Cache so a transparency-slider drag can re-blit without recomputing.
+        self._last_label_idx = idx
+        self._last_label_colors = colors
+        self.annotation_window.set_label_overlay(
+            idx, colors, rect=wa, alpha=self._overlay_alpha())
+
+    def _build_label_index_field_from_map(self, label_map, keys):
+        """Turn a [H, W] int label map into ``(uint8 index field, colors list)``.
+
+        Index 0 = unlabeled (transparent); class k -> index ``k + 1``. ``colors[k]``
+        is the ``(r, g, b)`` for ``keys[k]`` (a hover-only label not yet committed
+        is resolved from the current selection).
+        """
+        idx = np.zeros(label_map.shape, dtype=np.uint8)
+        sel = self.annotation_window.selected_label
+        colors = []
+        for k, key in enumerate(keys):
+            if k + 1 > 255:
+                break
+            idx[label_map == k] = k + 1
+            rgb = self.class_colors.get(key)
+            if rgb is None and sel is not None and key == sel.id:
+                rgb = (sel.color.red(), sel.color.green(), sel.color.blue())
+            colors.append(rgb if rgb is not None else (255, 255, 255))
+        return idx, colors
+
+    def _overlay_alpha(self):
+        """Label-overlay alpha, taken from the annotation transparency slider."""
+        try:
+            return int(self.main_window.get_transparency_value())
+        except Exception:
+            return 160
+
+    def _refresh_label_overlay_alpha(self):
+        """Re-blit the cached multi-class preview at the current slider alpha.
+
+        Connected to the transparency slider so dragging it updates the preview
+        live, without re-running classification.
+        """
+        if (self.mode != "multiclass" or self.working_area is None
+                or getattr(self, "_last_label_idx", None) is None):
+            return
+        self.annotation_window.set_label_overlay(
+            self._last_label_idx, self._last_label_colors,
+            rect=self.working_area.rect, alpha=self._overlay_alpha())
+
+    # ==================== Point suggestion (active learning) ====================
+
+    def _labeled_cell_ids(self):
+        """Flat crop-grid ids of every currently labeled patch, across modes."""
+        if self.mode == "multiclass":
+            ids = []
+            for v in self.class_prototypes.values():
+                ids.extend(v)
+            return ids
+        return list(self.positive_ids) + list(self.negative_ids)
+
+    def _auto_suggest(self):
+        """Refresh the suggested-next-point crosshair after a prompt change.
+
+        Called after every Ctrl+click so the crosshair is always shown and kept
+        current without the user pressing N. Cleared when no prompts remain.
+        """
+        if self._labeled_cell_ids():
+            self.suggest_next_point(announce=False)
+        else:
+            self._clear_suggestion()
+
+    def suggest_next_point(self, announce=True):
+        """Recommend the most informative next patch to label and mark it.
+
+        Score = (distance + uncertainty·λ) / (1 + λ), per the paper: uncertainty
+        is ``1 - best cosine similarity to ANY labeled prototype`` (the model is
+        least sure where this is low), distance is a Gaussian-smoothed Euclidean
+        distance from the labeled cells (spread the clicks out). Already-labeled
+        cells are excluded; the argmax cell is drawn as a crosshair for the user
+        to confirm by clicking. ``announce`` controls the status-bar hint (off for
+        the automatic per-click refresh so it doesn't spam the bar).
+        """
+        if self.query_engine is None or self.working_area is None:
+            return
+        seeds = self._labeled_cell_ids()
+        if not seeds:
+            if announce:
+                self._status("Feature Select: label at least one point before "
+                             "requesting a suggestion.")
+            return
+
+        # Uncertainty: max cosine of each cell to ANY labeled prototype (one
+        # pseudo-class), then inverted. High where the model is least committed.
+        best, keys = self.query_engine.class_scores({"_all": seeds})
+        if not keys:
+            return
+        best_sim = np.asarray(best[0], dtype=np.float32)
+        uncertainty = np.clip(1.0 - best_sim, 0.0, None)
+
+        # Distance map over the crop feature grid, seeded at labeled cells.
+        labeled_flat = np.zeros(self.feat_h * self.feat_w, dtype=np.int32)
+        seed_arr = np.asarray(seeds, dtype=int)
+        seed_arr = seed_arr[(seed_arr >= 0) & (seed_arr < labeled_flat.size)]
+        labeled_flat[seed_arr] = 1
+        labeled_grid = labeled_flat.reshape(self.feat_h, self.feat_w)
+        sigma = max(2.0, 0.125 * max(self.feat_h, self.feat_w))
+        distance_ft = self._distance_mask(labeled_grid, sigma).reshape(-1)
+
+        merge = (distance_ft + uncertainty * self.suggest_lambda) / (1.0 + self.suggest_lambda)
+        merge[labeled_flat > 0] = -1.0  # never re-suggest a labeled cell
+
+        best_idx = int(np.argmax(merge))
+        gy, gx = divmod(best_idx, self.feat_w)
+        self._draw_suggestion(self._cell_to_scene_center(gx, gy))
+        if announce:
+            self._status("Feature Select: suggested next point (yellow crosshair) — "
+                         "click it to confirm a label.", 5000)
+
+    @staticmethod
+    def _distance_mask(label_array, sigma):
+        """1 - exp(-d²/2σ²) over the EDT of the unlabeled cells (in [0, 1])."""
+        from scipy.ndimage import distance_transform_edt
+        dt = distance_transform_edt(label_array == 0)
+        return (1.0 - np.exp(-(dt ** 2) / (2.0 * (sigma ** 2)))).astype(np.float32)
+
+    def _cell_to_scene_center(self, gx, gy):
+        """Center of crop-grid cell (gx, gy) in scene coords (inverse of
+        pixel_to_cell's proportional mapping)."""
+        wa = self.working_area.rect
+        x = wa.left() + (gx + 0.5) / self.feat_w * wa.width()
+        y = wa.top() + (gy + 0.5) / self.feat_h * wa.height()
+        return QPointF(x, y)
+
+    def _draw_suggestion(self, scene_pt):
+        """Draw a yellow crosshair + ring at the suggested point (clears prior)."""
+        self._clear_suggestion()
+        sx, sy = scene_pt.x(), scene_pt.y()
+        r, arm = 8, 14
+
+        def _line(x1, y1, x2, y2, color, width):
+            from PyQt5.QtWidgets import QGraphicsLineItem
+            item = QGraphicsLineItem(x1, y1, x2, y2)
+            pen = QPen(color)
+            pen.setCosmetic(True)
+            pen.setWidth(width)
+            item.setPen(pen)
+            self.annotation_window.scene.addItem(item)
+            self.suggestion_graphics.append(item)
+
+        # Dark underlay for contrast, then the bright yellow crosshair on top.
+        for color, width in ((QColor("black"), 5), (Qt.yellow, 2)):
+            _line(sx - arm, sy, sx + arm, sy, color, width)
+            _line(sx, sy - arm, sx, sy + arm, color, width)
+
+        ring = QGraphicsEllipseItem(sx - r, sy - r, 2 * r, 2 * r)
+        pen = QPen(Qt.yellow)
+        pen.setCosmetic(True)
+        pen.setWidth(2)
+        ring.setPen(pen)
+        self.annotation_window.scene.addItem(ring)
+        self.suggestion_graphics.append(ring)
+        self.annotation_window.scene.update()
+
+    def _clear_suggestion(self):
+        """Remove the suggestion crosshair graphics, if any."""
+        for item in self.suggestion_graphics:
+            try:
+                self.annotation_window.scene.removeItem(item)
+            except Exception:
+                pass
+        self.suggestion_graphics = []
 
     # ==================== Mouse / keyboard ====================
 
@@ -518,10 +947,14 @@ class FeatureSelectTool(Tool):
         if not self.working_area.contains_point(scene_pos):
             return
 
-        # Ctrl+click → positive / negative prototype.
+        # Ctrl+click → prototype (mode-dependent).
         if event.modifiers() & Qt.ControlModifier:
             element_id = self.pixel_to_cell(scene_pos.x(), scene_pos.y())
             if element_id is None:
+                return
+            if self.mode == "multiclass":
+                self._handle_multiclass_click(event, scene_pos, element_id)
+                self._auto_suggest()
                 return
             if event.button() == Qt.LeftButton:
                 self.positive_ids.append(element_id)
@@ -530,6 +963,7 @@ class FeatureSelectTool(Tool):
                 self.negative_ids.append(element_id)
                 self._add_point_graphic(scene_pos, Qt.red)
             self.update_heatmap()
+            self._auto_suggest()
             return
 
         self.annotation_window.scene.update()
@@ -567,6 +1001,15 @@ class FeatureSelectTool(Tool):
         if self.query_engine is None:
             return
         step = 0.02
+        if self.mode == "multiclass":
+            if event.angleDelta().y() > 0:
+                self.multiclass_threshold = min(1.0, self.multiclass_threshold + step)
+            else:
+                self.multiclass_threshold = max(0.0, self.multiclass_threshold - step)
+            self.threshold_active = True
+            self.update_heatmap()
+            self._status(f"Feature Select reject threshold: {self.multiclass_threshold:.2f}", 2000)
+            return
         if event.angleDelta().y() > 0:
             self.threshold = min(1.0, self.threshold + step)
         else:
@@ -576,13 +1019,19 @@ class FeatureSelectTool(Tool):
         self._status(f"Feature Select threshold: {self.threshold:.2f}", 2000)
 
     def keyPressEvent(self, event: QKeyEvent):
+        # Ctrl+Alt toggles multi-class mode; it is handled by the GlobalEventFilter
+        # (so it works regardless of focus), not here.
+        if event.key() == Qt.Key_N and self.working_area is not None:
+            # Suggest the most informative next point to label (active learning).
+            self.suggest_next_point()
+            return
         if event.key() == Qt.Key_Space:
             if self.creating_working_area and self.working_area_start and self.hover_pos:
                 self.set_custom_working_area(self.working_area_start, self.hover_pos)
                 self.cancel_working_area_creation()
             elif self.working_area is None:
                 self.set_working_area()
-            elif self.positive_ids or self.negative_ids:
+            elif self._has_prompts():
                 self.commit_selection()
             else:
                 self.cancel_working_area()
@@ -590,12 +1039,19 @@ class FeatureSelectTool(Tool):
         elif event.key() == Qt.Key_Backspace:
             if self.creating_working_area:
                 self.cancel_working_area_creation()
-            elif self.positive_ids or self.negative_ids:
+            elif self._has_prompts():
                 self.clear_prompts()
-                self.annotation_window.clear_feature_heatmap()
+                self.annotation_window.clear_feature_overlay()
+                self.annotation_window.clear_label_overlay()
             else:
                 self.cancel_working_area()
             self.annotation_window.scene.update()
+
+    def _has_prompts(self):
+        """Whether any prompt exists in the active mode (gates commit / clear)."""
+        if self.mode == "multiclass":
+            return any(self.class_prototypes.values())
+        return bool(self.positive_ids or self.negative_ids)
 
     def _add_point_graphic(self, scene_pos, color):
         """Positive/negative point dot, identical to SAMTool's points."""
@@ -611,9 +1067,13 @@ class FeatureSelectTool(Tool):
 
     def commit_selection(self):
         """Turn the thresholded selection into a Polygon or Mask annotation."""
-        if self.query_engine is None or not self.annotation_window.selected_label:
-            if not self.annotation_window.selected_label:
-                self._status("A label must be selected before committing a selection.")
+        if self.query_engine is None:
+            return
+        if self.mode == "multiclass":
+            self._commit_multiclass()
+            return
+        if not self.annotation_window.selected_label:
+            self._status("A label must be selected before committing a selection.")
             return
 
         sim = self._compute_similarity(hover_id=None)
@@ -649,15 +1109,13 @@ class FeatureSelectTool(Tool):
         self.sync_settings_from_dialog()
         if self.output_type == "Mask":
             self._commit_as_mask(full_mask)
-            # Multi-Annotate: propagate the selection to the context cameras, just
-            # like SAMTool does for its final mask (Mask output only).
             self._propagate_to_cameras(crop_mask, wa_left, wa_top, wa_w, wa_h)
         else:
             self._commit_as_polygon(full_mask)
 
         # Clear prompts but keep the work area for further queries.
         self.clear_prompts()
-        self.annotation_window.clear_feature_heatmap()
+        self.annotation_window.clear_feature_overlay()
 
     @staticmethod
     def _upsample_similarity(grid, out_h, out_w):
@@ -740,12 +1198,7 @@ class FeatureSelectTool(Tool):
             self.annotation_window.action_stack.push(history_action)
 
     def _propagate_to_cameras(self, crop_mask, wa_left, wa_top, wa_w, wa_h):
-        """Multi-Annotate: hand the selection to the PropagationEngine.
-
-        Mirrors SAMTool: send a binary crop anchored at its centre plus the active
-        label id. The engine maps the crop through the source camera's index map
-        and paints the matching elements on every visible context camera.
-        """
+        """No-op in 2D builds; no-op when post_prediction_callback is None."""
         if self.post_prediction_callback is None:
             return
         label = self.annotation_window.selected_label
@@ -759,6 +1212,130 @@ class FeatureSelectTool(Tool):
         except Exception as e:
             print(f"[FeatureSelectTool] propagation failed: {e}")
 
+    # ==================== Commit (multi-class) ====================
+
+    def _commit_multiclass(self):
+        """Classify the work area into per-label blobs and commit them.
+
+        Upsamples each class's similarity field to full work-area resolution and
+        argmaxes there (smooth per-class boundaries, mirroring the binary commit),
+        applies the reject threshold, then writes a Mask (one prediction holding
+        each label's class_id) or one Polygon per label.
+        """
+        proto = {k: v for k, v in self.class_prototypes.items() if v}
+        if not proto:
+            self._status("Feature Select: add at least one class prototype to commit.")
+            return
+
+        wa = self.working_area.rect
+        wa_left, wa_top = int(wa.left()), int(wa.top())
+        wa_w, wa_h = int(round(wa.width())), int(round(wa.height()))
+
+        # Same full-res label map the live preview renders, so what you saw is
+        # exactly what gets committed.
+        label_map, keys = self._compute_multiclass_label_map(proto, wa_h, wa_w)
+        if label_map is None:
+            return
+        if not (label_map >= 0).any():
+            self._status("Feature Select: nothing above the reject threshold to commit.")
+            return
+
+        self.sync_settings_from_dialog()
+        if self.output_type == "Mask":
+            self._commit_multiclass_as_mask(label_map, keys, wa_left, wa_top, wa_w, wa_h)
+        else:
+            self._commit_multiclass_as_polygons(label_map, keys, wa_left, wa_top, wa_w, wa_h)
+
+        # Clear prompts but keep the work area for further queries.
+        self.clear_prompts()
+        self.annotation_window.clear_label_overlay()
+
+    def _commit_multiclass_as_mask(self, label_map, keys, wa_left, wa_top, wa_w, wa_h):
+        """Paint every class blob into the raster MaskAnnotation in one action."""
+        if self.annotation_window.current_mask_annotation is None:
+            self.annotation_window.rasterize_annotations()
+        mask_annotation = self.annotation_window.current_mask_annotation
+        if mask_annotation is None:
+            self._status("Feature Select: no mask annotation available for the image.")
+            return
+
+        prediction_mask = np.zeros((self.original_height, self.original_width), dtype=np.uint8)
+        y1 = min(self.original_height, wa_top + wa_h)
+        x1 = min(self.original_width, wa_left + wa_w)
+        crop = prediction_mask[wa_top:y1, wa_left:x1]
+        ch, cw = crop.shape
+
+        wrote_any = False
+        for c, key in enumerate(keys):
+            label = self.class_labels.get(key)
+            if label is None:
+                continue
+            class_id = mask_annotation.label_id_to_class_id_map.get(label.id)
+            if class_id is None:
+                self._status(f"Feature Select: label '{label.short_label_code}' is not in "
+                             "the mask's label map; skipped.")
+                continue
+            sel = (label_map[:ch, :cw] == c)
+            if sel.any():
+                crop[sel] = class_id
+                wrote_any = True
+        if not wrote_any:
+            return
+        prediction_mask[wa_top:y1, wa_left:x1] = crop
+
+        history_action = MaskEditAction(mask_annotation,
+                                        description="Feature Select multi-class prediction")
+        mask_annotation.update_mask_with_prediction_mask(prediction_mask,
+                                                         history_action=history_action)
+        if not history_action.is_empty():
+            self.annotation_window.action_stack.push(history_action)
+
+    def _commit_multiclass_as_polygons(self, label_map, keys, wa_left, wa_top, wa_w, wa_h):
+        """Polygonize each class blob and add one PolygonAnnotation per label."""
+        import torch
+
+        added = 0
+        y1 = min(self.original_height, wa_top + wa_h)
+        x1 = min(self.original_width, wa_left + wa_w)
+        for c, key in enumerate(keys):
+            label = self.class_labels.get(key)
+            if label is None:
+                continue
+            full_mask = np.zeros((self.original_height, self.original_width), dtype=np.uint8)
+            class_crop = (label_map == c).astype(np.uint8)
+            full_mask[wa_top:y1, wa_left:x1] = class_crop[: y1 - wa_top, : x1 - wa_left]
+            if not full_mask.any():
+                continue
+
+            mask_tensor = torch.from_numpy(full_mask)
+            exterior_coords, holes_coords_list = polygonize_mask_with_holes(mask_tensor)
+            if not exterior_coords or len(exterior_coords) < 3:
+                continue
+
+            points = [QPointF(p[0], p[1]) for p in exterior_coords]
+            holes = []
+            if self.allow_holes:
+                for hole in holes_coords_list:
+                    if len(hole) >= 3:
+                        holes.append([QPointF(p[0], p[1]) for p in hole])
+
+            annotation = PolygonAnnotation(
+                points=points,
+                holes=holes,
+                label=label,
+                image_path=self.annotation_window.current_image_path,
+                transparency=self.main_window.get_transparency_value(),
+                show_confidence=False,
+            )
+            if hasattr(self.annotation_window, 'rasterio_image') and self.annotation_window.rasterio_image:
+                annotation.create_cropped_image(self.annotation_window.rasterio_image)
+            annotation.create_graphics_item(self.annotation_window.scene)
+            self.annotation_window.add_annotation_from_tool(annotation)
+            added += 1
+
+        if added == 0:
+            self._status("Feature Select: no class blob large enough to polygonize.")
+
     # ==================== Cleanup ====================
 
     def clear_prompts(self):
@@ -771,11 +1348,26 @@ class FeatureSelectTool(Tool):
             except Exception:
                 pass
         self.point_graphics = []
+
+        # Multi-class prototype bookkeeping (dots are in point_graphics already).
+        self.class_prototypes = {}
+        self.class_point_graphics = {}
+        self.class_labels = {}
+        self.class_colors = {}
+
+        self._clear_suggestion()
         self.threshold_active = False
 
         if self.query_engine is not None:
             self.query_engine.clear()
 
     def stop_current_drawing(self):
-        """Called by the annotation window when switching tools mid-action."""
+        """Called by the annotation window when switching tools OR images mid-action.
+
+        Fully tears down the work area, extracted features, prompts, overlays, and
+        any suggestion crosshair so image-1's features never bleed into image 2.
+        ``set_image`` calls this on the active tool before clearing the scene, so
+        switching images while the tool stays enabled starts the next image clean.
+        """
         self.cancel_working_area_creation()
+        self.cancel_working_area()
