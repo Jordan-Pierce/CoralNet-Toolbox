@@ -9,6 +9,7 @@ verbatim without rewriting every self.xxx reference.
 """
 
 import os
+import uuid
 import numpy as np
 import traceback
 
@@ -1146,115 +1147,45 @@ class PropagationEngine(QObject):
         if not selected_paths:
             return
 
-        from PyQt5.QtCore import QPointF
         self._propagating_annotation = True
         try:
-            # ------------------------------------------------------------------
-            # Source element-ID extraction: sample a sparse grid within the
-            # annotation bounding box so that get_pixels_for_elements has many
-            # IDs to work with — not just the single center pixel.  More IDs
-            # dramatically reduces stride false-negatives in the target cameras.
-            # ------------------------------------------------------------------
             propagated_annotations = []
-            source_raster = getattr(self.selected_camera, '_raster', None)
-            source_index_map = source_raster.index_map if source_raster is not None else None
-            source_element_ids = None   # list[int] — passed to get_pixels_for_elements
-            element_id = None           # center-pixel ID — used by _build_projection ray
-            use_3d = False
 
-            if source_index_map is not None:
-                try:
-                    sf = getattr(source_raster, 'index_map_scale_factor', None) or 1.0
-                    img_h, img_w = source_index_map.shape
-                    ann_size = annotation.annotation_size   # half-extent in image pixels
+            # Source element-ID context (3D element ids + use_3d flag), shared
+            # across all target cameras. See _compute_source_patch_context.
+            _, _, source_element_ids, use_3d = self._compute_source_patch_context(
+                annotation, self.selected_camera
+            )
 
-                    # Clamp the annotation bounding box to the index-map bounds
-                    # (coordinates scaled by sf to match the index-map resolution).
-                    x0 = max(0,       int((px - ann_size) * sf))
-                    x1 = min(img_w,   int((px + ann_size) * sf) + 1)
-                    y0 = max(0,       int((py - ann_size) * sf))
-                    y1 = min(img_h,   int((py + ann_size) * sf) + 1)
-
-                    if x0 < x1 and y0 < y1:
-                        patch = source_index_map[y0:y1, x0:x1].ravel()
-                        valid = patch[patch > -1]
-                        if valid.size > 0:
-                            source_element_ids = list(np.unique(valid).tolist())
-                            # Prefer the exact center-pixel ID for the ray direction
-                            cx = min(int(px * sf), img_w - 1)
-                            cy = min(int(py * sf), img_h - 1)
-                            center_eid = int(source_index_map[cy, cx])
-                            element_id = center_eid if center_eid > -1 else source_element_ids[0]
-                            use_3d = True
-                except Exception:
-                    pass
-
-            # Lazy projection cache for fallback
+            # Lazy 2D projection cache for the fallback path.
             projections = None
 
             for target_path in selected_paths:
-
-                target_camera = self._get_camera_for_path(target_path)
-                if target_camera is None:
-                    continue
-
                 try:
-                    placed = False
-
-                    # ----------------------------------------------------------
-                    # 3D centroid path: look up every sampled element ID in the
-                    # target's index map and use the resulting pixel centroid.
-                    # Falls through to 2D when the lookup returns empty (element
-                    # too small / edge-on in target, or stride miss) rather than
-                    # hard-skipping the camera.
-                    # ----------------------------------------------------------
-                    target_has_index = (getattr(target_camera, '_raster', None) is not None
-                                        and target_camera._raster.index_map is not None)
-                    if use_3d and target_has_index and source_element_ids:
-                        flat = target_camera.get_pixels_for_elements(
-                            np.array(source_element_ids, dtype=np.int64)
-                        )
-                        if flat.size > 0:
-                            v_arr, u_arr = np.divmod(flat, target_camera.width)
-                            u_centroid = float(np.mean(u_arr))
-                            v_centroid = float(np.mean(v_arr))
-                            if 0 <= u_centroid < target_camera.width and 0 <= v_centroid < target_camera.height:
-                                new_annotation = PatchAnnotation(
-                                    center_xy=QPointF(u_centroid, v_centroid),
-                                    annotation_size=annotation.annotation_size,
-                                    label=annotation.label,
-                                    image_path=target_path,
-                                    transparency=annotation.transparency,
-                                )
-                                propagated_annotations.append(new_annotation)
-                                placed = True
-
-                    # ----------------------------------------------------------
-                    # 2D fallback: used when no index map is available OR when
-                    # the 3D lookup returned empty (element occluded / missed).
-                    # ----------------------------------------------------------
-                    if not placed:
-                        if projections is None:
-                            projections = self._build_projection(px, py)
-                        proj = projections.get(target_path)
-                        if proj is None:
-                            continue
-                        u, v, is_valid = proj
-                        if not is_valid:
-                            continue
-                        if not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
-                            continue
-
-                        new_annotation = PatchAnnotation(
-                            center_xy=QPointF(u, v),
-                            annotation_size=annotation.annotation_size,
-                            label=annotation.label,
-                            image_path=target_path,
-                            transparency=annotation.transparency,
-                        )
-                        propagated_annotations.append(new_annotation)
+                    center, projections = self._project_patch_center(
+                        target_path, px, py, source_element_ids, use_3d, projections
+                    )
+                    if center is None:
+                        continue
+                    new_annotation = PatchAnnotation(
+                        center_xy=center,
+                        annotation_size=annotation.annotation_size,
+                        label=annotation.label,
+                        image_path=target_path,
+                        transparency=annotation.transparency,
+                    )
+                    propagated_annotations.append(new_annotation)
                 except Exception:
                     pass
+
+            # Stamp a shared group UUID on the source + every sibling so later
+            # edits (move/resize/delete) can be propagated across the group.
+            # A lone patch is not a group, so only stamp when siblings exist.
+            if propagated_annotations:
+                group_uuid = str(uuid.uuid4())
+                annotation.shared_uuid = group_uuid
+                for sibling in propagated_annotations:
+                    sibling.shared_uuid = group_uuid
 
             # One batched commit: a single undo entry and a single UI refresh
             # pass instead of one per target camera.
@@ -1269,6 +1200,179 @@ class PropagationEngine(QObject):
                             pass
         finally:
             self._propagating_annotation = False
+
+    def _compute_source_patch_context(self, annotation, source_camera):
+        """Sample a source patch's element IDs from its camera index map.
+
+        Returns (px, py, source_element_ids, use_3d). source_element_ids is a
+        list of element IDs sampled across the annotation bounding box (many IDs
+        reduce stride false-negatives when looking them up in target cameras);
+        use_3d is False when no index map is available (caller falls back to 2D).
+        """
+        px = int(annotation.center_xy.x())
+        py = int(annotation.center_xy.y())
+        source_element_ids = None
+        use_3d = False
+
+        source_raster = getattr(source_camera, '_raster', None) if source_camera is not None else None
+        source_index_map = source_raster.index_map if source_raster is not None else None
+        if source_index_map is not None:
+            try:
+                sf = getattr(source_raster, 'index_map_scale_factor', None) or 1.0
+                img_h, img_w = source_index_map.shape
+                ann_size = annotation.annotation_size   # half-extent in image pixels
+
+                # Clamp the annotation bounding box to the index-map bounds
+                # (coordinates scaled by sf to match the index-map resolution).
+                x0 = max(0,     int((px - ann_size) * sf))
+                x1 = min(img_w, int((px + ann_size) * sf) + 1)
+                y0 = max(0,     int((py - ann_size) * sf))
+                y1 = min(img_h, int((py + ann_size) * sf) + 1)
+
+                if x0 < x1 and y0 < y1:
+                    patch = source_index_map[y0:y1, x0:x1].ravel()
+                    valid = patch[patch > -1]
+                    if valid.size > 0:
+                        source_element_ids = list(np.unique(valid).tolist())
+                        use_3d = True
+            except Exception:
+                pass
+
+        return px, py, source_element_ids, use_3d
+
+    def _project_patch_center(self, target_path, px, py, source_element_ids, use_3d, projections):
+        """Project a source patch center (px, py) into target_path.
+
+        Tries the 3D index-map centroid first, then a 2D projection fallback.
+        Returns (QPointF | None, projections). projections is the (possibly newly
+        built) lazy 2D-projection cache so the caller can reuse it across targets.
+        Returns None for the center when the point is occluded / off-frame.
+        """
+        target_camera = self._get_camera_for_path(target_path)
+        if target_camera is None:
+            return None, projections
+
+        # 3D centroid path: look up every sampled element ID in the target's
+        # index map and use the resulting pixel centroid.
+        target_has_index = (getattr(target_camera, '_raster', None) is not None
+                            and target_camera._raster.index_map is not None)
+        if use_3d and target_has_index and source_element_ids:
+            flat = target_camera.get_pixels_for_elements(
+                np.array(source_element_ids, dtype=np.int64)
+            )
+            if flat.size > 0:
+                v_arr, u_arr = np.divmod(flat, target_camera.width)
+                u_centroid = float(np.mean(u_arr))
+                v_centroid = float(np.mean(v_arr))
+                if 0 <= u_centroid < target_camera.width and 0 <= v_centroid < target_camera.height:
+                    return QPointF(u_centroid, v_centroid), projections
+
+        # 2D fallback: no index map, or the 3D lookup returned empty.
+        if projections is None:
+            projections = self._build_projection(px, py)
+        proj = projections.get(target_path)
+        if proj is None:
+            return None, projections
+        u, v, is_valid = proj
+        if not is_valid:
+            return None, projections
+        if not (0 <= u < target_camera.width and 0 <= v < target_camera.height):
+            return None, projections
+        return QPointF(u, v), projections
+
+    def _apply_sibling_geometry(self, sibling, center, size):
+        """Relocate/resize a sibling patch without cropping against the wrong
+        raster. The cropped image is invalidated and rebuilt lazily when that
+        sibling's image is next shown/exported."""
+        sibling.annotation_size = size
+        sibling.set_precision(center)
+        sibling.set_cropped_bbox()
+        sibling.cropped_image = None
+        sibling._cached_cropped_image_graphic = None
+        try:
+            sibling.update_graphics_item()   # no-op when off the active scene
+        except Exception:
+            pass
+        try:
+            sibling.annotationUpdated.emit(sibling)
+        except Exception:
+            pass
+
+    def _refresh_context_tile(self, image_path):
+        """Re-render a context-matrix tile's annotations after a sibling edit."""
+        canvas = self._get_context_canvas_for_path(image_path)
+        if canvas is None:
+            return
+        try:
+            annotations = self.annotation_window.get_image_annotations(image_path)
+            canvas._render_annotations_readonly(annotations)
+        except Exception:
+            pass
+
+    def resync_shared_group(self, primary_annotation, sync_size=False):
+        """Re-project the siblings of an edited shared patch through the index
+        maps (geometric re-sync on move/resize release).
+
+        Siblings whose 3D point can't be resolved in their camera are left
+        unmoved (never deleted). Returns a list of change records
+        [{'annotation','old_center','new_center','old_size','new_size'}] so the
+        caller can fold them into a single undo action. Refreshes context tiles.
+        """
+        if self._propagating_annotation:
+            return []
+        if not isinstance(primary_annotation, PatchAnnotation):
+            return []
+        group = self.annotation_window.get_shared_group(primary_annotation)
+        if len(group) < 2:
+            return []
+
+        source_camera = self._get_camera_for_path(primary_annotation.image_path)
+        if source_camera is None:
+            return []
+
+        px, py, source_element_ids, use_3d = self._compute_source_patch_context(
+            primary_annotation, source_camera
+        )
+        new_size = primary_annotation.annotation_size
+
+        changes = []
+        projections = None
+        self._propagating_annotation = True
+        try:
+            for sibling in group:
+                if sibling is primary_annotation or not isinstance(sibling, PatchAnnotation):
+                    continue
+                try:
+                    center, projections = self._project_patch_center(
+                        sibling.image_path, px, py, source_element_ids, use_3d, projections
+                    )
+                except Exception:
+                    center = None
+
+                old_center = QPointF(sibling.center_xy)
+                old_size = sibling.annotation_size
+                target_size = new_size if sync_size else sibling.annotation_size
+
+                if center is None:
+                    # Occluded / no coverage: keep position, but still honor a
+                    # size change so the group stays visually consistent.
+                    if target_size == old_size:
+                        continue
+                    center = QPointF(sibling.center_xy)
+
+                self._apply_sibling_geometry(sibling, center, target_size)
+                changes.append({
+                    'annotation': sibling,
+                    'old_center': old_center,
+                    'new_center': QPointF(sibling.center_xy),
+                    'old_size': old_size,
+                    'new_size': target_size,
+                })
+                self._refresh_context_tile(sibling.image_path)
+        finally:
+            self._propagating_annotation = False
+
+        return changes
 
     def _resolve_source_mask_class_context(self, source_camera, label_id: str, project_labels: list):
         """Resolve the source label, mask, and internal class ID for propagation."""

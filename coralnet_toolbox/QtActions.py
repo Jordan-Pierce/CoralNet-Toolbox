@@ -618,6 +618,49 @@ class CompoundAction(Action):
             action.undo()
 
 
+class SharedGroupEditAction(Action):
+    """Undoable relocate/resize of shared-group sibling patches.
+
+    Siblings live on other images, so geometry is applied directly rather than
+    through set_annotation_location (which would crop against the active raster).
+    Cropped images are invalidated and rebuilt lazily. `changes` is a list of
+    dicts: {'annotation', 'old_center', 'new_center', 'old_size', 'new_size'}.
+    """
+
+    def __init__(self, changes, description: str = "Sync shared group"):
+        self.description = description
+        self.changes = [c for c in (changes or []) if c and c.get('annotation') is not None]
+
+    def is_empty(self):
+        return len(self.changes) == 0
+
+    def _apply(self, annotation, center, size):
+        try:
+            annotation.annotation_size = size
+            annotation.set_precision(center)
+            annotation.set_cropped_bbox()
+            annotation.cropped_image = None
+            annotation._cached_cropped_image_graphic = None
+            try:
+                annotation.update_graphics_item()   # no-op when off the active scene
+            except Exception:
+                pass
+            try:
+                annotation.annotationUpdated.emit(annotation)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def do(self):
+        for c in self.changes:
+            self._apply(c['annotation'], c['new_center'], c['new_size'])
+
+    def undo(self):
+        for c in self.changes:
+            self._apply(c['annotation'], c['old_center'], c['old_size'])
+
+
 class MaskEditAction(Action):
     """Undoable raw pixel edit for a single mask annotation."""
 
@@ -776,6 +819,7 @@ __all__ = [
     "DeleteAnnotationAction",
     "ActionStack",
     "CompoundAction",
+    "SharedGroupEditAction",
     "AddAnnotationsAction",
     "DeleteAnnotationsAction",
     "MoveAnnotationAction",

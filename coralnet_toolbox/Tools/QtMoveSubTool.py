@@ -83,10 +83,9 @@ class MoveSubTool(SubTool):
             new_center = selected_annotation.center_xy
             if self.orig_center is not None and new_center != self.orig_center:
                 action = MoveAnnotationAction(self.annotation_window, selected_annotation.id, self.orig_center, new_center)
-                try:
-                    self.annotation_window.action_stack.push(action)
-                except Exception:
-                    pass
+                # Fold any Multi-Annotate sibling re-sync into a single undo entry
+                # (also handles break-the-link when Multi-Annotate is off).
+                self.parent_tool.push_edit_with_group_sync(selected_annotation, action, sync_size=False)
                 try:
                     self.annotation_window.annotationMoved.emit(selected_annotation.id, {'old_center': self.orig_center, 'new_center': new_center})
                 except Exception:

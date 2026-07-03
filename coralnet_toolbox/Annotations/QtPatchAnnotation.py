@@ -444,6 +444,9 @@ class PatchAnnotation(Annotation):
         if 'id' in data:
             annotation.id = data['id']
 
+        # Restore the shared-group UUID (Multi-Annotate linked siblings)
+        annotation.shared_uuid = data.get('shared_uuid')
+
         # Add any additional data from the dictionary
         annotation.data = data.get('data', {})
 

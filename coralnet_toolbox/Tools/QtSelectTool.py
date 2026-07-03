@@ -18,7 +18,8 @@ from coralnet_toolbox.Annotations import (PatchAnnotation,
                                           PolygonAnnotation, 
                                           RectangleAnnotation,
                                           MultiPolygonAnnotation)
-from coralnet_toolbox.QtActions import MergeAnnotationsAction, CutAnnotationAction
+from coralnet_toolbox.QtActions import (MergeAnnotationsAction, CutAnnotationAction,
+                                        SharedGroupEditAction, CompoundAction)
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -559,6 +560,55 @@ class SelectTool(Tool):
         """Safely cancels cutting mode."""
         if self.active_subtool and isinstance(self.active_subtool, CutSubTool):
             self.deactivate_subtool()
+
+    # --- Shared-group (Multi-Annotate linked patch) helpers ---
+
+    def _get_propagation_engine(self):
+        """Return the MVAT propagation engine if MVAT is present, else None."""
+        mvat = getattr(self.annotation_window.main_window, 'mvat_manager', None)
+        if mvat is None:
+            return None
+        return getattr(mvat, 'propagation_engine', None)
+
+    def maybe_sync_shared_group(self, primary, sync_size=False):
+        """Propagate a primary patch edit to its shared-uuid siblings.
+
+        Returns a SharedGroupEditAction to fold into the undo entry, or None.
+        Break-the-link: when Multi-Annotate is OFF the edited patch leaves its
+        group (shared_uuid cleared) so its siblings never silently drift.
+        """
+        if not isinstance(primary, PatchAnnotation):
+            return None
+        if not getattr(primary, 'shared_uuid', None):
+            return None
+
+        engine = self._get_propagation_engine()
+        if engine is None or not getattr(engine, 'multi_annotate_enabled', False):
+            # OFF (or no MVAT loaded): this patch becomes independent.
+            primary.shared_uuid = None
+            return None
+
+        try:
+            changes = engine.resync_shared_group(primary, sync_size=sync_size)
+        except Exception:
+            changes = None
+        if not changes:
+            return None
+        return SharedGroupEditAction(changes)
+
+    def push_edit_with_group_sync(self, primary, primary_action, sync_size=False):
+        """Push `primary_action`, folding any sibling re-sync into one undo entry."""
+        sibling_action = self.maybe_sync_shared_group(primary, sync_size=sync_size)
+        try:
+            if sibling_action is not None:
+                self.annotation_window.action_stack.push(
+                    CompoundAction([primary_action, sibling_action],
+                                   description="Edit shared group")
+                )
+            elif primary_action is not None:
+                self.annotation_window.action_stack.push(primary_action)
+        except Exception:
+            pass
 
     # --- Convenience Properties ---
     @property

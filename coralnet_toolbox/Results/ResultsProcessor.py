@@ -434,6 +434,16 @@ class ResultsProcessor:
         refresh_current_image = False  # need create_cropped_image on visible patches
         selected_annotation = None     # last selected annotation to show in confidence window
 
+        # Multi-Annotate: a prediction on a shared patch should apply to its whole
+        # linked group (siblings are the same physical point seen from other
+        # cameras and are not part of this image's prediction inputs). Propagate
+        # only — never break the link here, since classification is a bulk machine
+        # op that is commonly run with MVAT closed.
+        predicted_ids = {a.id for a in annotations}
+        engine = self.annotation_window._shared_group_propagation_engine()
+        multi_on = engine is not None and getattr(engine, 'multi_annotate_enabled', False)
+        sibling_tile_paths = set()
+
         try:
             for result, annotation in zip(results_list, annotations):
                 if result:
@@ -455,6 +465,21 @@ class ResultsProcessor:
                             refresh_current_image = True
                             if annotation in self.annotation_window.selected_annotations:
                                 selected_annotation = annotation
+
+                        # Apply the same prediction to shared-group siblings.
+                        if multi_on and getattr(annotation, 'shared_uuid', None):
+                            for sibling in self.annotation_window.get_shared_group(annotation):
+                                if sibling is annotation or sibling.id in predicted_ids:
+                                    continue
+                                sib_old_label_id = sibling.label.id
+                                self._update_classification_data(sibling, cls_name, conf, predictions)
+                                dirty_image_paths.add(sibling.image_path)
+                                if sib_old_label_id != sibling.label.id:
+                                    label_changed_pairs.append((sibling.id, sibling.label.id))
+                                if sibling.image_path == self.annotation_window.current_image_path:
+                                    refresh_current_image = True
+                                else:
+                                    sibling_tile_paths.add(sibling.image_path)
 
                     except Exception as e:
                         print(f"Warning: Failed to process classification result for annotation {annotation.id}\n{e}")
@@ -498,6 +523,15 @@ class ResultsProcessor:
                     self.image_window.update_image_annotations(image_path)
                 except Exception:
                     pass
+
+            # 4b. Repaint context-matrix tiles for off-canvas siblings that were
+            # relabeled by group propagation, so their new label colour shows.
+            if multi_on and engine is not None and hasattr(engine, '_refresh_context_tile'):
+                for image_path in sibling_tile_paths:
+                    try:
+                        engine._refresh_context_tile(image_path)
+                    except Exception:
+                        pass
 
             # 5. Close the progress bar if we own it
             if progress_bar_created_here and progress_bar:

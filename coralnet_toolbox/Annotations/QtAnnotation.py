@@ -230,6 +230,10 @@ class Annotation(QObject):
         super().__init__()
         self.id = str(uuid.uuid4())
 
+        # Links sibling annotations created together in Multi-Annotate mode
+        # (same physical point seen from different cameras). None = not grouped.
+        self.shared_uuid = None
+
         self.label = label
 
         self.image_path = image_path
@@ -1471,6 +1475,7 @@ class Annotation(QObject):
             'data': self.data,
             'machine_confidence': machine_confidence,
             'verified': self.verified,
+            'shared_uuid': self.shared_uuid,
         }
 
         return result

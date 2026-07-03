@@ -162,11 +162,12 @@ class AnnotationViewerWindow(QWidget):
         toolbar.addWidget(sort_label)
         
         self.sort_combo = QComboBox()
-        self.sort_combo.addItems(["None", "Label", "Image", "Confidence", "Area", "Cluster"])
+        self.sort_combo.addItems(["None", "Label", "Image", "Confidence", "Area", "Shared ID", "Cluster"])
         self.sort_combo.insertSeparator(self.sort_combo.findText("Cluster"))
         self.sort_combo.currentTextChanged.connect(self._on_sort_changed)
         self.sort_combo.setMinimumWidth(100)
-        self.sort_combo.setToolTip("Sort annotations by: None (no sort), Label, Image, Confidence score, Area size, or Cluster group")
+        self.sort_combo.setToolTip("Sort annotations by: None (no sort), Label, Image, Confidence score, "
+                                   "Area size, Shared ID (Multi-Annotate linked patches), or Cluster group")
         toolbar.addWidget(self.sort_combo)
 
         # "Cluster" is disabled until cluster data arrives from the EmbeddingViewer.
@@ -1277,6 +1278,11 @@ class AnnotationViewerWindow(QWidget):
             items.sort(key=self._confidence_sort_key)
         elif sort_type == "Area":
             items.sort(key=self._area_sort_key)
+        elif sort_type == "Shared ID":
+            # Cluster items by shared_uuid; ungrouped (no shared_uuid) go last.
+            items.sort(key=lambda i: (getattr(i.annotation, 'shared_uuid', None) is None,
+                                      getattr(i.annotation, 'shared_uuid', None) or "",
+                                      i.annotation.id))
         elif sort_type == "Cluster":
             # Build {ann_id -> (cluster_id, dist_from_centroid)} from the EmbeddingViewer
             cluster_map = {}
@@ -1349,6 +1355,15 @@ class AnnotationViewerWindow(QWidget):
                 cid = _cluster_map.get(item.annotation.id)
                 key = f"Cluster {cid}" if cid is not None else "No Cluster"
                 color = _cluster_colors.get(cid)  # Apply the centroid color here
+            elif sort_type == "Shared ID":
+                shared = getattr(item.annotation, 'shared_uuid', None)
+                if shared:
+                    key = shared  # header shows the full UUID
+                    color = self._shared_id_color(shared)
+                else:
+                    from PyQt5.QtGui import QColor
+                    key = "(No Shared IDs)"
+                    color = QColor(128, 128, 128)  # grey for the ungrouped section
             else:
                 key = ""
                 color = None
@@ -1369,6 +1384,23 @@ class AnnotationViewerWindow(QWidget):
             groups.append((k, v.get("color"), v.get("items", [])))
 
         return groups
+
+    @staticmethod
+    def _shared_id_color(shared_uuid):
+        """Return a stable, distinct-ish header color derived from a shared_uuid.
+
+        Deterministic (same UUID -> same color across refreshes) via a hash of
+        the id mapped onto the HSV hue wheel; saturation/value are fixed so the
+        result is colorful and never grey (grey is reserved for the ungrouped
+        '(No Shared IDs)' section).
+        """
+        from PyQt5.QtGui import QColor
+        import hashlib
+        digest = hashlib.md5(str(shared_uuid).encode('utf-8')).hexdigest()
+        hue = int(digest, 16) % 360
+        color = QColor()
+        color.setHsv(hue, 160, 220)
+        return color
 
     @staticmethod
     def _confidence_value(item):

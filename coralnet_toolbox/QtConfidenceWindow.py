@@ -772,6 +772,27 @@ class ConfidenceWindow(QWidget):
         # Update the label to whichever bar was selected
         annotation_to_update.update_label(label)
 
+        # Multi-Annotate: propagate the relabel to shared-group siblings, or break
+        # the link when Multi-Annotate is off. shared_uuid is only ever set on
+        # patches, so a truthy check is sufficient (no isinstance import needed).
+        if getattr(annotation_to_update, 'shared_uuid', None):
+            try:
+                aw = self.main_window.annotation_window
+                engine = aw._shared_group_propagation_engine()
+                if engine is not None and getattr(engine, 'multi_annotate_enabled', False):
+                    for sibling in aw.get_shared_group(annotation_to_update):
+                        if sibling is annotation_to_update or sibling.label.id == label.id:
+                            continue
+                        sibling.update_user_confidence(label)
+                        if (hasattr(engine, '_refresh_context_tile')
+                                and sibling.image_path != aw.current_image_path):
+                            engine._refresh_context_tile(sibling.image_path)
+                else:
+                    # OFF (or no MVAT): the relabeled patch leaves its group.
+                    annotation_to_update.shared_uuid = None
+            except Exception:
+                pass
+
         # Notify all subscribers (including the EmbeddingViewer) that this
         # annotation's label has changed.  The annotationLabelChanged signal is
         # the canonical way viewers such as the EmbeddingViewer learn about

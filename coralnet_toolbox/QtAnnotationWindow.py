@@ -1890,6 +1890,28 @@ class AnnotationWindow(BaseCanvas):
             QApplication.restoreOverrideCursor()
             return
 
+        # Multi-Annotate: relabeling a shared patch relabels its whole linked
+        # group. Siblings live on other images, so they are appended to the
+        # target set here — the relabel loop + ChangeLabelsAction then cover them
+        # (including a single-undo entry) for free. When Multi-Annotate is off,
+        # the edited patch leaves its group instead (break the link).
+        if label is not None:
+            engine = self._shared_group_propagation_engine()
+            multi_on = engine is not None and getattr(engine, 'multi_annotate_enabled', False)
+            seen_ids = {a.id for a in target_annotations}
+            for ann in list(target_annotations):
+                if not (isinstance(ann, PatchAnnotation) and getattr(ann, 'shared_uuid', None)):
+                    continue
+                if ann.label.id == label.id:
+                    continue  # no actual change for this annotation
+                if multi_on:
+                    for sibling in self.get_shared_group(ann):
+                        if sibling.id not in seen_ids:
+                            target_annotations.append(sibling)
+                            seen_ids.add(sibling.id)
+                else:
+                    ann.shared_uuid = None
+
         def _get_raster_source_for_annotation(annotation):
             try:
                 image_window = getattr(self.main_window, 'image_window', None)
@@ -2059,9 +2081,27 @@ class AnnotationWindow(BaseCanvas):
             print(f"[PERF] set_selected_label: action_push={_t_push*1000:.1f}ms"
                   f" | signal_emit={_t_emit*1000:.1f}ms")
 
+        # Repaint any context-matrix tiles whose (off-canvas) sibling patches were
+        # relabeled, so the new label colour shows without a reload.
+        if changes:
+            engine = self._shared_group_propagation_engine()
+            if engine is not None and hasattr(engine, '_refresh_context_tile'):
+                refreshed_paths = set()
+                for ann_id, _old, _new in changes:
+                    ann = self.annotations_dict.get(ann_id)
+                    if ann is None or ann.image_path == self.current_image_path:
+                        continue
+                    if ann.image_path in refreshed_paths:
+                        continue
+                    refreshed_paths.add(ann.image_path)
+                    try:
+                        engine._refresh_context_tile(ann.image_path)
+                    except Exception:
+                        pass
+
         # Make cursor normal again
         QApplication.restoreOverrideCursor()
-        
+
     def set_annotation_scale(self, annotation, image_path=None):
         """
         Updates a single annotation's scale properties to match its raster.
@@ -2151,6 +2191,9 @@ class AnnotationWindow(BaseCanvas):
                 if old_size is not None and new_size is not None and old_size != new_size:
                     try:
                         action = ResizeAnnotationAction(self, annotation.id, old_size, new_size)
+                        # Fold Multi-Annotate sibling re-sync into one undo entry
+                        # (or break the link when Multi-Annotate is off).
+                        action = self._sync_shared_group_size(annotation, action)
                         self.action_stack.push(action)
                     except Exception:
                         pass
@@ -4042,6 +4085,49 @@ class AnnotationWindow(BaseCanvas):
 
         return self.image_annotations_dict.get(image_path, [])
 
+    def get_shared_group(self, annotation):
+        """Return every annotation sharing this annotation's shared_uuid (self
+        included). Returns [annotation] when it has no shared_uuid.
+
+        Scans the global annotations dict. Shared groups are small and this is
+        only hit on user-paced edits (move/resize/delete), so an O(n) scan is
+        cheap and avoids the stale-index bugs a maintained side-index invites.
+        """
+        shared = getattr(annotation, 'shared_uuid', None)
+        if not shared:
+            return [annotation]
+        group = [a for a in self.annotations_dict.values()
+                 if getattr(a, 'shared_uuid', None) == shared]
+        return group if group else [annotation]
+
+    def _shared_group_propagation_engine(self):
+        """Return the MVAT propagation engine if present, else None."""
+        mvat = getattr(self.main_window, 'mvat_manager', None)
+        if mvat is None:
+            return None
+        return getattr(mvat, 'propagation_engine', None)
+
+    def _sync_shared_group_size(self, annotation, primary_action):
+        """After a patch resize, propagate size to shared siblings as one undo
+        entry, or break the link when Multi-Annotate is off. Returns the action
+        that should actually be pushed (compound when siblings changed)."""
+        from coralnet_toolbox.QtActions import SharedGroupEditAction, CompoundAction
+        if not isinstance(annotation, PatchAnnotation) or not getattr(annotation, 'shared_uuid', None):
+            return primary_action
+        engine = self._shared_group_propagation_engine()
+        if engine is None or not getattr(engine, 'multi_annotate_enabled', False):
+            # OFF (or no MVAT): the resized patch leaves its group.
+            annotation.shared_uuid = None
+            return primary_action
+        try:
+            changes = engine.resync_shared_group(annotation, sync_size=True)
+        except Exception:
+            changes = None
+        if not changes:
+            return primary_action
+        return CompoundAction([primary_action, SharedGroupEditAction(changes)],
+                              description="Resize shared group")
+
     def get_image_review_annotations(self, image_path=None):
         """Get all annotations marked for review for the specified image path or current image."""
         if not image_path:
@@ -4439,6 +4525,16 @@ class AnnotationWindow(BaseCanvas):
                     ann = annotations_dict.get(ann_id)
                     if ann:
                         selected_set[ann_id] = ann
+
+        # Multi-Annotate: deleting a shared patch removes its whole linked group.
+        # When Multi-Annotate is off, only the clicked patch is deleted (the group
+        # simply shrinks).
+        engine = self._shared_group_propagation_engine()
+        if engine is not None and getattr(engine, 'multi_annotate_enabled', False):
+            for ann in list(selected_set.values()):
+                if isinstance(ann, PatchAnnotation) and getattr(ann, 'shared_uuid', None):
+                    for sibling in self.get_shared_group(ann):
+                        selected_set.setdefault(sibling.id, sibling)
 
         selected_annotations = list(selected_set.values())
         # Unselect them first to clean up confidence window connections
