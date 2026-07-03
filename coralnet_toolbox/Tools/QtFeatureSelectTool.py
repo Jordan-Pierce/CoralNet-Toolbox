@@ -1230,6 +1230,29 @@ class FeatureSelectTool(Tool):
         except Exception as e:
             print(f"[FeatureSelectTool] propagation failed: {e}")
 
+    def _propagate_multiclass_mask_to_cameras(self, prediction_mask, mask_annotation, wa_left, wa_top):
+        """Batch-propagate all class blobs to context cameras.
+
+        Mirrors QtSemantic's approach: pass the full semantic mask and work-area
+        offset to the MVAT manager's batch propagation, which handles all labels
+        in one call instead of looping per-class.
+        """
+        try:
+            mvat_manager = getattr(self.main_window, 'mvat_manager', None)
+            if mvat_manager is None:
+                return
+            image_path = self.annotation_window.current_image_path
+            mvat_manager._on_semantic_prediction_applied(
+                image_path,
+                mask_annotation,
+                prediction_regions=[(prediction_mask, (wa_left, wa_top))],
+            )
+        except AttributeError:
+            # _on_semantic_prediction_applied not available (older MVAT version)
+            pass
+        except Exception as e:
+            print(f"[FeatureSelectTool] batch multiclass propagation failed: {e}")
+
     # ==================== Commit (multi-class) ====================
 
     def _commit_multiclass(self):
@@ -1308,21 +1331,12 @@ class FeatureSelectTool(Tool):
         if not history_action.is_empty():
             self.annotation_window.action_stack.push(history_action)
 
-        # Multi-Annotate: propagate each class blob to context cameras.
-        if self.post_prediction_callback is not None:
-            anchor = QPointF(wa_left + wa_w / 2.0, wa_top + wa_h / 2.0)
-            for c, key in enumerate(keys):
-                label = self.class_labels.get(key)
-                if label is None:
-                    continue
-                class_sel = (label_map[:ch, :cw] == c).astype(np.uint8)
-                if class_sel.any():
-                    try:
-                        self.post_prediction_callback(
-                            anchor, label.id, np.ascontiguousarray(class_sel)
-                        )
-                    except Exception as e:
-                        print(f"[FeatureSelectTool] multiclass propagation failed for {label.short_label_code}: {e}")
+        # Multi-Annotate: batch-propagate all class blobs to context cameras
+        # (mirrors QtSemantic's _on_semantic_prediction_applied approach).
+        if prediction_mask.any():
+            self._propagate_multiclass_mask_to_cameras(
+                prediction_mask, mask_annotation, wa_left, wa_top
+            )
 
     def _commit_multiclass_as_polygons(self, label_map, keys, wa_left, wa_top, wa_w, wa_h):
         """Polygonize each class blob and add one PolygonAnnotation per label."""
