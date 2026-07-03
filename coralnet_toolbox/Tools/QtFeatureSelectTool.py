@@ -1308,6 +1308,22 @@ class FeatureSelectTool(Tool):
         if not history_action.is_empty():
             self.annotation_window.action_stack.push(history_action)
 
+        # Multi-Annotate: propagate each class blob to context cameras.
+        if self.post_prediction_callback is not None:
+            anchor = QPointF(wa_left + wa_w / 2.0, wa_top + wa_h / 2.0)
+            for c, key in enumerate(keys):
+                label = self.class_labels.get(key)
+                if label is None:
+                    continue
+                class_sel = (label_map[:ch, :cw] == c).astype(np.uint8)
+                if class_sel.any():
+                    try:
+                        self.post_prediction_callback(
+                            anchor, label.id, np.ascontiguousarray(class_sel)
+                        )
+                    except Exception as e:
+                        print(f"[FeatureSelectTool] multiclass propagation failed for {label.short_label_code}: {e}")
+
     def _commit_multiclass_as_polygons(self, label_map, keys, wa_left, wa_top, wa_w, wa_h):
         """Polygonize each class blob and add one PolygonAnnotation per label."""
         import torch

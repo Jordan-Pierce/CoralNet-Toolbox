@@ -292,7 +292,7 @@ class MVATManager(QObject):
     # index map at all. Since the ortho <-> mesh element-ID bridge relies on that
     # map (only the geometric camera-projection paths work without it), the map
     # silently vanishing is what breaks painting between the ortho and the mesh.
-    _ORTHO_MAX_RENDER_DIM = 8192
+    _ORTHO_MAX_RENDER_DIM = 16384  # 8192
 
     @property
     def ortho_pixel_budget(self):
