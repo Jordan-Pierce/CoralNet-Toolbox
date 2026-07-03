@@ -773,9 +773,9 @@ class ConfidenceWindow(QWidget):
         annotation_to_update.update_label(label)
 
         # Multi-Annotate: propagate the relabel to shared-group siblings, or break
-        # the link when Multi-Annotate is off. shared_uuid is only ever set on
+        # the link when Multi-Annotate is off. shared_id is only ever set on
         # patches, so a truthy check is sufficient (no isinstance import needed).
-        if getattr(annotation_to_update, 'shared_uuid', None):
+        if getattr(annotation_to_update, 'shared_id', None):
             try:
                 aw = self.main_window.annotation_window
                 engine = aw._shared_group_propagation_engine()
@@ -789,7 +789,7 @@ class ConfidenceWindow(QWidget):
                             engine._refresh_context_tile(sibling.image_path)
                 else:
                     # OFF (or no MVAT): the relabeled patch leaves its group.
-                    annotation_to_update.shared_uuid = None
+                    annotation_to_update.shared_id = None
             except Exception:
                 pass
 

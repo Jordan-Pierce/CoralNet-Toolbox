@@ -1183,9 +1183,9 @@ class PropagationEngine(QObject):
             # A lone patch is not a group, so only stamp when siblings exist.
             if propagated_annotations:
                 group_uuid = str(uuid.uuid4())
-                annotation.shared_uuid = group_uuid
+                annotation.shared_id = group_uuid
                 for sibling in propagated_annotations:
-                    sibling.shared_uuid = group_uuid
+                    sibling.shared_id = group_uuid
 
             # One batched commit: a single undo entry and a single UI refresh
             # pass instead of one per target camera.

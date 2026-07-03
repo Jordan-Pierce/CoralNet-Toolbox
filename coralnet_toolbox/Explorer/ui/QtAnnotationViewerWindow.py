@@ -1279,9 +1279,9 @@ class AnnotationViewerWindow(QWidget):
         elif sort_type == "Area":
             items.sort(key=self._area_sort_key)
         elif sort_type == "Shared ID":
-            # Cluster items by shared_uuid; ungrouped (no shared_uuid) go last.
-            items.sort(key=lambda i: (getattr(i.annotation, 'shared_uuid', None) is None,
-                                      getattr(i.annotation, 'shared_uuid', None) or "",
+            # Cluster items by shared_id; ungrouped (no shared_id) go last.
+            items.sort(key=lambda i: (getattr(i.annotation, 'shared_id', None) is None,
+                                      getattr(i.annotation, 'shared_id', None) or "",
                                       i.annotation.id))
         elif sort_type == "Cluster":
             # Build {ann_id -> (cluster_id, dist_from_centroid)} from the EmbeddingViewer
@@ -1356,7 +1356,7 @@ class AnnotationViewerWindow(QWidget):
                 key = f"Cluster {cid}" if cid is not None else "No Cluster"
                 color = _cluster_colors.get(cid)  # Apply the centroid color here
             elif sort_type == "Shared ID":
-                shared = getattr(item.annotation, 'shared_uuid', None)
+                shared = getattr(item.annotation, 'shared_id', None)
                 if shared:
                     key = shared  # header shows the full UUID
                     color = self._shared_id_color(shared)
@@ -1386,8 +1386,8 @@ class AnnotationViewerWindow(QWidget):
         return groups
 
     @staticmethod
-    def _shared_id_color(shared_uuid):
-        """Return a stable, distinct-ish header color derived from a shared_uuid.
+    def _shared_id_color(shared_id):
+        """Return a stable, distinct-ish header color derived from a shared_id.
 
         Deterministic (same UUID -> same color across refreshes) via a hash of
         the id mapped onto the HSV hue wheel; saturation/value are fixed so the
@@ -1396,7 +1396,7 @@ class AnnotationViewerWindow(QWidget):
         """
         from PyQt5.QtGui import QColor
         import hashlib
-        digest = hashlib.md5(str(shared_uuid).encode('utf-8')).hexdigest()
+        digest = hashlib.md5(str(shared_id).encode('utf-8')).hexdigest()
         hue = int(digest, 16) % 360
         color = QColor()
         color.setHsv(hue, 160, 220)

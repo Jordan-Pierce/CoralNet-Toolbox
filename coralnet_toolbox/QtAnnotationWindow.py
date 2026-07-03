@@ -1900,7 +1900,7 @@ class AnnotationWindow(BaseCanvas):
             multi_on = engine is not None and getattr(engine, 'multi_annotate_enabled', False)
             seen_ids = {a.id for a in target_annotations}
             for ann in list(target_annotations):
-                if not (isinstance(ann, PatchAnnotation) and getattr(ann, 'shared_uuid', None)):
+                if not (isinstance(ann, PatchAnnotation) and getattr(ann, 'shared_id', None)):
                     continue
                 if ann.label.id == label.id:
                     continue  # no actual change for this annotation
@@ -1910,7 +1910,7 @@ class AnnotationWindow(BaseCanvas):
                             target_annotations.append(sibling)
                             seen_ids.add(sibling.id)
                 else:
-                    ann.shared_uuid = None
+                    ann.shared_id = None
 
         def _get_raster_source_for_annotation(annotation):
             try:
@@ -4086,18 +4086,18 @@ class AnnotationWindow(BaseCanvas):
         return self.image_annotations_dict.get(image_path, [])
 
     def get_shared_group(self, annotation):
-        """Return every annotation sharing this annotation's shared_uuid (self
-        included). Returns [annotation] when it has no shared_uuid.
+        """Return every annotation sharing this annotation's shared_id (self
+        included). Returns [annotation] when it has no shared_id.
 
         Scans the global annotations dict. Shared groups are small and this is
         only hit on user-paced edits (move/resize/delete), so an O(n) scan is
         cheap and avoids the stale-index bugs a maintained side-index invites.
         """
-        shared = getattr(annotation, 'shared_uuid', None)
+        shared = getattr(annotation, 'shared_id', None)
         if not shared:
             return [annotation]
         group = [a for a in self.annotations_dict.values()
-                 if getattr(a, 'shared_uuid', None) == shared]
+                 if getattr(a, 'shared_id', None) == shared]
         return group if group else [annotation]
 
     def _shared_group_propagation_engine(self):
@@ -4112,12 +4112,12 @@ class AnnotationWindow(BaseCanvas):
         entry, or break the link when Multi-Annotate is off. Returns the action
         that should actually be pushed (compound when siblings changed)."""
         from coralnet_toolbox.QtActions import SharedGroupEditAction, CompoundAction
-        if not isinstance(annotation, PatchAnnotation) or not getattr(annotation, 'shared_uuid', None):
+        if not isinstance(annotation, PatchAnnotation) or not getattr(annotation, 'shared_id', None):
             return primary_action
         engine = self._shared_group_propagation_engine()
         if engine is None or not getattr(engine, 'multi_annotate_enabled', False):
             # OFF (or no MVAT): the resized patch leaves its group.
-            annotation.shared_uuid = None
+            annotation.shared_id = None
             return primary_action
         try:
             changes = engine.resync_shared_group(annotation, sync_size=True)
@@ -4532,7 +4532,7 @@ class AnnotationWindow(BaseCanvas):
         engine = self._shared_group_propagation_engine()
         if engine is not None and getattr(engine, 'multi_annotate_enabled', False):
             for ann in list(selected_set.values()):
-                if isinstance(ann, PatchAnnotation) and getattr(ann, 'shared_uuid', None):
+                if isinstance(ann, PatchAnnotation) and getattr(ann, 'shared_id', None):
                     for sibling in self.get_shared_group(ann):
                         selected_set.setdefault(sibling.id, sibling)
 

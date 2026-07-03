@@ -232,7 +232,7 @@ class Annotation(QObject):
 
         # Links sibling annotations created together in Multi-Annotate mode
         # (same physical point seen from different cameras). None = not grouped.
-        self.shared_uuid = None
+        self.shared_id = None
 
         self.label = label
 
@@ -1475,7 +1475,7 @@ class Annotation(QObject):
             'data': self.data,
             'machine_confidence': machine_confidence,
             'verified': self.verified,
-            'shared_uuid': self.shared_uuid,
+            'shared_id': self.shared_id,
         }
 
         return result

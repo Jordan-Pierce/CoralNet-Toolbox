@@ -575,17 +575,17 @@ class SelectTool(Tool):
 
         Returns a SharedGroupEditAction to fold into the undo entry, or None.
         Break-the-link: when Multi-Annotate is OFF the edited patch leaves its
-        group (shared_uuid cleared) so its siblings never silently drift.
+        group (shared_id cleared) so its siblings never silently drift.
         """
         if not isinstance(primary, PatchAnnotation):
             return None
-        if not getattr(primary, 'shared_uuid', None):
+        if not getattr(primary, 'shared_id', None):
             return None
 
         engine = self._get_propagation_engine()
         if engine is None or not getattr(engine, 'multi_annotate_enabled', False):
             # OFF (or no MVAT loaded): this patch becomes independent.
-            primary.shared_uuid = None
+            primary.shared_id = None
             return None
 
         try:

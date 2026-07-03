@@ -467,7 +467,7 @@ class ResultsProcessor:
                                 selected_annotation = annotation
 
                         # Apply the same prediction to shared-group siblings.
-                        if multi_on and getattr(annotation, 'shared_uuid', None):
+                        if multi_on and getattr(annotation, 'shared_id', None):
                             for sibling in self.annotation_window.get_shared_group(annotation):
                                 if sibling is annotation or sibling.id in predicted_ids:
                                     continue
