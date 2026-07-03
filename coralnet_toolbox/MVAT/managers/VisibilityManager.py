@@ -1652,12 +1652,24 @@ class VisibilityManager:
         vu = top_center - bot_center
         vu_len = np.linalg.norm(vu)
         view_up = vu / vu_len if vu_len > 1e-12 else np.array([0., 1., 0.])
-        parallel_scale = vu_len * 0.5
+
+        # World-space footprint of the orthomosaic at the CRS Z=0 plane: its
+        # height is the vertical corner span, its width the horizontal span.
+        # These size the render frustum below so the mesh fills the frame.
+        vr = ((TR - TL) + (BR - BL)) * 0.5
+        world_width = float(np.linalg.norm(vr))
+        world_height = float(vu_len)
 
         vertical_dir = ortho_camera.get_vertical_direction_world()
         bounds = mesh.bounds
         z_range = max(abs(bounds[5] - bounds[4]), 1.0)
-        lift = z_range * 5.0
+        # Lift the emulated camera far above the surface so the tele-perspective
+        # closely approximates a true orthographic view (residual lateral shift
+        # ~ elevation / lift). The focal length scales with lift below, so the
+        # framing is preserved regardless of how high we go. Capped well inside
+        # the far clip plane so the mesh never lands beyond it (empty render).
+        lift = max(z_range * 200.0, world_width * 4.0, world_height * 4.0)
+        lift = min(lift, cls.GL_FAR * 0.4)
         cam_pos = center - vertical_dir * lift
 
         # Build view matrix (R, t) from camera position, focal point, and up vector
@@ -1685,23 +1697,36 @@ class VisibilityManager:
             return None
         up = up / up_len
 
-        # Rotation matrix (column-major: [right, up, -forward])
-        R = np.column_stack([right, up, -forward])
+        # World -> camera rotation (OpenCV convention: X right, Y down, Z forward
+        # toward the scene). The camera axes are the ROWS of R, so a footprint
+        # point at world `center` maps to camera-space [0, 0, lift] — dead centre,
+        # in front of the camera. The previous code used column_stack([right, up,
+        # -forward]), i.e. the camera-to-world rotation with flipped axes, which
+        # mis-oriented the camera so the mesh barely (or never) landed in frame
+        # (the ~0% coverage that left ortho<->mesh propagation with no face IDs).
+        R = np.vstack([right, -up, forward])
         t = -R @ cam_pos
 
-        # Build orthographic intrinsic matrix
-        # For ortho: K = [[2/width, 0, 0.5], [0, 2/height, 0.5], [0, 0, 1], [0, 0, 0]]
-        # But we use the standard format with focal lengths replaced by ortho scaling
-        ortho_scale_x = parallel_scale / render_w
-        ortho_scale_y = parallel_scale / render_h
+        # Pinhole intrinsics (in pixels) that make the orthomosaic footprint fill
+        # the render frame at the camera's lift distance. The principal point is
+        # the frame CENTRE (cx=W/2, cy=H/2) — the previous code placed it at pixel
+        # 0.5 and used a focal length that ignored the lift, which shrank the mesh
+        # to a tiny off-centre blob (~1% coverage) and left ortho<->mesh
+        # propagation with almost no face IDs. Because every footprint point lies
+        # on the plane perpendicular to `forward` at distance `lift`, this framing
+        # is exact for that plane (half-width world_width/2 maps to NDC edge).
+        fx = render_w * lift / max(world_width, 1e-6)
+        fy = render_h * lift / max(world_height, 1e-6)
         K = np.array([
-            [1.0 / ortho_scale_x, 0.0, 0.5],
-            [0.0, 1.0 / ortho_scale_y, 0.5],
+            [fx, 0.0, render_w / 2.0],
+            [0.0, fy, render_h / 2.0],
             [0.0, 0.0, 1.0],
-            [0.0, 0.0, 0.0],
         ], dtype=np.float64)
 
-        # Call batch moderngl with single ortho camera
+        # Call batch moderngl with single ortho camera. Viewport cropping is
+        # disabled: its bounding-box math is perspective-specific and, more
+        # importantly, the index map must span the WHOLE ortho footprint 1:1 so a
+        # cropped/pasted sub-frame would misalign pixel<->face lookups.
         try:
             results = cls.compute_batch_visibility_moderngl(
                 mesh_product,
@@ -1710,6 +1735,7 @@ class VisibilityManager:
                 compute_visible_indices=False,
                 pixel_budget=None,
                 upsample_to_native=False,
+                use_viewport_cropping=False,
             )
             index_map, visible_indices, _, _ = (results[0].get(k) for k in ['index_map', 'visible_indices', 'depth_map', 'inverted_index'])
 

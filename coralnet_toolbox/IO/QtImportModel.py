@@ -148,6 +148,7 @@ class ImportModelDialog(QDialog):
         # --- Texture loading (mesh-only) ---
         self._texture_combo = QComboBox()
         self._texture_combo.addItems(["True", "False"])
+        self._texture_combo.setCurrentIndex(1)  # Default to False
         self._texture_combo.setToolTip(
             "Load associated texture image if present in the same directory as the mesh.\n"
             "Requires UV coordinates to be present in the mesh file.\n"
@@ -247,8 +248,6 @@ class ImportModelDialog(QDialog):
         if is_mesh:
             has_texture = find_texture_file(path)
             self._texture_combo.setEnabled(has_texture)
-            # Default to True if texture exists, False otherwise
-            self._texture_combo.setCurrentIndex(0 if has_texture else 1)
         else:
             self._texture_combo.setEnabled(False)
             self._texture_combo.setCurrentIndex(1)  # Default to False

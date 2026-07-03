@@ -285,17 +285,43 @@ class MVATManager(QObject):
 
         self._setup_connections()
 
+    # Keep the largest ortho render dimension within this many pixels so the
+    # ModernGL FBO/texture stays inside the GL max-texture-size limit (commonly
+    # >= 16384; 8192 is safe on every GPU). A truly native ortho render — e.g. a
+    # 40k x 40k orthomosaic — exceeds that limit and the build fails, leaving no
+    # index map at all. Since the ortho <-> mesh element-ID bridge relies on that
+    # map (only the geometric camera-projection paths work without it), the map
+    # silently vanishing is what breaks painting between the ortho and the mesh.
+    _ORTHO_MAX_RENDER_DIM = 8192
+
     @property
     def ortho_pixel_budget(self):
         """
-        Dynamically scale the perspective pixel budget up for the orthomosaic.
+        Dynamically scale the perspective pixel budget for the orthomosaic.
 
-        Ortho maps cover the whole site, so they use 16x the single-camera
-        pixel budget without introducing extra state.
+        Ortho maps cover the whole site, so they use 16x the single-camera pixel
+        budget. The result is always clamped so the longest render dimension
+        stays within ``_ORTHO_MAX_RENDER_DIM`` — critically, this also bounds the
+        Native (``self.pixel_budget is None``) case, which would otherwise render
+        at full orthomosaic resolution and fail to build for large orthos. Small
+        orthos (longest side already within the cap) still render 1:1.
         """
-        if self.pixel_budget is None:
-            return None
-        return self.pixel_budget * 16
+        budget = None if self.pixel_budget is None else self.pixel_budget * 16
+
+        cam = self.ortho_camera
+        if cam is not None:
+            w = int(getattr(cam, 'width', 0) or 0)
+            h = int(getattr(cam, 'height', 0) or 0)
+            max_dim = max(w, h)
+            if w > 0 and h > 0 and max_dim > self._ORTHO_MAX_RENDER_DIM:
+                # Largest total-pixel budget whose sqrt-downscale keeps the
+                # longest side at exactly _ORTHO_MAX_RENDER_DIM:
+                #   render_max = max_dim * sqrt(budget / (w*h)) = cap
+                #   => budget  = (w*h) * (cap / max_dim) ** 2
+                feasible = int((w * h) * (self._ORTHO_MAX_RENDER_DIM / max_dim) ** 2)
+                budget = feasible if budget is None else min(budget, feasible)
+
+        return budget
 
     def _setup_connections(self):
         """
@@ -503,6 +529,14 @@ class MVATManager(QObject):
                 self._pixel_budget_user_set = True
                 self._cache_n_workers = n_workers  # Store for use in _compute_visibility_async
                 self.debug_enable_cache = enable_cache  # Debug: enable/disable caching
+                # The dialog's "Caching" choice is the master disk-cache switch for
+                # this session. Enabling it flips the manager out of aggressive
+                # (RAM-only) mode so the worker AND the on-the-fly background
+                # provider persist maps to disk; disabling it keeps the
+                # recompute-from-RAM behavior. This applies to BOTH "Compute Now"
+                # (bulk compute + cache) and "Background" (cache on demand), so the
+                # combo works regardless of which button was pressed.
+                self.index_map_disk_cache_enabled = bool(enable_cache)
                 self.debug_enable_compression = enable_compression  # Debug: compress cache or not
                 self.debug_splat_radius = splat_radius  # Debug: point-cloud splat sprite radius (px)
                 self.debug_splat_round = splat_round  # Debug: point-cloud splat shape (round vs square)

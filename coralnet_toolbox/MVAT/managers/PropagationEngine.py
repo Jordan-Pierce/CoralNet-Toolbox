@@ -633,11 +633,21 @@ class PropagationEngine(QObject):
         if scale_factor is not None and scale_factor != 1.0:
             map_px = int(px * scale_factor)
             map_py = int(py * scale_factor)
-            map_bw = max(1, int(mask_w * scale_factor))
-            map_bh = max(1, int(mask_h * scale_factor))
+            map_bw = max(1, int(round(mask_w * scale_factor)))
+            map_bh = max(1, int(round(mask_h * scale_factor)))
+            # Downscale the brush footprint to the index-map resolution so the
+            # sampled region keeps the brush SHAPE. Previously this branch grabbed
+            # the whole square bounding box (index_slice.ravel()), which turned a
+            # thin ortho stroke into blocky square patches of faces on the mesh.
+            import cv2
+            sample_mask = cv2.resize(
+                source_mask.astype(np.uint8), (map_bw, map_bh),
+                interpolation=cv2.INTER_NEAREST,
+            ).astype(bool)
         else:
             map_px, map_py = px, py
             map_bw, map_bh = mask_w, mask_h
+            sample_mask = source_mask.astype(bool)
 
         x0 = map_px - map_bw // 2
         y0 = map_py - map_bh // 2
@@ -654,16 +664,24 @@ class PropagationEngine(QObject):
         cy1 = min(y1, img_h)
         index_slice = source_index_map[cy0:cy1, cx0:cx1]
 
-        if scale_factor is not None and scale_factor != 1.0:
-            raw_ids = index_slice.ravel()
-        else:
-            bx0 = cx0 - x0
-            by0 = cy0 - y0
-            bx1 = bx0 + (cx1 - cx0)
-            by1 = by0 + (cy1 - cy0)
-            mask_clip = source_mask[by0:by1, bx0:bx1]
-            raw_ids = index_slice[mask_clip.astype(bool)]
+        bx0 = cx0 - x0
+        by0 = cy0 - y0
+        bx1 = bx0 + (cx1 - cx0)
+        by1 = by0 + (cy1 - cy0)
+        mask_clip = sample_mask[by0:by1, bx0:bx1]
 
+        # Rounding when downscaling can leave the clipped mask and index slice off
+        # by a pixel; trim both to their common extent before indexing.
+        if mask_clip.shape != index_slice.shape:
+            mh = min(mask_clip.shape[0], index_slice.shape[0])
+            mw = min(mask_clip.shape[1], index_slice.shape[1])
+            mask_clip = mask_clip[:mh, :mw]
+            index_slice = index_slice[:mh, :mw]
+
+        if mask_clip.size == 0 or not np.any(mask_clip):
+            return np.array([], dtype=np.int64)
+
+        raw_ids = index_slice[mask_clip]
         unique_ids = np.unique(raw_ids)
         return unique_ids[unique_ids > -1].astype(np.int64, copy=False)
 
