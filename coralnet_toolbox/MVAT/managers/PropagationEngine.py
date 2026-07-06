@@ -1201,6 +1201,101 @@ class PropagationEngine(QObject):
         finally:
             self._propagating_annotation = False
 
+    def build_sampled_patch_siblings(self, source_annotations, progress_bar=None) -> list:
+        """Build (but do not add) projected sibling patches for bulk-sampled patches.
+
+        For every source PatchAnnotation, project its center into all visible
+        context cameras (excluding the source's own image) and create a linked
+        sibling PatchAnnotation per valid projection. Each source patch and its
+        siblings are stamped with a shared ``shared_id`` group UUID.
+
+        Unlike ``_on_patch_annotation_created`` this method does NOT insert the
+        siblings — the caller (Patch Sampling tool) owns a single batched
+        ``add_annotations`` call for source + siblings, so the whole operation is
+        one undo entry and one UI refresh.
+
+        Args:
+            source_annotations: iterable of freshly created source PatchAnnotations
+                (already positioned on their source image, not yet added).
+            progress_bar: optional ProgressBar advanced once per source patch so the
+                user sees the (per-camera) projection work progressing.
+
+        Returns:
+            list[PatchAnnotation]: the projected siblings (may be empty).
+        """
+        source_annotations = [a for a in (source_annotations or [])
+                              if isinstance(a, PatchAnnotation)]
+        if not source_annotations:
+            return []
+
+        visible = set(self._get_visible_context_camera_paths())
+        if not visible:
+            return []
+
+        # Group source patches by their image so each source camera is set once.
+        from collections import defaultdict
+        by_image = defaultdict(list)
+        for ann in source_annotations:
+            by_image[ann.image_path].append(ann)
+
+        siblings_all = []
+        prev_selected_camera = self.selected_camera
+        self._propagating_annotation = True
+        try:
+            for image_path, patches in by_image.items():
+                src_cam = self._get_camera_for_path(image_path)
+                if src_cam is None:
+                    continue
+                targets = [p for p in visible if p != image_path]
+                if not targets:
+                    continue
+
+                # The projection helpers read self.selected_camera (via
+                # _build_projection); scope it to this source image.
+                self.selected_camera = src_cam
+
+                for src in patches:
+                    px = int(src.center_xy.x())
+                    py = int(src.center_xy.y())
+                    _, _, source_element_ids, use_3d = self._compute_source_patch_context(src, src_cam)
+
+                    projections = None
+                    siblings = []
+                    for target_path in targets:
+                        try:
+                            center, projections = self._project_patch_center(
+                                target_path, px, py, source_element_ids, use_3d, projections
+                            )
+                            if center is None:
+                                continue
+                            siblings.append(PatchAnnotation(
+                                center_xy=center,
+                                annotation_size=src.annotation_size,
+                                label=src.label,
+                                image_path=target_path,
+                                transparency=src.transparency,
+                            ))
+                        except Exception:
+                            pass
+
+                    if siblings:
+                        group_uuid = str(uuid.uuid4())
+                        src.shared_id = group_uuid
+                        for sibling in siblings:
+                            sibling.shared_id = group_uuid
+                        siblings_all.extend(siblings)
+
+                    if progress_bar is not None:
+                        try:
+                            progress_bar.update_progress()
+                        except Exception:
+                            pass
+        finally:
+            self.selected_camera = prev_selected_camera
+            self._propagating_annotation = False
+
+        return siblings_all
+
     def _compute_source_patch_context(self, annotation, source_camera):
         """Sample a source patch's element IDs from its camera index map.
 

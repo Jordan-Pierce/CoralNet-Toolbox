@@ -723,7 +723,8 @@ class BatchInferenceDialog(QDialog):
         super().showEvent(event)
         self.update_status_label()
         self.update_model_availability()
-        
+        self._update_multi_view_combo_state()
+
         # Check if any models are available
         if not self.model_dialogs:
             QMessageBox.warning(self, 
@@ -898,6 +899,20 @@ class BatchInferenceDialog(QDialog):
         self.all_combo.setCurrentText("False")
         self.all_combo.setToolTip("Generate predictions for ALL annotations.\nTrue: Classify model will predict labels for all annotations (including already-verified).")
         layout.addRow("Predict All Annotations:", self.all_combo)
+
+        # Multi-View Classification: fuse per-view (shared_id) predictions into a
+        # mean consensus. Enabled only when the Context Matrix has visible cameras;
+        # independent of the MVAT Multi-Annotate button. Defaults to False so the
+        # user must opt in (state re-evaluated in showEvent).
+        self.multi_view_combo = QComboBox()
+        self.multi_view_combo.addItems(["False", "True"])
+        self.multi_view_combo.setCurrentText("False")
+        self.multi_view_combo.setToolTip(
+            "Multi-View Classification: predict every view of a shared point and "
+            "assign the mean-consensus top-5 to the whole group.\n"
+            "Enabled only when the Context Matrix has visible cameras loaded."
+        )
+        layout.addRow("Multi-View Classification:", self.multi_view_combo)
 
         # Keep the two options mutually exclusive, like the old radio checkboxes
         self.review_combo.currentTextChanged.connect(self._on_review_combo_changed)
@@ -1461,6 +1476,37 @@ class BatchInferenceDialog(QDialog):
         """Keep the Review/All annotation dropdowns mutually exclusive."""
         if text == "True" and self.review_combo.currentText() == "True":
             self.review_combo.setCurrentText("False")
+
+    def _has_visible_context_cameras(self) -> bool:
+        """Return True when the Context Matrix has visible cameras loaded."""
+        context_matrix = getattr(self.main_window, 'context_matrix', None)
+        if context_matrix is None:
+            return False
+        try:
+            return bool(context_matrix.get_visible_camera_paths())
+        except Exception:
+            return False
+
+    def _update_multi_view_combo_state(self):
+        """Enable/disable the Multi-View Classification combo based on whether the
+        Context Matrix currently has valid (visible-camera) data. Disabled →
+        greyed out and forced to False; enabled → user opt-in, default False."""
+        combo = getattr(self, 'multi_view_combo', None)
+        if combo is None:
+            return
+        if self._has_visible_context_cameras():
+            combo.setEnabled(True)
+            combo.setCurrentText("False")
+        else:
+            combo.setCurrentText("False")
+            combo.setEnabled(False)
+
+    def _use_multi_view_classification(self) -> bool:
+        """Return the resolved Multi-View Classification flag for Classify batch runs."""
+        combo = getattr(self, 'multi_view_combo', None)
+        if combo is None or not combo.isEnabled():
+            return False
+        return combo.currentText() == "True"
 
     def _on_save_annotations_changed(self, text):
         """Handler for the Save Annotations combobox.

@@ -17,6 +17,8 @@ from coralnet_toolbox.Results import ResultsProcessor
 
 from coralnet_toolbox.Common import ThresholdsWidget
 
+from coralnet_toolbox.QtProgressBar import ProgressBar
+
 from rasterio.windows import Window as _RasterioWindow
 
 from coralnet_toolbox.utilities import pixmap_to_numpy
@@ -145,13 +147,19 @@ class Classify(Base):
         finally:
             QApplication.restoreOverrideCursor()
 
-    def predict(self, inputs=None, progress_bar=None):
+    def predict(self, inputs=None, progress_bar=None, multi_view=None):
         """
         Predict the classification results for the given inputs.
-        
+
         Args:
             inputs: List of annotations to predict on. If None, uses selected or all review annotations.
             progress_bar: Optional progress bar instance to use. If None, no progress bar is shown.
+            multi_view: Tri-state Multi-View Classification flag. When True, inputs are
+                expanded to include every shared-group sibling (deduped by id) so each
+                physical patch is inferred once and a mean consensus is applied to the
+                whole group. When None, the value is derived from the MVAT
+                Multi-Annotate flag (interactive default). When False, standard
+                per-patch prediction.
         """
         if self.loaded_model is None:
             return
@@ -173,6 +181,37 @@ class Classify(Base):
             # If no annotations are available, return
             QApplication.restoreOverrideCursor()
             return
+
+        # ── Multi-View Classification resolution ──────────────────────────────
+        # Resolve the multi_view flag; interactive callers pass None so we derive
+        # it from the MVAT Multi-Annotate state. Batch Inference passes an explicit
+        # True/False from its dropdown.
+        if multi_view is None:
+            engine = self.annotation_window._shared_group_propagation_engine()
+            multi_view = engine is not None and getattr(engine, 'multi_annotate_enabled', False)
+
+        if multi_view:
+            # Expand to every shared-group sibling so all views are inferred, then
+            # dedupe by annotation id so each unique physical patch is read/inferred
+            # exactly once (never predict the same patch multiple times).
+            expanded = []
+            seen_ids = set()
+            for ann in inputs:
+                for member in self.annotation_window.get_shared_group(ann):
+                    if member.id not in seen_ids:
+                        seen_ids.add(member.id)
+                        expanded.append(member)
+            inputs = expanded
+
+        # Multi-View expands to every sibling across cameras, so the read +
+        # inference can take noticeably longer. When we own the progress reporting
+        # (interactive path, no external bar), show a bar so the user sees activity.
+        # Batch Inference passes its own progress_bar and manages its own titles.
+        read_progress = None
+        if multi_view and progress_bar is None:
+            read_progress = ProgressBar(self.annotation_window, title="Reading patches (Multi-View)...")
+            read_progress.show()
+            read_progress.start_progress(len(inputs))
 
         # Create lists to store valid images and their corresponding annotations
         images_np = []
@@ -201,6 +240,8 @@ class Classify(Base):
                                 valid_inputs.append(ann)
                             except Exception as e:
                                 print(f"Error converting pixmap to numpy for {ann.id}: {e}")
+                        if read_progress is not None:
+                            read_progress.update_progress()
                     continue
 
                 src = raster.rasterio_src
@@ -252,6 +293,9 @@ class Classify(Base):
                             except Exception as e2:
                                 print(f"Error in pixmap fallback for {ann.id}: {e2}")
 
+                    if read_progress is not None:
+                        read_progress.update_progress()
+
             except Exception as e:
                 print(f"Error processing image group {image_path}: {e}")
                 # Fallback: QPixmap path for whole group
@@ -262,6 +306,8 @@ class Classify(Base):
                             valid_inputs.append(ann)
                         except Exception as e2:
                             print(f"Error in pixmap fallback for {ann.id}: {e2}")
+                    if read_progress is not None:
+                        read_progress.update_progress()
 
         # Only proceed if we have valid images to process
         if images_np:
@@ -282,9 +328,26 @@ class Classify(Base):
             results_processor = ResultsProcessor(self.main_window,
                                                  self.class_mapping)
 
+            # Reuse the reading-phase bar (if we created one) for the inference +
+            # consensus-aggregation phase so the user sees continuous activity.
+            active_progress = read_progress if read_progress is not None else progress_bar
+            if read_progress is not None:
+                read_progress.set_title("Classifying & aggregating (Multi-View)...")
+                read_progress.start_progress(len(valid_inputs))
+
             # Process the classification results using the valid inputs
             # Pass the progress_bar parameter to avoid creating nested progress bars
-            results_processor.process_classification_results(results, valid_inputs, progress_bar=progress_bar)
+            results_processor.process_classification_results(results, valid_inputs,
+                                                             progress_bar=active_progress,
+                                                             multi_view=multi_view)
+
+        # Close the reading-phase progress bar if we created it here.
+        if read_progress is not None:
+            try:
+                read_progress.stop_progress()
+                read_progress.close()
+            except Exception:
+                pass
 
         # Make cursor normal
         QApplication.restoreOverrideCursor()

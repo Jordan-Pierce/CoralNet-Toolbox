@@ -107,6 +107,9 @@ class PatchSamplingDialog(QDialog):
         self.main_window = tool.annotation_window.main_window
         self.label_window = tool.annotation_window.main_window.label_window
         self.image_window = tool.annotation_window.main_window.image_window
+
+        # Multi-Annotate (MVAT) integration
+        self.mvat_manager = getattr(self.main_window, 'mvat_manager', None)
         
         self.setWindowTitle("Sample Annotations")
         self.setWindowIcon(get_window_icon("coralnet.svg"))
@@ -139,7 +142,29 @@ class PatchSamplingDialog(QDialog):
         
         # Connect to table model signals to update highlighted count when rows are highlighted
         self.image_window.table_model.rowsChanged.connect(self.update_status_label)
-        
+
+        # Refresh the status hint whenever Multi-Annotate is toggled (guarded:
+        # context_matrix may not exist in all configurations).
+        context_matrix = getattr(self.main_window, 'context_matrix', None)
+        if context_matrix is not None and hasattr(context_matrix, 'multiAnnotateToggled'):
+            try:
+                context_matrix.multiAnnotateToggled.connect(lambda _enabled: self.update_status_label())
+            except Exception:
+                pass
+
+    def _multi_annotate_on(self) -> bool:
+        """Return True when MVAT Multi-Annotate mode is currently enabled."""
+        return bool(getattr(self.mvat_manager, 'multi_annotate_enabled', False))
+
+    def _visible_camera_paths(self) -> list:
+        """Return the visible context-camera paths, or [] when MVAT is unavailable."""
+        if self.mvat_manager is None:
+            return []
+        try:
+            return list(self.mvat_manager._get_visible_context_camera_paths())
+        except Exception:
+            return []
+
     def setup_info_layout(self):
         """
         Set up the info layout with explanatory text.
@@ -338,11 +363,22 @@ class PatchSamplingDialog(QDialog):
         highlighted_paths = self.image_window.table_model.get_highlighted_paths()
         count = len(highlighted_paths)
         if count == 0:
-            self.status_label.setText("No images highlighted")
+            base_text = "No images highlighted"
         elif count == 1:
-            self.status_label.setText("1 image highlighted")
+            base_text = "1 image highlighted"
         else:
-            self.status_label.setText(f"{count} images highlighted")
+            base_text = f"{count} images highlighted"
+
+        # When Multi-Annotate is ON, hint that sampled patches will be propagated
+        # to the visible context cameras.
+        if self._multi_annotate_on():
+            n_cameras = len(self._visible_camera_paths())
+            if n_cameras > 0:
+                base_text += f"  |  Multi-Annotate ON — will propagate to {n_cameras} visible camera(s)"
+            else:
+                base_text += "  |  Multi-Annotate ON — no visible cameras to propagate to"
+
+        self.status_label.setText(base_text)
         
     def on_propagate_labels_changed(self, idx):
         """Handle changes to the propagate labels combo box."""
@@ -591,6 +627,67 @@ class PatchSamplingDialog(QDialog):
         self.cleanup()
         self.accept()
 
+    def _prompt_multi_annotate_mode(self):
+        """Ask the user how to sample when Multi-Annotate is ON and multiple images
+        are highlighted.
+
+        Returns:
+            'A' — sample on the first highlighted image only, propagate to cameras.
+            'B' — sample on every highlighted image, propagate each to cameras.
+            None — the user cancelled.
+        """
+        n_cameras = len(self._visible_camera_paths())
+        n_images = len(self.image_window.table_model.get_highlighted_paths())
+        num = self.num_annotations_spinbox.value()
+
+        box = QMessageBox(self)
+        box.setWindowIcon(get_window_icon("coralnet.svg"))
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle("Multi-Annotate Sampling")
+        box.setText("Multi-Annotate is enabled — how should patches be sampled?")
+        box.setInformativeText(
+            f"You have <b>{n_images} images highlighted</b> and "
+            f"<b>{n_cameras} visible context camera(s)</b>.<br><br>"
+
+            f"<b>Sample the first image only</b><br>"
+            f"Sample {num} patch(es) on just the first highlighted image, then "
+            f"project each patch onto all {n_cameras} visible camera(s) as a linked "
+            f"group. Use this when your highlighted images are different views of "
+            f"the same scene and you only need to place points once.<br><br>"
+
+            f"<b>Sample all images &amp; propagate</b><br>"
+            f"Sample {num} patch(es) on <i>every one</i> of the {n_images} highlighted "
+            f"images, and <i>also</i> project each image's patches onto all "
+            f"{n_cameras} visible camera(s). This creates many more annotations "
+            f"(roughly {n_images} × {num}, plus their projected copies).<br><br>"
+
+            f"<b>Cancel</b><br>"
+            f"Do nothing. The tool stays open so you can turn Multi-Annotate off "
+            f"if you did not mean to propagate."
+        )
+
+        first_button = box.addButton("Sample first image only", QMessageBox.AcceptRole)
+        first_button.setToolTip(
+            "Sample on the first highlighted image, then copy each patch to every "
+            "visible context camera as a linked group."
+        )
+        each_button = box.addButton("Sample all images && propagate", QMessageBox.AcceptRole)
+        each_button.setToolTip(
+            "Sample on every highlighted image, then copy each image's patches to "
+            "all visible context cameras as linked groups."
+        )
+        cancel_button = box.addButton("Cancel", QMessageBox.RejectRole)
+        cancel_button.setToolTip("Do not sample. The tool stays active so you can "
+                                 "toggle Multi-Annotate off if needed.")
+
+        box.exec_()
+        clicked = box.clickedButton()
+        if clicked is first_button:
+            return 'A'
+        if clicked is each_button:
+            return 'B'
+        return None
+
     def add_sampled_annotations(self, method, num_annotations, annotation_size):
         """Add the sampled annotations to the current image."""
         # Set the cursor to waiting (busy) cursor
@@ -614,6 +711,22 @@ class PatchSamplingDialog(QDialog):
             QMessageBox.warning(self, "No Selection", msg)
             return
 
+        # ── Multi-Annotate resolution ─────────────────────────────────────────
+        # When Multi-Annotate is ON and there are visible context cameras, sampled
+        # patches are propagated to those cameras as linked shared-id groups. When
+        # more than one image is highlighted, ask the user which images to sample.
+        mvat_active = self._multi_annotate_on() and bool(self._visible_camera_paths())
+        source_paths = image_paths  # default: sample on every highlighted image
+        if mvat_active and len(image_paths) > 1:
+            mode = self._prompt_multi_annotate_mode()
+            if mode is None:
+                # Cancelled — leave the tool active so the user can toggle MVAT off.
+                QApplication.restoreOverrideCursor()
+                return
+            if mode == 'A':
+                source_paths = [image_paths[0]]  # first image only
+            # mode == 'B' → sample on all highlighted images (source_paths unchanged)
+
         # Prepare flags
         propagate = self.propagate_labels_combo.currentText() == "True"
         exclude_regions = False if propagate else (self.exclude_regions_combo.currentText() == "True")
@@ -621,12 +734,15 @@ class PatchSamplingDialog(QDialog):
         # Create and show the progress bar
         progress_bar = ProgressBar(self, title="Sampling Annotations")
         progress_bar.show()
-        progress_bar.start_progress(len(image_paths) * num_annotations)
+        progress_bar.start_progress(len(source_paths) * num_annotations)
 
         try:
             sampled_annotations = []  # Initialize ONCE outside the loop
 
-            for image_path in image_paths:
+            # Hoist per-run constant: transparency is the same for every patch.
+            transparency = self.main_window.get_transparency_value()
+
+            for image_path in source_paths:
 
                 # Get the raster from the manager
                 raster = self.image_window.raster_manager.get_raster(image_path)
@@ -640,13 +756,24 @@ class PatchSamplingDialog(QDialog):
 
                 # Validate margins for each image
                 margins = self.margin_input.get_margins(width, height)
-                
-                # Prepare polygons to exclude if needed
-                polygons = []
-                if exclude_regions:
-                    # Get all annotation polygons for this image
+
+                # Precompute the existing-annotation polygons ONCE per image. The
+                # same list serves both the exclusion test and the label-propagation
+                # lookup below (exclusion and propagation are mutually exclusive in
+                # the UI). Building QPolygonF here — instead of inside the per-patch
+                # loop — turns O(patches × annotations) polygon rebuilds into O(annotations).
+                existing_polys = []  # list[(annotation, QPolygonF)]
+                if exclude_regions or propagate:
                     image_annotations = self.annotation_window.get_image_annotations(image_path)
-                    polygons = [a.get_polygon() for a in image_annotations]
+                    existing_polys = [(a, a.get_polygon()) for a in image_annotations]
+
+                polygons = [poly for _a, poly in existing_polys] if exclude_regions else []
+
+                # Resolve the mask annotation for this image once (used by label
+                # propagation). mask_active guards the per-patch class lookup.
+                mask_annotation = self.annotation_window.current_mask_annotation
+                mask_active = bool(propagate and mask_annotation and
+                                   image_path == mask_annotation.image_path)
 
                 # Sample the annotations given params
                 annotations_coords = self.sample_annotations(method,
@@ -663,54 +790,82 @@ class PatchSamplingDialog(QDialog):
                     used_label = sample_label  # Default to the selected sample label
                     if propagate:
                         center = QPointF(x + size // 2, y + size // 2)
-                        
-                        # First, check the MaskAnnotation for label propagation 
+
+                        # First, check the MaskAnnotation for label propagation
                         # (since masks and vectors don't overlap, this is safe)
-                        mask_annotation = self.annotation_window.current_mask_annotation
-                        if mask_annotation and image_path == mask_annotation.image_path:
+                        if mask_active:
                             class_id = mask_annotation.get_class_at_point(center)
                             if class_id > 0:  # Valid class ID (not background)
                                 mask_label = mask_annotation.class_id_to_label_map.get(class_id)
                                 if mask_label:
                                     used_label = mask_label
-                        # Note: No need to check vectors here if mask provided a label, as they don't overlap
-                        
+
                         # If no mask label (or no mask), check vector annotations
+                        # against the precomputed polygons (no per-patch rebuild).
                         if used_label == sample_label:  # Only check vectors if mask didn't provide a label
-                            existing = self.annotation_window.get_image_annotations(image_path)
-                            found = next(
-                                (
-                                    a for a in existing
-                                    if a.get_polygon().containsPoint(center, Qt.OddEvenFill)
-                                ),
-                                None
-                            )
-                            if found:
-                                used_label = found.label
-        
+                            for a, poly in existing_polys:
+                                if poly.containsPoint(center, Qt.OddEvenFill):
+                                    used_label = a.label
+                                    break
+
                     # Create the annotation with the determined label
                     new_annotation = PatchAnnotation(
                         QPointF(x + size // 2, y + size // 2),
                         size,
                         used_label,
                         image_path,
-                        transparency=self.main_window.get_transparency_value(),
+                        transparency=transparency,
                         show_confidence=False
                     )
                     sampled_annotations.append(new_annotation)  # Appends to the SHARED list
                     progress_bar.update_progress()
-                
+
                 # Update the raster's annotation info for each processed image
                 self.image_window.update_image_annotations(image_path)
+                # TODO Check if we can move this outside the loop, and do it per image, instead of per annotation
 
-            # Add all sampled annotations to the annotation window in one BULK operation
-            if sampled_annotations:
-                self.annotation_window.add_annotations(sampled_annotations, record_action=True)
-                
+            # Multi-Annotate: project each source patch into the visible context
+            # cameras and stamp shared-id groups. Siblings are added together with
+            # the source patches in a single bulk insert (one undo entry, one UI
+            # refresh). This must happen BEFORE add_annotations so the shared_id is
+            # already stamped on the source patches when they are inserted.
+            sibling_annotations = []
+            if mvat_active and sampled_annotations:
+                try:
+                    engine = self.annotation_window._shared_group_propagation_engine()
+                    if engine is not None and hasattr(engine, 'build_sampled_patch_siblings'):
+                        # Re-purpose the progress bar for the (slower) propagation
+                        # phase so the user sees that work is still happening.
+                        progress_bar.set_title("Propagating to visible cameras...")
+                        progress_bar.start_progress(len(sampled_annotations))
+                        sibling_annotations = engine.build_sampled_patch_siblings(
+                            sampled_annotations, progress_bar=progress_bar
+                        )
+                except Exception as e:
+                    print(f"Warning: Multi-Annotate propagation failed: {e}")
+                    sibling_annotations = []
+
+            # Final insert phase can also be slow for large batches — signal it.
+            all_count = len(sampled_annotations) + len(sibling_annotations)
+            if all_count:
+                progress_bar.set_title(f"Adding {all_count} annotations...")
+                progress_bar.set_busy_mode()
+
+            # Add all sampled annotations (source + propagated siblings) in one BULK operation
+            all_annotations = sampled_annotations + sibling_annotations
+            if all_annotations:
+                self.annotation_window.add_annotations(all_annotations, record_action=True)
+
+                # Update annotation info for any sibling images touched by propagation
+                sibling_paths = {a.image_path for a in sibling_annotations}
+                for sib_path in sibling_paths:
+                    self.image_window.update_image_annotations(sib_path)
+
                 # --- PHANTOM ARCHITECTURE UPDATE ---
                 # We NO LONGER force the creation of Qt graphics items here.
                 # Instead, render them as sleeping phantoms using the fast readonly pass.
-                if self.annotation_window.current_image_path in image_paths:
+                affected_paths = set(source_paths) | sibling_paths
+                if self.annotation_window.current_image_path in affected_paths:
                     self.annotation_window.refresh_phantom_annotations()
                     self.annotation_window.viewport().update()
                 # --------------------------------------------------------------------------

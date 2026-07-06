@@ -407,7 +407,7 @@ class ResultsProcessor:
 
         return image_path, top1cls, top1conf, predictions
 
-    def process_classification_results(self, results_list, annotations, progress_bar=None):
+    def process_classification_results(self, results_list, annotations, progress_bar=None, multi_view=None):
         """
         Process the classification results from the results generator.
 
@@ -415,6 +415,11 @@ class ResultsProcessor:
             results_list: List of classification results
             annotations: List of annotations to update
             progress_bar: Optional external progress bar. If None, creates its own.
+            multi_view: Tri-state Multi-View Classification flag. When True, the
+                per-view predictions of each shared_id group are fused into a mean
+                consensus top-5 and applied to every member of the group. When None,
+                the value is derived from the MVAT Multi-Annotate flag (back-compat).
+                When False, standard per-patch assignment.
         """
         # Track if we created the progress bar ourselves
         progress_bar_created_here = progress_bar is None
@@ -434,58 +439,118 @@ class ResultsProcessor:
         refresh_current_image = False  # need create_cropped_image on visible patches
         selected_annotation = None     # last selected annotation to show in confidence window
 
-        # Multi-Annotate: a prediction on a shared patch should apply to its whole
-        # linked group (siblings are the same physical point seen from other
-        # cameras and are not part of this image's prediction inputs). Propagate
-        # only — never break the link here, since classification is a bulk machine
-        # op that is commonly run with MVAT closed.
-        predicted_ids = {a.id for a in annotations}
+        # Multi-View Classification: fuse the per-view predictions of each shared_id
+        # group into a mean consensus and apply it to every member of the group
+        # (siblings are the same physical point seen from other cameras). When
+        # multi_view is None we derive the gate from the MVAT Multi-Annotate flag
+        # for back-compat; Batch Inference passes an explicit True/False.
         engine = self.annotation_window._shared_group_propagation_engine()
-        multi_on = engine is not None and getattr(engine, 'multi_annotate_enabled', False)
+        if multi_view is None:
+            multi_on = engine is not None and getattr(engine, 'multi_annotate_enabled', False)
+        else:
+            multi_on = bool(multi_view)
         sibling_tile_paths = set()
+        current_path = self.annotation_window.current_image_path
+        # O(1) selected-membership test (avoids repeated `in list` scans below).
+        selected_ids = {a.id for a in self.annotation_window.selected_annotations}
 
         try:
-            for result, annotation in zip(results_list, annotations):
-                if result:
-                    try:
-                        image_path, cls_name, conf, predictions = self.extract_classification_result(result)
-                        if image_path is None:
+            if multi_on:
+                # ── Pass 1: collect per-annotation predictions (no assignment) ──
+                # Keyed by id → predictions dict. Progress advances here, once per result.
+                preds_by_id = {}
+                for result, annotation in zip(results_list, annotations):
+                    if result:
+                        try:
+                            image_path, cls_name, conf, predictions = self.extract_classification_result(result)
+                            if image_path is not None:
+                                preds_by_id[annotation.id] = predictions
+                        except Exception as e:
+                            print(f"Warning: Failed to process classification result "
+                                  f"for annotation {annotation.id}\n{e}")
+                    if progress_bar:
+                        progress_bar.update_progress()
+
+                # ── Group by shared_id in a single O(n) pass ──
+                # Classify.predict() has already expanded inputs to include every
+                # shared-group sibling, so each group is complete in `annotations`.
+                # We therefore group the input list directly instead of calling
+                # get_shared_group() per group, which would scan the entire
+                # project's annotations_dict (O(groups × total_annotations)).
+                # Ungrouped annotations form singleton groups keyed by their own id.
+                groups = {}  # group_key -> [annotation, ...]
+                for annotation in annotations:
+                    key = getattr(annotation, 'shared_id', None) or f"__solo__{annotation.id}"
+                    groups.setdefault(key, []).append(annotation)
+
+                # ── Pass 2: mean consensus per group, assigned to every member ──
+                for members in groups.values():
+                    # Sum probabilities across predicted members; `count` = members
+                    # that actually produced a prediction (mean = sum / count).
+                    acc = {}
+                    count = 0
+                    for member in members:
+                        preds = preds_by_id.get(member.id)
+                        if not preds:
                             continue
+                        count += 1
+                        for label, prob in preds.items():
+                            acc[label] = acc.get(label, 0.0) + float(prob)
+                    if count == 0 or not acc:
+                        continue
 
-                        old_label_id = annotation.label.id
-                        self._update_classification_data(annotation, cls_name, conf, predictions)
+                    # Top-5 by summed prob (identical ranking to mean since `count`
+                    # is constant within the group), then divide only the kept 5.
+                    top5 = sorted(acc.items(), key=lambda kv: kv[1], reverse=True)[:5]
+                    consensus = {label: total / count for label, total in top5}
+                    top_label = top5[0][0]
+                    top_name = top_label.short_label_code
+                    top_conf = consensus[top_label]
 
-                        # Track what changed — actual UI calls happen after the loop
-                        dirty_image_paths.add(annotation.image_path)
-
-                        if old_label_id != annotation.label.id:
-                            label_changed_pairs.append((annotation.id, annotation.label.id))
-
-                        if annotation.image_path == self.annotation_window.current_image_path:
+                    # Assign the consensus to every member of the group. Groups
+                    # partition `annotations` (deduped by id upstream), so no member
+                    # is visited twice — no per-member dedup set needed.
+                    for member in members:
+                        old_label_id = member.label.id
+                        self._update_classification_data(member, top_name, top_conf, consensus)
+                        dirty_image_paths.add(member.image_path)
+                        if old_label_id != member.label.id:
+                            label_changed_pairs.append((member.id, member.label.id))
+                        if member.image_path == current_path:
                             refresh_current_image = True
-                            if annotation in self.annotation_window.selected_annotations:
-                                selected_annotation = annotation
+                            if member.id in selected_ids:
+                                selected_annotation = member
+                        else:
+                            sibling_tile_paths.add(member.image_path)
+            else:
+                # ── Standard per-patch assignment (no grouping) ──
+                for result, annotation in zip(results_list, annotations):
+                    if result:
+                        try:
+                            image_path, cls_name, conf, predictions = self.extract_classification_result(result)
+                            if image_path is None:
+                                continue
 
-                        # Apply the same prediction to shared-group siblings.
-                        if multi_on and getattr(annotation, 'shared_id', None):
-                            for sibling in self.annotation_window.get_shared_group(annotation):
-                                if sibling is annotation or sibling.id in predicted_ids:
-                                    continue
-                                sib_old_label_id = sibling.label.id
-                                self._update_classification_data(sibling, cls_name, conf, predictions)
-                                dirty_image_paths.add(sibling.image_path)
-                                if sib_old_label_id != sibling.label.id:
-                                    label_changed_pairs.append((sibling.id, sibling.label.id))
-                                if sibling.image_path == self.annotation_window.current_image_path:
-                                    refresh_current_image = True
-                                else:
-                                    sibling_tile_paths.add(sibling.image_path)
+                            old_label_id = annotation.label.id
+                            self._update_classification_data(annotation, cls_name, conf, predictions)
 
-                    except Exception as e:
-                        print(f"Warning: Failed to process classification result for annotation {annotation.id}\n{e}")
+                            # Track what changed — actual UI calls happen after the loop
+                            dirty_image_paths.add(annotation.image_path)
 
-                if progress_bar:
-                    progress_bar.update_progress()
+                            if old_label_id != annotation.label.id:
+                                label_changed_pairs.append((annotation.id, annotation.label.id))
+
+                            if annotation.image_path == current_path:
+                                refresh_current_image = True
+                                if annotation.id in selected_ids:
+                                    selected_annotation = annotation
+
+                        except Exception as e:
+                            print(f"Warning: Failed to process classification result "
+                                  f"for annotation {annotation.id}\n{e}")
+
+                    if progress_bar:
+                        progress_bar.update_progress()
 
         finally:
             # ── Deferred UI flush ──────────────────────────────────────────

@@ -256,6 +256,13 @@ class ClassifyBatchInferenceTask(BatchInferenceTask):
         except Exception:
             return True
 
+    def _use_multi_view(self) -> bool:
+        getter = getattr(self.dialog, "_use_multi_view_classification", None)
+        try:
+            return bool(getter()) if callable(getter) else False
+        except Exception:
+            return False
+
     def collect_image_annotations(self) -> dict[str, list[Any]]:
         annotation_window = self.dialog.annotation_window
         image_annotations = {}
@@ -311,7 +318,8 @@ class ClassifyBatchInferenceTask(BatchInferenceTask):
             f"Classifying {len(flat_annotations)} patches "
             f"across {len(image_annotations)} image(s)..."
         )
-        self.model_dialog.predict(inputs=flat_annotations, progress_bar=progress_bar)
+        self.model_dialog.predict(inputs=flat_annotations, progress_bar=progress_bar,
+                                  multi_view=self._use_multi_view())
 
         try:
             from PyQt5.QtWidgets import QApplication
