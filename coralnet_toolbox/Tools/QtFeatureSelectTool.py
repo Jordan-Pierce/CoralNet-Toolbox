@@ -316,7 +316,8 @@ class FeatureSelectTool(Tool):
             self.annotation_window.unrasterize_annotations()
 
         # Clear GPU memory (the feature extractor may have been on the GPU).
-        self.feature_dialog.clear_model_cache()
+        if self.feature_dialog is not None:
+            self.feature_dialog.clear_model_cache()
 
         super().deactivate()
 
