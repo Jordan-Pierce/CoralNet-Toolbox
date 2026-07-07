@@ -124,11 +124,15 @@ class FeatureSelectTool(Tool):
 
         self.hover_pos = None
 
-        # Debounce hover refresh so a flood of move events can't back up.
+        # Throttle hover refresh: the preview updates immediately on the first
+        # move, then at most once per debounce_ms while the cursor keeps moving
+        # (leading + trailing), so it tracks the cursor live instead of only
+        # catching up after a pause, without a flood of move events backing up.
         self.hover_timer = QTimer()
         self.hover_timer.setSingleShot(True)
         self.hover_timer.timeout.connect(self._on_hover_timeout)
         self.debounce_ms = 30
+        self._hover_pending = False
 
         # Whether the shared colormap controls have been handed to the feature
         # overlay. Engaged only once a work area exists (not on tool activation),
@@ -290,6 +294,7 @@ class FeatureSelectTool(Tool):
         """Deactivate, clearing the query, heatmap, prompts, and any work area."""
         self.active = False
         self.hover_timer.stop()
+        self._hover_pending = False
         self.annotation_window.setCursor(self.default_cursor)
 
         try:
@@ -309,6 +314,9 @@ class FeatureSelectTool(Tool):
         # If we were painting into the mask, drop the rasterization lock.
         if self.output_type == "Mask":
             self.annotation_window.unrasterize_annotations()
+
+        # Clear GPU memory (the feature extractor may have been on the GPU).
+        self.feature_dialog.clear_model_cache()
 
         super().deactivate()
 
@@ -753,10 +761,14 @@ class FeatureSelectTool(Tool):
         return label_map, keys
 
     def _update_label_overlay(self, hover_id=None):
-        """Multi-class live preview: classify at full work-area res, color by label.
+        """Multi-class live preview: classify at preview res, color by label.
 
-        Rendered at the same resolution as the commit (the reject floor is always
-        applied) so the preview and the finalized blobs match exactly.
+        The per-class similarity fields are upsampled to a capped preview
+        resolution (PREVIEW_MAX_EDGE) rather than the full work-area pixel size,
+        so a hover refresh over a large work area stays cheap. The label overlay
+        nearest-scales the field to the work-area rect (crisp class boundaries).
+        The commit path still classifies at full resolution, so the finalized
+        blobs are sharper than this live preview.
         """
         proto = self._effective_class_prototypes(hover_id)
         if not proto:
@@ -764,8 +776,7 @@ class FeatureSelectTool(Tool):
             self.annotation_window.clear_label_overlay()
             return
         wa = self.working_area.rect
-        out_h = max(1, int(round(wa.height())))
-        out_w = max(1, int(round(wa.width())))
+        out_h, out_w = self._preview_dims(wa.height(), wa.width())
         label_map, keys = self._compute_multiclass_label_map(proto, out_h, out_w)
         if label_map is None:
             self._last_label_idx = None
@@ -1143,9 +1154,31 @@ class FeatureSelectTool(Tool):
         # Live hover preview of similarity to the patch under the cursor.
         if (self.query_engine is not None
                 and self.annotation_window.cursorInWindow(event.pos())):
-            self.hover_timer.start(self.debounce_ms)
+            self._request_hover_refresh()
+
+    def _request_hover_refresh(self):
+        """Throttled hover refresh (leading + trailing).
+
+        Refreshes immediately when idle and starts a cooldown; moves arriving
+        during the cooldown coalesce into a single pending refresh fired on the
+        next tick. The result is a live preview that follows the cursor at ~1
+        update per debounce_ms instead of only refreshing once movement stops.
+        """
+        if self.hover_timer.isActive():
+            self._hover_pending = True
+            return
+        self._do_hover_refresh()
+        self.hover_timer.start(self.debounce_ms)
 
     def _on_hover_timeout(self):
+        # Trailing edge: process the most recent hover position if one arrived
+        # during the cooldown, and keep the cadence going while the cursor moves.
+        if self._hover_pending:
+            self._hover_pending = False
+            self._do_hover_refresh()
+            self.hover_timer.start(self.debounce_ms)
+
+    def _do_hover_refresh(self):
         if not self.active or self.query_engine is None or self.hover_pos is None:
             return
         if self.creating_working_area:
