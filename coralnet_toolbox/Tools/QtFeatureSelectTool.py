@@ -831,54 +831,98 @@ class FeatureSelectTool(Tool):
 
     # ==================== Seeding from existing annotations ====================
 
+    def _annotation_grid_coords(self, annotation):
+        """Map a vector annotation's shapely geometry into feature-grid rings.
+
+        Returns a list of ``(exterior_int32, [hole_int32, ...])`` rings in
+        feature-grid pixel coordinates, ready for ``cv2.fillPoly``. Vertices are
+        shifted by -0.5 so a cell CENTER lands on an integer coord (OpenCV samples
+        pixels at integer positions), matching pixel_to_cell's proportional
+        mapping. Returns None when the annotation has no rasterizable geometry.
+        """
+        wa = self.working_area.rect
+        if wa.width() <= 0 or wa.height() <= 0:
+            return None
+        sx = self.feat_w / wa.width()
+        sy = self.feat_h / wa.height()
+        left, top = wa.left(), wa.top()
+
+        def _ring(coords):
+            pts = np.asarray(coords, dtype=np.float64)
+            if pts.shape[0] < 3:
+                return None
+            pts[:, 0] = (pts[:, 0] - left) * sx - 0.5
+            pts[:, 1] = (pts[:, 1] - top) * sy - 0.5
+            return np.round(pts).astype(np.int32)
+
+        # Robust geometry acquisition (mirrors MaskAnnotation): prefer the
+        # shapely getter, fall back to the Qt polygon's outer ring.
+        geom = None
+        getter = getattr(annotation, 'get_rasterization_geometry', None)
+        if callable(getter):
+            try:
+                geom = getter()
+            except Exception:
+                geom = None
+        if geom is None:
+            try:
+                qpoly = annotation.get_polygon()
+                pts = [(p.x(), p.y()) for p in qpoly]
+                if len(pts) >= 3:
+                    from shapely.geometry import Polygon as _Poly
+                    geom = _Poly(pts)
+            except Exception:
+                geom = None
+        if geom is None:
+            return None
+
+        gtype = getattr(geom, 'geom_type', None)
+        members = geom.geoms if gtype == 'MultiPolygon' else [geom]
+        rings = []
+        for poly in members:
+            try:
+                ext = _ring(list(poly.exterior.coords))
+            except Exception:
+                ext = None
+            if ext is None:
+                continue
+            holes = []
+            try:
+                for r in poly.interiors:
+                    hg = _ring(list(r.coords))
+                    if hg is not None:
+                        holes.append(hg)
+            except Exception:
+                pass
+            rings.append((ext, holes))
+        return rings or None
+
     def _cells_covered_by_annotation(self, annotation):
-        """Flat crop-grid ids of every feature cell covered by an annotation.
+        """Flat feature-cell ids covered by a vector region annotation.
 
-        Region coverage: returns each cell whose scene-space center falls inside
-        the annotation's shape (and inside the work area). A large shape yields
-        many prototype cells, a small one just a few; if the shape is smaller
-        than a single cell (no cell center lands inside) we fall back to the one
-        cell under its centroid.
-
-        Type-agnostic: it only needs get_bounding_box_* + contains_point, so it
-        already works for polygons/rectangles/multipolygons when those are added
-        as seed sources.
+        Fast path: rasterize the annotation's shapely geometry straight into the
+        (small) feature grid with cv2.fillPoly — O(vertices + grid), no per-cell
+        containment test (which rebuilt a Shapely polygon on every cell). Holes
+        are punched out and MultiPolygon islands all fill. Falls back to the
+        centroid's cell for sub-cell shapes or when geometry is unavailable.
         """
         if self.working_area is None or self.feat_w is None or self.feat_h is None:
             return []
-        try:
-            tl = annotation.get_bounding_box_top_left()
-            br = annotation.get_bounding_box_bottom_right()
-        except Exception:
-            tl = br = None
 
         cells = []
-        wa = self.working_area.rect
-        if tl is not None and br is not None and wa.width() > 0 and wa.height() > 0:
-            def _to_cell(px, py):
-                # Same proportional mapping used by pixel_to_cell / _cell_to_scene_center.
-                gx = (px - wa.left()) / wa.width() * self.feat_w
-                gy = (py - wa.top()) / wa.height() * self.feat_h
-                return gx, gy
-
-            gx0f, gy0f = _to_cell(tl.x(), tl.y())
-            gx1f, gy1f = _to_cell(br.x(), br.y())
-            gx0 = max(0, int(np.floor(min(gx0f, gx1f))))
-            gx1 = min(self.feat_w - 1, int(np.ceil(max(gx0f, gx1f))))
-            gy0 = max(0, int(np.floor(min(gy0f, gy1f))))
-            gy1 = min(self.feat_h - 1, int(np.ceil(max(gy0f, gy1f))))
-
-            for gy in range(gy0, gy1 + 1):
-                for gx in range(gx0, gx1 + 1):
-                    center = self._cell_to_scene_center(gx, gy)
-                    try:
-                        if annotation.contains_point(center):
-                            cells.append(gy * self.feat_w + gx)
-                    except Exception:
-                        pass
+        rings = self._annotation_grid_coords(annotation)
+        if rings:
+            import cv2
+            grid = np.zeros((self.feat_h, self.feat_w), dtype=np.uint8)
+            for ext, holes in rings:
+                cv2.fillPoly(grid, [ext], 1)
+                if holes:
+                    cv2.fillPoly(grid, holes, 0)
+            ys, xs = np.nonzero(grid)
+            cells = (ys.astype(np.int64) * self.feat_w + xs).tolist()
 
         if not cells:
-            # Sub-cell shape (or bbox miss): fall back to the centroid's cell.
+            # Sub-cell shape (or no geometry): fall back to the centroid's cell.
             try:
                 cx, cy = annotation.get_centroid()
                 cid = self.pixel_to_cell(cx, cy)
@@ -888,6 +932,66 @@ class FeatureSelectTool(Tool):
                 pass
         return cells
 
+    def _cells_by_class_from_mask(self, mask_annotation):
+        """Group feature cells by the mask class occupying them, ``{label: [cells]}``.
+
+        Crops mask_data to the work-area rect and nearest-downsamples it to the
+        feature grid in one cv2.resize — O(grid) regardless of the mask's full
+        resolution, so a multi-megapixel mask stays cheap. Each non-background
+        class present maps through class_id_to_label_map to its Label; the
+        LOCK_BIT is stripped so locked and unlocked pixels of a class read alike.
+        """
+        data = getattr(mask_annotation, 'mask_data', None)
+        if data is None or self.feat_w is None or self.feat_h is None:
+            return {}
+        wa = self.working_area.rect
+        h, w = data.shape
+        x0 = max(0, int(np.floor(wa.left())))
+        y0 = max(0, int(np.floor(wa.top())))
+        x1 = min(w, int(np.ceil(wa.right())))
+        y1 = min(h, int(np.ceil(wa.bottom())))
+        if x1 <= x0 or y1 <= y0:
+            return {}
+
+        import cv2
+        lock = getattr(mask_annotation, 'LOCK_BIT', 128)
+        crop = np.ascontiguousarray(data[y0:y1, x0:x1] & (lock - 1))
+        grid = cv2.resize(crop, (self.feat_w, self.feat_h), interpolation=cv2.INTER_NEAREST)
+
+        by_label = {}
+        for class_id in np.unique(grid):
+            cid = int(class_id)
+            if cid == 0:
+                continue
+            label = mask_annotation.class_id_to_label_map.get(cid)
+            if label is None:
+                continue
+            ys, xs = np.nonzero(grid == class_id)
+            by_label[label] = (ys.astype(np.int64) * self.feat_w + xs).tolist()
+        return by_label
+
+    def _add_cells_to_label(self, cells, label):
+        """Add feature-cell ids to a label's prototype bucket; return #newly added.
+
+        Registers the label + its overlay color on first contribution and de-dups
+        so a cell already present (e.g. from an overlapping seed) isn't recounted.
+        """
+        bucket = self.class_prototypes.setdefault(label.id, [])
+        existing = set(bucket)
+        added = 0
+        for cid in cells:
+            if cid is None or cid in existing:
+                continue
+            bucket.append(cid)
+            existing.add(cid)
+            added += 1
+        if added:
+            self.class_labels[label.id] = label
+            self.class_colors[label.id] = (label.color.red(),
+                                           label.color.green(),
+                                           label.color.blue())
+        return added
+
     def _seed_prototypes_from_annotations(self):
         """Seed multi-class prototypes from existing annotations on the image.
 
@@ -896,6 +1000,19 @@ class FeatureSelectTool(Tool):
         Each eligible annotation contributes the feature cells it covers to its
         own label's prototype set, and the live mask preview is rendered — so a
         user who already placed annotations doesn't have to re-click every class.
+
+        Seeding is O(feature grid) per source, not O(image pixels): vector
+        regions rasterize straight into the small grid and masks downsample into
+        it, so even large polygons / multi-megapixel masks add negligible cost on
+        top of the feature extraction that just ran.
+
+        Seed contributions per source:
+          - PatchAnnotation: its single center-most cell (deliberately one vote,
+            so dense patches don't swamp the user's manual refinements).
+          - Polygon / Rectangle / MultiPolygon: every feature cell the shape
+            covers (region coverage — a bigger shape genuinely represents more
+            of its class).
+          - MaskAnnotation: one prototype set per class present in the work area.
 
         Seeded prototypes are ordinary prototypes: Backspace (clear_prompts)
         removes them and resets the preview WITHOUT deleting the annotations.
@@ -919,47 +1036,43 @@ class FeatureSelectTool(Tool):
             seeded_cells = 0
             seeded_labels = set()
             for ann in annotations:
-                # FUTURE: seed from MaskAnnotation regions too — one class per
-                # class_id present in the mask, sampling cells from each class blob
-                # (the class_id -> label map lives on the MaskAnnotation).
+                # MaskAnnotation: seed one prototype set per class it holds.
                 if getattr(ann, 'is_mask_annotation', False):
+                    try:
+                        by_label = self._cells_by_class_from_mask(ann)
+                    except Exception:
+                        by_label = {}
+                    for label, cells in by_label.items():
+                        added = self._add_cells_to_label(cells, label)
+                        if added:
+                            seeded_cells += added
+                            seeded_labels.add(label.id)
                     continue
+
                 label = getattr(ann, 'label', None)
                 if label is None:
                     continue
 
                 if isinstance(ann, PatchAnnotation):
                     # A patch contributes ONLY its center-most cell (one vote).
-                    # Using the whole patch area lets dense/large patches dominate
-                    # the classifier and swamp the user's manual refinements, so we
-                    # deliberately down-weight each patch to a single prototype.
                     cid = self.pixel_to_cell(*ann.get_centroid())
                     cells = [cid] if cid is not None else []
                 else:
-                    # FUTURE: widen to PolygonAnnotation / RectangleAnnotation /
-                    # MultiPolygonAnnotation via region coverage —
-                    # _cells_covered_by_annotation is already type-agnostic:
-                    #   cells = self._cells_covered_by_annotation(ann)
-                    continue
+                    # Polygon / Rectangle / MultiPolygon: full region coverage,
+                    # fast-rasterized into the feature grid.
+                    cells = self._cells_covered_by_annotation(ann)
 
                 if not cells:
                     continue
 
-                bucket = self.class_prototypes.setdefault(label.id, [])
-                existing = set(bucket)
-                for cid in cells:
-                    if cid not in existing:
-                        bucket.append(cid)
-                        existing.add(cid)
-                        seeded_cells += 1
-                self.class_labels[label.id] = label
-                self.class_colors[label.id] = (label.color.red(),
-                                               label.color.green(),
-                                               label.color.blue())
+                added = self._add_cells_to_label(cells, label)
+                if not added:
+                    continue
+                seeded_cells += added
+                seeded_labels.add(label.id)
                 # One dot per annotation (at its centroid) marks the seed.
                 cx, cy = ann.get_centroid()
                 self._add_class_point_graphic(QPointF(cx, cy), label)
-                seeded_labels.add(label.id)
 
             if seeded_cells:
                 self.update_heatmap()
