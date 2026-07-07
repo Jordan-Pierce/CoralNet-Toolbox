@@ -280,6 +280,10 @@ class FeatureSelectTool(Tool):
         else:
             self._status("Feature Select: BINARY mode — Ctrl+click positive, "
                          "Ctrl+right-click negative. Ctrl+Alt for multi-class.", 4000)
+        # If a work area is already up, seed prototypes from existing annotations
+        # right away rather than waiting for the next work-area creation.
+        if self.mode == "multiclass":
+            self._seed_prototypes_from_annotations()
         self.annotation_window.scene.update()
 
     def deactivate(self):
@@ -406,6 +410,10 @@ class FeatureSelectTool(Tool):
             self._engage_colormap_controls()
             self._status("Feature Select: Ctrl+click patches to query similarity, "
                          "Space to finalize.", 5000)
+            # Multi-class: seed prototypes from existing annotations so the mask
+            # preview appears immediately (Backspace clears it).
+            if self.mode == "multiclass":
+                self._seed_prototypes_from_annotations()
         except Exception as e:
             self._status(f"Feature Select: feature extraction failed ({e}).")
             self.cancel_working_area()
@@ -810,6 +818,147 @@ class FeatureSelectTool(Tool):
             self._last_label_idx, self._last_label_colors,
             rect=self.working_area.rect, alpha=self._overlay_alpha())
 
+    # ==================== Seeding from existing annotations ====================
+
+    def _cells_covered_by_annotation(self, annotation):
+        """Flat crop-grid ids of every feature cell covered by an annotation.
+
+        Region coverage: returns each cell whose scene-space center falls inside
+        the annotation's shape (and inside the work area). A large shape yields
+        many prototype cells, a small one just a few; if the shape is smaller
+        than a single cell (no cell center lands inside) we fall back to the one
+        cell under its centroid.
+
+        Type-agnostic: it only needs get_bounding_box_* + contains_point, so it
+        already works for polygons/rectangles/multipolygons when those are added
+        as seed sources.
+        """
+        if self.working_area is None or self.feat_w is None or self.feat_h is None:
+            return []
+        try:
+            tl = annotation.get_bounding_box_top_left()
+            br = annotation.get_bounding_box_bottom_right()
+        except Exception:
+            tl = br = None
+
+        cells = []
+        wa = self.working_area.rect
+        if tl is not None and br is not None and wa.width() > 0 and wa.height() > 0:
+            def _to_cell(px, py):
+                # Same proportional mapping used by pixel_to_cell / _cell_to_scene_center.
+                gx = (px - wa.left()) / wa.width() * self.feat_w
+                gy = (py - wa.top()) / wa.height() * self.feat_h
+                return gx, gy
+
+            gx0f, gy0f = _to_cell(tl.x(), tl.y())
+            gx1f, gy1f = _to_cell(br.x(), br.y())
+            gx0 = max(0, int(np.floor(min(gx0f, gx1f))))
+            gx1 = min(self.feat_w - 1, int(np.ceil(max(gx0f, gx1f))))
+            gy0 = max(0, int(np.floor(min(gy0f, gy1f))))
+            gy1 = min(self.feat_h - 1, int(np.ceil(max(gy0f, gy1f))))
+
+            for gy in range(gy0, gy1 + 1):
+                for gx in range(gx0, gx1 + 1):
+                    center = self._cell_to_scene_center(gx, gy)
+                    try:
+                        if annotation.contains_point(center):
+                            cells.append(gy * self.feat_w + gx)
+                    except Exception:
+                        pass
+
+        if not cells:
+            # Sub-cell shape (or bbox miss): fall back to the centroid's cell.
+            try:
+                cx, cy = annotation.get_centroid()
+                cid = self.pixel_to_cell(cx, cy)
+                if cid is not None:
+                    cells.append(cid)
+            except Exception:
+                pass
+        return cells
+
+    def _seed_prototypes_from_annotations(self):
+        """Seed multi-class prototypes from existing annotations on the image.
+
+        Called once a work area exists in multi-class mode (after work-area
+        creation, or when toggling into the mode with a work area already up).
+        Each eligible annotation contributes the feature cells it covers to its
+        own label's prototype set, and the live mask preview is rendered — so a
+        user who already placed annotations doesn't have to re-click every class.
+
+        Seeded prototypes are ordinary prototypes: Backspace (clear_prompts)
+        removes them and resets the preview WITHOUT deleting the annotations.
+        """
+        if (self.mode != "multiclass" or self.working_area is None
+                or self.query_engine is None):
+            return
+        # Don't clobber or duplicate a set the user is already working with; this
+        # also prevents re-seeding after a manual Backspace clear.
+        if self._has_prompts():
+            return
+
+        from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
+
+        # Classifying the whole work area and rendering the preview can take a
+        # moment when there are many annotations, so show a busy cursor for the
+        # duration of the pre-calculation.
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            annotations = self.annotation_window.get_image_annotations()
+            seeded_cells = 0
+            seeded_labels = set()
+            for ann in annotations:
+                # FUTURE: seed from MaskAnnotation regions too — one class per
+                # class_id present in the mask, sampling cells from each class blob
+                # (the class_id -> label map lives on the MaskAnnotation).
+                if getattr(ann, 'is_mask_annotation', False):
+                    continue
+                label = getattr(ann, 'label', None)
+                if label is None:
+                    continue
+
+                if isinstance(ann, PatchAnnotation):
+                    # A patch contributes ONLY its center-most cell (one vote).
+                    # Using the whole patch area lets dense/large patches dominate
+                    # the classifier and swamp the user's manual refinements, so we
+                    # deliberately down-weight each patch to a single prototype.
+                    cid = self.pixel_to_cell(*ann.get_centroid())
+                    cells = [cid] if cid is not None else []
+                else:
+                    # FUTURE: widen to PolygonAnnotation / RectangleAnnotation /
+                    # MultiPolygonAnnotation via region coverage —
+                    # _cells_covered_by_annotation is already type-agnostic:
+                    #   cells = self._cells_covered_by_annotation(ann)
+                    continue
+
+                if not cells:
+                    continue
+
+                bucket = self.class_prototypes.setdefault(label.id, [])
+                existing = set(bucket)
+                for cid in cells:
+                    if cid not in existing:
+                        bucket.append(cid)
+                        existing.add(cid)
+                        seeded_cells += 1
+                self.class_labels[label.id] = label
+                self.class_colors[label.id] = (label.color.red(),
+                                               label.color.green(),
+                                               label.color.blue())
+                # One dot per annotation (at its centroid) marks the seed.
+                cx, cy = ann.get_centroid()
+                self._add_class_point_graphic(QPointF(cx, cy), label)
+                seeded_labels.add(label.id)
+
+            if seeded_cells:
+                self.update_heatmap()
+                self._auto_suggest()
+                self._status(
+                    f"Feature Select: seeded {seeded_cells} prototype(s) from "
+                    f"{len(seeded_labels)} existing class(es). Backspace to clear.", 6000)
+        finally:
+            QApplication.restoreOverrideCursor()
+
     # ==================== Point suggestion (active learning) ====================
 
     def _labeled_cell_ids(self):
@@ -1186,6 +1335,58 @@ class FeatureSelectTool(Tool):
         annotation.create_graphics_item(self.annotation_window.scene)
         self.annotation_window.add_annotation_from_tool(annotation)
 
+    def _vector_occupancy_indices(self, mask_annotation):
+        """Flat pixel indices covered by the image's non-mask vector annotations.
+
+        Enforces the app-wide invariant that a MaskAnnotation never holds a label
+        behind a vector annotation (mask class A hiding under a patch/polygon of
+        class B). Reuses the MaskAnnotation's own rasterization helpers so the
+        occupancy matches exactly how rasterize_annotations()/bake mark the same
+        pixels. Returns None when there is nothing to clear.
+        """
+        try:
+            annotations = self.annotation_window.get_image_annotations()
+        except Exception:
+            return None
+        geometries = []
+        for ann in annotations:
+            if getattr(ann, 'is_mask_annotation', False):
+                continue
+            try:
+                geom = mask_annotation._get_annotation_rasterization_geometry(ann)
+            except Exception:
+                geom = None
+            if geom is None or getattr(geom, 'is_empty', False):
+                continue
+            geometries.append(geom)
+        if not geometries:
+            return None
+        try:
+            h, w = mask_annotation.mask_data.shape
+            occ = mask_annotation._fast_rasterize(geometries, w, h, mode="rasterio")
+        except Exception:
+            return None
+        idx = np.flatnonzero(occ.ravel())
+        return idx if idx.size else None
+
+    def _clear_prediction_under_vectors(self, prediction_mask, mask_annotation, history_action):
+        """Keep the finalized mask from sitting behind any vector annotation.
+
+        Zeroes the prediction wherever a vector annotation sits (so this commit
+        never writes a new label under one) AND clears any pre-existing mask there
+        in the SAME history action, so a single undo restores everything. No-op
+        when the image has no rasterizable vector annotations.
+        """
+        indices = self._vector_occupancy_indices(mask_annotation)
+        if indices is None:
+            return
+        # Don't paint the prediction under existing vector annotations.
+        prediction_mask.ravel()[indices] = 0
+        # Remove any mask already sitting behind a vector annotation (respects the
+        # LOCK_BIT, so genuinely protected pixels are left untouched).
+        mask_annotation.update_mask_at_indices(
+            indices, 0, silent=True, history_action=history_action)
+
     def _commit_as_mask(self, full_mask):
         """Paint the selection into the raster MaskAnnotation."""
         if self.annotation_window.current_mask_annotation is None:
@@ -1203,6 +1404,8 @@ class FeatureSelectTool(Tool):
 
         prediction_mask = (full_mask.astype(np.uint8) * class_id).astype(np.uint8)
         history_action = MaskEditAction(mask_annotation, description="Feature Select prediction")
+        # Enforce: no mask behind existing vector annotations.
+        self._clear_prediction_under_vectors(prediction_mask, mask_annotation, history_action)
         mask_annotation.update_mask_with_prediction_mask(
             prediction_mask,
             history_action=history_action,
@@ -1240,6 +1443,12 @@ class FeatureSelectTool(Tool):
         try:
             mvat_manager = getattr(self.main_window, 'mvat_manager', None)
             if mvat_manager is None:
+                return
+            # Only propagate when Multi-Annotate is actually enabled. The binary
+            # path is gated implicitly (post_prediction_callback is wired only
+            # while enabled), but this semantic path calls the engine directly,
+            # so it must check the flag itself or it fires even with the button off.
+            if not getattr(mvat_manager, 'multi_annotate_enabled', False):
                 return
             image_path = self.annotation_window.current_image_path
             mvat_manager._on_semantic_prediction_applied(
@@ -1326,6 +1535,8 @@ class FeatureSelectTool(Tool):
 
         history_action = MaskEditAction(mask_annotation,
                                         description="Feature Select multi-class prediction")
+        # Enforce: no mask behind existing vector annotations.
+        self._clear_prediction_under_vectors(prediction_mask, mask_annotation, history_action)
         mask_annotation.update_mask_with_prediction_mask(prediction_mask,
                                                          history_action=history_action)
         if not history_action.is_empty():
