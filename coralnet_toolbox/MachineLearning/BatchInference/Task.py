@@ -257,11 +257,9 @@ class ClassifyBatchInferenceTask(BatchInferenceTask):
             return True
 
     def _use_multi_view(self) -> bool:
-        getter = getattr(self.dialog, "_use_multi_view_classification", None)
-        try:
-            return bool(getter()) if callable(getter) else False
-        except Exception:
-            return False
+        # Resolved at dispatch time by the dialog's Multi-Annotate prompt
+        # (_resolve_classify_multi_view); defaults to False when unset.
+        return bool(getattr(self.dialog, "_classify_multi_view", False))
 
     def collect_image_annotations(self) -> dict[str, list[Any]]:
         annotation_window = self.dialog.annotation_window

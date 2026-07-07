@@ -1125,6 +1125,70 @@ class PropagationEngine(QObject):
 
         return ray.project_to_cameras(cameras_for_projection)
 
+    def _notify(self, message: str, timeout: int = 4000):
+        """Show a brief status-bar message about propagation (best-effort)."""
+        status_bar = getattr(self.main_window, 'status_bar', None)
+        if status_bar is not None:
+            try:
+                status_bar.showMessage(message, timeout)
+            except Exception:
+                pass
+
+    def _source_has_projection_capability(self, camera) -> bool:
+        """Return True when a source camera can project points at all — either it
+        has a 3D index map, or a primary target exists for the 2D ray fallback."""
+        if camera is None:
+            return False
+        raster = getattr(camera, '_raster', None)
+        if raster is not None and getattr(raster, 'index_map', None) is not None:
+            return True
+        try:
+            return self.viewer.scene_context.get_primary_target() is not None
+        except Exception:
+            return False
+
+    def _project_patch_to_targets(self, source_patch, source_camera, target_paths) -> list:
+        """Project one source patch's center into each target camera.
+
+        Shared core used by both the interactive hook (_on_patch_annotation_created)
+        and bulk sampling (build_sampled_patch_siblings), and mirrored by
+        resync_shared_group. Pure: creates sibling PatchAnnotations but does NOT
+        stamp shared_id or add them to the scene — callers own that.
+
+        Returns:
+            list[PatchAnnotation]: one sibling per target the point projected into
+            (may be shorter than target_paths when points are occluded/off-frame).
+        """
+        if not target_paths:
+            return []
+
+        px = int(source_patch.center_xy.x())
+        py = int(source_patch.center_xy.y())
+        _, _, center_ids, wide_ids, use_3d = self._compute_source_patch_context(
+            source_patch, source_camera
+        )
+
+        projections = None  # lazy 2D-projection cache, reused across targets
+        siblings = []
+        for target_path in target_paths:
+            try:
+                center, projections = self._project_patch_center(
+                    target_path, px, py, center_ids, wide_ids, use_3d,
+                    projections, source_camera=source_camera
+                )
+                if center is None:
+                    continue
+                siblings.append(PatchAnnotation(
+                    center_xy=center,
+                    annotation_size=source_patch.annotation_size,
+                    label=source_patch.label,
+                    image_path=target_path,
+                    transparency=source_patch.transparency,
+                ))
+            except Exception:
+                pass
+        return siblings
+
     def _on_patch_annotation_created(self, annotation_id: str):
         """Propagate a newly created PatchAnnotation into all target cameras (perspective and ortho-aware)."""
         if self._propagating_annotation:
@@ -1132,72 +1196,52 @@ class PropagationEngine(QObject):
 
         annotation = self.annotation_window.annotations_dict.get(annotation_id)
         if annotation is None or not isinstance(annotation, PatchAnnotation):
-            return
-        if self.selected_camera is None:
-            return
-        if annotation.image_path != self.selected_camera.image_path:
+            # Not a patch — no Multi-Annotate propagation applies. Stay silent so
+            # we don't nag when the user draws rectangles/polygons.
             return
 
-        px = int(annotation.center_xy.x())
-        py = int(annotation.center_xy.y())
+        # From here the user created a patch while Multi-Annotate is ON, so an
+        # early exit is worth explaining via the status bar.
+        if self.selected_camera is None or annotation.image_path != self.selected_camera.image_path:
+            self._notify("Multi-Annotate: active image is not the selected MVAT camera — cannot propagate.")
+            return
 
-        selected_paths = self._get_annotation_target_paths()
-
-        # Quick exit: nothing to propagate to
-        if not selected_paths:
+        target_paths = list(self._get_annotation_target_paths())
+        if not target_paths:
+            self._notify("Multi-Annotate: no visible context cameras to propagate to.")
             return
 
         self._propagating_annotation = True
         try:
-            propagated_annotations = []
+            siblings = self._project_patch_to_targets(annotation, self.selected_camera, target_paths)
 
-            # Source element-ID context (3D element ids + use_3d flag), shared
-            # across all target cameras. See _compute_source_patch_context.
-            _, _, source_element_ids, use_3d = self._compute_source_patch_context(
-                annotation, self.selected_camera
-            )
-
-            # Lazy 2D projection cache for the fallback path.
-            projections = None
-
-            for target_path in selected_paths:
-                try:
-                    center, projections = self._project_patch_center(
-                        target_path, px, py, source_element_ids, use_3d, projections
-                    )
-                    if center is None:
-                        continue
-                    new_annotation = PatchAnnotation(
-                        center_xy=center,
-                        annotation_size=annotation.annotation_size,
-                        label=annotation.label,
-                        image_path=target_path,
-                        transparency=annotation.transparency,
-                    )
-                    propagated_annotations.append(new_annotation)
-                except Exception:
-                    pass
+            if not siblings:
+                if not self._source_has_projection_capability(self.selected_camera):
+                    self._notify("Multi-Annotate: no 3D data for this camera — cannot project patches.")
+                else:
+                    self._notify("Multi-Annotate: point did not project into any visible "
+                                 "camera (occluded or off-frame).")
+                return
 
             # Stamp a shared group UUID on the source + every sibling so later
-            # edits (move/resize/delete) can be propagated across the group.
-            # A lone patch is not a group, so only stamp when siblings exist.
-            if propagated_annotations:
-                group_uuid = str(uuid.uuid4())
-                annotation.shared_id = group_uuid
-                for sibling in propagated_annotations:
-                    sibling.shared_id = group_uuid
+            # edits (move/resize/delete) propagate across the group.
+            group_uuid = str(uuid.uuid4())
+            annotation.shared_id = group_uuid
+            for sibling in siblings:
+                sibling.shared_id = group_uuid
 
-            # One batched commit: a single undo entry and a single UI refresh
-            # pass instead of one per target camera.
-            if propagated_annotations:
-                try:
-                    self.annotation_window.add_annotations(propagated_annotations, record_action=True)
-                except Exception:
-                    for ann in propagated_annotations:
-                        try:
-                            self.annotation_window.add_annotation(ann, record_action=True)
-                        except Exception:
-                            pass
+            # One batched commit: a single undo entry and one UI refresh.
+            try:
+                self.annotation_window.add_annotations(siblings, record_action=True)
+            except Exception:
+                for ann in siblings:
+                    try:
+                        self.annotation_window.add_annotation(ann, record_action=True)
+                    except Exception:
+                        pass
+
+            self._notify(f"Multi-Annotate: propagated to {len(siblings)} of "
+                         f"{len(target_paths)} visible camera(s).")
         finally:
             self._propagating_annotation = False
 
@@ -1230,54 +1274,46 @@ class PropagationEngine(QObject):
 
         visible = set(self._get_visible_context_camera_paths())
         if not visible:
+            self._notify("Multi-Annotate: no visible context cameras to propagate to.")
             return []
 
-        # Group source patches by their image so each source camera is set once.
+        # Group source patches by their image so each source camera is resolved once.
         from collections import defaultdict
         by_image = defaultdict(list)
         for ann in source_annotations:
             by_image[ann.image_path].append(ann)
 
         siblings_all = []
-        prev_selected_camera = self.selected_camera
+        skipped_non_camera = 0     # source patches not on a loaded MVAT camera
         self._propagating_annotation = True
         try:
             for image_path, patches in by_image.items():
                 src_cam = self._get_camera_for_path(image_path)
                 if src_cam is None:
+                    skipped_non_camera += len(patches)
+                    if progress_bar is not None:
+                        for _ in patches:
+                            try:
+                                progress_bar.update_progress()
+                            except Exception:
+                                pass
                     continue
+
                 targets = [p for p in visible if p != image_path]
                 if not targets:
+                    if progress_bar is not None:
+                        for _ in patches:
+                            try:
+                                progress_bar.update_progress()
+                            except Exception:
+                                pass
                     continue
 
-                # The projection helpers read self.selected_camera (via
-                # _build_projection); scope it to this source image.
-                self.selected_camera = src_cam
-
                 for src in patches:
-                    px = int(src.center_xy.x())
-                    py = int(src.center_xy.y())
-                    _, _, source_element_ids, use_3d = self._compute_source_patch_context(src, src_cam)
-
-                    projections = None
-                    siblings = []
-                    for target_path in targets:
-                        try:
-                            center, projections = self._project_patch_center(
-                                target_path, px, py, source_element_ids, use_3d, projections
-                            )
-                            if center is None:
-                                continue
-                            siblings.append(PatchAnnotation(
-                                center_xy=center,
-                                annotation_size=src.annotation_size,
-                                label=src.label,
-                                image_path=target_path,
-                                transparency=src.transparency,
-                            ))
-                        except Exception:
-                            pass
-
+                    # Shared projection core — identical geometry to the interactive
+                    # hook, so the source camera is passed explicitly (no global
+                    # selected_camera mutation).
+                    siblings = self._project_patch_to_targets(src, src_cam, targets)
                     if siblings:
                         group_uuid = str(uuid.uuid4())
                         src.shared_id = group_uuid
@@ -1291,22 +1327,41 @@ class PropagationEngine(QObject):
                         except Exception:
                             pass
         finally:
-            self.selected_camera = prev_selected_camera
             self._propagating_annotation = False
+
+        # Summary status so the user understands the outcome.
+        if siblings_all:
+            self._notify(f"Multi-Annotate: created {len(siblings_all)} propagated "
+                         f"patch(es) across visible cameras.")
+        elif skipped_non_camera:
+            self._notify(f"Multi-Annotate: {skipped_non_camera} sampled patch(es) are not on a "
+                         f"loaded MVAT camera — nothing propagated.")
+        else:
+            self._notify("Multi-Annotate: sampled patches did not project into any visible "
+                         "camera (occluded or off-frame).")
 
         return siblings_all
 
     def _compute_source_patch_context(self, annotation, source_camera):
         """Sample a source patch's element IDs from its camera index map.
 
-        Returns (px, py, source_element_ids, use_3d). source_element_ids is a
-        list of element IDs sampled across the annotation bounding box (many IDs
-        reduce stride false-negatives when looking them up in target cameras);
-        use_3d is False when no index map is available (caller falls back to 2D).
+        Returns ``(px, py, center_element_ids, wide_element_ids, use_3d)``:
+
+        - ``center_element_ids``: unique IDs in a tiny window around the exact
+          patch center. Projecting these gives the true corresponding point in
+          the target camera, so this is tried first for accuracy.
+        - ``wide_element_ids``: unique IDs across the patch footprint
+          (``±annotation_size/2``, the real square the patch covers — NOT ``±size``
+          which oversampled neighbouring surface and biased the centroid). Used
+          only as a fallback when the center has no valid ID (mesh holes / stride
+          gaps), preserving robustness.
+
+        ``use_3d`` is False when no index map is available (caller falls back to 2D).
         """
         px = int(annotation.center_xy.x())
         py = int(annotation.center_xy.y())
-        source_element_ids = None
+        center_element_ids = None
+        wide_element_ids = None
         use_3d = False
 
         source_raster = getattr(source_camera, '_raster', None) if source_camera is not None else None
@@ -1315,30 +1370,40 @@ class PropagationEngine(QObject):
             try:
                 sf = getattr(source_raster, 'index_map_scale_factor', None) or 1.0
                 img_h, img_w = source_index_map.shape
-                ann_size = annotation.annotation_size   # half-extent in image pixels
 
-                # Clamp the annotation bounding box to the index-map bounds
-                # (coordinates scaled by sf to match the index-map resolution).
-                x0 = max(0,     int((px - ann_size) * sf))
-                x1 = min(img_w, int((px + ann_size) * sf) + 1)
-                y0 = max(0,     int((py - ann_size) * sf))
-                y1 = min(img_h, int((py + ann_size) * sf) + 1)
+                def _ids_in(half_extent_px):
+                    """Unique valid element IDs in the ±half_extent_px window
+                    (coordinates scaled by sf to match the index-map resolution)."""
+                    x0 = max(0,     int((px - half_extent_px) * sf))
+                    x1 = min(img_w, int((px + half_extent_px) * sf) + 1)
+                    y0 = max(0,     int((py - half_extent_px) * sf))
+                    y1 = min(img_h, int((py + half_extent_px) * sf) + 1)
+                    if x0 >= x1 or y0 >= y1:
+                        return None
+                    window = source_index_map[y0:y1, x0:x1].ravel()
+                    valid = window[window > -1]
+                    if valid.size == 0:
+                        return None
+                    return list(np.unique(valid).tolist())
 
-                if x0 < x1 and y0 < y1:
-                    patch = source_index_map[y0:y1, x0:x1].ravel()
-                    valid = patch[patch > -1]
-                    if valid.size > 0:
-                        source_element_ids = list(np.unique(valid).tolist())
-                        use_3d = True
+                # Center-first: a tiny window around the exact center pixel.
+                center_element_ids = _ids_in(2)
+                # Fallback: the true patch footprint (±size/2).
+                wide_element_ids = _ids_in(max(2.0, annotation.annotation_size / 2.0))
+
+                if center_element_ids or wide_element_ids:
+                    use_3d = True
             except Exception:
                 pass
 
-        return px, py, source_element_ids, use_3d
+        return px, py, center_element_ids, wide_element_ids, use_3d
 
-    def _project_patch_center(self, target_path, px, py, source_element_ids, use_3d, projections):
+    def _project_patch_center(self, target_path, px, py, center_element_ids,
+                              wide_element_ids, use_3d, projections, source_camera=None):
         """Project a source patch center (px, py) into target_path.
 
-        Tries the 3D index-map centroid first, then a 2D projection fallback.
+        Tries the 3D index-map path first — center element IDs (accurate), then
+        the wider footprint IDs (robust) — then a 2D projection fallback.
         Returns (QPointF | None, projections). projections is the (possibly newly
         built) lazy 2D-projection cache so the caller can reuse it across targets.
         Returns None for the center when the point is occluded / off-frame.
@@ -1347,24 +1412,29 @@ class PropagationEngine(QObject):
         if target_camera is None:
             return None, projections
 
-        # 3D centroid path: look up every sampled element ID in the target's
-        # index map and use the resulting pixel centroid.
+        # 3D centroid path: look the source IDs up in the target's index map and
+        # use the resulting pixel centroid. Center IDs give the true corresponding
+        # point; the wider footprint is only a fallback when the center misses.
         target_has_index = (getattr(target_camera, '_raster', None) is not None
                             and target_camera._raster.index_map is not None)
-        if use_3d and target_has_index and source_element_ids:
-            flat = target_camera.get_pixels_for_elements(
-                np.array(source_element_ids, dtype=np.int64)
-            )
-            if flat.size > 0:
-                v_arr, u_arr = np.divmod(flat, target_camera.width)
-                u_centroid = float(np.mean(u_arr))
-                v_centroid = float(np.mean(v_arr))
-                if 0 <= u_centroid < target_camera.width and 0 <= v_centroid < target_camera.height:
-                    return QPointF(u_centroid, v_centroid), projections
+        if use_3d and target_has_index:
+            for element_ids in (center_element_ids, wide_element_ids):
+                if not element_ids:
+                    continue
+                flat = target_camera.get_pixels_for_elements(
+                    np.array(element_ids, dtype=np.int64)
+                )
+                if flat.size > 0:
+                    v_arr, u_arr = np.divmod(flat, target_camera.width)
+                    u_centroid = float(np.mean(u_arr))
+                    v_centroid = float(np.mean(v_arr))
+                    if 0 <= u_centroid < target_camera.width and 0 <= v_centroid < target_camera.height:
+                        return QPointF(u_centroid, v_centroid), projections
 
-        # 2D fallback: no index map, or the 3D lookup returned empty.
+        # 2D fallback: no index map, or the 3D lookup returned empty. Use the
+        # explicit source camera so the ray originates from the correct view.
         if projections is None:
-            projections = self._build_projection(px, py)
+            projections = self._build_projection(px, py, source_camera=source_camera)
         proj = projections.get(target_path)
         if proj is None:
             return None, projections
@@ -1425,7 +1495,7 @@ class PropagationEngine(QObject):
         if source_camera is None:
             return []
 
-        px, py, source_element_ids, use_3d = self._compute_source_patch_context(
+        px, py, center_ids, wide_ids, use_3d = self._compute_source_patch_context(
             primary_annotation, source_camera
         )
         new_size = primary_annotation.annotation_size
@@ -1439,7 +1509,8 @@ class PropagationEngine(QObject):
                     continue
                 try:
                     center, projections = self._project_patch_center(
-                        sibling.image_path, px, py, source_element_ids, use_3d, projections
+                        sibling.image_path, px, py, center_ids, wide_ids, use_3d,
+                        projections, source_camera=source_camera
                     )
                 except Exception:
                     center = None

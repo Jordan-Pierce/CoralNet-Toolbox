@@ -670,6 +670,16 @@ class BatchInferenceDialog(QDialog):
 
         self.setup_buttons_layout()
 
+        # Keep the Classify-only Multi-Annotate status suffix live if the user
+        # toggles Multi-Annotate while this dialog is open (guarded: context_matrix
+        # may not exist in all configurations).
+        context_matrix = getattr(self.main_window, 'context_matrix', None)
+        if context_matrix is not None and hasattr(context_matrix, 'multiAnnotateToggled'):
+            try:
+                context_matrix.multiAnnotateToggled.connect(lambda _enabled: self._refresh_status_label())
+            except Exception:
+                pass
+
     def _refresh_model_dialog_references(self):
         """Refresh cached dialog references from MainWindow."""
         self.classify_dialog = getattr(self.main_window, 'classify_deploy_model_dialog', None)
@@ -723,7 +733,6 @@ class BatchInferenceDialog(QDialog):
         super().showEvent(event)
         self.update_status_label()
         self.update_model_availability()
-        self._update_multi_view_combo_state()
 
         # Check if any models are available
         if not self.model_dialogs:
@@ -900,19 +909,10 @@ class BatchInferenceDialog(QDialog):
         self.all_combo.setToolTip("Generate predictions for ALL annotations.\nTrue: Classify model will predict labels for all annotations (including already-verified).")
         layout.addRow("Predict All Annotations:", self.all_combo)
 
-        # Multi-View Classification: fuse per-view (shared_id) predictions into a
-        # mean consensus. Enabled only when the Context Matrix has visible cameras;
-        # independent of the MVAT Multi-Annotate button. Defaults to False so the
-        # user must opt in (state re-evaluated in showEvent).
-        self.multi_view_combo = QComboBox()
-        self.multi_view_combo.addItems(["False", "True"])
-        self.multi_view_combo.setCurrentText("False")
-        self.multi_view_combo.setToolTip(
-            "Multi-View Classification: predict every view of a shared point and "
-            "assign the mean-consensus top-5 to the whole group.\n"
-            "Enabled only when the Context Matrix has visible cameras loaded."
-        )
-        layout.addRow("Multi-View Classification:", self.multi_view_combo)
+        # Note: Multi-View (consensus) classification is not a static option here.
+        # When Multi-Annotate is enabled, the user is prompted at run time to choose
+        # independent vs. multi-view consensus (see _resolve_classify_multi_view),
+        # mirroring the Patch Sampling flow.
 
         # Keep the two options mutually exclusive, like the old radio checkboxes
         self.review_combo.currentTextChanged.connect(self._on_review_combo_changed)
@@ -1025,17 +1025,39 @@ class BatchInferenceDialog(QDialog):
         
         self.layout.addLayout(button_layout)
 
+    def _multi_annotate_status_suffix(self) -> str:
+        """Return a ' | Multi-Annotate ON/OFF' status suffix.
+
+        Currently only shown for the Classify model (consensus is a classify-only
+        feature for now); the plumbing lives here so other models can opt in later.
+        """
+        if getattr(self, 'current_selected_model', None) != "Classify":
+            return ""
+        mvat = getattr(self.main_window, 'mvat_manager', None)
+        on = bool(mvat and getattr(mvat, 'multi_annotate_enabled', False))
+        return "  |  Multi-Annotate ON" if on else "  |  Multi-Annotate OFF"
+
+    def _refresh_status_label(self):
+        """Refresh the status label using the variant matching the current mode,
+        so callers don't clobber the Tiled work-area text."""
+        if (hasattr(self, 'inference_type_combo')
+                and self.inference_type_combo.currentText() == "Tiled"):
+            self.update_status_label_for_tiled()
+        else:
+            self.update_status_label()
+
     def update_status_label(self):
         """
         Update the status label to show the number of images for batch inference.
         """
         num_images = len(self.highlighted_images)
         if num_images == 0:
-            self.status_label.setText("No rasters selected")
+            base = "No rasters selected"
         elif num_images == 1:
-            self.status_label.setText("1 raster selected")
+            base = "1 raster selected"
         else:
-            self.status_label.setText(f"{num_images} rasters selected")
+            base = f"{num_images} rasters selected"
+        self.status_label.setText(base + self._multi_annotate_status_suffix())
 
     def update_status_label_for_tiled(self):
         """
@@ -1170,6 +1192,10 @@ class BatchInferenceDialog(QDialog):
 
             # Drive section visibility and the Type combo from (task x source).
             self._update_visible_sections()
+
+            # Refresh the status label so the Classify-only Multi-Annotate suffix
+            # appears/disappears when the selected model changes.
+            self._refresh_status_label()
 
     def _update_visible_sections(self):
         """Show only the controls that apply to the current model and source.
@@ -1477,36 +1503,50 @@ class BatchInferenceDialog(QDialog):
         if text == "True" and self.review_combo.currentText() == "True":
             self.review_combo.setCurrentText("False")
 
-    def _has_visible_context_cameras(self) -> bool:
-        """Return True when the Context Matrix has visible cameras loaded."""
-        context_matrix = getattr(self.main_window, 'context_matrix', None)
-        if context_matrix is None:
+    def _resolve_classify_multi_view(self):
+        """Decide whether a Classify batch run should use Multi-View consensus.
+
+        Mirrors the Patch Sampling flow: only prompt when Multi-Annotate is
+        enabled (the gate is the button, not visible cameras — classification
+        aggregates existing shared_id groups and never projects). Returns:
+            False — run each annotation independently (also the no-prompt default),
+            True  — fuse each shared_id group into a mean consensus,
+            None  — the user cancelled the run.
+        """
+        mvat = getattr(self.main_window, 'mvat_manager', None)
+        if not (mvat and getattr(mvat, 'multi_annotate_enabled', False)):
             return False
+
+        box = QMessageBox(self)
         try:
-            return bool(context_matrix.get_visible_camera_paths())
+            box.setWindowIcon(get_window_icon("coralnet.svg"))
         except Exception:
-            return False
+            pass
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle("Multi-View Classification")
+        box.setText("Multi-Annotate is enabled — how should linked patches be classified?")
+        box.setInformativeText(
+            "<b>Independent (default)</b><br>"
+            "Classify every annotation on its own; each patch keeps its own top-5.<br><br>"
+            "<b>Multi-View consensus</b><br>"
+            "For patches linked across cameras (same physical point), predict every "
+            "view once, average the per-view probabilities, and assign the shared "
+            "consensus top-5 to the whole group.<br><br>"
+            "<b>Cancel</b><br>Do not run inference."
+        )
+        indep_button = box.addButton("Independent (default)", QMessageBox.AcceptRole)
+        indep_button.setToolTip("Classify each annotation separately (no consensus).")
+        multi_button = box.addButton("Multi-View consensus", QMessageBox.AcceptRole)
+        multi_button.setToolTip("Fuse linked (shared_id) patches into one mean-consensus top-5.")
+        box.addButton("Cancel", QMessageBox.RejectRole)
 
-    def _update_multi_view_combo_state(self):
-        """Enable/disable the Multi-View Classification combo based on whether the
-        Context Matrix currently has valid (visible-camera) data. Disabled →
-        greyed out and forced to False; enabled → user opt-in, default False."""
-        combo = getattr(self, 'multi_view_combo', None)
-        if combo is None:
-            return
-        if self._has_visible_context_cameras():
-            combo.setEnabled(True)
-            combo.setCurrentText("False")
-        else:
-            combo.setCurrentText("False")
-            combo.setEnabled(False)
-
-    def _use_multi_view_classification(self) -> bool:
-        """Return the resolved Multi-View Classification flag for Classify batch runs."""
-        combo = getattr(self, 'multi_view_combo', None)
-        if combo is None or not combo.isEnabled():
+        box.exec_()
+        clicked = box.clickedButton()
+        if clicked is indep_button:
             return False
-        return combo.currentText() == "True"
+        if clicked is multi_button:
+            return True
+        return None
 
     def _on_save_annotations_changed(self, text):
         """Handler for the Save Annotations combobox.
@@ -1882,6 +1922,17 @@ class BatchInferenceDialog(QDialog):
 
             # ── Classify ──────────────────────────────────────────────────────
             elif selected_model == "Classify":
+                # When Multi-Annotate is on, prompt for independent vs. multi-view
+                # consensus (mirrors Patch Sampling). None = user cancelled.
+                multi_view = self._resolve_classify_multi_view()
+                if multi_view is None:
+                    QApplication.restoreOverrideCursor()
+                    try:
+                        progress_bar.close()
+                    except Exception:
+                        pass
+                    return
+                self._classify_multi_view = multi_view
                 if not task_runner.run(progress_bar):
                     try:
                         progress_bar.close()

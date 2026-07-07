@@ -1216,15 +1216,21 @@ class Annotation(QObject):
         return 0.0
 
     def get_display_tag_text(self) -> str:
-        """Return the class label text shown in the tag, including confidence."""
+        """Return the class label text shown in the tag, including confidence.
+
+        A trailing "*" marks a Multi-View-linked patch (shared_id set — a member of
+        a cross-camera group). It is derived live from shared_id, so breaking the
+        link (shared_id = None) drops the marker on the next tag rebuild.
+        """
         label_text = self.label.short_label_code if self.label else ""
+        mv_suffix = " *" if getattr(self, 'shared_id', None) else ""
         if not self.show_confidence:
-            return label_text
+            return f"{label_text}{mv_suffix}"
 
         confidence_text = "100%" if self.verified else f"{self.get_display_confidence():.1f}%"
         if label_text:
-            return f"{label_text} {confidence_text}"
-        return confidence_text
+            return f"{label_text} {confidence_text}{mv_suffix}"
+        return f"{confidence_text}{mv_suffix}"
     
     def update_bounding_box_graphics_item(self, top_left, bottom_right):
         """Update the position and appearance of the bounding box graphics item."""

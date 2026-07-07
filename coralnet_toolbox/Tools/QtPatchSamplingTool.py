@@ -372,11 +372,9 @@ class PatchSamplingDialog(QDialog):
         # When Multi-Annotate is ON, hint that sampled patches will be propagated
         # to the visible context cameras.
         if self._multi_annotate_on():
-            n_cameras = len(self._visible_camera_paths())
-            if n_cameras > 0:
-                base_text += f"  |  Multi-Annotate ON — will propagate to {n_cameras} visible camera(s)"
-            else:
-                base_text += "  |  Multi-Annotate ON — no visible cameras to propagate to"
+            base_text += " | Multi-Annotate ON"
+        else:
+            base_text += " | Multi-Annotate OFF"
 
         self.status_label.setText(base_text)
         

@@ -510,7 +510,17 @@ class ConfidenceWindow(QWidget):
         
         # Verification status
         tooltip_parts.append(f"<b>Verified:</b> {'Yes' if annotation.verified else 'No'}")
-        
+
+        # Multi-View group membership (computed on demand from shared_id)
+        if getattr(annotation, 'shared_id', None):
+            try:
+                group = self.main_window.annotation_window.get_shared_group(annotation)
+                n_group = len(group)
+                if n_group > 1:
+                    tooltip_parts.append(f"<b>Multi-View Group:</b> {n_group} linked patches")
+            except Exception:
+                pass
+
         # Image path
         if annotation.image_path:
             tooltip_parts.append(f"<b>Source Image:</b> {os.path.basename(annotation.image_path)}")
