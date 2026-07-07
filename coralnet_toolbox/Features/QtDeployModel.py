@@ -288,16 +288,24 @@ class FeaturesDeployModelDialog(QDialog):
             progress_bar.stop_progress()
             progress_bar.close()
 
+    def clear_model_cache(self):
+        """Clear the loaded model's cache to free GPU memory."""
+        if self.loaded_model is not None:
+            try:
+                self.loaded_model.clear_cache()
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                self.status_label.setText("Model cache cleared")
+            except Exception as e:
+                QMessageBox.critical(self, "Error Clearing Cache", f"Error: {e}")
+
     def deactivate_model(self):
         """Deactivate and clear the loaded model from memory."""
         if self.loaded_model is not None:
             try:
-                self.loaded_model.clear_cache()
+                self.clear_model_cache()
                 self.loaded_model = None
-
-                gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
 
                 self.status_label.setText("Model deactivated")
                 self.load_button.setEnabled(True)
