@@ -27,7 +27,7 @@ from PyQt5.QtWidgets import (
 
 from coralnet_toolbox.MVAT.core.Ray import CameraRay
 from coralnet_toolbox.MVAT.core.Ray import BatchedRayManager
-from coralnet_toolbox.MVAT.managers.CursorPreview3D import CursorPreview3D
+from coralnet_toolbox.MVAT.core.CursorPreview3D import CursorPreview3D
 from coralnet_toolbox.MVAT.core.Frustum import BatchedFrustumManager
 from coralnet_toolbox.MVAT.core.Products import PointCloudProduct, MeshProduct, GaussianSplattingProduct
 from coralnet_toolbox.MVAT.core.SceneContext import SceneContext
@@ -437,6 +437,17 @@ class MVATViewer(QFrame):
         # Sphere actor for mouse tracking on mesh
         self._cursor_preview = CursorPreview3D(radius=0.1)
         self._sphere_visible = False
+        # Always-on dynamic cursor marker: a single in-scene dot at the hovered
+        # world point (also mirrored into the 2D views by
+        # MVATManager.sync_cursor_markers). Exists regardless of the active tool,
+        # unlike the brush _cursor_preview sphere.
+        self._cursor_marker_enabled = True
+        # Camera-drag state used to suspend the always-on hover pipeline mid-drag
+        # so it never renders and stalls the trackball. `_camera_interacting` is set
+        # from VTK's Start/EndInteractionEvent; `_mouse_button_down` from the
+        # reliable Qt eventFilter path. See _is_camera_dragging().
+        self._camera_interacting = False
+        self._mouse_button_down = False
         self._brush_3d_tool = None
         self._erase_3d_tool = None
         self._fill_3d_tool = None
@@ -981,7 +992,15 @@ class MVATViewer(QFrame):
             style = None
 
         return style if style is not None else interactor
-    
+
+    def _on_camera_interaction_start(self, *_args):
+        """VTK StartInteractionEvent — a camera drag (rotate) has begun."""
+        self._camera_interacting = True
+
+    def _on_camera_interaction_end(self, *_args):
+        """VTK EndInteractionEvent — the camera drag has ended."""
+        self._camera_interacting = False
+
     def _configure_interaction(self):
         """
         Configures the interaction style using PyVista's custom trackball API.
@@ -1015,6 +1034,20 @@ class MVATViewer(QFrame):
         inertia_style = self._get_vtk_interaction_style(interactor)
         if hasattr(self, '_camera_inertia') and self._camera_inertia is not None:
             self._camera_inertia.bind(inertia_style)
+
+        # Track camera-drag state so the always-on hover pipeline can suspend
+        # itself during a rotate (it must not render mid-drag or the trackball
+        # stutters/stalls). Bound once; VTK observers are additive and never abort.
+        if not getattr(self, '_camera_interaction_observers_bound', False):
+            try:
+                if inertia_style is not None and inertia_style is not interactor:
+                    inertia_style.AddObserver("StartInteractionEvent",
+                                              self._on_camera_interaction_start)
+                    inertia_style.AddObserver("EndInteractionEvent",
+                                              self._on_camera_interaction_end)
+                    self._camera_interaction_observers_bound = True
+            except Exception:
+                pass
 
         # Strip the right-button handlers that enable_custom_trackball_style
         # just re-installed. This removes the VTK-side pan and, because the
@@ -1050,6 +1083,8 @@ class MVATViewer(QFrame):
             from coralnet_toolbox.MVAT.core.constants import SELECT_COLOR_RGB
             self._cursor_preview.add_to_plotter(self.plotter, color=SELECT_COLOR_RGB, line_width=1.5)
             self._cursor_preview.set_visibility(False)  # Hidden by default
+            # Bind the hover observer for the always-on 2D cursor-marker path (see
+            # _sync_sphere_hover_binding); it now stays bound in navigation too.
             self._sync_sphere_hover_binding()
 
     def _scene_has_opaque_geometry(self) -> bool:
@@ -1231,8 +1266,14 @@ class MVATViewer(QFrame):
         self._sphere_hover_observer_bound = False
 
     def _sync_sphere_hover_binding(self):
-        """Keep the sphere hover observer aligned with the feature toggle."""
-        if self._sphere_visible:
+        """Keep the mouse-move hover observer bound while EITHER the brush sphere
+        is active OR the always-on cursor marker is enabled.
+
+        Binding for the always-on marker means the observer stays live in pure
+        navigation mode (no tool selected), which is what drives the always-on
+        cursor markers + 3D dot.
+        """
+        if self._sphere_visible or getattr(self, '_cursor_marker_enabled', False):
             self._bind_sphere_hover_observer()
         else:
             self._unbind_sphere_hover_observer()
@@ -1293,6 +1334,15 @@ class MVATViewer(QFrame):
         # aren't when a 3D tool has captured the interaction style, so we
         # drive pan from here regardless of tool state.
         etype = event.type()
+
+        # Track button state from the reliable Qt eventFilter path so the hover
+        # pipeline can suspend during a camera drag (VTK's mouse grab can hide the
+        # button from QApplication.mouseButtons()). See _is_camera_dragging().
+        if etype == QEvent.MouseButtonPress:
+            self._mouse_button_down = True
+        elif etype == QEvent.MouseButtonRelease:
+            self._mouse_button_down = False
+
         if etype == QEvent.MouseButtonPress and event.button() == Qt.RightButton:
             try:
                 pos = event.pos()
@@ -1329,6 +1379,12 @@ class MVATViewer(QFrame):
                         pass
             manager = getattr(self, 'mvat_manager', None)
             if manager is not None:
+                # Clear the always-on 2D cursor markers (annotation window + context
+                # matrix) plus any bridge markers when the pointer leaves the viewport.
+                try:
+                    manager.sync_cursor_markers(None)
+                except Exception:
+                    pass
                 try:
                     manager.clear_all_markers()
                 except Exception:
@@ -1339,6 +1395,10 @@ class MVATViewer(QFrame):
                 pass
             try:
                 self.clear_ortho_ray()
+            except Exception:
+                pass
+            try:
+                self.plotter.render()
             except Exception:
                 pass
             return False
@@ -1575,8 +1635,13 @@ class MVATViewer(QFrame):
         return True
 
     def _process_sphere_hover_update(self):
-        """Process the most recent queued mouse-move batch for the sphere actor."""
-        start_time = perf_counter()
+        """Process the most recent queued mouse-move batch.
+
+        Runs three things off one hardware pick: the always-on 2D cursor markers
+        (annotation window + context matrix), the active tool's own hover handling
+        (brush sphere / overlays / similarity preview), and the always-on in-scene
+        3D cursor dot. Everything is coalesced to one pick + one VTK render per batch.
+        """
         try:
             pending_events = self._sphere_hover_pending_events
             self._sphere_hover_pending_events = 0
@@ -1585,61 +1650,79 @@ class MVATViewer(QFrame):
                 return
 
             active_tool = getattr(self, '_active_3d_tool', None)
+            manager = getattr(self, 'mvat_manager', None)
+
+            # Suspend the hover pipeline entirely while the camera is being dragged
+            # (rotate/pan) so the active tool's own render (e.g. FeatureSelect's
+            # preview timer) is never triggered mid-drag. Painting tools keep going.
+            if (self._is_camera_dragging()
+                    and not getattr(active_tool, 'painting', False)):
+                return
 
             # --- INSTANT HARDWARE PICK ---
             # hover=True: focal-plane projection for O(1) Gaussian miss path
             world_pos = self._fast_hardware_pick(hover=True)
 
+            # --- Always-on: mirror the 3D cursor as 2D dynamic markers ---
+            # Qt graphics items — no VTK render needed. Owns the dynamic markers
+            # for ALL tools now (MVATManager.refresh_sphere_hover_overlay no longer
+            # syncs them), so navigation and FeatureSelect both get them.
+            if manager is not None and getattr(self, '_cursor_marker_enabled', False):
+                try:
+                    manager.sync_cursor_markers(world_pos)
+                except Exception:
+                    pass
+
+            need_render = False
+
+            # --- Active tool hover (brush sphere / overlays / similarity preview) ---
             if active_tool is not None:
                 if self._cursor_preview is None or not self._sphere_visible:
                     try:
                         active_tool.mouseMoveEvent(None, -1, None)
                     except Exception:
                         pass
-                    return
-
+                else:
+                    try:
+                        active_tool.mouseMoveEvent(None, 1, world_pos)
+                    except Exception:
+                        pass
+                # Only flush here if the tool actually shows its cursor sphere
+                # (brush/erase). Tools like FeatureSelect keep the sphere hidden and
+                # render from their own hover timer, so a render here is redundant
+                # and (mid-drag) a rotation hazard.
+                cp = self._cursor_preview
                 try:
-                    active_tool.mouseMoveEvent(None, 1, world_pos)
+                    need_render = (cp is not None and cp.sphere_actor is not None
+                                   and bool(cp.sphere_actor.GetVisibility()))
                 except Exception:
-                    pass
+                    need_render = False
+            elif self._sphere_visible and self._cursor_preview is not None:
+                # No-tool sphere-tracking path (sphere follows the cursor directly).
+                if world_pos is not None:
+                    self._cursor_preview.set_position(world_pos)
+                    self._cursor_preview.set_visibility(True)
+                    if manager is not None:
+                        try:
+                            manager.update_sphere_hover_overlay(world_pos, render=False)
+                        except Exception:
+                            pass
+                else:
+                    self._cursor_preview.set_visibility(False)
+                    if manager is not None:
+                        try:
+                            manager.clear_sphere_hover_overlay(reset_context=True, render=False)
+                        except Exception:
+                            pass
+                need_render = True
 
-                # Flush the frame — mesh.Modified() alone does not trigger a redraw.
+            # VTK flush only when a VTK actor actually changed (never in pure
+            # navigation), so hover work can't fight the camera trackball.
+            if need_render:
                 try:
                     self.plotter.render()
                 except Exception:
                     pass
-
-                if self._sphere_hover_pending_events > 0:
-                    self._sphere_hover_timer.start()
-                return
-
-            if self._cursor_preview is None:
-                return
-
-            if world_pos is not None:
-                self._cursor_preview.set_position(world_pos)
-                self._cursor_preview.set_visibility(True)
-
-                manager = getattr(self, 'mvat_manager', None)
-                if manager is not None:
-                    try:
-                        manager.update_sphere_hover_overlay(world_pos, render=False)
-                    except Exception:
-                        pass
-            else:
-                self._cursor_preview.set_visibility(False)
-
-                manager = getattr(self, 'mvat_manager', None)
-                if manager is not None:
-                    try:
-                        manager.clear_sphere_hover_overlay(reset_context=True, render=False)
-                    except Exception:
-                        pass
-
-            try:
-                self.plotter.render()
-            except Exception:
-                pass
 
             # If more mouse moves arrived while we were processing this batch,
             # schedule another coalesced update for the latest cursor position.
@@ -1648,6 +1731,17 @@ class MVATViewer(QFrame):
         except Exception:
             # Silent failure
             pass
+
+    def _is_camera_dragging(self) -> bool:
+        """True while the user is dragging the camera (rotate or pan).
+
+        Combines VTK's Start/EndInteractionEvent flag with Qt-tracked button state
+        (from the reliable eventFilter path) and the right-pan flag, so a drag is
+        detected regardless of which interaction path VTK takes.
+        """
+        return bool(getattr(self, '_camera_interacting', False)
+                    or getattr(self, '_mouse_button_down', False)
+                    or getattr(self, '_right_pan_active', False))
 
     def _on_mouse_move(self, obj, event):
         """
@@ -1660,8 +1754,16 @@ class MVATViewer(QFrame):
             if self._cursor_preview is None:
                 return
 
-            # Only track if sphere feature is enabled
-            if not self._sphere_visible:
+            # Track while the brush sphere is active OR the always-on cursor
+            # marker is enabled (so hover markers work in pure navigation too).
+            if not self._sphere_visible and not getattr(self, '_cursor_marker_enabled', False):
+                return
+
+            # Suspend the hover pipeline while the camera is being dragged so it
+            # never schedules a mid-drag render that stalls the trackball. Painting
+            # tools (brush/erase) set `painting` and keep going.
+            if (self._is_camera_dragging()
+                    and not getattr(self._active_3d_tool, 'painting', False)):
                 return
 
             # Refresh PyVista's stored mouse position immediately so the batch

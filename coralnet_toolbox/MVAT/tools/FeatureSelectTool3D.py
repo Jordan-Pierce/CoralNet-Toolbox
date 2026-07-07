@@ -39,6 +39,7 @@ from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QColor
 
 from coralnet_toolbox.MVAT.tools.Tool3D import Tool3D
+from coralnet_toolbox.MVAT.core.PointMarkers3D import ColoredPointMarkers3D
 
 
 # Hover updates are coalesced to at most one per this interval (~60 Hz) so a
@@ -91,6 +92,13 @@ class FeatureSelectTool3D(Tool3D):
         self._pending_hover_world = None
         self._hover_dirty = False
 
+        # In-scene colored prototype markers (Feature 2): one label-colored sphere
+        # per committed prototype (multi-class) or green/red per positive/negative
+        # (binary). Its actor is added on activate() and refreshed by the display
+        # updates. Mirrors the 2D FeatureSelectTool's per-prototype dots.
+        self._proto_markers = ColoredPointMarkers3D(
+            point_size=18.0, name='_feature_proto_markers')
+
     def activate(self):
         """Activate the tool. Nothing changes visually until the user engages.
 
@@ -105,12 +113,19 @@ class FeatureSelectTool3D(Tool3D):
         self._pending_hover_world = None
         self._hover_dirty = False
         self._hover_timer.start()
+        # Register the prototype-marker actor (created lazily on first set_markers).
+        self._proto_markers.add_to_plotter(self.mvat_viewer.plotter)
 
     def deactivate(self):
         """Deactivate: disengage the overlay and clear the query."""
         self._hover_timer.stop()
         self._pending_hover_world = None
         self._hover_dirty = False
+        # Remove the in-scene prototype markers.
+        try:
+            self._proto_markers.remove_from_plotter(self.mvat_viewer.plotter)
+        except Exception:
+            pass
         super().deactivate()
 
         fmm = getattr(self.mvat_manager, 'feature_mesh_manager', None)
@@ -481,6 +496,7 @@ class FeatureSelectTool3D(Tool3D):
         # shader (or the splat display channel) picks them up on the render.
         threshold = self._threshold if thresholded else None
         feature_manager.recolor_by_similarity(threshold=threshold, hover_id=hover_id)
+        self._refresh_prototype_markers()
         self.mvat_viewer.plotter.render()
 
     def _paint_elements(self, primary_target, element_ids, class_id,
@@ -599,6 +615,7 @@ class FeatureSelectTool3D(Tool3D):
         feature_manager.recolor_by_class(
             proto, colors, reject_threshold=self.multiclass_threshold,
             hover_key=hover_key, hover_id=hover_id)
+        self._refresh_prototype_markers()
         self.mvat_viewer.plotter.render()
 
     def _commit_multiclass(self) -> None:
@@ -663,3 +680,71 @@ class FeatureSelectTool3D(Tool3D):
         # Clear the prototypes for the next selection (keep multiclass mode).
         self._clear_class_prototypes()
         self._update_class_display()
+
+    # ==================== Prototype markers (Feature 2) ====================
+
+    def _refresh_prototype_markers(self) -> None:
+        """Sync the in-scene colored prototype markers with the current prompts.
+
+        Multi-class: one label-colored sphere per prototype element (class_colors).
+        Binary: green positive / red negative spheres (query_engine pos/neg ids).
+        Hidden when the overlay is not engaged or there are no prompts. Called from
+        the display-update methods, so the markers share the existing render (no
+        extra render) and stay in sync on add / remove / clear / commit / backspace.
+        """
+        marker = getattr(self, '_proto_markers', None)
+        if marker is None:
+            return
+
+        # No markers unless engaged (mirrors "no work area → no markers").
+        if not self._engaged():
+            marker.set_markers(None, None)
+            return
+
+        primary_target = self.mvat_viewer.scene_context.get_primary_target()
+        if primary_target is None:
+            marker.set_markers(None, None)
+            return
+        get_coord = getattr(primary_target, 'get_element_coordinate', None)
+
+        # Collect (element_id, rgb) for the active mode.
+        entries = []
+        if self.mode == "multiclass":
+            for label_id, ids in self.class_prototypes.items():
+                if not ids:
+                    continue
+                rgb = self.class_colors.get(label_id, (255, 255, 255))
+                entries.extend((eid, rgb) for eid in ids)
+        else:
+            fm = getattr(self.mvat_manager, 'feature_mesh_manager', None)
+            qe = getattr(fm, 'query_engine', None)
+            if qe is not None:
+                entries.extend((eid, (0, 255, 0)) for eid in (qe.positive_ids or []))
+                entries.extend((eid, (255, 0, 0)) for eid in (qe.negative_ids or []))
+
+        # element_id → on-surface world coordinate. get_element_coordinate returns
+        # the element's centroid on the rendered geometry (verified on-surface via
+        # diagnostics), unlike the click pick which floats above the surface while
+        # the similarity overlay biases the depth buffer toward the camera.
+        if get_coord is None:
+            marker.set_markers(None, None)
+            return
+        points, colors = [], []
+        for eid, rgb in entries:
+            try:
+                pt = get_coord(int(eid))
+            except Exception:
+                pt = None
+            if pt is None:
+                continue
+            pt = np.asarray(pt, dtype=np.float64).reshape(-1)
+            if pt.size < 3 or not np.all(np.isfinite(pt[:3])):
+                continue
+            points.append(pt[:3])
+            colors.append(rgb)
+
+        if points:
+            marker.set_markers(np.asarray(points, dtype=np.float32),
+                               np.asarray(colors, dtype=np.uint8))
+        else:
+            marker.set_markers(None, None)

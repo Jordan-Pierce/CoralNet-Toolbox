@@ -4480,6 +4480,23 @@ class MVATManager(QObject):
             except Exception:
                 pass
 
+    def sync_cursor_markers(self, world_point):
+        """Always-on entry point: mirror the 3D cursor as 2D dynamic markers.
+
+        Projects ``world_point`` into the selected camera (main annotation window)
+        and every visible context camera, decoupled from ``_sphere_visible`` / the
+        active tool so the marker exists in pure navigation mode and during the
+        FeatureSelect tool too. ``world_point=None`` clears the markers.
+
+        The 2D markers are Qt graphics items (no VTK render needed), so this always
+        runs with ``render=False``; the viewer batches the single VTK render used
+        for the in-scene 3D cursor dot.
+        """
+        try:
+            self._sync_hover_dynamic_markers(world_point, render=False)
+        except Exception:
+            pass
+
     def refresh_sphere_hover_overlay(self, render: bool = True):
         """Rebuild the hover overlay from the current hover context."""
         if not self._hover_overlay_enabled:
@@ -4496,12 +4513,15 @@ class MVATManager(QObject):
                 except Exception:
                     center = None
 
+            # NOTE: the dynamic cursor markers (2D dots mirroring the 3D hover) are
+            # now owned solely by the always-on viewer path (QtMVATViewer →
+            # MVATManager.sync_cursor_markers), so they are intentionally NOT synced
+            # here — that avoids double-projecting them while a tool is active. Only
+            # the brush-radius projected cursor outline remains tool-specific.
             if center is not None and center.size >= 3 and np.all(np.isfinite(center[:3])):
                 self._sync_projected_cursor_previews(center[:3], render=False)
-                self._sync_hover_dynamic_markers(center[:3], render=False)
             else:
                 self._clear_projected_cursor_previews(render=False)
-                self._clear_hover_dynamic_markers(render=False)
             return
 
         context = self._hover_overlay_context

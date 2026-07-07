@@ -22,6 +22,8 @@ from coralnet_toolbox.MVAT.core.Products import (
 # Camera and Visualization
 from coralnet_toolbox.MVAT.core.Cameras import Camera
 from coralnet_toolbox.MVAT.core.Frustum import Frustum
+from coralnet_toolbox.MVAT.core.CursorPreview3D import CursorPreview3D
+from coralnet_toolbox.MVAT.core.PointMarkers3D import ColoredPointMarkers3D
 from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
 from coralnet_toolbox.MVAT.core.constants import (
     HIGHLIGHT_COLOR,
@@ -51,6 +53,8 @@ __all__ = [
     # Camera and Visualization
     'Camera',
     'Frustum',
+    'CursorPreview3D',
+    'ColoredPointMarkers3D',
     'VisibilityManager',
     # Color constants
     'HIGHLIGHT_COLOR',
