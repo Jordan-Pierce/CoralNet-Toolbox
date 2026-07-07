@@ -124,11 +124,15 @@ class FeatureSelectTool(Tool):
 
         self.hover_pos = None
 
-        # Debounce hover refresh so a flood of move events can't back up.
+        # Throttle hover refresh: the preview updates immediately on the first
+        # move, then at most once per debounce_ms while the cursor keeps moving
+        # (leading + trailing), so it tracks the cursor live instead of only
+        # catching up after a pause, without a flood of move events backing up.
         self.hover_timer = QTimer()
         self.hover_timer.setSingleShot(True)
         self.hover_timer.timeout.connect(self._on_hover_timeout)
         self.debounce_ms = 30
+        self._hover_pending = False
 
         # Whether the shared colormap controls have been handed to the feature
         # overlay. Engaged only once a work area exists (not on tool activation),
@@ -269,12 +273,17 @@ class FeatureSelectTool(Tool):
         else:
             self._status("Feature Select: BINARY mode — Ctrl+click positive, "
                          "Ctrl+right-click negative. Ctrl+Alt for multi-class.", 4000)
+        # If a work area is already up, seed prototypes from existing annotations
+        # right away rather than waiting for the next work-area creation.
+        if self.mode == "multiclass":
+            self._seed_prototypes_from_annotations()
         self.annotation_window.scene.update()
 
     def deactivate(self):
         """Deactivate, clearing the query, heatmap, prompts, and any work area."""
         self.active = False
         self.hover_timer.stop()
+        self._hover_pending = False
         self.annotation_window.setCursor(self.default_cursor)
 
         try:
@@ -294,6 +303,10 @@ class FeatureSelectTool(Tool):
         # If we were painting into the mask, drop the rasterization lock.
         if self.output_type == "Mask":
             self.annotation_window.unrasterize_annotations()
+
+        # Clear GPU memory (the feature extractor may have been on the GPU).
+        if self.feature_dialog is not None:
+            self.feature_dialog.clear_model_cache()
 
         super().deactivate()
 
@@ -395,6 +408,10 @@ class FeatureSelectTool(Tool):
             self._engage_colormap_controls()
             self._status("Feature Select: Ctrl+click patches to query similarity, "
                          "Space to finalize.", 5000)
+            # Multi-class: seed prototypes from existing annotations so the mask
+            # preview appears immediately (Backspace clears it).
+            if self.mode == "multiclass":
+                self._seed_prototypes_from_annotations()
         except Exception as e:
             self._status(f"Feature Select: feature extraction failed ({e}).")
             self.cancel_working_area()
@@ -734,10 +751,14 @@ class FeatureSelectTool(Tool):
         return label_map, keys
 
     def _update_label_overlay(self, hover_id=None):
-        """Multi-class live preview: classify at full work-area res, color by label.
+        """Multi-class live preview: classify at preview res, color by label.
 
-        Rendered at the same resolution as the commit (the reject floor is always
-        applied) so the preview and the finalized blobs match exactly.
+        The per-class similarity fields are upsampled to a capped preview
+        resolution (PREVIEW_MAX_EDGE) rather than the full work-area pixel size,
+        so a hover refresh over a large work area stays cheap. The label overlay
+        nearest-scales the field to the work-area rect (crisp class boundaries).
+        The commit path still classifies at full resolution, so the finalized
+        blobs are sharper than this live preview.
         """
         proto = self._effective_class_prototypes(hover_id)
         if not proto:
@@ -745,8 +766,7 @@ class FeatureSelectTool(Tool):
             self.annotation_window.clear_label_overlay()
             return
         wa = self.working_area.rect
-        out_h = max(1, int(round(wa.height())))
-        out_w = max(1, int(round(wa.width())))
+        out_h, out_w = self._preview_dims(wa.height(), wa.width())
         label_map, keys = self._compute_multiclass_label_map(proto, out_h, out_w)
         if label_map is None:
             self._last_label_idx = None
@@ -758,6 +778,260 @@ class FeatureSelectTool(Tool):
         self._last_label_colors = colors
         self.annotation_window.set_label_overlay(
             idx, colors, rect=wa, alpha=self._overlay_alpha())
+
+    # ==================== Seeding from existing annotations ====================
+
+    def _annotation_grid_coords(self, annotation):
+        """Map a vector annotation's shapely geometry into feature-grid rings.
+
+        Returns a list of ``(exterior_int32, [hole_int32, ...])`` rings in
+        feature-grid pixel coordinates, ready for ``cv2.fillPoly``. Vertices are
+        shifted by -0.5 so a cell CENTER lands on an integer coord (OpenCV samples
+        pixels at integer positions), matching pixel_to_cell's proportional
+        mapping. Returns None when the annotation has no rasterizable geometry.
+        """
+        wa = self.working_area.rect
+        if wa.width() <= 0 or wa.height() <= 0:
+            return None
+        sx = self.feat_w / wa.width()
+        sy = self.feat_h / wa.height()
+        left, top = wa.left(), wa.top()
+
+        def _ring(coords):
+            pts = np.asarray(coords, dtype=np.float64)
+            if pts.shape[0] < 3:
+                return None
+            pts[:, 0] = (pts[:, 0] - left) * sx - 0.5
+            pts[:, 1] = (pts[:, 1] - top) * sy - 0.5
+            return np.round(pts).astype(np.int32)
+
+        # Robust geometry acquisition (mirrors MaskAnnotation): prefer the
+        # shapely getter, fall back to the Qt polygon's outer ring.
+        geom = None
+        getter = getattr(annotation, 'get_rasterization_geometry', None)
+        if callable(getter):
+            try:
+                geom = getter()
+            except Exception:
+                geom = None
+        if geom is None:
+            try:
+                qpoly = annotation.get_polygon()
+                pts = [(p.x(), p.y()) for p in qpoly]
+                if len(pts) >= 3:
+                    from shapely.geometry import Polygon as _Poly
+                    geom = _Poly(pts)
+            except Exception:
+                geom = None
+        if geom is None:
+            return None
+
+        gtype = getattr(geom, 'geom_type', None)
+        members = geom.geoms if gtype == 'MultiPolygon' else [geom]
+        rings = []
+        for poly in members:
+            try:
+                ext = _ring(list(poly.exterior.coords))
+            except Exception:
+                ext = None
+            if ext is None:
+                continue
+            holes = []
+            try:
+                for r in poly.interiors:
+                    hg = _ring(list(r.coords))
+                    if hg is not None:
+                        holes.append(hg)
+            except Exception:
+                pass
+            rings.append((ext, holes))
+        return rings or None
+
+    def _cells_covered_by_annotation(self, annotation):
+        """Flat feature-cell ids covered by a vector region annotation.
+
+        Fast path: rasterize the annotation's shapely geometry straight into the
+        (small) feature grid with cv2.fillPoly — O(vertices + grid), no per-cell
+        containment test (which rebuilt a Shapely polygon on every cell). Holes
+        are punched out and MultiPolygon islands all fill. Falls back to the
+        centroid's cell for sub-cell shapes or when geometry is unavailable.
+        """
+        if self.working_area is None or self.feat_w is None or self.feat_h is None:
+            return []
+
+        cells = []
+        rings = self._annotation_grid_coords(annotation)
+        if rings:
+            import cv2
+            grid = np.zeros((self.feat_h, self.feat_w), dtype=np.uint8)
+            for ext, holes in rings:
+                cv2.fillPoly(grid, [ext], 1)
+                if holes:
+                    cv2.fillPoly(grid, holes, 0)
+            ys, xs = np.nonzero(grid)
+            cells = (ys.astype(np.int64) * self.feat_w + xs).tolist()
+
+        if not cells:
+            # Sub-cell shape (or no geometry): fall back to the centroid's cell.
+            try:
+                cx, cy = annotation.get_centroid()
+                cid = self.pixel_to_cell(cx, cy)
+                if cid is not None:
+                    cells.append(cid)
+            except Exception:
+                pass
+        return cells
+
+    def _cells_by_class_from_mask(self, mask_annotation):
+        """Group feature cells by the mask class occupying them, ``{label: [cells]}``.
+
+        Crops mask_data to the work-area rect and nearest-downsamples it to the
+        feature grid in one cv2.resize — O(grid) regardless of the mask's full
+        resolution, so a multi-megapixel mask stays cheap. Each non-background
+        class present maps through class_id_to_label_map to its Label; the
+        LOCK_BIT is stripped so locked and unlocked pixels of a class read alike.
+        """
+        data = getattr(mask_annotation, 'mask_data', None)
+        if data is None or self.feat_w is None or self.feat_h is None:
+            return {}
+        wa = self.working_area.rect
+        h, w = data.shape
+        x0 = max(0, int(np.floor(wa.left())))
+        y0 = max(0, int(np.floor(wa.top())))
+        x1 = min(w, int(np.ceil(wa.right())))
+        y1 = min(h, int(np.ceil(wa.bottom())))
+        if x1 <= x0 or y1 <= y0:
+            return {}
+
+        import cv2
+        lock = getattr(mask_annotation, 'LOCK_BIT', 128)
+        crop = np.ascontiguousarray(data[y0:y1, x0:x1] & (lock - 1))
+        grid = cv2.resize(crop, (self.feat_w, self.feat_h), interpolation=cv2.INTER_NEAREST)
+
+        by_label = {}
+        for class_id in np.unique(grid):
+            cid = int(class_id)
+            if cid == 0:
+                continue
+            label = mask_annotation.class_id_to_label_map.get(cid)
+            if label is None:
+                continue
+            ys, xs = np.nonzero(grid == class_id)
+            by_label[label] = (ys.astype(np.int64) * self.feat_w + xs).tolist()
+        return by_label
+
+    def _add_cells_to_label(self, cells, label):
+        """Add feature-cell ids to a label's prototype bucket; return #newly added.
+
+        Registers the label + its overlay color on first contribution and de-dups
+        so a cell already present (e.g. from an overlapping seed) isn't recounted.
+        """
+        bucket = self.class_prototypes.setdefault(label.id, [])
+        existing = set(bucket)
+        added = 0
+        for cid in cells:
+            if cid is None or cid in existing:
+                continue
+            bucket.append(cid)
+            existing.add(cid)
+            added += 1
+        if added:
+            self.class_labels[label.id] = label
+            self.class_colors[label.id] = (label.color.red(),
+                                           label.color.green(),
+                                           label.color.blue())
+        return added
+
+    def _seed_prototypes_from_annotations(self):
+        """Seed multi-class prototypes from existing annotations on the image.
+
+        Called once a work area exists in multi-class mode (after work-area
+        creation, or when toggling into the mode with a work area already up).
+        Each eligible annotation contributes the feature cells it covers to its
+        own label's prototype set, and the live mask preview is rendered — so a
+        user who already placed annotations doesn't have to re-click every class.
+
+        Seeding is O(feature grid) per source, not O(image pixels): vector
+        regions rasterize straight into the small grid and masks downsample into
+        it, so even large polygons / multi-megapixel masks add negligible cost on
+        top of the feature extraction that just ran.
+
+        Seed contributions per source:
+          - PatchAnnotation: its single center-most cell (deliberately one vote,
+            so dense patches don't swamp the user's manual refinements).
+          - Polygon / Rectangle / MultiPolygon: every feature cell the shape
+            covers (region coverage — a bigger shape genuinely represents more
+            of its class).
+          - MaskAnnotation: one prototype set per class present in the work area.
+
+        Seeded prototypes are ordinary prototypes: Backspace (clear_prompts)
+        removes them and resets the preview WITHOUT deleting the annotations.
+        """
+        if (self.mode != "multiclass" or self.working_area is None
+                or self.query_engine is None):
+            return
+        # Don't clobber or duplicate a set the user is already working with; this
+        # also prevents re-seeding after a manual Backspace clear.
+        if self._has_prompts():
+            return
+
+        from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
+
+        # Classifying the whole work area and rendering the preview can take a
+        # moment when there are many annotations, so show a busy cursor for the
+        # duration of the pre-calculation.
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            annotations = self.annotation_window.get_image_annotations()
+            seeded_cells = 0
+            seeded_labels = set()
+            for ann in annotations:
+                # MaskAnnotation: seed one prototype set per class it holds.
+                if getattr(ann, 'is_mask_annotation', False):
+                    try:
+                        by_label = self._cells_by_class_from_mask(ann)
+                    except Exception:
+                        by_label = {}
+                    for label, cells in by_label.items():
+                        added = self._add_cells_to_label(cells, label)
+                        if added:
+                            seeded_cells += added
+                            seeded_labels.add(label.id)
+                    continue
+
+                label = getattr(ann, 'label', None)
+                if label is None:
+                    continue
+
+                if isinstance(ann, PatchAnnotation):
+                    # A patch contributes ONLY its center-most cell (one vote).
+                    cid = self.pixel_to_cell(*ann.get_centroid())
+                    cells = [cid] if cid is not None else []
+                else:
+                    # Polygon / Rectangle / MultiPolygon: full region coverage,
+                    # fast-rasterized into the feature grid.
+                    cells = self._cells_covered_by_annotation(ann)
+
+                if not cells:
+                    continue
+
+                added = self._add_cells_to_label(cells, label)
+                if not added:
+                    continue
+                seeded_cells += added
+                seeded_labels.add(label.id)
+                # One dot per annotation (at its centroid) marks the seed.
+                cx, cy = ann.get_centroid()
+                self._add_class_point_graphic(QPointF(cx, cy), label)
+
+            if seeded_cells:
+                self.update_heatmap()
+                self._auto_suggest()
+                self._status(
+                    f"Feature Select: seeded {seeded_cells} prototype(s) from "
+                    f"{len(seeded_labels)} existing class(es). Backspace to clear.", 6000)
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def _build_label_index_field_from_map(self, label_map, keys):
         """Turn a [H, W] int label map into ``(uint8 index field, colors list)``.
@@ -983,9 +1257,31 @@ class FeatureSelectTool(Tool):
         # Live hover preview of similarity to the patch under the cursor.
         if (self.query_engine is not None
                 and self.annotation_window.cursorInWindow(event.pos())):
-            self.hover_timer.start(self.debounce_ms)
+            self._request_hover_refresh()
+
+    def _request_hover_refresh(self):
+        """Throttled hover refresh (leading + trailing).
+
+        Refreshes immediately when idle and starts a cooldown; moves arriving
+        during the cooldown coalesce into a single pending refresh fired on the
+        next tick. The result is a live preview that follows the cursor at ~1
+        update per debounce_ms instead of only refreshing once movement stops.
+        """
+        if self.hover_timer.isActive():
+            self._hover_pending = True
+            return
+        self._do_hover_refresh()
+        self.hover_timer.start(self.debounce_ms)
 
     def _on_hover_timeout(self):
+        # Trailing edge: process the most recent hover position if one arrived
+        # during the cooldown, and keep the cadence going while the cursor moves.
+        if self._hover_pending:
+            self._hover_pending = False
+            self._do_hover_refresh()
+            self.hover_timer.start(self.debounce_ms)
+
+    def _do_hover_refresh(self):
         if not self.active or self.query_engine is None or self.hover_pos is None:
             return
         if self.creating_working_area:
@@ -1173,6 +1469,58 @@ class FeatureSelectTool(Tool):
         annotation.create_graphics_item(self.annotation_window.scene)
         self.annotation_window.add_annotation_from_tool(annotation)
 
+    def _vector_occupancy_indices(self, mask_annotation):
+        """Flat pixel indices covered by the image's non-mask vector annotations.
+
+        Enforces the app-wide invariant that a MaskAnnotation never holds a label
+        behind a vector annotation (mask class A hiding under a patch/polygon of
+        class B). Reuses the MaskAnnotation's own rasterization helpers so the
+        occupancy matches exactly how rasterize_annotations()/bake mark the same
+        pixels. Returns None when there is nothing to clear.
+        """
+        try:
+            annotations = self.annotation_window.get_image_annotations()
+        except Exception:
+            return None
+        geometries = []
+        for ann in annotations:
+            if getattr(ann, 'is_mask_annotation', False):
+                continue
+            try:
+                geom = mask_annotation._get_annotation_rasterization_geometry(ann)
+            except Exception:
+                geom = None
+            if geom is None or getattr(geom, 'is_empty', False):
+                continue
+            geometries.append(geom)
+        if not geometries:
+            return None
+        try:
+            h, w = mask_annotation.mask_data.shape
+            occ = mask_annotation._fast_rasterize(geometries, w, h, mode="rasterio")
+        except Exception:
+            return None
+        idx = np.flatnonzero(occ.ravel())
+        return idx if idx.size else None
+
+    def _clear_prediction_under_vectors(self, prediction_mask, mask_annotation, history_action):
+        """Keep the finalized mask from sitting behind any vector annotation.
+
+        Zeroes the prediction wherever a vector annotation sits (so this commit
+        never writes a new label under one) AND clears any pre-existing mask there
+        in the SAME history action, so a single undo restores everything. No-op
+        when the image has no rasterizable vector annotations.
+        """
+        indices = self._vector_occupancy_indices(mask_annotation)
+        if indices is None:
+            return
+        # Don't paint the prediction under existing vector annotations.
+        prediction_mask.ravel()[indices] = 0
+        # Remove any mask already sitting behind a vector annotation (respects the
+        # LOCK_BIT, so genuinely protected pixels are left untouched).
+        mask_annotation.update_mask_at_indices(
+            indices, 0, silent=True, history_action=history_action)
+
     def _commit_as_mask(self, full_mask):
         """Paint the selection into the raster MaskAnnotation."""
         if self.annotation_window.current_mask_annotation is None:
@@ -1190,6 +1538,8 @@ class FeatureSelectTool(Tool):
 
         prediction_mask = (full_mask.astype(np.uint8) * class_id).astype(np.uint8)
         history_action = MaskEditAction(mask_annotation, description="Feature Select prediction")
+        # Enforce: no mask behind existing vector annotations.
+        self._clear_prediction_under_vectors(prediction_mask, mask_annotation, history_action)
         mask_annotation.update_mask_with_prediction_mask(
             prediction_mask,
             history_action=history_action,
@@ -1285,6 +1635,8 @@ class FeatureSelectTool(Tool):
 
         history_action = MaskEditAction(mask_annotation,
                                         description="Feature Select multi-class prediction")
+        # Enforce: no mask behind existing vector annotations.
+        self._clear_prediction_under_vectors(prediction_mask, mask_annotation, history_action)
         mask_annotation.update_mask_with_prediction_mask(prediction_mask,
                                                          history_action=history_action)
         if not history_action.is_empty():
