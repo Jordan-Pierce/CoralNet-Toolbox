@@ -36,8 +36,13 @@ class BrushTool3D(Tool3D):
         brush_size (float): World-space radius of the brush sphere.
                             Calibrated to the scene on first activate(); resizable
                             with Ctrl+wheel — mirrors BrushTool.brush_size.
-        painting (bool):    True while the left mouse button is held down.
-                            Mirrors BrushTool.painting.
+        painting (bool):    True from a confirmed click (press-then-release
+                            without exceeding the drag threshold) until the
+                            next left press — the mouse button itself does
+                            NOT need to stay held; painting continues as the
+                            cursor moves freely. A press-and-hold-drag is
+                            interpreted as camera rotate instead (see
+                            on_left_drag_detected / on_left_click_confirmed).
     """
 
     # Default radius as a fraction of the mesh bounding-box diagonal.
@@ -60,11 +65,20 @@ class BrushTool3D(Tool3D):
         self._stroke_chunks: list = []
         self._last_brush_volume_state = None
 
+        # A left press from idle doesn't start painting immediately — it might
+        # be the start of a press-and-hold-drag the user means as "rotate".
+        # The world position is cached here and only turned into a stroke if
+        # QtMVATViewer's Qt-level click tracking confirms a clean release
+        # (on_left_click_confirmed); a detected drag discards it instead
+        # (on_left_drag_detected), leaving VTK's native rotate untouched.
+        self._pending_click_world = None
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
     def stop_current_drawing(self):
+        self._pending_click_world = None
         if self.painting:
             self._finish_stroke()
 
@@ -89,6 +103,17 @@ class BrushTool3D(Tool3D):
                 return
 
             if self.painting:
+                # A second press while a stroke is already toggled on: this is
+                # either a plain click to stop painting, or the start of a
+                # press-and-hold the user means as "rotate instead". Commit
+                # what's painted so far and drop back to idle either way —
+                # painting is already False by the time any MouseMoveEvent for
+                # this gesture arrives, so VTK's native rotate (armed on every
+                # left press regardless of tool) simply proceeds untouched if
+                # the user keeps holding and drags. A plain click never
+                # generates that MouseMoveEvent, so this is a no-op for the
+                # "just stop painting" case.
+                self._pending_click_world = None
                 self._finish_stroke()
                 return
 
@@ -103,16 +128,13 @@ class BrushTool3D(Tool3D):
             if face_id < 0 or world_pos is None:
                 return
 
-            primary = self._get_primary_mesh()
-            self.painting = True
-            self._stroke_label = self._get_selected_label()
-            self._begin_stroke_tracking(primary)
-            self._last_brush_volume_state = None
-            if primary is not None and not self._paint_shader_active():
-                # Only the overlay fallback needs the LabelWorker thread; under the
-                # GPU paint shader the stroke commits via the class-id texture write.
-                self.mvat_manager._ensure_label_painter(primary)
-            self._apply_brush(world_pos)
+            # Cache the click position but don't start painting yet — see
+            # on_left_click_confirmed / on_left_drag_detected.
+            try:
+                pos = np.asarray(world_pos, dtype=np.float64).reshape(-1)
+                self._pending_click_world = pos[:3].copy() if pos.size >= 3 else None
+            except Exception:
+                self._pending_click_world = None
         except Exception:
             pass
 
@@ -123,6 +145,37 @@ class BrushTool3D(Tool3D):
 
     def mouseReleaseEvent(self, event):
         return
+
+    def on_left_drag_detected(self):
+        """Qt-reliable notice that the current left-button hold has become a
+        drag (movement past QtMVATViewer's click threshold) — the gesture
+        means "rotate", not "paint". Drop any pending click so
+        on_left_click_confirmed never starts a stroke for it.
+        """
+        self._pending_click_world = None
+
+    def on_left_click_confirmed(self):
+        """Qt-reliable notice that the left button was released without the
+        drag threshold ever being exceeded — a genuine click. Starts the
+        stroke deferred from mousePressEvent, at the position cached there.
+        """
+        world_pos = self._pending_click_world
+        self._pending_click_world = None
+        if self.preview_only or self.painting or world_pos is None:
+            return
+        if not self._has_selected_label():
+            return
+
+        primary = self._get_primary_mesh()
+        self.painting = True
+        self._stroke_label = self._get_selected_label()
+        self._begin_stroke_tracking(primary)
+        self._last_brush_volume_state = None
+        if primary is not None and not self._paint_shader_active():
+            # Only the overlay fallback needs the LabelWorker thread; under the
+            # GPU paint shader the stroke commits via the class-id texture write.
+            self.mvat_manager._ensure_label_painter(primary)
+        self._apply_brush(world_pos)
 
     def wheelEvent(self, event, delta_y: int):
         super().wheelEvent(event, delta_y)

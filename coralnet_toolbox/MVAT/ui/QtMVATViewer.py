@@ -455,12 +455,16 @@ class MVATViewer(QFrame):
         self._active_3d_tool = None
         self._mouse_sphere_observer_id = None
         self._sphere_hover_observer_bound = False
-        # Style-level rotate lock, bound only while brush/erase is the active
-        # tool (see _bind_paint_rotate_lock). Left-drag is otherwise always
-        # available for camera rotate, including for the other 3D tools.
-        self._paint_rotate_lock_id = None
-        self._paint_rotate_lock_style = None
-        self._paint_rotate_lock_bound = False
+        # Left-button click-vs-drag tracking (Qt-reliable path — see the
+        # right-button pan comment below for why VTK observers aren't used).
+        # A held drag past the pixel threshold is reported to the active tool
+        # as "rotate, not paint"; a clean release under the threshold is
+        # reported as a confirmed click. Lets BrushTool3D/EraseTool3D defer
+        # starting a stroke until we know the press wasn't the start of a
+        # camera-rotate drag.
+        self._left_press_pos = None
+        self._left_press_is_drag = False
+        self._LEFT_CLICK_DRAG_THRESHOLD_PX = 6
         self._sphere_hover_timer = QTimer(self)
         self._sphere_hover_timer.setSingleShot(True)
         self._sphere_hover_timer.setInterval(16)
@@ -932,10 +936,8 @@ class MVATViewer(QFrame):
             except Exception:
                 pass
             self._sync_sphere_hover_binding()
-            self._sync_paint_rotate_lock(next_tool)
             self._request_sphere_hover_refresh()
         else:
-            self._unbind_paint_rotate_lock()
             sphere_manager = getattr(self, '_cursor_preview', None)
             if sphere_manager is not None:
                 try:
@@ -1280,55 +1282,6 @@ class MVATViewer(QFrame):
         self._mouse_sphere_observer_id = None
         self._sphere_hover_observer_bound = False
 
-    def _bind_paint_rotate_lock(self):
-        """Suppress the trackball's native left-drag rotate for brush/erase.
-
-        A MouseMoveEvent observer added directly to the vtkInteractorStyle (as
-        opposed to the interactor — see _bind_sphere_hover_observer) short-
-        circuits that style's own OnMouseMove dispatch, which is what drives
-        left-drag rotate. Brush/erase strokes need left-drag exclusively for
-        painting, so this is the one place that trick is used deliberately;
-        it's bound only while one of those two tools is active and removed the
-        moment any other tool (or plain navigation) takes over.
-        """
-        if self._paint_rotate_lock_bound:
-            return
-
-        style = self._get_vtk_interaction_style(getattr(self.plotter, 'interactor', None))
-        if style is None or style is self.plotter.interactor:
-            return
-
-        try:
-            self._paint_rotate_lock_id = style.AddObserver("MouseMoveEvent", lambda *_: None)
-            self._paint_rotate_lock_style = style
-            self._paint_rotate_lock_bound = self._paint_rotate_lock_id is not None
-        except Exception:
-            pass
-
-    def _unbind_paint_rotate_lock(self):
-        """Restore native left-drag rotate after leaving brush/erase."""
-        if not self._paint_rotate_lock_bound:
-            return
-
-        try:
-            style = self._paint_rotate_lock_style
-            if style is not None and self._paint_rotate_lock_id is not None:
-                style.RemoveObserver(self._paint_rotate_lock_id)
-        except Exception:
-            pass
-
-        self._paint_rotate_lock_id = None
-        self._paint_rotate_lock_style = None
-        self._paint_rotate_lock_bound = False
-
-    def _sync_paint_rotate_lock(self, tool):
-        """Bind/unbind the rotate lock to match whether `tool` is brush/erase."""
-        tool_kind = str(getattr(tool, 'tool_kind', '') or '').strip().lower()
-        if tool_kind in ('brush', 'erase'):
-            self._bind_paint_rotate_lock()
-        else:
-            self._unbind_paint_rotate_lock()
-
     def _sync_sphere_hover_binding(self):
         """Keep the mouse-move hover observer bound while EITHER the brush sphere
         is active OR the always-on cursor marker is enabled.
@@ -1426,6 +1379,53 @@ class MVATViewer(QFrame):
         elif etype in (QEvent.MouseButtonRelease, QEvent.MouseButtonDblClick) and event.button() == Qt.RightButton:
             self._right_pan_active = False
             self._right_pan_last_xy = None
+
+        # ---- Left-button click-vs-drag detection (Qt-reliable path) --------
+        # Lets a tool (BrushTool3D/EraseTool3D) defer "start painting" until a
+        # press resolves as a clean click rather than the start of a rotate
+        # drag — VTK's own left-press/move observers aren't trustworthy here
+        # for the same reason the right-button pan above bypasses them (a
+        # held drag can put the interaction style into a focus-grabbing state
+        # that swallows release events; see InteractorStyleCaptureMixin's
+        # docstring). Don't consume: VTK still needs the raw press/move/
+        # release to drive its own trackball rotate.
+        if etype == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+            try:
+                pos = event.pos()
+                self._left_press_pos = (int(pos.x()), int(pos.y()))
+                self._left_press_is_drag = False
+            except Exception:
+                self._left_press_pos = None
+                self._left_press_is_drag = False
+        elif etype == QEvent.MouseMove and self._left_press_pos is not None and not self._left_press_is_drag:
+            try:
+                pos = event.pos()
+                dx = int(pos.x()) - self._left_press_pos[0]
+                dy = int(pos.y()) - self._left_press_pos[1]
+                if (dx * dx + dy * dy) >= self._LEFT_CLICK_DRAG_THRESHOLD_PX ** 2:
+                    self._left_press_is_drag = True
+                    active_tool = getattr(self, '_active_3d_tool', None)
+                    on_drag = getattr(active_tool, 'on_left_drag_detected', None)
+                    if callable(on_drag):
+                        try:
+                            on_drag()
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+        elif (etype in (QEvent.MouseButtonRelease, QEvent.MouseButtonDblClick)
+                and event.button() == Qt.LeftButton):
+            was_drag = self._left_press_is_drag
+            self._left_press_pos = None
+            self._left_press_is_drag = False
+            if not was_drag and etype == QEvent.MouseButtonRelease:
+                active_tool = getattr(self, '_active_3d_tool', None)
+                on_click = getattr(active_tool, 'on_left_click_confirmed', None)
+                if callable(on_click):
+                    try:
+                        on_click()
+                    except Exception:
+                        pass
 
         if event.type() == QEvent.Leave:
             active_tool = getattr(self, '_active_3d_tool', None)

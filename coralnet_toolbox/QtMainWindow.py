@@ -1352,9 +1352,9 @@ class MainWindow(QMainWindow):
         for dock_name, dock_widget, add_separator in dock_windows:
             action = QAction(dock_name, self, checkable=True)
             action.setChecked(dock_widget.isVisible())
-            # Connect the action to toggle the dock visibility
-            action.triggered.connect(lambda checked, dw=dock_widget: dw.toggleView(checked))
-            # Also update the action when the dock visibility changes
+            # Connect the action to toggle the dock visibility and sync the checkmark
+            action.triggered.connect(lambda checked, dw=dock_widget, act=action: self._toggle_dock_and_sync_action(dw, act, checked))
+            # Also update the action when the dock visibility changes (for external visibility changes)
             dock_widget.visibilityChanged.connect(lambda visible, act=action: act.setChecked(visible))
             self.windows_menu.addAction(action)
             self.dock_toggle_actions[dock_name] = action
@@ -1635,6 +1635,11 @@ class MainWindow(QMainWindow):
             return None
         return self.annotation_window.transparency_slider.value()
 
+    def _toggle_dock_and_sync_action(self, dock_widget, action, checked):
+        """Toggle dock visibility and immediately sync the action's checkmark."""
+        dock_widget.toggleView(checked)
+        # Update action checkmark to match the dock's actual visibility
+        action.setChecked(dock_widget.isVisible())
 
     def get_loaded_yolo_models(self):
         """Return the currently loaded YOLO deploy models."""
