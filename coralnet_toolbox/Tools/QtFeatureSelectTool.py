@@ -303,21 +303,25 @@ class FeatureSelectTool(Tool):
         except Exception:
             pass
 
-        self.cancel_working_area_creation()
-        self.cancel_working_area()
-        self.annotation_window.clear_feature_overlay()
-        self.annotation_window.clear_label_overlay()
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            self.cancel_working_area_creation()
+            self.cancel_working_area()
+            self.annotation_window.clear_feature_overlay()
+            self.annotation_window.clear_label_overlay()
 
-        # Return the colormap controls to the depth overlay (left hidden).
-        self._release_colormap_controls()
+            # Return the colormap controls to the depth overlay (left hidden).
+            self._release_colormap_controls()
 
-        # If we were painting into the mask, drop the rasterization lock.
-        if self.output_type == "Mask":
-            self.annotation_window.unrasterize_annotations()
+            # If we were painting into the mask, drop the rasterization lock.
+            if self.output_type == "Mask":
+                self.annotation_window.unrasterize_annotations()
 
-        # Clear GPU memory (the feature extractor may have been on the GPU).
-        if self.feature_dialog is not None:
-            self.feature_dialog.clear_model_cache()
+            # Clear GPU memory (the feature extractor may have been on the GPU).
+            if self.feature_dialog is not None:
+                self.feature_dialog.clear_model_cache()
+        finally:
+            QApplication.restoreOverrideCursor()
 
         super().deactivate()
 
@@ -1341,7 +1345,11 @@ class FeatureSelectTool(Tool):
             elif self._has_prompts():
                 self.commit_selection()
             else:
-                self.cancel_working_area()
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+                try:
+                    self.cancel_working_area()
+                finally:
+                    QApplication.restoreOverrideCursor()
             self.annotation_window.scene.update()
         elif event.key() == Qt.Key_Backspace:
             if self.creating_working_area:
@@ -1351,7 +1359,11 @@ class FeatureSelectTool(Tool):
                 self.annotation_window.clear_feature_overlay()
                 self.annotation_window.clear_label_overlay()
             else:
-                self.cancel_working_area()
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+                try:
+                    self.cancel_working_area()
+                finally:
+                    QApplication.restoreOverrideCursor()
             self.annotation_window.scene.update()
 
     def _has_prompts(self):
@@ -1383,48 +1395,52 @@ class FeatureSelectTool(Tool):
             self._status("A label must be selected before committing a selection.")
             return
 
-        sim = self._compute_similarity(hover_id=None)
-        if sim is None:
-            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            sim = self._compute_similarity(hover_id=None)
+            if sim is None:
+                return
 
-        wa = self.working_area.rect
-        wa_left, wa_top = int(wa.left()), int(wa.top())
-        wa_w, wa_h = int(round(wa.width())), int(round(wa.height()))
+            wa = self.working_area.rect
+            wa_left, wa_top = int(wa.left()), int(wa.top())
+            wa_w, wa_h = int(round(wa.width())), int(round(wa.height()))
 
-        # Upsample the CONTINUOUS similarity field to full work-area resolution
-        # with bilinear interpolation, THEN threshold. Thresholding first on the
-        # coarse feature grid and nearest-upscaling the binary mask is what made
-        # boundaries blocky; interpolating the scalar field first yields a smooth
-        # contour that matches the (smoothly scaled) heatmap preview. The achievable
-        # detail is still bounded by the feature-grid density — raise Input
-        # Resolution / AnyUp in the Features dialog for genuinely finer features.
-        grid = np.asarray(sim, dtype=np.float32).reshape(self.feat_h, self.feat_w)
-        # Keep any masked/non-finite cells safely below threshold across the interp.
-        grid = np.where(np.isfinite(grid), grid, -1.0e9).astype(np.float32)
+            # Upsample the CONTINUOUS similarity field to full work-area resolution
+            # with bilinear interpolation, THEN threshold. Thresholding first on the
+            # coarse feature grid and nearest-upscaling the binary mask is what made
+            # boundaries blocky; interpolating the scalar field first yields a smooth
+            # contour that matches the (smoothly scaled) heatmap preview. The achievable
+            # detail is still bounded by the feature-grid density — raise Input
+            # Resolution / AnyUp in the Features dialog for genuinely finer features.
+            grid = np.asarray(sim, dtype=np.float32).reshape(self.feat_h, self.feat_w)
+            # Keep any masked/non-finite cells safely below threshold across the interp.
+            grid = np.where(np.isfinite(grid), grid, -1.0e9).astype(np.float32)
 
-        crop_mask = self._upsample_similarity(grid, wa_h, wa_w) >= self.threshold
-        crop_mask = crop_mask.astype(np.uint8)
-        if not crop_mask.any():
-            self._status("Feature Select: nothing above threshold to commit.")
-            return
+            crop_mask = self._upsample_similarity(grid, wa_h, wa_w) >= self.threshold
+            crop_mask = crop_mask.astype(np.uint8)
+            if not crop_mask.any():
+                self._status("Feature Select: nothing above threshold to commit.")
+                return
 
-        full_mask = np.zeros((self.original_height, self.original_width), dtype=np.uint8)
-        y1 = min(self.original_height, wa_top + wa_h)
-        x1 = min(self.original_width, wa_left + wa_w)
-        full_mask[wa_top:y1, wa_left:x1] = crop_mask[: y1 - wa_top, : x1 - wa_left]
+            full_mask = np.zeros((self.original_height, self.original_width), dtype=np.uint8)
+            y1 = min(self.original_height, wa_top + wa_h)
+            x1 = min(self.original_width, wa_left + wa_w)
+            full_mask[wa_top:y1, wa_left:x1] = crop_mask[: y1 - wa_top, : x1 - wa_left]
 
-        self.sync_settings_from_dialog()
-        if self.output_type == "Mask":
-            self._commit_as_mask(full_mask)
-            # Multi-Annotate: propagate the selection to the context cameras, just
-            # like SAMTool does for its final mask (Mask output only).
-            self._propagate_to_cameras(crop_mask, wa_left, wa_top, wa_w, wa_h)
-        else:
-            self._commit_as_polygon(full_mask)
+            self.sync_settings_from_dialog()
+            if self.output_type == "Mask":
+                self._commit_as_mask(full_mask)
+                # Multi-Annotate: propagate the selection to the context cameras, just
+                # like SAMTool does for its final mask (Mask output only).
+                self._propagate_to_cameras(crop_mask, wa_left, wa_top, wa_w, wa_h)
+            else:
+                self._commit_as_polygon(full_mask)
 
-        # Clear prompts but keep the work area for further queries.
-        self.clear_prompts()
-        self.annotation_window.clear_feature_overlay()
+            # Clear prompts but keep the work area for further queries.
+            self.clear_prompts()
+            self.annotation_window.clear_feature_overlay()
+        finally:
+            QApplication.restoreOverrideCursor()
 
     @staticmethod
     def _upsample_similarity(grid, out_h, out_w):
@@ -1624,28 +1640,32 @@ class FeatureSelectTool(Tool):
             self._status("Feature Select: add at least one class prototype to commit.")
             return
 
-        wa = self.working_area.rect
-        wa_left, wa_top = int(wa.left()), int(wa.top())
-        wa_w, wa_h = int(round(wa.width())), int(round(wa.height()))
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            wa = self.working_area.rect
+            wa_left, wa_top = int(wa.left()), int(wa.top())
+            wa_w, wa_h = int(round(wa.width())), int(round(wa.height()))
 
-        # Same full-res label map the live preview renders, so what you saw is
-        # exactly what gets committed.
-        label_map, keys = self._compute_multiclass_label_map(proto, wa_h, wa_w)
-        if label_map is None:
-            return
-        if not (label_map >= 0).any():
-            self._status("Feature Select: nothing above the reject threshold to commit.")
-            return
+            # Same full-res label map the live preview renders, so what you saw is
+            # exactly what gets committed.
+            label_map, keys = self._compute_multiclass_label_map(proto, wa_h, wa_w)
+            if label_map is None:
+                return
+            if not (label_map >= 0).any():
+                self._status("Feature Select: nothing above the reject threshold to commit.")
+                return
 
-        self.sync_settings_from_dialog()
-        if self.output_type == "Mask":
-            self._commit_multiclass_as_mask(label_map, keys, wa_left, wa_top, wa_w, wa_h)
-        else:
-            self._commit_multiclass_as_polygons(label_map, keys, wa_left, wa_top, wa_w, wa_h)
+            self.sync_settings_from_dialog()
+            if self.output_type == "Mask":
+                self._commit_multiclass_as_mask(label_map, keys, wa_left, wa_top, wa_w, wa_h)
+            else:
+                self._commit_multiclass_as_polygons(label_map, keys, wa_left, wa_top, wa_w, wa_h)
 
-        # Clear prompts but keep the work area for further queries.
-        self.clear_prompts()
-        self.annotation_window.clear_label_overlay()
+            # Clear prompts but keep the work area for further queries.
+            self.clear_prompts()
+            self.annotation_window.clear_label_overlay()
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def _commit_multiclass_as_mask(self, label_map, keys, wa_left, wa_top, wa_w, wa_h):
         """Paint every class blob into the raster MaskAnnotation in one action."""

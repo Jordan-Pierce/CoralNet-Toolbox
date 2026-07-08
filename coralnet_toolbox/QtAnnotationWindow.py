@@ -963,7 +963,25 @@ class AnnotationWindow(BaseCanvas):
         self.schedule_dynamic_range_update()
 
     def mousePressEvent(self, event: QMouseEvent):
-        """Handle mouse press events for the active tool."""        
+        """Handle mouse press events for the active tool."""
+        # Ctrl+click / Ctrl+right-click on the current image feeds the engaged
+        # 3D FeatureSelectTool3D's query engine (positive/negative or
+        # multi-class prototype), regardless of which 2D tool is active — the
+        # 3D tool's own Ctrl+click gesture, just unprojected from this window.
+        # add_seed_from_2d_click no-ops (False) when the overlay isn't engaged,
+        # MVAT isn't initialized, the image isn't a loaded camera, or the pixel
+        # has no mesh coverage, so the click falls through to normal 2D
+        # handling unchanged in all of those cases.
+        if event.modifiers() & Qt.ControlModifier and event.button() in (Qt.LeftButton, Qt.RightButton):
+            tool_3d = getattr(getattr(self.main_window, 'mvat_viewer', None), '_feature_3d_tool', None)
+            if tool_3d is not None:
+                scene_pos = self.mapToScene(event.pos())
+                if tool_3d.add_seed_from_2d_click(
+                    self.current_image_path, int(scene_pos.x()), int(scene_pos.y()),
+                    is_right_button=(event.button() == Qt.RightButton),
+                ):
+                    return  # consumed: skip the active 2D tool AND super()
+
         # Check if a tool is selected before proceeding
         if self.selected_tool:
             # If the selected tool is a mask tool, delegate the event to it
@@ -985,8 +1003,22 @@ class AnnotationWindow(BaseCanvas):
         scene_pos = self.mapToScene(event.pos())
         self.mouseMoved.emit(int(scene_pos.x()), int(scene_pos.y()))
 
-        if not self.cursorInWindow(event.pos()):
+        in_window = self.cursorInWindow(event.pos())
+        if not in_window:
             self.toggle_cursor_annotation()
+
+        # When the 3D FeatureSelectTool3D overlay is engaged, mirror its own
+        # hover-driven similarity/class live preview here — moving the mouse
+        # over the current image previews the same way hovering the 3D scene
+        # does, regardless of which 2D tool is active. No-op (see
+        # hover_from_2d_pixel) when the overlay isn't engaged.
+        tool_3d = getattr(getattr(self.main_window, 'mvat_viewer', None), '_feature_3d_tool', None)
+        if tool_3d is not None:
+            if in_window:
+                tool_3d.hover_from_2d_pixel(
+                    self.current_image_path, int(scene_pos.x()), int(scene_pos.y()))
+            else:
+                tool_3d.clear_2d_hover()
 
         # Let BaseCanvas handle native pan/zoom via super()
         super().mouseMoveEvent(event)

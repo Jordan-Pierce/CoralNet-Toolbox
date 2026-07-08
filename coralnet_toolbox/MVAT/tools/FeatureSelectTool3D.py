@@ -26,6 +26,11 @@ Interaction (mirrors the 2D FeatureSelectTool):
         labels to add more classes; Ctrl+right-click removes the selected
         label's last prototype), Ctrl+wheel adjusts the reject floor, Space
         commits one paint per label (nearest-prototype argmax).
+  - While engaged, Ctrl+click / Ctrl+right-click also work on the CURRENT
+    image in the 2D annotation window (see add_seed_from_2d_click), regardless
+    of which 2D tool is active there — the pixel is unprojected to an element
+    id via that image's camera index map and fed through the same prototype
+    handling as a direct 3D click.
 
 Engagement is mutually exclusive with the 2D tool's work area (either/or).
 Both modes render through the same LUT-indexed display paths (mesh
@@ -37,6 +42,7 @@ multi-class costs the same as the binary gradient.
 import numpy as np
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QColor
+from PyQt5.QtWidgets import QApplication
 
 from coralnet_toolbox.MVAT.tools.Tool3D import Tool3D
 from coralnet_toolbox.MVAT.core.PointMarkers3D import ColoredPointMarkers3D
@@ -83,20 +89,20 @@ class FeatureSelectTool3D(Tool3D):
         # from the binary `_threshold`, which lives on the same raw scale here).
         self.multiclass_threshold = 0.5
 
-        # ---- Point suggestion (active learning, press N) ----------------------
-        # 3D analogue of the 2D FeatureSelectTool's crosshair suggestion. Weight
-        # of uncertainty vs. spatial spread in the merge score (see
-        # suggest_next_point) — same constant/formula as the 2D tool.
-        self.suggest_lambda = 2.2
-        self._suggestion_element_id = None
-
         # Live-hover state. mouseMoveEvent just records the latest cursor world
         # position and marks dirty; the timer coalesces those into one recolor
         # per tick so a flood of move events can't back up the render thread.
+        # A hover can come from either window: a 3D mouseMoveEvent resolves an
+        # element id lazily (KD-tree over world_pos, done in _process_hover);
+        # a 2D mouseMoveEvent (hover_from_2d_pixel) already has the element id
+        # (via the camera's index map), so it's stored directly. Whichever
+        # fired most recently wins — each setter clears the other's pending
+        # value.
         self._hover_timer = QTimer()
         self._hover_timer.setInterval(_HOVER_INTERVAL_MS)
         self._hover_timer.timeout.connect(self._process_hover)
         self._pending_hover_world = None
+        self._pending_hover_element_id = None
         self._hover_dirty = False
 
         # In-scene colored prototype markers (Feature 2): one label-colored sphere
@@ -105,10 +111,6 @@ class FeatureSelectTool3D(Tool3D):
         # updates. Mirrors the 2D FeatureSelectTool's per-prototype dots.
         self._proto_markers = ColoredPointMarkers3D(
             point_size=18.0, name='_feature_proto_markers')
-        # Single yellow marker at the suggested next element to label — the 3D
-        # analogue of the 2D tool's yellow crosshair (see suggest_next_point).
-        self._suggestion_marker = ColoredPointMarkers3D(
-            point_size=26.0, name='_feature_suggestion_marker')
 
     def activate(self):
         """Activate the tool. Nothing changes visually until the user engages.
@@ -122,11 +124,11 @@ class FeatureSelectTool3D(Tool3D):
         # No brush sphere for this tool — hover drives the similarity preview.
         self._hide_preview_sphere()
         self._pending_hover_world = None
+        self._pending_hover_element_id = None
         self._hover_dirty = False
         self._hover_timer.start()
         # Register the prototype-marker actor (created lazily on first set_markers).
         self._proto_markers.add_to_plotter(self.mvat_viewer.plotter)
-        self._suggestion_marker.add_to_plotter(self.mvat_viewer.plotter)
 
     def deactivate(self):
         """Deactivate: disengage the overlay and clear the query."""
@@ -138,27 +140,26 @@ class FeatureSelectTool3D(Tool3D):
             self._proto_markers.remove_from_plotter(self.mvat_viewer.plotter)
         except Exception:
             pass
-        try:
-            self._suggestion_marker.remove_from_plotter(self.mvat_viewer.plotter)
-        except Exception:
-            pass
-        self._suggestion_element_id = None
         super().deactivate()
 
         fmm = getattr(self.mvat_manager, 'feature_mesh_manager', None)
 
-        # Drop the query and multi-class prototypes; the LUT returns to the
-        # colormap (it may hold the label palette when leaving multiclass).
-        self._clear_class_prototypes()
-        if fmm is not None and fmm.query_engine is not None:
-            fmm.query_engine.clear()
-            self._threshold_active = False
-            fmm.apply_colormap()
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            # Drop the query and multi-class prototypes; the LUT returns to the
+            # colormap (it may hold the label palette when leaving multiclass).
+            self._clear_class_prototypes()
+            if fmm is not None and fmm.query_engine is not None:
+                fmm.query_engine.clear()
+                self._threshold_active = False
+                fmm.apply_colormap()
 
-        # Tear the overlay down and release the shared colormap controls
-        # (mirrors the 2D tool's deactivate → _release_colormap_controls).
-        if fmm is not None:
-            fmm.disengage_overlay()
+            # Tear the overlay down and release the shared colormap controls
+            # (mirrors the 2D tool's deactivate → _release_colormap_controls).
+            if fmm is not None:
+                fmm.disengage_overlay()
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def _engaged(self) -> bool:
         """True while the similarity overlay is engaged (Space was pressed)."""
@@ -201,7 +202,6 @@ class FeatureSelectTool3D(Tool3D):
         feature_manager.query_engine.clear()
         self._clear_class_prototypes()
         self._threshold_active = False
-        self._clear_suggestion()
         # Shared dropdown → 'None' (multiclass) / colormap (binary); no-op
         # while not engaged (2D _apply_mode_colormap parity).
         feature_manager.apply_mode_colormap(self.mode)
@@ -273,12 +273,22 @@ class FeatureSelectTool3D(Tool3D):
         if element_id < 0:
             return
 
+        self._apply_click_to_element(element_id, self._is_right_button(event))
+
+    def _apply_click_to_element(self, element_id: int, is_right_button: bool) -> None:
+        """Shared tail of a committed Ctrl+click: dispatch to multiclass or
+        binary prototype handling and refresh the display.
+
+        Used by mousePressEvent (element_id resolved via a 3D KD-tree query on
+        world_pos) and add_seed_from_2d_click (element_id resolved via the
+        camera's index map from a 2D pixel) — the only two callers.
+        """
         if self.mode == "multiclass":
-            self._handle_multiclass_click(event, element_id)
-            self._auto_suggest()
+            self._handle_multiclass_click(element_id, is_right_button)
             return
 
-        if self._is_right_button(event):
+        feature_manager = self.mvat_manager.feature_mesh_manager
+        if is_right_button:
             # Ctrl + right-click: add negative prototype.
             feature_manager.query_engine.add_negative(element_id)
         else:
@@ -288,17 +298,47 @@ class FeatureSelectTool3D(Tool3D):
         # Preserve the thresholded preview across point additions once the
         # user has started thresholding (don't snap back to the full gradient).
         self._update_similarity_display(thresholded=self._threshold_active)
-        self._auto_suggest()
 
-    def _handle_multiclass_click(self, event, element_id: int):
-        """Ctrl+click in multi-class mode: (de)assign an element prototype to the
-        currently selected label (left adds, right removes the label's last)."""
+    def add_seed_from_2d_click(self, image_path: str, px: int, py: int,
+                               is_right_button: bool) -> bool:
+        """Feed a Ctrl+click on the 2D annotation window's current image into
+        the same query engine a 3D Ctrl+click drives, by unprojecting the 2D
+        pixel to a 3D element id via the camera's index map.
+
+        Returns True when the click was claimed (overlay engaged, camera +
+        element id resolved) — the caller should swallow the event. Returns
+        False when the overlay isn't engaged, the current image isn't a
+        loaded MVAT camera, or the pixel has no mesh coverage there — in all
+        of those cases the caller should let the click fall through to
+        normal 2D behavior.
+        """
+        if not self._engaged():
+            return False
+        feature_manager = getattr(self.mvat_manager, 'feature_mesh_manager', None)
+        if feature_manager is None or feature_manager.query_engine is None:
+            return False
+        propagation_engine = getattr(self.mvat_manager, 'propagation_engine', None)
+        if propagation_engine is None:
+            return False
+        camera = propagation_engine._get_camera_for_path(image_path)
+        if camera is None:
+            return False
+        element_id = propagation_engine.pixel_to_element_id(camera, int(px), int(py))
+        if element_id is None:
+            return False
+        self._apply_click_to_element(element_id, is_right_button)
+        return True
+
+    def _handle_multiclass_click(self, element_id: int, is_right_button: bool):
+        """(De)assign an element prototype to the currently selected label
+        (left adds, right removes the label's last) — mode-agnostic to the
+        gesture's origin (3D click or 2D unprojected click)."""
         label = self._get_selected_label()
         if label is None:
             self._status("Select a label before adding a class prototype.")
             return
 
-        if self._is_right_button(event):
+        if is_right_button:
             ids = self.class_prototypes.get(label.id)
             if ids:
                 ids.pop()
@@ -335,6 +375,32 @@ class FeatureSelectTool3D(Tool3D):
         self._pending_hover_world = (
             np.asarray(world_pos, dtype=np.float64) if world_pos is not None else None
         )
+        self._pending_hover_element_id = None
+        self._hover_dirty = True
+
+    def hover_from_2d_pixel(self, image_path: str, px: int, py: int) -> None:
+        """Live-preview hover sourced from the 2D annotation window.
+
+        Mirrors mouseMoveEvent's role, but the element id is resolved via the
+        camera's index map (see PropagationEngine.pixel_to_element_id) instead
+        of a 3D KD-tree query on world_pos — same coalesced-timer path either
+        way. No-op while the tool isn't active or the overlay isn't engaged.
+        """
+        if not self.active or not self._engaged():
+            return
+        propagation_engine = getattr(self.mvat_manager, 'propagation_engine', None)
+        camera = propagation_engine._get_camera_for_path(image_path) if propagation_engine else None
+        element_id = (propagation_engine.pixel_to_element_id(camera, int(px), int(py))
+                     if camera is not None else None)
+        self._pending_hover_element_id = element_id
+        self._pending_hover_world = None
+        self._hover_dirty = True
+
+    def clear_2d_hover(self) -> None:
+        """Clear a 2D-sourced hover (e.g. the cursor left the annotation window)."""
+        if self._pending_hover_element_id is None:
+            return
+        self._pending_hover_element_id = None
         self._hover_dirty = True
 
     def _process_hover(self) -> None:
@@ -351,9 +417,9 @@ class FeatureSelectTool3D(Tool3D):
         if feature_manager.buffer is None or feature_manager.query_engine is None:
             return
 
-        hover_id = None
+        hover_id = self._pending_hover_element_id
         world = self._pending_hover_world
-        if world is not None:
+        if hover_id is None and world is not None:
             primary_target = self.mvat_viewer.scene_context.get_primary_target()
             tree = getattr(primary_target, '_hover_face_kdtree', None) if primary_target else None
             if tree is not None:
@@ -464,19 +530,32 @@ class FeatureSelectTool3D(Tool3D):
                     # No baked features yet — say so instead of doing nothing.
                     self._status("Feature Select 3D: no baked features for this "
                                  "model — run 'Bake Mesh Features' first.", 6000)
-                elif feature_manager.engage_overlay(mode=self.mode):
-                    self._status("Feature Select 3D: overlay engaged — Ctrl+click "
-                                 "to query, Space to commit, Backspace to clear. "
-                                 "Colormap + opacity: annotation-window controls.",
-                                 5000)
-            elif self._has_prompts():
-                if self.mode == "multiclass":
-                    self._commit_multiclass()
                 else:
-                    self._commit_selection_to_label()
+                    QApplication.setOverrideCursor(Qt.WaitCursor)
+                    try:
+                        engaged = feature_manager.engage_overlay(mode=self.mode)
+                    finally:
+                        QApplication.restoreOverrideCursor()
+                    if engaged:
+                        self._status("Feature Select 3D: overlay engaged — Ctrl+click "
+                                     "to query, Space to commit, Backspace to clear. "
+                                     "Colormap + opacity: annotation-window controls.",
+                                     5000)
+            elif self._has_prompts():
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+                try:
+                    if self.mode == "multiclass":
+                        self._commit_multiclass()
+                    else:
+                        self._commit_selection_to_label()
+                finally:
+                    QApplication.restoreOverrideCursor()
             else:
-                feature_manager.disengage_overlay()
-                self._clear_suggestion()
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+                try:
+                    feature_manager.disengage_overlay()
+                finally:
+                    QApplication.restoreOverrideCursor()
             event.accept()
         elif event.key() == Qt.Key_Backspace:
             # Backspace: clear prototypes; with none, disengage (2D parity).
@@ -492,16 +571,12 @@ class FeatureSelectTool3D(Tool3D):
                     feature_manager.query_engine.clear()
                     self._threshold_active = False
                     self._update_similarity_display()
-                self._clear_suggestion()
             else:
-                feature_manager.disengage_overlay()
-                self._clear_suggestion()
-            event.accept()
-        elif event.key() == Qt.Key_N:
-            # N: suggest the next most informative point to label (active
-            # learning) — 3D analogue of the 2D tool's yellow crosshair.
-            if self._engaged():
-                self.suggest_next_point()
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+                try:
+                    feature_manager.disengage_overlay()
+                finally:
+                    QApplication.restoreOverrideCursor()
             event.accept()
         else:
             super().keyPressEvent(event)
@@ -615,7 +690,6 @@ class FeatureSelectTool3D(Tool3D):
         # Clear the query for the next selection (back to gradient view).
         feature_manager.query_engine.clear()
         self._threshold_active = False
-        self._clear_suggestion()
         self._update_similarity_display()
 
     # ==================== Multi-class mode ====================
@@ -709,144 +783,7 @@ class FeatureSelectTool3D(Tool3D):
 
         # Clear the prototypes for the next selection (keep multiclass mode).
         self._clear_class_prototypes()
-        self._clear_suggestion()
         self._update_class_display()
-
-    # ==================== Point suggestion (active learning) ====================
-
-    def _labeled_element_ids(self):
-        """Flat element ids of every currently labeled prototype, across modes."""
-        if self.mode == "multiclass":
-            ids = []
-            for v in self.class_prototypes.values():
-                ids.extend(v)
-            return ids
-        feature_manager = self.mvat_manager.feature_mesh_manager
-        qe = getattr(feature_manager, 'query_engine', None)
-        if qe is None:
-            return []
-        return list(qe.positive_ids) + list(qe.negative_ids)
-
-    def _auto_suggest(self):
-        """Refresh the suggested-next-point marker after a prompt change.
-
-        Called after every Ctrl+click so the marker is always shown and kept
-        current without the user pressing N. Cleared when no prompts remain.
-        """
-        if self._labeled_element_ids():
-            self.suggest_next_point(announce=False)
-        else:
-            self._clear_suggestion()
-
-    def suggest_next_point(self, announce=True):
-        """Recommend the most informative next element to label and mark it.
-
-        3D analogue of the 2D FeatureSelectTool's crosshair suggestion (same
-        paper, same merge formula): score = (distance + uncertainty*lambda) /
-        (1+lambda). Uncertainty is 1 - best cosine similarity to ANY labeled
-        prototype (the model is least sure where this is low); distance is a
-        Gaussian-smoothed Euclidean distance, in world space, from the labeled
-        elements (spread suggestions out instead of clustering) — the 3D stand-
-        in for the 2D tool's EDT-over-the-crop-grid term, since there's no 2D
-        grid here. Already-labeled and uncovered elements are excluded; the
-        argmax element is drawn as a yellow marker for the user to confirm with
-        Ctrl+click. ``announce`` controls the status-bar hint (off for the
-        automatic per-click refresh so it doesn't spam the bar).
-        """
-        feature_manager = self.mvat_manager.feature_mesh_manager
-        if (feature_manager is None or feature_manager.buffer is None
-                or feature_manager.query_engine is None):
-            return
-        seeds = self._labeled_element_ids()
-        if not seeds:
-            if announce:
-                self._status("Feature Select 3D: label at least one point before "
-                             "requesting a suggestion.")
-            return
-
-        qe = feature_manager.query_engine
-        best, keys = qe.class_scores({"_all": seeds})
-        if not keys:
-            return
-        best_sim = np.asarray(best[0], dtype=np.float32)
-        uncertainty = np.clip(1.0 - best_sim, 0.0, None)
-
-        primary_target = self.mvat_viewer.scene_context.get_primary_target()
-        if primary_target is None:
-            return
-        centers = getattr(primary_target, '_element_centers_np', None)
-        if centers is None or len(centers) != uncertainty.size:
-            return
-        centers = np.asarray(centers, dtype=np.float64)
-
-        seed_arr = np.asarray(sorted(set(int(s) for s in seeds)), dtype=np.int64)
-        seed_arr = seed_arr[(seed_arr >= 0) & (seed_arr < centers.shape[0])]
-        if seed_arr.size == 0:
-            return
-
-        # Gaussian-smoothed nearest-seed distance in world space. A fresh, tiny
-        # KD-tree over just the seeds is cheap (a handful of clicks) even though
-        # it's queried against every element — O(N log S), not O(N*S).
-        from scipy.spatial import cKDTree
-        seed_tree = cKDTree(centers[seed_arr])
-        dist, _ = seed_tree.query(centers, k=1)
-        bounds = primary_target.get_bounds()
-        diag = float(np.sqrt((bounds[1] - bounds[0]) ** 2
-                             + (bounds[3] - bounds[2]) ** 2
-                             + (bounds[5] - bounds[4]) ** 2))
-        sigma = max(1e-6, 0.125 * diag)
-        distance_term = 1.0 - np.exp(-(dist.astype(np.float64) ** 2) / (2.0 * sigma ** 2))
-
-        merge = (distance_term.astype(np.float32)
-                 + uncertainty * self.suggest_lambda) / (1.0 + self.suggest_lambda)
-        valid = getattr(qe, 'valid', None)
-        if valid is not None:
-            valid = np.asarray(valid, dtype=bool)
-            if valid.size == merge.size:
-                merge[~valid] = -1.0
-        merge[seed_arr] = -1.0  # never re-suggest an already-labeled element
-
-        best_idx = int(np.argmax(merge))
-        if merge[best_idx] < 0:
-            return  # nothing left to suggest (fully labeled / uncovered scene)
-
-        self._draw_suggestion(best_idx)
-        if announce:
-            self._status("Feature Select 3D: suggested next point (yellow marker) "
-                         "— Ctrl+click it to confirm a label.", 5000)
-
-    def _draw_suggestion(self, element_id: int) -> None:
-        """Show the yellow suggestion marker at ``element_id`` (clears any prior)."""
-        primary_target = self.mvat_viewer.scene_context.get_primary_target()
-        get_coord = getattr(primary_target, 'get_element_coordinate', None) if primary_target else None
-        if get_coord is None:
-            self._clear_suggestion()
-            return
-        try:
-            pt = get_coord(int(element_id))
-        except Exception:
-            pt = None
-        if pt is None:
-            self._clear_suggestion()
-            return
-        pt = np.asarray(pt, dtype=np.float64).reshape(-1)
-        if pt.size < 3 or not np.all(np.isfinite(pt[:3])):
-            self._clear_suggestion()
-            return
-
-        self._suggestion_element_id = int(element_id)
-        self._suggestion_marker.set_markers(
-            pt[:3].reshape(1, 3).astype(np.float32),
-            np.asarray([[255, 255, 0]], dtype=np.uint8),
-        )
-        self.mvat_viewer.plotter.render()
-
-    def _clear_suggestion(self) -> None:
-        """Hide the suggestion marker, if any."""
-        if self._suggestion_element_id is None:
-            return
-        self._suggestion_element_id = None
-        self._suggestion_marker.clear()
 
     # ==================== Prototype markers (Feature 2) ====================
 

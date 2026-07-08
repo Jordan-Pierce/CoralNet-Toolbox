@@ -990,6 +990,28 @@ class PropagationEngine(QObject):
     def _is_ortho_path(self, image_path: str) -> bool:
         return self.ortho_camera is not None and image_path == self.ortho_camera.image_path
 
+    def pixel_to_element_id(self, camera, px: int, py: int) -> Optional[int]:
+        """Element id (mesh face / point index) visible under an image pixel.
+
+        Ratio-scales into the camera's index map (handles a cached map that's
+        sub-native resolution), matching the approach MousePositionBridge uses
+        for the live-hover ray. Returns None when out of bounds, no index map
+        yet, or the pixel has no mesh coverage (background, -1).
+        """
+        if camera is None or not (0 <= px < camera.width and 0 <= py < camera.height):
+            return None
+        raster = getattr(camera, '_raster', None)
+        index_map = getattr(raster, 'index_map', None) if raster is not None else None
+        if index_map is None:
+            return None
+        map_h, map_w = index_map.shape[:2]
+        mx, my = px, py
+        if map_w != camera.width or map_h != camera.height:
+            mx = min(map_w - 1, (px * map_w) // max(1, camera.width))
+            my = min(map_h - 1, (py * map_h) // max(1, camera.height))
+        candidate_id = int(index_map[my, mx])
+        return candidate_id if candidate_id > -1 else None
+
     def _build_projection(self, px: int, py: int, source_camera=None, target_cameras=None) -> dict:
         """Cast a ray from the selected camera at (px, py) and return projections.
 
