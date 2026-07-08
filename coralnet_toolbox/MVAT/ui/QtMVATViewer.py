@@ -455,6 +455,12 @@ class MVATViewer(QFrame):
         self._active_3d_tool = None
         self._mouse_sphere_observer_id = None
         self._sphere_hover_observer_bound = False
+        # Style-level rotate lock, bound only while brush/erase is the active
+        # tool (see _bind_paint_rotate_lock). Left-drag is otherwise always
+        # available for camera rotate, including for the other 3D tools.
+        self._paint_rotate_lock_id = None
+        self._paint_rotate_lock_style = None
+        self._paint_rotate_lock_bound = False
         self._sphere_hover_timer = QTimer(self)
         self._sphere_hover_timer.setSingleShot(True)
         self._sphere_hover_timer.setInterval(16)
@@ -926,8 +932,10 @@ class MVATViewer(QFrame):
             except Exception:
                 pass
             self._sync_sphere_hover_binding()
+            self._sync_paint_rotate_lock(next_tool)
             self._request_sphere_hover_refresh()
         else:
+            self._unbind_paint_rotate_lock()
             sphere_manager = getattr(self, '_cursor_preview', None)
             if sphere_manager is not None:
                 try:
@@ -1235,17 +1243,24 @@ class MVATViewer(QFrame):
         return None
 
     def _bind_sphere_hover_observer(self):
-        """Bind the sphere hover observer if sphere tracking is enabled."""
+        """Bind the sphere hover observer if sphere tracking is enabled.
+
+        Bound on the INTERACTOR, not the interaction style. A MouseMoveEvent
+        observer added directly to a vtkInteractorStyle (`style.AddObserver(...)`)
+        short-circuits that style's own default OnMouseMove handling, which is
+        what drives left-drag rotate — so a style-level binding silently disables
+        rotation for as long as it's bound. The interactor-level event carries the
+        same GetEventPosition() data and does not touch the style's dispatch.
+        """
         if self._sphere_hover_observer_bound:
             return
 
         interactor = self.plotter.interactor
-        style = self._get_vtk_interaction_style(interactor)
-        if style is None:
+        if interactor is None:
             return
 
         try:
-            self._mouse_sphere_observer_id = style.AddObserver("MouseMoveEvent", self._on_mouse_move)
+            self._mouse_sphere_observer_id = interactor.AddObserver("MouseMoveEvent", self._on_mouse_move)
             self._sphere_hover_observer_bound = self._mouse_sphere_observer_id is not None
         except Exception as e:
             pass
@@ -1256,14 +1271,63 @@ class MVATViewer(QFrame):
             return
 
         try:
-            style = self._get_vtk_interaction_style(getattr(self.plotter, 'interactor', None))
-            if style is not None and self._mouse_sphere_observer_id is not None:
-                style.RemoveObserver(self._mouse_sphere_observer_id)
+            interactor = getattr(self.plotter, 'interactor', None)
+            if interactor is not None and self._mouse_sphere_observer_id is not None:
+                interactor.RemoveObserver(self._mouse_sphere_observer_id)
         except Exception:
             pass
 
         self._mouse_sphere_observer_id = None
         self._sphere_hover_observer_bound = False
+
+    def _bind_paint_rotate_lock(self):
+        """Suppress the trackball's native left-drag rotate for brush/erase.
+
+        A MouseMoveEvent observer added directly to the vtkInteractorStyle (as
+        opposed to the interactor — see _bind_sphere_hover_observer) short-
+        circuits that style's own OnMouseMove dispatch, which is what drives
+        left-drag rotate. Brush/erase strokes need left-drag exclusively for
+        painting, so this is the one place that trick is used deliberately;
+        it's bound only while one of those two tools is active and removed the
+        moment any other tool (or plain navigation) takes over.
+        """
+        if self._paint_rotate_lock_bound:
+            return
+
+        style = self._get_vtk_interaction_style(getattr(self.plotter, 'interactor', None))
+        if style is None or style is self.plotter.interactor:
+            return
+
+        try:
+            self._paint_rotate_lock_id = style.AddObserver("MouseMoveEvent", lambda *_: None)
+            self._paint_rotate_lock_style = style
+            self._paint_rotate_lock_bound = self._paint_rotate_lock_id is not None
+        except Exception:
+            pass
+
+    def _unbind_paint_rotate_lock(self):
+        """Restore native left-drag rotate after leaving brush/erase."""
+        if not self._paint_rotate_lock_bound:
+            return
+
+        try:
+            style = self._paint_rotate_lock_style
+            if style is not None and self._paint_rotate_lock_id is not None:
+                style.RemoveObserver(self._paint_rotate_lock_id)
+        except Exception:
+            pass
+
+        self._paint_rotate_lock_id = None
+        self._paint_rotate_lock_style = None
+        self._paint_rotate_lock_bound = False
+
+    def _sync_paint_rotate_lock(self, tool):
+        """Bind/unbind the rotate lock to match whether `tool` is brush/erase."""
+        tool_kind = str(getattr(tool, 'tool_kind', '') or '').strip().lower()
+        if tool_kind in ('brush', 'erase'):
+            self._bind_paint_rotate_lock()
+        else:
+            self._unbind_paint_rotate_lock()
 
     def _sync_sphere_hover_binding(self):
         """Keep the mouse-move hover observer bound while EITHER the brush sphere
