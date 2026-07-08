@@ -15,8 +15,6 @@ from time import perf_counter
 import numpy as np
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QMessageBox
-
 from coralnet_toolbox.MVAT.tools.Tool3D import Tool3D
 from coralnet_toolbox.MVAT.utils.MVATLogger import get_visibility_logger
 
@@ -118,11 +116,12 @@ class BrushTool3D(Tool3D):
                 return
 
             if not self._has_selected_label():
-                QMessageBox.warning(
-                    self.mvat_viewer,
-                    "No Label Selected",
-                    "A label must be selected before using the brush tool.",
-                )
+                # A modal QMessageBox here (as opposed to a status message)
+                # blocks the Qt event loop mid-gesture, which leaves VTK's
+                # button/grab state confused once it closes — the scene then
+                # "sticks" to the mouse until another left-click resets it.
+                # Mirrors QtBrushTool (2D), which uses the status bar instead.
+                self._status("A label must be selected before using the brush tool.", 4000)
                 return
 
             if face_id < 0 or world_pos is None:
@@ -462,6 +461,14 @@ class BrushTool3D(Tool3D):
             return self.mvat_manager.annotation_window.selected_label
         except Exception:
             return None
+
+    def _status(self, message, msecs=4000):
+        try:
+            status_bar = getattr(self.mvat_manager.main_window, 'status_bar', None)
+            if status_bar is not None:
+                status_bar.showMessage(message, msecs)
+        except Exception:
+            pass
 
     def _calibrate_brush_size(self):
         try:

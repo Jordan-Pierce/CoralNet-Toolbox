@@ -28,35 +28,17 @@ class DropperTool3D(Tool3D):
         tool_kind (str): 'dropper' — identifies this as the dropper tool.
     """
 
-    _PREVIEW_COLOR = 'cyan'
-    _PREVIEW_OPACITY = 0.5
     tool_kind = 'dropper'
 
     def __init__(self, mvat_viewer, mvat_manager):
         super().__init__(mvat_viewer, mvat_manager)
         self.preview_only = False
-        # Keep the aiming preview small — the dropper picks a single element.
-        self.brush_size = 0.02
-
-    def _use_active_label_preview_color(self) -> bool:
-        """Use a neutral picker color; the dropper does not paint the active label."""
-        return False
 
     def activate(self):
-        """Activate the dropper with a tiny aiming dot."""
+        """Activate the dropper. No aiming sphere — a click picks whatever
+        single element is under the cursor regardless of any radius."""
         super().activate()
-        cursor = getattr(self.mvat_viewer, '_cursor_preview', None)
-        if cursor is not None:
-            try:
-                cursor.update_transform(
-                    center=np.asarray(self.mvat_viewer.plotter.camera.focal_point),
-                    radius=self.brush_size,
-                    shape='circle',
-                    color_rgb_float=self._preview_color_rgb_float(),
-                    opacity=self._PREVIEW_OPACITY,
-                )
-            except Exception:
-                pass
+        self._hide_preview_sphere()
 
     def mousePressEvent(self, event, _face_id: int, world_pos):
         """
@@ -183,16 +165,13 @@ class DropperTool3D(Tool3D):
         return None
 
     def mouseMoveEvent(self, event, face_id: int, world_pos):
-        """Allow the aiming dot to follow the mouse."""
+        """Track the hovered position. No aiming sphere (see activate)."""
         if not self.active:
             return
 
-        if world_pos is not None:
-            self._last_hover_world_pos = np.asarray(world_pos, dtype=np.float64)
-            self._update_preview_sphere(world_pos)
-        else:
-            self._last_hover_world_pos = None
-            self._hide_preview_sphere()
+        self._last_hover_world_pos = (
+            np.asarray(world_pos, dtype=np.float64) if world_pos is not None else None
+        )
 
     def wheelEvent(self, event, delta_y: int):
         """Dropper doesn't use wheel for resizing."""

@@ -26,8 +26,6 @@ class FillTool3D(Tool3D):
         tool_kind (str): 'fill' — identifies this as the fill tool.
     """
 
-    _PREVIEW_COLOR = 'yellow'
-    _PREVIEW_OPACITY = 0.5
     tool_kind = 'fill'
 
     # The Fill tool floods UV islands, so it only operates while the user is
@@ -49,21 +47,10 @@ class FillTool3D(Tool3D):
             return False
 
     def activate(self):
-        """Activate the fill tool with a tiny aiming sphere."""
+        """Activate the fill tool. No aiming sphere — a click fills the whole
+        UV segment under the cursor regardless of any radius."""
         super().activate()
-        # Shrink the cursor preview to a dot for aiming
-        cursor = getattr(self.mvat_viewer, '_cursor_preview', None)
-        if cursor is not None:
-            try:
-                cursor.update_transform(
-                    center=np.asarray(self.mvat_viewer.plotter.camera.focal_point),
-                    radius=0.02,
-                    shape='circle',
-                    color_rgb_float=self._preview_color_rgb_float(),
-                    opacity=self._PREVIEW_OPACITY,
-                )
-            except Exception:
-                pass
+        self._hide_preview_sphere()
 
     def mousePressEvent(self, event, _face_id: int, world_pos):
         """
@@ -195,16 +182,13 @@ class FillTool3D(Tool3D):
             )
 
     def mouseMoveEvent(self, event, face_id: int, world_pos):
-        """Allow the aiming dot to follow the mouse."""
+        """Track the hovered position. No aiming sphere (see activate)."""
         if not self.active:
             return
 
-        if world_pos is not None:
-            self._last_hover_world_pos = np.asarray(world_pos, dtype=np.float64)
-            self._update_preview_sphere(world_pos)
-        else:
-            self._last_hover_world_pos = None
-            self._hide_preview_sphere()
+        self._last_hover_world_pos = (
+            np.asarray(world_pos, dtype=np.float64) if world_pos is not None else None
+        )
 
     def wheelEvent(self, event, delta_y: int):
         """Ctrl+wheel adjusts UV-segment granularity for filling.
