@@ -1380,7 +1380,12 @@ class MainWindow(QMainWindow):
             self.dock_manager,
             layout_name='default'
         )
-        
+
+        # Update menu checkmarks to match restored dock visibility
+        for dock_name, dock_widget, _ in dock_windows:
+            if dock_name in self.dock_toggle_actions:
+                self.dock_toggle_actions[dock_name].setChecked(dock_widget.isVisible())
+
         # --------------------------------------------------
         # Enable drag and drop
         # --------------------------------------------------
