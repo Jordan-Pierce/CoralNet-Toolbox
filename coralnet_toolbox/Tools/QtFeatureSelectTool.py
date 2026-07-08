@@ -652,16 +652,31 @@ class FeatureSelectTool(Tool):
     # Cap the preview render resolution (long edge, px) so the per-hover RGBA
     # rebuild stays cheap even for large work areas. The canvas scales whatever
     # we hand it up to the work-area rect, so this only affects edge sharpness.
+    # Floor, not a fixed value: this also sets the bilinear pre-upsample size
+    # for the (small) native feature grid, so a floor below the native grid
+    # would remove that smoothing and make the label overlay's nearest-scale
+    # blockier. The ceiling only lets the cap grow past 768 when the loaded
+    # model's native grid (feat_h/feat_w, itself input_size + AnyUp dependent)
+    # is genuinely denser, so high-res model configs aren't throttled to a
+    # constant tuned for the 768-input default.
     PREVIEW_MAX_EDGE = 768
+    PREVIEW_MAX_EDGE_CEILING = 1536
 
     def _preview_dims(self, wa_h, wa_w):
-        """Work-area pixel size, scaled down so the long edge ≤ PREVIEW_MAX_EDGE."""
+        """Work-area pixel size, scaled down so the long edge ≤ preview cap.
+
+        The cap is ``PREVIEW_MAX_EDGE`` unless the current crop's native
+        feature-grid resolution (``feat_h``/``feat_w``) exceeds it, in which
+        case the cap grows to match (up to ``PREVIEW_MAX_EDGE_CEILING``).
+        """
         wa_h = max(1, int(round(wa_h)))
         wa_w = max(1, int(round(wa_w)))
         long_edge = max(wa_h, wa_w)
-        if long_edge <= self.PREVIEW_MAX_EDGE:
+        native = max(self.feat_h or 0, self.feat_w or 0)
+        cap = min(max(self.PREVIEW_MAX_EDGE, native), self.PREVIEW_MAX_EDGE_CEILING)
+        if long_edge <= cap:
             return wa_h, wa_w
-        scale = self.PREVIEW_MAX_EDGE / float(long_edge)
+        scale = cap / float(long_edge)
         return max(1, int(wa_h * scale)), max(1, int(wa_w * scale))
 
     # ==================== Multi-class mode ====================
