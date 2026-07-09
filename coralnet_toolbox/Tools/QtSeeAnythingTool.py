@@ -808,31 +808,41 @@ class SeeAnythingTool(Tool):
         )
 
         # OPTIMIZATION: Avoid copy.deepcopy() on PyTorch tensors.
-        # Since self.results is discarded during cancel_working_area(), 
+        # Since self.results is discarded during cancel_working_area(),
         # we can safely modify the class dictionary in-place.
         results_to_process = self.results
         results_to_process.names = {0: class_mapping[0].short_label_code}
 
+        # results_to_process.boxes.xyxy is in SeeAnything's internal, non-uniformly
+        # resized image space (long side snapped to imgsz, short side independently
+        # rounded to a multiple of 32 in QtDeployPredictor.get_target_shape). Rebind
+        # boxes to true work-area pixel space via the resolution-independent
+        # normalized coords, and rebind orig_img/orig_shape to the work area image so
+        # SAM operates on its already-preloaded full-resolution embeddings instead of
+        # re-encoding the smaller, non-uniformly scaled SeeAnything image. Otherwise
+        # Ultralytics' letterbox-based scale_coords/scale_masks (used to map SAM's
+        # masks back to work-area space) misinterprets that non-uniform resize as a
+        # uniform gain + pad, producing polygons that drift increasingly off as you
+        # move away from the middle of the work area.
+        if results_to_process.boxes is not None and len(results_to_process.boxes) > 0:
+            boxes_xyxyn = results_to_process.boxes.xyxyn.clone()
+            wa_h, wa_w = self.work_area_image.shape[:2]
+
+            results_to_process.orig_img = self.work_area_image
+            results_to_process.orig_shape = (wa_h, wa_w)
+
+            new_boxes = results_to_process.boxes.data.clone()
+            new_boxes[:, [0, 2]] = boxes_xyxyn[:, [0, 2]] * wa_w
+            new_boxes[:, [1, 3]] = boxes_xyxyn[:, [1, 3]] * wa_h
+            results_to_process.update(boxes=new_boxes)
+
         from time import time
         t0 = time()
-        
-        # Process the results with the SAM predictor 
-        processed_results = self.see_anything_dialog.sam_dialog.predict_from_results([results_to_process], 
+
+        # Process the results with the SAM predictor
+        processed_results = self.see_anything_dialog.sam_dialog.predict_from_results([results_to_process],
                                                                                      self.image_path)
         print(f"SAM prediction from results took {time() - t0:.2f} seconds")
-        
-        # Get the original working area image dimensions
-        original_h, original_w = self.work_area_image.shape[:2]
-
-        # SAM returns masks at its own processed resolution which may differ
-        # from the original work area.  Ultralytics' Masks.xy property uses
-        # scale_coords(mask_shape, contours, orig_shape) to map contour
-        # coordinates from mask-tensor space to orig_shape space.  Setting
-        # orig_shape to the work area dimensions makes that scaling produce
-        # work-area-local coordinates, which MapResults then offsets to
-        # full-image space.
-        if processed_results and processed_results[0].masks is not None:
-            processed_results[0].masks.orig_shape = (original_h, original_w)
 
         # Get the raster
         raster = self.main_window.image_window.raster_manager.get_raster(self.image_path)
