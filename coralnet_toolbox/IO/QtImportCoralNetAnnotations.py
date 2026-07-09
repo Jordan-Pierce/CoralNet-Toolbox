@@ -28,7 +28,7 @@ class ImportCoralNetAnnotations:
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
 
-    def import_annotations(self):
+    def import_annotations(self, file_paths=None, annotation_size=None):
         """Import annotations from CoralNet CSV export files into the current project."""
         self.main_window.untoggle_all_tools()
 
@@ -38,23 +38,25 @@ class ImportCoralNetAnnotations:
                                 "Please load images first before importing annotations.")
             return
 
-        options = QFileDialog.Options()
-        file_paths, _ = QFileDialog.getOpenFileNames(self.annotation_window,
-                                                     "Import CoralNet Annotations",
-                                                     "",
-                                                     "CSV Files (*.csv);;All Files (*)",
-                                                     options=options)
+        if file_paths is None:
+            options = QFileDialog.Options()
+            file_paths, _ = QFileDialog.getOpenFileNames(self.annotation_window,
+                                                         "Import CoralNet Annotations",
+                                                         "",
+                                                         "CSV Files (*.csv);;All Files (*)",
+                                                         options=options)
 
         if not file_paths:
             return
 
-        annotation_size, ok = QInputDialog.getInt(self.annotation_window,
-                                                  "Patch Annotation Size",
-                                                  "Enter the default patch annotation size for imported annotations:",
-                                                  224, 1, 10000, 1)
-        if not ok:
-            return
-        
+        if annotation_size is None:
+            annotation_size, ok = QInputDialog.getInt(self.annotation_window,
+                                                      "Patch Annotation Size",
+                                                      "Enter the default patch annotation size for imported annotations:",
+                                                      224, 1, 10000, 1)
+            if not ok:
+                return
+
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title="Reading CSV Files")
