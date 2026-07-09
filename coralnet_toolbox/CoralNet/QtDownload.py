@@ -25,6 +25,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
+from coralnet_toolbox.IO.QtImportImages import SUPPORTED_IMAGE_EXTENSIONS
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -449,6 +450,11 @@ class DownloadDialog(QDialog):
         self.progress_bar = ProgressBar(self, "CoralNet Download")
         self.progress_bar.show()
 
+        # Track the source directories that were successfully downloaded to, for optional import
+        self.downloaded_source_dirs = []
+
+        download_succeeded = False
+
         try:
             for source_id in source_ids:
                 self.progress_bar.set_title(f"Downloading Data from Source {source_id}")
@@ -456,8 +462,9 @@ class DownloadDialog(QDialog):
 
                 # Start the download process for this source ID
                 self.download()
+                self.downloaded_source_dirs.append(self.source_dir)
 
-            QMessageBox.information(self, "Download Complete", "Download completed successfully.")
+            download_succeeded = True
 
         except Exception as e:
             QMessageBox.critical(self, "Download Error", f"{str(e)}")
@@ -476,6 +483,24 @@ class DownloadDialog(QDialog):
                 self.driver = None
 
             self.logged_in = False
+
+        # Show the completion dialog (and optionally import) only after the
+        # download progress bar has been fully closed, to avoid overlapping dialogs
+        if download_succeeded:
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Download Complete")
+            msg_box.setText("Download completed successfully.")
+            msg_box.setIcon(QMessageBox.Information)
+            ok_button = msg_box.addButton(QMessageBox.Ok)
+            import_button = msg_box.addButton("Import Data", QMessageBox.ActionRole)
+            msg_box.setDefaultButton(ok_button)
+            msg_box.exec_()
+
+            if msg_box.clickedButton() == import_button:
+                # Close the download dialog itself before importing, so it's not
+                # left hanging around behind the import progress bars
+                self.accept()
+                self.import_downloaded_data()
 
     def download(self):
         """Run the download process"""
@@ -1170,3 +1195,52 @@ class DownloadDialog(QDialog):
 
         # Finish the progress bar
         self.progress_bar.finish_progress()
+
+    def import_downloaded_data(self):
+        """Import previously downloaded images, labelsets, and annotations into the current project."""
+        if not self.downloaded_source_dirs:
+            return
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
+        try:
+            image_paths = []
+            labelset_paths = []
+            annotation_paths = []
+
+            for source_dir in self.downloaded_source_dirs:
+                images_dir = os.path.join(source_dir, "images")
+                if os.path.isdir(images_dir):
+                    for name in os.listdir(images_dir):
+                        if os.path.splitext(name)[1].lower() in SUPPORTED_IMAGE_EXTENSIONS:
+                            image_paths.append(os.path.join(images_dir, name))
+
+                labelset_path = os.path.join(source_dir, "labelset.csv")
+                if os.path.exists(labelset_path):
+                    labelset_paths.append(labelset_path)
+
+                annotations_path = os.path.join(source_dir, "annotations.csv")
+                if os.path.exists(annotations_path):
+                    annotation_paths.append(annotations_path)
+
+            # Import images first so annotations can be matched against loaded images
+            if image_paths:
+                self.main_window.import_images._process_image_files(image_paths, suppress_errors=True)
+
+                # Ensure there's an active image so annotation import doesn't bail out
+                if not self.main_window.annotation_window.active_image:
+                    self.main_window.image_window.load_image_by_path(image_paths[0])
+
+            # Import labelsets (labels only; safe to run for each source)
+            for labelset_path in labelset_paths:
+                self.main_window.import_coralnet_labels.import_coralnet_labels(labelset_path)
+
+            # Import all downloaded annotation files at once
+            if annotation_paths:
+                self.main_window.import_coralnet_annotations.import_annotations(annotation_paths)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Import Error", f"An error occurred while importing downloaded data: {str(e)}")
+
+        finally:
+            QApplication.restoreOverrideCursor()

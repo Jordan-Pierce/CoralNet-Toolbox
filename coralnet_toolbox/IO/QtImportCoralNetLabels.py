@@ -24,15 +24,16 @@ class ImportCoralNetLabels:
         self.main_window = main_window
         self.label_window = main_window.label_window
 
-    def import_coralnet_labels(self):
+    def import_coralnet_labels(self, file_path=None):
         self.main_window.untoggle_all_tools()
 
-        options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getOpenFileName(self.label_window,
-                                                   "Import CoralNet Labels",
-                                                   "",
-                                                   "CSV Files (*.csv);;All Files (*)",
-                                                   options=options)
+        if file_path is None:
+            options = QFileDialog.Options()
+            file_path, _ = QFileDialog.getOpenFileName(self.label_window,
+                                                       "Import CoralNet Labels",
+                                                       "",
+                                                       "CSV Files (*.csv);;All Files (*)",
+                                                       options=options)
         if file_path:
             try:
                 data = pd.read_csv(file_path)
