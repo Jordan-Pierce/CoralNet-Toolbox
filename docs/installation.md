@@ -1,11 +1,9 @@
 ## 💾 **How to Install**
 
-### 🐍 Anaconda
+### 🐍 Create Conda Environment (Recommended)
 
 It's recommended to use `Anaconda` to create an environment for the `toolbox`:
 ```bash
-# cmd
-
 # Create and activate an environment
 conda create --name coralnet10 python=3.10 -y
 conda activate coralnet10
@@ -14,38 +12,38 @@ conda activate coralnet10
 pip install uv
 ```
 
-### ⚡ CUDA
+### ⚡ GPU Acceleration (Optional)
 
-If you have `CUDA`, you can install the versions of `cuda-nvcc` and `cudatoolkit` that you need, and then install the corresponding versions of `torch` and `torchvision`. Below is an example of how that can be done using `CUDA` version 
-12.9:
+If you have an **NVIDIA GPU with CUDA**, you can install the corresponding versions of `CUDA` and `PyTorch` for full GPU acceleration.
+
+Below is an example for CUDA 12.9:
 ```bash
-# cmd
-
-# Example for CUDA 12.9
+# Install CUDA toolkit and compiler
 conda install nvidia/label/cuda-12.9.0::cuda-nvcc -y
 conda install nvidia/label/cuda-12.9.0::cuda-toolkit -y
 
-# Example for torch w/ CUDA 12.9
+# Install PyTorch with CUDA 12.9
 uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu129
 ```
 
+For other CUDA versions and detailed installation, see:
+- [`cuda-nvcc`](https://anaconda.org/nvidia/cuda-nvcc)
+- [`cudatoolkit`](https://anaconda.org/nvidia/cuda-toolkit)
+- [`torch`](https://pytorch.org/get-started/locally/)
+
 ### 📦 Install
 
-Once this has finished, install the `toolbox` using `uv`: 
+Once this has finished, install the `toolbox` using `uv`:
 
 ```bash
-# cmd
-
-# Install with uv
+# Install with uv (fastest)
 uv pip install coralnet-toolbox
 ```
 
-> Although fast, `uv` is still relatively new; if this fails, simply fall back to using `pip`:
+> **Fallback**: If `uv` fails, simply fall back to using `pip`:
 
 ```bash
-# cmd
-
-# Install
+# Install with pip
 pip install coralnet-toolbox
 ```
 
@@ -54,49 +52,50 @@ pip install coralnet-toolbox
 Finally, you can run the `toolbox` from the command line:
 
 ```bash
-# cmd
-
-# Run
 coralnet-toolbox
 ```
 
-If `CUDA` is installed on your computer, and `torch` was built with it properly, you should see a `🐇` icon in the
-`toolbox` instead of a `🐢`; if you have multiple `CUDA` devices available, you should see a `🚀` icon,
-and if you're using a Mac with `Metal`, you should see an `🍎` icon (click on the icon to see the device information).
+### 🎯 GPU Status Indicators
 
-See here for more details on versions for the following:
-- [`cuda-nvcc`](https://anaconda.org/nvidia/cuda-nvcc)
-- [`cudatoolkit`](https://anaconda.org/nvidia/cuda-toolkit)
-- [`torch`](https://pytorch.org/get-started/locally/)
+If `CUDA` is installed and `PyTorch` was built with it properly, you'll see a device indicator in the bottom-left corner of the toolbox:
+- **🐢** CPU only
+- **🐇** Single GPU (CUDA)
+- **🚀** Multiple GPUs (CUDA)
+- **🍎** Mac Metal (Apple Silicon)
 
-### **How to Upgrade**
+*Click the icon to see available device details*
 
-When opening the `toolbox`, you will be notified if there is an update available, and you have the _option_ to do so, 
-if you so choose. To upgrade, run the following command from your terminal:
+### 🔄 Upgrade
+
+When opening the `toolbox`, you will be notified if there is an update available. To upgrade to a specific version, run:
 
 ```bash
-# cmd
-
-uv pip install -U coralnet-toolbox==[enter_newest_version_here]
+# Upgrade to latest version
+uv pip install -U coralnet-toolbox
 ```
 
-> Again, fall back to using just `pip` and not `uv` if this fails.
+Or upgrade to a specific version:
+```bash
+uv pip install -U coralnet-toolbox==[version_number]
+```
 
-## GitHub Repository
+> **Fallback**: If `uv` fails, use `pip` instead: `pip install -U coralnet-toolbox`
 
-If you prefer to clone the repository and run the `toolbox` from the source code, you can do so with the following:
+> **Note**: If you have `torch` installed with `CUDA`, adding `-U` may trigger a regression to the CPU version. If this occurs, uninstall `torch` and `torchvision`, and reinstall the CUDA versions.
+
+## 🐍 Install from Source (GitHub Repository)
+
+If you prefer to clone the repository and run the `toolbox` from the source code:
 
 ```bash
-# cmd
-
 # Create and activate an environment
 conda create --name coralnet10 python=3.10 -y
 conda activate coralnet10
 
-# Install git via conda, if not already installed
+# Install git via conda (if not already installed)
 conda install git -y
 
-# Change to the desired directory (e.g., Documents)
+# Change to your desired directory
 cd Documents
 
 # Clone and enter the repository
@@ -107,48 +106,83 @@ cd CoralNet-Toolbox
 conda install nvidia/label/cuda-12.9.0::cuda-nvcc -y
 conda install nvidia/label/cuda-12.9.0::cuda-toolkit -y
 
-# Example for torch w/ CUDA 12.9
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118 --upgrade
+# Install PyTorch with CUDA support
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu129
 
-# Install the latest
+# Install the toolbox in development mode
 pip install -e .
 
 # Run
 coralnet-toolbox
 ```
 
-To update your repository to match the current version on `main`, run `fetch` and `pull` commands:
+### Updating Your Repository
+
+To update your repository to match the current version on `main`:
 
 ```bash
-# cmd
+# Navigate to repository directory
+cd CoralNet-Toolbox
 
-# Change to the proper directory
-cd Coralnet-Toolbox
-
-# Ask for the updates on main
+# Fetch latest changes
 git fetch
 
-# Pull the updates from main
+# Pull updates from main
 git pull
 
-# Update your conda environment 
+# Update your environment
 pip install -e . -U
 ```
 
-Or, if you want to simply install the `toolbox` from the GitHub repo directly you can also do the following:
+### Install from GitHub Directly
+
+You can also install the `toolbox` from the GitHub repo without cloning:
 
 ```bash
-# cmd
-
+# Install from main branch
 pip install git+https://github.com/Jordan-Pierce/CoralNet-Toolbox.git@main -U
 
-# replace @main with a different branch if you want to test out experimental code
+# Or install from a different branch (e.g., for testing experimental features)
+pip install git+https://github.com/Jordan-Pierce/CoralNet-Toolbox.git@branch-name -U
 ```
 
-## Docker
+## 🧹 Cleanup
+
+### Remove a Package
+
+To remove a problematic package:
 
 ```bash
+uv pip uninstall package-name-here
+```
+
+### Delete and Reset Environment
+
+To delete an old environment and start fresh:
+
+```bash
+# Deactivate the environment first
+conda deactivate
+
+# Delete the environment by name
+conda env remove --name coralnet10
+
+# Confirm when prompted
+y
+```
+
+## ⚠️ MacOS Users
+
+> **Version 1.0.0 and later** rely heavily on `PyQtADS`, which cannot be installed on macOS. **Do not upgrade from version 0.0.105** until this is resolved.
+
+## 🐳 Docker
+
+To run the `toolbox` in a Docker container:
+
+```bash
+# Build the Docker image
 docker build -t coralnet-vnc .
 
+# Run the container with VNC access
 docker run -d -p 6901:6901 -p 5901:5901 --name coralnet-app coralnet-vnc
 ```
