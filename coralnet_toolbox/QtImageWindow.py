@@ -340,11 +340,24 @@ class ImageWindow(QWidget):
         self.table_model = RasterTableModel(self.raster_manager, self)
         self.tableView.setModel(self.table_model)
         
-        self.tableView.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents) 
-        self.tableView.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents) 
-        self.tableView.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents) 
-        self.tableView.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
-        
+        # Interactive on the fixed-content columns lets the user drag-resize
+        # them; the Image column stays Stretch so it always absorbs whatever
+        # space the others don't use — growing/shrinking a column reallocates
+        # space within the table instead of growing the table itself.
+        header = self.tableView.horizontalHeader()
+        last_col = self.table_model.columnCount() - 1
+        for col in range(self.table_model.columnCount()):
+            if col == last_col:
+                header.setSectionResizeMode(col, QHeaderView.Stretch)
+            else:
+                header.setSectionResizeMode(col, QHeaderView.Interactive)
+
+        # Seed the fixed-content columns with the model's intended default
+        # widths; the last column (-1 sentinel) is left to Stretch.
+        for col, width in enumerate(self.table_model.column_widths):
+            if width > 0:
+                self.tableView.setColumnWidth(col, width)
+
         self.tableView.horizontalHeader().setStyleSheet(
             app_theme.scale_qss(
                 """
