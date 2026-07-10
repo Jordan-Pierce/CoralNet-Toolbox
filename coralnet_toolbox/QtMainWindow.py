@@ -401,7 +401,7 @@ class MainWindow(QMainWindow):
         # Import CoralNet Annotations
         self.import_coralnet_annotations_action = QAction("CoralNet (CSV)", self)
         self.import_coralnet_annotations_action.setToolTip("Import annotations from CoralNet CSV export")
-        self.import_coralnet_annotations_action.triggered.connect(self.import_coralnet_annotations.import_annotations)
+        self.import_coralnet_annotations_action.triggered.connect(lambda: self.import_coralnet_annotations.import_annotations())
         self.import_annotations_menu.addAction(self.import_coralnet_annotations_action)
         # Import Viscore Annotations
         self.import_viscore_annotations_action = QAction("Viscore (CSV)", self)
