@@ -285,7 +285,15 @@ class RasterManager(QObject):
             if raster is None:
                 return None
 
-            # If raster supports direct frame access (VideoRaster), use it
+            # If raster supports a cached preview pixmap (VideoRaster), use it
+            # so repeated hovers over nearby/revisited frames skip re-decoding.
+            if hasattr(raster, 'get_preview_pixmap'):
+                try:
+                    return raster.get_preview_pixmap(frame_idx, longest_edge=longest_edge)
+                except Exception:
+                    return None
+
+            # If raster supports direct frame access, use it
             if hasattr(raster, 'get_frame'):
                 try:
                     qimg = raster.get_frame(frame_idx)
