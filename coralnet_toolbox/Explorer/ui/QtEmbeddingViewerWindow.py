@@ -183,7 +183,16 @@ class EmbeddingViewerWindow(QWidget):
         self.max_z = 0.0
         self.z_range = 0.0
         self.is_3d_data = False
-        
+
+        # Auto-rotate (continuous spin about a tilted axis)
+        self.is_auto_rotating = False
+        self._auto_rotate_tick = 0
+        self._auto_rotate_last_wobble = 0.0
+        self._auto_rotate_paused_by_drag = False
+        self.auto_rotate_timer = QTimer(self)
+        self.auto_rotate_timer.setInterval(30)
+        self.auto_rotate_timer.timeout.connect(self._on_auto_rotate_tick)
+
         # Rubber band selection
         self.rubber_band = None
         self.rubber_band_origin = QPointF()
@@ -431,6 +440,14 @@ class EmbeddingViewerWindow(QWidget):
         self.home_button.setToolTip("Reset view to fit all points")
         self.home_button.clicked.connect(self._reset_view)
         toolbar.addWidget(self.home_button)
+
+        # Auto-rotate toggle button (enabled only for 3D data)
+        self.rotate_toggle_button = QPushButton()
+        self.rotate_toggle_button.setIcon(get_icon("rotate.svg"))
+        self.rotate_toggle_button.setToolTip("Start Auto-Rotate")
+        self.rotate_toggle_button.setEnabled(False)
+        self.rotate_toggle_button.clicked.connect(self._on_auto_rotate_toggled)
+        toolbar.addWidget(self.rotate_toggle_button)
 
         # Sprite toggle button
         self.sprite_toggle_button = QPushButton()
@@ -2351,6 +2368,13 @@ class EmbeddingViewerWindow(QWidget):
 
         self.isolate_button.setEnabled(not self.isolated_mode and selection_exists)
 
+        # Auto-rotate is only meaningful for 3D data
+        if hasattr(self, 'rotate_toggle_button'):
+            can_auto_rotate = points_exist and self.is_3d_data
+            self.rotate_toggle_button.setEnabled(can_auto_rotate)
+            if not can_auto_rotate:
+                self._stop_auto_rotate()
+
         # Cluster controls
         if hasattr(self, 'cluster_k_spin'):
             self.cluster_k_spin.setEnabled(points_exist)
@@ -2688,6 +2712,7 @@ class EmbeddingViewerWindow(QWidget):
     
     def _reset_view(self):
         """Reset view to fit all points."""
+        self._stop_auto_rotate()
         self.rotation_angle_y = 0.0
         self.rotation_angle_x = 0.0
         self._apply_rotation_and_projection()
@@ -3071,6 +3096,62 @@ class EmbeddingViewerWindow(QWidget):
 
         self._update_toolbar_state()
 
+    def _on_auto_rotate_toggled(self):
+        """Start or stop continuous auto-rotation."""
+        if self.is_auto_rotating:
+            self._stop_auto_rotate()
+        else:
+            self.is_auto_rotating = True
+            self._auto_rotate_tick = 0
+            self._auto_rotate_last_wobble = 0.0
+            self.auto_rotate_timer.start()
+            self.rotate_toggle_button.setIcon(get_icon("pause.svg"))
+            self.rotate_toggle_button.setToolTip("Stop Auto-Rotate")
+
+    def _stop_auto_rotate(self):
+        """Stop continuous auto-rotation, if running."""
+        self._auto_rotate_paused_by_drag = False
+        if not self.is_auto_rotating:
+            return
+        self.is_auto_rotating = False
+        self.auto_rotate_timer.stop()
+        self.rotate_toggle_button.setIcon(get_icon("rotate.svg"))
+        self.rotate_toggle_button.setToolTip("Start Auto-Rotate")
+
+    def _pause_auto_rotate_for_manual_drag(self):
+        """Suspend the auto-rotate timer for a manual drag, without turning it off.
+
+        Called when the user starts a manual Ctrl+Right-Click rotate while
+        auto-rotate is active. The timer resumes on mouse release, wobbling
+        onward from wherever the manual drag left the angles.
+        """
+        if self.is_auto_rotating:
+            self._auto_rotate_paused_by_drag = True
+            self.auto_rotate_timer.stop()
+
+    def _resume_auto_rotate_after_manual_drag(self):
+        """Resume auto-rotate after a manual drag, if it was paused for one."""
+        if self._auto_rotate_paused_by_drag:
+            self._auto_rotate_paused_by_drag = False
+            if self.is_auto_rotating:
+                self.auto_rotate_timer.start()
+
+    def _on_auto_rotate_tick(self):
+        """Advance rotation angles for a continuous, ever-changing spin.
+
+        Spins mainly about the vertical (y) axis, with a slow sinusoidal
+        wobble added to the x axis so the tilt drifts and the view never
+        retraces the same path. The wobble is applied as a delta from its
+        previous value (not set absolutely) so that a manual rotation made
+        mid-spin is preserved rather than snapped back.
+        """
+        self._auto_rotate_tick += 1
+        wobble = 20.0 * np.sin(self._auto_rotate_tick * 0.01)
+        self.rotation_angle_y += 0.6
+        self.rotation_angle_x += wobble - self._auto_rotate_last_wobble
+        self._auto_rotate_last_wobble = wobble
+        self._apply_rotation_and_projection()
+
     # -------------------------------------------------------------------------
     # Mouse Event Handlers
     # -------------------------------------------------------------------------
@@ -3121,6 +3202,7 @@ class EmbeddingViewerWindow(QWidget):
             
             # Ctrl+Right-Click on empty space with 3D data: rotate
             if self.is_3d_data:
+                self._pause_auto_rotate_for_manual_drag()
                 self.is_rotating = True
                 self.last_mouse_pos = event.pos()
                 self.graphics_view.setCursor(Qt.ClosedHandCursor)
@@ -3293,6 +3375,7 @@ class EmbeddingViewerWindow(QWidget):
         if self.is_rotating:
             self.is_rotating = False
             self.graphics_view.unsetCursor()
+            self._resume_auto_rotate_after_manual_drag()
             event.accept()
             return
         
@@ -3430,6 +3513,10 @@ class EmbeddingViewerWindow(QWidget):
     def clear_view(self):
         """Clear the embedding view: cancel pipeline, clear points and reset placeholders."""
         try:
+            self._stop_auto_rotate()
+        except Exception:
+            pass
+        try:
             # Cancel running pipeline worker if any
             try:
                 if getattr(self, '_pipeline_running', False) and getattr(self, '_pipeline_worker', None):
@@ -3474,5 +3561,6 @@ class EmbeddingViewerWindow(QWidget):
 
     def closeEvent(self, event):
         """Handle close event - cleanup resources."""
+        self.auto_rotate_timer.stop()
         self.cache_manager.close()
         super().closeEvent(event)
