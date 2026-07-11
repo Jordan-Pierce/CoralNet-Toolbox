@@ -95,7 +95,12 @@ class EmbeddingViewerWindow(QWidget):
     selection_changed = pyqtSignal(list)  # List of annotation IDs
     embedding_complete = pyqtSignal()
     reset_view_requested = pyqtSignal()
-    
+
+    # Base (unscaled) pixel size for the bottom-toolbar view-control icons
+    # (locate/center/home/rotate/sprite). Scaled via app_theme.scale_size()
+    # both at creation and whenever refresh_scaling() runs.
+    _VIEW_ICON_BASE_SIZE = 18
+
     def __init__(self, main_window, parent=None):
         """
         Initialize the EmbeddingViewerWindow.
@@ -423,6 +428,7 @@ class EmbeddingViewerWindow(QWidget):
         # Locate button
         self.locate_button = QPushButton()
         self.locate_button.setIcon(get_icon("location.svg"))
+        self.locate_button.setIconSize(app_theme.scale_size(self._VIEW_ICON_BASE_SIZE))
         self.locate_button.setToolTip("Show location indicator for selected annotation")
         self.locate_button.clicked.connect(self._on_locate_clicked)
         toolbar.addWidget(self.locate_button)
@@ -430,6 +436,7 @@ class EmbeddingViewerWindow(QWidget):
         # Center on selection button
         self.center_button = QPushButton()
         self.center_button.setIcon(get_icon("target.svg"))
+        self.center_button.setIconSize(app_theme.scale_size(self._VIEW_ICON_BASE_SIZE))
         self.center_button.setToolTip("Center view on selected point(s)")
         self.center_button.clicked.connect(self._center_on_selection)
         toolbar.addWidget(self.center_button)
@@ -437,6 +444,7 @@ class EmbeddingViewerWindow(QWidget):
         # Home button
         self.home_button = QPushButton()
         self.home_button.setIcon(get_icon("home.svg"))
+        self.home_button.setIconSize(app_theme.scale_size(self._VIEW_ICON_BASE_SIZE))
         self.home_button.setToolTip("Reset view to fit all points")
         self.home_button.clicked.connect(self._reset_view)
         toolbar.addWidget(self.home_button)
@@ -444,6 +452,7 @@ class EmbeddingViewerWindow(QWidget):
         # Auto-rotate toggle button (enabled only for 3D data)
         self.rotate_toggle_button = QPushButton()
         self.rotate_toggle_button.setIcon(get_icon("rotate.svg"))
+        self.rotate_toggle_button.setIconSize(app_theme.scale_size(self._VIEW_ICON_BASE_SIZE))
         self.rotate_toggle_button.setToolTip("Start Auto-Rotate")
         self.rotate_toggle_button.setEnabled(False)
         self.rotate_toggle_button.clicked.connect(self._on_auto_rotate_toggled)
@@ -452,6 +461,7 @@ class EmbeddingViewerWindow(QWidget):
         # Sprite toggle button
         self.sprite_toggle_button = QPushButton()
         self.sprite_toggle_button.setIcon(get_icon("sprites.svg"))
+        self.sprite_toggle_button.setIconSize(app_theme.scale_size(self._VIEW_ICON_BASE_SIZE))
         self.sprite_toggle_button.setToolTip("Switch to Sprites View")
         self.sprite_toggle_button.setEnabled(True)
         self.sprite_toggle_button.clicked.connect(self._on_display_mode_changed)
@@ -740,7 +750,7 @@ class EmbeddingViewerWindow(QWidget):
         layout.addWidget(self.placeholder_label)
 
     def refresh_scaling(self):
-        """Refresh the placeholder styling after a UI scale change."""
+        """Refresh the placeholder styling and toolbar icon sizes after a UI scale change."""
         self.graphics_view.setStyleSheet(f"background-color: {app_theme.BACKGROUND_COLOR.name()};")
         self.graphics_scene.setBackgroundBrush(QColor(app_theme.BACKGROUND_COLOR))
         self.placeholder_label.setStyleSheet(
@@ -748,7 +758,32 @@ class EmbeddingViewerWindow(QWidget):
                 f"color: {app_theme.TEXT_PRIMARY_COLOR.name()}; background-color: transparent; font-size: 14px; padding: 16px;"
             )
         )
-        
+
+        # Bottom-toolbar view-control icons don't rescale via QSS alone
+        # (icon-size only applies to QToolButton/QAction, not QPushButton
+        # widgets added via addWidget), so re-fetch each icon pixmap and
+        # icon box size explicitly at the new scale factor.
+        icon_size = app_theme.scale_size(self._VIEW_ICON_BASE_SIZE)
+        static_icon_buttons = (
+            (getattr(self, 'locate_button', None), "location.svg"),
+            (getattr(self, 'center_button', None), "target.svg"),
+            (getattr(self, 'home_button', None), "home.svg"),
+        )
+        for button, icon_name in static_icon_buttons:
+            if button is not None:
+                button.setIcon(get_icon(icon_name))
+                button.setIconSize(icon_size)
+
+        if hasattr(self, 'sprite_toggle_button'):
+            sprite_icon_name = "dot.svg" if self.display_mode == 'sprites' else "sprites.svg"
+            self.sprite_toggle_button.setIcon(get_icon(sprite_icon_name))
+            self.sprite_toggle_button.setIconSize(icon_size)
+
+        if hasattr(self, 'rotate_toggle_button'):
+            rotate_icon_name = "pause.svg" if self.is_auto_rotating else "rotate.svg"
+            self.rotate_toggle_button.setIcon(get_icon(rotate_icon_name))
+            self.rotate_toggle_button.setIconSize(icon_size)
+
     # -------------------------------------------------------------------------
     # Public API
     # -------------------------------------------------------------------------
