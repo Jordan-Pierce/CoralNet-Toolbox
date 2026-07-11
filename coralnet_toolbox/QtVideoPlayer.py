@@ -1,6 +1,6 @@
-from PyQt5.QtCore import Qt, pyqtSignal, QEvent
-from PyQt5.QtGui import QPainter, QPen, QColor, QPixmap, QImage, QCursor
-from PyQt5.QtWidgets import (QWidget, QHBoxLayout, QPushButton, QSlider,
+from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QTimer
+from PyQt5.QtGui import QPainter, QPen, QColor, QPixmap, QCursor
+from PyQt5.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QSlider,
                              QLabel, QStyle, QSizePolicy, QStyleOptionSlider, QFrame, QApplication)
 
 from coralnet_toolbox import theme as app_theme
@@ -80,38 +80,81 @@ class AnnotatedSlider(QSlider):
 
 class FramePreviewTooltip(QFrame):
     """
-    Lightweight tooltip that shows a QPixmap. Provides `set_image(pixmap)` and
-    `show_at(global_pos)` methods to mirror ImagePreviewTooltip API used elsewhere.
+    Lightweight tooltip that shows a decoded video frame plus its frame
+    number. Mirrors ImagePreviewTooltip's look (used for image-list hover
+    previews elsewhere) but adds a frame-index label, which that shared
+    widget doesn't support.
     """
 
     def __init__(self, parent=None):
-        super().__init__(parent, Qt.ToolTip)
-        self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        super().__init__(parent, Qt.ToolTip | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
-        self._label = QLabel(self)
-        self._label.setAlignment(Qt.AlignCenter)
-        self._label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.setFrameShape(QFrame.StyledPanel)
+        self.setFrameShadow(QFrame.Raised)
+        self.refresh_scaling()
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(4)
+
+        self._image_label = QLabel(self)
+        self._image_label.setAlignment(Qt.AlignCenter)
+        self._image_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        layout.addWidget(self._image_label)
+
+        self._frame_label = QLabel(self)
+        self._frame_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self._frame_label)
+
         self._pixmap = None
+        self.hide()
 
     def set_image(self, pixmap: QPixmap):
-        if pixmap is None:
+        if pixmap is None or pixmap.isNull():
             self._pixmap = None
             self.hide()
             return
         self._pixmap = pixmap
-        self._label.setPixmap(self._pixmap)
-        self._label.adjustSize()
+        self._image_label.setPixmap(pixmap)
+        self._image_label.setFixedSize(pixmap.size())
         self.adjustSize()
+
+    def set_frame_label(self, text: str):
+        """Update the frame-number caption shown below the preview image."""
+        self._frame_label.setText(text)
+        self.adjustSize()
+
+    def refresh_scaling(self):
+        """Rebuild the scale-dependent stylesheet after a UI scale change."""
+        self.setStyleSheet(
+            app_theme.scale_qss(
+                """
+            QFrame {
+                background-color: %s;
+                border: 1px solid %s;
+                border-radius: 6px;
+                color: %s;
+            }
+        """ % (app_theme.SURFACE_COLOR.name(),
+               app_theme.SURFACE_BORDER_COLOR.name(),
+               app_theme.TEXT_PRIMARY_COLOR.name()))
+        )
 
     def show_at(self, global_pos):
         if self._pixmap is None:
             return
-        # Offset tooltip slightly above cursor
-        geo = self._label.geometry()
-        w = geo.width()
-        h = geo.height()
-        x = global_pos.x() - (w // 2)
-        y = global_pos.y() - h - 20
+        size = self.sizeHint()
+        x = global_pos.x() - (size.width() // 2)
+        y = global_pos.y() - size.height() - 20
+
+        screen = QApplication.screenAt(global_pos) or QApplication.primaryScreen()
+        if screen is not None:
+            rect = screen.geometry()
+            x = max(rect.left(), min(x, rect.right() - size.width()))
+            if y < rect.top():
+                # Not enough room above the cursor — show below instead
+                y = global_pos.y() + 20
+
         self.move(x, y)
         self.show()
 
@@ -163,16 +206,27 @@ class VideoPlayerWidget(QWidget):
         
         self.setup_ui()
 
-        # Prefer reuse of ImagePreviewTooltip from ImageWindow if available
-        try:
-            from coralnet_toolbox.QtImageWindow import ImagePreviewTooltip
-            self.preview_tooltip = ImagePreviewTooltip(self)
-        except Exception:
-            self.preview_tooltip = FramePreviewTooltip(self)
+        # Dedicated tooltip (not the shared ImagePreviewTooltip) since it also
+        # needs to show the frame number alongside the image.
+        self.preview_tooltip = FramePreviewTooltip(self)
 
         self._last_preview_idx = None
         self._is_user_scrubbing = False
         self._was_playing_before_scrub = False
+
+        # Debounce rapid hover/drag movement so a fast sweep across the
+        # slider doesn't trigger a frame decode for every intermediate
+        # position — only the latest pending frame is decoded, at most
+        # once per interval.
+        self._pending_preview_idx = None
+        self._pending_preview_pos = None
+        self._preview_active = False
+        self._connected_preview_raster = None
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(40)
+        self._preview_timer.timeout.connect(self._flush_pending_preview)
+
         # Install event filter on slider to capture hover and clicks
         self.slider.installEventFilter(self)
         
@@ -351,19 +405,15 @@ class VideoPlayerWidget(QWidget):
                     else:
                         frame_idx = vmin
 
-                    if frame_idx != self._last_preview_idx:
-                        self._last_preview_idx = frame_idx
-                        self._show_preview_for_frame_idx(frame_idx, event.globalPos())
+                    self._schedule_preview(frame_idx, event.globalPos())
                     return False
                 else:
                     # Hide preview when neither Ctrl nor scrubbing
-                    self._last_preview_idx = None
-                    self.preview_tooltip.hide()
+                    self._cancel_pending_preview()
                     return False
 
             if event.type() == QEvent.Leave:
-                self._last_preview_idx = None
-                self.preview_tooltip.hide()
+                self._cancel_pending_preview()
                 return False
 
             if event.type() == QEvent.MouseButtonPress:
@@ -386,8 +436,7 @@ class VideoPlayerWidget(QWidget):
                         self.slider.setValue(frame_idx)
                         self.seekChanged.emit(frame_idx)
                         # Hide tooltip after selection
-                        self._last_preview_idx = None
-                        self.preview_tooltip.hide()
+                        self._cancel_pending_preview()
                         return True
 
         return super().eventFilter(obj, event)
@@ -407,18 +456,48 @@ class VideoPlayerWidget(QWidget):
     def _on_slider_moved(self, value):
         # Show a thumbnail preview for the current drag position without
         # emitting a seek — the actual seek occurs on release.
-        if value != self._last_preview_idx:
-            self._last_preview_idx = value
-            try:
-                self._show_preview_for_frame_idx(value, QCursor.pos())
-            except Exception:
-                self.preview_tooltip.hide()
+        self._schedule_preview(value, QCursor.pos())
+
+    def _schedule_preview(self, frame_idx, global_pos):
+        """
+        Queue a preview decode for frame_idx, coalescing rapid hover/drag
+        movement so at most one decode happens per timer interval — a fast
+        sweep across the slider only decodes the latest frame, not every
+        frame the cursor passed over.
+        """
+        self._pending_preview_idx = frame_idx
+        self._pending_preview_pos = global_pos
+        self._preview_active = True
+        if not self._preview_timer.isActive():
+            self._preview_timer.start()
+
+    def _cancel_pending_preview(self):
+        """Cancel any queued preview and hide the tooltip immediately."""
+        self._preview_timer.stop()
+        self._pending_preview_idx = None
+        self._last_preview_idx = None
+        self._preview_active = False
+        self.preview_tooltip.hide()
+
+    def _flush_pending_preview(self):
+        """Timer callback: decode/show the most recently requested frame."""
+        idx = self._pending_preview_idx
+        if idx is None or idx == self._last_preview_idx:
+            return
+        self._last_preview_idx = idx
+        try:
+            self._show_preview_for_frame_idx(idx, self._pending_preview_pos)
+        except Exception:
+            self.preview_tooltip.hide()
 
     def _on_slider_released(self):
         # User finished scrubbing — perform the actual seek and hide preview.
         self._is_user_scrubbing = False
         final_value = self.slider.value()
+        self._preview_timer.stop()
+        self._pending_preview_idx = None
         self._last_preview_idx = None
+        self._preview_active = False
         self.preview_tooltip.hide()
         self.seekChanged.emit(final_value)
         # Restore playback if it was playing before scrubbing
@@ -442,35 +521,61 @@ class VideoPlayerWidget(QWidget):
                     break
                 p = p.parent()
 
-        if aw is None:
+        vr = getattr(aw, '_active_video_raster', None) if aw is not None else None
+        if vr is None:
             self.preview_tooltip.hide()
             return
 
-        try:
-            rm = None
-            try:
-                rm = aw.main_window.image_window.raster_manager
-            except Exception:
-                rm = None
+        if global_pos is None:
+            global_pos = QCursor.pos()
+        self._pending_preview_pos = global_pos
 
-            if rm is not None and hasattr(aw, '_active_video_raster') and aw._active_video_raster is not None:
-                virtual = aw._active_video_raster.make_frame_path(aw._active_video_raster.image_path, frame_idx)
-                pix = rm.get_thumbnail(virtual, longest_edge=256)
-                if pix is not None:
-                    if isinstance(pix, QImage):
-                        pm = QPixmap.fromImage(pix)
-                    else:
-                        pm = pix
-                    self.preview_tooltip.set_image(pm)
-                    if global_pos is None:
-                        global_pos = QCursor.pos()
-                    self.preview_tooltip.show_at(global_pos)
-                else:
-                    self.preview_tooltip.hide()
-            else:
-                self.preview_tooltip.hide()
+        try:
+            self._ensure_preview_connection(vr)
+
+            # Fast path: already-decoded frame sitting in the raster's LRU
+            # cache — show it immediately, no thread hop.
+            pix = vr.get_preview_pixmap_cached(frame_idx, longest_edge=256)
+            if pix is not None:
+                self.preview_tooltip.set_image(pix)
+                self.preview_tooltip.set_frame_label(f"{frame_idx} / {self.total_frames}")
+                self.preview_tooltip.show_at(global_pos)
+                return
+
+            # Slow path: queue an off-thread decode; result arrives via
+            # previewPixmapReady -> _on_async_preview_ready. Leave whatever
+            # the tooltip is currently showing in place to avoid flicker
+            # while the new frame decodes.
+            vr.request_preview_async(frame_idx, longest_edge=256)
         except Exception:
             self.preview_tooltip.hide()
+
+    def _ensure_preview_connection(self, vr):
+        """(Re)connect to the active VideoRaster's async preview signal."""
+        if self._connected_preview_raster is vr:
+            return
+        if self._connected_preview_raster is not None:
+            try:
+                self._connected_preview_raster.previewPixmapReady.disconnect(self._on_async_preview_ready)
+            except Exception:
+                pass
+        vr.previewPixmapReady.connect(self._on_async_preview_ready)
+        self._connected_preview_raster = vr
+
+    def _on_async_preview_ready(self, frame_idx, pix):
+        """
+        Slot: an off-thread preview decode finished. The worker only ever
+        decodes its most recently requested frame (stale requests are
+        overwritten before it gets to them), so this is always the freshest
+        result available — show it even if the user has since moved past
+        this exact frame_idx. Only discard once the preview session itself
+        has ended (Ctrl released, hover left, slider released).
+        """
+        if not self._preview_active:
+            return
+        self.preview_tooltip.set_image(pix)
+        self.preview_tooltip.set_frame_label(f"{frame_idx} / {self.total_frames}")
+        self.preview_tooltip.show_at(QCursor.pos())
 
     def toggle_playback_state(self):
         """
@@ -540,13 +645,13 @@ class VideoPlayerWidget(QWidget):
         Uses blockSignals to prevent creating a feedback loop.
         """
         self.total_frames = total_frames
-        
+
         # Update Slider
         self.slider.blockSignals(True)
         self.slider.setRange(0, max(0, total_frames - 1))
         self.slider.setValue(current_frame)
         self.slider.blockSignals(False)
-        
+
         # Update Label
         self.lbl_frame.setText(f"{current_frame} / {total_frames}")
 
@@ -591,3 +696,45 @@ class VideoPlayerWidget(QWidget):
         self.slider.set_annotation_frames(set())
         self.slider.set_keyframe_frames(set())
         self.set_keyframe_state(False)
+
+    def refresh_scaling(self):
+        """
+        Re-apply the current UI scale to every icon/button and the preview
+        tooltip. VideoPlayerWidget builds its icons and button sizes once in
+        __init__ from app_theme; nothing re-applies them if the user changes
+        the scale later via the Scale menu, so AnnotationWindow.refresh_scaling()
+        forwards here.
+        """
+        self.first_frame_icon = get_icon("skip-to-start.svg", tint=self.control_icon_tint)
+        self.prev_frame_icon = get_icon("rewind.svg", tint=self.control_icon_tint)
+        self.play_icon = get_icon("play.svg", tint=self.control_icon_tint)
+        self.pause_icon = get_icon("pause.svg", tint=self.control_icon_tint)
+        self.stop_icon = get_icon("stop.svg", tint=self.control_icon_tint)
+        self.next_frame_icon = get_icon("fast-forward.svg", tint=self.control_icon_tint)
+        self.last_frame_icon = get_icon("skip-to-end.svg", tint=self.control_icon_tint)
+        self.prev_annotated_icon = get_icon("left.svg", tint=self.control_icon_tint)
+        self.next_annotated_icon = get_icon("right.svg", tint=self.control_icon_tint)
+        self.star_icon = get_icon("star.svg", tint=self.control_icon_tint)
+        self.prev_keyframe_icon = get_icon("left.svg", tint=self.control_icon_tint)
+        self.next_keyframe_icon = get_icon("right.svg", tint=self.control_icon_tint)
+
+        btn_size = app_theme.scale_size(30)
+        icon_size = app_theme.scale_size(18)
+        for btn, icon in (
+            (self.btn_first, self.first_frame_icon),
+            (self.btn_prev, self.prev_frame_icon),
+            (self.btn_play, self.pause_icon if self.is_playing else self.play_icon),
+            (self.btn_stop, self.stop_icon),
+            (self.btn_next, self.next_frame_icon),
+            (self.btn_last, self.last_frame_icon),
+            (self.btn_prev_annotated, self.prev_annotated_icon),
+            (self.btn_next_annotated, self.next_annotated_icon),
+            (self.btn_prev_keyframe, self.prev_keyframe_icon),
+            (self.btn_star, self.star_icon),
+            (self.btn_next_keyframe, self.next_keyframe_icon),
+        ):
+            btn.setIcon(icon)
+            btn.setFixedSize(btn_size)
+            btn.setIconSize(icon_size)
+
+        self.preview_tooltip.refresh_scaling()

@@ -733,6 +733,8 @@ class AnnotationWindow(BaseCanvas):
             self.transparent_icon_label.setPixmap(get_icon("transparent.svg").pixmap(app_theme.scale_size(16)))
         if hasattr(self, 'opaque_icon_label'):
             self.opaque_icon_label.setPixmap(get_icon("opaque.svg").pixmap(app_theme.scale_size(16)))
+        if hasattr(self, '_video_player'):
+            self._video_player.refresh_scaling()
 
     def create_bottom_toolbar(self) -> QToolBar:
         """Create the bottom toolbar with mouse position, image/view dimensions, 

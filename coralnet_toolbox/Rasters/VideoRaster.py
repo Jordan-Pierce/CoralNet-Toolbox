@@ -1,6 +1,7 @@
 import warnings
 import os
 import time
+from collections import OrderedDict
 from typing import Optional
 
 import cv2
@@ -12,7 +13,7 @@ except ImportError:
     torch = None
 
 from PyQt5.QtGui import QImage, QPixmap
-from PyQt5.QtCore import QObject, QThread, QMutex, pyqtSignal
+from PyQt5.QtCore import Qt, QObject, QThread, QMutex, pyqtSignal
 
 from coralnet_toolbox.Rasters.QtRaster import Raster
 
@@ -308,6 +309,95 @@ class VideoDecodeWorker(QThread):
         self.wait(3000)
 
 
+class PreviewDecodeWorker(QThread):
+    """
+    Decodes single "preview" frames (Ctrl+hover / scrub thumbnails) on a
+    background thread using its own ``cv2.VideoCapture`` — separate from
+    the raster's main capture and from ``VideoDecodeWorker`` — so preview
+    requests never block the GUI thread or contend with playback decode.
+
+    Only the most recently requested frame is decoded: a new ``request()``
+    overwrites any not-yet-started request, so a fast hover sweep never
+    queues up stale decode work.
+    """
+
+    previewReady = pyqtSignal(int, int, object)  # frame_idx, longest_edge, QImage
+
+    def __init__(self, video_path: str, parent=None):
+        super().__init__(parent)
+        self._video_path = video_path
+        self._running = False
+        self._mutex = QMutex()
+        self._pending_request: Optional[tuple] = None  # (frame_idx, longest_edge)
+
+    def run(self):
+        cap = cv2.VideoCapture(self._video_path)
+        if not cap.isOpened():
+            return
+
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        self._running = True
+        next_idx: Optional[int] = None
+
+        while self._running:
+            self._mutex.lock()
+            req = self._pending_request
+            self._pending_request = None
+            self._mutex.unlock()
+
+            if req is None:
+                time.sleep(0.005)
+                continue
+
+            frame_idx, longest_edge = req
+            if total_frames > 0:
+                frame_idx = max(0, min(frame_idx, total_frames - 1))
+            else:
+                frame_idx = max(0, frame_idx)
+
+            gap = None if next_idx is None else frame_idx - next_idx
+            try:
+                if gap is None or gap < 0 or gap > 30:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                elif gap > 0:
+                    for _ in range(gap):
+                        if not cap.grab():
+                            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                            break
+                ret, bgr = cap.read()
+            except Exception:
+                next_idx = None
+                continue
+
+            if not ret or bgr is None:
+                next_idx = None
+                continue
+            next_idx = frame_idx + 1
+
+            h, w = bgr.shape[:2]
+            if longest_edge and max(h, w) > longest_edge:
+                scale = longest_edge / max(h, w)
+                new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
+                bgr = cv2.resize(bgr, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                h, w = new_h, new_w
+
+            rgb = bgr[..., ::-1]
+            q_img = QImage(rgb.tobytes(), w, h, w * 3, QImage.Format_RGB888)
+            self.previewReady.emit(frame_idx, longest_edge, q_img)
+
+        cap.release()
+
+    def request(self, frame_idx: int, longest_edge: int):
+        """Queue a preview decode. Thread-safe; callable from any thread."""
+        self._mutex.lock()
+        self._pending_request = (frame_idx, longest_edge)
+        self._mutex.unlock()
+
+    def stop(self):
+        self._running = False
+        self.wait(3000)
+
+
 class VideoRaster(Raster):
     """
     A Raster subclass backed by a video file instead of a static image.
@@ -322,6 +412,10 @@ class VideoRaster(Raster):
     # Emitted by the decode worker (forwarded via _on_worker_frame).
     # Listeners receive (frame_idx: int, q_img: QImage).
     frameReady = pyqtSignal(int, object)
+
+    # Emitted when an async preview request (see request_preview_async)
+    # finishes decoding. Listeners receive (frame_idx: int, pixmap: QPixmap).
+    previewPixmapReady = pyqtSignal(int, object)
 
     def __init__(self, video_path: str):
         # Canonical type
@@ -351,12 +445,22 @@ class VideoRaster(Raster):
 
         # Thumbnail cache (populated on first call to get_thumbnail)
         self._video_thumbnail: Optional[QImage] = None
+
+        # Small LRU cache of decoded+scaled preview pixmaps, keyed by
+        # (frame_idx, longest_edge). Used by the Ctrl+hover / scrub preview
+        # so repeated hovers over nearby frames don't re-decode from disk.
+        self._preview_cache: "OrderedDict[tuple, QPixmap]" = OrderedDict()
+        self._preview_cache_max = 48
         self._nvcodec_decoder = None
         self._nvcodec_output_is_planar = False
         self._nvcodec_disabled = False
 
         # Background decode worker (created by start_decode_worker; None when stopped)
         self._decode_worker: Optional[VideoDecodeWorker] = None
+
+        # Background preview-decode worker (created lazily on first async
+        # preview request; used by Ctrl+hover/scrub thumbnails).
+        self._preview_worker: Optional[PreviewDecodeWorker] = None
 
         # Call parent __init__ — it will call load_rasterio() which we override
         super().__init__(video_path)
@@ -494,6 +598,67 @@ class VideoRaster(Raster):
         self._current_frame_idx = frame_idx
 
         return self._bgr_to_qimage(bgr)
+
+    def get_preview_pixmap(self, frame_idx: int, longest_edge: int = 256) -> Optional[QPixmap]:
+        """
+        Return a decoded+scaled preview QPixmap for frame_idx, using a small
+        LRU cache so repeated hovers (Ctrl+hover, scrub) over nearby/revisited
+        frames avoid re-seeking and re-decoding the video.
+        """
+        frame_idx = self._clamp_frame_idx(frame_idx)
+        key = (frame_idx, longest_edge)
+
+        cached = self._preview_cache.get(key)
+        if cached is not None:
+            self._preview_cache.move_to_end(key)
+            return cached
+
+        q_img = self.get_frame(frame_idx)
+        if q_img is None:
+            return None
+
+        pix = QPixmap.fromImage(q_img)
+        if longest_edge is not None:
+            pix = pix.scaled(longest_edge, longest_edge,
+                              Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+        self._store_preview(key, pix)
+        return pix
+
+    def get_preview_pixmap_cached(self, frame_idx: int, longest_edge: int = 256) -> Optional[QPixmap]:
+        """Non-blocking cache lookup only — returns None on a miss without decoding."""
+        frame_idx = self._clamp_frame_idx(frame_idx)
+        key = (frame_idx, longest_edge)
+        cached = self._preview_cache.get(key)
+        if cached is not None:
+            self._preview_cache.move_to_end(key)
+        return cached
+
+    def request_preview_async(self, frame_idx: int, longest_edge: int = 256) -> None:
+        """
+        Queue a background decode for frame_idx on a dedicated preview
+        thread (separate cv2.VideoCapture, does not block the GUI thread
+        or contend with the playback decode worker). Result arrives via
+        the ``previewPixmapReady`` signal.
+        """
+        frame_idx = self._clamp_frame_idx(frame_idx)
+        if self._preview_worker is None:
+            self._preview_worker = PreviewDecodeWorker(self.image_path)
+            self._preview_worker.previewReady.connect(self._on_preview_decoded)
+            self._preview_worker.start()
+        self._preview_worker.request(frame_idx, longest_edge)
+
+    def _on_preview_decoded(self, frame_idx: int, longest_edge: int, q_img: QImage) -> None:
+        """Slot (runs on the GUI thread): build the QPixmap and cache it."""
+        pix = QPixmap.fromImage(q_img)
+        self._store_preview((frame_idx, longest_edge), pix)
+        self.previewPixmapReady.emit(frame_idx, pix)
+
+    def _store_preview(self, key: tuple, pix: QPixmap) -> None:
+        self._preview_cache[key] = pix
+        self._preview_cache.move_to_end(key)
+        if len(self._preview_cache) > self._preview_cache_max:
+            self._preview_cache.popitem(last=False)
 
     def get_bgr_frame(self, frame_idx: int) -> Optional[np.ndarray]:
         """Return a raw BGR numpy array for the given frame index."""
@@ -831,8 +996,12 @@ class VideoRaster(Raster):
 
     def cleanup(self, collect_garbage: bool = True):
         """Release cv2 resources before parent cleanup."""
-        # Stop the background decode worker first so its cap is released before ours
+        # Stop background workers first so their caps are released before ours
         self.stop_decode_worker()
+
+        if getattr(self, '_preview_worker', None) is not None:
+            self._preview_worker.stop()
+            self._preview_worker = None
 
         if hasattr(self, '_cap') and self._cap is not None:
             try:
