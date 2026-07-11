@@ -19,6 +19,8 @@
 
 </div>
 
+Marine imaging technology is advancing rapidly, capturing more data than ever before. To keep pace, the instinct of the tech industry is often to build entirely new, fully automated pipelines that disrupt how scientists naturally work. However, this ignores the reality of ecological research: laboratories already rely on stringent standards, deeply established protocols, and decades of domain expertise. CoralNet-Toolbox recognizes that the goal shouldn't be to force a new way of working, but to respect and protect the processes that already yield rigorous scientific results.
+
 ## ⚡ Get Started
 
 **1. Create Conda Environment (Recommended)**
