@@ -164,9 +164,11 @@ class ImportTagLabAnnotations:
                         label_info = merged_data['labels'][label_id]
                         short_label_code = label_info['name'].strip()
                         color = QColor(*label_info['fill'])
-                        
-                        self.label_window.add_label_if_not_exists(short_label_code, short_label_code, color, label_id)
-                        
+
+                        # Defer UI refresh; batch-refresh once after the loop to avoid flashing.
+                        self.label_window.add_label_if_not_exists(short_label_code, short_label_code, color, label_id,
+                                                                  refresh_ui=False)
+
                         points = self.parse_contour(annotation['contour'])
                         holes = [self.parse_contour(inner) for inner in annotation.get('inner contours', [])]
 
@@ -203,8 +205,10 @@ class ImportTagLabAnnotations:
                         short_label_code = label_info['name'].strip()
                         color = QColor(*label_info['fill'])
 
-                        self.label_window.add_label_if_not_exists(short_label_code, short_label_code, color, label_id)
-                        
+                        # Defer UI refresh; batch-refresh once after the loop to avoid flashing.
+                        self.label_window.add_label_if_not_exists(short_label_code, short_label_code, color, label_id,
+                                                                  refresh_ui=False)
+
                         label_obj = self.label_window.get_label_by_short_code(short_label_code)
                         patch_annotation = PatchAnnotation(
                             center_xy=QPointF(annotation['X'], annotation['Y']),
@@ -242,6 +246,8 @@ class ImportTagLabAnnotations:
                                 f"An error occurred while importing annotations:\n\n{str(e)}\n\n"
                                 "Please check the console for more details.")
         finally:
+            # Single UI refresh for the whole batch (avoids per-label flashing).
+            self.label_window.refresh_after_batch_add()
             progress_bar.stop_progress()
             progress_bar.close()
             QApplication.restoreOverrideCursor()

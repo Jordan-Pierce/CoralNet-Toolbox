@@ -36,6 +36,9 @@ BACKGROUND_ALT_COLOR = QColor("#13161f")
 SURFACE_COLOR = QColor("#1e2130")
 SURFACE_ELEVATED_COLOR = QColor("#252a3d")
 SURFACE_BORDER_COLOR = QColor("#2a2d3a")
+DOCK_BORDER_COLOR = QColor("#3d4358")     # dock-area outline — brighter than SURFACE_BORDER
+DOCK_SPLITTER_COLOR = QColor("#4a5270")   # the draggable line BETWEEN adjacent docks
+DOCK_SPLITTER_WIDTH = 6                    # px grab-zone; visible line is a thin gradient core
 TEXT_PRIMARY_COLOR = QColor("#d4d8e8")
 TEXT_SECONDARY_COLOR = QColor("#8892b0")
 TEXT_MUTED_COLOR = QColor("#556080")
@@ -745,7 +748,49 @@ ads--CDockWidgetTab:focus {{
 
 ads--CDockArea {{
     background-color: {BACKGROUND_COLOR.name()};
-    border: 1px solid {SURFACE_BORDER_COLOR.name()};
+    border: 1px solid {DOCK_BORDER_COLOR.name()};
+}}
+
+/* ── Splitter between docks ────────────────────────────────────
+   The handle is the real boundary line when two docks sit side by
+   side or stacked. The handle itself is a wide (~6px) grab zone, but
+   we only paint a thin hairline down its centre via a gradient with
+   transparent margins — crisp core, soft edges, no fat bar. Handle
+   width is set in code via CDockSplitter; colour only lives here. */
+ads--CDockSplitter::handle {{
+    background-color: transparent;
+}}
+ads--CDockSplitter::handle:horizontal {{
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0    transparent,
+        stop:0.35 transparent,
+        stop:0.5  {DOCK_SPLITTER_COLOR.name()},
+        stop:0.65 transparent,
+        stop:1    transparent);
+}}
+ads--CDockSplitter::handle:vertical {{
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0    transparent,
+        stop:0.35 transparent,
+        stop:0.5  {DOCK_SPLITTER_COLOR.name()},
+        stop:0.65 transparent,
+        stop:1    transparent);
+}}
+ads--CDockSplitter::handle:horizontal:hover {{
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0    transparent,
+        stop:0.3  transparent,
+        stop:0.5  {ACCENT_HOVER_COLOR.name()},
+        stop:0.7  transparent,
+        stop:1    transparent);
+}}
+ads--CDockSplitter::handle:vertical:hover {{
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0    transparent,
+        stop:0.3  transparent,
+        stop:0.5  {ACCENT_HOVER_COLOR.name()},
+        stop:0.7  transparent,
+        stop:1    transparent);
 }}
 
 /* ── Dock title-bar button icons ──────────────────────────────

@@ -66,10 +66,12 @@ class ImportCoralNetLabels:
                         short_label_code = r['Short Code'].strip()
                         
                         # Create a QtColor object from the color string
+                        # Defer UI refresh; batch-refresh once after the loop to avoid flashing.
                         label = self.label_window.add_label_if_not_exists(short_label_code,
                                                                           long_label_code=None,
                                                                           color=None,
-                                                                          label_id=None)
+                                                                          label_id=None,
+                                                                          refresh_ui=False)
 
                     except Exception as e:
                         print(f"Warning: Could not import label {r}: {str(e)}")
@@ -87,6 +89,8 @@ class ImportCoralNetLabels:
                                     f"An error occurred while importing CoralNet labels: {str(e)}")
 
             finally:
+                # Single UI refresh for the whole batch (avoids per-label flashing).
+                self.label_window.refresh_after_batch_add()
                 # Stop the progress bar
                 progress_bar.stop_progress()
                 progress_bar.close()

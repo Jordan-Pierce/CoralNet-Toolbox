@@ -533,7 +533,8 @@ class Base(QDialog):
 
         # 1. Create all annotation objects in memory first
         for raw_ann in raw_annotations:
-            label = self.main_window.label_window.add_label_if_not_exists(raw_ann["class_name"])
+            # Defer UI refresh; batch-refresh once after the loop to avoid flashing.
+            label = self.main_window.label_window.add_label_if_not_exists(raw_ann["class_name"], refresh_ui=False)
             annotation = None
             if raw_ann["type"] == "RectangleAnnotation":
                 tl, br = raw_ann["top_left"], raw_ann["bottom_right"]
@@ -555,8 +556,11 @@ class Base(QDialog):
             
             if annotation:
                 newly_created_annotations.append(annotation)
-            
+
             progress_bar.update_progress()
+
+        # Single UI refresh for the whole batch (avoids per-label flashing).
+        self.main_window.label_window.refresh_after_batch_add()
 
         # 2. Add all created annotations to the project in a single batch operation
         if newly_created_annotations:

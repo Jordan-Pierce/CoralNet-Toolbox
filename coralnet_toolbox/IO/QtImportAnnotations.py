@@ -102,7 +102,9 @@ class ImportAnnotations:
                     long_label = annotation['label_long_code']
                     color = QColor(*annotation['annotation_color'])
                     label_id = annotation['label_id']
-                    label = self.label_window.add_label_if_not_exists(short_label, long_label, color, label_id)
+                    # Defer UI refresh; batch-refresh once after the loop to avoid flashing.
+                    label = self.label_window.add_label_if_not_exists(short_label, long_label, color, label_id,
+                                                                      refresh_ui=False)
                     if label.color != color:
                         annotation['annotation_color'] = label.color.getRgb()
                         updated_annotations = True
@@ -110,6 +112,8 @@ class ImportAnnotations:
         except Exception as e:
             print(f"Error loading label: {str(e)}")
         finally:
+            # Single UI refresh for the whole batch (avoids per-label flashing).
+            self.label_window.refresh_after_batch_add()
             QApplication.restoreOverrideCursor()
             progress_bar.stop_progress()
             progress_bar.close()

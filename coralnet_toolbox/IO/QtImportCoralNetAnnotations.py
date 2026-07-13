@@ -113,9 +113,12 @@ class ImportCoralNetAnnotations:
             
             label_cache = {}
             for label_code in unique_labels:
-                label = self.label_window.add_label_if_not_exists(label_code, label_code)
+                # Defer UI refresh; batch-refresh once after the loop to avoid flashing.
+                label = self.label_window.add_label_if_not_exists(label_code, label_code, refresh_ui=False)
                 label_cache[label_code] = label
-            
+            # Single UI refresh for the whole batch (avoids per-label flashing).
+            self.label_window.refresh_after_batch_add()
+
             annotations_to_add = []
             images_to_update = set()
             
