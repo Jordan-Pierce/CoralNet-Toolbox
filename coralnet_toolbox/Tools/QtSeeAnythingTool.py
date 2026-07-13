@@ -152,11 +152,12 @@ class SeeAnythingTool(Tool):
         # Set the image in the SeeAnything dialog
         self.see_anything_dialog.set_image(self.work_area_image, self.image_path)
         
-        # --- NEW CODE: PRELOAD SAM EMBEDDINGS ---
+        # --- PRELOAD SAM EMBEDDINGS ---
         if self.see_anything_dialog.use_sam_dropdown.currentText() == "True":
-            if hasattr(self.see_anything_dialog, 'sam_dialog') and self.see_anything_dialog.sam_dialog:
+            sam_dialog = getattr(self.see_anything_dialog, 'sam_dialog', None)
+            if sam_dialog is not None and getattr(sam_dialog, 'loaded_model', None) is not None:
                 # This runs the 500ms ViT encoder while the WaitCursor is active during setup
-                self.see_anything_dialog.sam_dialog.set_image(self.work_area_image, self.image_path)
+                sam_dialog.set_image(self.work_area_image, self.image_path)
         # ----------------------------------------
 
         self.annotation_window.setCursor(Qt.CrossCursor)
@@ -213,11 +214,12 @@ class SeeAnythingTool(Tool):
         # Set the image in the SeeAnything dialog
         self.see_anything_dialog.set_image(self.work_area_image, self.image_path)
         
-        # --- NEW CODE: PRELOAD SAM EMBEDDINGS ---
+        # --- PRELOAD SAM EMBEDDINGS ---
         if self.see_anything_dialog.use_sam_dropdown.currentText() == "True":
-            if hasattr(self.see_anything_dialog, 'sam_dialog') and self.see_anything_dialog.sam_dialog:
+            sam_dialog = getattr(self.see_anything_dialog, 'sam_dialog', None)
+            if sam_dialog is not None and getattr(sam_dialog, 'loaded_model', None) is not None:
                 # This runs the 500ms ViT encoder while the WaitCursor is active during setup
-                self.see_anything_dialog.sam_dialog.set_image(self.work_area_image, self.image_path)
+                sam_dialog.set_image(self.work_area_image, self.image_path)
         # ----------------------------------------
         
         self.annotation_window.setCursor(Qt.CrossCursor)
