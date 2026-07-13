@@ -57,10 +57,12 @@ class ImportLabels:
                     label = Label.from_dict(label)
 
                     # Create a new label if it doesn't already exist
+                    # Defer UI refresh; batch-refresh once after the loop to avoid flashing.
                     label = self.label_window.add_label_if_not_exists(label.short_label_code,
                                                                       label.long_label_code,
                                                                       label.color,
-                                                                      label.id)
+                                                                      label.id,
+                                                                      refresh_ui=False)
                     # Update the progress bar
                     progress_bar.update_progress()
 
@@ -74,6 +76,8 @@ class ImportLabels:
                                     f"An error occurred while importing Labels: {str(e)}")
 
             finally:
+                # Single UI refresh for the whole batch (avoids per-label flashing).
+                self.label_window.refresh_after_batch_add()
                 # Stop the progress bar
                 progress_bar.stop_progress()
                 progress_bar.close()
