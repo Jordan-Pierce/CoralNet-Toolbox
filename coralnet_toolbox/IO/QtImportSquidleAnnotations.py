@@ -148,15 +148,19 @@ class ImportSquidleAnnotations:
             for record in all_records:
                 label_code = record.get("label.name", "Review")
                 if label_code not in unique_labels:
+                    # Defer UI refresh; batch-refresh once after the loop to avoid flashing.
                     label_obj = self.label_window.add_label_if_not_exists(
                         label_code,
                         label_code,
                         None,
-                        None
+                        None,
+                        refresh_ui=False
                     )
                     if label_obj:
                         unique_labels[label_code] = label_obj
-            
+            # Single UI refresh for the whole batch (avoids per-label flashing).
+            self.label_window.refresh_after_batch_add()
+
             # PHASE 2: Create all annotation objects in memory first
             new_annotations = []
             for record in all_records:

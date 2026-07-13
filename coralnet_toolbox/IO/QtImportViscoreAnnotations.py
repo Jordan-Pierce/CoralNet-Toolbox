@@ -265,8 +265,11 @@ class ImportViscoreAnnotations(QDialog):
             for label_code in label_codes:
                 if pd.notna(label_code):
                     short_code = str(label_code)
-                    self.label_window.add_label_if_not_exists(short_code)
+                    # Defer UI refresh; batch-refresh once after the loop to avoid flashing.
+                    self.label_window.add_label_if_not_exists(short_code, refresh_ui=False)
                 progress_bar.update_progress()
+            # Single UI refresh for the whole batch (avoids per-label flashing).
+            self.label_window.refresh_after_batch_add()
 
             # Import annotations
             progress_bar.setWindowTitle("Importing Annotations")

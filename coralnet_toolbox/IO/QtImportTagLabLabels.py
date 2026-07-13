@@ -67,9 +67,11 @@ class ImportTagLabLabels:
                                        label_info['fill'][2])
 
                         # Add label if it does not exist
-                        label = self.label_window.add_label_if_not_exists(short_label_code, 
-                                                                          long_label_code, 
-                                                                          color)
+                        # Defer UI refresh; batch-refresh once after the loop to avoid flashing.
+                        label = self.label_window.add_label_if_not_exists(short_label_code,
+                                                                          long_label_code,
+                                                                          color,
+                                                                          refresh_ui=False)
 
                     except Exception as e:
                         print(f"Warning: Could not import label {label_info['name']}: {str(e)}")
@@ -87,6 +89,8 @@ class ImportTagLabLabels:
                                     f"An error occurred while importing TagLab labels: {str(e)}")
 
             finally:
+                # Single UI refresh for the whole batch (avoids per-label flashing).
+                self.label_window.refresh_after_batch_add()
                 # Stop the progress bar
                 progress_bar.stop_progress()
                 progress_bar.close()

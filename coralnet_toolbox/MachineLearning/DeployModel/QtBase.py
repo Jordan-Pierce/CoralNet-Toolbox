@@ -393,12 +393,15 @@ class Base(QDialog):
         """
         if self.class_mapping:
             for label in self.class_mapping.values():
+                # Defer UI refresh; batch-refresh once after the loop to avoid flashing.
                 self.label_window.add_label_if_not_exists(
-                    label['short_label_code'], 
+                    label['short_label_code'],
                     label['long_label_code'],
                     QColor(*label.get('color', [255, 255, 255])),
-                    label_id=label.get('id')
+                    label_id=label.get('id'),
+                    refresh_ui=False
                 )
+            self.label_window.refresh_after_batch_add()
 
     def handle_missing_class_mapping(self, unmapped_classes=None):
         """
@@ -454,15 +457,20 @@ class Base(QDialog):
                            If None, uses self.class_names
         """
         names_to_create = class_names if class_names is not None else self.class_names
-        
+
         for class_name in names_to_create:
             # Create the label in the label window
+            # Defer UI refresh; batch-refresh once after the loop to avoid flashing.
             label = self.label_window.add_label_if_not_exists(
                 class_name,
                 class_name,
+                refresh_ui=False,
             )
             self.class_mapping[class_name] = label.to_dict()
             self.auto_created_labels.add(class_name)  # Track as auto-created
+
+        if names_to_create:
+            self.label_window.refresh_after_batch_add()
 
     def get_checked_class_names(self):
         """

@@ -793,9 +793,23 @@ class LabelWindow(QWidget):
         # Add labels vertically
         for label in self.labels:
             self.labels_layout.addWidget(label)
-        
+
         # Add a stretch to push all labels to the top
         self.labels_layout.addStretch()
+
+    def refresh_after_batch_add(self):
+        """Refresh the label dock ONCE after a batch of labels was added with refresh_ui=False.
+
+        Callers that add many labels in a loop should pass refresh_ui=False to
+        add_label / add_label_if_not_exists to avoid a full layout teardown and
+        forced repaint per label (the flashing), then call this once when done.
+        """
+        self.update_labels_per_row()
+        self.reorganize_labels()
+        self.update_label_count()
+        self.main_window.image_window.update_search_bars()
+        self.sync_all_masks_with_labels()
+        self.update_tooltips()
 
     def open_add_label_dialog(self):
         """Open the dialog to add a new label."""
