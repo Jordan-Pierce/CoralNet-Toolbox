@@ -486,6 +486,11 @@ class BatchedRayManager:
             )
             if self.ray_actor is not None:
                 self.ray_actor.SetPickable(False)
+                # Opaque actors always write the depth buffer regardless of
+                # SetPickable, so force translucent classification to keep
+                # hardware Z-buffer picks (e.g. CursorPreview3D hover) from
+                # snapping onto the ray lines.
+                self.ray_actor.ForceTranslucentOn()
 
         return self.ray_actor
 

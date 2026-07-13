@@ -1696,6 +1696,11 @@ class MVATManager(QObject):
                 )
                 # Fresh results were rendered at the session budget (0 = Native).
                 camera._raster.index_map_pixel_budget = int(self.pixel_budget or 0)
+                # Pin active camera's index map to RAM so multi-annotate's first patch
+                # access doesn't trigger expensive recomputation. Pinned maps cache in
+                # _index_map on property read, avoiding the provider's cold GL render.
+                if path == self.selected_camera.image_path if self.selected_camera else False:
+                    camera._raster._index_map_pinned = True
             except Exception:
                 pass
 

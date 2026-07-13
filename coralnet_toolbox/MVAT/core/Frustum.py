@@ -180,7 +180,12 @@ class Frustum:
             )
             # Make sure it's not pickable to avoid interfering with selection
             self.actors[plotter].SetPickable(False)
-            
+            # Force into VTK's translucent render pass so it never writes to the
+            # depth buffer (opaque actors always do, regardless of SetPickable),
+            # otherwise hardware Z-buffer picks (e.g. CursorPreview3D hover) snap
+            # to the wireframe instead of passing through to the real geometry.
+            self.actors[plotter].ForceTranslucentOn()
+
         return self.actors[plotter]
 
     def create_image_plane_actor(self, plotter, scale=0.3, opacity=0.8):
@@ -239,7 +244,9 @@ class Frustum:
             )
             # Make sure it's not pickable to avoid interfering with selection
             actor.SetPickable(False)
-            
+            # Same depth-buffer concern as the wireframe actor above.
+            actor.ForceTranslucentOn()
+
             # 5. Disable Lighting
             # This ensures the image is shown as "emissive" (true colors) 
             # and doesn't get darkened by shadows inside the frustum.
@@ -553,6 +560,10 @@ class BatchedFrustumManager:
             reset_camera=False
         )
         self.wireframe_actor.SetPickable(False)
+        # Opaque actors always write the depth buffer regardless of SetPickable,
+        # so force translucent classification to keep hardware Z-buffer picks
+        # (e.g. CursorPreview3D hover) from snapping onto the frustum wireframes.
+        self.wireframe_actor.ForceTranslucentOn()
 
         return self.wireframe_actor
 
