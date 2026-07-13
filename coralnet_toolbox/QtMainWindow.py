@@ -1325,6 +1325,9 @@ class MainWindow(QMainWindow):
             if dock_name in self.dock_toggle_actions:
                 self.dock_toggle_actions[dock_name].setChecked(dock_widget.isVisible())
 
+        # Thicken splitter handles now that the restored layout created them
+        self._apply_dock_splitter_width()
+
         # --------------------------------------------------
         # Enable drag and drop
         # --------------------------------------------------
@@ -2832,9 +2835,32 @@ class MainWindow(QMainWindow):
                 # fallback in build_dock_stylesheet() still applies.
                 pass
 
+    def _apply_dock_splitter_width(self):
+        """Thicken every ADS splitter handle so dock boundaries read clearly.
+
+        The splitter colour is set via QSS in build_dock_stylesheet(), but its
+        thickness is a QSplitter property ADS reads from C++ and ignores from
+        QSS. Walk the dock container and set the handle width on each
+        CDockSplitter. Splitters are created lazily (on restore / on drag), so
+        this is called after layout restore and on every scale refresh; it is
+        cheap and idempotent.
+        """
+        splitter_cls = getattr(ads, 'CDockSplitter', None)
+        if splitter_cls is None:
+            return
+        width = app_theme.scale_int(app_theme.DOCK_SPLITTER_WIDTH)
+        try:
+            for splitter in self.dock_manager.findChildren(splitter_cls):
+                splitter.setHandleWidth(width)
+        except Exception:
+            # Older PyQtAds builds may not expose the class to findChildren;
+            # the QSS colour still applies, so fail quietly.
+            pass
+
     def refresh_scale_sensitive_ui(self):
         """Refresh widget sizes and styles that depend on the selected UI scale."""
         self.dock_manager.setStyleSheet(app_theme.build_dock_stylesheet())
+        self._apply_dock_splitter_width()
 
         self.toolbar.setFixedWidth(app_theme.scale_int(48))
         self.toolbar.setIconSize(app_theme.scale_size(24))
