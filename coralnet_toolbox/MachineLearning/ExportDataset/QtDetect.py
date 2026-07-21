@@ -25,6 +25,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 class Detect(Base):
     supports_unlabeled_video_frames = True
+    task = "detect"
 
     def __init__(self, parent=None):
         super(Detect, self).__init__(parent)

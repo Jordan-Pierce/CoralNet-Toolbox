@@ -48,7 +48,8 @@ class Semantic(Base):
     """
 
     supports_unlabeled_video_frames = True
-    
+    task = "semantic"
+
     def __init__(self, main_window, parent=None):
         super(Semantic, self).__init__(main_window, parent)
         self.setWindowTitle("Export Semantic Segmentation Dataset")

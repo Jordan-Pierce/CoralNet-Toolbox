@@ -25,6 +25,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 class Segment(Base):
     supports_unlabeled_video_frames = True
+    task = "segment"
 
     def __init__(self, parent=None):
         super(Segment, self).__init__(parent)
