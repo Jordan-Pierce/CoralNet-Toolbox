@@ -17,10 +17,14 @@ import numpy as np
 import pandas as pd
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel, QMessageBox, QApplication)
+from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel, QMessageBox, QApplication, QDialog)
 
 from coralnet_toolbox.MachineLearning.ExportDataset.QtBase import Base
 from coralnet_toolbox.MachineLearning.ExportDataset.export_dataset_utils import is_video_frame_path
+from coralnet_toolbox.MachineLearning.TrainModel.QtBase import (
+    open_train_model_dialog_later,
+    prompt_train_model,
+)
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Icons import get_icon
 
@@ -31,6 +35,8 @@ from coralnet_toolbox.Icons import get_icon
 
 
 class Classify(Base):
+    task = "classify"
+
     def __init__(self, parent=None):
         super(Classify, self).__init__(parent)
         self.setWindowTitle("Export Classification Dataset")
@@ -155,13 +161,16 @@ class Classify(Base):
             # Create the dataset
             self.create_dataset(output_dir_path)
 
-            QMessageBox.information(self,
-                                    "Dataset Created",
-                                    "Dataset has been successfully created.")
-        
+            if prompt_train_model(self, "Dataset Created", "Dataset has been successfully created."):
+                # Close this dialog (skipping Base.accept, which would re-export) before handing
+                # off to the Train Model dialog
+                QDialog.accept(self)
+                open_train_model_dialog_later(self.main_window, self.task, output_dir_path)
+
         except Exception as e:
             QMessageBox.critical(self, "Failed to Create Dataset", f"{e}")
-            
+
+
     def create_dataset(self, output_dir_path):
         """
         Create an image classification dataset.

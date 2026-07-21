@@ -15,6 +15,12 @@ from coralnet_toolbox.Common.QtTileSizeInput import TileSizeInput
 from coralnet_toolbox.Common.QtOverlapInput import OverlapInput
 from coralnet_toolbox.Common.QtMarginInput import MarginInput
 
+from coralnet_toolbox.MachineLearning.TrainModel.QtBase import (
+    get_task_for_annotation_type,
+    open_train_model_dialog_later,
+    prompt_train_model,
+)
+
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Icons import get_icon, get_window_icon
@@ -38,6 +44,9 @@ class Base(QDialog):
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.main_window = main_window
+
+        # Dataset directory to hand off to the Train Model dialog, set on user request
+        self.pending_train_dataset = None
 
         self.setWindowIcon(get_window_icon("tile.svg"))
         self.setWindowTitle("Tile Dataset")
@@ -377,6 +386,8 @@ class Base(QDialog):
         # Pause the cursor
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
+        self.pending_train_dataset = None
+
         try:
             # Tile the dataset
             self.tile_dataset()
@@ -388,6 +399,12 @@ class Base(QDialog):
             QApplication.restoreOverrideCursor()
 
         self.accept()
+
+        # Hand off to the Train Model dialog once this dialog has closed
+        if self.pending_train_dataset:
+            task = get_task_for_annotation_type(self.annotation_type)
+            open_train_model_dialog_later(self.main_window, task, self.pending_train_dataset)
+            self.pending_train_dataset = None
 
     def tile_dataset(self):
         """
@@ -481,9 +498,10 @@ class Base(QDialog):
 
         try:
             tiler.run()
-            QMessageBox.information(self,
-                                    "Tiling Complete",
-                                    "The dataset has been tiled successfully.")
+            if prompt_train_model(self,
+                                  "Tiling Complete",
+                                  "The dataset has been tiled successfully."):
+                self.pending_train_dataset = dst
 
         except Exception as e:
             QMessageBox.critical(self,

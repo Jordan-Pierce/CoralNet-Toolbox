@@ -27,6 +27,10 @@ from coralnet_toolbox.MachineLearning.ExportDataset.export_dataset_utils import 
     group_annotations_by_source,
     normalize_source_path,
 )
+from coralnet_toolbox.MachineLearning.TrainModel.QtBase import (
+    open_train_model_dialog_later,
+    prompt_train_model,
+)
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -39,6 +43,8 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 class Base(QDialog):
     supports_unlabeled_video_frames = False
+    # Task the exported dataset trains; set by the subclasses
+    task = None
 
     def __init__(self, main_window, parent=None):
         """
@@ -977,21 +983,27 @@ class Base(QDialog):
             class_mapping = self.get_class_mapping()
             self.save_class_mapping_json(class_mapping, output_dir_path)
 
+        train_requested = False
+
         try:
             # Create the dataset
             self.create_dataset(output_dir_path)
 
-            QMessageBox.information(self,
-                                    "Dataset Created",
-                                    "Dataset has been successfully created.")
-        
+            train_requested = prompt_train_model(self,
+                                                 "Dataset Created",
+                                                 "Dataset has been successfully created.")
+
         except Exception as e:
             QMessageBox.critical(self, "Failed to Create Dataset", f"{e}")
-            
+
         finally:
             # Restore the cursor to the default cursor
             QApplication.restoreOverrideCursor()
             super().accept()
+
+        # Hand off to the Train Model dialog once this dialog has closed
+        if train_requested:
+            open_train_model_dialog_later(self.main_window, self.task, output_dir_path)
 
     def create_dataset(self, output_dir_path):
         raise NotImplementedError("Method must be implemented in the subclass.")
