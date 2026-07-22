@@ -157,18 +157,25 @@ class Classify(Base):
             class_mapping = self.get_class_mapping()
             self.save_class_mapping_json(class_mapping, output_dir_path)
 
+        train_requested = False
+
         try:
             # Create the dataset
             self.create_dataset(output_dir_path)
 
-            if prompt_train_model(self, "Dataset Created", "Dataset has been successfully created."):
-                # Close this dialog (skipping Base.accept, which would re-export) before handing
-                # off to the Train Model dialog
-                QDialog.accept(self)
-                open_train_model_dialog_later(self.main_window, self.task, output_dir_path)
+            train_requested = prompt_train_model(self,
+                                                 "Dataset Created",
+                                                 "Dataset has been successfully created.")
 
         except Exception as e:
             QMessageBox.critical(self, "Failed to Create Dataset", f"{e}")
+
+        # Close this dialog (skipping Base.accept, which would re-export) regardless of choice
+        QDialog.accept(self)
+
+        # Hand off to the Train Model dialog once this dialog has closed
+        if train_requested:
+            open_train_model_dialog_later(self.main_window, self.task, output_dir_path)
 
 
     def create_dataset(self, output_dir_path):
