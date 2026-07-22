@@ -17,7 +17,7 @@ from ultralytics.data.dataset import YOLODataset
 import ultralytics.models.yolo.classify.train as train_build
 from ultralytics.data.dataset import ClassificationDataset
 
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QWidget, QVBoxLayout,
                              QLabel, QLineEdit, QDialog, QHBoxLayout, QPushButton, QComboBox,
                              QFormLayout, QTabWidget, QDoubleSpinBox, QGroupBox, QFrame, QSpinBox)
@@ -34,6 +34,153 @@ from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
+
+
+# Maps a task to the persistent Train Model dialog held by the MainWindow
+TASK_TO_TRAIN_DIALOG = {
+    'classify': 'classify_train_model_dialog',
+    'detect': 'detect_train_model_dialog',
+    'segment': 'segment_train_model_dialog',
+    'semantic': 'semantic_train_model_dialog',
+}
+
+# Maps the yolo-tiler annotation type used by the Tile Dataset dialogs to a task
+ANNOTATION_TYPE_TO_TASK = {
+    'image_classification': 'classify',
+    'object_detection': 'detect',
+    'instance_segmentation': 'segment',
+    'semantic_segmentation': 'semantic',
+}
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Functions
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def prompt_train_model(parent, title, text):
+    """
+    Show a dataset completion message with an additional "Train Model" button.
+
+    Args:
+        parent: The dialog showing the message.
+        title (str): Window title of the message box.
+        text (str): Message body.
+
+    Returns:
+        bool: True if the user chose to continue on to training.
+    """
+    msg_box = QMessageBox(parent)
+    msg_box.setIcon(QMessageBox.Information)
+    msg_box.setWindowTitle(title)
+    msg_box.setText(text)
+    ok_button = msg_box.addButton(QMessageBox.Ok)
+    train_button = msg_box.addButton("Train Model", QMessageBox.AcceptRole)
+    train_button.setToolTip("Close this dialog and open the Train Model dialog for this dataset.")
+    msg_box.setDefaultButton(ok_button)
+    msg_box.exec_()
+
+    return msg_box.clickedButton() is train_button
+
+
+def get_task_for_annotation_type(annotation_type):
+    """
+    Get the training task matching a yolo-tiler annotation type.
+
+    Args:
+        annotation_type (str): The yolo-tiler annotation type.
+
+    Returns:
+        str or None: The task name, or None when unknown.
+    """
+    return ANNOTATION_TYPE_TO_TASK.get(annotation_type)
+
+
+def resolve_data_path(task, dataset_dir):
+    """
+    Get the path the Train Model dialog expects for a dataset directory.
+
+    Classification trains from the dataset directory itself; the other tasks
+    train from the data.yaml file within it.
+
+    Args:
+        task (str): The task name.
+        dataset_dir (str): Path to the exported or tiled dataset directory.
+
+    Returns:
+        str: Path to the dataset directory or its data.yaml file.
+    """
+    if task == 'classify':
+        return dataset_dir
+
+    return os.path.join(dataset_dir, 'data.yaml')
+
+
+def open_train_model_dialog(main_window, task, dataset_dir):
+    """
+    Prefill and open the Train Model dialog for a freshly created dataset.
+
+    Injects the dataset path and class mapping, and points the training output at
+    a timestamped run inside the dataset's own "results" folder.
+
+    Args:
+        main_window: The MainWindow object holding the Train Model dialogs.
+        task (str): One of 'classify', 'detect', 'segment', 'semantic'.
+        dataset_dir (str): Path to the exported or tiled dataset directory.
+    """
+    dialog_attr = TASK_TO_TRAIN_DIALOG.get(task)
+    dialog = getattr(main_window, dialog_attr, None) if dialog_attr else None
+
+    if dialog is None:
+        QMessageBox.warning(main_window, "Train Model", f"Unknown task type for training: {task}")
+        return
+
+    data_path = resolve_data_path(task, dataset_dir)
+    if not os.path.exists(data_path):
+        QMessageBox.warning(main_window, "Train Model", f"Could not find the dataset at:\n{data_path}")
+        return
+
+    # Inject the dataset path
+    dialog.dataset_edit.setText(data_path)
+
+    # Inject the class mapping written alongside the dataset, if present
+    class_mapping_path = os.path.join(dataset_dir, 'class_mapping.json')
+    if os.path.exists(class_mapping_path):
+        try:
+            with open(class_mapping_path, 'r') as json_file:
+                dialog.class_mapping = json.load(json_file)
+            dialog.mapping_edit.setText(class_mapping_path)
+        except Exception as e:
+            print(f"Warning: Failed to load class mapping from {class_mapping_path}: {e}")
+
+    # Training results land in <dataset_dir>/results/<timestamp>
+    project_dir = os.path.join(dataset_dir, 'results')
+    run_name = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    try:
+        os.makedirs(os.path.join(project_dir, run_name), exist_ok=True)
+    except Exception as e:
+        QMessageBox.warning(main_window, "Train Model", f"Failed to create the results directory: {e}")
+        return
+
+    dialog.project_edit.setText(project_dir)
+    dialog.name_edit.setText(run_name)
+
+    if hasattr(main_window, 'untoggle_all_tools'):
+        main_window.untoggle_all_tools()
+
+    dialog.exec_()
+
+
+def open_train_model_dialog_later(main_window, task, dataset_dir):
+    """
+    Open the Train Model dialog once the currently closing dialog has gone away.
+
+    Args:
+        main_window: The MainWindow object holding the Train Model dialogs.
+        task (str): One of 'classify', 'detect', 'segment', 'semantic'.
+        dataset_dir (str): Path to the exported or tiled dataset directory.
+    """
+    QTimer.singleShot(0, lambda: open_train_model_dialog(main_window, task, dataset_dir))
 
 
 # ----------------------------------------------------------------------------------------------------------------------
