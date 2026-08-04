@@ -171,7 +171,8 @@ class TrainModelWorker(QThread):
                 continue
 
             # Recover the split's path relative to the dataset's original root (recorded
-            # in the YAML's own 'path' key), then re-join it under the YAML's current folder.
+            # in the YAML's own 'path' key), then check it actually exists under the
+            # YAML's current folder before adopting it.
             if old_root:
                 try:
                     rel = os.path.relpath(str(value), str(old_root))
@@ -179,19 +180,23 @@ class TrainModelWorker(QThread):
                     rel = os.path.basename(str(value))
             else:
                 rel = os.path.basename(str(value))
+            rel = rel.replace(os.sep, '/')
 
-            candidate = os.path.normpath(os.path.join(yaml_dir, rel))
-            if os.path.exists(candidate):
-                fixed[key] = candidate
+            if os.path.exists(os.path.join(yaml_dir, rel)):
+                # Store as a relative path (like a freshly exported dataset), not
+                # absolute, so this copy stays portable if moved again.
+                fixed[key] = rel
                 changed = True
 
         if not changed:
             return data_yaml_path
 
-        fixed['path'] = yaml_dir
+        # No 'path' key: Ultralytics then resolves the relative split paths above
+        # against wherever this YAML file itself currently lives.
+        fixed.pop('path', None)
 
         stem = os.path.splitext(os.path.basename(data_yaml_path))[0]
-        temp_path = os.path.join(yaml_dir, f"{stem}_rerooted.yaml")
+        temp_path = os.path.join(yaml_dir, f"{stem}_relative_path.yaml")
         with open(temp_path, 'w') as f:
             yaml.dump(fixed, f, default_flow_style=False)
 
