@@ -504,7 +504,11 @@ class TrainModelDialog(QDialog):
         # Create a widget to hold the form layout
         form_widget = QWidget()
         form_layout = QFormLayout(form_widget)
-        form_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        # QSpinBox/QDoubleSpinBox/QComboBox default to a "Preferred" (not "Expanding")
+        # horizontal size policy, so ExpandingFieldsGrow would leave them stuck at their
+        # sizeHint() width. AllNonFixedFieldsGrow stretches any field that isn't
+        # explicitly Fixed, so these fields actually fill the available row width.
+        form_layout.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
 
         # Create the scroll area
         scroll_area = QScrollArea()
