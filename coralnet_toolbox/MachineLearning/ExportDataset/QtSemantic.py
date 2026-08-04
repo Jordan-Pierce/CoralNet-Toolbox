@@ -692,13 +692,15 @@ class Semantic(Base):
                 names_dict[i] = name
             num_classes = len(names)
 
+        # Paths are relative to this YAML file's own location (no 'path' key), so the
+        # dataset still resolves correctly if this folder is later moved, copied, or
+        # shared to a different machine.
         data = {
-            'path': output_dir_path,
-            'train': f"{train_dir}/images",
-            'val': f"{val_dir}/images",
-            'test': f"{test_dir}/images",
-            'nc': num_classes, 
-            'names': names_dict, 
+            'train': 'train/images',
+            'val': 'valid/images',
+            'test': 'test/images',
+            'nc': num_classes,
+            'names': names_dict,
             'masks_dir': 'masks'
         }
 
