@@ -8,6 +8,8 @@ from coralnet_toolbox.QtActions import AnnotationGeometryEditAction
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 
+from coralnet_toolbox.utilities import get_view_scale
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -221,8 +223,8 @@ class ResizeSubTool(SubTool):
         # Store reference to current annotation for updates
         self._current_annotation = annotation
         
-        # Calculate handle size based on current zoom to maintain constant screen size
-        scale = self.annotation_window.transform().m11()
+        # Calculate handle size based on current zoom to maintain constant screen size (rotation-safe)
+        scale = get_view_scale(self.annotation_window.transform())
         if scale == 0:
             scale = 1  # avoid division by zero
             

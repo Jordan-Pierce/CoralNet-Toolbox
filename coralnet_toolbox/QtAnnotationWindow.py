@@ -64,6 +64,7 @@ from coralnet_toolbox.Icons import ColormapDelegate
 
 from coralnet_toolbox.utilities import rasterio_open
 from coralnet_toolbox.utilities import convert_scale_units
+from coralnet_toolbox.utilities import get_view_scale
 
 from coralnet_toolbox.QtVideoPlayer import VideoPlayerWidget
 from coralnet_toolbox import theme as app_theme
@@ -2945,11 +2946,13 @@ class AnnotationWindow(BaseCanvas):
 
     def viewportToScene(self):
         """Convert viewport coordinates to scene coordinates."""
-        # Map the top-left and bottom-right corners of the viewport to the scene coordinates
-        top_left = self.mapToScene(self.viewport().rect().topLeft())
-        bottom_right = self.mapToScene(self.viewport().rect().bottomRight())
-        # Create and return a QRectF object from these points
-        return QRectF(top_left, bottom_right)
+        # Use the QRect overload (returns a QPolygonF of all 4 mapped corners)
+        # instead of mapping just topLeft/bottomRight: under a rotated view
+        # transform those two screen corners no longer correspond to the
+        # scene's min/max x/y, which can yield a QRectF with negative
+        # width/height. boundingRect() gives the correct axis-aligned bounding
+        # box of the visible region for any rotation angle.
+        return self.mapToScene(self.viewport().rect()).boundingRect()
 
     def animate_to_rect(self, target_rect: QRectF, duration: int = 500, max_zoom: float = 4.0):
         """Smoothly animate the view center and zoom to fit `target_rect`.
@@ -2974,7 +2977,7 @@ class AnnotationWindow(BaseCanvas):
         start_center = self.mapToScene(self.viewport().rect().center())
         end_center = target_rect.center()
         try:
-            start_zoom = float(self.transform().m11())
+            start_zoom = float(get_view_scale(self.transform()))
         except Exception:
             start_zoom = 1.0
 
@@ -4312,9 +4315,9 @@ class ViewAnimator(QObject):
         self.view = view
         self._center_x = 0.0
         self._center_y = 0.0
-        # Use current horizontal scale as zoom (assumes uniform scaling)
+        # Use the view's true uniform scale as zoom (rotation-safe)
         try:
-            self._zoom = float(self.view.transform().m11())
+            self._zoom = float(get_view_scale(self.view.transform()))
         except Exception:
             self._zoom = 1.0
 

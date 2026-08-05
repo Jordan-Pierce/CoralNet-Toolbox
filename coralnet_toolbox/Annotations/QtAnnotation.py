@@ -17,6 +17,7 @@ from PyQt5.QtWidgets import (QGraphicsRectItem, QGraphicsItem,
 from coralnet_toolbox.QtLabelWindow import Label
 
 from coralnet_toolbox.utilities import convert_scale_units
+from coralnet_toolbox.utilities import get_view_scale
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -166,9 +167,9 @@ class FloatingTagItem(QGraphicsSimpleTextItem):
     def _should_suppress(self):
         """Return True when the annotation is too small on-screen to warrant a tag.
 
-        Uses the view's current scene→screen scale (transform().m11()) combined
-        with the annotation's scene-space bounding size so that large annotations
-        show their tags sooner than small ones.
+        Uses the view's current scene→screen scale (get_view_scale(), rotation-safe)
+        combined with the annotation's scene-space bounding size so that large
+        annotations show their tags sooner than small ones.
         """
         if self._ann_scene_size is None:
             return False
@@ -179,10 +180,10 @@ class FloatingTagItem(QGraphicsSimpleTextItem):
             views = scene.views()
             if not views:
                 return False
-            m11 = views[0].transform().m11()  # scene px → screen px
+            scale = get_view_scale(views[0].transform())  # scene px → screen px
             ann_w, ann_h = self._ann_scene_size
-            return (ann_w * m11 < self.LOD_MIN_SCREEN_PX or
-                    ann_h * m11 < self.LOD_MIN_SCREEN_PX)
+            return (ann_w * scale < self.LOD_MIN_SCREEN_PX or
+                    ann_h * scale < self.LOD_MIN_SCREEN_PX)
         except Exception:
             return False
 

@@ -19,6 +19,7 @@ from coralnet_toolbox.WorkArea import WorkArea
 
 from coralnet_toolbox.utilities import pixmap_to_numpy
 from coralnet_toolbox.utilities import polygonize_mask_with_holes
+from coralnet_toolbox.utilities import get_view_scale
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -994,7 +995,10 @@ class SAMTool(Tool):
         """Create a point graphic ellipse scaled to the current zoom level."""
         view = self.annotation_window
         transform = view.transform()
-        scale_factor = max(transform.m11(), transform.m22(), 0.01)
+        # get_view_scale() is rotation-safe; m11/m22 alone would collapse
+        # toward the 0.01 floor under rotation and blow the radius up to
+        # ~1000px (see its docstring in utilities.py for why).
+        scale_factor = max(get_view_scale(transform), 0.01)
         radius = 10.0 / scale_factor
         point = QGraphicsEllipseItem(
             scene_pos.x() - radius, scene_pos.y() - radius,

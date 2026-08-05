@@ -19,6 +19,8 @@ from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPixmapItem,
                              QGraphicsItemGroup, QGraphicsEllipseItem, QGraphicsLineItem,
                              QGraphicsItem, QGraphicsPathItem, QLabel, QApplication, QFrame)
 
+from coralnet_toolbox.utilities import get_view_scale
+
 from coralnet_toolbox import theme as app_theme
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -610,7 +612,7 @@ class BaseCanvas(QGraphicsView):
             self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
             # Sync zoom state after fitInView
             self._calculate_min_zoom()
-            self.zoom_factor = self.transform().m11()
+            self.zoom_factor = get_view_scale(self.transform())
         
         # Keep placeholder geometry in sync
         try:
@@ -811,7 +813,7 @@ class BaseCanvas(QGraphicsView):
         self._calculate_min_zoom()
         
         # Sync zoom_factor to the actual transform scale after fitInView
-        self.zoom_factor = self.transform().m11()
+        self.zoom_factor = get_view_scale(self.transform())
         
         self._emit_view_navigated()
     
@@ -939,9 +941,13 @@ class BaseCanvas(QGraphicsView):
     
     def viewportToScene(self):
         """Convert viewport rectangle to scene coordinates."""
-        top_left = self.mapToScene(self.viewport().rect().topLeft())
-        bottom_right = self.mapToScene(self.viewport().rect().bottomRight())
-        return QRectF(top_left, bottom_right)
+        # Use the QRect overload (returns a QPolygonF of all 4 mapped corners)
+        # instead of mapping just topLeft/bottomRight: under a rotated view
+        # transform those two screen corners no longer correspond to the
+        # scene's min/max x/y, which can yield a QRectF with negative
+        # width/height. boundingRect() gives the correct axis-aligned bounding
+        # box of the visible region for any rotation angle.
+        return self.mapToScene(self.viewport().rect()).boundingRect()
     
     def get_image_dimensions(self):
         """Get the dimensions of the currently loaded image."""

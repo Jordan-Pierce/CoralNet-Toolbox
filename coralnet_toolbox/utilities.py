@@ -3,6 +3,7 @@ import warnings
 
 import os
 import gc
+import math
 import sys
 import requests
 import traceback
@@ -541,6 +542,25 @@ def work_area_to_numpy(rasterio_src, work_area):
     except Exception as e:
         traceback.print_exc()
         return None
+
+
+def get_view_scale(transform):
+    """
+    Get the true uniform scale factor of a QGraphicsView transform.
+
+    transform.m11()/.m22() alone only equal the uniform zoom when the view is
+    unrotated. AnnotationWindow's rotate gesture mixes rotation into those
+    cells (m11 = m22 = zoom * cos(angle)), which passes through 0 at 90/270
+    degrees and goes negative beyond that - breaking anything that sizes
+    itself as screen_px / m11. hypot(m11, m12) is the magnitude of the
+    transformed x-axis basis vector, which recovers the true scale at any
+    rotation angle since these view transforms are always rotate +
+    uniform-scale (no shear, no independent x/y scale).
+
+    :param transform: QTransform, e.g. view.transform()
+    :return: float, the uniform scale factor (always >= 0)
+    """
+    return math.hypot(transform.m11(), transform.m12())
 
 
 def pixmap_to_numpy(pixmap):
