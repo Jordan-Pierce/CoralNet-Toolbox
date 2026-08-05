@@ -85,12 +85,13 @@ class Detect(Base):
         # Create dictionary of class names with numeric keys
         names_dict = {i: name for i, name in enumerate(names)}
 
-        # Define the data as a dictionary with absolute paths
+        # Define the data using paths relative to this YAML file's own location (no
+        # 'path' key), so the dataset still resolves correctly if this folder is
+        # later moved, copied, or shared to a different machine.
         data = {
-            'path': output_dir_path,
-            'train': train_dir,
-            'val': val_dir,
-            'test': test_dir,
+            'train': 'train',
+            'val': 'valid',
+            'test': 'test',
             'nc': num_classes,
             'names': list(range(num_classes)),  # List of numeric indices
             'names': names_dict  # Dictionary mapping from indices to class names

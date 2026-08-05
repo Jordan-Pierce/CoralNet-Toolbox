@@ -7,6 +7,8 @@ from PyQt5.QtWidgets import (QGraphicsRectItem, QGraphicsItemGroup, QGraphicsLin
 
 from coralnet_toolbox.Annotations.QtAnnotation import FloatingTagItem
 
+from coralnet_toolbox.utilities import get_view_scale
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
@@ -340,8 +342,8 @@ class WorkArea(QObject):
             return
         view = views[0]
         
-        # Get current zoom scale
-        scale = view.transform().m11()
+        # Get current zoom scale (rotation-safe)
+        scale = get_view_scale(view.transform())
         if scale == 0:
             scale = 1
             

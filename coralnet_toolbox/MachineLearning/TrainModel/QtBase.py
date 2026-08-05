@@ -219,6 +219,7 @@ class TrainModelWorker(QThread):
         self.model = None
         self.model_path = None
         self.weighted = False
+        self.temp_data_yaml = None
 
     def pre_run(self):
         """
@@ -248,10 +249,90 @@ class TrainModelWorker(QThread):
             # Set the freeze parameter for ultralytics
             self.params['freeze'] = freeze_layers
 
+            # Dataset YAMLs exported by this toolbox (or produced by yolo-tiler) can have
+            # train/val/test baked in as absolute paths from wherever they were created;
+            # moving or sharing the dataset folder then leaves them pointing nowhere.
+            data_path = self.params.get('data')
+            if isinstance(data_path, str) and data_path.lower().endswith(('.yaml', '.yml')):
+                self.params['data'] = self._reroot_dataset_yaml(data_path)
+
         except Exception as e:
             print(f"Error during setup: {e}\n\nTraceback:\n{traceback.format_exc()}")
             self.training_error.emit(f"Error during setup: {e} (see console log)")
             raise
+
+    def _reroot_dataset_yaml(self, data_yaml_path):
+        """
+        Rewrite a dataset YAML's train/val/test paths relative to its own current folder
+        if the paths stored inside it no longer exist (e.g. the dataset was moved, copied,
+        or shared to a different machine after being created with absolute paths).
+
+        Args:
+            data_yaml_path (str): Path to the dataset YAML file selected for training.
+
+        Returns:
+            str: The original path if nothing needed fixing, otherwise the path to a
+                 corrected temporary copy of the YAML.
+        """
+        try:
+            with open(data_yaml_path, 'r') as f:
+                data = yaml.safe_load(f)
+        except Exception:
+            return data_yaml_path
+
+        if not isinstance(data, dict):
+            return data_yaml_path
+
+        split_keys = ('train', 'val', 'test')
+        if all(not data.get(key) or os.path.exists(str(data[key])) for key in split_keys):
+            return data_yaml_path
+
+        yaml_dir = os.path.dirname(os.path.abspath(data_yaml_path))
+        old_root = data.get('path')
+
+        fixed = dict(data)
+        changed = False
+        for key in split_keys:
+            value = data.get(key)
+            if not value or os.path.exists(str(value)):
+                continue
+
+            # Recover the split's path relative to the dataset's original root (recorded
+            # in the YAML's own 'path' key), then check it actually exists under the
+            # YAML's current folder before adopting it.
+            if old_root:
+                try:
+                    rel = os.path.relpath(str(value), str(old_root))
+                except ValueError:
+                    rel = os.path.basename(str(value))
+            else:
+                rel = os.path.basename(str(value))
+            rel = rel.replace(os.sep, '/')
+
+            if os.path.exists(os.path.join(yaml_dir, rel)):
+                # Store as a relative path (like a freshly exported dataset), not
+                # absolute, so this copy stays portable if moved again.
+                fixed[key] = rel
+                changed = True
+
+        if not changed:
+            return data_yaml_path
+
+        # No 'path' key: Ultralytics then resolves the relative split paths above
+        # against wherever this YAML file itself currently lives.
+        fixed.pop('path', None)
+
+        # Written alongside the original (not the OS temp dir) so downstream logic that
+        # derives the dataset root from os.path.dirname(params['data']) — e.g. locating
+        # the 'test' folder for post-training evaluation — still finds it correctly.
+        stem = os.path.splitext(os.path.basename(data_yaml_path))[0]
+        temp_path = os.path.join(yaml_dir, f"{stem}_relative_path.yaml")
+        with open(temp_path, 'w') as f:
+            yaml.dump(fixed, f, default_flow_style=False)
+
+        print(f"Note: Dataset YAML paths pointed to a missing location; using a corrected copy for this run: {temp_path}")
+        self.temp_data_yaml = temp_path
+        return temp_path
 
     def set_weighted_dataset(self):
         """
@@ -386,6 +467,12 @@ class TrainModelWorker(QThread):
         """
         Clean up resources after training.
         """
+        if self.temp_data_yaml and os.path.exists(self.temp_data_yaml):
+            try:
+                os.remove(self.temp_data_yaml)
+            except OSError:
+                pass
+
         del self.model
         gc.collect()
         empty_cache()
@@ -578,7 +665,11 @@ class Base(QDialog):
         # Create a widget to hold the form layout
         form_widget = QWidget()
         form_layout = QFormLayout(form_widget)
-        form_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        # QSpinBox/QDoubleSpinBox/QComboBox default to a "Preferred" (not "Expanding")
+        # horizontal size policy, so ExpandingFieldsGrow would leave them stuck at their
+        # sizeHint() width. AllNonFixedFieldsGrow stretches any field that isn't
+        # explicitly Fixed, so these fields actually fill the available row width.
+        form_layout.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
 
         # Create the scroll area
         scroll_area = QScrollArea()
@@ -625,6 +716,14 @@ class Base(QDialog):
         self.single_class_combo.setCurrentText("False")  # Default to False
         self.single_class_combo.setToolTip("If True, treat all objects as a single class (useful for presence/absence detection).\nIf False, distinguish between different object classes.\nDefault: False (multi-class).")
         form_layout.addRow("Single Class:", self.single_class_combo)
+
+        # Mask Ratio
+        self.mask_ratio_spinbox = QSpinBox()
+        self.mask_ratio_spinbox.setMinimum(1)
+        self.mask_ratio_spinbox.setMaximum(32)
+        self.mask_ratio_spinbox.setValue(4)
+        self.mask_ratio_spinbox.setToolTip("Downsample ratio for segmentation masks, affecting the resolution of masks used during training (e.g., 1 is native, 4 is 1/4th the resolution).")
+        form_layout.addRow("Mask Ratio:", self.mask_ratio_spinbox)
 
         # Weighted Dataset
         self.weighted_combo = create_bool_combo()
@@ -694,24 +793,24 @@ class Base(QDialog):
         separator = QFrame()
         separator.setFrameShape(QFrame.HLine)
         separator.setFrameShadow(QFrame.Sunken)
-        form_layout.addRow("", separator)
-        
+        form_layout.addRow(separator)
+
         # Add parameter button at the top of custom parameters section
         self.add_param_button = QPushButton("Add Parameter")
         self.add_param_button.clicked.connect(self.add_parameter_pair)
         self.add_param_button.setToolTip("Add a custom training parameter not available in the standard controls.\nUseful for advanced hyperparameter tuning with Ultralytics options.")
-        form_layout.addRow("", self.add_param_button)
+        form_layout.addRow(self.add_param_button)
 
         # Add custom parameters section
         self.custom_params_layout = QVBoxLayout()
-        form_layout.addRow("", self.custom_params_layout)
+        form_layout.addRow(self.custom_params_layout)
 
         # Remove parameter button at the bottom
         self.remove_param_button = QPushButton("Remove Parameter")
         self.remove_param_button.clicked.connect(self.remove_parameter_pair)
         self.remove_param_button.setEnabled(False)  # Disabled until at least one parameter is added
         self.remove_param_button.setToolTip("Remove the most recently added custom parameter.\nDisabled when no custom parameters are present.")
-        form_layout.addRow("", self.remove_param_button)
+        form_layout.addRow(self.remove_param_button)
 
         self.layout.addWidget(group_box)
 
@@ -833,6 +932,19 @@ class Base(QDialog):
     def load_model_combobox(self):
         raise NotImplementedError("Subclasses must implement this method.")
 
+    def _autofill_output_fields(self, dataset_root):
+        """
+        Auto-fill the Project and Name fields from the selected dataset's location,
+        matching the 'results/<timestamp>' layout used when training is launched
+        directly from the Tile/Export Dataset dialogs.
+
+        Args:
+            dataset_root (str): Directory containing the selected dataset.
+        """
+        self.project_edit.setText(os.path.join(dataset_root, 'results'))
+        now = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        self.name_edit.setText(now)
+
     def browse_dataset_dir(self):
         """
         Browse and select a dataset directory.
@@ -851,6 +963,7 @@ class Base(QDialog):
 
             # Set the dataset path
             self.dataset_edit.setText(dir_path)
+            self._autofill_output_fields(dir_path)
 
     def browse_dataset_yaml(self):
         """
@@ -874,6 +987,7 @@ class Base(QDialog):
 
             # Set the dataset and class mapping paths
             self.dataset_edit.setText(file_path)
+            self._autofill_output_fields(dir_path)
 
     def browse_class_mapping_file(self):
         """
@@ -958,6 +1072,12 @@ class Base(QDialog):
             while self.custom_params:
                 self.remove_parameter_pair()
 
+            # These are already set by dedicated dialog fields (task/model/dataset/output),
+            # not the generic training-parameter controls, so importing a full Ultralytics
+            # args.yaml must not add them as custom params and silently override those fields.
+            excluded_keys = {'task', 'mode', 'model', 'data', 'project', 'name', 'save_dir',
+                             'time', 'device', 'exist_ok', 'pretrained', 'tracker', 'freeze'}
+
             # Map standard parameters to their UI controls
             param_mapping = {
                 'epochs': self.epochs_spinbox,
@@ -974,13 +1094,19 @@ class Base(QDialog):
                 'single_cls': self.single_class_combo,
                 'val': self.val_combo,
                 'verbose': self.verbose_combo,
-                'optimizer': self.optimizer_combo
+                'optimizer': self.optimizer_combo,
+                'mask_ratio': self.mask_ratio_spinbox
             }
 
             # Update UI controls with imported values
             for param_name, value in params_to_load.items():
+                # Ultralytics writes a "null" for any unset option; importing that as the
+                # literal string "None" would be truthy and get passed to training as-is.
+                if param_name in excluded_keys or value is None:
+                    continue
+
                 param_type, converted_value = infer_type_and_value(value)
-                
+
                 if param_name in param_mapping:
                     widget = param_mapping[param_name]
                     
@@ -1048,6 +1174,7 @@ class Base(QDialog):
             export_data['val'] = self.val_combo.currentText() == "True"
             export_data['verbose'] = self.verbose_combo.currentText() == "True"
             export_data['optimizer'] = self.optimizer_combo.currentText()
+            export_data['mask_ratio'] = self.mask_ratio_spinbox.value()
 
             # Custom parameters
             for param_info in self.custom_params:
@@ -1124,6 +1251,7 @@ class Base(QDialog):
             'single_cls': self.single_class_combo.currentText() == "True",
             'dropout': self.dropout_spinbox.value(),
             'val': self.val_combo.currentText() == "True",
+            'mask_ratio': self.mask_ratio_spinbox.value(),
             'exist_ok': True,
             'plots': True,
         }

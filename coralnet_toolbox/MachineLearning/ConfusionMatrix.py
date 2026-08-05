@@ -44,7 +44,7 @@ class ConfusionMatrixMetrics:
 
         # Add background class if needed
         if len(self.class_mapping) + 1 == self.num_classes:
-            self.class_mapping[self.num_classes] = 'background'
+            self.class_mapping[self.num_classes - 1] = 'background'
 
         # Calculate total predictions and class distributions
         self.total_predictions = np.sum(self.matrix)

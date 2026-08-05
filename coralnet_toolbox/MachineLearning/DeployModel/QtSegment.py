@@ -449,7 +449,7 @@ class Segment(Base):
                                               max_det=self.thresholds_widget.get_max_detections(),
                                               device=self.main_window.device,
                                               imgsz=self.imgsz,
-                                              retina_masks=self.task == "segment",
+                                              retina_masks=True,
                                               quantize=16,
                                               stream=True)  # memory efficient inference
 
