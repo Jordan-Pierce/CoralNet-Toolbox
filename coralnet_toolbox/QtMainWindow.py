@@ -112,7 +112,6 @@ from coralnet_toolbox.SAM import (
 
 # See Anything dialogs
 from coralnet_toolbox.SeeAnything import (
-    TrainModelDialog as SeeAnythingTrainModelDialog,
     DeployPredictorDialog as SeeAnythingDeployPredictorDialog,
     DeployGeneratorDialog as SeeAnythingDeployGeneratorDialog,
 )
@@ -305,7 +304,6 @@ class MainWindow(QMainWindow):
         self.sam_deploy_generator_dialog = SAMDeployGeneratorDialog(self)
 
         # Create dialogs (See Anything)
-        self.see_anything_train_model_dialog = SeeAnythingTrainModelDialog(self)
         self.see_anything_deploy_predictor_dialog = SeeAnythingDeployPredictorDialog(self)
         self.see_anything_deploy_generator_dialog = SeeAnythingDeployGeneratorDialog(self)
 
@@ -575,13 +573,6 @@ class MainWindow(QMainWindow):
 
         # See Anything submenu
         self.see_anything_menu = self.ai_assist_menu.addMenu("See Anything (YOLOE)")
-        # Train Model
-        self.see_anything_train_model_action = QAction("Train Model", self)
-        self.see_anything_train_model_action.setToolTip("Train a See Anything (YOLOE) model")
-        self.see_anything_train_model_action.triggered.connect(self.open_see_anything_train_model_dialog)
-        self.see_anything_menu.addAction(self.see_anything_train_model_action)
-        # Add separator
-        self.see_anything_menu.addSeparator()
         # Deploy Predictor
         self.see_anything_deploy_predictor_action = QAction("Deploy Predictor", self)
         self.see_anything_deploy_predictor_action.setToolTip("Deploy See Anything (YOLOE) predictor")
@@ -3064,14 +3055,6 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.sam_deploy_generator_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-
-    def open_see_anything_train_model_dialog(self):
-        """Open the See Anything Train Model dialog to train a See Anything model."""
-        try:
-            self.untoggle_all_tools()
-            self.see_anything_train_model_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
