@@ -6,6 +6,7 @@ these in a separate module avoids cluttering the large
 `QtAnnotationWindow.py` file and prevents circular imports.
 """
 
+import re
 from typing import Any
 
 import numpy as np
@@ -20,6 +21,33 @@ from PyQt5.QtWidgets import QApplication
 
 class Action:
     """Base class for undo/redo actions."""
+
+    #: Human-readable phrase for the undo/redo status message. Subclasses that
+    #: carry a caller-supplied description set it in __init__; the rest inherit
+    #: None and fall back to their class name, so a new Action reports something
+    #: sensible without any extra wiring.
+    description = None
+
+    @property
+    def label(self) -> str:
+        """Phrase naming this action, e.g. "delete annotations".
+
+        Derived from the class name when no explicit description was given —
+        ``DeleteAnnotationsAction`` reads as "delete annotations" — so the status
+        message stays accurate as actions are added.
+        """
+        text = self.description
+        if text:
+            # An explicit description keeps its internal capitals ("sync SAM
+            # prototypes"); only the leading character is folded so it reads as a
+            # sentence fragment.
+            return text[:1].lower() + text[1:]
+
+        text = type(self).__name__
+        if text.endswith("Action"):
+            text = text[:-len("Action")]
+        # CamelCase is all word boundaries here, so the whole phrase folds.
+        return re.sub(r"(?<!^)(?=[A-Z])", " ", text).lower() or "edit"
 
     def do(self) -> Any:
         raise NotImplementedError
@@ -618,6 +646,49 @@ class CompoundAction(Action):
             action.undo()
 
 
+class SharedGroupEditAction(Action):
+    """Undoable relocate/resize of shared-group sibling patches.
+
+    Siblings live on other images, so geometry is applied directly rather than
+    through set_annotation_location (which would crop against the active raster).
+    Cropped images are invalidated and rebuilt lazily. `changes` is a list of
+    dicts: {'annotation', 'old_center', 'new_center', 'old_size', 'new_size'}.
+    """
+
+    def __init__(self, changes, description: str = "Sync shared group"):
+        self.description = description
+        self.changes = [c for c in (changes or []) if c and c.get('annotation') is not None]
+
+    def is_empty(self):
+        return len(self.changes) == 0
+
+    def _apply(self, annotation, center, size):
+        try:
+            annotation.annotation_size = size
+            annotation.set_precision(center)
+            annotation.set_cropped_bbox()
+            annotation.cropped_image = None
+            annotation._cached_cropped_image_graphic = None
+            try:
+                annotation.update_graphics_item()   # no-op when off the active scene
+            except Exception:
+                pass
+            try:
+                annotation.annotationUpdated.emit(annotation)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def do(self):
+        for c in self.changes:
+            self._apply(c['annotation'], c['new_center'], c['new_size'])
+
+    def undo(self):
+        for c in self.changes:
+            self._apply(c['annotation'], c['old_center'], c['old_size'])
+
+
 class MaskEditAction(Action):
     """Undoable raw pixel edit for a single mask annotation."""
 
@@ -742,6 +813,11 @@ class ActionStack:
                 pass
 
     def undo(self):
+        """Reverse the most recent action. Returns it, or None if there was none.
+
+        The return value is what lets a caller report *what* was undone rather
+        than just that something was.
+        """
         # Use a busy cursor while performing undo to indicate work
         try:
             QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -749,6 +825,8 @@ class ActionStack:
                 action = self.undo_stack.pop()
                 action.undo()
                 self.redo_stack.append(action)
+                return action
+            return None
         finally:
             try:
                 QApplication.restoreOverrideCursor()
@@ -756,6 +834,7 @@ class ActionStack:
                 pass
 
     def redo(self):
+        """Re-apply the most recently undone action. Returns it, or None."""
         # Use a busy cursor while performing redo to indicate work
         try:
             QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -763,6 +842,8 @@ class ActionStack:
                 action = self.redo_stack.pop()
                 action.do()
                 self.undo_stack.append(action)
+                return action
+            return None
         finally:
             try:
                 QApplication.restoreOverrideCursor()

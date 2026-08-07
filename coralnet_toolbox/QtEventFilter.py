@@ -27,6 +27,30 @@ class GlobalEventFilter(QObject):
         self.semantic_deploy_model_dialog = main_window.semantic_deploy_model_dialog
         self.sam_deploy_generator_dialog = main_window.sam_deploy_generator_dialog
         self.see_anything_deploy_generator_dialog = main_window.see_anything_deploy_generator_dialog
+
+    def _status(self, message: str, msecs: int = 2000):
+        """Post to the status bar, tolerating a window that has none yet."""
+        try:
+            status_bar = getattr(self.main_window, 'status_bar', None)
+            if status_bar is not None:
+                status_bar.showMessage(message, msecs)
+        except Exception:
+            pass
+
+    def _undo_redo_2d(self, redo: bool):
+        """Run a 2D undo/redo and say what it did.
+
+        Undo is otherwise silent, which reads as "the key did nothing" whenever
+        the change is off-screen — a mask edit on a different part of the image,
+        or an empty stack. Naming the action distinguishes the two.
+        """
+        stack = self.annotation_window.action_stack
+        action = stack.redo() if redo else stack.undo()
+        if action is None:
+            self._status("Nothing to redo." if redo else "Nothing to undo.")
+        else:
+            verb = "Redid" if redo else "Undid"
+            self._status(f"{verb} {action.label}.")
         
     def eventFilter(self, obj, event):
         try:
@@ -134,7 +158,7 @@ class GlobalEventFilter(QObject):
                                 tool.stop_current_drawing()
                                 return True
 
-                            self.annotation_window.action_stack.undo()
+                            self._undo_redo_2d(redo=False)
                             return True
 
                 # Handle redo hotkey (Ctrl+Shift+Z)
@@ -150,7 +174,7 @@ class GlobalEventFilter(QObject):
                             tool.stop_current_drawing()
                             return True
 
-                        self.annotation_window.action_stack.redo()
+                        self._undo_redo_2d(redo=True)
                         return True
 
                 # Delete (backspace or delete key) selected annotations when select tool is active
