@@ -2158,7 +2158,7 @@ class AnnotationWindow(BaseCanvas):
         """Update the graphics scene and its items."""
         self.scene.update()
         self.viewport().update()
-        QApplication.processEvents()
+        self.viewport().repaint()
 
     def _show_placeholder(self, text: str = None):
         """Show the centered placeholder label with optional custom text."""
@@ -2225,9 +2225,6 @@ class AnnotationWindow(BaseCanvas):
         # Clear own static marker (focal-point crosshair)
         self.clear_static_marker()
 
-        # Process events
-        QApplication.processEvents()
-
     def display_image(self, q_image):
         """Display a QImage in the annotation window without setting it."""
         # Clean up
@@ -2247,7 +2244,9 @@ class AnnotationWindow(BaseCanvas):
 
         # Clear the confidence window
         self.main_window.confidence_window.clear_display()
-        QApplication.processEvents()
+        # Force the image onto the screen now without letting unrelated queued
+        # work re-enter this call.
+        self.viewport().repaint()
 
     def set_image(self, image_path):
         """Set and display an image at the given path using a staged load for instant feedback."""
@@ -2344,7 +2343,11 @@ class AnnotationWindow(BaseCanvas):
         self.scene.addItem(base_image_item)
         self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
         self._hide_placeholder()
-        QApplication.processEvents()
+        # The whole point of the staged load: get the low-res preview visible
+        # before the expensive full-res decode below. repaint() does exactly that
+        # and nothing else — processEvents() here used to hand control to any
+        # queued handler mid-load.
+        self.viewport().repaint()
         
         # Update the rasterio image source for cropping annotations
         self.rasterio_image = raster.rasterio_src
@@ -2392,8 +2395,6 @@ class AnnotationWindow(BaseCanvas):
         self.main_window.image_window.update_image_annotations(image_path)
         # Clear the confidence window
         self.main_window.confidence_window.clear_display()
-
-        QApplication.processEvents()
 
         # Set the image dimensions, and current view in status bar
         self.imageLoaded.emit(self.pixmap_image.width(), self.pixmap_image.height())
@@ -3522,7 +3523,6 @@ class AnnotationWindow(BaseCanvas):
         # Render all unselected annotations to phantom layer
         self.refresh_phantom_annotations()
         
-        QApplication.processEvents()
         self.viewport().update()
 
     def load_mask_annotation(self):
