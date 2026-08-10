@@ -956,6 +956,24 @@ class AnnotationWindow(BaseCanvas):
         # Let BaseCanvas handle native pan/zoom via super()
         super().mouseMoveEvent(event)
 
+    def on_pointer_left(self):
+        """Tear down hover graphics when the pointer leaves the window.
+
+        cursorInWindow() only ever gets consulted from mouseMoveEvent, and Qt
+        delivers no move event once the pointer is outside the widget — so a
+        fast exit at the widget edge (or an alt-tab, or moving onto a dock) left
+        the crosshair and cursor annotation frozen on screen. Tool.leave() 
+        clears hover state only; an in-progress stroke or polygon survives.
+        """
+        if self.selected_tool and self.selected_tool in self.tools:
+            try:
+                self.tools[self.selected_tool].leave()
+            except Exception:
+                pass
+
+        # BaseCanvas drops this window's own cursor preview + dynamic marker.
+        super().on_pointer_left()
+
     def mouseReleaseEvent(self, event: QMouseEvent):
         """Handle mouse release events for the active tool."""
         # Check if a tool is selected before proceeding

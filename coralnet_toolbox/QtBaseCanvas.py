@@ -13,8 +13,8 @@ import numpy as np
 
 import pyqtgraph as pg
 from PyQt5.QtGui import (QMouseEvent, QPixmap, QImage, QBrush, QColor, QPen,
-                         QTransform, QPainter, QPainterPath, qRgba)
-from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QSize, QObject
+                         QTransform, QPainter, QPainterPath, QCursor, qRgba)
+from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QSize, QObject, QEvent
 from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, 
                              QGraphicsItemGroup, QGraphicsEllipseItem, QGraphicsLineItem,
                              QGraphicsItem, QGraphicsPathItem, QLabel, QApplication, QFrame)
@@ -589,6 +589,45 @@ class BaseCanvas(QGraphicsView):
         self.mouseHovered.emit(scene_pos.x(), scene_pos.y())
         
         super().mouseMoveEvent(event)
+
+    def _pointer_over_self(self) -> bool:
+        """True while the pointer is physically inside this view's frame."""
+        try:
+            return self.rect().contains(self.mapFromGlobal(QCursor.pos()))
+        except Exception:
+            return False
+
+    def on_pointer_left(self):
+        """Drop hover-only graphics because the pointer left this canvas.
+
+        Both the cursor preview and the dynamic marker are written by *other*
+        widgets so nothing on the canvas itself used to take them down — 
+        they stranded on every context tile once the pointer left the source widget.
+
+        Subclasses extend this rather than leaveEvent so both entry points below
+        stay covered. Must stay idempotent: it can run twice for one exit.
+        """
+        self.clear_cursor_preview()
+        self.clear_dynamic_marker()
+
+    def leaveEvent(self, event):
+        """Primary exit path: Qt sends Leave to every widget the pointer left,
+        ancestors of the viewport included."""
+        self.on_pointer_left()
+        super().leaveEvent(event)
+
+    def viewportEvent(self, event):
+        """Backstop for the viewport's own Leave.
+
+        A Leave delivered only to the viewport child does NOT reach
+        leaveEvent() — QAbstractScrollArea does not forward it to the view — so
+        this catches any exit the ancestor-chain dispatch misses. Gated on the
+        pointer genuinely being outside the frame, because moving onto a
+        scrollbar also leaves the viewport while the view still holds the cursor.
+        """
+        if event.type() == QEvent.Leave and not self._pointer_over_self():
+            self.on_pointer_left()
+        return super().viewportEvent(event)
     
     def mouseReleaseEvent(self, event: QMouseEvent):
         """Handle mouse release events for rotation or panning."""
