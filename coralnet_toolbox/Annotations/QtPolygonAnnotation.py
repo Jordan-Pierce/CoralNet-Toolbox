@@ -38,18 +38,29 @@ class PolygonAnnotation(Annotation):
                  image_path: str,
                  transparency: int = 128,
                  holes: list = None,
-                 show_confidence: bool = True):
+                 show_confidence: bool = True,
+                 simplify: bool = True):
+        """Create a polygon annotation.
+
+        Args:
+            simplify: Run the 0.5 px cleanup pass in ``set_precision``. Leave it
+                on for hand-drawn or model geometry. Callers that already
+                simplified their points (mask vectorization runs
+                ``cv2.approxPolyDP`` at a larger epsilon) should pass False —
+                the pass is a shapely round-trip per polygon and dominates bulk
+                construction, while removing nothing approxPolyDP left behind.
+        """
         super().__init__(label=label, image_path=image_path, transparency=transparency, show_confidence=show_confidence)
 
         self.center_xy = QPointF(0, 0)
         self.cropped_bbox = (0, 0, 0, 0)
         self.annotation_size = 0
-        
+
         # Initialize holes, ensuring it's always a list
         self.holes = holes if holes is not None else []
 
         # Set the main polygon points and calculate initial properties
-        self.set_precision(points, True)
+        self.set_precision(points, simplify)
         self._set_centroid_and_bbox()
 
     def _set_centroid_and_bbox(self):

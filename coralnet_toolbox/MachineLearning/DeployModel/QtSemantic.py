@@ -2,6 +2,7 @@ import warnings
 
 import gc
 import os
+import time
 
 import numpy as np
 
@@ -530,10 +531,15 @@ class Semantic(Base):
                 if auto_vectorize:
                     history_description = "Semantic prediction & vectorize"
                     try:
+                        _vectorize_start = time.perf_counter()
                         vector_annotations = mask_annotation.to_vector_annotations(
                             transparency=self.main_window.get_transparency_value(),
                             show_confidence=False,
                             min_hole_area=500,
+                        )
+                        self._report_vectorize_timing(
+                            len(vector_annotations),
+                            time.perf_counter() - _vectorize_start,
                         )
                     except Exception as e:
                         print(f"Warning: Failed to vectorize semantic prediction for {image_path}: {e}")
@@ -617,6 +623,23 @@ class Semantic(Base):
             QApplication.restoreOverrideCursor()
             gc.collect()
             empty_cache()
+
+    def _report_vectorize_timing(self, polygon_count, elapsed_seconds):
+        """Show how long the mask -> polygon conversion took.
+
+        Written to both the status bar and stdout so runs can be compared
+        without keeping the window in view.
+        """
+        message = (f"Converted masks into {polygon_count} polygons - "
+                   f"{elapsed_seconds:.3f} seconds")
+        print(message)
+        try:
+            self.main_window.status_bar.showMessage(message, 10000)
+            # The prediction loop holds the event loop, so the status bar would
+            # not repaint until the whole run finished without this.
+            QApplication.processEvents()
+        except Exception:
+            pass
 
     def _apply_model(self, inputs):
         """

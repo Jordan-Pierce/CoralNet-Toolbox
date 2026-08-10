@@ -1240,7 +1240,11 @@ class MaskAnnotation(Annotation):
         clear_mask = None
         if exact_flat_indices:
             flat_mask = np.zeros(height * width, dtype=bool)
-            flat_mask[np.unique(np.concatenate(exact_flat_indices))] = True
+            # Scatter each index set in turn. Writing True is idempotent, so
+            # neither the concatenate nor a np.unique (a sort over every index)
+            # is needed to reconcile overlapping sets.
+            for indices_array in exact_flat_indices:
+                flat_mask[indices_array] = True
             clear_mask = flat_mask.reshape((height, width))
 
         if geometries:
@@ -1407,58 +1411,24 @@ class MaskAnnotation(Annotation):
                 annotations.append(anno)
         return annotations
 
-    def to_vector_annotations(self, transparency=None, show_confidence: bool = False,
-                               min_hole_area: int = 500, min_component_area: int = 5) -> list:
-        """Convert all labeled regions in this mask into vector annotations.
+    # --- Vectorization ---
 
-        Disconnected regions become separate annotations. Four-point, axis-aligned
-        square regions become PatchAnnotation objects; four-point, axis-aligned
-        non-squares become RectangleAnnotation objects; everything else becomes a
-        PolygonAnnotation.
+    def _make_vector_builders(self, transparency, show_confidence):
+        """Build the contour -> annotation helpers used by the vectorizer.
 
-        Holes (interior voids) are handled selectively: holes whose area in pixels
-        is at least *min_hole_area* are preserved as interior rings in the resulting
-        PolygonAnnotation, giving an accurate representation of large voids (e.g. a
-        sand patch inside a coral colony). Holes smaller than *min_hole_area* are
-        silently filled, avoiding the vertex explosion that comes from tracing every
-        noise-level gap while retaining meaningful structure.
-
-        Performance notes
-        -----------------
-        * ``cv2.connectedComponentsWithStats`` replaces ``scipy.ndimage.label`` —
-          ~2-4x faster and returns bounding-box + area for every component for free,
-          enabling early noise rejection before any contour work is done.
-        * Contour extraction is ROI-based: each component is cropped to its own
-          bounding rect before ``findContours`` runs, so a 200×200 px object in a
-          4000×4000 image operates on a ~200×200 patch rather than the full image.
-        * ``CHAIN_APPROX_TC89_KCOS`` pre-filters dominant points at extraction
-          time, reducing the vertex count fed to ``approxPolyDP``.
-        * ``_source_clear_indices`` is derived by filtering the class's pre-built
-          flat-index array rather than running a full O(H×W) ``flatnonzero`` scan
-          inside the inner loop.
-        Args:
-            transparency: Alpha value for created annotations (0-255).
-            show_confidence: Whether to display confidence scores.
-            min_hole_area: Minimum hole area in pixels to preserve as an interior
-                ring. Holes smaller than this threshold are filled. Default 500.
-            min_component_area: Minimum component area in pixels. Components
-                smaller than this are skipped as noise. Default 5.
+        Returns a ``(contour_to_points, build_annotation)`` pair.
         """
-        try:
-            import cv2
-            from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
-            from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
-        except Exception:
-            return []
-
-        if transparency is None:
-            transparency = getattr(self, 'transparency', 128)
+        from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
+        from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 
         def _contour_to_points(contour_array):
             contour_array = np.asarray(contour_array)
             if contour_array.size == 0:
                 return []
-            return [QPointF(float(x), float(y)) for x, y in contour_array.reshape(-1, 2)]
+            # .tolist() converts the whole array to native Python numbers in one
+            # C-level pass; calling float() per element inside the comprehension
+            # costs several times more at these vertex counts.
+            return [QPointF(x, y) for x, y in contour_array.reshape(-1, 2).tolist()]
 
         def _is_axis_aligned_quad(points, tolerance=1.0):
             if len(points) != 4:
@@ -1507,120 +1477,164 @@ class MaskAnnotation(Annotation):
                 image_path=self.image_path,
                 transparency=transparency,
                 show_confidence=show_confidence,
+                # The points already went through cv2.approxPolyDP at a larger
+                # epsilon than the 0.5 px cleanup pass, so running it again is a
+                # shapely round-trip per polygon that removes nothing.
+                simplify=False,
             )
 
-        # Strip lock bits to recover the true class IDs for every pixel.
+        return _contour_to_points, _build_annotation
+
+    def _class_mask(self) -> np.ndarray:
+        """Strip lock bits to recover the true class ID for every pixel.
+
+        Returns ``mask_data`` itself when nothing is locked, so callers must
+        treat the result as read-only.
+        """
+        if self.mask_data.max() < self.LOCK_BIT:
+            # No locked pixels: the raw data already holds the class IDs, so
+            # skip the np.where allocation over the full image.
+            return self.mask_data
+
         class_mask = np.where(
             self.mask_data >= self.LOCK_BIT,
             self.mask_data % self.LOCK_BIT,
             self.mask_data,
         )
+        return class_mask.astype(np.uint8, copy=False)
 
+    def to_vector_annotations(self, transparency=None, show_confidence: bool = False,
+                              min_hole_area: int = 500, min_component_area: int = 5,
+                              simplify_px: float = 1.0) -> list:
+        """Convert all labeled regions in this mask into vector annotations.
+
+        Disconnected regions become separate annotations. Four-point, axis-aligned
+        square regions become PatchAnnotation objects; four-point, axis-aligned
+        non-squares become RectangleAnnotation objects; everything else becomes a
+        PolygonAnnotation.
+
+        Holes (interior voids) are handled selectively: holes whose area in pixels
+        is at least *min_hole_area* are preserved as interior rings in the resulting
+        PolygonAnnotation, giving an accurate representation of large voids (e.g. a
+        sand patch inside a coral colony). Holes smaller than *min_hole_area* are
+        silently filled, avoiding the vertex explosion that comes from tracing every
+        noise-level gap while retaining meaningful structure.
+
+        Each class is traced in a single ``findContours`` pass. ``RETR_CCOMP``
+        already separates a class into disjoint regions — exteriors land at
+        hierarchy level 0, their holes at level 1 — so no connected-component
+        labelling is needed, and ``_source_clear_indices`` come from a
+        ``flatnonzero`` over each exterior's bounding box. Total index cost is
+        therefore the sum of bounding-box areas rather than
+        components × class area.
+
+        Behaviour worth knowing
+        -----------------------
+        * ``findContours`` uses 8-connectivity for the foreground. Regions that
+          touch only diagonally become one annotation, not two.
+        * Clear indices are taken from the exterior's bounding box, so two
+          same-class regions with overlapping boxes each claim the union of
+          their pixels. Both regions are vectorised and cleared in the same pass,
+          so the mask still ends up correct, and pixels of *other* classes are
+          never included — the index set is filtered by this class's own mask.
+
+        Args:
+            transparency: Alpha value for created annotations (0-255).
+            show_confidence: Whether to display confidence scores.
+            min_hole_area: Minimum hole area in pixels to preserve as an interior
+                ring. Holes smaller than this threshold are filled. Default 500.
+            min_component_area: Minimum region area in pixels. Regions smaller
+                than this are skipped as noise. Default 5.
+            simplify_px: ``cv2.approxPolyDP`` epsilon in pixels. 0 disables
+                simplification. Raising it trades boundary fidelity for fewer
+                vertices, which shrinks every downstream stage.
+        """
+        if transparency is None:
+            transparency = getattr(self, 'transparency', 128)
+
+        try:
+            import cv2
+            _contour_to_points, _build_annotation = self._make_vector_builders(
+                transparency, show_confidence
+            )
+        except Exception:
+            return []
+
+        class_mask = self._class_mask()
         mask_h, mask_w = class_mask.shape
+
+        # One O(N) histogram gives both the class IDs present and their pixel
+        # counts, so classes below the noise floor are rejected before any
+        # per-class mask is materialised. Cheaper than np.unique, which sorts.
+        class_counts = np.bincount(class_mask.ravel(), minlength=2)
+
+        # findContours needs a writable single-channel uint8 image; reuse one
+        # buffer across classes instead of allocating a mask per class.
+        binary_mask = np.empty(class_mask.shape, dtype=np.uint8)
         vector_annotations = []
-        for class_id in [int(value) for value in np.unique(class_mask) if int(value) != 0]:
+
+        for class_id in np.nonzero(class_counts)[0]:
+            class_id = int(class_id)
+            if class_id == 0 or class_counts[class_id] < min_component_area:
+                continue
+
             label = self.class_id_to_label_map.get(class_id)
             if label is None:
                 continue
 
-            binary_mask = (class_mask == class_id).astype(np.uint8)
-            if not np.any(binary_mask):
+            # cv2.compare writes 0/255, which findContours treats as background/
+            # foreground exactly like 0/1.
+            cv2.compare(class_mask, class_id, cv2.CMP_EQ, dst=binary_mask)
+
+            contours, hierarchy = cv2.findContours(
+                binary_mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_TC89_KCOS
+            )
+            if not contours or hierarchy is None:
                 continue
 
-            # --- Fast connected-component analysis with free per-component stats ---
-            # cv2.connectedComponentsWithStats is ~2-4x faster than scipy.ndimage.label
-            # and returns bounding-box + area for every component at no extra cost,
-            # enabling early noise rejection before any contour work is done.
-            num_labels, label_img, stats, _ = cv2.connectedComponentsWithStats(
-                binary_mask, connectivity=4
-            )
-            if num_labels <= 1:
-                continue  # nothing but background
+            hier = hierarchy[0]
 
-            # Pre-compute flat indices for ALL pixels of this class in one O(N) pass.
-            # Per-component sets are derived by filtering this sparse array, avoiding
-            # a full O(H×W) flatnonzero scan inside the inner loop.
-            all_class_flat_indices = np.flatnonzero(binary_mask.ravel())
-            label_flat = label_img.ravel()
-
-            for comp_id in range(1, num_labels):
-
-                # --- Early noise reject (bounding-box stats are free from above) ---
-                area = int(stats[comp_id, cv2.CC_STAT_AREA])
-                if area < min_component_area:
+            for i, contour in enumerate(contours):
+                # Only top-level (exterior) contours; holes are reached below
+                # via the child-index chain.
+                if hier[i][3] != -1:
                     continue
 
-                # --- ROI-based contour extraction ---
-                # Crop to this component's bounding rect so that findContours operates
-                # on a small patch rather than the full image. For a 200×200 px object
-                # in a 4000×4000 image, that is roughly a 400x reduction in pixels
-                # scanned.
-                cx = int(stats[comp_id, cv2.CC_STAT_LEFT])
-                cy = int(stats[comp_id, cv2.CC_STAT_TOP])
-                cw = int(stats[comp_id, cv2.CC_STAT_WIDTH])
-                ch = int(stats[comp_id, cv2.CC_STAT_HEIGHT])
-
-                # 1 px padding ensures contours that touch the crop edge are captured.
-                x1 = max(0, cx - 1)
-                y1 = max(0, cy - 1)
-                x2 = min(mask_w, cx + cw + 1)
-                y2 = min(mask_h, cy + ch + 1)
-
-                roi = (label_img[y1:y2, x1:x2] == comp_id).astype(np.uint8)
-
-                # TC89_KCOS applies the Teh-Chin dominant-point algorithm at
-                # extraction time, pre-thinning the contour before approxPolyDP
-                # runs — fewer input vertices means faster simplification.
-                contours, hierarchy = cv2.findContours(
-                    roi, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_TC89_KCOS
-                )
-                if not contours or hierarchy is None:
+                # Pixel-exact area and clear indices in one pass over the
+                # exterior's bounding box. contourArea would under-report here
+                # (it traces pixel centres) and could drop objects the
+                # components backend keeps.
+                bx, by, bw, bh = cv2.boundingRect(contour)
+                roi_local_indices = np.flatnonzero(binary_mask[by:by + bh, bx:bx + bw])
+                if roi_local_indices.size < min_component_area:
                     continue
 
-                hier = hierarchy[0]
+                simplified_contour = cv2.approxPolyDP(contour, simplify_px, closed=True)
+                exterior_points = _contour_to_points(simplified_contour)
+                if len(exterior_points) < 3:
+                    continue
 
-                # Efficient per-component flat-index set: filter the pre-built
-                # class index array by this component's label ID — no full image scan.
-                component_flat_indices = all_class_flat_indices[
-                    label_flat[all_class_flat_indices] == comp_id
-                ]
+                # Walk the child chain to collect significant holes.
+                interior_rings = []
+                child_idx = hier[i][2]  # index of first hole, -1 if none
+                while child_idx != -1:
+                    hole_contour = contours[child_idx]
+                    if cv2.contourArea(hole_contour) >= min_hole_area:
+                        simplified_hole = cv2.approxPolyDP(hole_contour, simplify_px, closed=True)
+                        hole_points = _contour_to_points(simplified_hole)
+                        if len(hole_points) >= 3:
+                            interior_rings.append(hole_points)
+                    child_idx = hier[child_idx][0]  # next sibling hole
 
-                for i, contour in enumerate(contours):
-                    # Only process top-level (exterior) contours; holes are
-                    # collected below via the child-index chain.
-                    if hier[i][3] != -1:
-                        continue
+                annotation = _build_annotation(label, exterior_points, interior_rings)
+                if annotation is None:
+                    continue
 
-                    # Offset contour points from ROI-local space back to full-image
-                    # space before running approxPolyDP.
-                    contour_offset = contour.copy()
-                    contour_offset[:, :, 0] += x1
-                    contour_offset[:, :, 1] += y1
-
-                    simplified_contour = cv2.approxPolyDP(contour_offset, 1.0, closed=True)
-                    exterior_points = _contour_to_points(simplified_contour)
-                    if len(exterior_points) < 3:
-                        continue
-
-                    # Walk the child chain to collect significant holes.
-                    interior_rings = []
-                    child_idx = hier[i][2]  # index of first hole, -1 if none
-                    while child_idx != -1:
-                        hole_contour = contours[child_idx]
-                        if cv2.contourArea(hole_contour) >= min_hole_area:
-                            hole_offset = hole_contour.copy()
-                            hole_offset[:, :, 0] += x1
-                            hole_offset[:, :, 1] += y1
-                            simplified_hole = cv2.approxPolyDP(hole_offset, 1.0, closed=True)
-                            hole_points = _contour_to_points(simplified_hole)
-                            if len(hole_points) >= 3:
-                                interior_rings.append(hole_points)
-                        child_idx = hier[child_idx][0]  # next sibling hole
-
-                    annotation = _build_annotation(label, exterior_points, interior_rings)
-                    if annotation is not None:
-                        annotation._source_clear_indices = component_flat_indices
-                        vector_annotations.append(annotation)
+                # ROI-local flat indices -> full-image flat indices.
+                rows = roi_local_indices // bw + by
+                cols = roi_local_indices % bw + bx
+                annotation._source_clear_indices = rows.astype(np.int64) * mask_w + cols
+                vector_annotations.append(annotation)
 
         return vector_annotations
 
