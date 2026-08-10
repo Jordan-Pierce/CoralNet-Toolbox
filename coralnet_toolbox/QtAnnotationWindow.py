@@ -2867,16 +2867,21 @@ class AnnotationWindow(BaseCanvas):
                 pass
             return False
 
+        # Regions too small to become polygons are noise; their pixels are
+        # dropped alongside the vectorized ones so nothing is left behind.
+        rejected_indices = []
         try:
             vector_annotations = mask_annotation.to_vector_annotations(
                 transparency=self.main_window.get_transparency_value(),
                 show_confidence=False,
                 min_hole_area=min_hole_area,
+                rejected_indices_out=rejected_indices,
             )
         except Exception:
             vector_annotations = []
+            rejected_indices = []
 
-        if not vector_annotations:
+        if not vector_annotations and not rejected_indices:
             try:
                 self.main_window.status_bar.showMessage(
                     "No mask regions could be vectorized from the current image.",
@@ -2900,11 +2905,16 @@ class AnnotationWindow(BaseCanvas):
             try:
                 self.unselect_annotations()
 
-                add_action = AddAnnotationsAction(self, vector_annotations)
-                add_action.do()
+                if vector_annotations:
+                    add_action = AddAnnotationsAction(self, vector_annotations)
+                    add_action.do()
 
                 clear_action = MaskEditAction(mask_annotation, description="Vectorize mask annotations")
-                mask_annotation.clear_pixels_for_annotations(vector_annotations, history_action=clear_action)
+                mask_annotation.clear_pixels_for_annotations(
+                    vector_annotations,
+                    history_action=clear_action,
+                    extra_flat_indices=rejected_indices,
+                )
             finally:
                 if _annotation_manager is not None:
                     _annotation_manager.blockSignals(False)
@@ -2918,7 +2928,8 @@ class AnnotationWindow(BaseCanvas):
 
             if clear_action is None or clear_action.is_empty():
                 try:
-                    self.delete_annotations(vector_annotations, record_action=False)
+                    if vector_annotations:
+                        self.delete_annotations(vector_annotations, record_action=False)
                     self.main_window.status_bar.showMessage(
                         "No editable mask pixels were changed during vectorization.",
                         3000,
@@ -2927,17 +2938,20 @@ class AnnotationWindow(BaseCanvas):
                     pass
                 return False
 
-            compound_action = CompoundAction(
-                [add_action, clear_action],
-                description="Vectorize mask annotations",
-            )
-            self.action_stack.push(compound_action)
+            actions = [action for action in (add_action, clear_action) if action is not None]
+            if len(actions) > 1:
+                self.action_stack.push(CompoundAction(
+                    actions,
+                    description="Vectorize mask annotations",
+                ))
+            else:
+                self.action_stack.push(actions[0])
 
             try:
-                self.main_window.status_bar.showMessage(
-                    f"Vectorized {len(vector_annotations)} mask regions into annotations.",
-                    3000,
-                )
+                message = f"Vectorized {len(vector_annotations)} mask regions into annotations."
+                if rejected_indices:
+                    message += f" Discarded {len(rejected_indices)} sub-threshold regions."
+                self.main_window.status_bar.showMessage(message, 3000)
             except Exception:
                 pass
         finally:

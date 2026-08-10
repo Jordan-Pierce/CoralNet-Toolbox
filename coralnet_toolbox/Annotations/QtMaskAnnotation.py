@@ -1194,19 +1194,34 @@ class MaskAnnotation(Annotation):
         if np.any(pixels_to_clear):
             self.annotationUpdated.emit(self)
 
-    def clear_pixels_for_annotations(self, annotations_to_clear: list, history_action=None):
+    def clear_pixels_for_annotations(self, annotations_to_clear: list, history_action=None,
+                                     extra_flat_indices=None):
         """
         Rasterizes a list of vector annotations and sets the corresponding
         pixels in the mask_data to 0 (unclassified).
+
+        Args:
+            annotations_to_clear: Annotations whose pixels should be cleared.
+            history_action: Optional MaskEditAction to record the change on.
+            extra_flat_indices: Optional iterable of flat-index arrays to clear
+                alongside the annotations. Used to drop regions that were too
+                small to vectorize, which would otherwise survive as stray mask
+                pixels after the rest of the mask was converted.
         """
-        if not annotations_to_clear:
+        if not annotations_to_clear and not extra_flat_indices:
             return
 
         # 1. Build a precise mask from any stored source indices, then fall back
         #    to rasterizing the annotation geometry when no exact indices exist.
         exact_flat_indices = []
         geometries = []
-        for anno in annotations_to_clear:
+
+        for indices in (extra_flat_indices or ()):
+            indices_array = np.asarray(indices, dtype=np.int64).ravel()
+            if indices_array.size:
+                exact_flat_indices.append(indices_array)
+
+        for anno in (annotations_to_clear or ()):
             source_indices = getattr(anno, '_source_clear_indices', None)
             if source_indices is not None:
                 indices_array = np.asarray(source_indices, dtype=np.int64).ravel()
@@ -1380,9 +1395,10 @@ class MaskAnnotation(Annotation):
     def to_instance_polygons(self, class_id: int) -> list:
         """Converts all contiguous regions of a class ID into PolygonAnnotations.
 
-        Uses cv2.findContours with CHAIN_APPROX_TC89_KCOS (replaces skimage
-        find_contours) for consistency with to_vector_annotations and better
-        performance. No padding needed — OpenCV handles image-border contours.
+        Uses cv2.findContours with CHAIN_APPROX_SIMPLE, matching
+        to_vector_annotations. No padding needed — OpenCV handles image-border
+        contours. The Teh-Chin chains thin a contour down to dominant points,
+        which collapses small regions below three points and drops them.
         """
         import cv2
 
@@ -1392,21 +1408,23 @@ class MaskAnnotation(Annotation):
 
         binary_mask = self.get_binary_mask(class_id).astype(np.uint8)
 
-        # TC89_KCOS pre-filters dominant points at extraction time,
-        # reducing vertex count before approxPolyDP even runs.
         contours, _ = cv2.findContours(
-            binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_TC89_KCOS
+            binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
 
         annotations = []
         for contour in contours:
             simplified = cv2.approxPolyDP(contour, 1.0, closed=True)
-            points = [QPointF(float(x), float(y)) for x, y in simplified.reshape(-1, 2)]
+            points = [QPointF(x, y) for x, y in simplified.reshape(-1, 2).tolist()]
             if len(points) >= 3:
                 anno = PolygonAnnotation(
                     points=points,
                     label=label,
                     image_path=self.image_path,
+                    # approxPolyDP already simplified harder than the 0.5 px
+                    # cleanup pass would; running it again is a shapely
+                    # round-trip per polygon that removes nothing.
+                    simplify=False,
                 )
                 annotations.append(anno)
         return annotations
@@ -1505,7 +1523,8 @@ class MaskAnnotation(Annotation):
 
     def to_vector_annotations(self, transparency=None, show_confidence: bool = False,
                               min_hole_area: int = 500, min_component_area: int = 5,
-                              simplify_px: float = 1.0) -> list:
+                              simplify_px: float = 1.0,
+                              rejected_indices_out: list = None) -> list:
         """Convert all labeled regions in this mask into vector annotations.
 
         Disconnected regions become separate annotations. Four-point, axis-aligned
@@ -1548,6 +1567,14 @@ class MaskAnnotation(Annotation):
             simplify_px: ``cv2.approxPolyDP`` epsilon in pixels. 0 disables
                 simplification. Raising it trades boundary fidelity for fewer
                 vertices, which shrinks every downstream stage.
+            rejected_indices_out: Optional list. When given, one flat-index
+                array is appended for every region that failed to become an
+                annotation — too few pixels, or simplified down to fewer than
+                three points. Pass it to ``clear_pixels_for_annotations`` as
+                ``extra_flat_indices`` so sub-threshold regions are dropped
+                instead of surviving as stray mask pixels. Regions of an
+                unmapped class are *not* reported: those are a label-mapping
+                problem, not noise, and clearing them would lose data.
         """
         if transparency is None:
             transparency = getattr(self, 'transparency', 128)
@@ -1562,6 +1589,7 @@ class MaskAnnotation(Annotation):
 
         class_mask = self._class_mask()
         mask_h, mask_w = class_mask.shape
+        track_rejected = rejected_indices_out is not None
 
         # One O(N) histogram gives both the class IDs present and their pixel
         # counts, so classes below the noise floor are rejected before any
@@ -1573,21 +1601,51 @@ class MaskAnnotation(Annotation):
         binary_mask = np.empty(class_mask.shape, dtype=np.uint8)
         vector_annotations = []
 
+        def _to_global_indices(roi_local, x0, y0, roi_w):
+            """ROI-local flat indices -> full-image flat indices.
+
+            Runs once per region and regions number in the thousands, so the
+            arithmetic is done in place on the array divmod already allocated
+            rather than building a fresh intermediate at every step.
+            """
+            rows, cols = np.divmod(roi_local, roi_w)
+            rows *= mask_w
+            rows += cols
+            rows += y0 * mask_w + x0
+            return rows
+
         for class_id in np.nonzero(class_counts)[0]:
             class_id = int(class_id)
-            if class_id == 0 or class_counts[class_id] < min_component_area:
+            if class_id == 0:
                 continue
 
+            # A class with no mapped label cannot be vectorised at all. That is
+            # a label-mapping problem rather than noise, so its pixels are left
+            # alone instead of being reported as rejected.
             label = self.class_id_to_label_map.get(class_id)
             if label is None:
+                continue
+
+            if class_counts[class_id] < min_component_area:
+                if track_rejected:
+                    rejected_indices_out.append(
+                        np.flatnonzero((class_mask == class_id).ravel())
+                    )
                 continue
 
             # cv2.compare writes 0/255, which findContours treats as background/
             # foreground exactly like 0/1.
             cv2.compare(class_mask, class_id, cv2.CMP_EQ, dst=binary_mask)
 
+            # CHAIN_APPROX_SIMPLE, not TC89_KCOS: the bounding rect below has to
+            # cover every pixel of its region, and SIMPLE guarantees that
+            # because it only drops points interior to a straight run, always
+            # keeping each run's endpoints. The Teh-Chin variants thin down to
+            # dominant points and can report a rect smaller than the region --
+            # a 2x2 block collapses to a single point, so a 1x1 rect -- which
+            # silently strands pixels in the mask.
             contours, hierarchy = cv2.findContours(
-                binary_mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_TC89_KCOS
+                binary_mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE
             )
             if not contours or hierarchy is None:
                 continue
@@ -1602,16 +1660,28 @@ class MaskAnnotation(Annotation):
 
                 # Pixel-exact area and clear indices in one pass over the
                 # exterior's bounding box. contourArea would under-report here
-                # (it traces pixel centres) and could drop objects the
-                # components backend keeps.
-                bx, by, bw, bh = cv2.boundingRect(contour)
-                roi_local_indices = np.flatnonzero(binary_mask[by:by + bh, bx:bx + bw])
+                # (it traces pixel centres) and could drop regions that are
+                # genuinely above the threshold.
+                x0, y0, roi_w, roi_h = cv2.boundingRect(contour)
+                roi_local_indices = np.flatnonzero(
+                    binary_mask[y0:y0 + roi_h, x0:x0 + roi_w]
+                )
                 if roi_local_indices.size < min_component_area:
+                    if track_rejected:
+                        rejected_indices_out.append(
+                            _to_global_indices(roi_local_indices, x0, y0, roi_w)
+                        )
                     continue
 
                 simplified_contour = cv2.approxPolyDP(contour, simplify_px, closed=True)
                 exterior_points = _contour_to_points(simplified_contour)
                 if len(exterior_points) < 3:
+                    # A sliver that simplified down to a line. Not a polygon, so
+                    # it is reported as rejected rather than silently left behind.
+                    if track_rejected:
+                        rejected_indices_out.append(
+                            _to_global_indices(roi_local_indices, x0, y0, roi_w)
+                        )
                     continue
 
                 # Walk the child chain to collect significant holes.
@@ -1628,12 +1698,15 @@ class MaskAnnotation(Annotation):
 
                 annotation = _build_annotation(label, exterior_points, interior_rings)
                 if annotation is None:
+                    if track_rejected:
+                        rejected_indices_out.append(
+                            _to_global_indices(roi_local_indices, x0, y0, roi_w)
+                        )
                     continue
 
-                # ROI-local flat indices -> full-image flat indices.
-                rows = roi_local_indices // bw + by
-                cols = roi_local_indices % bw + bx
-                annotation._source_clear_indices = rows.astype(np.int64) * mask_w + cols
+                annotation._source_clear_indices = _to_global_indices(
+                    roi_local_indices, x0, y0, roi_w
+                )
                 vector_annotations.append(annotation)
 
         return vector_annotations
