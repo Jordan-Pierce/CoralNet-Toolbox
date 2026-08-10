@@ -1,7 +1,7 @@
 import warnings
 
 from PyQt5.QtCore import Qt, QPointF, QTimer
-from PyQt5.QtGui import QMouseEvent, QColor, QPen
+from PyQt5.QtGui import QMouseEvent, QColor, QPen, QCursor
 from PyQt5.QtWidgets import QGraphicsPixmapItem, QGraphicsLineItem
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -62,6 +62,37 @@ class Tool:
         # Stop any current drawing operation
         self.stop_current_drawing()
 
+    def leave(self):
+        """Drop hover-only graphics because the pointer left the window.
+
+        Qt stops delivering mouseMoveEvent the instant the pointer exits the
+        widget, so every clear that lives inside mouseMoveEvent never runs on
+        the way out and the graphics stay on screen. AnnotationWindow.leaveEvent
+        calls this instead.
+
+        Deliberately does NOT call stop_current_drawing(): a toggled-on brush
+        stroke, a half-drawn polygon, or a pending SAM work area must survive
+        the pointer leaving. Subclasses that own extra *hover-driven* state
+        (debounce timers, temp predictions) should override, clear that, and
+        call super().leave().
+        """
+        self._cursor_update_timer.stop()
+        self._pending_cursor_pos = None
+        self.clear_cursor_annotation()
+        self.clear_crosshair()
+        if self.cursor_clear_callback:
+            self.cursor_clear_callback()
+
+    def _pointer_over_window(self) -> bool:
+        """True while the pointer is physically over the annotation viewport.
+        Used to stop debounce timers from re-adding hover graphics after a leave.
+        """
+        try:
+            viewport = self.annotation_window.viewport()
+            return viewport.rect().contains(viewport.mapFromGlobal(QCursor.pos()))
+        except Exception:
+            return False
+
     def mousePressEvent(self, event: QMouseEvent):
         pass
 
@@ -101,6 +132,12 @@ class Tool:
 
     def _fire_cursor_preview_update(self):
         """Timer callback — fire cursor_move_callback if a consumer is registered."""
+        # The pointer can leave during the 100 ms debounce; firing anyway would
+        # re-add the context-canvas previews leave() just removed.
+        if not self._pointer_over_window():
+            self._pending_cursor_pos = None
+            return
+        
         if self._pending_cursor_pos is not None and self.cursor_move_callback:
             self.cursor_move_callback(self._pending_cursor_pos, self.create_cursor_preview_item)
 

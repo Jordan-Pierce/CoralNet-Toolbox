@@ -172,12 +172,29 @@ class SAMTool(Tool):
         self.annotation_window.setCursor(Qt.CrossCursor)
         self.annotation_window.scene.update()
 
+    def leave(self):
+        """Pointer left the window — drop the hover prediction, keep the prompts.
+
+        The working area, point prompts, and any half-drawn rectangle are
+        deliberately preserved; only the hover-driven temp annotation goes.
+        """
+        self.hover_timer.stop()
+        self.hover_pos = None
+        if not self.has_active_prompts:
+            self.clear_temp_annotation()
+        super().leave()
+
     def _on_hover_timeout(self):
         """
         Triggered when the mouse stops moving for 'debounce_ms'.
         Safe to run heavy predictions here without lagging the UI.
         """
         if not self.active or not self.working_area or not self.hover_pos:
+            return
+
+        # The pointer can leave during the debounce; predicting anyway would
+        # re-add the temp annotation leave() just cleared.
+        if not self._pointer_over_window():
             return
 
         # Double check conditions before predicting

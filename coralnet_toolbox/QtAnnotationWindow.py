@@ -956,6 +956,24 @@ class AnnotationWindow(BaseCanvas):
         # Let BaseCanvas handle native pan/zoom via super()
         super().mouseMoveEvent(event)
 
+    def on_pointer_left(self):
+        """Tear down hover graphics when the pointer leaves the window.
+
+        cursorInWindow() only ever gets consulted from mouseMoveEvent, and Qt
+        delivers no move event once the pointer is outside the widget — so a
+        fast exit at the widget edge (or an alt-tab, or moving onto a dock) left
+        the crosshair and cursor annotation frozen on screen. Tool.leave() 
+        clears hover state only; an in-progress stroke or polygon survives.
+        """
+        if self.selected_tool and self.selected_tool in self.tools:
+            try:
+                self.tools[self.selected_tool].leave()
+            except Exception:
+                pass
+
+        # BaseCanvas drops this window's own cursor preview + dynamic marker.
+        super().on_pointer_left()
+
     def mouseReleaseEvent(self, event: QMouseEvent):
         """Handle mouse release events for the active tool."""
         # Check if a tool is selected before proceeding
@@ -2158,7 +2176,7 @@ class AnnotationWindow(BaseCanvas):
         """Update the graphics scene and its items."""
         self.scene.update()
         self.viewport().update()
-        QApplication.processEvents()
+        self.viewport().repaint()
 
     def _show_placeholder(self, text: str = None):
         """Show the centered placeholder label with optional custom text."""
@@ -2225,9 +2243,6 @@ class AnnotationWindow(BaseCanvas):
         # Clear own static marker (focal-point crosshair)
         self.clear_static_marker()
 
-        # Process events
-        QApplication.processEvents()
-
     def display_image(self, q_image):
         """Display a QImage in the annotation window without setting it."""
         # Clean up
@@ -2247,7 +2262,9 @@ class AnnotationWindow(BaseCanvas):
 
         # Clear the confidence window
         self.main_window.confidence_window.clear_display()
-        QApplication.processEvents()
+        # Force the image onto the screen now without letting unrelated queued
+        # work re-enter this call.
+        self.viewport().repaint()
 
     def set_image(self, image_path):
         """Set and display an image at the given path using a staged load for instant feedback."""
@@ -2344,7 +2361,11 @@ class AnnotationWindow(BaseCanvas):
         self.scene.addItem(base_image_item)
         self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
         self._hide_placeholder()
-        QApplication.processEvents()
+        # The whole point of the staged load: get the low-res preview visible
+        # before the expensive full-res decode below. repaint() does exactly that
+        # and nothing else — processEvents() here used to hand control to any
+        # queued handler mid-load.
+        self.viewport().repaint()
         
         # Update the rasterio image source for cropping annotations
         self.rasterio_image = raster.rasterio_src
@@ -2392,8 +2413,6 @@ class AnnotationWindow(BaseCanvas):
         self.main_window.image_window.update_image_annotations(image_path)
         # Clear the confidence window
         self.main_window.confidence_window.clear_display()
-
-        QApplication.processEvents()
 
         # Set the image dimensions, and current view in status bar
         self.imageLoaded.emit(self.pixmap_image.width(), self.pixmap_image.height())
@@ -2848,16 +2867,21 @@ class AnnotationWindow(BaseCanvas):
                 pass
             return False
 
+        # Regions too small to become polygons are noise; their pixels are
+        # dropped alongside the vectorized ones so nothing is left behind.
+        rejected_indices = []
         try:
             vector_annotations = mask_annotation.to_vector_annotations(
                 transparency=self.main_window.get_transparency_value(),
                 show_confidence=False,
                 min_hole_area=min_hole_area,
+                rejected_indices_out=rejected_indices,
             )
         except Exception:
             vector_annotations = []
+            rejected_indices = []
 
-        if not vector_annotations:
+        if not vector_annotations and not rejected_indices:
             try:
                 self.main_window.status_bar.showMessage(
                     "No mask regions could be vectorized from the current image.",
@@ -2881,11 +2905,16 @@ class AnnotationWindow(BaseCanvas):
             try:
                 self.unselect_annotations()
 
-                add_action = AddAnnotationsAction(self, vector_annotations)
-                add_action.do()
+                if vector_annotations:
+                    add_action = AddAnnotationsAction(self, vector_annotations)
+                    add_action.do()
 
                 clear_action = MaskEditAction(mask_annotation, description="Vectorize mask annotations")
-                mask_annotation.clear_pixels_for_annotations(vector_annotations, history_action=clear_action)
+                mask_annotation.clear_pixels_for_annotations(
+                    vector_annotations,
+                    history_action=clear_action,
+                    extra_flat_indices=rejected_indices,
+                )
             finally:
                 if _annotation_manager is not None:
                     _annotation_manager.blockSignals(False)
@@ -2899,7 +2928,8 @@ class AnnotationWindow(BaseCanvas):
 
             if clear_action is None or clear_action.is_empty():
                 try:
-                    self.delete_annotations(vector_annotations, record_action=False)
+                    if vector_annotations:
+                        self.delete_annotations(vector_annotations, record_action=False)
                     self.main_window.status_bar.showMessage(
                         "No editable mask pixels were changed during vectorization.",
                         3000,
@@ -2908,17 +2938,20 @@ class AnnotationWindow(BaseCanvas):
                     pass
                 return False
 
-            compound_action = CompoundAction(
-                [add_action, clear_action],
-                description="Vectorize mask annotations",
-            )
-            self.action_stack.push(compound_action)
+            actions = [action for action in (add_action, clear_action) if action is not None]
+            if len(actions) > 1:
+                self.action_stack.push(CompoundAction(
+                    actions,
+                    description="Vectorize mask annotations",
+                ))
+            else:
+                self.action_stack.push(actions[0])
 
             try:
-                self.main_window.status_bar.showMessage(
-                    f"Vectorized {len(vector_annotations)} mask regions into annotations.",
-                    3000,
-                )
+                message = f"Vectorized {len(vector_annotations)} mask regions into annotations."
+                if rejected_indices:
+                    message += f" Discarded {len(rejected_indices)} sub-threshold regions."
+                self.main_window.status_bar.showMessage(message, 3000)
             except Exception:
                 pass
         finally:
@@ -3522,7 +3555,6 @@ class AnnotationWindow(BaseCanvas):
         # Render all unselected annotations to phantom layer
         self.refresh_phantom_annotations()
         
-        QApplication.processEvents()
         self.viewport().update()
 
     def load_mask_annotation(self):

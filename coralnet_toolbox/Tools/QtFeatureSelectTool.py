@@ -1288,9 +1288,28 @@ class FeatureSelectTool(Tool):
         self._do_hover_refresh()
         self.hover_timer.start(self.debounce_ms)
 
+    def leave(self):
+        """Pointer left the window — drop the hover highlight, keep the query.
+
+        Repaints the heatmap with hover_id=None so the preview falls back to the
+        committed prompts instead of freezing on the last hovered cell. The work
+        area, prompts, and prototypes are untouched.
+        """
+        self.hover_timer.stop()
+        self._hover_pending = False
+        self.hover_pos = None
+        if self.query_engine is not None and not self.creating_working_area:
+            self.update_heatmap(hover_id=None)
+        super().leave()
+
     def _on_hover_timeout(self):
         # Trailing edge: process the most recent hover position if one arrived
         # during the cooldown, and keep the cadence going while the cursor moves.
+        # Bail if the pointer left during the cooldown — otherwise this re-adds
+        # the hover highlight that leave() just cleared.
+        if not self._pointer_over_window():
+            self._hover_pending = False
+            return
         if self._hover_pending:
             self._hover_pending = False
             self._do_hover_refresh()

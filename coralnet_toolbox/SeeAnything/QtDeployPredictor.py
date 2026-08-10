@@ -334,6 +334,7 @@ class DeployPredictorDialog(QDialog):
         Load the selected model (from dropdown or file).
         """
         QApplication.setOverrideCursor(Qt.WaitCursor)
+        self.main_window.status_bar.showMessage("Obtaining model...")
         progress_bar = ProgressBar(self.annotation_window, title="Loading Model")
         progress_bar.show()
     

@@ -50,6 +50,17 @@ class PatchTool(Tool):
         # Call parent deactivate to ensure crosshair and cursor preview are properly cleared
         super().deactivate()
 
+    def leave(self):
+        """Pointer left the window — cancel the pending live-classify inference.
+
+        Live-classify mode itself stays on; only the queued inference for a
+        cursor position that no longer exists is dropped. The base leave()
+        removes the cursor annotation the prediction would have painted onto.
+        """
+        self._live_classify_timer.stop()
+        self._pending_inference_pos = None
+        super().leave()
+
     def mousePressEvent(self, event: QMouseEvent):
 
         if not self.annotation_window.selected_label:

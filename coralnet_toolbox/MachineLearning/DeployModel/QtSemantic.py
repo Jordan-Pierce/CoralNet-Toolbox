@@ -2,6 +2,7 @@ import warnings
 
 import gc
 import os
+import time
 
 import numpy as np
 
@@ -529,15 +530,26 @@ class Semantic(Base):
 
                 if auto_vectorize:
                     history_description = "Semantic prediction & vectorize"
+                    # Regions too small to become polygons are noise. Collect
+                    # their pixels so they can be dropped below rather than
+                    # left behind as stray mask specks.
+                    rejected_indices = []
                     try:
+                        _vectorize_start = time.perf_counter()
                         vector_annotations = mask_annotation.to_vector_annotations(
                             transparency=self.main_window.get_transparency_value(),
                             show_confidence=False,
                             min_hole_area=500,
+                            rejected_indices_out=rejected_indices,
+                        )
+                        self._report_vectorize_timing(
+                            len(vector_annotations),
+                            time.perf_counter() - _vectorize_start,
                         )
                     except Exception as e:
                         print(f"Warning: Failed to vectorize semantic prediction for {image_path}: {e}")
                         vector_annotations = []
+                        rejected_indices = []
 
                     if vector_annotations:
                         try:
@@ -547,10 +559,19 @@ class Semantic(Base):
                             vector_annotations = []
                         else:
                             vectors_added = True
-                            try:
-                                mask_annotation.clear_pixels_for_annotations(vector_annotations)
-                            except Exception as e:
-                                print(f"Warning: Failed to clear semantic pixels for {image_path}: {e}")
+
+                    # Clear the vectorized regions and the rejected ones in one
+                    # pass. This still runs when nothing vectorized, so a mask
+                    # made entirely of sub-threshold specks is emptied rather
+                    # than left intact.
+                    if vectors_added or rejected_indices:
+                        try:
+                            mask_annotation.clear_pixels_for_annotations(
+                                vector_annotations if vectors_added else [],
+                                extra_flat_indices=rejected_indices,
+                            )
+                        except Exception as e:
+                            print(f"Warning: Failed to clear semantic pixels for {image_path}: {e}")
 
                 _history_action = MaskEditAction.from_snapshot(
                     mask_annotation, _before_mask_snapshot, description=history_description
@@ -617,6 +638,23 @@ class Semantic(Base):
             QApplication.restoreOverrideCursor()
             gc.collect()
             empty_cache()
+
+    def _report_vectorize_timing(self, polygon_count, elapsed_seconds):
+        """Show how long the mask -> polygon conversion took.
+
+        Written to both the status bar and stdout so runs can be compared
+        without keeping the window in view.
+        """
+        message = (f"Converted masks into {polygon_count} polygons - "
+                   f"{elapsed_seconds:.3f} seconds")
+        print(message)
+        try:
+            self.main_window.status_bar.showMessage(message, 10000)
+            # The prediction loop holds the event loop, so the status bar would
+            # not repaint until the whole run finished without this.
+            QApplication.processEvents()
+        except Exception:
+            pass
 
     def _apply_model(self, inputs):
         """
