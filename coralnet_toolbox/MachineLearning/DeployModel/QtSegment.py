@@ -20,6 +20,8 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Common import ThresholdsWidget
 
+from coralnet_toolbox.utilities import bgr_to_qimage, decode_video_frame
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -256,6 +258,15 @@ class Segment(Base):
                 )
                 progress_bar.start_progress(len(work_areas))
 
+                # Virtual video-frame paths (video.mp4::frame_N): decode the frame
+                # once, up front, and keep the array.  Passing it to the model
+                # avoids handing Ultralytics a non-filesystem path, and holding it
+                # for the fast render below means the painted pixels are the exact
+                # ones the model saw — re-reading raster.rasterio_src afterwards
+                # would not, because the progress bar yields to the event loop and
+                # a Ctrl+hover preview can repoint the shim at another frame.
+                frame_bgr = decode_video_frame(image_path, raster)
+
                 results_for_image = []
 
                 for i in range(0, len(work_areas), self.BATCH_SIZE):
@@ -266,22 +277,9 @@ class Segment(Base):
                         if wa is not None:
                             wa.highlight()
                             inputs.append(raster.get_work_area_data(wa, as_format='BGR'))
+                        elif frame_bgr is not None:
+                            inputs.append(frame_bgr)
                         else:
-                            # Full-image: if this is a virtual video frame path,
-                            # fetch the raw BGR frame and pass the ndarray directly
-                            # to the model to avoid giving a non-filesystem path.
-                            if isinstance(image_path, str) and '::frame_' in image_path:
-                                try:
-                                    from coralnet_toolbox.Rasters.VideoRaster import VideoRaster
-                                    _, frame_idx = VideoRaster.parse_frame_path(image_path)
-                                    if frame_idx is not None and hasattr(raster, 'get_bgr_frame'):
-                                        bgr = raster.get_bgr_frame(int(frame_idx))
-                                        if bgr is not None:
-                                            inputs.append(bgr)
-                                            continue
-                                except Exception:
-                                    # Any failure falls back to using the image path
-                                    pass
                             inputs.append(image_path)
 
                     batch_results = self._apply_model(inputs)
@@ -330,12 +328,20 @@ class Segment(Base):
                 if use_sam and results_for_image and not use_tiles:
                     try:
                         import cv2
-                        numpy_arr = raster.get_numpy()
-                        if numpy_arr is not None:
-                            full_bgr = cv2.cvtColor(numpy_arr, cv2.COLOR_RGB2BGR)
+                        if frame_bgr is not None:
+                            # VideoRaster.get_numpy() routes through get_pixmap(),
+                            # which always returns frame 0 — SAM would cut its masks
+                            # out of the wrong frame. Use the frame we decoded.
+                            full_bgr = frame_bgr
+                        else:
+                            numpy_arr = raster.get_numpy()
+                            full_bgr = (cv2.cvtColor(numpy_arr, cv2.COLOR_RGB2BGR)
+                                        if numpy_arr is not None else None)
+                            del numpy_arr
+                        if full_bgr is not None:
                             for r in results_for_image:
                                 r.orig_img = full_bgr
-                            del full_bgr, numpy_arr
+                        del full_bgr
                         results_for_image = self.sam_dialog.predict_from_results(
                             results_for_image, image_path)
                         for r in results_for_image:
@@ -357,7 +363,8 @@ class Segment(Base):
                 if image_path == self.annotation_window.current_image_path:
                     try:
                         self._fast_render_image(
-                            image_path, raster, results_for_image, results_processor)
+                            image_path, raster, results_for_image, results_processor,
+                            frame_bgr=frame_bgr)
                     except Exception as e:
                         print(f"Segment.predict: fast render failed: {e}")
 
@@ -397,15 +404,22 @@ class Segment(Base):
             gc.collect()
             empty_cache()
 
-    def _fast_render_image(self, image_path, raster, results_for_image, results_processor):
+    def _fast_render_image(self, image_path, raster, results_for_image, results_processor,
+                           frame_bgr=None):
         """Push a ghost-render of new predictions to the OpenGL canvas without baking."""
         from coralnet_toolbox.utilities import rasterio_to_qimage
         aw = self.annotation_window
 
-        try:
-            q_img = rasterio_to_qimage(raster.rasterio_src)
-        except Exception:
-            q_img = None
+        # For a video frame, paint the array the model was given.  Reading the
+        # shim instead lets a preview decode that landed between inference and
+        # here put a different frame under this frame's detections.
+        q_img = bgr_to_qimage(frame_bgr) if frame_bgr is not None else None
+
+        if q_img is None:
+            try:
+                q_img = rasterio_to_qimage(raster.rasterio_src)
+            except Exception:
+                q_img = None
 
         if getattr(aw, '_base_image_item', None) is not None:
             if q_img is not None:

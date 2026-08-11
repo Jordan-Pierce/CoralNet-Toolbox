@@ -221,6 +221,56 @@ def rasterio_to_qimage(rasterio_src, longest_edge=None):
         return QImage()  # Return an empty QImage if there's an error
 
 
+def decode_video_frame(image_path, raster):
+    """
+    Decode the frame a virtual video-frame path refers to, as a BGR array.
+
+    Interactive inference must hold on to this array rather than re-reading
+    ``raster.rasterio_src`` later: the VideoRaster shim is shared mutable state,
+    and any preview / thumbnail decode that runs while an inference loop yields
+    to the event loop (the progress bar calls processEvents) repoints it at a
+    different frame.
+
+    Args:
+        image_path (str): Path to check; only 'video.mp4::frame_N' forms decode.
+        raster (Raster): Raster the path belongs to.
+
+    Returns:
+        numpy.ndarray or None: BGR frame, or None if the path is not a virtual
+            video frame or the decode failed.
+    """
+    if not isinstance(image_path, str) or '::frame_' not in image_path:
+        return None
+
+    try:
+        from coralnet_toolbox.Rasters.VideoRaster import VideoRaster
+        _, frame_idx = VideoRaster.parse_frame_path(image_path)
+        if frame_idx is None or not hasattr(raster, 'get_bgr_frame'):
+            return None
+        return raster.get_bgr_frame(int(frame_idx))
+    except Exception:
+        return None
+
+
+def bgr_to_qimage(bgr):
+    """
+    Convert a BGR numpy array to a deep-copied RGB888 QImage.
+
+    Args:
+        bgr (numpy.ndarray): (H, W, 3) BGR image data
+
+    Returns:
+        QImage or None: The converted image, or None on failure.
+    """
+    try:
+        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        h, w, channels = rgb.shape
+        # .copy() so the QImage owns its bytes and does not alias the array
+        return QImage(rgb.data, w, h, channels * w, QImage.Format_RGB888).copy()
+    except Exception:
+        return None
+
+
 def rasterio_to_cropped_image(rasterio_src, window):
     """
     Convert a rasterio window to a QImage, supporting colormaps.
