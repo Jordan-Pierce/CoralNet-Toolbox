@@ -243,7 +243,7 @@ class DeployPredictorDialog(QDialog):
         Ultralytics will automatically download missing weights.
         """
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        self.main_window.status_bar.showMessage("Obtaining model...")
+        self.main_window.status_bar.showMessage("Obtaining model...", 3000)
         progress_bar = ProgressBar(self.annotation_window, title="Loading Model")
         progress_bar.show()
 

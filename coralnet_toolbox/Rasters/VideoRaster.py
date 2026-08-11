@@ -599,6 +599,20 @@ class VideoRaster(Raster):
 
         return self._bgr_to_qimage(bgr)
 
+    def _read_qimage_at(self, frame_idx: int) -> Optional[QImage]:
+        """Decode one frame to a QImage *without* repointing the rasterio shim.
+
+        The shim is what every annotation-cropping and fast-render path reads,
+        so a preview / thumbnail decode must never redirect it at a different
+        frame: doing so makes unrelated code crop — and repaint — the wrong
+        frame.  ``get_frame`` is the shim-updating variant and is reserved for
+        the display path.
+        """
+        bgr = self._read_bgr_at(self._clamp_frame_idx(frame_idx))
+        if bgr is None:
+            return None
+        return self._bgr_to_qimage(bgr)
+
     def get_preview_pixmap(self, frame_idx: int, longest_edge: int = 256) -> Optional[QPixmap]:
         """
         Return a decoded+scaled preview QPixmap for frame_idx, using a small
@@ -613,7 +627,7 @@ class VideoRaster(Raster):
             self._preview_cache.move_to_end(key)
             return cached
 
-        q_img = self.get_frame(frame_idx)
+        q_img = self._read_qimage_at(frame_idx)
         if q_img is None:
             return None
 
@@ -891,13 +905,18 @@ class VideoRaster(Raster):
     # ------------------------------------------------------------------
 
     def get_qimage(self) -> Optional[QImage]:
-        """Return frame 0 for display purposes (used by ImageWindow thumbnail)."""
-        return self.get_frame(0)
+        """Return frame 0 for display purposes (used by ImageWindow thumbnail).
+
+        Deliberately shim-free: this is a thumbnail helper, and pointing the
+        shim at frame 0 would make the annotation window crop and repaint
+        frame 0 over whatever frame is actually displayed.
+        """
+        return self._read_qimage_at(0)
 
     def get_thumbnail(self, longest_edge: int = 256) -> Optional[QImage]:
         """Return a cached thumbnail of frame 0."""
         if self._video_thumbnail is None:
-            frame_image = self.get_frame(0)
+            frame_image = self._read_qimage_at(0)
             if frame_image is None:
                 return None
             # Scale down

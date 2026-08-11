@@ -30,6 +30,8 @@ from coralnet_toolbox.Results import MapResults
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
+from coralnet_toolbox.utilities import bgr_to_qimage, decode_video_frame
+
 from coralnet_toolbox.Common import ThresholdsWidget
 
 from coralnet_toolbox.Icons import get_icon, get_window_icon
@@ -872,7 +874,7 @@ class DeployGeneratorDialog(QDialog):
         Load the selected model.
         """
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        self.main_window.status_bar.showMessage("Obtaining model...")
+        self.main_window.status_bar.showMessage("Obtaining model...", 3000)
         progress_bar = ProgressBar(self.annotation_window, title="Loading Model")
         progress_bar.show()
 
@@ -1029,6 +1031,15 @@ class DeployGeneratorDialog(QDialog):
                     print(f"SeeAnything.predict: model setup failed for {image_path}, skipping.")
                     continue
 
+                # Virtual video-frame paths (video.mp4::frame_N): decode the frame
+                # first, so the raster shim that work-area crops read from is
+                # pinned to this frame, and keep the array.  Holding it for the
+                # fast render below means the painted pixels are the exact ones
+                # the model saw — re-reading raster.rasterio_src afterwards would
+                # not, because the progress bar yields to the event loop and a
+                # Ctrl+hover preview can repoint the shim at another frame.
+                frame_bgr = decode_video_frame(image_path, raster)
+
                 use_tiles = (
                     raster.has_work_areas()
                     and self.annotation_window.get_selected_tool() == "work_area"
@@ -1050,19 +1061,8 @@ class DeployGeneratorDialog(QDialog):
                         work_items_data = raster.get_work_areas_data()
                 else:
                     work_areas = [None]
-                    # For virtual video frame paths, decode the specific frame
-                    # and pass the raw BGR array rather than the video file path.
-                    if isinstance(image_path, str) and '::frame_' in image_path:
-                        try:
-                            from coralnet_toolbox.Rasters.VideoRaster import VideoRaster
-                            _, frame_idx = VideoRaster.parse_frame_path(image_path)
-                            if frame_idx is not None and hasattr(raster, 'get_bgr_frame'):
-                                bgr = raster.get_bgr_frame(int(frame_idx))
-                                work_items_data = [bgr] if bgr is not None else [raster.image_path]
-                            else:
-                                work_items_data = [raster.image_path]
-                        except Exception:
-                            work_items_data = [raster.image_path]
+                    if frame_bgr is not None:
+                        work_items_data = [frame_bgr]
                     else:
                         work_items_data = [raster.image_path]
 
@@ -1177,7 +1177,8 @@ class DeployGeneratorDialog(QDialog):
                     if image_path == self.annotation_window.current_image_path:
                         try:
                             self._fast_render_image(
-                                image_path, raster, results_for_this_image, results_processor)
+                                image_path, raster, results_for_this_image, results_processor,
+                                frame_bgr=frame_bgr)
                         except Exception as e:
                             print(f"SeeAnything.predict: fast render failed: {e}")
 
@@ -1234,15 +1235,22 @@ class DeployGeneratorDialog(QDialog):
             gc.collect()
             empty_cache()
 
-    def _fast_render_image(self, image_path, raster, results_for_image, results_processor):
+    def _fast_render_image(self, image_path, raster, results_for_image, results_processor,
+                           frame_bgr=None):
         """Push a ghost-render of new predictions to the OpenGL canvas without baking."""
         from coralnet_toolbox.utilities import rasterio_to_qimage
         aw = self.annotation_window
 
-        try:
-            q_img = rasterio_to_qimage(raster.rasterio_src)
-        except Exception:
-            q_img = None
+        # For a video frame, paint the array the model was given.  Reading the
+        # shim instead lets a preview decode that landed between inference and
+        # here put a different frame under this frame's detections.
+        q_img = bgr_to_qimage(frame_bgr) if frame_bgr is not None else None
+
+        if q_img is None:
+            try:
+                q_img = rasterio_to_qimage(raster.rasterio_src)
+            except Exception:
+                q_img = None
 
         if getattr(aw, '_base_image_item', None) is not None:
             if q_img is not None:
