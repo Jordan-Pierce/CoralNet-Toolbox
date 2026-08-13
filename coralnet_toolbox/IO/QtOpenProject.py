@@ -196,7 +196,10 @@ class OpenProject(QDialog):
     def import_images(self, images_data, legacy_workareas=None):
         """Import images, states, and work areas from the given data."""
         try:
-            self.main_window.status_bar.showMessage("Importing images...", 0)
+            # Bounded: several early returns below (no image data, user cancelled
+            # the missing-path prompt) skip the "Import complete." in the finally,
+            # and a 0 timeout would leave this on screen permanently.
+            self.main_window.status_bar.showMessage("Importing images...", 5000)
         except Exception:
             pass
         if not images_data:
@@ -297,7 +300,8 @@ class OpenProject(QDialog):
     def import_labels(self, labels):
         """Import labels from the given list."""
         try:
-            self.main_window.status_bar.showMessage("Importing labels...", 0)
+            # Bounded: the `if not labels: return` below skips the completion message.
+            self.main_window.status_bar.showMessage("Importing labels...", 5000)
         except Exception:
             pass
         if not labels:
@@ -351,7 +355,8 @@ class OpenProject(QDialog):
     def import_annotations(self, annotations):
         """Import annotations from the given dictionary."""
         try:
-            self.main_window.status_bar.showMessage("Importing annotations...", 0)
+            # Bounded: the `if not annotations: return` below skips the completion message.
+            self.main_window.status_bar.showMessage("Importing annotations...", 5000)
         except Exception:
             pass
         if not annotations:

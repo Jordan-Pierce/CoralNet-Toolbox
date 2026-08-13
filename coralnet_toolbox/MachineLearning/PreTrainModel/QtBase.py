@@ -526,7 +526,8 @@ class Base(QDialog):
         image_count = 0
         
         if hasattr(self.main_window, 'statusBar'):
-            self.main_window.statusBar().showMessage(f"Scanning {os.path.basename(dir_path)} for images...")
+            self.main_window.statusBar().showMessage(
+                f"Scanning {os.path.basename(dir_path)} for images...", 5000)
             
         for root, _, files in os.walk(dir_path):
             for file in files:
