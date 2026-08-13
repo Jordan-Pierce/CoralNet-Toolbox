@@ -147,11 +147,15 @@ class CheckableComboBox(QComboBox):
         state = item.checkState()
 
         # --- Enforce Mutual Exclusivity ---
+        # "Has Mask" implies annotations exist, so it also contradicts "No Annotations".
         if state == Qt.Checked:
             if text == "Has Annotations":
                 self.uncheck_item("No Annotations")
+            elif text == "Has Mask":
+                self.uncheck_item("No Annotations")
             elif text == "No Annotations":
                 self.uncheck_item("Has Annotations")
+                self.uncheck_item("Has Mask")
         # ----------------------------------
 
         self.filterChanged.emit()
@@ -271,11 +275,12 @@ class ImageWindow(QWidget):
         self.filter_combo.addItem("Has Z-Channel")
         self.filter_combo.addItem("Has Predictions")
         self.filter_combo.addItem("Has Annotations")
+        self.filter_combo.addItem("Has Mask")
         self.filter_combo.addItem("No Annotations")
         self.filter_combo.setCurrentIndex(-1)
         self.filter_combo.filterChanged.connect(self.schedule_filter)
         self.filter_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.filter_combo.setToolTip("Filter images by type (Image, Ortho, Video), Z-channel presence, predictions, annotation status, and highlight state.\nSelect multiple filters to apply all criteria.")
+        self.filter_combo.setToolTip("Filter images by type (Image, Ortho, Video), Z-channel presence, predictions, annotation status, mask presence, and highlight state.\nSelect multiple filters to apply all criteria.")
 
         # Setup filter/search controls
         self.search_layout.addRow("Filters:", self.filter_combo)
@@ -1124,6 +1129,7 @@ class ImageWindow(QWidget):
         require_z_channel = "Has Z-Channel" in checked_filters
         has_predictions = "Has Predictions" in checked_filters
         has_annotations = "Has Annotations" in checked_filters
+        has_mask = "Has Mask" in checked_filters
         no_annotations = "No Annotations" in checked_filters
         # --- End new logic ---
         
@@ -1138,6 +1144,7 @@ class ImageWindow(QWidget):
             require_annotations=has_annotations,
             require_no_annotations=no_annotations,
             require_predictions=has_predictions,
+            require_mask=has_mask,
             allowed_raster_types=allowed_raster_types,
             require_z_channel=require_z_channel,
             selected_paths=highlighted_paths,

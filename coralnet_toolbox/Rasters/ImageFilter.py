@@ -41,6 +41,7 @@ class ImageFilter(QObject):
                       require_annotations: bool = False,
                       require_no_annotations: bool = False,
                       require_predictions: bool = False,
+                      require_mask: bool = False,
                       allowed_raster_types: Optional[Set[str]] = None,
                       require_z_channel: bool = False,
                       selected_paths: List[str] = None,
@@ -48,17 +49,18 @@ class ImageFilter(QObject):
                       callback: Callable = None) -> List[str]:
         """
         Filter images based on various criteria.
-        
+
         Args:
             search_text (str): Text to search for in image names
             search_label (str): Label code to search for
             require_annotations (bool): Require images to have annotations
             require_no_annotations (bool): Require images to have no annotations
             require_predictions (bool): Require images to have predictions
+            require_mask (bool): Require images to have a mask annotation
             selected_paths (List[str]): List of paths to filter from
             use_threading (bool): Whether to use multithreading
             callback (Callable): Optional callback function to call when filtering is complete
-            
+
         Returns:
             List[str]: List of filtered image paths
         """
@@ -69,6 +71,7 @@ class ImageFilter(QObject):
             require_annotations,
             require_no_annotations,
             require_predictions,
+            require_mask,
             require_z_channel,
             allowed_raster_types is not None,
             selected_paths,
@@ -84,24 +87,25 @@ class ImageFilter(QObject):
         if use_threading:
             return self._filter_with_threading(
                 search_text, search_label, require_annotations,
-                require_no_annotations, require_predictions,
+                require_no_annotations, require_predictions, require_mask,
                 allowed_raster_types, require_z_channel,
                 selected_paths, callback
             )
         else:
             return self._filter_images_sync(
                 search_text, search_label, require_annotations,
-                require_no_annotations, require_predictions,
+                require_no_annotations, require_predictions, require_mask,
                 allowed_raster_types, require_z_channel,
                 selected_paths, callback
             )
-    
-    def _filter_images_sync(self, 
+
+    def _filter_images_sync(self,
                             search_text: str,
                             search_label: str,
                             require_annotations: bool,
                             require_no_annotations: bool,
                             require_predictions: bool,
+                            require_mask: bool,
                             allowed_raster_types: Optional[Set[str]],
                             require_z_channel: bool,
                             selected_paths: List[str],
@@ -124,6 +128,7 @@ class ImageFilter(QObject):
             require_annotations=require_annotations,
             require_no_annotations=require_no_annotations,
             require_predictions=require_predictions,
+            require_mask=require_mask,
             allowed_raster_types=allowed_raster_types,
             require_z_channel=require_z_channel,
             selected_paths=selected_paths
@@ -140,12 +145,13 @@ class ImageFilter(QObject):
             
         return filtered_paths
     
-    def _filter_with_threading(self, 
+    def _filter_with_threading(self,
                                search_text: str,
                                search_label: str,
                                require_annotations: bool,
                                require_no_annotations: bool,
                                require_predictions: bool,
+                               require_mask: bool,
                                allowed_raster_types: Optional[Set[str]],
                                require_z_channel: bool,
                                selected_paths: List[str],
@@ -189,6 +195,7 @@ class ImageFilter(QObject):
                     require_annotations=require_annotations,
                     require_no_annotations=require_no_annotations,
                     require_predictions=require_predictions,
+                    require_mask=require_mask,
                     allowed_raster_types=allowed_raster_types,
                     require_z_channel=require_z_channel,
                 )

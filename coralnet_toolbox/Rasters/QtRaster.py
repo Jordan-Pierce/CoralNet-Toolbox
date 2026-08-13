@@ -78,6 +78,10 @@ class Raster(QObject):
         # Annotation state
         self.has_annotations = False
         self.has_predictions = False
+        # Cached mirror of `has_mask_content`, refreshed by update_annotation_info.
+        # Filtering reads this rather than the property because the property costs
+        # a full np.count_nonzero over the mask on every call.
+        self.has_mask = False
         self.labels: Set = set()
         self.annotation_count = 0
         self.annotations: List = []  # Store the actual annotations
@@ -856,6 +860,7 @@ class Raster(QObject):
         self.annotations = vector_annotations
         self.annotation_count = len(vector_annotations) + (1 if has_mask_annotation else 0)
         self.has_annotations = bool(vector_annotations) or has_mask_annotation
+        self.has_mask = has_mask_annotation
         
         predictions = [a.machine_confidence for a in vector_annotations if a.machine_confidence]
         self.has_predictions = len(predictions) > 0
@@ -917,11 +922,12 @@ class Raster(QObject):
                        require_annotations=False,
                        require_no_annotations=False,
                        require_predictions=False,
+                       require_mask=False,
                        allowed_raster_types: Optional[Set[str]] = None,
                        require_z_channel: bool = False) -> bool:
         """
         Check if this raster matches the given filter criteria
-        
+
         Args:
             search_text (str): Text to search for in filename
             search_label (str): Label code to search for
@@ -929,6 +935,7 @@ class Raster(QObject):
             require_annotations (bool): If True, must have annotations
             require_no_annotations (bool): If True, must have no annotations
             require_predictions (bool): If True, must have predictions
+            require_mask (bool): If True, must have a mask annotation with labeled pixels
             allowed_raster_types (Set[str], optional): Allowed canonical raster types.
             require_z_channel (bool): If True, require z-channel metadata.
 
@@ -980,7 +987,16 @@ class Raster(QObject):
             return False
         if require_no_annotations and self.has_annotations:
             return False
-            
+
+        # Check mask filter. Reads the cached flag, but falls back to the live
+        # property when a mask object exists and the flag has not been refreshed
+        # yet (e.g. a mask attached without a following update_annotation_info).
+        if require_mask:
+            if not self.has_mask:
+                if self.mask_annotation is None or not self.has_mask_content:
+                    return False
+                self.has_mask = True
+
         # Check prediction filter
         if require_predictions and not self.has_predictions:
             return False
@@ -1170,6 +1186,7 @@ class Raster(QObject):
         if self.mask_annotation:
             self.mask_annotation.remove_from_scene()
             self.mask_annotation = None
+        self.has_mask = False
     
     def to_dict(self):
         """

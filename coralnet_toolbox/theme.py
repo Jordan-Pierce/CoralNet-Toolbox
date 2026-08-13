@@ -39,6 +39,11 @@ SURFACE_BORDER_COLOR = QColor("#2a2d3a")
 DOCK_BORDER_COLOR = QColor("#3d4358")     # dock-area outline — brighter than SURFACE_BORDER
 DOCK_SPLITTER_COLOR = QColor("#4a5270")   # the draggable line BETWEEN adjacent docks
 DOCK_SPLITTER_WIDTH = 6                    # px grab-zone; visible line is a thin gradient core
+# Toolbar separator hairline. Fusion draws QToolBar separators from palette.window()
+# (#0f1117) shaded +/-10%, which is indistinguishable from the toolbar's own
+# background — so the separators read as blank space. This token drives an explicit
+# QToolBar::separator rule instead. Raise toward #ffffff for a starker divider.
+TOOLBAR_SEPARATOR_COLOR = QColor("#4a5270")
 TEXT_PRIMARY_COLOR = QColor("#d4d8e8")
 TEXT_SECONDARY_COLOR = QColor("#8892b0")
 TEXT_MUTED_COLOR = QColor("#556080")
@@ -635,12 +640,34 @@ QToolBar {{
     padding: 3px 4px;
     icon-size: 18px;
 }}
+/* Separator hairline. Without an explicit rule Fusion paints these from
+   palette.window() shaded +/-10%, which lands on the toolbar's own background
+   and reads as blank space. The thin axis carries no margin so the divider is
+   still visible even if a style ignores the width/height hint. */
+QToolBar::separator {{
+    background-color: {TOOLBAR_SEPARATOR_COLOR.name()};
+}}
+QToolBar::separator:horizontal {{
+    width: 1px;
+    margin-top: 4px;
+    margin-bottom: 4px;
+}}
+QToolBar::separator:vertical {{
+    height: 1px;
+    margin-left: 6px;
+    margin-right: 6px;
+}}
 QToolButton {{
     background: transparent;
     color: {TEXT_PRIMARY_COLOR.name()};
     border: 1px solid transparent;
     border-radius: 4px;
     padding: 4px 6px;
+}}
+/* The hand-rolled QWidget divider in the tools toolbar (QtMainWindow). A bare
+   QWidget otherwise inherits the global QWidget background and vanishes. */
+QWidget#toolbarSeparator {{
+    background-color: {TOOLBAR_SEPARATOR_COLOR.name()};
 }}
 QToolButton:hover {{
     background: {SURFACE_COLOR.name()};
@@ -863,6 +890,19 @@ QToolBar {{
     border: none;
     padding: 2px;
     icon-size: 18px;
+}}
+QToolBar::separator {{
+    background-color: {TOOLBAR_SEPARATOR_COLOR.name()};
+}}
+QToolBar::separator:horizontal {{
+    width: 1px;
+    margin-top: 4px;
+    margin-bottom: 4px;
+}}
+QToolBar::separator:vertical {{
+    height: 1px;
+    margin-left: 6px;
+    margin-right: 6px;
 }}
 QMenu {{
     background-color: {SURFACE_COLOR.name()};
