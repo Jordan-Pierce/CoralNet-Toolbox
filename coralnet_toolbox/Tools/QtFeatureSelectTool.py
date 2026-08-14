@@ -392,7 +392,7 @@ class FeatureSelectTool(Tool):
 
         # Extract dense features for just the crop, build the local query engine.
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        self._status("Feature Select: extracting work-area features…", 0)
+        self._status("Feature Select: extracting work-area features…", 5000)
         try:
             crop = self.original_image[top:bottom, left:right]
             crop_fmap = extractor.extract_dense(crop)

@@ -906,8 +906,12 @@ class MainWindow(QMainWindow):
         self.toolbar_spacer.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.toolbar_spacer.setFixedHeight(app_theme.scale_int(12))  # Set a fixed height for the spacer
 
-        # Define line separator
+        # Define line separator. The object name hooks the QWidget#toolbarSeparator
+        # rule in theme.py; WA_StyledBackground guarantees a plain QWidget actually
+        # paints that background rather than inheriting the toolbar's own color.
         self.toolbar_separator = QWidget()
+        self.toolbar_separator.setObjectName("toolbarSeparator")
+        self.toolbar_separator.setAttribute(Qt.WA_StyledBackground, True)
         self.toolbar_separator.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.toolbar_separator.setFixedHeight(app_theme.scale_int(1))  # Set a fixed height for the line separator
 

@@ -4115,6 +4115,10 @@ class AnnotationWindow(BaseCanvas):
                     )
                     if raster is not None and raster.mask_annotation is annotation:
                         raster.mask_annotation = None
+                        # update_image_annotations refreshes has_mask, but it only
+                        # runs when not bulk_mode — clear it here so the "Has Mask"
+                        # filter cannot keep matching a raster whose mask is gone.
+                        raster.has_mask = False
                 except Exception:
                     pass
 

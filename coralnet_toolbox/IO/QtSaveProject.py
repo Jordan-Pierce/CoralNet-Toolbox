@@ -156,7 +156,7 @@ class SaveProject(QDialog):
         """Get the list of image objects, including paths, states, and work areas."""
         # Show status message
         try:
-            self.main_window.status_bar.showMessage("Exporting images...", 0)
+            self.main_window.status_bar.showMessage("Exporting images...", 5000)
         except Exception:
             pass
         # Start the progress bar
@@ -195,7 +195,7 @@ class SaveProject(QDialog):
     def get_labels(self):
         """Get the list of labels to export."""
         try:
-            self.main_window.status_bar.showMessage("Exporting labels...", 0)
+            self.main_window.status_bar.showMessage("Exporting labels...", 5000)
         except Exception:
             pass
         # Start the progress bar
@@ -230,7 +230,7 @@ class SaveProject(QDialog):
     def get_annotations(self):
         """Get the annotations to export."""
         try:
-            self.main_window.status_bar.showMessage("Exporting annotations...", 0)
+            self.main_window.status_bar.showMessage("Exporting annotations...", 5000)
         except Exception:
             pass
         # Combine vector annotations with any existing mask annotations

@@ -220,18 +220,20 @@ class RasterManager(QObject):
                            require_annotations: bool = False,
                            require_no_annotations: bool = False,
                            require_predictions: bool = False,
+                           require_mask: bool = False,
                            allowed_raster_types: Optional[Set[str]] = None,
                            require_z_channel: bool = False,
                            selected_paths: List[str] = None) -> List[str]:
         """
         Get a filtered list of image paths based on criteria.
-        
+
         Args:
             search_text (str): Text to search for in filename
             search_label (str): Label code to search for
             require_annotations (bool): If True, must have annotations
             require_no_annotations (bool): If True, must have no annotations
             require_predictions (bool): If True, must have predictions
+            require_mask (bool): If True, must have a mask annotation with labeled pixels
             selected_paths (list): Only include paths from this list
             
         Returns:
@@ -253,6 +255,7 @@ class RasterManager(QObject):
                 require_annotations=require_annotations,
                 require_no_annotations=require_no_annotations,
                 require_predictions=require_predictions,
+                require_mask=require_mask,
                 allowed_raster_types=allowed_raster_types,
                 require_z_channel=require_z_channel,
             ):

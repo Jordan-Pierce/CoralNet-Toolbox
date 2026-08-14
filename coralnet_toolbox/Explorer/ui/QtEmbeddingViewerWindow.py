@@ -1244,8 +1244,10 @@ class EmbeddingViewerWindow(QWidget):
         def on_status_callback():
             """Update status bar with current sample count."""
             processed_count[0] += 1
+            # Re-issued per sample, so the timeout is invisible while the pipeline
+            # is moving but stops a stalled count from sitting there forever.
             self.main_window.status_bar.showMessage(
-                f"Extracting features: {processed_count[0]}/{total_items}"
+                f"Extracting features: {processed_count[0]}/{total_items}", 5000
             )
 
         # Create worker with callable extractors
@@ -1271,7 +1273,7 @@ class EmbeddingViewerWindow(QWidget):
         
         # Update status bar if available
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        self.main_window.status_bar.showMessage("Running embedding pipeline...")
+        self.main_window.status_bar.showMessage("Running embedding pipeline...", 5000)
         
         self._disable_analysis_buttons()
         self._pipeline_worker.start()
@@ -1298,8 +1300,9 @@ class EmbeddingViewerWindow(QWidget):
     
     def _on_pipeline_progress(self, message):
         """Handle progress updates from the worker."""
-        # Update main window status bar if available
-        self.main_window.status_bar.showMessage(message)
+        # Update main window status bar if available. Bounded so a worker that
+        # dies without emitting finished/error cannot strand its last update.
+        self.main_window.status_bar.showMessage(message, 5000)
     
     def _on_pipeline_finished(self, results):
         """Handle successful completion of the embedding pipeline."""

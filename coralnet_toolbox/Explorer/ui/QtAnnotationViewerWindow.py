@@ -70,6 +70,9 @@ class AnnotationViewerWindow(QWidget):
         # Cropping state
         self._cropping_in_progress = False
         self._cropping_worker = None
+        # Tracks whether *this* widget currently owns an application override
+        # cursor, so the wait cursor can span the asynchronous crop worker.
+        self._busy_cursor_active = False
         
         # Data model
         self.data_item_cache = {}  # annotation_id -> AnnotationDataItem
@@ -284,6 +287,25 @@ class AnnotationViewerWindow(QWidget):
     def refresh_filter_options(self):
         """Refresh filter options based on current state."""
         self._populate_filter_combos()
+
+    def _set_busy_cursor(self):
+        """Show the application wait cursor, guarding against unbalanced pushes.
+
+        QApplication keeps override cursors on a *stack*, so an extra
+        setOverrideCursor that never gets a matching restore leaves the whole
+        app stuck showing an hourglass. The flag keeps this idempotent, which
+        matters because refresh_annotations can be re-entered while the
+        asynchronous crop worker is still running.
+        """
+        if not self._busy_cursor_active:
+            self._busy_cursor_active = True
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+
+    def _restore_busy_cursor(self):
+        """Drop the wait cursor, but only if this widget is the one that set it."""
+        if self._busy_cursor_active:
+            self._busy_cursor_active = False
+            QApplication.restoreOverrideCursor()
 
     def apply_filters(self):
         """Apply the current UI filters and populate the gallery.
@@ -573,17 +595,52 @@ class AnnotationViewerWindow(QWidget):
     def refresh_annotations(self):
         """
         Refresh the gallery based on current filter settings.
-        
+
+        Thin wrapper that owns the wait cursor; the work itself lives in
+        _refresh_annotations_impl. Filtering walks every annotation and may
+        kick off cropping, so the pointer needs to show the app is busy for
+        the whole operation, not just while the ProgressBar is up.
+        """
+        self._set_busy_cursor()
+        keep_busy = False
+        try:
+            keep_busy = self._refresh_annotations_impl()
+        finally:
+            # The crop-worker path returns while the worker is still running and
+            # hands cursor ownership to its finished/error handlers. Every other
+            # path — including an exception — is done and must release it here.
+            if not keep_busy:
+                self._restore_busy_cursor()
+
+    def _resume_refresh_after_cropping(self):
+        """Re-run the refresh once the crop worker has finished.
+
+        Wrapped rather than connecting refresh_annotations to the timer directly
+        so that a failure in the re-run can never strand the wait cursor.
+        """
+        try:
+            self.refresh_annotations()
+        finally:
+            self._restore_busy_cursor()
+
+    def _refresh_annotations_impl(self):
+        """
+        Refresh the gallery based on current filter settings.
+
         This method:
         1. Gets annotations from AnnotationWindow that match the filter
         2. Creates/updates data items
         3. Rebuilds the gallery layout
         4. Emits annotations_filtered signal
+
+        Returns:
+            bool: True when asynchronous cropping is still in flight and the
+                caller must leave the wait cursor in place.
         """
         # Only refresh (and create widgets) when the user has explicitly
         # applied the filter via the Apply Filter button.
         if not getattr(self, '_filter_applied', False):
-            return
+            return False
 
         # Get filter selections
         selected_images = self._get_selected_images()
@@ -594,7 +651,7 @@ class AnnotationViewerWindow(QWidget):
         if not hasattr(self.annotation_window, 'annotations_dict'):
             self.all_data_items = []
             self._update_annotations_display([])
-            return
+            return False
             
         # Filter annotations
         filtered_annotations = []
@@ -623,9 +680,10 @@ class AnnotationViewerWindow(QWidget):
                               if not hasattr(ann, 'cropped_image') or ann.cropped_image is None]
 
         if anns_needing_crops:
-            # If already cropping, wait for the worker to finish
+            # If already cropping, wait for the worker to finish. That run still
+            # owns the wait cursor, so report it as busy rather than clearing it.
             if getattr(self, '_cropping_in_progress', False):
-                return
+                return True
 
             image_window = getattr(self.main_window, 'image_window', None)
             raster_manager = getattr(image_window, 'raster_manager', None) if image_window else None
@@ -660,7 +718,9 @@ class AnnotationViewerWindow(QWidget):
                         progress_bar.update_progress()
                         # Update status message with percentage
                         pct = int((processed_counter['count'] / max(1, len(anns_needing_crops))) * 100)
-                        self.main_window.statusBar().showMessage(f"Cropping images... {pct}%")
+                        # Re-issued on every crop, so the timeout is invisible in
+                        # normal operation but clears the message if the worker stalls.
+                        self.main_window.statusBar().showMessage(f"Cropping images... {pct}%", 5000)
                     except Exception:
                         pass
 
@@ -679,8 +739,11 @@ class AnnotationViewerWindow(QWidget):
                         pass
                     self._cropping_in_progress = False
                     self._cropping_worker = None
-                    # Re-run the refresh now that crops should exist
-                    QTimer.singleShot(50, self.refresh_annotations)
+                    # Re-run the refresh now that crops should exist. The wait
+                    # cursor is deliberately left up across this gap: the re-run
+                    # re-acquires it (a no-op while still held) and releases it
+                    # once the gallery is actually populated.
+                    QTimer.singleShot(50, self._resume_refresh_after_cropping)
 
                 def _on_error(msg):
                     try:
@@ -698,14 +761,17 @@ class AnnotationViewerWindow(QWidget):
                         self.main_window.statusBar().clearMessage()
                     except Exception:
                         pass
+                    # Nothing will re-run, so this path owns the release.
+                    self._restore_busy_cursor()
 
                 worker.progress.connect(_on_progress)
                 worker.finished.connect(_on_finished)
                 worker.error.connect(_on_error)
                 progress_bar.cancel_button.clicked.connect(worker.cancel)
                 worker.start()
-                return
-        
+                # Cursor stays up until _on_finished / _on_error resolve it.
+                return True
+
         # Get or create data items
         data_items = []
         for ann in filtered_annotations:
@@ -725,7 +791,10 @@ class AnnotationViewerWindow(QWidget):
         # Emit signal with filtered IDs
         filtered_ids = [item.annotation.id for item in data_items]
         self.annotations_filtered.emit(filtered_ids)
-        
+
+        return False
+
+
     def _get_selected_images(self):
         """Get list of selected image names from filter combo."""
         if not hasattr(self, 'image_filter_combo'):
