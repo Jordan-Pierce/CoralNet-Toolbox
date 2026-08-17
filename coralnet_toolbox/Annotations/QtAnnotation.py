@@ -8,7 +8,7 @@ import numpy as np
 
 from enum import Enum, auto
 
-from PyQt5.QtGui import QColor, QPen, QBrush, QPainterPath, QFont, QPainter
+from PyQt5.QtGui import QColor, QPen, QBrush, QPainterPath, QFont, QPainter, QPolygonF
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, QRectF
 from PyQt5.QtWidgets import (QGraphicsRectItem, QGraphicsItem,
                              QGraphicsScene, QGraphicsItemGroup, QGraphicsSimpleTextItem,
@@ -102,10 +102,10 @@ class OptimizedPathItem(QGraphicsPathItem):
     def paint(self, painter, option, widget=None):
         # Calculate the Level of Detail (Zoom factor)
         lod = option.levelOfDetailFromTransform(painter.worldTransform())
-        
+
         # Grab the current pen
         pen = self.pen()
-        
+
         # If zoomed out significantly (e.g., < 0.4x scale), use simplified geometry
         # and turn off cosmetic pens, using a fixed physical width.
         if lod < 0.4:
@@ -791,6 +791,44 @@ class Annotation(QObject):
         """Get the polygon representation of this annotation."""
         raise NotImplementedError("Subclasses must implement this method.")
     
+    @staticmethod
+    def _ring_is_positive(points) -> bool:
+        """True when a ring winds in the positive-signed-area direction.
+
+        Screen space has Y pointing down, so "positive" is a bookkeeping label
+        rather than a visual direction. All that matters is that every outer
+        ring in the scene agrees, and that a hole disagrees with its own outer
+        ring.
+        """
+        total = 0.0
+        previous = points[-1]
+        for point in points:
+            total += previous.x() * point.y() - point.x() * previous.y()
+            previous = point
+        return total > 0.0
+
+    @classmethod
+    def _add_ring(cls, path: QPainterPath, points, positive: bool = True):
+        """Append one explicitly closed ring, reversed if its winding is wrong.
+
+        Every annotation type must build its path through this so the phantom
+        layer can merge them all into a single QPainterPath under
+        Qt.WindingFill: consistent outer winding is what makes overlapping
+        annotations union instead of cancelling into "cutout" artifacts, and it
+        is what removed the need for QPainterPath.toFillPolygon() — whose
+        rewinding inserted connector segments that the layer then stroked as
+        stray chords.
+        """
+        ring = list(points)
+        if len(ring) < 3:
+            return
+        if cls._ring_is_positive(ring) != positive:
+            ring.reverse()
+        path.addPolygon(QPolygonF(ring))
+        # addPolygon leaves the ring open, and closeSubpath only ever acts on
+        # the most recent subpath, so it has to run once per ring.
+        path.closeSubpath()
+
     def get_painter_path(self):
         """Get the QPainterPath representation of this annotation."""
         raise NotImplementedError("Subclasses must implement this method.")

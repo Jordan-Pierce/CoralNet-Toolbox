@@ -193,6 +193,10 @@ class ConfidenceWindow(QWidget):
         self.icon_button_size = app_theme.scale_int(26)
         self.icon_button_icon_size = 16
 
+        # Fixed widths so all bars start and end at the same x
+        self.class_label_width = app_theme.scale_int(90)
+        self.percentage_label_width = app_theme.scale_int(60)
+
         # 1. Initialize the Image View (Top)
         self.init_graphics_view()
 
@@ -357,6 +361,9 @@ class ConfidenceWindow(QWidget):
         """Refresh icon and control sizes after a UI scale change."""
         self.icon_button_size = app_theme.scale_int(26)
         self.icon_button_icon_size = 16
+
+        self.class_label_width = app_theme.scale_int(90)
+        self.percentage_label_width = app_theme.scale_int(60)
 
         self.prev_button.setFixedSize(self.icon_button_size, self.icon_button_size)
         self.prev_button.setStyleSheet("padding: 0px; margin: 0px;")
@@ -730,14 +737,15 @@ class ConfidenceWindow(QWidget):
         icon_label.setFixedSize(14, 14)
 
         # Class Label
-        label_text = label.short_label_code
-        if len(label_text) > 10:
-            label_text = label_text[:10] + "..."
-        
-        class_label = QLabel(label_text)
-        class_label.setMinimumWidth(75) # Use minimum instead of fixed
-        class_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        class_label.setToolTip(label.short_label_code) 
+        class_label = QLabel()
+        class_label.setFixedWidth(self.class_label_width)  # Fixed so every bar starts at the same x
+        class_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        # Elide with font metrics so the text always fits the fixed width
+        elided_text = class_label.fontMetrics().elidedText(label.short_label_code,
+                                                           Qt.ElideRight,
+                                                           self.class_label_width)
+        class_label.setText(elided_text)
+        class_label.setToolTip(label.short_label_code)
 
         # Progress Bar
         bar_widget = ConfidenceBar(self, label, bar_confidence)
@@ -745,7 +753,8 @@ class ConfidenceWindow(QWidget):
 
         # Percentage
         percentage_label = QLabel(f"{display_confidence:.2f}%")
-        percentage_label.setMinimumWidth(55)
+        percentage_label.setFixedWidth(self.percentage_label_width)  # Fixed so every bar ends at the same x
+        percentage_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         percentage_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
         # Add to row

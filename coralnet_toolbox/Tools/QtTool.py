@@ -38,6 +38,11 @@ class Tool:
         self._cursor_update_timer.timeout.connect(self._fire_cursor_preview_update)
         self._pending_cursor_pos = None
 
+        # Last hover position in scene coords, recorded by mouseMoveEvent.
+        # refresh_label_preview() needs it to rebuild previews in place when the
+        # selected label changes without the mouse moving.
+        self.last_scene_pos = None
+
         # Crosshair settings
         self.show_crosshair = True  # Flag to toggle crosshair visibility for this tool
         self.h_crosshair_line = None
@@ -50,6 +55,7 @@ class Tool:
     def deactivate(self):
         self._cursor_update_timer.stop()
         self._pending_cursor_pos = None
+        self.last_scene_pos = None
         self.active = False
         self.annotation_window.setCursor(self.default_cursor)
         self.clear_cursor_annotation()
@@ -78,6 +84,7 @@ class Tool:
         """
         self._cursor_update_timer.stop()
         self._pending_cursor_pos = None
+        self.last_scene_pos = None
         self.clear_cursor_annotation()
         self.clear_crosshair()
         if self.cursor_clear_callback:
@@ -104,7 +111,8 @@ class Tool:
         # Handle crosshair display
         scene_pos = self.annotation_window.mapToScene(event.pos())
         cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
-        
+        self.last_scene_pos = scene_pos if cursor_in_window else None
+
         if (cursor_in_window and self.active and 
             self.annotation_window.selected_label and 
             self.show_crosshair):
@@ -141,13 +149,45 @@ class Tool:
         if self._pending_cursor_pos is not None and self.cursor_move_callback:
             self.cursor_move_callback(self._pending_cursor_pos, self.create_cursor_preview_item)
 
+    def refresh_label_preview(self):
+        """Rebuild live preview graphics after the selected label changed.
+
+        AnnotationWindow.set_selected_label calls this on the active tool. It
+        fires whether or not any annotation is selected, because the previews it
+        repaints — the cursor annotation, the projected preview on context
+        canvases — exist purely from hovering and would otherwise keep showing
+        the previous label's color until the mouse moved again.
+
+        Base behaviour covers every tool whose preview is just a cursor
+        annotation built from annotation_window.selected_label. Tools holding
+        extra label-colored graphics (prompt rectangles, unconfirmed
+        predictions) override this.
+        """
+        if not self.active:
+            return
+
+        scene_pos = self.last_scene_pos
+        if scene_pos is None or not self._pointer_over_window():
+            # Nothing is being hovered, so there is no preview to recolor.
+            self.clear_cursor_annotation()
+            if self.cursor_clear_callback:
+                self.cursor_clear_callback()
+            return
+
+        self.clear_cursor_annotation()
+        self.create_cursor_annotation(scene_pos)
+
+        # Push the rebuilt preview out to any consumer canvases as well.
+        if self.cursor_move_callback:
+            self.cursor_move_callback(scene_pos, self.create_cursor_preview_item)
+
     def stop_current_drawing(self):
         """
         Force stop of the current drawing operation if one is in progress.
         Subclasses should override this to implement tool-specific stopping logic.
         """
         pass
-        
+
     def create_cursor_annotation(self, scene_pos: QPointF = None):
         """
         Create and display a cursor annotation at the given position.

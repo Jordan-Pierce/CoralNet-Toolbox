@@ -666,6 +666,38 @@ class SeeAnythingTool(Tool):
             
             self.annotations.append(annotation)
             
+    def refresh_label_preview(self):
+        """Recolor the prompt rectangles and unconfirmed predictions for the new label.
+
+        Every rectangle and every not-yet-confirmed annotation was drawn with
+        the label that was selected at the time, so all of them move to the new
+        one. Each annotation's confidence is re-keyed onto the new label so the
+        score survives the switch instead of being dropped by update_label().
+        """
+        label = self.annotation_window.selected_label
+        if label is None:
+            return
+
+        pen = QPen(QColor(label.color))
+        pen.setCosmetic(True)
+        pen.setWidth(2)
+        pen.setStyle(Qt.DashLine)
+
+        for rect_item in self.rectangle_items:
+            rect_item.setPen(pen)
+        if self.current_rect_graphics is not None:
+            self.current_rect_graphics.setPen(pen)
+
+        for annotation in self.annotations:
+            confidence = None
+            if annotation.machine_confidence:
+                confidence = max(annotation.machine_confidence.values())
+            annotation.update_label(label)
+            if confidence is not None:
+                annotation.update_machine_confidence({label: confidence})
+
+        self.annotation_window.scene.update()
+
     def update_transparency(self, value):
         """
         Update the transparency of all unconfirmed annotations in this tool.

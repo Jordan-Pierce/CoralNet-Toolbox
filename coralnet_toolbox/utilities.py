@@ -11,7 +11,6 @@ from functools import lru_cache
 
 import cv2
 import torch
-import torch.nn.functional as F
 import numpy as np
 
 import rasterio
@@ -1054,76 +1053,74 @@ def densify_polygon(xy_points):
 
 def polygonize_mask_with_holes(mask_tensor, epsilon=1.0):
     """
-    Converts a mask tensor to polygons using a GPU-accelerated convolution hack 
-    to hollow out the interior before passing to OpenCV.
-    Falls back to standard processing if CUDA is not available.
-    
+    Convert a mask tensor into an exterior ring plus the holes inside it.
+
+    Contours are traced on the FILLED mask. An earlier version ran a Laplacian
+    edge filter first and traced the resulting 1-2 px outline, which handed
+    RETR_CCOMP the wrong topology: the ring's inner boundary came back as a
+    child contour -- a hole that does not exist in the mask -- and the exterior
+    was inflated by the width of the edge band. Every blob therefore acquired a
+    phantom hole, roughly doubling the vertex count the annotation layer has to
+    draw. Tracing the filled region yields the true exterior and only genuine
+    holes.
+
     Args:
         mask_tensor (torch.Tensor): A boolean or uint8 prediction tensor.
         epsilon (float): Douglas-Peucker simplification tolerance.
+
+    Returns:
+        tuple: ``(exterior, holes)`` where ``exterior`` is a list of ``[x, y]``
+        points for the largest filled region and ``holes`` is a list of such
+        rings, each lying inside that region. Both are empty when nothing was
+        found.
     """
-    # 1. Standardize dimensions for PyTorch Conv2D (requires B, C, H, W)
-    if mask_tensor.dim() == 2:
-        working_tensor = mask_tensor.unsqueeze(0).unsqueeze(0) 
-    elif mask_tensor.dim() == 3:
-        working_tensor = mask_tensor.unsqueeze(0)
-    else:
-        working_tensor = mask_tensor
+    # Reduce to a single 2D plane; a batched or channelled tensor contributes
+    # only its first plane, matching the previous squeeze() behaviour.
+    working = mask_tensor
+    if working.dim() > 2:
+        working = working.reshape(-1, *working.shape[-2:])[0]
 
-    # 2. Check for CUDA and execute the Edge Detection Hack
-    if working_tensor.is_cuda or torch.cuda.is_available():
-        device = working_tensor.device if working_tensor.is_cuda else torch.device('cuda')
-        # Conv2d requires float tensors
-        mask_float = working_tensor.to(device=device, dtype=torch.float32)
+    mask_np = np.ascontiguousarray((working > 0).to(torch.uint8).cpu().numpy())
 
-        # Define a Laplacian edge detection kernel
-        # Flat areas sum to 0. Edges yield high absolute values.
-        kernel = torch.tensor([[[[-1., -1., -1.],
-                                 [-1.,  8., -1.],
-                                 [-1., -1., -1.]]]], device=device)
-
-        with torch.no_grad():
-            # padding=1 ensures output size perfectly matches input size
-            edges = F.conv2d(mask_float, kernel, padding=1)
-
-        # Threshold the edges: anything > 0.1 is a boundary pixel.
-        # Cast to uint8 and move to CPU for OpenCV
-        edge_mask_np = (edges.abs() > 0.1).squeeze().to(torch.uint8).cpu().numpy()
-        
-    else:
-        # Fallback: Standard CPU method
-        edge_mask_np = (mask_tensor.squeeze() > 0).to(torch.uint8).cpu().numpy()
-
-    # 3. Find contours on the extremely sparse edge mask
-    # Using TC89_KCOS instead of SIMPLE to pre-filter dominant points for approxPolyDP
-    contours, hierarchy = cv2.findContours(edge_mask_np, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_TC89_KCOS)
+    # TC89_KCOS rather than SIMPLE: it pre-filters to dominant points, leaving
+    # approxPolyDP less to chew on.
+    contours, hierarchy = cv2.findContours(mask_np, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_TC89_KCOS)
 
     if not contours or hierarchy is None:
         return [], []
 
-    exterior = []
-    holes = []
-    max_exterior_area = -1
-
-    # 4. Process the hierarchy to separate exterior from holes
-    for i, contour in enumerate(contours):
-        
-        simplified_contour = cv2.approxPolyDP(contour, epsilon, closed=True)
-        
-        if len(simplified_contour) < 3:
+    # Pick the largest top-level contour as the exterior. Area is measured on
+    # the raw contour, before simplification, so the choice does not depend on
+    # how much epsilon happened to remove.
+    best_index = -1
+    max_area = -1.0
+    for i in range(len(contours)):
+        if hierarchy[0][i][3] != -1:
             continue
+        area = cv2.contourArea(contours[i])
+        if area > max_area:
+            max_area = area
+            best_index = i
 
-        # hierarchy[0][i][3] holds the parent contour index. -1 means it has no parent (it's an exterior ring).
-        if hierarchy[0][i][3] == -1:
-            area = cv2.contourArea(simplified_contour)
-            if area > max_exterior_area:
-                max_exterior_area = area
-                exterior = simplified_contour.squeeze(axis=1).tolist()
-        else:
-            holes.append(simplified_contour.squeeze(axis=1).tolist())
+    if best_index < 0:
+        return [], []
 
-    if exterior and not isinstance(exterior[0], list):
-        exterior = [exterior]
+    simplified = cv2.approxPolyDP(contours[best_index], epsilon, closed=True)
+    if len(simplified) < 3:
+        return [], []
+    exterior = simplified.squeeze(axis=1).tolist()
+
+    # Keep only the holes belonging to the exterior that was chosen. The
+    # previous version collected every child contour in the image, so a second
+    # blob's holes were attached to the first blob's ring.
+    holes = []
+    for i in range(len(contours)):
+        if hierarchy[0][i][3] != best_index:
+            continue
+        simplified_hole = cv2.approxPolyDP(contours[i], epsilon, closed=True)
+        if len(simplified_hole) < 3:
+            continue
+        holes.append(simplified_hole.squeeze(axis=1).tolist())
 
     return exterior, holes
 

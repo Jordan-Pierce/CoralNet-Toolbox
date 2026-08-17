@@ -226,6 +226,28 @@ class PatchTool(Tool):
             self.clear_cursor_annotation()
             self.create_cursor_annotation(scene_pos)
 
+    def refresh_label_preview(self):
+        """Rebuild the patch preview for the newly selected label."""
+        if not self.active:
+            return
+
+        if self.live_classify_mode:
+            # The live cursor shows the model's prediction, not the selected
+            # label — rebuilding it would wipe the prediction on screen. Only
+            # rebuild while no prediction has landed yet, when the cursor is
+            # still painted with the selected label.
+            if self._last_prediction:
+                return
+            scene_pos = self.last_scene_pos
+            if scene_pos is not None and self._pointer_over_window():
+                self.clear_cursor_annotation()
+                self._update_live_cursor(scene_pos)
+                if self.cursor_move_callback:
+                    self.cursor_move_callback(scene_pos, self.create_cursor_preview_item)
+            return
+
+        super().refresh_label_preview()
+
     def toggle_live_classify(self):
         """Toggle live classification mode on/off."""
         main_window = self.annotation_window.main_window

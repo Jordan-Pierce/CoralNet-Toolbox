@@ -664,7 +664,7 @@ class BaseCanvas(QGraphicsView):
             self._sync_perimeter_overlay_geometry()
         except Exception:
             pass
-    
+
     # ==================== Placeholder Management ====================
     
     def _show_placeholder(self, text: str = None):
@@ -1039,7 +1039,6 @@ class BaseCanvas(QGraphicsView):
             annotations (list): List of Annotation objects to display.
         """
         from coralnet_toolbox.Annotations import MaskAnnotation
-        from coralnet_toolbox.Annotations.QtAnnotation import create_pen
         from collections import defaultdict
 
         self._clear_readonly_annotations()
@@ -1067,45 +1066,25 @@ class BaseCanvas(QGraphicsView):
             c = annotation.label.color
             is_sel = bool(annotation.is_selected)
             key = (c.red(), c.green(), c.blue(), annotation.transparency, is_sel)
-            # Convert to a filled polygon before merging.  Different annotation
-            # sources (SAM, YOLOE, manual) produce vertices in arbitrary winding
-            # order.  addPath preserves raw subpaths, so opposite-wound subpaths
-            # cancel under WindingFill, creating visual "cutout" artifacts.
-            # toFillPolygon applies Qt's rewinding technique, producing a single
-            # polygon with consistent winding that merges cleanly.
-            groups[key].addPolygon(path.toFillPolygon())
+            # Merge raw subpaths.  Annotation._add_ring now normalizes ring
+            # winding at the source, so opposite-wound subpaths no longer cancel
+            # under WindingFill and the "cutout" artifacts that toFillPolygon()
+            # was introduced to fix cannot arise.  Dropping toFillPolygon also
+            # drops the connector segments its rewinding inserts — Qt documents
+            # that rewinding "inserts addition lines in the polygon" — which
+            # this layer was stroking as a chord across every polygon that had
+            # a hole.
+            groups[key].addPath(path)
             if key not in group_styles:
                 group_styles[key] = (QColor(c), annotation.transparency, is_sel)
 
+        # NoIndex while bulk-adding: one index rebuild at the end beats N
+        # insertions.  update_readonly_group deliberately does NOT do this — for
+        # a single addItem the toggle would force a full rebuild for nothing.
         self.scene.setItemIndexMethod(QGraphicsScene.NoIndex)
         for key, merged_path in groups.items():
             color, transparency, is_selected = group_styles[key]
-            fill_color = QColor(color)
-            fill_color.setAlpha(transparency)
-
-            if is_selected:
-                # Delegate to the shared create_pen() — no more copy-paste constants.
-                pen = create_pen(color, is_selected=True)
-            else:
-                # Phantom unselected: thinner 1 px pen is intentionally lighter
-                # than the 2 px pen used by a fully-owned annotation item.
-                pen = QPen(color, 1)
-                pen.setCosmetic(True)
-
-            # WindingFill prevents overlapping shapes from cancelling each other
-            # (the default even-odd rule punches holes where annotations overlap)
-            merged_path.setFillRule(Qt.WindingFill)
-            item = PhantomGroupItem(merged_path)
-            item.setBrush(QBrush(fill_color))
-            item.setPen(pen)
-            # Cache the rendered group at device resolution: panning then blits a
-            # pixmap instead of re-stroking/re-filling every subpath per frame.
-            # Qt invalidates the cache automatically on zoom/rotation.
-            item.setCacheMode(QGraphicsItem.DeviceCoordinateCache)
-            item.setFlag(QGraphicsItem.ItemIsSelectable, False)
-            item.setFlag(QGraphicsItem.ItemIsMovable, False)
-            item.setAcceptHoverEvents(False)
-            item.setZValue(10)
+            item = self._make_phantom_item(merged_path, color, transparency, is_selected)
             self.scene.addItem(item)
             # Store by key so individual groups can be patched incrementally.
             self._readonly_annotation_items[key] = item
@@ -1123,6 +1102,57 @@ class BaseCanvas(QGraphicsView):
                 pass
         self._readonly_annotation_items = {}
 
+    def _make_phantom_item(self, merged_path, color, transparency, is_selected):
+        """Build the single scene item that draws one phantom colour group.
+
+        Both the full rebuild and the incremental single-group rebuild go
+        through here. They previously each built their own item and drifted
+        apart — different item class, different fill-merge strategy — so that
+        selecting an annotation silently swapped one colour group onto a
+        differently-shaped rendering path that deselecting never undid.
+
+        Args:
+            merged_path: the group's combined QPainterPath (modified in place).
+            color (QColor): the label colour for the group.
+            transparency (int): alpha applied to the fill.
+            is_selected (bool): whether this group is the selected-state group.
+
+        Returns:
+            A configured PhantomGroupItem, not yet added to the scene.
+        """
+        from coralnet_toolbox.Annotations.QtAnnotation import create_pen
+
+        fill_color = QColor(color)
+        fill_color.setAlpha(transparency)
+
+        if is_selected:
+            # Delegate to the shared create_pen() — no more copy-paste constants.
+            pen = create_pen(color, is_selected=True)
+        else:
+            # Phantom unselected: thinner 1 px pen is intentionally lighter
+            # than the 2 px pen used by a fully-owned annotation item.
+            pen = QPen(color, 1)
+            pen.setCosmetic(True)
+
+        # WindingFill prevents overlapping shapes from cancelling each other
+        # (the default even-odd rule punches holes where annotations overlap).
+        # Correctness here depends on every ring arriving with normalized
+        # winding — see Annotation._add_ring.
+        merged_path.setFillRule(Qt.WindingFill)
+
+        item = PhantomGroupItem(merged_path)
+        item.setBrush(QBrush(fill_color))
+        item.setPen(pen)
+        # Cache the rendered group at device resolution: panning then blits a
+        # pixmap instead of re-stroking/re-filling every subpath per frame.
+        # Qt invalidates the cache automatically on zoom/rotation.
+        item.setCacheMode(QGraphicsItem.DeviceCoordinateCache)
+        item.setFlag(QGraphicsItem.ItemIsSelectable, False)
+        item.setFlag(QGraphicsItem.ItemIsMovable, False)
+        item.setAcceptHoverEvents(False)
+        item.setZValue(10)
+        return item
+
     def update_readonly_group(self, key, annotations):
         """Rebuild ONE phantom group item in place.
 
@@ -1134,8 +1164,6 @@ class BaseCanvas(QGraphicsView):
         Only valid once the layer has been built by _render_annotations_readonly;
         callers must fall back to a full refresh otherwise.
         """
-        from coralnet_toolbox.Annotations.QtAnnotation import create_pen
-
         # Remove the existing item for this key
         old_item = self._readonly_annotation_items.pop(key, None)
         if old_item is not None:
@@ -1164,24 +1192,7 @@ class BaseCanvas(QGraphicsView):
             self.viewport().update()
             return
 
-        color = QColor(r, g, b)
-        fill_color = QColor(color)
-        fill_color.setAlpha(transparency)
-        if is_selected:
-            pen = create_pen(color, is_selected=True)
-        else:
-            pen = QPen(color, 1)
-            pen.setCosmetic(True)
-
-        merged_path.setFillRule(Qt.WindingFill)
-        item = QGraphicsPathItem(merged_path)
-        item.setBrush(QBrush(fill_color))
-        item.setPen(pen)
-        item.setCacheMode(QGraphicsItem.DeviceCoordinateCache)
-        item.setFlag(QGraphicsItem.ItemIsSelectable, False)
-        item.setFlag(QGraphicsItem.ItemIsMovable, False)
-        item.setAcceptHoverEvents(False)
-        item.setZValue(10)
+        item = self._make_phantom_item(merged_path, QColor(r, g, b), transparency, is_selected)
         self.scene.addItem(item)
         self._readonly_annotation_items[key] = item
         self.viewport().update()

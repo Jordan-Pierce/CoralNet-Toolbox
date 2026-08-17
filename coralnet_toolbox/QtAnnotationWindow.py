@@ -116,7 +116,6 @@ class AnnotationWindow(BaseCanvas):
         self.transparency = 128
 
         self.drag_start_pos = None
-        self.cursor_annotation = None
         self.rasterized_annotations_cache = []  # Caches vector annotations during mask mode
         self.selected_label = None  # Flag to check if an active label is set
         self.selected_tool = None  # Store the current tool state
@@ -1673,6 +1672,19 @@ class AnnotationWindow(BaseCanvas):
         """Get the currently selected tool."""
         return self.selected_tool
 
+    def refresh_tool_label_preview(self):
+        """Tell the active tool to repaint its previews for the current label.
+
+        Called when the selected label changes and when the active label's own
+        properties (color, codes) are edited in the LabelWindow.
+        """
+        if not self.selected_tool or self.selected_tool not in self.tools:
+            return
+        try:
+            self.tools[self.selected_tool].refresh_label_preview()
+        except Exception:
+            pass
+
     def set_selected_tool(self, tool, preserve_selection=False):
         """Set the currently active tool and update the UI layers for the correct editing mode.
         
@@ -1730,6 +1742,11 @@ class AnnotationWindow(BaseCanvas):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
         self.selected_label = label
+
+        # Repaint the active tool's live previews with the new label. This runs
+        # before the no-selection early return below, because those previews are
+        # driven by hovering and exist whether or not anything is selected.
+        self.refresh_tool_label_preview()
 
         # Collect changes for action stack
         changes = []  # list of (annotation_id, old_label, new_label)
@@ -1865,14 +1882,6 @@ class AnnotationWindow(BaseCanvas):
                 except Exception:
                     pass
 
-            if self.cursor_annotation:
-                if self.cursor_annotation.label.id != label.id:
-                    self.toggle_cursor_annotation()
-        else:
-            # Clear cursor annotation when no label is selected
-            if self.cursor_annotation:
-                self.toggle_cursor_annotation()
-
         # Record action(s)
         try:
             if changes:
@@ -1982,8 +1991,6 @@ class AnnotationWindow(BaseCanvas):
             if isinstance(annotation, PatchAnnotation):
                 old_size = getattr(annotation, 'annotation_size', None)
                 annotation.update_annotation_size(self.annotation_size)
-                if self.cursor_annotation:
-                    self.cursor_annotation.update_annotation_size(self.annotation_size)
                 new_size = getattr(annotation, 'annotation_size', None)
                 # Push a resize action; ActionStack will coalesce consecutive resizes
                 if old_size is not None and new_size is not None and old_size != new_size:
@@ -2003,8 +2010,6 @@ class AnnotationWindow(BaseCanvas):
                     old_geom = None
 
                 annotation.update_annotation_size(scale_factor)
-                if self.cursor_annotation:
-                    self.cursor_annotation.update_annotation_size(scale_factor)
 
                 # Capture new geometry and push geometry-edit action
                 try:
@@ -2034,8 +2039,6 @@ class AnnotationWindow(BaseCanvas):
                     old_geom = None
 
                 annotation.update_annotation_size(scale_factor)
-                if self.cursor_annotation:
-                    self.cursor_annotation.update_annotation_size(scale_factor)
 
                 # Capture new polygon geometry
                 try:
@@ -2168,10 +2171,7 @@ class AnnotationWindow(BaseCanvas):
                 self.tools[self.selected_tool].update_cursor_annotation(scene_pos)
             else:
                 self.tools[self.selected_tool].clear_cursor_annotation()
-        
-        # Clear our reference to any cursor annotation
-        self.cursor_annotation = None
-        
+
     def update_scene(self):
         """Update the graphics scene and its items."""
         self.scene.update()
