@@ -43,6 +43,14 @@ class ImportTagLabLabels:
                 else:
                     raise Exception("The selected JSON file does not contain 'Labels' or 'labels' key.")
 
+                # TagLab stores labels two ways: a dictionary file holds a list of
+                # label dicts, while a project file holds a dict keyed by label
+                # name. Normalize to a list so either file imports the same way -
+                # iterating the dict form yielded its string keys, and the first
+                # label_info['name'] then raised.
+                if isinstance(data['labels'], dict):
+                    data['labels'] = list(data['labels'].values())
+
             except Exception as e:
                 QMessageBox.warning(self.label_window,
                                     "Error Loading Labels",
@@ -74,7 +82,11 @@ class ImportTagLabLabels:
                                                                           refresh_ui=False)
 
                     except Exception as e:
-                        print(f"Warning: Could not import label {label_info['name']}: {str(e)}")
+                        # label_info is whatever the file held, so do not assume it
+                        # is a dict with a 'name' - that turned a skippable label
+                        # into a hard failure of the whole import.
+                        name = label_info.get('name') if isinstance(label_info, dict) else label_info
+                        print(f"Warning: Could not import label {name}: {str(e)}")
 
                     # Update the progress bar
                     progress_bar.update_progress()

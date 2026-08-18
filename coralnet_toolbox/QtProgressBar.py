@@ -316,7 +316,7 @@ QPushButton#ProgressCancelButton:disabled {{
         self.adjustSize()
         self.setMinimumSize(self.size())
 
-        self.progress_updated.connect(self.update_progress)
+        self.progress_updated.connect(self.set_value)
 
         self._sync_indicator()
 
@@ -369,11 +369,21 @@ QPushButton#ProgressCancelButton:disabled {{
         elif value > self.max_value:
             pass
 
-    def update_progress(self, new_title=None):
+    def update_progress(self):
         """Increment the progress by one step."""
-        if new_title is not None:
-            self.setWindowTitle(new_title)
+        self.advance_progress(1)
 
+    def advance_progress(self, steps=1):
+        """Advance the progress by a number of steps.
+
+        Callers that skip a whole block of work at once - an input file whose
+        items are all being ignored, for instance - need this. update_progress()
+        takes no count, so `update_progress(n)` used to land on its old title
+        argument and raise from setWindowTitle().
+
+        Args:
+            steps (int): Number of steps to advance by.
+        """
         if self.canceled:
             return
 
@@ -381,13 +391,19 @@ QPushButton#ProgressCancelButton:disabled {{
             QApplication.processEvents()
             return
 
-        self.value += 1
+        steps = int(steps)
+        if steps <= 0:
+            return
 
+        self.value = min(self.value + steps, self.max_value)
+
+        # Repaint on a ~1% cadence so a large import is not dominated by
+        # processEvents; the final step always repaints. The "< steps" test
+        # catches a multi-step jump that steps straight over the boundary.
         update_interval = max(1, self.max_value // 100)
         is_last_step = self.value >= self.max_value
-        is_update_step = self.value % update_interval == 0
 
-        if is_update_step or is_last_step:
+        if is_last_step or (self.value % update_interval) < steps:
             self.progress_bar.setValue(self.value)
             QApplication.processEvents()
 
