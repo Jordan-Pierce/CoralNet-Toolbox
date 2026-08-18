@@ -223,7 +223,9 @@ class Base(QDialog):
         self.image_options_group.addButton(self.filtered_images_radio)
         self.image_options_group.setExclusive(True)
 
-        self.all_images_radio.setChecked(True)
+        # Default to the filtered set: it matches the table the user is looking
+        # at, and equals every image when no filter is active.
+        self.filtered_images_radio.setChecked(True)
 
         self.all_images_radio.toggled.connect(self.update_image_selection)
         self.filtered_images_radio.toggled.connect(self.update_image_selection)
