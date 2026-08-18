@@ -118,6 +118,9 @@ class MultiPolygonAnnotation(Annotation):
         path = QPainterPath()
         for poly in self.polygons:
             path.addPath(poly.get_painter_path())
+        # Islands arrive with normalized winding from PolygonAnnotation, so
+        # WindingFill unions them while still letting their holes subtract.
+        path.setFillRule(Qt.WindingFill)
         return path
 
     def get_rasterization_geometry(self):

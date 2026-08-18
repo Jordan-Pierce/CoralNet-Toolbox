@@ -151,12 +151,13 @@ class PatchAnnotation(Annotation):
         Get a QPainterPath representation of the annotation.
         """
         path = QPainterPath()
-        # Get the square's corners from the existing get_polygon method
-        polygon = self.get_polygon()
-        # Add the polygon to the path
-        path.addPolygon(polygon)
-        # Close the subpath to ensure the path is a closed polygon
-        path.closeSubpath()
+        # Get the square's corners from the existing get_polygon method, and
+        # route them through _add_ring so this ring's winding agrees with every
+        # other annotation's. The phantom layer merges them all into one path
+        # under Qt.WindingFill, where a disagreeing ring would cancel the
+        # overlap into a "cutout" artifact.
+        self._add_ring(path, self.get_polygon())
+        path.setFillRule(Qt.WindingFill)
 
         return path
 

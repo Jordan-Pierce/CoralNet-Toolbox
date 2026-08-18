@@ -351,24 +351,27 @@ class PolygonAnnotation(Annotation):
         """
         Get a QPainterPath representation of the annotation, including holes.
 
-        This is the correct object to use for rendering complex polygons.
+        Rings are emitted with normalized winding: the outer boundary one way,
+        every hole the other. Under Qt.WindingFill that makes a hole subtract
+        from its own polygon while overlapping annotations still union — which
+        is what lets the phantom layer merge thousands of these into one path
+        with a plain addPath().
+
+        The merged layer used to run each path through toFillPolygon() to force
+        consistent winding. That fixes the fill, but as Qt documents, rewinding
+        "inserts addition lines in the polygon", and the layer strokes what it
+        merges — so every polygon with a hole grew a visible chord across it.
+        Normalizing winding at the source removes the need for toFillPolygon.
         """
         path = QPainterPath()
 
-        # 1. Add the outer boundary to the path
-        path.addPolygon(QPolygonF(self.points))
-
-        # 2. Add each of the inner holes to the path
+        # Outer boundary first, then every hole wound the opposite way.
+        self._add_ring(path, self.points, positive=True)
         for hole in self.holes:
-            path.addPolygon(QPolygonF(hole))
+            self._add_ring(path, hole, positive=False)
 
-        # 3. Set the fill rule, which tells the painter to treat
-        #    overlapping polygons as holes.
-        path.setFillRule(Qt.OddEvenFill)
+        path.setFillRule(Qt.WindingFill)
         
-        # Close the subpath to ensure the path is a closed polygon
-        path.closeSubpath()
-
         return path
 
     def get_rasterization_geometry(self):

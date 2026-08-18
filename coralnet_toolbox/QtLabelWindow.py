@@ -3,6 +3,7 @@ import warnings
 import re
 import uuid
 import random
+from contextlib import contextmanager
 
 from PyQt5.QtCore import QMimeData, QTimer, Qt, pyqtSignal, QRectF, pyqtProperty
 from PyQt5.QtGui import (QColor, QPainter, QPen, QBrush, QFontMetrics, QLinearGradient, QDrag)
@@ -38,6 +39,21 @@ SWATCH_RADIUS = 4
 LABEL_SPACING = 6
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Functions
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+@contextmanager
+def busy_cursor():
+    """Show the wait cursor for the duration of a block, restoring it even if an error is raised."""
+    QApplication.setOverrideCursor(Qt.WaitCursor)
+    try:
+        yield
+    finally:
+        QApplication.restoreOverrideCursor()
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -615,9 +631,10 @@ class LabelWindow(QWidget):
         label_id = event.mimeData().text()
         label = self.get_label_by_id(label_id)
         if label:
-            self.labels.remove(label)
-            self.labels.insert(self.calculate_new_index(event.pos()), label)
-            self.reorganize_labels()
+            with busy_cursor():
+                self.labels.remove(label)
+                self.labels.insert(self.calculate_new_index(event.pos()), label)
+                self.reorganize_labels()
 
     def calculate_new_index(self, pos):
         """Calculate the new index for vertical drop based on y position."""
@@ -804,12 +821,13 @@ class LabelWindow(QWidget):
         add_label / add_label_if_not_exists to avoid a full layout teardown and
         forced repaint per label (the flashing), then call this once when done.
         """
-        self.update_labels_per_row()
-        self.reorganize_labels()
-        self.update_label_count()
-        self.main_window.image_window.update_search_bars()
-        self.sync_all_masks_with_labels()
-        self.update_tooltips()
+        with busy_cursor():
+            self.update_labels_per_row()
+            self.reorganize_labels()
+            self.update_label_count()
+            self.main_window.image_window.update_search_bars()
+            self.sync_all_masks_with_labels()
+            self.update_tooltips()
 
     def open_add_label_dialog(self):
         """Open the dialog to add a new label."""
@@ -821,19 +839,21 @@ class LabelWindow(QWidget):
                                     "Label Exists",
                                     "A label with the same short and long name already exists.")
             else:
-                new_label = self.add_label(short_label_code, long_label_code, color)
-                self.set_active_label(new_label)
+                with busy_cursor():
+                    new_label = self.add_label(short_label_code, long_label_code, color)
+                    self.set_active_label(new_label)
 
     def open_edit_label_dialog(self):
         """Open the dialog to edit the active label."""
         if self.active_label:
             dialog = EditLabelDialog(self, self.active_label)
             if dialog.exec_() == QDialog.Accepted:
-                # Update the tooltip with the new long label code
-                self.active_label.setToolTip(self.active_label.long_label_code)
-                self.update_labels_per_row()
-                self.reorganize_labels()
-                self.main_window.image_window.update_search_bars()
+                with busy_cursor():
+                    # Update the tooltip with the new long label code
+                    self.active_label.setToolTip(self.active_label.long_label_code)
+                    self.update_labels_per_row()
+                    self.reorganize_labels()
+                    self.main_window.image_window.update_search_bars()
 
     def add_review_label(self):
         """Add a review label to the window and place it at the front of the label list."""
@@ -868,15 +888,16 @@ class LabelWindow(QWidget):
         self.labels.append(label)
         self._short_code_map[label.short_label_code.strip().lower()] = label
         if refresh_ui:
-            self.set_active_label(label)
-            # Update in LabelWindow
-            self.update_labels_per_row()
-            self.reorganize_labels()
-            self.update_label_count()
-            self.main_window.image_window.update_search_bars()
-            self.sync_all_masks_with_labels()
-            QApplication.processEvents()
-            self.update_tooltips()
+            with busy_cursor():
+                self.set_active_label(label)
+                # Update in LabelWindow
+                self.update_labels_per_row()
+                self.reorganize_labels()
+                self.update_label_count()
+                self.main_window.image_window.update_search_bars()
+                self.sync_all_masks_with_labels()
+                QApplication.processEvents()
+                self.update_tooltips()
 
         return label
     
@@ -1092,17 +1113,13 @@ class LabelWindow(QWidget):
             return
             
         # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-
-        for annotation in self.annotation_window.selected_annotations:
-            if annotation.label.id == label.id:
-                # Get the transparency of the label
-                transparency = self.get_label_transparency(label.id)
-                # Update the annotation transparency
-                annotation.update_transparency(transparency)
-
-        # Make cursor normal again
-        QApplication.restoreOverrideCursor()
+        with busy_cursor():
+            for annotation in self.annotation_window.selected_annotations:
+                if annotation.label.id == label.id:
+                    # Get the transparency of the label
+                    transparency = self.get_label_transparency(label.id)
+                    # Update the annotation transparency
+                    annotation.update_transparency(transparency)
 
     def get_label_color(self, label_id):
         """Get the color of a label by its ID."""
@@ -1252,40 +1269,48 @@ class LabelWindow(QWidget):
         Updates the properties of a specific label and refreshes associated annotations.
         This is for a simple edit, not a merge.
         """
-        # Update the label object's properties
-        self._short_code_map.pop(label_to_update.short_label_code.strip().lower(), None)
-        label_to_update.short_label_code = new_short
-        self._short_code_map[new_short.strip().lower()] = label_to_update
-        label_to_update.long_label_code = new_long
-        label_to_update.update_label_color(new_color)  # This already updates color and emits signal
+        # Make cursor busy
+        with busy_cursor():
+            # Update the label object's properties
+            self._short_code_map.pop(label_to_update.short_label_code.strip().lower(), None)
+            label_to_update.short_label_code = new_short
+            self._short_code_map[new_short.strip().lower()] = label_to_update
+            label_to_update.long_label_code = new_long
+            label_to_update.update_label_color(new_color)  # This already updates color and emits signal
 
-        # Update all annotations that use this label to reflect the new color/properties
-        for annotation in self.annotation_window.annotations_dict.values():
-            if annotation.label.id == label_to_update.id:
-                # Re-apply the label to trigger a style update if needed (e.g., color change)
-                annotation.update_label(label_to_update)
+            # Update all annotations that use this label to reflect the new color/properties
+            for annotation in self.annotation_window.annotations_dict.values():
+                if annotation.label.id == label_to_update.id:
+                    # Re-apply the label to trigger a style update if needed (e.g., color change)
+                    annotation.update_label(label_to_update)
 
-        # Also, force the mask annotation to re-render to show the new color (only in mask editing mode).
-        if self.annotation_window.current_mask_annotation: 
-            self.annotation_window.current_mask_annotation.update_graphics_item()
+            # Also, force the mask annotation to re-render to show the new color (only in mask editing mode).
+            if self.annotation_window.current_mask_annotation:
+                self.annotation_window.current_mask_annotation.update_graphics_item()
 
-        # Force a repaint of the label widget itself and reorganize the grid
-        label_to_update.update()
-        self.reorganize_labels()
-        self.sync_all_masks_with_labels()
-        
-        # Update tooltip immediately to reflect the new properties
-        rgb = label_to_update.color.getRgb()
-        rgb_text = f"RGB({rgb[0]}, {rgb[1]}, {rgb[2]})"
-        tooltip = f"{label_to_update.long_label_code}\n" \
-                  f"Current image: 0 annotations\n" \
-                  f"Total project: 0 annotations\n" \
-                  f"Color: {rgb_text}\n" \
-                  f"ID: {label_to_update.id}"
-        label_to_update.setToolTip(tooltip)
-        
-        # Then update all tooltips for complete counts
-        self.update_tooltips()
+            # Repaint any live tool previews drawn with this label (cursor
+            # annotation, prompt rectangles, unconfirmed predictions).
+            if self.active_label is label_to_update:
+                self.annotation_window.refresh_tool_label_preview()
+
+            # Force a repaint of the label widget itself and reorganize the grid
+            label_to_update.update()
+            self.reorganize_labels()
+            self.sync_all_masks_with_labels()
+
+            # Update tooltip immediately to reflect the new properties
+            rgb = label_to_update.color.getRgb()
+            rgb_text = f"RGB({rgb[0]}, {rgb[1]}, {rgb[2]})"
+            tooltip = f"{label_to_update.long_label_code}\n" \
+                      f"Current image: 0 annotations\n" \
+                      f"Total project: 0 annotations\n" \
+                      f"Color: {rgb_text}\n" \
+                      f"ID: {label_to_update.id}"
+            label_to_update.setToolTip(tooltip)
+
+            # Then update all tooltips for complete counts
+            self.update_tooltips()
+
         print(f"Note: Label '{label_to_update.id}' updated successfully.")
 
     def merge_labels(self, source_label, target_label):
@@ -1296,66 +1321,62 @@ class LabelWindow(QWidget):
         3. Deletes the source label.
         """
         # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        
-        print(f"Merging label '{source_label.short_label_code}' into '{target_label.short_label_code}'.")
-        
-        # Iterate through ALL rasters to update every existing mask.
-        for raster in self.main_window.image_window.raster_manager.rasters.values():
-            if raster.mask_annotation is not None:
-                mask_anno = raster.mask_annotation
-                
-                source_cid = mask_anno.label_id_to_class_id_map.get(source_label.id)
-                target_cid = mask_anno.label_id_to_class_id_map.get(target_label.id)
+        with busy_cursor():
+            print(f"Merging label '{source_label.short_label_code}' into '{target_label.short_label_code}'.")
 
-                if source_cid and target_cid:
-                    # Find all pixels belonging to the source class
-                    pixels_to_reassign = (mask_anno.mask_data % mask_anno.LOCK_BIT) == source_cid
-                    # Re-assign them to the target class, preserving their locked status
-                    mask_anno.mask_data[pixels_to_reassign] = target_cid + mask_anno.LOCK_BIT
+            # Iterate through ALL rasters to update every existing mask.
+            for raster in self.main_window.image_window.raster_manager.rasters.values():
+                if raster.mask_annotation is not None:
+                    mask_anno = raster.mask_annotation
 
-                    # Clean up the old source label from the mask's maps
-                    mask_anno.class_id_to_label_map.pop(source_cid, None)
-                    mask_anno.label_id_to_class_id_map.pop(source_label.id, None)
+                    source_cid = mask_anno.label_id_to_class_id_map.get(source_label.id)
+                    target_cid = mask_anno.label_id_to_class_id_map.get(target_label.id)
 
-        # --- GLOBAL CLEANUP OPERATION ---
-        all_annotations = self.annotation_window.annotations_dict.values()
-        
-        for annotation in all_annotations:
-            if annotation.label == source_label:
-                annotation.update_label(target_label)
+                    if source_cid and target_cid:
+                        # Find all pixels belonging to the source class
+                        pixels_to_reassign = (mask_anno.mask_data % mask_anno.LOCK_BIT) == source_cid
+                        # Re-assign them to the target class, preserving their locked status
+                        mask_anno.mask_data[pixels_to_reassign] = target_cid + mask_anno.LOCK_BIT
 
-            if annotation.machine_confidence:
-                annotation.machine_confidence.pop(source_label, None)
+                        # Clean up the old source label from the mask's maps
+                        mask_anno.class_id_to_label_map.pop(source_cid, None)
+                        mask_anno.label_id_to_class_id_map.pop(source_label.id, None)
 
-        # --- FINALIZING THE MERGE ---
-        if self.active_label == source_label:
-            self.set_active_label(target_label)
-            
-        if source_label in self.labels:
-            self.labels.remove(source_label)
-            self._short_code_map.pop(source_label.short_label_code.strip().lower(), None)
-            source_label.deleteLater()
+            # --- GLOBAL CLEANUP OPERATION ---
+            all_annotations = self.annotation_window.annotations_dict.values()
 
-        self.update_label_count()
-        self.reorganize_labels()
+            for annotation in all_annotations:
+                if annotation.label == source_label:
+                    annotation.update_label(target_label)
 
-        current_image_path = self.annotation_window.current_image_path
-        if current_image_path:
-            self.annotation_window.set_image(current_image_path)
-            self.update_annotation_count()
-            
-        self.sync_all_masks_with_labels()
-        self.main_window.image_window.update_search_bars()
-        self.update_tooltips()
+                if annotation.machine_confidence:
+                    annotation.machine_confidence.pop(source_label, None)
 
-        # After the merge, refresh the view of the currently displayed mask (only in mask editing mode).
-        current_mask = self.annotation_window.current_mask_annotation
-        if current_mask:  
-            current_mask.update_graphics_item()
-            
-        # Return cursor to normal
-        QApplication.restoreOverrideCursor()
+            # --- FINALIZING THE MERGE ---
+            if self.active_label == source_label:
+                self.set_active_label(target_label)
+
+            if source_label in self.labels:
+                self.labels.remove(source_label)
+                self._short_code_map.pop(source_label.short_label_code.strip().lower(), None)
+                source_label.deleteLater()
+
+            self.update_label_count()
+            self.reorganize_labels()
+
+            current_image_path = self.annotation_window.current_image_path
+            if current_image_path:
+                self.annotation_window.set_image(current_image_path)
+                self.update_annotation_count()
+
+            self.sync_all_masks_with_labels()
+            self.main_window.image_window.update_search_bars()
+            self.update_tooltips()
+
+            # After the merge, refresh the view of the currently displayed mask (only in mask editing mode).
+            current_mask = self.annotation_window.current_mask_annotation
+            if current_mask:
+                current_mask.update_graphics_item()
 
     def open_bulk_map_dialog(self):
         """Open the BulkMapDialog and perform bulk mapping if accepted."""
@@ -1375,64 +1396,65 @@ class LabelWindow(QWidget):
             QMessageBox.warning(self, "Invalid Selection", "Target label cannot be one of the sources.")
             return
 
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        self.main_window.status_bar.showMessage(f"Bulk merging {len(source_labels)} labels into '{target_label.short_label_code}'...", 5000)
+        # Make cursor busy
+        with busy_cursor():
+            self.main_window.status_bar.showMessage(
+                f"Bulk merging {len(source_labels)} labels into '{target_label.short_label_code}'...", 5000
+            )
 
-        # Update all rasters once
-        for raster in self.main_window.image_window.raster_manager.rasters.values():
-            if raster.mask_annotation is not None:
-                mask_anno = raster.mask_annotation
-                for source_label in source_labels:
-                    source_cid = mask_anno.label_id_to_class_id_map.get(source_label.id)
-                    target_cid = mask_anno.label_id_to_class_id_map.get(target_label.id)
+            # Update all rasters once
+            for raster in self.main_window.image_window.raster_manager.rasters.values():
+                if raster.mask_annotation is not None:
+                    mask_anno = raster.mask_annotation
+                    for source_label in source_labels:
+                        source_cid = mask_anno.label_id_to_class_id_map.get(source_label.id)
+                        target_cid = mask_anno.label_id_to_class_id_map.get(target_label.id)
 
-                    if source_cid and target_cid:
-                        pixels_to_reassign = (mask_anno.mask_data % mask_anno.LOCK_BIT) == source_cid
-                        mask_anno.mask_data[pixels_to_reassign] = target_cid + mask_anno.LOCK_BIT
-                        mask_anno.class_id_to_label_map.pop(source_cid, None)
-                        mask_anno.label_id_to_class_id_map.pop(source_label.id, None)
+                        if source_cid and target_cid:
+                            pixels_to_reassign = (mask_anno.mask_data % mask_anno.LOCK_BIT) == source_cid
+                            mask_anno.mask_data[pixels_to_reassign] = target_cid + mask_anno.LOCK_BIT
+                            mask_anno.class_id_to_label_map.pop(source_cid, None)
+                            mask_anno.label_id_to_class_id_map.pop(source_label.id, None)
 
-        # Update annotations and machine_confidence
-        for annotation in list(self.annotation_window.annotations_dict.values()):
-            if annotation.label in source_labels:
-                annotation.update_label(target_label)
+            # Update annotations and machine_confidence
+            for annotation in list(self.annotation_window.annotations_dict.values()):
+                if annotation.label in source_labels:
+                    annotation.update_label(target_label)
 
-            if getattr(annotation, 'machine_confidence', None):
-                for source_label in source_labels:
-                    annotation.machine_confidence.pop(source_label, None)
+                if getattr(annotation, 'machine_confidence', None):
+                    for source_label in source_labels:
+                        annotation.machine_confidence.pop(source_label, None)
 
-        # Remove source labels from UI and internal list
-        for source_label in list(source_labels):
-            if source_label in self.labels:
-                try:
-                    self.labels.remove(source_label)
-                    self._short_code_map.pop(source_label.short_label_code.strip().lower(), None)
-                except ValueError:
-                    pass
-                source_label.deleteLater()
+            # Remove source labels from UI and internal list
+            for source_label in list(source_labels):
+                if source_label in self.labels:
+                    try:
+                        self.labels.remove(source_label)
+                        self._short_code_map.pop(source_label.short_label_code.strip().lower(), None)
+                    except ValueError:
+                        pass
+                    source_label.deleteLater()
 
-        # Update active label
-        if self.active_label in source_labels:
-            self.set_active_label(target_label)
+            # Update active label
+            if self.active_label in source_labels:
+                self.set_active_label(target_label)
 
-        # Final UI updates
-        self.update_label_count()
-        self.reorganize_labels()
+            # Final UI updates
+            self.update_label_count()
+            self.reorganize_labels()
 
-        current_image_path = self.annotation_window.current_image_path
-        if current_image_path:
-            self.annotation_window.set_image(current_image_path)
-            self.update_annotation_count()
+            current_image_path = self.annotation_window.current_image_path
+            if current_image_path:
+                self.annotation_window.set_image(current_image_path)
+                self.update_annotation_count()
 
-        self.sync_all_masks_with_labels()
-        self.main_window.image_window.update_search_bars()
-        self.update_tooltips()
+            self.sync_all_masks_with_labels()
+            self.main_window.image_window.update_search_bars()
+            self.update_tooltips()
 
-        current_mask = self.annotation_window.current_mask_annotation
-        if current_mask:
-            current_mask.update_graphics_item()
-
-        QApplication.restoreOverrideCursor()
+            current_mask = self.annotation_window.current_mask_annotation
+            if current_mask:
+                current_mask.update_graphics_item()
 
     def delete_label(self, label):
         """Delete the specified label and its associated annotations after confirmation."""
@@ -1464,85 +1486,81 @@ class LabelWindow(QWidget):
                 return
 
         # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        
-        # Get a list of all VECTOR annotations that will be deleted
-        vector_annotations_to_delete = [
-            anno for anno in self.annotation_window.annotations_dict.values() 
-            if anno.label.id == label.id and hasattr(anno, 'get_polygon')
-        ]
+        with busy_cursor():
+            # Get a list of all VECTOR annotations that will be deleted
+            vector_annotations_to_delete = [
+                anno for anno in self.annotation_window.annotations_dict.values()
+                if anno.label.id == label.id and hasattr(anno, 'get_polygon')
+            ]
 
-        # Iterate through ALL rasters in the project to update every existing mask.
-        for raster in self.main_window.image_window.raster_manager.rasters.values():
-            # Only act on masks that have already been created (lazy-loading).
-            if raster.mask_annotation is not None:
-                mask_anno = raster.mask_annotation
-                
-                # 1. Clear pixels from VECTOR annotations being deleted
-                #    This finds all pixels under these polygons (locked or not)
-                #    and sets them to 0, removing the lock.
-                raster_vector_annos = [
-                    anno for anno in vector_annotations_to_delete 
-                    if anno.image_path == raster.image_path
-                ]
-                if raster_vector_annos:
-                    mask_anno.clear_pixels_for_annotations(raster_vector_annos)
+            # Iterate through ALL rasters in the project to update every existing mask.
+            for raster in self.main_window.image_window.raster_manager.rasters.values():
+                # Only act on masks that have already been created (lazy-loading).
+                if raster.mask_annotation is not None:
+                    mask_anno = raster.mask_annotation
 
-                # 2. Clear pixels from SEMANTIC mask for this class
-                #    This finds all remaining semantic pixels (locked or not)
-                #    and sets them to 0.
-                class_id_to_clear = mask_anno.label_id_to_class_id_map.get(label.id)
-                if class_id_to_clear:
-                    mask_anno.clear_pixels_for_class(class_id_to_clear)
-                    # Remove the label from the mask's internal maps to keep them clean
-                    mask_anno.class_id_to_label_map.pop(class_id_to_clear, None)
-                    mask_anno.label_id_to_class_id_map.pop(label.id, None)
+                    # 1. Clear pixels from VECTOR annotations being deleted
+                    #    This finds all pixels under these polygons (locked or not)
+                    #    and sets them to 0, removing the lock.
+                    raster_vector_annos = [
+                        anno for anno in vector_annotations_to_delete
+                        if anno.image_path == raster.image_path
+                    ]
+                    if raster_vector_annos:
+                        mask_anno.clear_pixels_for_annotations(raster_vector_annos)
 
-        # If the currently visible mask was affected, refresh its view.
-        current_mask = self.annotation_window.current_mask_annotation
-        if current_mask:
-            current_mask.update_graphics_item()
+                    # 2. Clear pixels from SEMANTIC mask for this class
+                    #    This finds all remaining semantic pixels (locked or not)
+                    #    and sets them to 0.
+                    class_id_to_clear = mask_anno.label_id_to_class_id_map.get(label.id)
+                    if class_id_to_clear:
+                        mask_anno.clear_pixels_for_class(class_id_to_clear)
+                        # Remove the label from the mask's internal maps to keep them clean
+                        mask_anno.class_id_to_label_map.pop(class_id_to_clear, None)
+                        mask_anno.label_id_to_class_id_map.pop(label.id, None)
 
-        # Store affected image paths before deletion to update them later
-        affected_images = set()
-        for annotation in self.annotation_window.annotations_dict.values():
-            if annotation.label.id == label.id:
-                affected_images.add(annotation.image_path)
+            # If the currently visible mask was affected, refresh its view.
+            current_mask = self.annotation_window.current_mask_annotation
+            if current_mask:
+                current_mask.update_graphics_item()
 
-        # Remove from the LabelWindow
-        self.labels.remove(label)
-        self._short_code_map.pop(label.short_label_code.strip().lower(), None)
-        label.deleteLater()
+            # Store affected image paths before deletion to update them later
+            affected_images = set()
+            for annotation in self.annotation_window.annotations_dict.values():
+                if annotation.label.id == label.id:
+                    affected_images.add(annotation.image_path)
 
-        # Delete annotations associated with the label
-        self.annotation_window.delete_label_annotations(label)
+            # Remove from the LabelWindow
+            self.labels.remove(label)
+            self._short_code_map.pop(label.short_label_code.strip().lower(), None)
+            label.deleteLater()
 
-        # Reset active label if it was deleted
-        if self.active_label == label:
-            self.active_label = None
-            if self.labels:
-                self.set_active_label(self.labels[0])
-            else:
-                self.label_lock_button.setEnabled(False)
+            # Delete annotations associated with the label
+            self.annotation_window.delete_label_annotations(label)
 
-        # Update the LabelWindow
-        self.update_labels_per_row()
-        self.reorganize_labels()
-        self.update_label_count()
+            # Reset active label if it was deleted
+            if self.active_label == label:
+                self.active_label = None
+                if self.labels:
+                    self.set_active_label(self.labels[0])
+                else:
+                    self.label_lock_button.setEnabled(False)
 
-        # Explicitly update affected images in the image window
-        for image_path in affected_images:
-            self.main_window.image_window.update_image_annotations(image_path)
-            
-        # Update the label map in the annotation window
-        self.sync_all_masks_with_labels()
+            # Update the LabelWindow
+            self.update_labels_per_row()
+            self.reorganize_labels()
+            self.update_label_count()
 
-        # Update the search bars to remove the deleted label
-        self.main_window.image_window.update_search_bars()
-        self.update_tooltips()
-        
-        # Return cursor to normal
-        QApplication.restoreOverrideCursor()
+            # Explicitly update affected images in the image window
+            for image_path in affected_images:
+                self.main_window.image_window.update_image_annotations(image_path)
+
+            # Update the label map in the annotation window
+            self.sync_all_masks_with_labels()
+
+            # Update the search bars to remove the deleted label
+            self.main_window.image_window.update_search_bars()
+            self.update_tooltips()
 
     def cycle_labels(self, direction):
         """Cycle through VISIBLE labels in the specified direction (1 for down/next, -1 for up/previous)."""

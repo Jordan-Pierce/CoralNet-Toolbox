@@ -476,6 +476,29 @@ class SAMTool(Tool):
             # Always restore cursor
             QApplication.restoreOverrideCursor()
 
+    def refresh_label_preview(self):
+        """Recolor the prompt rectangle and hover preview for the new label.
+
+        The hover preview is re-labelled in place rather than re-predicted: its
+        geometry does not depend on the label, and re-running create_temp_annotation
+        would pay for a full SAM forward pass just to change a color.
+        """
+        label = self.annotation_window.selected_label
+        if label is None:
+            return
+
+        if self.rectangle_graphics is not None:
+            pen = QPen(label.color)
+            pen.setCosmetic(True)
+            pen.setStyle(Qt.DashLine)
+            pen.setWidth(2)
+            self.rectangle_graphics.setPen(pen)
+
+        if self.temp_annotation is not None:
+            self.temp_annotation.update_label(label)
+
+        self.annotation_window.scene.update()
+
     def display_rectangle(self):
         """
         Display the rectangle during drawing.
