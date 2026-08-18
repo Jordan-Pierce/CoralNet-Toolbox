@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import os
 import shutil
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 
 import cv2
+
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import QApplication
 
 
 # -------------------------------------------------------------------------------------------------
@@ -18,6 +22,44 @@ DEFAULT_VIDEO_EXPORT_EXTENSION = ".jpg"
 # -------------------------------------------------------------------------------------------------
 # Functions
 # -------------------------------------------------------------------------------------------------
+
+
+@contextmanager
+def busy_cursor():
+    """Show the wait cursor for a block, restoring it even if an error is raised.
+
+    The override cursor is application-wide, so an unbalanced push leaves every
+    window stuck on the hourglass until the app restarts.
+    """
+    QApplication.setOverrideCursor(Qt.WaitCursor)
+    try:
+        yield
+    finally:
+        QApplication.restoreOverrideCursor()
+
+
+@contextmanager
+def locked_window(window):
+    """Disable a window for a block, re-enabling it even if an error is raised."""
+    window.setEnabled(False)
+    try:
+        yield
+    finally:
+        window.setEnabled(True)
+
+
+@contextmanager
+def closing_progress_bar(progress_bar):
+    """Close a progress bar on the way out of a block, error or not.
+
+    ProgressBar is application modal, so one left open by a raised exception
+    blocks input to the whole application.
+    """
+    try:
+        yield progress_bar
+    finally:
+        progress_bar.stop_progress()
+        progress_bar.close()
 
 
 def parse_frame_path(path: str) -> Tuple[str, Optional[int]]:

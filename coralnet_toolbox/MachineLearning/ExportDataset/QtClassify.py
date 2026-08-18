@@ -16,11 +16,15 @@ import cv2
 import numpy as np
 import pandas as pd
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel, QMessageBox, QApplication, QDialog)
+from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel, QMessageBox, QDialog)
 
 from coralnet_toolbox.MachineLearning.ExportDataset.QtBase import Base
-from coralnet_toolbox.MachineLearning.ExportDataset.export_dataset_utils import is_video_frame_path
+from coralnet_toolbox.MachineLearning.ExportDataset.export_dataset_utils import (
+    busy_cursor,
+    closing_progress_bar,
+    is_video_frame_path,
+    locked_window,
+)
 from coralnet_toolbox.MachineLearning.TrainModel.QtBase import (
     open_train_model_dialog_later,
     prompt_train_model,
@@ -159,19 +163,23 @@ class Classify(Base):
 
         train_requested = False
 
-        try:
-            # Create the dataset
-            self.create_dataset(output_dir_path)
+        # create_dataset() runs on the GUI thread and pumps events through its
+        # progress bars, so the project stays locked for the whole write -
+        # otherwise annotations can be edited or deleted out from under it.
+        with locked_window(self.main_window):
+            try:
+                # Create the dataset
+                self.create_dataset(output_dir_path)
 
-            train_requested = prompt_train_model(self,
-                                                 "Dataset Created",
-                                                 "Dataset has been successfully created.")
+                train_requested = prompt_train_model(self,
+                                                     "Dataset Created",
+                                                     "Dataset has been successfully created.")
 
-        except Exception as e:
-            QMessageBox.critical(self, "Failed to Create Dataset", f"{e}")
+            except Exception as e:
+                QMessageBox.critical(self, "Failed to Create Dataset", f"{e}")
 
-        # Close this dialog (skipping Base.accept, which would re-export) regardless of choice
-        QDialog.accept(self)
+            # Close this dialog (skipping Base.accept, which would re-export) regardless of choice
+            QDialog.accept(self)
 
         # Hand off to the Train Model dialog once this dialog has closed
         if train_requested:
@@ -245,112 +253,103 @@ class Classify(Base):
 
         has_video_frames = any(is_video_frame_path(image_path) for image_path in image_paths)
 
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        progress_bar = ProgressBar(self.annotation_window, title=f"Creating {split} Dataset")
-        progress_bar.show()
-        progress_bar.start_progress(len(image_paths))
+        # Parented to the dialog, not the annotation window: accept() disables
+        # the main window during the export, which would disable a bar inside it.
+        with busy_cursor():
+            progress_bar = ProgressBar(self, title=f"Creating {split} Dataset")
+            progress_bar.show()
+            progress_bar.start_progress(len(image_paths))
 
-        # Group annotations by image path
-        sorted_annotations = sorted(annotations, key=attrgetter('image_path'))
-        grouped_annotations = [(key, list(group)) for key, group in groupby(sorted_annotations, key=attrgetter('image_path'))]
+            with closing_progress_bar(progress_bar):
+                # Group annotations by image path
+                sorted_annotations = sorted(annotations, key=attrgetter('image_path'))
+                grouped_annotations = [(key, list(group)) for key, group in groupby(sorted_annotations, key=attrgetter('image_path'))]
 
-        cropped_annotations = []
-
-        try:
-            if has_video_frames:
-                for image_path, image_annotations in grouped_annotations:
-                    image_annotations_list = image_annotations if isinstance(image_annotations, list) else list(image_annotations)
-                    try:
-                        cropped = self.annotation_window.crop_annotations(
-                            image_path,
-                            image_annotations_list,
-                            verbose=False,
-                        )
-                        cropped_annotations.extend(cropped)
-                    except Exception as e:
-                        print(f"{image_path} generated an exception: {e}")
-                    finally:
-                        progress_bar.update_progress()
-            else:
-                # Use ThreadPoolExecutor for parallel processing with worker threads
-                with ThreadPoolExecutor(max_workers=max(1, (os.cpu_count() or 1) // 2)) as executor:
-                    # Dictionary to track futures and their corresponding image paths
-                    futures = {}
-
-                    # Process each group of annotations by image path
-                    for image_path, image_annotations in grouped_annotations:
-                        # Submit cropping task asynchronously for each image
-                        future = executor.submit(
-                            self.annotation_window.crop_annotations,
-                            image_path,
-                            image_annotations,
-                            verbose=False,
-                        )
-
-                        # Store image path for each future for error reporting
-                        futures[future] = image_path
-
-                    # Process completed futures as they finish
-                    for future in as_completed(futures):
-                        try:
-                            # Get cropped patches from completed task
-                            cropped = future.result()
-                            # Add cropped patches to our collection
-                            cropped_annotations.extend(cropped)
-                        except Exception as e:
-                            print(f"{futures[future]} generated an exception: {e}")
-                        finally:
-                            # Update progress bar after each image is processed
-                            progress_bar.update_progress()
-                        
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error processing annotations: {e}")
-            # Make cursor normal
-            QApplication.restoreOverrideCursor()
-            progress_bar.finish_progress()
-            progress_bar.stop_progress()
-            progress_bar.close()
-            progress_bar = None
-            return
-        
-        finally:
-            gc.collect()
-        
-        try:
-            # Update progress bar for cropping annotations
-            progress_bar.set_title(f"Saving {split} Dataset")
-            progress_bar.start_progress(len(cropped_annotations))
-            
-            # Now save all cropped annotations
-            for annotation in cropped_annotations:
-                # If the annotation has no cropped image, skip it
-                if not annotation.cropped_image:
-                    print(f"Skipping annotation {annotation.id} because it has no cropped image")
-                    continue
-                
-                label_code = annotation.label.short_label_code
-                output_path = os.path.join(split_dir, label_code)
-                # Create a split / label directory if it does not exist
-                os.makedirs(output_path, exist_ok=True)
-                output_filename = f"{label_code}_{annotation.id}.jpg"
-                full_output_path = os.path.join(output_path, output_filename)
+                cropped_annotations = []
 
                 try:
-                    annotation.cropped_image.save(full_output_path, "JPG", quality=100)
-                except Exception as e:
-                    print(f"ERROR: Issue saving image {full_output_path}: {e}")
-                    # Optionally, save as PNG if JPG fails
-                    png_path = full_output_path.replace(".jpg", ".png")
-                    annotation.cropped_image.save(png_path, "PNG")
+                    if has_video_frames:
+                        for image_path, image_annotations in grouped_annotations:
+                            image_annotations_list = image_annotations if isinstance(image_annotations, list) else list(image_annotations)
+                            try:
+                                cropped = self.annotation_window.crop_annotations(
+                                    image_path,
+                                    image_annotations_list,
+                                    verbose=False,
+                                )
+                                cropped_annotations.extend(cropped)
+                            except Exception as e:
+                                print(f"{image_path} generated an exception: {e}")
+                            finally:
+                                progress_bar.update_progress()
+                    else:
+                        # Use ThreadPoolExecutor for parallel processing with worker threads
+                        with ThreadPoolExecutor(max_workers=max(1, (os.cpu_count() or 1) // 2)) as executor:
+                            # Dictionary to track futures and their corresponding image paths
+                            futures = {}
 
-        except Exception as exc:
-            print(f'Error in parallel processing: {exc}')
-        finally:
-            # Make cursor normal
-            QApplication.restoreOverrideCursor()
-            progress_bar.finish_progress()
-            progress_bar.stop_progress()
-            progress_bar.close()
-            progress_bar = None
-            gc.collect()
+                            # Process each group of annotations by image path
+                            for image_path, image_annotations in grouped_annotations:
+                                # Submit cropping task asynchronously for each image
+                                future = executor.submit(
+                                    self.annotation_window.crop_annotations,
+                                    image_path,
+                                    image_annotations,
+                                    verbose=False,
+                                )
+
+                                # Store image path for each future for error reporting
+                                futures[future] = image_path
+
+                            # Process completed futures as they finish
+                            for future in as_completed(futures):
+                                try:
+                                    # Get cropped patches from completed task
+                                    cropped = future.result()
+                                    # Add cropped patches to our collection
+                                    cropped_annotations.extend(cropped)
+                                except Exception as e:
+                                    print(f"{futures[future]} generated an exception: {e}")
+                                finally:
+                                    # Update progress bar after each image is processed
+                                    progress_bar.update_progress()
+
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Error processing annotations: {e}")
+                    return
+
+                finally:
+                    gc.collect()
+
+                try:
+                    # Update progress bar for cropping annotations
+                    progress_bar.set_title(f"Saving {split} Dataset")
+                    progress_bar.start_progress(len(cropped_annotations))
+
+                    # Now save all cropped annotations
+                    for annotation in cropped_annotations:
+                        # If the annotation has no cropped image, skip it
+                        if not annotation.cropped_image:
+                            print(f"Skipping annotation {annotation.id} because it has no cropped image")
+                            continue
+
+                        label_code = annotation.label.short_label_code
+                        output_path = os.path.join(split_dir, label_code)
+                        # Create a split / label directory if it does not exist
+                        os.makedirs(output_path, exist_ok=True)
+                        output_filename = f"{label_code}_{annotation.id}.jpg"
+                        full_output_path = os.path.join(output_path, output_filename)
+
+                        try:
+                            annotation.cropped_image.save(full_output_path, "JPG", quality=100)
+                        except Exception as e:
+                            print(f"ERROR: Issue saving image {full_output_path}: {e}")
+                            # Optionally, save as PNG if JPG fails
+                            png_path = full_output_path.replace(".jpg", ".png")
+                            annotation.cropped_image.save(png_path, "PNG")
+
+                except Exception as exc:
+                    print(f'Error in parallel processing: {exc}')
+                finally:
+                    progress_bar.finish_progress()
+                    gc.collect()

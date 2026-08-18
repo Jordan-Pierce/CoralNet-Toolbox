@@ -3,12 +3,13 @@ import warnings
 import os
 import yaml
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel, QApplication)
+from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel)
 
 from coralnet_toolbox.MachineLearning.ExportDataset.QtBase import Base
 from coralnet_toolbox.MachineLearning.ExportDataset.export_dataset_utils import (
     build_sample_export_name,
+    busy_cursor,
+    closing_progress_bar,
     materialize_sample_image,
     sample_dimensions,
 )
@@ -135,45 +136,42 @@ class Segment(Base):
         if not image_paths:
             return
 
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        progress_bar = ProgressBar(self.annotation_window, title=f"Creating {split} Dataset")
-        progress_bar.show()
-        progress_bar.start_progress(len(image_paths))
+        # Parented to the dialog, not the annotation window: accept() disables
+        # the main window during the export, which would disable a bar inside it.
+        with busy_cursor():
+            progress_bar = ProgressBar(self, title=f"Creating {split} Dataset")
+            progress_bar.show()
+            progress_bar.start_progress(len(image_paths))
 
-        # Group annotations by image path and precompute label→index once
-        annotations_by_image = {}
-        for a in annotations:
-            annotations_by_image.setdefault(a.image_path, []).append(a)
-        label_to_index = {label: i for i, label in enumerate(self.selected_labels)}
+            with closing_progress_bar(progress_bar):
+                # Group annotations by image path and precompute label→index once
+                annotations_by_image = {}
+                for a in annotations:
+                    annotations_by_image.setdefault(a.image_path, []).append(a)
+                label_to_index = {label: i for i, label in enumerate(self.selected_labels)}
 
-        for image_path in image_paths:
-            yolo_annotations = []
-            image_height, image_width, _ = sample_dimensions(image_path, self.image_window.raster_manager)
-            image_annotations = annotations_by_image.get(image_path, [])
+                for image_path in image_paths:
+                    yolo_annotations = []
+                    image_height, image_width, _ = sample_dimensions(image_path, self.image_window.raster_manager)
+                    image_annotations = annotations_by_image.get(image_path, [])
 
-            for image_annotation in image_annotations:
-                class_label, annotation = image_annotation.to_yolo_segmentation(image_width, image_height)
-                class_number = label_to_index[class_label]
-                yolo_annotations.append(f"{class_number} {annotation}")
+                    for image_annotation in image_annotations:
+                        class_label, annotation = image_annotation.to_yolo_segmentation(image_width, image_height)
+                        class_number = label_to_index[class_label]
+                        yolo_annotations.append(f"{class_number} {annotation}")
 
-            # Save the annotations to a text file
-            text_file = build_sample_export_name(image_path, ".txt")
-            text_path = os.path.join(f"{split_dir}/labels", text_file)
+                    # Save the annotations to a text file
+                    text_file = build_sample_export_name(image_path, ".txt")
+                    text_path = os.path.join(f"{split_dir}/labels", text_file)
 
-            # Write the annotations to the text file (creates an empty file for negatives)
-            with open(text_path, 'w') as f:
-                for annotation in yolo_annotations:
-                    f.write(annotation + '\n')
+                    # Write the annotations to the text file (creates an empty file for negatives)
+                    with open(text_path, 'w') as f:
+                        for annotation in yolo_annotations:
+                            f.write(annotation + '\n')
 
-            # Copy the image to the split directory
-            output_image_path = os.path.join(f"{split_dir}/images", build_sample_export_name(image_path))
-            if not materialize_sample_image(image_path, self.image_window.raster_manager, output_image_path):
-                raise RuntimeError(f"Failed to export image sample: {image_path}")
+                    # Copy the image to the split directory
+                    output_image_path = os.path.join(f"{split_dir}/images", build_sample_export_name(image_path))
+                    if not materialize_sample_image(image_path, self.image_window.raster_manager, output_image_path):
+                        raise RuntimeError(f"Failed to export image sample: {image_path}")
 
-            progress_bar.update_progress()
-
-        # Reset cursor
-        QApplication.restoreOverrideCursor()
-        progress_bar.stop_progress()
-        progress_bar.close()
+                    progress_bar.update_progress()
