@@ -924,7 +924,8 @@ class Raster(QObject):
                        require_predictions=False,
                        require_mask=False,
                        allowed_raster_types: Optional[Set[str]] = None,
-                       require_z_channel: bool = False) -> bool:
+                       require_z_channel: bool = False,
+                       require_checked: bool = False) -> bool:
         """
         Check if this raster matches the given filter criteria
 
@@ -938,6 +939,7 @@ class Raster(QObject):
             require_mask (bool): If True, must have a mask annotation with labeled pixels
             allowed_raster_types (Set[str], optional): Allowed canonical raster types.
             require_z_channel (bool): If True, require z-channel metadata.
+            require_checked (bool): If True, must have its checkbox ticked.
 
         Returns:
             bool: True if this raster matches all filter criteria
@@ -982,6 +984,10 @@ class Raster(QObject):
             if not label_match:
                 return False
         
+        # Check checkbox filter
+        if require_checked and not self.checkbox_state:
+            return False
+
         # Check annotation filters
         if require_annotations and not self.has_annotations:
             return False

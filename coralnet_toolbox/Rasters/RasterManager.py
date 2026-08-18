@@ -223,6 +223,7 @@ class RasterManager(QObject):
                            require_mask: bool = False,
                            allowed_raster_types: Optional[Set[str]] = None,
                            require_z_channel: bool = False,
+                           require_checked: bool = False,
                            selected_paths: List[str] = None) -> List[str]:
         """
         Get a filtered list of image paths based on criteria.
@@ -234,6 +235,7 @@ class RasterManager(QObject):
             require_no_annotations (bool): If True, must have no annotations
             require_predictions (bool): If True, must have predictions
             require_mask (bool): If True, must have a mask annotation with labeled pixels
+            require_checked (bool): If True, must have its checkbox ticked
             selected_paths (list): Only include paths from this list
             
         Returns:
@@ -258,6 +260,7 @@ class RasterManager(QObject):
                 require_mask=require_mask,
                 allowed_raster_types=allowed_raster_types,
                 require_z_channel=require_z_channel,
+                require_checked=require_checked,
             ):
                 filtered_paths.append(path)
                 

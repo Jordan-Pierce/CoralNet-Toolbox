@@ -2398,8 +2398,7 @@ class AnnotationWindow(BaseCanvas):
                 pass
         
         # Automatically mark this image as checked when viewed
-        raster.checkbox_state = True
-        self.main_window.image_window.table_model.update_raster_data(image_path)
+        self.main_window.image_window.table_model.set_checkbox_state(image_path, True)
 
         # Toggle the cursor annotation
         self.toggle_cursor_annotation()

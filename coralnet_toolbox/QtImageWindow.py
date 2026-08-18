@@ -269,6 +269,7 @@ class ImageWindow(QWidget):
         # --- Setup Filter ComboBox ---
         self.filter_combo = CheckableComboBox(self)
         self.filter_combo.addItem("Highlighted")
+        self.filter_combo.addItem("Checked")
         self.filter_combo.addItem("Image")
         self.filter_combo.addItem("Ortho")
         self.filter_combo.addItem("Video")
@@ -280,7 +281,7 @@ class ImageWindow(QWidget):
         self.filter_combo.setCurrentIndex(-1)
         self.filter_combo.filterChanged.connect(self.schedule_filter)
         self.filter_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.filter_combo.setToolTip("Filter images by type (Image, Ortho, Video), Z-channel presence, predictions, annotation status, mask presence, and highlight state.\nSelect multiple filters to apply all criteria.")
+        self.filter_combo.setToolTip("Filter images by type (Image, Ortho, Video), Z-channel presence, predictions, annotation status, mask presence, checked state, and highlight state.\nSelect multiple filters to apply all criteria.")
 
         # Setup filter/search controls
         self.search_layout.addRow("Filters:", self.filter_combo)
@@ -344,6 +345,7 @@ class ImageWindow(QWidget):
         
         self.table_model = RasterTableModel(self.raster_manager, self)
         self.tableView.setModel(self.table_model)
+        self.table_model.checkboxStateChanged.connect(self.on_checkbox_state_changed)
         
         # Interactive on the fixed-content columns lets the user drag-resize
         # them; the Image column stays Stretch so it always absorbs whatever
@@ -848,11 +850,22 @@ class ImageWindow(QWidget):
             return
 
         for path in highlighted_paths:
-            raster = self.raster_manager.get_raster(path)
-            if raster:
-                raster.checkbox_state = new_state
-                # Notify the model to update the view for this specific raster
-                self.table_model.update_raster_data(path)
+            # The model owns the write so the "Checked" filter hears about it
+            self.table_model.set_checkbox_state(path, new_state)
+
+    def on_checkbox_state_changed(self, path: str, state: bool):
+        """Re-filter when a checkbox changes while the "Checked" filter is on.
+
+        Without this, rows the user just checked or unchecked would keep their
+        old visibility until something else triggered a filter pass. Uses the
+        debounced schedule so a bulk toggle over many rows costs one pass.
+
+        Args:
+            path (str): Image path whose checkbox changed
+            state (bool): The new checkbox state
+        """
+        if "Checked" in self.filter_combo.get_checked_items():
+            self.schedule_filter()
             
     #
     # Public methods
@@ -1036,12 +1049,8 @@ class ImageWindow(QWidget):
                     # Unhighlight all rows
                     self.unhighlight_all_rows()
                     
-                    # Get the raster (but don't load data from it yet)
-                    raster = self.raster_manager.get_raster(image_path)
-                    
                     # Mark as checked when viewed
-                    raster.checkbox_state = True
-                    self.table_model.update_raster_data(image_path)
+                    self.table_model.set_checkbox_state(image_path, True)
                     
                     # Update selection
                     self.selected_image_path = image_path
@@ -1131,6 +1140,7 @@ class ImageWindow(QWidget):
         has_annotations = "Has Annotations" in checked_filters
         has_mask = "Has Mask" in checked_filters
         no_annotations = "No Annotations" in checked_filters
+        require_checked = "Checked" in checked_filters
         # --- End new logic ---
         
         
@@ -1147,6 +1157,7 @@ class ImageWindow(QWidget):
             require_mask=has_mask,
             allowed_raster_types=allowed_raster_types,
             require_z_channel=require_z_channel,
+            require_checked=require_checked,
             selected_paths=highlighted_paths,
             use_threading=use_threading
         )
