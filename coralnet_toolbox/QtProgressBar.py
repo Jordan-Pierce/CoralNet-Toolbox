@@ -173,6 +173,13 @@ class ProgressBar(QDialog):
 
     progress_updated = pyqtSignal(int)
 
+    # The message lane is sized once and never resized, so a title change
+    # mid-operation cannot make the dialog jump or re-center. Titles are
+    # measured to fit 1-2 lines at this width; anything longer is clipped, so
+    # the full string always goes into the tooltip as a backstop.
+    MESSAGE_WIDTH = 280
+    MESSAGE_LINES = 2
+
     def __init__(self, parent=None, title="Progress"):
         super().__init__(parent)
 
@@ -184,8 +191,6 @@ class ProgressBar(QDialog):
         self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
-        self.resize(app_theme.scale_int(260), app_theme.scale_int(260))
-        self.setMinimumSize(app_theme.scale_int(220), app_theme.scale_int(220))
 
         try:
             if parent is not None:
@@ -226,8 +231,8 @@ class ProgressBar(QDialog):
         self.message_label.setObjectName("ProgressMessage")
         self.message_label.setAlignment(Qt.AlignCenter)
         self.message_label.setWordWrap(True)
-        self.message_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.message_label.setMaximumWidth(app_theme.scale_int(160))
+        self.message_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.message_label.setFixedWidth(app_theme.scale_int(self.MESSAGE_WIDTH))
 
         self.panel = QFrame(self)
         self.panel.setObjectName("ProgressPanel")
@@ -298,6 +303,19 @@ QPushButton#ProgressCancelButton:disabled {{
             )
         )
 
+        # The stylesheet above sets the message font, so the lane height can
+        # only be measured now - fontMetrics() before this point reports the
+        # default font and yields a lane one line too short.
+        self.message_label.ensurePolished()
+        line_height = self.message_label.fontMetrics().lineSpacing()
+        self.message_label.setFixedHeight(line_height * self.MESSAGE_LINES)
+
+        # Everything in the panel is now fixed, so its size hint is constant.
+        # Fit the dialog to it once instead of pinning a guessed size that the
+        # panel does not fit into.
+        self.adjustSize()
+        self.setMinimumSize(self.size())
+
         self.progress_updated.connect(self.update_progress)
 
         self._sync_indicator()
@@ -307,6 +325,7 @@ QPushButton#ProgressCancelButton:disabled {{
         super().setWindowTitle(title)
         if hasattr(self, "message_label"):
             self.message_label.setText(title)
+            self.message_label.setToolTip(title)
 
     def _sync_indicator(self):
         self.value = int(self.progress_bar.value())
