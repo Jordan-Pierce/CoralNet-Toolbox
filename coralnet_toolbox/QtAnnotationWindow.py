@@ -2266,6 +2266,23 @@ class AnnotationWindow(BaseCanvas):
         # work re-enter this call.
         self.viewport().repaint()
 
+    def _show_loading_status(self, image_path):
+        """Show a persistent status bar message while an image is loading."""
+        try:
+            status_bar = self.main_window.status_bar
+            status_bar.showMessage(f"Loading image: {os.path.basename(image_path)}...")
+            # Paint it now; the full-res decode below blocks the event loop
+            status_bar.repaint()
+        except Exception:
+            pass
+
+    def _clear_loading_status(self):
+        """Clear the persistent loading message (used on early-exit paths)."""
+        try:
+            self.main_window.status_bar.clearMessage()
+        except Exception:
+            pass
+
     def set_image(self, image_path):
         """Set and display an image at the given path using a staged load for instant feedback."""
         # Make cursor busy
@@ -2300,7 +2317,11 @@ class AnnotationWindow(BaseCanvas):
             # Deactivate video mode if we're switching to a regular image
             self._deactivate_video_mode()
         # ---- END VIDEO BRANCH ----
-                    
+
+        # Persistent loading message: stays up through the staged load
+        # (low-res preview -> full-res) until the loaded message replaces it
+        self._show_loading_status(image_path)
+
         # Clean up (This is the ONLY scene clear)
         self.clear_scene()
 
@@ -2310,12 +2331,14 @@ class AnnotationWindow(BaseCanvas):
 
         # Check that the image path is valid
         if image_path not in self.main_window.image_window.raster_manager.image_paths:
+            self._clear_loading_status()
             QApplication.restoreOverrideCursor()
             return
 
         # Get the raster
         raster = self.main_window.image_window.raster_manager.get_raster(image_path)
         if not raster:
+            self._clear_loading_status()
             QApplication.restoreOverrideCursor()
             return
         
@@ -2349,6 +2372,7 @@ class AnnotationWindow(BaseCanvas):
                 "Image Loading Error",
                 f"Image {os.path.basename(image_path)} thumbnail could not be loaded."
             )
+            self._clear_loading_status()
             QApplication.restoreOverrideCursor()
             return
         
@@ -2377,6 +2401,7 @@ class AnnotationWindow(BaseCanvas):
                 "Image Loading Error",
                 f"Image {os.path.basename(image_path)} full resolution could not be loaded."
             )
+            self._clear_loading_status()
             QApplication.restoreOverrideCursor()
             return  # Failed to load full res, but preview is still visible
         
