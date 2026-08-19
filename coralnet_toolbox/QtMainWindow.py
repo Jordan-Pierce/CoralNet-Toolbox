@@ -67,6 +67,7 @@ from coralnet_toolbox.IO import (
     ExportViscoreAnnotations,
     ExportTagLabAnnotations,
     ExportSpatialMetrics,
+    CaptureView,
     OpenProject,
     SaveProject
 )
@@ -263,6 +264,7 @@ class MainWindow(QMainWindow):
         self.export_mask_annotations_dialog = ExportMaskAnnotations(self)
         self.export_geojson_annotations_dialog = ExportGeoJSONAnnotations(self)
         self.export_spatial_metrics_dialog = ExportSpatialMetrics(self)
+        self.capture_view_dialog = CaptureView(self)
         self.import_frames_dialog = ImportFrames(self)
         self.import_videos = ImportVideos(self)
         self.open_project_dialog = OpenProject(self)
@@ -527,6 +529,13 @@ class MainWindow(QMainWindow):
         self.windows_menu = self.view_menu.addMenu("Windows")
         self.layout_menu = self.view_menu.addMenu("Layout")
         self.scale_menu = self.view_menu.addMenu("Scale")
+
+        # Capture View
+        self.capture_view_action = QAction("Capture View", self)
+        self.capture_view_action.setToolTip("Capture the application or annotation view to the clipboard or disk")
+        self.capture_view_action.triggered.connect(self.open_capture_view_dialog)
+        self.view_menu.addAction(self.capture_view_action)
+
         self.view_menu.addSeparator()
 
         # ========== UTILITIES MENU ==========
@@ -1523,10 +1532,19 @@ class MainWindow(QMainWindow):
         QApplication.instance().installEventFilter(self.global_event_filter)
 
         # --------------------------------------------------
+        # Version label, pinned to the far right of the status bar
+        # --------------------------------------------------
+        # A permanent widget, so it stays put while temporary status messages come and go
+        self.version_label = QLabel(f"v{self.version}")
+        self.version_label.setToolTip(f"CoralNet-Toolbox version {self.version}")
+        self.version_label.setStyleSheet("color: #666; margin-right: 4px;")
+        self.status_bar.addPermanentWidget(self.version_label)
+
+        # --------------------------------------------------
         # Check for updates on opening
         # --------------------------------------------------
         self.open_check_for_updates_dialog(on_open=True)
-        
+
         # Flash a success message for 3 seconds
         self.status_bar.showMessage("Ready!", 3000)
         
@@ -2603,6 +2621,14 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.export_mask_annotations_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_capture_view_dialog(self):
+        """Open the Capture View dialog to screenshot the application or annotation view"""
+        try:
+            self.untoggle_all_tools()
+            self.capture_view_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
