@@ -18,6 +18,8 @@ from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel, QApplication, QChec
 from coralnet_toolbox.MachineLearning.ExportDataset.QtBase import Base
 from coralnet_toolbox.MachineLearning.ExportDataset.export_dataset_utils import (
     build_sample_export_name,
+    busy_cursor,
+    closing_progress_bar,
     frame_matches_stride,
     materialize_sample_image,
     normalize_source_path,
@@ -310,115 +312,109 @@ class Semantic(Base):
         """
         Populate the class filter list from the cache.
         """
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        
-        # Set the row count to 0
-        self.label_counts_table.setRowCount(0)
+        with busy_cursor():
+            # Set the row count to 0
+            self.label_counts_table.setRowCount(0)
 
-        # --- Build the cache ONCE ---
-        self._update_annotation_stats_cache()
+            # --- Build the cache ONCE ---
+            self._update_annotation_stats_cache()
 
-        label_counts = {}  # Number of annotations/masks containing each label
-        label_image_counts = {}  # Set of unique images containing each label
+            label_counts = {}  # Number of annotations/masks containing each label
+            label_image_counts = {}  # Set of unique images containing each label
 
-        # Get all annotations we have stats for
-        all_annotations = (list(self.annotation_window.annotations_dict.values()) + self.get_mask_annotations())
-        unique_annotations = {anno.id: anno for anno in all_annotations}.values()
+            # Get all annotations we have stats for
+            all_annotations = (list(self.annotation_window.annotations_dict.values()) + self.get_mask_annotations())
+            unique_annotations = {anno.id: anno for anno in all_annotations}.values()
 
-        unique_annotations_list = list(unique_annotations)
-        # Create a progress bar
-        progress_bar = ProgressBar(self, "Populating Class Lists")
-        progress_bar.show()
-        progress_bar.start_progress(len(unique_annotations_list))
+            unique_annotations_list = list(unique_annotations)
+            # Create a progress bar
+            progress_bar = ProgressBar(self, "Populating Class Lists")
+            progress_bar.show()
+            progress_bar.start_progress(len(unique_annotations_list))
 
-        for annotation in unique_annotations_list:
-            image_path = annotation.image_path
+            with closing_progress_bar(progress_bar):
+                for annotation in unique_annotations_list:
+                    image_path = annotation.image_path
 
-            # --- Read from the cache ---
-            class_stats = self._stats_cache.get(annotation.id, {})
+                    # --- Read from the cache ---
+                    class_stats = self._stats_cache.get(annotation.id, {})
 
-            # Handle MaskAnnotation: iterate through its internal labels
-            if annotation.__class__.__name__ == 'MaskAnnotation':
-                for label_code, stats in class_stats.items():
-                    if stats.get('pixel_count', 0) > 0:
-                        if label_code in label_counts:
-                            label_counts[label_code] += 1
-                            label_image_counts[label_code].add(image_path)
-                        else:
-                            label_counts[label_code] = 1
-                            label_image_counts[label_code] = {image_path}
+                    # Handle MaskAnnotation: iterate through its internal labels
+                    if annotation.__class__.__name__ == 'MaskAnnotation':
+                        for label_code, stats in class_stats.items():
+                            if stats.get('pixel_count', 0) > 0:
+                                if label_code in label_counts:
+                                    label_counts[label_code] += 1
+                                    label_image_counts[label_code].add(image_path)
+                                else:
+                                    label_counts[label_code] = 1
+                                    label_image_counts[label_code] = {image_path}
 
-            # Handle Vector Annotations
-            else:
-                for label_code in class_stats.keys():
-                    if label_code != 'Review':
-                        if label_code in label_counts:
-                            label_counts[label_code] += 1
-                            label_image_counts[label_code].add(image_path)
-                        else:
-                            label_counts[label_code] = 1
-                            label_image_counts[label_code] = {image_path}
+                    # Handle Vector Annotations
+                    else:
+                        for label_code in class_stats.keys():
+                            if label_code != 'Review':
+                                if label_code in label_counts:
+                                    label_counts[label_code] += 1
+                                    label_image_counts[label_code].add(image_path)
+                                else:
+                                    label_counts[label_code] = 1
+                                    label_image_counts[label_code] = {image_path}
 
-            progress_bar.update_progress()
+                    progress_bar.update_progress()
 
-        # If no annotations are found, populate with all available project labels
-        if not label_counts:
-            for label in self.main_window.label_window.labels:
-                if label.short_label_code != 'Review':
-                    label_counts[label.short_label_code] = 0
-                    label_image_counts[label.short_label_code] = set()
+                # If no annotations are found, populate with all available project labels
+                if not label_counts:
+                    for label in self.main_window.label_window.labels:
+                        if label.short_label_code != 'Review':
+                            label_counts[label.short_label_code] = 0
+                            label_image_counts[label.short_label_code] = set()
 
-        # Sort and populate the table
-        sorted_label_counts = sorted(label_counts.items(), key=lambda item: item[1], reverse=True)
-        
-        self.label_counts_table.setColumnCount(7)
-        self.label_counts_table.setHorizontalHeaderLabels(["Include", 
-                                                           "Label", 
-                                                           "Annotations", 
-                                                           "Train", 
-                                                           "Val", 
-                                                           "Test", 
-                                                           "Images"])
-        self.label_counts_table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
+                # Sort and populate the table
+                sorted_label_counts = sorted(label_counts.items(), key=lambda item: item[1], reverse=True)
 
-        self.label_counts_table.setUpdatesEnabled(False)
-        row = 0
-        for label, count in sorted_label_counts:
-            include_checkbox = QCheckBox()
-            include_checkbox.setChecked(True)
-            include_checkbox.stateChanged.connect(self.update_summary_statistics)
-            container = QWidget()
-            layout = QHBoxLayout(container)
-            layout.setContentsMargins(0, 0, 0, 0)
-            layout.addStretch()
-            layout.addWidget(include_checkbox)
-            layout.addStretch()
+                self.label_counts_table.setColumnCount(7)
+                self.label_counts_table.setHorizontalHeaderLabels(["Include", 
+                                                                   "Label", 
+                                                                   "Annotations", 
+                                                                   "Train", 
+                                                                   "Val", 
+                                                                   "Test", 
+                                                                   "Images"])
+                self.label_counts_table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
 
-            # Create centered table items using helper function from Base class
-            label_item = self.create_centered_item(label)
-            anno_item = self.create_centered_item(count)
-            train_item = self.create_centered_item("0")
-            val_item = self.create_centered_item("0")
-            test_item = self.create_centered_item("0")
-            images_item = self.create_centered_item(len(label_image_counts.get(label, set())))
+                self.label_counts_table.setUpdatesEnabled(False)
+                row = 0
+                for label, count in sorted_label_counts:
+                    include_checkbox = QCheckBox()
+                    include_checkbox.setChecked(True)
+                    include_checkbox.stateChanged.connect(self.update_summary_statistics)
+                    container = QWidget()
+                    layout = QHBoxLayout(container)
+                    layout.setContentsMargins(0, 0, 0, 0)
+                    layout.addStretch()
+                    layout.addWidget(include_checkbox)
+                    layout.addStretch()
 
-            self.label_counts_table.insertRow(row)
-            self.label_counts_table.setCellWidget(row, 0, container)
-            self.label_counts_table.setItem(row, 1, label_item)
-            self.label_counts_table.setItem(row, 2, anno_item)
-            self.label_counts_table.setItem(row, 3, train_item)
-            self.label_counts_table.setItem(row, 4, val_item)
-            self.label_counts_table.setItem(row, 5, test_item)
-            self.label_counts_table.setItem(row, 6, images_item)
-            row += 1
-        self.label_counts_table.setUpdatesEnabled(True)
-            
-        # Restore the cursor to the default cursor
-        QApplication.restoreOverrideCursor()
-        progress_bar.finish_progress()
-        progress_bar.stop_progress()
-        progress_bar.close()
+                    # Create centered table items using helper function from Base class
+                    label_item = self.create_centered_item(label)
+                    anno_item = self.create_centered_item(count)
+                    train_item = self.create_centered_item("0")
+                    val_item = self.create_centered_item("0")
+                    test_item = self.create_centered_item("0")
+                    images_item = self.create_centered_item(len(label_image_counts.get(label, set())))
+
+                    self.label_counts_table.insertRow(row)
+                    self.label_counts_table.setCellWidget(row, 0, container)
+                    self.label_counts_table.setItem(row, 1, label_item)
+                    self.label_counts_table.setItem(row, 2, anno_item)
+                    self.label_counts_table.setItem(row, 3, train_item)
+                    self.label_counts_table.setItem(row, 4, val_item)
+                    self.label_counts_table.setItem(row, 5, test_item)
+                    self.label_counts_table.setItem(row, 6, images_item)
+                    row += 1
+                self.label_counts_table.setUpdatesEnabled(True)
+                progress_bar.finish_progress()
 
     def update_summary_statistics(self):
         """
@@ -427,113 +423,110 @@ class Semantic(Base):
         if self.updating_summary_statistics:
             return
 
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
+        with busy_cursor():
+            self.updating_summary_statistics = True
+            try:
+                # --- Build the cache ONCE at the start ---
+                self._update_annotation_stats_cache()
 
-        self.updating_summary_statistics = True
+                # Selected labels based on user's selection
+                self.selected_labels = []
+                for row in range(self.label_counts_table.rowCount()):
+                    container = self.label_counts_table.cellWidget(row, 0)
+                    include_checkbox = container.findChild(QCheckBox)
+                    if include_checkbox.isChecked():
+                        label = self.label_counts_table.item(row, 1).text()
+                        self.selected_labels.append(label)
 
-        # --- Build the cache ONCE at the start ---
-        self._update_annotation_stats_cache()
+                # This call will NOW BE FAST, as it uses the cache
+                self.selected_annotations = self.filter_annotations()
 
-        # Selected labels based on user's selection
-        self.selected_labels = []
-        for row in range(self.label_counts_table.rowCount()):
-            container = self.label_counts_table.cellWidget(row, 0)
-            include_checkbox = container.findChild(QCheckBox)
-            if include_checkbox.isChecked():
-                label = self.label_counts_table.item(row, 1).text()
-                self.selected_labels.append(label)
+                # Split the data by images
+                self.split_data()
 
-        # This call will NOW BE FAST, as it uses the cache
-        self.selected_annotations = self.filter_annotations()
-        
-        # Split the data by images
-        self.split_data()
+                # Split the data by annotations
+                self.determine_splits()
 
-        # Split the data by annotations
-        self.determine_splits()
+                # Precompute label→annotation count in a single pass each — O(n) instead of O(labels × n)
+                def _label_counts_from(annotation_list):
+                    counts = {}
+                    for anno in annotation_list:
+                        for lbl in self._stats_cache.get(anno.id, {}):
+                            counts[lbl] = counts.get(lbl, 0) + 1
+                    return counts
 
-        # Precompute label→annotation count in a single pass each — O(n) instead of O(labels × n)
-        def _label_counts_from(annotation_list):
-            counts = {}
-            for anno in annotation_list:
-                for lbl in self._stats_cache.get(anno.id, {}):
-                    counts[lbl] = counts.get(lbl, 0) + 1
-            return counts
+                selected_counts = _label_counts_from(self.selected_annotations)
+                train_counts = _label_counts_from(self.train_annotations)
+                val_counts = _label_counts_from(self.val_annotations)
+                test_counts = _label_counts_from(self.test_annotations)
 
-        selected_counts = _label_counts_from(self.selected_annotations)
-        train_counts = _label_counts_from(self.train_annotations)
-        val_counts = _label_counts_from(self.val_annotations)
-        test_counts = _label_counts_from(self.test_annotations)
+                # Unique images per label from the filtered selection, so the "Images"
+                # column tracks the chosen Image Source (All vs Filtered).
+                selected_image_counts = {}
+                for anno in self.selected_annotations:
+                    for lbl in self._stats_cache.get(anno.id, {}):
+                        selected_image_counts.setdefault(lbl, set()).add(anno.image_path)
 
-        # Unique images per label from the filtered selection, so the "Images"
-        # column tracks the chosen Image Source (All vs Filtered).
-        selected_image_counts = {}
-        for anno in self.selected_annotations:
-            for lbl in self._stats_cache.get(anno.id, {}):
-                selected_image_counts.setdefault(lbl, set()).add(anno.image_path)
+                red = QColor(255, 220, 220)
+                green = QColor(220, 255, 220)
 
-        red = QColor(255, 220, 220)
-        green = QColor(220, 255, 220)
+                # Update the label counts table
+                self.label_counts_table.setUpdatesEnabled(False)
+                allow_unlabeled_video_export = self.allows_unlabeled_video_export() and self.include_negatives_radio.isChecked()
+                for row in range(self.label_counts_table.rowCount()):
+                    container = self.label_counts_table.cellWidget(row, 0)
+                    include_checkbox = container.findChild(QCheckBox)
+                    label = self.label_counts_table.item(row, 1).text()
 
-        # Update the label counts table
-        self.label_counts_table.setUpdatesEnabled(False)
-        allow_unlabeled_video_export = self.allows_unlabeled_video_export() and self.include_negatives_radio.isChecked()
-        for row in range(self.label_counts_table.rowCount()):
-            container = self.label_counts_table.cellWidget(row, 0)
-            include_checkbox = container.findChild(QCheckBox)
-            label = self.label_counts_table.item(row, 1).text()
+                    total_count = selected_counts.get(label, 0)
+                    if include_checkbox.isChecked():
+                        train_count = train_counts.get(label, 0)
+                        val_count = val_counts.get(label, 0)
+                        test_count = test_counts.get(label, 0)
+                    else:
+                        train_count = 0
+                        val_count = 0
+                        test_count = 0
 
-            total_count = selected_counts.get(label, 0)
-            if include_checkbox.isChecked():
-                train_count = train_counts.get(label, 0)
-                val_count = val_counts.get(label, 0)
-                test_count = test_counts.get(label, 0)
-            else:
-                train_count = 0
-                val_count = 0
-                test_count = 0
+                    self.label_counts_table.item(row, 2).setText(str(total_count))
+                    self.label_counts_table.item(row, 3).setText(str(train_count))
+                    self.label_counts_table.item(row, 4).setText(str(val_count))
+                    self.label_counts_table.item(row, 5).setText(str(test_count))
+                    self.label_counts_table.item(row, 6).setText(str(len(selected_image_counts.get(label, ()))))
 
-            self.label_counts_table.item(row, 2).setText(str(total_count))
-            self.label_counts_table.item(row, 3).setText(str(train_count))
-            self.label_counts_table.item(row, 4).setText(str(val_count))
-            self.label_counts_table.item(row, 5).setText(str(test_count))
-            self.label_counts_table.item(row, 6).setText(str(len(selected_image_counts.get(label, ()))))
+                    if include_checkbox.isChecked():
+                        if allow_unlabeled_video_export:
+                            self.set_cell_color(row, 3, red if self.train_ratio > 0 and len(self.train_images) == 0 else green)
+                            self.set_cell_color(row, 4, red if self.val_ratio > 0 and len(self.val_images) == 0 else green)
+                            self.set_cell_color(row, 5, red if self.test_ratio > 0 and len(self.test_images) == 0 else green)
+                        else:
+                            self.set_cell_color(row, 3, red if train_count == 0 and self.train_ratio > 0 else green)
+                            self.set_cell_color(row, 4, red if val_count == 0 and self.val_ratio > 0 else green)
+                            self.set_cell_color(row, 5, red if test_count == 0 and self.test_ratio > 0 else green)
+                    else:
+                        self.set_cell_color(row, 3, green)
+                        self.set_cell_color(row, 4, green)
+                        self.set_cell_color(row, 5, green)
+                self.label_counts_table.setUpdatesEnabled(True)
 
-            if include_checkbox.isChecked():
-                if allow_unlabeled_video_export:
-                    self.set_cell_color(row, 3, red if self.train_ratio > 0 and len(self.train_images) == 0 else green)
-                    self.set_cell_color(row, 4, red if self.val_ratio > 0 and len(self.val_images) == 0 else green)
-                    self.set_cell_color(row, 5, red if self.test_ratio > 0 and len(self.test_images) == 0 else green)
-                else:
-                    self.set_cell_color(row, 3, red if train_count == 0 and self.train_ratio > 0 else green)
-                    self.set_cell_color(row, 4, red if val_count == 0 and self.val_ratio > 0 else green)
-                    self.set_cell_color(row, 5, red if test_count == 0 and self.test_ratio > 0 else green)
-            else:
-                self.set_cell_color(row, 3, green)
-                self.set_cell_color(row, 4, green)
-                self.set_cell_color(row, 5, green)
-        self.label_counts_table.setUpdatesEnabled(True)
+                # This call will NOW BE FAST, as it uses the cache
+                self.ready_status = self.check_label_distribution()
+                self.split_status = abs(self.train_ratio + self.val_ratio + self.test_ratio - 1.0) < 1e-9
+                self.ready_label.setText("✅ Ready" if (self.ready_status and self.split_status) else "❌ Not Ready")
 
-        # This call will NOW BE FAST, as it uses the cache
-        self.ready_status = self.check_label_distribution()
-        self.split_status = abs(self.train_ratio + self.val_ratio + self.test_ratio - 1.0) < 1e-9
-        self.ready_label.setText("✅ Ready" if (self.ready_status and self.split_status) else "❌ Not Ready")
-        
-        # Get counts directly from the image split lists
-        train_count = len(self.train_images)
-        val_count = len(self.val_images)
-        test_count = len(self.test_images)
-        total_count = train_count + val_count + test_count
+                # Get counts directly from the image split lists
+                train_count = len(self.train_images)
+                val_count = len(self.val_images)
+                test_count = len(self.test_images)
+                total_count = train_count + val_count + test_count
 
-        # Update the new labels
-        self.total_images_label.setText(f"Total Images: {total_count}")
-        self.split_summary_label.setText(f"(Train: {train_count}, Val: {val_count}, Test: {test_count})")
-        
-        self.updating_summary_statistics = False
-
-        # Restore the cursor to the default cursor
-        QApplication.restoreOverrideCursor()
+                # Update the new labels
+                self.total_images_label.setText(f"Total Images: {total_count}")
+                self.split_summary_label.setText(f"(Train: {train_count}, Val: {val_count}, Test: {test_count})")
+            finally:
+                # An exception here must not leave the guard set - every later
+                # refresh would return at the top without updating anything.
+                self.updating_summary_statistics = False
 
     def check_label_distribution(self):
         """

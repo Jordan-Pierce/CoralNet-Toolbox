@@ -66,9 +66,19 @@ class ImportTagLabAnnotations:
         # Deals with the fact that TagLab JSON files can have different structures
         # before and after point annotations were introduced in version v2024.10.29
         for image in image_data:
+            annotations = image.get('annotations')
+
             # Older versions do not have regions and points, annotations is a list not a dict
-            if isinstance(image['annotations'], list):
-                image['annotations'] = {'regions': image['annotations'], 'points': []}
+            if isinstance(annotations, list):
+                annotations = {'regions': annotations, 'points': []}
+            elif not isinstance(annotations, dict):
+                annotations = {}
+
+            # A dict written by an in-between version can still be missing one of
+            # the two keys, which would blow up the counting pass below.
+            annotations.setdefault('regions', [])
+            annotations.setdefault('points', [])
+            image['annotations'] = annotations
 
         return image_data
 
@@ -150,8 +160,9 @@ class ImportTagLabAnnotations:
             for image_data in merged_data['images']:
                 image_basename = os.path.basename(image_data['channels'][0]['filename'])
                 if image_basename not in image_path_map:
-                    progress_bar.update_progress(len(image_data['annotations']['regions']) + 
-                                                 len(image_data['annotations']['points']))
+                    # Skip this image's whole share of the total in one step
+                    progress_bar.advance_progress(len(image_data['annotations']['regions']) +
+                                                  len(image_data['annotations']['points']))
                     continue
 
                 image_full_path = image_path_map[image_basename]

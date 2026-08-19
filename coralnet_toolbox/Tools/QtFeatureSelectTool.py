@@ -1439,7 +1439,6 @@ class FeatureSelectTool(Tool):
         self.sync_settings_from_dialog()
         if self.output_type == "Mask":
             self._commit_as_mask(full_mask)
-            self._propagate_to_cameras(crop_mask, wa_left, wa_top, wa_w, wa_h)
         else:
             self._commit_as_polygon(full_mask)
 
@@ -1580,21 +1579,6 @@ class FeatureSelectTool(Tool):
         )
         if not history_action.is_empty():
             self.annotation_window.action_stack.push(history_action)
-
-    def _propagate_to_cameras(self, crop_mask, wa_left, wa_top, wa_w, wa_h):
-        """No-op in 2D builds; no-op when post_prediction_callback is None."""
-        if self.post_prediction_callback is None:
-            return
-        label = self.annotation_window.selected_label
-        if label is None:
-            return
-        anchor = QPointF(wa_left + wa_w / 2.0, wa_top + wa_h / 2.0)
-        try:
-            self.post_prediction_callback(
-                anchor, label.id, np.ascontiguousarray(crop_mask.astype(np.uint8))
-            )
-        except Exception as e:
-            print(f"[FeatureSelectTool] propagation failed: {e}")
 
     # ==================== Commit (multi-class) ====================
 

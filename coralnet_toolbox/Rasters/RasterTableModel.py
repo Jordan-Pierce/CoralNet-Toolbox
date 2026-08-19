@@ -21,6 +21,7 @@ class RasterTableModel(QAbstractTableModel):
     """
     # Signals
     rowsChanged = pyqtSignal()  # Emitted when rows are highlighted/unhighlighted
+    checkboxStateChanged = pyqtSignal(str, bool)  # Image path, new checkbox state
     
     # Column indices
     CHECKBOX_COL = 0
@@ -470,6 +471,31 @@ class RasterTableModel(QAbstractTableModel):
                 return path
         return None
                 
+    def set_checkbox_state(self, path: str, state: bool) -> bool:
+        """Set a raster's checkbox state, refresh its row, and report the change.
+
+        Every checkbox write goes through here so the "Checked" filter has a
+        single signal to watch. Returns False without emitting when the state is
+        already correct, which stops repeated writes - re-viewing an image that
+        is already checked, for instance - from kicking off a filter pass.
+
+        Args:
+            path (str): Image path whose checkbox is being set
+            state (bool): The new checkbox state
+
+        Returns:
+            bool: True if the state actually changed
+        """
+        raster = self.raster_manager.get_raster(path)
+        state = bool(state)
+        if raster is None or raster.checkbox_state == state:
+            return False
+
+        raster.checkbox_state = state
+        self.update_raster_data(path)
+        self.checkboxStateChanged.emit(path, state)
+        return True
+
     def update_raster_data(self, path: str):
         """
         Update display for a specific raster.

@@ -7,13 +7,14 @@ import numpy as np
 import rasterio
 from PIL import Image, ImageColor
 
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, QEvent, pyqtSignal
 from PyQt5.QtGui import QColor, QPainter, QPen
-from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QFormLayout,
+from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QFormLayout,
                              QCheckBox, QComboBox, QLineEdit, QPushButton, QFileDialog,
                              QApplication, QMessageBox, QLabel, QTableWidgetItem,
                              QButtonGroup, QWidget, QTableWidget, QHeaderView,
-                             QAbstractItemView, QSpinBox, QRadioButton, QColorDialog)
+                             QAbstractItemView, QSpinBox, QRadioButton, QColorDialog,
+                             QScrollArea, QSizePolicy)
 
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
@@ -21,7 +22,8 @@ from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotati
 from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
-from coralnet_toolbox.Icons import get_icon, get_window_icon
+from coralnet_toolbox.Icons import get_window_icon
+from coralnet_toolbox.utilities import rasterio_to_numpy
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -88,10 +90,11 @@ class ExportMaskAnnotations(QDialog):
 
         self.setWindowIcon(get_window_icon("mask.svg"))
         self.setWindowTitle("Export Annotations to Masks")
-        self.resize(800, 600)
+        self.resize(850, 650)
 
-        self.mask_mode = 'semantic'  # 'semantic', 'sfm', or 'rgb'
+        self.mask_mode = 'semantic'  # 'semantic', 'sfm', 'rgb', or 'overlay'
         self.rgb_background_color = QColor(0, 0, 0)
+        self._initial_fit_done = False
 
         # Main layout for the dialog
         self.main_layout = QVBoxLayout(self)
@@ -127,12 +130,50 @@ class ExportMaskAnnotations(QDialog):
         super().showEvent(event)
         self.update_ui_for_mode()
 
+        # Qt opens the dialog at its layout minimum, which is well short of what the content
+        # actually needs, so every group box in the top section gets compressed. Grow to the
+        # laid-out size hint once, the first time the dialog is shown.
+        if not self._initial_fit_done:
+            self._initial_fit_done = True
+            self.fit_to_content()
+
+    def fit_to_content(self):
+        """Resize to the height the laid-out content needs, bounded by the screen."""
+        layout = self.layout()
+        if layout is not None:
+            layout.activate()
+
+        hint = self.sizeHint()
+        width = max(self.width(), hint.width())
+        height = max(self.height(), hint.height())
+
+        # Never open larger than the screen can actually show
+        screen = QApplication.screenAt(self.frameGeometry().center()) or QApplication.primaryScreen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            width = min(width, available.width() - 80)
+            height = min(height, available.height() - 80)
+
+        if (width, height) != (self.width(), self.height()):
+            self.resize(width, height)
+
+    def eventFilter(self, obj, event):
+        """Keep the Information label exactly as tall as its wrapped text."""
+        if event.type() == QEvent.Resize and obj is self.info_scroll_area.viewport():
+            self.sync_info_label_height()
+        return super().eventFilter(obj, event)
+
+    def sync_info_label_height(self):
+        """Pin the Information label to the height its text actually needs."""
+        width = self.info_scroll_area.viewport().width()
+        self.info_label.setFixedHeight(self.info_label.heightForWidth(width))
+
     def setup_info_layout(self, parent_layout=None):
         """Set up the information layout section."""
         group_box = QGroupBox("Information")
         layout = QVBoxLayout()
         info_text = (
-            "This tool exports annotations to image masks for three primary use cases:<br><br>"
+            "This tool exports annotations to image masks for four primary use cases:<br><br>"
             "<b>1. Semantic Segmentation (Integer IDs):</b> Creates masks where each class is represented by a "
             "unique integer. <br><i>Training Tip:</i> Set the background value to <b>255 (Ignore)</b> if your images "
             "are sparsely labeled (so the model isn't penalized for unlabeled objects). Set it to <b>0 (Background)</b> "
@@ -141,12 +182,38 @@ class ExportMaskAnnotations(QDialog):
             "(e.g., 255) represents objects to keep, and a background value (e.g., 0) represents areas to "
             "ignore. This is used by software like Metashape to improve 3D model reconstruction.<br><br>"
             "<b>3. Visualization (RGB Colors):</b> Creates a human-readable color mask using the colors "
-            "assigned to each label. Ideal for reports, presentations, and qualitative analysis."
+            "assigned to each label. Ideal for reports, presentations, and qualitative analysis.<br><br>"
+            "<b>4. Overlay (Image + Color Mask):</b> Blends the color mask over the original image, using the "
+            "current transparency value from the Annotation Window. This is the bulk equivalent of a screenshot. "
+            "Unannotated areas keep their original pixels, and images with no annotations export as an unmodified "
+            "copy of the source."
         )
         info_label = QLabel(info_text)
         info_label.setWordWrap(True)
-        layout.addWidget(info_label)
+        info_label.setAlignment(Qt.AlignTop)
+        info_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+
+        # This text is long enough that laying it out inline squashes everything below it, and
+        # its wrapped height is not known until the dialog has a real width. A scroll area gives
+        # it a fixed footprint, so the dialog opens at a stable size on any monitor or DPI.
+        scroll_area = QScrollArea()
+        scroll_area.setWidget(info_label)
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QScrollArea.NoFrame)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll_area.setMinimumHeight(120)
+        scroll_area.setMaximumHeight(160)
+
+        # setWidgetResizable sizes the label from QLabel's word-wrap sizeHint heuristic, which
+        # overshoots the real wrapped height and leaves dead space below the text. Pin the label
+        # to its true heightForWidth whenever the viewport changes width.
+        self.info_label = info_label
+        self.info_scroll_area = scroll_area
+        scroll_area.viewport().installEventFilter(self)
+
+        layout.addWidget(scroll_area)
         group_box.setLayout(layout)
+        group_box.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         parent_layout.addWidget(group_box)
 
     def setup_output_layout(self, parent_layout=None):
@@ -177,23 +244,29 @@ class ExportMaskAnnotations(QDialog):
         main_layout = QVBoxLayout()
 
         # Mode Selection
-        mode_layout = QHBoxLayout()
+        mode_layout = QGridLayout()
         self.semantic_radio = QRadioButton("Semantic Segmentation (Integer IDs)")
         self.semantic_radio.setToolTip("Each class gets a unique integer value (0-255).\nUse for machine learning training where each pixel needs a class label.")
         self.sfm_radio = QRadioButton("Structure from Motion (Binary Mask)")
         self.sfm_radio.setToolTip("Binary masks (foreground/background only).\nUse with Metashape or other SfM software for 3D reconstruction.")
         self.rgb_radio = QRadioButton("Visualization (RGB Colors)")
         self.rgb_radio.setToolTip("Colors based on label assignments.\nPerfect for visual inspection, reports, and presentations.")
+        self.overlay_radio = QRadioButton("Overlay (Image + Color Mask)")
+        self.overlay_radio.setToolTip("Blends the color mask over the original image using the current\n"
+                                      "transparency value from the Annotation Window.\n"
+                                      "Unannotated areas keep their original pixels.")
 
         self.mode_group = QButtonGroup(self)
         self.mode_group.addButton(self.semantic_radio)
         self.mode_group.addButton(self.sfm_radio)
         self.mode_group.addButton(self.rgb_radio)
+        self.mode_group.addButton(self.overlay_radio)
         self.mode_group.buttonClicked.connect(self.update_ui_for_mode)
 
-        mode_layout.addWidget(self.semantic_radio)
-        mode_layout.addWidget(self.sfm_radio)
-        mode_layout.addWidget(self.rgb_radio)
+        mode_layout.addWidget(self.semantic_radio, 0, 0)
+        mode_layout.addWidget(self.sfm_radio, 0, 1)
+        mode_layout.addWidget(self.rgb_radio, 1, 0)
+        mode_layout.addWidget(self.overlay_radio, 1, 1)
         main_layout.addLayout(mode_layout)
 
         # Format and Options
@@ -214,9 +287,11 @@ class ExportMaskAnnotations(QDialog):
         self.preserve_georef_checkbox.setChecked(True)
         self.preserve_georef_checkbox.setToolTip("Save geographic coordinate information in GeoTIFF format.\nEnable if your source images have georeferencing and you need it in the masks.\nOnly available with TIF format.")
         options_layout.addRow(self.preserve_georef_checkbox)
-        self.georef_note = QLabel("Note: Georeferencing is only supported for TIF format.")
-        self.georef_note.setStyleSheet("color: #666; font-style: italic;")
-        options_layout.addRow(self.georef_note)
+
+        # Outlines, available to the color modes only (kept in the layout so the dialog does not resize)
+        self.draw_outlines_checkbox = QCheckBox("Draw annotation outlines")
+        self.draw_outlines_checkbox.setChecked(True)
+        options_layout.addRow(self.draw_outlines_checkbox)
 
         main_layout.addLayout(options_layout)
         groupbox.setLayout(main_layout)
@@ -281,17 +356,21 @@ class ExportMaskAnnotations(QDialog):
         self.move_up_button = QPushButton("▲ Move Up")
         self.move_down_button = QPushButton("▼ Move Down")
         self.move_up_button.clicked.connect(self.move_row_up)
-        self.move_up_button.setToolTip("Move the selected label up in the layer order.\nLabels higher in the list are drawn first (will be behind).")
+        self.move_up_button.setToolTip("Move the selected label toward the top of this table.\nLabels nearer the top are painted first, so they end up underneath.")
         self.move_down_button.clicked.connect(self.move_row_down)
-        self.move_down_button.setToolTip("Move the selected label down in the layer order.\nLabels lower in the list are drawn last (will be on top).")
+        self.move_down_button.setToolTip("Move the selected label toward the bottom of this table.\nLabels nearer the bottom are painted last, so they end up on top.")
+        self.label_table.itemSelectionChanged.connect(self.update_move_buttons)
         button_layout.addWidget(self.move_up_button)
         button_layout.addWidget(self.move_down_button)
         button_layout.addStretch(1)
         layout.addLayout(button_layout)
         
         order_note = QLabel(
-            "<b>Layer Order is Important:</b> Labels lower in the list will be drawn on top of labels "
-            "higher in the list. For overlapping annotations, only the topmost class will appear."
+            "<b>Rasterization Order:</b> Labels are painted in the order they appear in this table, "
+            "starting at the top row and working down. A label nearer the <b>bottom of the table</b> is "
+            "therefore painted over one nearer the top. Where two annotations overlap, the one whose "
+            "label sits further down the table is the one you will see. Use Move Up / Move Down to "
+            "reorder the rows; this is about row position, not the assigned mask value."
         )
         order_note.setStyleSheet("color: #666;")
         order_note.setWordWrap(True)
@@ -314,6 +393,17 @@ class ExportMaskAnnotations(QDialog):
         button_layout.addWidget(self.cancel_button)
         parent_layout.addLayout(button_layout)
 
+    def _is_color_mode(self):
+        """Return True for the modes that rasterize RGB colors rather than integer values."""
+        return self.mask_mode in ('rgb', 'overlay')
+
+    def get_transparency_value(self):
+        """Get the current transparency (0-255) from the Annotation Window slider."""
+        value = self.main_window.get_transparency_value()
+        if value is None:
+            value = 128
+        return max(0, min(255, int(value)))
+
     def update_ui_for_mode(self):
         """Update the UI dynamically based on the selected export mode."""
         if self.semantic_radio.isChecked():
@@ -322,7 +412,36 @@ class ExportMaskAnnotations(QDialog):
             self.mask_mode = 'sfm'
         elif self.rgb_radio.isChecked():
             self.mask_mode = 'rgb'
-        
+        elif self.overlay_radio.isChecked():
+            self.mask_mode = 'overlay'
+
+        # Outlines only make sense once labels are drawn in their own colors
+        is_color = self._is_color_mode()
+        if not is_color:
+            self.draw_outlines_checkbox.setChecked(False)
+        self.draw_outlines_checkbox.setEnabled(is_color)
+        if self.mask_mode == 'overlay':
+            transparency = self.get_transparency_value()
+            percent = round(transparency / 255.0 * 100)
+            self.draw_outlines_checkbox.setToolTip(
+                "Draw a fully opaque border around each vector annotation, matching how they\n"
+                "appear in the Annotation Window. Borders are drawn after the blend, so they\n"
+                "stay crisp instead of fading with the fill.\n\n"
+                f"Blend transparency: {transparency} ({percent}% opacity), taken from the\n"
+                "transparency slider in the Annotation Window. Close this dialog to change it."
+            )
+        elif is_color:
+            self.draw_outlines_checkbox.setToolTip(
+                "Draw a border around each vector annotation, in its own label color.\n"
+                "Borders are drawn after every fill, so the boundary of an annotation stays\n"
+                "visible even where a later label is painted over it."
+            )
+        else:
+            self.draw_outlines_checkbox.setToolTip(
+                "Only available for the Visualization and Overlay modes, which draw labels\n"
+                "in their own colors."
+            )
+
         self.populate_label_table()
     
     def populate_label_table(self):
@@ -332,10 +451,10 @@ class ExportMaskAnnotations(QDialog):
 
         # Set table headers based on mode
         headers = ["Include", "Label Name"]
-        if self.mask_mode in ['semantic', 'sfm']:
-            headers.append("Mask Value")
-        elif self.mask_mode == 'rgb':
+        if self._is_color_mode():
             headers.append("Color Preview")
+        else:
+            headers.append("Mask Value")
         self.label_table.setHorizontalHeaderLabels(headers)
 
         # --- BACKGROUND ROW (ROW 0) ---
@@ -348,11 +467,17 @@ class ExportMaskAnnotations(QDialog):
         label_item.setData(Qt.UserRole, "background")
         self.label_table.setItem(0, 1, label_item)
 
-        if self.mask_mode in ['semantic', 'sfm']:
-            spinbox = QSpinBox()
-            spinbox.setRange(0, 255)
-            spinbox.setValue(0)
-            self.label_table.setCellWidget(0, 2, spinbox)
+        if self.mask_mode == 'overlay':
+            # The background is the source image itself, so there is no color to pick
+            source_label = QLabel("Source image")
+            source_label.setEnabled(False)
+            source_label.setToolTip("In Overlay mode, unannotated pixels keep their original image values.")
+            container_widget = QWidget()
+            layout = QHBoxLayout(container_widget)
+            layout.addWidget(source_label)
+            layout.setAlignment(Qt.AlignCenter)
+            layout.setContentsMargins(0, 0, 0, 0)
+            self.label_table.setCellWidget(0, 2, container_widget)
         elif self.mask_mode == 'rgb':
             swatch = ClickableColorSwatchWidget(self.rgb_background_color)
             swatch.clicked.connect(self.pick_background_color)
@@ -363,6 +488,11 @@ class ExportMaskAnnotations(QDialog):
             layout.setAlignment(Qt.AlignCenter)
             layout.setContentsMargins(0, 0, 0, 0)
             self.label_table.setCellWidget(0, 2, container_widget)
+        else:
+            spinbox = QSpinBox()
+            spinbox.setRange(0, 255)
+            spinbox.setValue(0)
+            self.label_table.setCellWidget(0, 2, spinbox)
 
         # --- LABEL ROWS ---
         for i, label in enumerate(self.label_window.labels):
@@ -390,7 +520,7 @@ class ExportMaskAnnotations(QDialog):
                 spinbox.setRange(0, 255)
                 spinbox.setValue(255)  # Default foreground value
                 self.label_table.setCellWidget(row, 2, spinbox)
-            elif self.mask_mode == 'rgb':
+            elif self._is_color_mode():
                 try:
                     q_color = QColor(label.color)
                 except Exception:
@@ -404,9 +534,14 @@ class ExportMaskAnnotations(QDialog):
                 layout.setContentsMargins(0, 0, 0, 0)
                 self.label_table.setCellWidget(row, 2, cell_widget)
         
-        if self.label_table.rowCount() > 0:
+        # Select the first label row rather than the pinned background row, so the
+        # reorder buttons are usable straight away
+        if self.label_table.rowCount() > 1:
+            self.label_table.selectRow(1)
+        elif self.label_table.rowCount() > 0:
             self.label_table.selectRow(0)
         self.label_table.blockSignals(False)
+        self.update_move_buttons()
         
     def pick_background_color(self):
         """Pick the background color using a color dialog."""
@@ -471,13 +606,17 @@ class ExportMaskAnnotations(QDialog):
         if not self.file_format.startswith('.'):
             self.file_format = '.' + self.file_format
 
-        if self.file_format == '.txt' and self.mask_mode == 'rgb':
+        if self.file_format == '.txt' and self._is_color_mode():
             QMessageBox.warning(
                 self,
                 "Unsupported Export Format",
                 "RLE export is only supported for semantic and SfM mask modes."
             )
             return
+
+        # Overlay blends against the source image, so capture the slider value and outline preference
+        self.overlay_transparency = self.get_transparency_value()
+        self.draw_outlines = self.draw_outlines_checkbox.isChecked()
 
         # --- Collect data from UI based on mode ---
         if self.mask_mode in ['semantic', 'sfm']:
@@ -513,8 +652,13 @@ class ExportMaskAnnotations(QDialog):
                                        QMessageBox.Yes | QMessageBox.No) == QMessageBox.No:
                     return
 
-        elif self.mask_mode == 'rgb':
-            self.background_value = self.rgb_background_color.getRgb()[:3]  # (R, G, B) tuple
+        elif self._is_color_mode():
+            if self.mask_mode == 'overlay':
+                # The accumulator is RGBA; alpha 0 means "not painted" so the source pixel shows through
+                self.background_value = (0, 0, 0, 0)
+            else:
+                self.background_value = self.rgb_background_color.getRgb()[:3]  # (R, G, B) tuple
+
             for i in range(1, self.label_table.rowCount()):  # Skip background
                 if self.label_table.cellWidget(i, 0).findChild(QCheckBox).isChecked():
                     label_code = self.label_table.item(i, 1).data(Qt.UserRole)
@@ -527,7 +671,11 @@ class ExportMaskAnnotations(QDialog):
                             else:
                                 # Otherwise, assume it's a string (hex code) and convert it
                                 color_tuple = ImageColor.getrgb(label.color)
-                            
+
+                            # Overlay carries a 4th coverage channel, fully opaque wherever it is drawn
+                            if self.mask_mode == 'overlay':
+                                color_tuple = tuple(color_tuple[:3]) + (255,)
+
                             self.labels_to_render.append((label, color_tuple))
                             self.label_code_to_export_value[label_code] = color_tuple
                         except (ValueError, TypeError) as e:
@@ -568,13 +716,40 @@ class ExportMaskAnnotations(QDialog):
         progress_bar.show()
         progress_bar.start_progress(len(images))
 
+        # Images that could not be read are collected here and reported once at the end
+        self.skipped_images = []
+        self.exported_count = 0
+
         try:
             for image_path in images:
                 self.create_mask_for_image(image_path, output_path)
                 progress_bar.update_progress()
 
             self.export_metadata(output_path)
-            QMessageBox.information(self, "Export Complete", "Masks exported successfully.")
+
+            message = "Masks exported successfully."
+            if self.skipped_images:
+                names = [os.path.basename(path) for path in self.skipped_images[:10]]
+                preview = "\n".join(names)
+                if len(self.skipped_images) > 10:
+                    preview += "\n...and %d more." % (len(self.skipped_images) - 10)
+                message += ("\n\n%d image(s) were skipped because their pixels could not be read:"
+                            "\n%s" % (len(self.skipped_images), preview))
+
+            # Status bar keeps a short record of the export after the dialog is dismissed
+            mode_names = {
+                'semantic': "Semantic",
+                'sfm': "SfM",
+                'rgb': "Visualization",
+                'overlay': "Overlay"
+            }
+            status = (f"Exported {self.exported_count} {mode_names.get(self.mask_mode, self.mask_mode)} "
+                      f"mask(s) to {output_path}")
+            if self.skipped_images:
+                status += f" — {len(self.skipped_images)} skipped"
+            self.main_window.status_bar.showMessage(status, 5000)
+
+            QMessageBox.information(self, "Export Complete", message)
             self.accept()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"An error occurred during export: {e}")
@@ -587,6 +762,7 @@ class ExportMaskAnnotations(QDialog):
         height, width, has_georef, transform, crs = self.get_image_metadata(image_path, self.file_format)
         if not height or not width:
             print(f"Skipping {image_path}: could not determine dimensions.")
+            self.skipped_images.append(image_path)
             return
 
         mask = None
@@ -601,37 +777,47 @@ class ExportMaskAnnotations(QDialog):
         
         # --- 2. Create blank mask if no MaskAnnotation was rendered ---
         if mask is None:
-            if self.mask_mode == 'rgb':
-                mask = np.full((height, width, 3), self.background_value, dtype=np.uint8)
-            else:  # semantic or sfm
-                mask = np.full((height, width), self.background_value, dtype=np.uint8)
+            mask = np.full(self._mask_shape(height, width), self.background_value, dtype=np.uint8)
 
         # --- 3. Render Vector Annotations (Top Layer) ---
+        # Overlay keeps the drawn annotations so their outlines can be stroked after blending
         has_vector_annotations = False
+        drawn_annotations = []
         if self.annotation_types:  # Only run if vector types were selected
-            if self.mask_mode in ['semantic', 'sfm']:
-                for label, value in self.labels_to_render:
-                    annotations = self.get_annotations_for_image(image_path, label)
-                    if annotations:
-                        has_vector_annotations = True
-                        self.draw_annotations_on_mask(mask, annotations, value)
-            elif self.mask_mode == 'rgb':
-                for label, color in self.labels_to_render:
-                    annotations = self.get_annotations_for_image(image_path, label)
-                    if annotations:
-                        has_vector_annotations = True
-                        self.draw_annotations_on_mask(mask, annotations, color)
-        
+            for label, value in self.labels_to_render:
+                annotations = self.get_annotations_for_image(image_path, label)
+                if annotations:
+                    has_vector_annotations = True
+                    self.draw_annotations_on_mask(mask, annotations, value)
+                    drawn_annotations.append((annotations, value))
+
         # --- 4. Check for negative samples ---
-        if not has_mask_data and not has_vector_annotations and \
-           not self.include_negative_samples_checkbox.isChecked():
+        if (not has_mask_data and not has_vector_annotations and
+                not self.include_negative_samples_checkbox.isChecked()):
             return
+
+        # --- 4b. Overlay: blend the color mask over the source image ---
+        if self.mask_mode == 'overlay':
+            base_image = self._load_base_image(image_path, height, width)
+            if base_image is None:
+                print(f"Skipping {image_path}: could not read image pixels for the overlay.")
+                self.skipped_images.append(image_path)
+                return
+
+            self._composite_overlay(base_image, mask, self.overlay_transparency)
+            mask = base_image
+
+        # --- 4c. Outlines, drawn last so boundaries survive both the blend and any overpainting ---
+        if self._is_color_mode() and self.draw_outlines:
+            for annotations, value in drawn_annotations:
+                self.draw_annotation_outlines(mask, annotations, tuple(value[:3]))
 
         filename = f"{os.path.splitext(os.path.basename(image_path))[0]}{self.file_format}"
         mask_path = os.path.join(output_path, filename)
 
         if self.file_format.lower() == '.txt':
             self._save_rle_mask(mask, mask_path)
+            self.exported_count += 1
             return
 
         # --- 5. Save the final mask ---
@@ -641,7 +827,7 @@ class ExportMaskAnnotations(QDialog):
         
         if use_georef:
             # Save with georeferencing using rasterio
-            if self.mask_mode == 'rgb':
+            if self._is_color_mode():
                 # For RGB, we need to convert to the expected channel order for rasterio
                 # rasterio expects (bands, height, width) with R,G,B channel order
                 mask_transposed = np.transpose(mask, (2, 0, 1))
@@ -673,12 +859,14 @@ class ExportMaskAnnotations(QDialog):
                     dst.write(mask, 1)
         else:
             # Use cv2 for non-georeferenced output
-            if self.mask_mode == 'rgb':
+            if self._is_color_mode():
                 # OpenCV expects BGR, so convert from RGB
                 mask = cv2.cvtColor(mask, cv2.COLOR_RGB2BGR)
             
             # Save using the appropriate format
             cv2.imwrite(mask_path, mask)
+
+        self.exported_count += 1
 
     def _encode_rle_runs(self, mask: np.ndarray):
         """Encode a 2D mask as value/count runs in row-major order."""
@@ -714,10 +902,7 @@ class ExportMaskAnnotations(QDialog):
         """
         try:
             # 1. Initialize the output mask
-            if self.mask_mode == 'rgb':
-                output_mask = np.full((height, width, 3), self.background_value, dtype=np.uint8)
-            else: # semantic or sfm
-                output_mask = np.full((height, width), self.background_value, dtype=np.uint8)
+            output_mask = np.full(self._mask_shape(height, width), self.background_value, dtype=np.uint8)
             
             # 2. Get the source mask data and label mapping
             mask_data = mask_annotation.mask_data
@@ -763,17 +948,24 @@ class ExportMaskAnnotations(QDialog):
             with open(os.path.join(output_path, "class_mapping.json"), 'w') as f:
                 json.dump(class_mapping, f, indent=4)
         
-        elif self.mask_mode == 'rgb':
+        elif self._is_color_mode():
             color_legend = {}
-            if self.label_table.cellWidget(0, 0).findChild(QCheckBox).isChecked():
+            if self.mask_mode == 'overlay':
+                # Record the blend settings so an export can be reproduced later
+                color_legend["_overlay"] = {
+                    "background": "source image",
+                    "transparency": self.overlay_transparency,
+                    "outlines": self.draw_outlines
+                }
+            elif self.label_table.cellWidget(0, 0).findChild(QCheckBox).isChecked():
                 color_legend["background"] = self.background_value
 
             for label, color in self.labels_to_render:
-                color_legend[label.short_label_code] = color
-            
+                color_legend[label.short_label_code] = tuple(color[:3])
+
             with open(os.path.join(output_path, "color_legend.json"), 'w') as f:
                 json.dump(color_legend, f, indent=4)
-        
+
         # No metadata file needed for SfM mode
 
     def get_annotations_for_image(self, image_path, label):
@@ -801,6 +993,100 @@ class ExportMaskAnnotations(QDialog):
             elif isinstance(ann, PolygonAnnotation):
                 points = np.array([[p.x(), p.y()] for p in ann.points], dtype=np.int32)
                 cv2.fillPoly(mask, [points], value)
+
+    def draw_annotation_outlines(self, image, annotations, color, thickness=2):
+        """
+        Stroke a fully opaque border around each annotation.
+
+        Used by Overlay mode after blending, so the outlines stay crisp instead
+        of fading with the translucent fill (matching the Annotation Window).
+        """
+        for ann in annotations:
+            if isinstance(ann, (PatchAnnotation, RectangleAnnotation)):
+                p1 = (int(ann.get_bounding_box_top_left().x()), int(ann.get_bounding_box_top_left().y()))
+                p2 = (int(ann.get_bounding_box_bottom_right().x()), int(ann.get_bounding_box_bottom_right().y()))
+                cv2.rectangle(image, p1, p2, color, thickness)
+            elif isinstance(ann, PolygonAnnotation):
+                points = np.array([[p.x(), p.y()] for p in ann.points], dtype=np.int32)
+                cv2.polylines(image, [points], True, color, thickness)
+
+    def _mask_shape(self, height, width):
+        """Return the accumulator shape for the current mode."""
+        if self.mask_mode == 'overlay':
+            # The 4th channel is coverage: alpha 0 means "not painted"
+            return (height, width, 4)
+        if self.mask_mode == 'rgb':
+            return (height, width, 3)
+        return (height, width)  # semantic or sfm
+
+    def _load_base_image(self, image_path, height, width):
+        """
+        Load the source image pixels as an (H, W, 3) uint8 RGB array for Overlay mode.
+
+        Uses rasterio directly rather than Raster.get_qimage(), which caches the
+        full-resolution QImage for the lifetime of the raster and would pin every
+        image in memory across a bulk export.
+        """
+        image = None
+
+        try:
+            raster = self.image_window.raster_manager.get_raster(image_path)
+            if raster and raster.rasterio_src:
+                image = rasterio_to_numpy(raster.rasterio_src)
+        except Exception as e:
+            print(f"Error reading pixels for {image_path} via rasterio: {e}")
+            image = None
+
+        # rasterio_to_numpy returns a 100x100 placeholder on failure, so validate the shape
+        if image is None or image.shape[:2] != (height, width):
+            try:
+                fallback = cv2.imread(image_path, cv2.IMREAD_COLOR)
+                if fallback is not None and fallback.shape[:2] == (height, width):
+                    image = cv2.cvtColor(fallback, cv2.COLOR_BGR2RGB)
+                else:
+                    image = None
+            except Exception as e:
+                print(f"Error reading pixels for {image_path} via OpenCV: {e}")
+                image = None
+
+        if image is None:
+            return None
+
+        # Guarantee a contiguous, writable 3-channel uint8 array for in-place blending
+        if image.ndim == 2:
+            image = np.stack([image] * 3, axis=-1)
+        elif image.shape[2] > 3:
+            image = image[:, :, :3]
+
+        if image.dtype != np.uint8:
+            image = image.astype(np.uint8)
+
+        return np.ascontiguousarray(image)
+
+    def _composite_overlay(self, base_rgb, rgba, transparency, block_rows=2048):
+        """
+        Blend the RGBA color mask into base_rgb in place, wherever coverage alpha is set.
+
+        Only pixels with a non-zero coverage alpha are touched, so unannotated areas
+        keep their original values. Processed in row blocks to bound the size of the
+        float temporary on very large images.
+        """
+        alpha = max(0, min(255, int(transparency))) / 255.0
+        if alpha <= 0.0:
+            return  # Fully transparent: the source image is unchanged
+
+        height = base_rgb.shape[0]
+        for start in range(0, height, block_rows):
+            stop = min(start + block_rows, height)
+            base_block = base_rgb[start:stop]
+            rgba_block = rgba[start:stop]
+
+            covered = rgba_block[:, :, 3] > 0
+            if not covered.any():
+                continue
+
+            blended = (base_block[covered] * (1.0 - alpha) + rgba_block[covered, :3] * alpha)
+            base_block[covered] = blended.astype(np.uint8)
 
     def get_image_metadata(self, image_path, file_format):
         """Get image metadata including dimensions and georeferencing."""
@@ -831,23 +1117,37 @@ class ExportMaskAnnotations(QDialog):
         return height, width, has_georef, transform, crs
 
     # --- Row Movement and UI Helpers ---
+    def update_move_buttons(self):
+        """Enable the reorder buttons only for label rows that can actually move."""
+        row = self.label_table.currentRow()
+        last_row = self.label_table.rowCount() - 1
+        # Row 0 is the fixed background row: it is the initial fill, so it is always painted
+        # first and never takes part in the ordering.
+        self.move_up_button.setEnabled(row > 1)
+        self.move_down_button.setEnabled(1 <= row < last_row)
+
     def move_row_up(self):
         """Move the selected row up in the table."""
         current_row = self.label_table.currentRow()
-        if current_row > 0:
+        if current_row > 1:
             self.swap_rows(current_row, current_row - 1)
             self.label_table.selectRow(current_row - 1)
 
     def move_row_down(self):
         """Move the selected row down in the table."""
         current_row = self.label_table.currentRow()
-        if 0 <= current_row < self.label_table.rowCount() - 1:
+        if 1 <= current_row < self.label_table.rowCount() - 1:
             self.swap_rows(current_row, current_row + 1)
             self.label_table.selectRow(current_row + 1)
 
     def swap_rows(self, row1, row2):
+        """
+        Swap two label rows, carrying the whole row with them.
+
+        Only label rows reach this point (the background row is pinned at row 0), so
+        column 2 holds the same kind of widget in both rows for any given mode.
+        """
         table = self.label_table
-        col_count = table.columnCount()
 
         # Extract all state from both rows
         def extract_row(r):
@@ -856,12 +1156,15 @@ class ExportMaskAnnotations(QDialog):
             label_text = table.item(r, 1).text()
 
             col2_value = None
-            if self.mask_mode in ['semantic', 'sfm']:
-                col2_value = table.cellWidget(r, 2).value()
-            elif self.mask_mode == 'rgb':
-                swatch = table.cellWidget(r, 2).findChild(ColorSwatchWidget)
-                if swatch:
-                    col2_value = QColor(swatch.color)
+            widget = table.cellWidget(r, 2)
+            if widget is not None:
+                if self._is_color_mode():
+                    swatch = widget.findChild(ColorSwatchWidget)
+                    if swatch:
+                        col2_value = QColor(swatch.color)
+                else:
+                    col2_value = widget.value()
+
             return {'checked': checked, 'code': label_code, 'text': label_text, 'col2': col2_value}
 
         data1 = extract_row(row1)
@@ -874,12 +1177,16 @@ class ExportMaskAnnotations(QDialog):
             item.setText(data['text'])
             item.setData(Qt.UserRole, data['code'])
 
-            if self.mask_mode in ['semantic', 'sfm']:
-                table.cellWidget(r, 2).setValue(data['col2'])
-            elif self.mask_mode == 'rgb' and data['col2'] is not None:
-                swatch = table.cellWidget(r, 2).findChild(ColorSwatchWidget)
+            widget = table.cellWidget(r, 2)
+            if widget is None or data['col2'] is None:
+                return
+
+            if self._is_color_mode():
+                swatch = widget.findChild(ColorSwatchWidget)
                 if swatch:
                     swatch.setColor(data['col2'])
+            else:
+                widget.setValue(data['col2'])
 
         table.blockSignals(True)
         apply_row(row1, data2)
@@ -893,9 +1200,6 @@ class ExportMaskAnnotations(QDialog):
         self.preserve_georef_checkbox.setEnabled(is_tif)
         if not is_tif:
             self.preserve_georef_checkbox.setChecked(False)
-            self.georef_note.setStyleSheet("color: red; font-style: italic;")
-        else:
-            self.georef_note.setStyleSheet("color: #666; font-style: italic;")
 
     def closeEvent(self, event):
         """Handle the close event."""

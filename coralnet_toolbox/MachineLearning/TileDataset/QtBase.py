@@ -256,9 +256,9 @@ class Base(QDialog):
 
         # Number of Visualization Samples
         self.num_viz_sample_spinbox = QSpinBox()
-        self.num_viz_sample_spinbox.setRange(1, 10)
+        self.num_viz_sample_spinbox.setRange(0, 10)
         self.num_viz_sample_spinbox.setValue(1)
-        self.num_viz_sample_spinbox.setToolTip("Number of example visualizations to generate showing tile boundaries.\nHelps verify tiling configuration (1-10).")
+        self.num_viz_sample_spinbox.setToolTip("Number of example visualizations to generate showing tile boundaries.\nHelps verify tiling configuration (0-10, 0 disables).")
         misc_form.addRow("# Visualization Samples:", self.num_viz_sample_spinbox)
         
         layout.addRow(misc_group)
