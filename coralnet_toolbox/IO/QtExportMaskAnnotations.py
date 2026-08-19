@@ -7,7 +7,7 @@ import numpy as np
 import rasterio
 from PIL import Image, ImageColor
 
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, QEvent, pyqtSignal
 from PyQt5.QtGui import QColor, QPainter, QPen
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QFormLayout,
                              QCheckBox, QComboBox, QLineEdit, QPushButton, QFileDialog,
@@ -157,6 +157,17 @@ class ExportMaskAnnotations(QDialog):
         if (width, height) != (self.width(), self.height()):
             self.resize(width, height)
 
+    def eventFilter(self, obj, event):
+        """Keep the Information label exactly as tall as its wrapped text."""
+        if event.type() == QEvent.Resize and obj is self.info_scroll_area.viewport():
+            self.sync_info_label_height()
+        return super().eventFilter(obj, event)
+
+    def sync_info_label_height(self):
+        """Pin the Information label to the height its text actually needs."""
+        width = self.info_scroll_area.viewport().width()
+        self.info_label.setFixedHeight(self.info_label.heightForWidth(width))
+
     def setup_info_layout(self, parent_layout=None):
         """Set up the information layout section."""
         group_box = QGroupBox("Information")
@@ -192,6 +203,13 @@ class ExportMaskAnnotations(QDialog):
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll_area.setMinimumHeight(120)
         scroll_area.setMaximumHeight(160)
+
+        # setWidgetResizable sizes the label from QLabel's word-wrap sizeHint heuristic, which
+        # overshoots the real wrapped height and leaves dead space below the text. Pin the label
+        # to its true heightForWidth whenever the viewport changes width.
+        self.info_label = info_label
+        self.info_scroll_area = scroll_area
+        scroll_area.viewport().installEventFilter(self)
 
         layout.addWidget(scroll_area)
         group_box.setLayout(layout)
