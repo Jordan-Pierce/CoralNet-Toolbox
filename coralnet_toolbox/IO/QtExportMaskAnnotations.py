@@ -94,6 +94,7 @@ class ExportMaskAnnotations(QDialog):
 
         self.mask_mode = 'semantic'  # 'semantic', 'sfm', 'rgb', or 'overlay'
         self.rgb_background_color = QColor(0, 0, 0)
+        self._initial_fit_done = False
 
         # Main layout for the dialog
         self.main_layout = QVBoxLayout(self)
@@ -128,6 +129,33 @@ class ExportMaskAnnotations(QDialog):
         """Handle show event and update UI."""
         super().showEvent(event)
         self.update_ui_for_mode()
+
+        # Qt opens the dialog at its layout minimum, which is well short of what the content
+        # actually needs, so every group box in the top section gets compressed. Grow to the
+        # laid-out size hint once, the first time the dialog is shown.
+        if not self._initial_fit_done:
+            self._initial_fit_done = True
+            self.fit_to_content()
+
+    def fit_to_content(self):
+        """Resize to the height the laid-out content needs, bounded by the screen."""
+        layout = self.layout()
+        if layout is not None:
+            layout.activate()
+
+        hint = self.sizeHint()
+        width = max(self.width(), hint.width())
+        height = max(self.height(), hint.height())
+
+        # Never open larger than the screen can actually show
+        screen = QApplication.screenAt(self.frameGeometry().center()) or QApplication.primaryScreen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            width = min(width, available.width() - 80)
+            height = min(height, available.height() - 80)
+
+        if (width, height) != (self.width(), self.height()):
+            self.resize(width, height)
 
     def setup_info_layout(self, parent_layout=None):
         """Set up the information layout section."""
