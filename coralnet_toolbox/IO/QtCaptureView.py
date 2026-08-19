@@ -109,21 +109,21 @@ class CaptureView(QDialog):
         groupbox = QGroupBox("Destination")
         layout = QVBoxLayout()
 
-        self.disk_radio = QRadioButton("Save to Disk")
-        self.disk_radio.setToolTip("Write the capture to an image file in the output directory below.")
         self.clipboard_radio = QRadioButton("Copy to Clipboard")
         self.clipboard_radio.setToolTip("Copy the capture to the system clipboard for pasting into another "
                                         "application.")
+        self.disk_radio = QRadioButton("Save to Disk")
+        self.disk_radio.setToolTip("Write the capture to an image file in the output directory below.")
 
         self.destination_group = QButtonGroup(self)
-        self.destination_group.addButton(self.disk_radio)
         self.destination_group.addButton(self.clipboard_radio)
+        self.destination_group.addButton(self.disk_radio)
         self.destination_group.buttonClicked.connect(self.update_ui_for_destination)
 
-        layout.addWidget(self.disk_radio)
         layout.addWidget(self.clipboard_radio)
+        layout.addWidget(self.disk_radio)
 
-        self.disk_radio.setChecked(True)
+        self.clipboard_radio.setChecked(True)
 
         groupbox.setLayout(layout)
         parent_layout.addWidget(groupbox)
