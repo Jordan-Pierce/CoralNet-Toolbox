@@ -1532,10 +1532,19 @@ class MainWindow(QMainWindow):
         QApplication.instance().installEventFilter(self.global_event_filter)
 
         # --------------------------------------------------
+        # Version label, pinned to the far right of the status bar
+        # --------------------------------------------------
+        # A permanent widget, so it stays put while temporary status messages come and go
+        self.version_label = QLabel(f"v{self.version}")
+        self.version_label.setToolTip(f"CoralNet-Toolbox version {self.version}")
+        self.version_label.setStyleSheet("color: #666; margin-right: 4px;")
+        self.status_bar.addPermanentWidget(self.version_label)
+
+        # --------------------------------------------------
         # Check for updates on opening
         # --------------------------------------------------
         self.open_check_for_updates_dialog(on_open=True)
-        
+
         # Flash a success message for 3 seconds
         self.status_bar.showMessage("Ready!", 3000)
         
