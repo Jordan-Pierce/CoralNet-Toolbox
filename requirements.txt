@@ -15,7 +15,7 @@ umap-learn
 faiss-cpu
 transformers>=5.0.0
 timm>=1.0.0
-yolo-tiling>=0.0.28
+yolo-tiling>=0.0.31
 requests
 selenium>=4.15.2
 beautifulsoup4>=4.12.2
