@@ -46,6 +46,9 @@ class Raster(QObject):
     
     # Signal emitted when z-channel data is added, updated, or removed
     zChannelChanged = pyqtSignal()
+
+    # Signal emitted when scale information is set or removed
+    scaleChanged = pyqtSignal()
     
     def __init__(self, image_path: str):
         """
@@ -306,6 +309,10 @@ class Raster(QObject):
         self.metadata['scale_x'] = f"{self.scale_x:.6f} {self.scale_units}"
         self.metadata['scale_y'] = f"{self.scale_y:.6f} {self.scale_units}"
 
+        # Notify listeners so cached copies of the scale (e.g. on annotations)
+        # can be re-synced without waiting for an image reload
+        self.scaleChanged.emit()
+
     def remove_scale(self):
         """
         Remove all scale information from this raster.
@@ -318,6 +325,8 @@ class Raster(QObject):
         self.metadata.pop('scale_x', None)
         self.metadata.pop('scale_y', None)
         self.metadata.pop('original_crs', None)  # Also remove derived crs
+
+        self.scaleChanged.emit()
     
     # ------------------------------------------------------------------
     # Feature Map management

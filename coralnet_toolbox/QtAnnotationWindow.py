@@ -156,6 +156,9 @@ class AnnotationWindow(BaseCanvas):
         # Video toolbar is created lazily via create_video_toolbar()
         self._video_toolbar = None
 
+        # Guards against duplicate connections from repeated showEvent calls
+        self._scale_signals_connected = False
+
         # Connect signals to slots
         self.toolChanged.connect(self.set_selected_tool)
         
@@ -879,6 +882,13 @@ class AnnotationWindow(BaseCanvas):
         # Connect to ImageWindow signals
         self.main_window.image_window.imageLoaded.connect(self.on_image_loaded_check_z_channel)
         self.main_window.image_window.zChannelRemoved.connect(self.on_z_channel_removed)
+
+        # Keep annotation scale fields in sync whenever a raster's scale changes
+        if not self._scale_signals_connected:
+            self.main_window.image_window.raster_manager.scaleUpdated.connect(
+                self.on_raster_scale_updated
+            )
+            self._scale_signals_connected = True
     
     def resizeEvent(self, event):
         """Handle resize events to maintain proper view fitting."""
@@ -1946,6 +1956,28 @@ class AnnotationWindow(BaseCanvas):
             # Pass the image_path for efficiency
             self.set_annotation_scale(annotation, image_path=image_path)
             
+    def on_raster_scale_updated(self, image_path):
+        """
+        Re-sync annotation scale properties when a raster's scale is set or removed.
+
+        Annotations cache scale_x/scale_y/scale_units from their raster when they
+        are loaded, so without this they keep reporting pixel units (or a stale
+        scale) until the image is navigated away from and back.
+        """
+        # Video rasters emit the base video path, but their annotations are keyed
+        # by virtual frame paths, so those need syncing as well.
+        paths = [image_path]
+        frame_prefix = f"{image_path}::frame_"
+        paths.extend(p for p in self.image_annotations_dict if p.startswith(frame_prefix))
+
+        for path in paths:
+            self.set_annotations_scale(path)
+
+        # Rebuild the tooltip for the annotation currently on display
+        confidence_window = self.main_window.confidence_window
+        if confidence_window.annotation and confidence_window.annotation.image_path in paths:
+            confidence_window.refresh_display()
+
     def set_annotation_location(self, annotation_id, new_center_xy: QPointF):
         """Update the location of an annotation to a new center point."""
         if annotation_id in self.annotations_dict:
