@@ -413,7 +413,8 @@ class ScaleTool(Tool):
             raster = raster_manager.get_raster(path)
             if raster:
                 # Always store in meters with 'm' as the unit
-                raster.update_scale(scale_value_meters, scale_value_meters, 'm')
+                raster.update_scale(scale_value_meters, scale_value_meters, 'm',
+                                    source='manual (scale tool)')
                 raster_manager.rasterUpdated.emit(path)
                 
         if current_path in highlighted_paths:

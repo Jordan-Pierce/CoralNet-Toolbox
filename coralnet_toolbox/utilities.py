@@ -705,6 +705,36 @@ LENGTH_UNITS = frozenset([
 ])
 
 
+def convert_measurement(value, base_unit, target_unit, squared=False):
+    """
+    Convert a measurement, reporting the unit the result is actually in.
+
+    convert_scale_units returns its input unchanged when it does not recognise a
+    unit, which makes an impossible conversion look like a successful one: the
+    caller relabels the number as the target unit even though nothing was
+    converted. This wrapper refuses to relabel in that case, so a value whose
+    unit cannot be converted keeps its own unit and stays visibly unconverted.
+
+    Args:
+        value (float): The measurement to convert.
+        base_unit (str): The unit `value` is currently in.
+        target_unit (str): The desired unit.
+        squared (bool): True for areas, where the linear factor is squared.
+
+    Returns:
+        tuple (float, str, bool): The value, the unit it is really in, and
+            whether the conversion actually happened.
+    """
+    if not is_length_unit(base_unit) or not is_length_unit(target_unit):
+        # Nothing sensible to convert to or from - leave the value alone
+        return value, base_unit, False
+
+    factor = convert_scale_units(1.0, base_unit, target_unit)
+    if squared:
+        factor = factor * factor
+    return value * factor, target_unit, True
+
+
 def format_measurement(value, decimals=2):
     """
     Format a measurement for display without collapsing small values to zero.
