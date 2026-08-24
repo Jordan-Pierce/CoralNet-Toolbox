@@ -85,6 +85,8 @@ class ScaleToolDialog(QDialog):
         self.units_combo.addItems(["mm", "cm", "m", "km", "in", "ft", "yd", "mi"])
         self.units_combo.setCurrentText("m")
         self.units_combo.setToolTip("Unit of measurement for the real-world distance.\nSelect the unit matching your known length.")
+        # Recalculate on unit change so the displayed scale stays in step
+        self.units_combo.currentTextChanged.connect(self.tool.calculate_scale)
         scale_layout.addRow("Units:", self.units_combo)
 
         # Known length
@@ -131,11 +133,39 @@ class ScaleToolDialog(QDialog):
         highlighted_paths = self.main_window.image_window.table_model.get_highlighted_paths()
         count = len(highlighted_paths)
         self.status_label.setText(f"{count} images highlighted" if count != 1 else "1 image highlighted")
+        self.update_apply_button_state()
+
+    def update_apply_button_state(self):
+        """Enable Apply only when there is a measurement to apply.
+
+        Requires both a completed line (a drawn measurement, not the existing
+        scale loaded for display) and at least one highlighted image, so the
+        button cannot be pressed while the pixel length still reads
+        'Draw a line on the image'.
+        """
+        has_measurement = self.tool.calculated_scale_value is not None
+        has_targets = bool(self.main_window.image_window.table_model.get_highlighted_paths())
+        self.apply_button.setEnabled(has_measurement and has_targets)
+
+        if not has_measurement:
+            self.apply_button.setToolTip("Draw a line across a known distance first")
+        elif not has_targets:
+            self.apply_button.setToolTip("Highlight at least one image to apply the scale to")
+        else:
+            self.apply_button.setToolTip("Apply pixel calibration to highlighted images")
+
+        # Removing scale needs a target but not a measurement
+        self.remove_highlighted_button.setEnabled(has_targets)
+
+    def show_status_message(self, message, msecs=4000):
+        """Report an outcome on the main window status bar."""
+        self.main_window.status_bar.showMessage(message, msecs)
 
     def reset_fields(self):
         """Resets the dialog fields."""
         self.pixel_length_label.setText("Draw a line on the image")
         # Don't reset scale label - keep showing current scale
+        self.update_apply_button_state()
 
     def clear_scale_line(self):
         """Clears the current scale line."""
@@ -202,6 +232,12 @@ class ScaleTool(Tool):
         self.end_point = None
         self.pixel_length = 0.0
 
+        # --- Measurement State ---
+        # Held numerically rather than parsed back out of the label text,
+        # and used to decide whether Apply has anything to act on.
+        self.calculated_scale_value = None
+        self.calculated_scale_units = None
+
         # --- Graphics Items ---
         # Line for scale setting
         self.preview_line = QGraphicsLineItem()
@@ -221,6 +257,14 @@ class ScaleTool(Tool):
         
         self.stop_current_drawing()
         self.dialog.reset_fields()
+
+        # Adopt the unit the user already chose in the main window, rather
+        # than snapping back to the 'm' the combo was built with
+        current_unit = self.main_window.current_unit_scale
+        if current_unit and self.dialog.units_combo.findText(current_unit) != -1:
+            self.dialog.units_combo.blockSignals(True)
+            self.dialog.units_combo.setCurrentText(current_unit)
+            self.dialog.units_combo.blockSignals(False)
         
         # Connect signal to update highlighted count (only once)
         if not self.dialog._signal_connected:
@@ -257,9 +301,13 @@ class ScaleTool(Tool):
         self.start_point = None
         self.end_point = None
         self.pixel_length = 0.0
+        self.calculated_scale_value = None
+        self.calculated_scale_units = None
         
         if self.preview_line.scene():
             self.preview_line.hide()
+
+        self.dialog.update_apply_button_state()
 
     def mousePressEvent(self, event: QMouseEvent):
         """Handle mouse press."""
@@ -282,7 +330,9 @@ class ScaleTool(Tool):
         
         scene_pos = self.annotation_window.mapToScene(event.pos())
         
-        if self.is_drawing and self.start_point:
+        # Compare against None: QPointF(0, 0) is falsy, so a truthiness test
+        # would drop a line anchored on the image's top-left pixel
+        if self.is_drawing and self.start_point is not None:
             self.end_point = scene_pos
             
             # Update Line
@@ -320,7 +370,7 @@ class ScaleTool(Tool):
 
     def calculate_scale(self):
         """Calculate pixel scale."""
-        if not self.start_point or not self.end_point: 
+        if self.start_point is None or self.end_point is None:
             return
         line = QLineF(self.start_point, self.end_point)
         pixel_length = line.length()
@@ -330,8 +380,14 @@ class ScaleTool(Tool):
         known_length = self.dialog.known_length_input.value()
         units = self.dialog.units_combo.currentText()
         scale = known_length / pixel_length
+
+        self.pixel_length = pixel_length
+        self.calculated_scale_value = scale
+        self.calculated_scale_units = units
+
         self.dialog.calculated_scale_label.setText(f"{scale:.6f} {units}/pixel")
         self.dialog.pixel_length_label.setText(f"{pixel_length:.2f} pixels")
+        self.dialog.update_apply_button_state()
 
     def apply_scale(self):
         """Apply XY scale to highlighted images."""
@@ -339,14 +395,11 @@ class ScaleTool(Tool):
         if not highlighted_paths: 
             return
         
-        scale_text = self.dialog.calculated_scale_label.text()
-        if "N/A" in scale_text: 
-            return
-        
-        try:
-            scale_value = float(scale_text.split()[0])
-            units = scale_text.split()[1].split('/')[0]
-        except: 
+        # Read the measurement from state rather than re-parsing the label,
+        # so a scale merely loaded for display can never be applied
+        scale_value = self.calculated_scale_value
+        units = self.calculated_scale_units
+        if scale_value is None or units is None:
             return
 
         # Convert the scale value to meters (standardized internal unit)
@@ -368,7 +421,11 @@ class ScaleTool(Tool):
             w, h = self.annotation_window.get_image_dimensions()
             self.annotation_window.update_view_dimensions(w, h)
             
-        QMessageBox.information(self.dialog, "Applied", f"Scale applied to {len(highlighted_paths)} images.")
+        count = len(highlighted_paths)
+        self.dialog.show_status_message(
+            f"Scale applied to {count} image{'s' if count != 1 else ''} "
+            f"({scale_value:.6f} {units}/pixel)."
+        )
         self.stop_current_drawing()
 
     def remove_scale_highlighted(self):
@@ -410,8 +467,9 @@ class ScaleTool(Tool):
 
         self.load_existing_scale()
 
-        QMessageBox.information(self.dialog, "Scale Removed", f"Successfully removed scale from {len(highlighted_paths)} image{'s' if len(highlighted_paths) != 1 else ''}.")
-        self.dialog.accept()
+        self.dialog.show_status_message(
+            f"Removed scale from {count} image{'s' if count != 1 else ''}."
+        )
 
     def on_image_changed(self):
         """Handle image change events to update UI state."""

@@ -9,6 +9,8 @@ from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout
 
 from coralnet_toolbox.utilities import scale_pixmap
 from coralnet_toolbox.utilities import convert_scale_units
+from coralnet_toolbox.utilities import compose_volume_unit
+from coralnet_toolbox.utilities import compose_surface_area_unit
 
 from coralnet_toolbox.Icons import get_icon
 from coralnet_toolbox import theme as app_theme
@@ -587,24 +589,39 @@ class ConfidenceWindow(QWidget):
             scale_y = raster.scale_y
             scale_units = raster.scale_units
             z_unit = raster.z_unit
+            z_nodata = raster.z_nodata
+            z_data_type = raster.z_data_type
             
             # Check if all required data is available
             if z_channel is not None and scale_x is not None and scale_y is not None and scale_units is not None:
                 try:
                     # --- Volume Calculation ---
                     # Pass z_unit to ensure proper unit conversion in the calculation
-                    volume = annotation.get_scaled_volume(z_channel, scale_x, scale_y, z_unit)
+                    volume = annotation.get_scaled_volume(z_channel, scale_x, scale_y, z_unit,
+                                                          z_nodata=z_nodata, z_data_type=z_data_type)
                     if volume is not None:
-                        # Volume is now in cubic meters
-                        vol_units = f"{scale_units}² · m"
+                        # The unit is composed from both scales rather than assumed:
+                        # a relative z-channel (e.g. 'px') yields 'm² · px', not 'm³'
+                        vol_units = compose_volume_unit(scale_units, z_unit)
                         tooltip_parts.append(f"<b>Volume:</b> {volume:.2f} {vol_units}")
                     
                     # --- 3D Surface Area Calculation ---
                     # Pass z_unit to ensure proper unit conversion in the calculation
-                    surface_area = annotation.get_scaled_surface_area(z_channel, scale_x, scale_y, z_unit)
+                    surface_area = annotation.get_scaled_surface_area(z_channel, scale_x, scale_y, z_unit,
+                                                                      z_nodata=z_nodata,
+                                                                      z_data_type=z_data_type)
                     if surface_area is not None:
-                        # Surface area is now in square meters
-                        tooltip_parts.append(f"<b>3D Surface Area:</b> {surface_area:.2f} {scale_units}²")
+                        surf_units = compose_surface_area_unit(scale_units, z_unit)
+                        tooltip_parts.append(f"<b>3D Surface Area:</b> {surface_area:.2f} {surf_units}")
+                    
+                    # --- Z Coverage ---
+                    # 3D metrics are computed over valid pixels only, so a partly
+                    # empty z-channel under-reports. Surface that rather than hide it.
+                    coverage = annotation.get_z_coverage(z_channel,
+                                                         z_nodata=z_nodata,
+                                                         z_data_type=z_data_type)
+                    if coverage is not None and coverage < 1.0:
+                        tooltip_parts.append(f"<b>Z Coverage:</b> {coverage * 100:.0f}%")
                 
                 except Exception as e:
                     print(f"Error calculating 3D metrics for tooltip: {e}")
