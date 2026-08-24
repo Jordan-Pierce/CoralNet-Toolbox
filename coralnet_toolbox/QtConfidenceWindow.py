@@ -10,6 +10,7 @@ from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout
 from coralnet_toolbox.utilities import scale_pixmap
 from coralnet_toolbox.utilities import convert_scale_units
 from coralnet_toolbox.utilities import compose_volume_unit
+from coralnet_toolbox.utilities import format_measurement
 from coralnet_toolbox.utilities import compose_surface_area_unit
 
 from coralnet_toolbox.Icons import get_icon
@@ -548,12 +549,13 @@ class ConfidenceWindow(QWidget):
                 # Calculate the final area in the target units
                 converted_area = base_area_value * area_conv_factor
                 
-                tooltip_parts.append(f"<b>Area:</b> {converted_area:.2f} {target_unit}²")
+                tooltip_parts.append(
+                    f"<b>Area:</b> {format_measurement(converted_area)} {target_unit}²")
             else:
                 # Fallback to pixel area
                 area = annotation.get_area()
                 if area is not None:
-                    tooltip_parts.append(f"<b>Area:</b> {area:.2f} pixels²")
+                    tooltip_parts.append(f"<b>Area:</b> {format_measurement(area)} pixels²")
         except (NotImplementedError, AttributeError):
             pass  # No area method available
         
@@ -570,12 +572,13 @@ class ConfidenceWindow(QWidget):
                 # Convert the perimeter value (linear)
                 converted_perimeter = convert_scale_units(base_perimeter_value, base_linear_unit, target_unit)
                 
-                tooltip_parts.append(f"<b>Perimeter:</b> {converted_perimeter:.2f} {target_unit}")
+                tooltip_parts.append(
+                    f"<b>Perimeter:</b> {format_measurement(converted_perimeter)} {target_unit}")
             else:
                 # Fallback to pixel perimeter
                 perimeter = annotation.get_perimeter()
                 if perimeter is not None:
-                    tooltip_parts.append(f"<b>Perimeter:</b> {perimeter:.2f} pixels")
+                    tooltip_parts.append(f"<b>Perimeter:</b> {format_measurement(perimeter)} pixels")
         except (NotImplementedError, AttributeError):
             pass  # No perimeter method available
                 
@@ -603,7 +606,8 @@ class ConfidenceWindow(QWidget):
                         # The unit is composed from both scales rather than assumed:
                         # a relative z-channel (e.g. 'px') yields 'm² · px', not 'm³'
                         vol_units = compose_volume_unit(scale_units, z_unit)
-                        tooltip_parts.append(f"<b>Volume:</b> {volume:.2f} {vol_units}")
+                        tooltip_parts.append(
+                            f"<b>Volume:</b> {format_measurement(volume)} {vol_units}")
                     
                     # --- 3D Surface Area Calculation ---
                     # Pass z_unit to ensure proper unit conversion in the calculation
@@ -612,7 +616,8 @@ class ConfidenceWindow(QWidget):
                                                                       z_data_type=z_data_type)
                     if surface_area is not None:
                         surf_units = compose_surface_area_unit(scale_units, z_unit)
-                        tooltip_parts.append(f"<b>3D Surface Area:</b> {surface_area:.2f} {surf_units}")
+                        tooltip_parts.append(
+                            f"<b>3D Surface Area:</b> {format_measurement(surface_area)} {surf_units}")
                     
                     # --- Z Coverage ---
                     # 3D metrics are computed over valid pixels only, so a partly
@@ -642,8 +647,10 @@ class ConfidenceWindow(QWidget):
                     # Convert major/minor axis to target units
                     major_scaled = convert_scale_units(morph_data['major_axis_scaled'], base_unit, target_unit)
                     minor_scaled = convert_scale_units(morph_data['minor_axis_scaled'], base_unit, target_unit)
-                    tooltip_parts.append(f"<b>Length:</b> {major_scaled:.2f} {target_unit}")
-                    tooltip_parts.append(f"<b>Width:</b> {minor_scaled:.2f} {target_unit}")
+                    tooltip_parts.append(
+                        f"<b>Length:</b> {format_measurement(major_scaled)} {target_unit}")
+                    tooltip_parts.append(
+                        f"<b>Width:</b> {format_measurement(minor_scaled)} {target_unit}")
                 else:
                     # Show pixel values
                     if morph_data.get('major_axis') is not None:
@@ -683,8 +690,10 @@ class ConfidenceWindow(QWidget):
                     area_conv = linear_conv * linear_conv
                     hull_area = morph_data['hull_area_scaled'] * area_conv
                     hull_perim = convert_scale_units(morph_data['hull_perimeter_scaled'], base_unit, target_unit)
-                    tooltip_parts.append(f"<b>Hull Area:</b> {hull_area:.2f} {target_unit}²")
-                    tooltip_parts.append(f"<b>Hull Perimeter:</b> {hull_perim:.2f} {target_unit}")
+                    tooltip_parts.append(
+                        f"<b>Hull Area:</b> {format_measurement(hull_area)} {target_unit}²")
+                    tooltip_parts.append(
+                        f"<b>Hull Perimeter:</b> {format_measurement(hull_perim)} {target_unit}")
                 else:
                     if morph_data.get('hull_area') is not None:
                         tooltip_parts.append(f"<b>Hull Area:</b> {morph_data['hull_area']:.2f} px²")

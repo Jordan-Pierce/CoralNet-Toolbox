@@ -705,6 +705,37 @@ LENGTH_UNITS = frozenset([
 ])
 
 
+def format_measurement(value, decimals=2):
+    """
+    Format a measurement for display without collapsing small values to zero.
+
+    Measurements are held in metres, so a fixed 2-decimal format erases anything
+    below a centimetre - and an area below 0.005 m2 reads as '0.00' in every
+    unit, which makes a unit change look like it did nothing. Values too small
+    for the requested precision fall back to significant figures instead.
+
+    Args:
+        value (float): The value to format.
+        decimals (int): Decimal places used for values large enough to warrant them.
+
+    Returns:
+        str: Formatted value, e.g. '12.34', '0.02' or '2.5e-05'.
+    """
+    if value is None:
+        return "-"
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+
+    if v == 0:
+        return "0"
+    if abs(v) >= 10 ** (-decimals):
+        return f"{v:.{decimals}f}"
+    # Too small for fixed notation at this precision - keep it readable
+    return f"{v:.3g}"
+
+
 def is_length_unit(unit):
     """
     Check whether a unit string names a real length that can be converted.

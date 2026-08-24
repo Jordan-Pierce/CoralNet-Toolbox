@@ -301,7 +301,9 @@ class Annotation(QObject):
             try:
                 pixel_area = self.get_area()
                 scaled_area = pixel_area * (self.scale_x * self.scale_y)
-                scaled_area = np.around(scaled_area, 2)  # Round to 2 decimal places
+                # Returned at full precision: the value is in square metres and
+                # callers convert it to the display unit before rounding. Rounding
+                # here would zero out anything under 0.005 m2 in every unit.
                 return scaled_area, self.scale_units
             except (NotImplementedError, TypeError):
                 return None
@@ -322,7 +324,7 @@ class Annotation(QObject):
                 # Use scale_x as the primary factor.
                 # Our ScaleTool sets x and y to be the same.
                 scaled_perimeter = pixel_perimeter * self.scale_x
-                scaled_perimeter = np.around(scaled_perimeter, 2)  # Round to 2 decimal places
+                # Full precision; the caller rounds after converting units
                 return scaled_perimeter, self.scale_units
             except (NotImplementedError, TypeError):
                 return None
@@ -468,11 +470,10 @@ class Annotation(QObject):
             area_scale = self.scale_x * self.scale_y
             result['hull_area_scaled'] = hull_area * area_scale
             
-        # For each value in result, if not None, use np.around to 2 decimal places
-        for key, value in result.items():
-            if isinstance(value, (int, float)):
-                result[key] = np.around(value, 2)
-        
+        # Values are returned at full precision. Scaled lengths and areas are in
+        # metres and get converted to the display unit before being rounded, and
+        # the unitless ratios are shown to 3 decimals - rounding to 2 here would
+        # damage both.
         return result
     
     def _get_raster_slice_and_mask(self, full_raster_data: np.ndarray):
@@ -671,8 +672,6 @@ class Annotation(QObject):
             # 7. Calculate total volume (in cubic meters)
             # This is the sum of (pixel_area * pixel_height)
             total_volume = np.sum(z_values_inside) * pixel_area_2d
-            
-            total_volume = np.around(total_volume, 2)  # Round to 2 decimal places
 
             return total_volume
         except Exception as e:
@@ -760,8 +759,6 @@ class Annotation(QObject):
 
             # 10. Select only the 3D areas *inside* the polygon and sum them
             total_surface_area = np.sum(pixel_areas_3d[mask])
-            
-            total_surface_area = np.around(total_surface_area, 2)  # Round to 2 decimal places
 
             return total_surface_area
         except Exception as e:
@@ -825,8 +822,8 @@ class Annotation(QObject):
                     min_z_meters = min_z_scaled
             
             return {
-                'pixels': np.around(min_z_pixels, 2),
-                'meters': np.around(min_z_meters, 2) if min_z_meters is not None else None
+                'pixels': min_z_pixels,
+                'meters': min_z_meters
             }
             
         except Exception as e:
@@ -888,8 +885,8 @@ class Annotation(QObject):
                     max_z_meters = max_z_scaled
             
             return {
-                'pixels': np.around(max_z_pixels, 2),
-                'meters': np.around(max_z_meters, 2) if max_z_meters is not None else None
+                'pixels': max_z_pixels,
+                'meters': max_z_meters
             }
             
         except Exception as e:
