@@ -64,6 +64,7 @@ from coralnet_toolbox.Icons import ColormapDelegate
 
 from coralnet_toolbox.utilities import rasterio_open
 from coralnet_toolbox.utilities import convert_scale_units
+from coralnet_toolbox.utilities import is_length_unit
 from coralnet_toolbox.utilities import get_view_scale
 
 from coralnet_toolbox.QtVideoPlayer import VideoPlayerWidget
@@ -381,7 +382,10 @@ class AnnotationWindow(BaseCanvas):
                 self.current_image_path
             )
 
-        if raster and raster.scale_units:
+        # is_length_unit guards the metre assumption below: a raster may carry
+        # a non-convertible unit (e.g. 'degree' from a lon/lat world file), and
+        # treating that as metres would mislabel the whole readout.
+        if raster and is_length_unit(raster.scale_units):
             # Scale exists and is always in meters (standardized internally)
             # Calculate dimensions in meters
             self.scaled_view_width_m = width * raster.scale_x
@@ -437,9 +441,14 @@ class AnnotationWindow(BaseCanvas):
                         # Get the original unit from the raster
                         original_unit = raster.z_unit if raster.z_unit else 'm'
                         
-                        # Convert to selected unit if different from original
+                        # Convert to selected unit if different from original.
+                        # A relative z-channel carries 'px', which cannot be
+                        # converted - leave the value alone rather than showing
+                        # the same number under a different unit.
                         display_value = z_value
-                        if self.current_unit_z != original_unit:
+                        if (self.current_unit_z != original_unit
+                                and is_length_unit(original_unit)
+                                and is_length_unit(self.current_unit_z)):
                             display_value = convert_scale_units(z_value, original_unit, self.current_unit_z)
                         
                         # Format the display based on data type
@@ -558,12 +567,15 @@ class AnnotationWindow(BaseCanvas):
                     original_unit = raster.z_unit if raster.z_unit else 'm'
                     z_channel = raster.z_channel_lazy
                     
-                    # Convert from original unit to selected unit
-                    converted_value = convert_scale_units(
-                        self.current_z_value, 
-                        original_unit, 
-                        selected_unit
-                    )
+                    # Convert from original unit to selected unit, unless the
+                    # z-channel is relative ('px') and has nothing to convert
+                    converted_value = self.current_z_value
+                    if is_length_unit(original_unit) and is_length_unit(selected_unit):
+                        converted_value = convert_scale_units(
+                            self.current_z_value, 
+                            original_unit, 
+                            selected_unit
+                        )
                     
                     # Format the display based on data type
                     if z_channel.dtype == np.float32:

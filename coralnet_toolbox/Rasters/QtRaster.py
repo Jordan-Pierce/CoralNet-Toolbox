@@ -21,6 +21,7 @@ from coralnet_toolbox.Features.FeatureMapCodec import load_feature_map, FEATURE_
 from coralnet_toolbox.WorkArea import WorkArea
 
 from coralnet_toolbox.utilities import convert_scale_units
+from coralnet_toolbox.utilities import is_length_unit
 from coralnet_toolbox.utilities import rasterio_open
 from coralnet_toolbox.utilities import rasterio_to_qimage
 from coralnet_toolbox.utilities import work_area_to_numpy
@@ -224,13 +225,21 @@ class Raster(QObject):
                     # Case 1: Already projected. Read the scale and convert to meters.
                     scale_x = abs(transform.a)
                     scale_y = abs(transform.e)
-                    source_units = crs.linear_units.lower()
+                    source_units = (crs.linear_units or '').lower()
 
-                    # Convert scale to meters per pixel
-                    scale_x_meters = convert_scale_units(scale_x, source_units, 'm')
-                    scale_y_meters = convert_scale_units(scale_y, source_units, 'm')
-
-                    self.update_scale(scale_x_meters, scale_y_meters, 'm', source='crs')
+                    if is_length_unit(source_units):
+                        # Convert scale to meters per pixel
+                        scale_x_meters = convert_scale_units(scale_x, source_units, 'm')
+                        scale_y_meters = convert_scale_units(scale_y, source_units, 'm')
+                        self.update_scale(scale_x_meters, scale_y_meters, 'm', source='crs')
+                    else:
+                        # Projected, but rasterio cannot name the linear unit.
+                        # Converting would be a no-op that still got labelled
+                        # metres, so record the assumption explicitly instead.
+                        self.update_scale(
+                            scale_x, scale_y, 'm',
+                            source=f'crs (unit "{source_units or "unnamed"}", assumed metres)'
+                        )
 
                 elif getattr(crs, "is_geographic", False):
                     # Case 2: Geographic. Project to Web Mercator (EPSG:3857) to get meter-based scale.
@@ -317,15 +326,21 @@ class Raster(QObject):
             units (str): The name of the units (e.g., 'm', 'cm', 'ft')
             source (str, optional): How the scale was established, recorded for display.
         """
-        # Convert to meters if not already in meters
-        if units.lower() != 'm':
-            scale_x = convert_scale_units(scale_x, units, 'm')
-            scale_y = convert_scale_units(scale_y, units, 'm')
-        
-        # Always store in meters
+        # Convert to meters if not already in meters. convert_scale_units
+        # returns its input unchanged for a unit it does not recognise, so
+        # without this check an unconvertible unit would be stored verbatim
+        # and then labelled 'm' - wrong numbers that look right. Keep the
+        # declared unit instead and let the display layer flag it.
+        stored_units = units
+        if is_length_unit(units):
+            if units.lower() != 'm':
+                scale_x = convert_scale_units(scale_x, units, 'm')
+                scale_y = convert_scale_units(scale_y, units, 'm')
+            stored_units = 'm'
+
         self.scale_x = scale_x
         self.scale_y = scale_y
-        self.scale_units = 'm'
+        self.scale_units = stored_units
         if source is not None:
             self.scale_source = source
         

@@ -19,6 +19,7 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 from coralnet_toolbox.utilities import convert_scale_units
+from coralnet_toolbox.utilities import is_length_unit
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -536,7 +537,12 @@ class ExportSpatialMetrics(QDialog):
         scale_x = annotation.scale_x
         scale_y = annotation.scale_y
         scale_units = annotation.scale_units
-        has_scale = scale_x is not None and scale_y is not None and scale_units is not None
+        # The '(meters)' columns are only meaningful when the annotation's scale
+        # unit can actually be converted to metres. For anything else (e.g. the
+        # 'degree' of a lon/lat world file) convert_scale_units is a no-op, which
+        # would fill a metres column with unconverted values.
+        has_scale = (scale_x is not None and scale_y is not None
+                     and is_length_unit(scale_units))
 
         # Calculate conversion factor to meters if scale is available
         to_meters_factor = 1.0
