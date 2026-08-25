@@ -688,6 +688,151 @@ def scale_pixmap(pixmap, max_size):
     return scaled_pixmap
 
 
+# Length units understood by convert_scale_units. Kept in sync with the
+# conversion tables inside that function; used to tell a real length unit from a
+# placeholder such as 'px' (relative depth), which convert_scale_units passes
+# through unchanged.
+LENGTH_UNITS = frozenset([
+    'metre', 'meter', 'm',
+    'millimetre', 'millimeter', 'mm',
+    'centimetre', 'centimeter', 'cm',
+    'kilometre', 'kilometer', 'km',
+    'inch', 'in',
+    'foot', 'ft',
+    'yard', 'yd',
+    'mile', 'mi',
+    'us survey foot',
+])
+
+
+def convert_measurement(value, base_unit, target_unit, squared=False):
+    """
+    Convert a measurement, reporting the unit the result is actually in.
+
+    convert_scale_units returns its input unchanged when it does not recognise a
+    unit, which makes an impossible conversion look like a successful one: the
+    caller relabels the number as the target unit even though nothing was
+    converted. This wrapper refuses to relabel in that case, so a value whose
+    unit cannot be converted keeps its own unit and stays visibly unconverted.
+
+    Args:
+        value (float): The measurement to convert.
+        base_unit (str): The unit `value` is currently in.
+        target_unit (str): The desired unit.
+        squared (bool): True for areas, where the linear factor is squared.
+
+    Returns:
+        tuple (float, str, bool): The value, the unit it is really in, and
+            whether the conversion actually happened.
+    """
+    if not is_length_unit(base_unit) or not is_length_unit(target_unit):
+        # Nothing sensible to convert to or from - leave the value alone
+        return value, base_unit, False
+
+    factor = convert_scale_units(1.0, base_unit, target_unit)
+    if squared:
+        factor = factor * factor
+    return value * factor, target_unit, True
+
+
+def format_measurement(value, decimals=2):
+    """
+    Format a measurement for display without collapsing small values to zero.
+
+    Measurements are held in metres, so a fixed 2-decimal format erases anything
+    below a centimetre - and an area below 0.005 m2 reads as '0.00' in every
+    unit, which makes a unit change look like it did nothing. Values too small
+    for the requested precision fall back to significant figures instead.
+
+    Args:
+        value (float): The value to format.
+        decimals (int): Decimal places used for values large enough to warrant them.
+
+    Returns:
+        str: Formatted value, e.g. '12.34', '0.02' or '2.5e-05'.
+    """
+    if value is None:
+        return "-"
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+
+    if v == 0:
+        return "0"
+    if abs(v) >= 10 ** (-decimals):
+        return f"{v:.{decimals}f}"
+    # Too small for fixed notation at this precision - keep it readable
+    return f"{v:.3g}"
+
+
+def is_length_unit(unit):
+    """
+    Check whether a unit string names a real length that can be converted.
+
+    Relative z-channels carry 'px' (or another placeholder), which
+    convert_scale_units returns unchanged. Metrics derived from such data are
+    not in real-world units, so callers use this to label them honestly rather
+    than to block the calculation.
+
+    Args:
+        unit (str): Unit string to test.
+
+    Returns:
+        bool: True if the unit is a convertible length unit.
+    """
+    if not unit:
+        return False
+    return unit.lower().strip() in LENGTH_UNITS
+
+
+def compose_volume_unit(xy_unit, z_unit):
+    """
+    Build the unit label for a volume derived from an XY scale and a z-channel.
+
+    Volume is an area times a height, so its unit is the XY unit squared times
+    the z unit. When z is a real length in the same terms as XY the label
+    collapses to a cube (e.g. 'm3'); when z is relative (e.g. 'px') the
+    mismatch stays visible in the label instead of being silently reported as a
+    real-world volume.
+
+    Args:
+        xy_unit (str): Unit of the XY scale (e.g. 'm').
+        z_unit (str): Unit of the z-channel, or None if it matches the XY unit.
+
+    Returns:
+        str: A unit label such as 'm3' or 'm2 - px'.
+    """
+    xy = xy_unit if xy_unit else '?'
+    # No z unit means the caller treats z as already being in the XY unit
+    if z_unit is None or not str(z_unit).strip():
+        return f"{xy}³"
+    if is_length_unit(z_unit):
+        return f"{xy}³"
+    return f"{xy}² · {z_unit}"
+
+
+def compose_surface_area_unit(xy_unit, z_unit):
+    """
+    Build the unit label for a 3D surface area.
+
+    The slope term inside the surface-area integral is only dimensionless when
+    the z-channel shares units with the XY scale. If it does not, the result is
+    not a real-world area and the label says so rather than claiming one.
+
+    Args:
+        xy_unit (str): Unit of the XY scale (e.g. 'm').
+        z_unit (str): Unit of the z-channel, or None if it matches the XY unit.
+
+    Returns:
+        str: A unit label such as 'm2' or 'm2 (z in px)'.
+    """
+    xy = xy_unit if xy_unit else '?'
+    if z_unit is None or not str(z_unit).strip() or is_length_unit(z_unit):
+        return f"{xy}²"
+    return f"{xy}² (z in {z_unit})"
+
+
 def convert_scale_units(value, from_unit, to_unit):
     """
     Convert a value from one unit to another. Supports common metric and imperial units.

@@ -64,6 +64,7 @@ from coralnet_toolbox.Icons import ColormapDelegate
 
 from coralnet_toolbox.utilities import rasterio_open
 from coralnet_toolbox.utilities import convert_scale_units
+from coralnet_toolbox.utilities import is_length_unit
 from coralnet_toolbox.utilities import get_view_scale
 
 from coralnet_toolbox.QtVideoPlayer import VideoPlayerWidget
@@ -155,6 +156,9 @@ class AnnotationWindow(BaseCanvas):
         self._playback_timer.timeout.connect(self._playback_tick)
         # Video toolbar is created lazily via create_video_toolbar()
         self._video_toolbar = None
+
+        # Guards against duplicate connections from repeated showEvent calls
+        self._scale_signals_connected = False
 
         # Connect signals to slots
         self.toolChanged.connect(self.set_selected_tool)
@@ -378,7 +382,10 @@ class AnnotationWindow(BaseCanvas):
                 self.current_image_path
             )
 
-        if raster and raster.scale_units:
+        # is_length_unit guards the metre assumption below: a raster may carry
+        # a non-convertible unit (e.g. 'degree' from a lon/lat world file), and
+        # treating that as metres would mislabel the whole readout.
+        if raster and is_length_unit(raster.scale_units):
             # Scale exists and is always in meters (standardized internally)
             # Calculate dimensions in meters
             self.scaled_view_width_m = width * raster.scale_x
@@ -434,9 +441,14 @@ class AnnotationWindow(BaseCanvas):
                         # Get the original unit from the raster
                         original_unit = raster.z_unit if raster.z_unit else 'm'
                         
-                        # Convert to selected unit if different from original
+                        # Convert to selected unit if different from original.
+                        # A relative z-channel carries 'px', which cannot be
+                        # converted - leave the value alone rather than showing
+                        # the same number under a different unit.
                         display_value = z_value
-                        if self.current_unit_z != original_unit:
+                        if (self.current_unit_z != original_unit
+                                and is_length_unit(original_unit)
+                                and is_length_unit(self.current_unit_z)):
                             display_value = convert_scale_units(z_value, original_unit, self.current_unit_z)
                         
                         # Format the display based on data type
@@ -555,12 +567,15 @@ class AnnotationWindow(BaseCanvas):
                     original_unit = raster.z_unit if raster.z_unit else 'm'
                     z_channel = raster.z_channel_lazy
                     
-                    # Convert from original unit to selected unit
-                    converted_value = convert_scale_units(
-                        self.current_z_value, 
-                        original_unit, 
-                        selected_unit
-                    )
+                    # Convert from original unit to selected unit, unless the
+                    # z-channel is relative ('px') and has nothing to convert
+                    converted_value = self.current_z_value
+                    if is_length_unit(original_unit) and is_length_unit(selected_unit):
+                        converted_value = convert_scale_units(
+                            self.current_z_value, 
+                            original_unit, 
+                            selected_unit
+                        )
                     
                     # Format the display based on data type
                     if z_channel.dtype == np.float32:
@@ -879,6 +894,13 @@ class AnnotationWindow(BaseCanvas):
         # Connect to ImageWindow signals
         self.main_window.image_window.imageLoaded.connect(self.on_image_loaded_check_z_channel)
         self.main_window.image_window.zChannelRemoved.connect(self.on_z_channel_removed)
+
+        # Keep annotation scale fields in sync whenever a raster's scale changes
+        if not self._scale_signals_connected:
+            self.main_window.image_window.raster_manager.scaleUpdated.connect(
+                self.on_raster_scale_updated
+            )
+            self._scale_signals_connected = True
     
     def resizeEvent(self, event):
         """Handle resize events to maintain proper view fitting."""
@@ -1946,6 +1968,28 @@ class AnnotationWindow(BaseCanvas):
             # Pass the image_path for efficiency
             self.set_annotation_scale(annotation, image_path=image_path)
             
+    def on_raster_scale_updated(self, image_path):
+        """
+        Re-sync annotation scale properties when a raster's scale is set or removed.
+
+        Annotations cache scale_x/scale_y/scale_units from their raster when they
+        are loaded, so without this they keep reporting pixel units (or a stale
+        scale) until the image is navigated away from and back.
+        """
+        # Video rasters emit the base video path, but their annotations are keyed
+        # by virtual frame paths, so those need syncing as well.
+        paths = [image_path]
+        frame_prefix = f"{image_path}::frame_"
+        paths.extend(p for p in self.image_annotations_dict if p.startswith(frame_prefix))
+
+        for path in paths:
+            self.set_annotations_scale(path)
+
+        # Rebuild the tooltip for the annotation currently on display
+        confidence_window = self.main_window.confidence_window
+        if confidence_window.annotation and confidence_window.annotation.image_path in paths:
+            confidence_window.refresh_display()
+
     def set_annotation_location(self, annotation_id, new_center_xy: QPointF):
         """Update the location of an annotation to a new center point."""
         if annotation_id in self.annotations_dict:

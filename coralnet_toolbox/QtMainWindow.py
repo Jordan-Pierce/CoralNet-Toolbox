@@ -530,6 +530,9 @@ class MainWindow(QMainWindow):
         self.layout_menu = self.view_menu.addMenu("Layout")
         self.scale_menu = self.view_menu.addMenu("Scale")
 
+        # Separator for the view menu
+        self.view_menu.addSeparator()
+
         # Capture View
         self.capture_view_action = QAction("Capture View", self)
         self.capture_view_action.setToolTip("Capture the application or annotation view to the clipboard or disk")

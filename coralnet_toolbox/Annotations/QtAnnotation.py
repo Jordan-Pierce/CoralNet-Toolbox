@@ -301,7 +301,9 @@ class Annotation(QObject):
             try:
                 pixel_area = self.get_area()
                 scaled_area = pixel_area * (self.scale_x * self.scale_y)
-                scaled_area = np.around(scaled_area, 2)  # Round to 2 decimal places
+                # Returned at full precision: the value is in square metres and
+                # callers convert it to the display unit before rounding. Rounding
+                # here would zero out anything under 0.005 m2 in every unit.
                 return scaled_area, self.scale_units
             except (NotImplementedError, TypeError):
                 return None
@@ -322,7 +324,7 @@ class Annotation(QObject):
                 # Use scale_x as the primary factor.
                 # Our ScaleTool sets x and y to be the same.
                 scaled_perimeter = pixel_perimeter * self.scale_x
-                scaled_perimeter = np.around(scaled_perimeter, 2)  # Round to 2 decimal places
+                # Full precision; the caller rounds after converting units
                 return scaled_perimeter, self.scale_units
             except (NotImplementedError, TypeError):
                 return None
@@ -468,11 +470,10 @@ class Annotation(QObject):
             area_scale = self.scale_x * self.scale_y
             result['hull_area_scaled'] = hull_area * area_scale
             
-        # For each value in result, if not None, use np.around to 2 decimal places
-        for key, value in result.items():
-            if isinstance(value, (int, float)):
-                result[key] = np.around(value, 2)
-        
+        # Values are returned at full precision. Scaled lengths and areas are in
+        # metres and get converted to the display unit before being rounded, and
+        # the unitless ratios are shown to 3 decimals - rounding to 2 here would
+        # damage both.
         return result
     
     def _get_raster_slice_and_mask(self, full_raster_data: np.ndarray):
@@ -542,8 +543,89 @@ class Annotation(QObject):
         # 9. Return slice and boolean mask
         return data_slice, mask.astype(bool)
 
-    def get_scaled_volume(self, z_channel: np.ndarray, scale_x: float, scale_y: float, 
-                          z_unit: str = None) -> float | None:
+    def _get_valid_z_slice_and_mask(self, z_channel: np.ndarray, z_nodata: float = None,
+                                    z_data_type: str = None):
+        """
+        Slice the z-channel to this annotation and identify which pixels hold
+        real measurements.
+
+        Nodata pixels must be excluded before any summation: a NaN propagates
+        through np.sum and erases the whole result, while a sentinel such as
+        -9999 silently produces a wildly wrong one. The validity rules mirror
+        Raster.get_z_value_at_point so the status bar and the derived metrics
+        agree on what counts as data.
+
+        Args:
+            z_channel (np.ndarray): The full 2D z_channel data from the Raster.
+            z_nodata (float, optional): Sentinel marking missing measurements.
+            z_data_type (str, optional): 'depth' or 'elevation'. Depth data uses
+                                         0.0 as an additional nodata convention.
+
+        Returns:
+            tuple (np.ndarray, np.ndarray, np.ndarray):
+                - z_slice: 2D slice of the z-channel covering the annotation.
+                - polygon_mask: True inside the annotation shape.
+                - valid_mask: True where the pixel holds a real measurement.
+                  Sample with ``polygon_mask & valid_mask``; use ``valid_mask``
+                  alone when filling holes before a gradient, since invalid
+                  pixels outside the polygon still corrupt gradients inside it.
+        """
+        z_slice, polygon_mask = self._get_raster_slice_and_mask(z_channel)
+
+        if z_slice.size == 0 or polygon_mask.size == 0:
+            return z_slice, polygon_mask, np.zeros_like(polygon_mask, dtype=bool)
+
+        # NaN/inf is never a measurement, regardless of the declared nodata
+        valid_mask = np.isfinite(z_slice)
+
+        if z_nodata is not None:
+            try:
+                if np.isfinite(z_nodata):
+                    valid_mask &= (z_slice != z_nodata)
+            except (TypeError, ValueError):
+                pass
+
+        # Depth maps conventionally use 0 for "no measurement"
+        if z_data_type == 'depth':
+            try:
+                valid_mask &= (z_slice != 0.0)
+            except (TypeError, ValueError):
+                pass
+
+        return z_slice, polygon_mask, valid_mask
+
+    def get_z_coverage(self, z_channel: np.ndarray, z_nodata: float = None,
+                       z_data_type: str = None) -> float | None:
+        """
+        Fraction of this annotation's pixels that hold a real z measurement.
+
+        Metrics derived from a partly-empty z-channel are computed over the
+        valid subset only, so they under-report silently. Reporting coverage
+        alongside them keeps that visible without blocking the calculation.
+
+        Returns:
+            float | None: Coverage in [0.0, 1.0], or None if the annotation
+                          covers no pixels.
+        """
+        if z_channel is None:
+            return None
+
+        try:
+            _, polygon_mask, valid_mask = self._get_valid_z_slice_and_mask(
+                z_channel, z_nodata=z_nodata, z_data_type=z_data_type
+            )
+        except Exception:
+            return None
+
+        total = int(np.count_nonzero(polygon_mask))
+        if total == 0:
+            return None
+
+        return float(np.count_nonzero(polygon_mask & valid_mask)) / total
+
+    def get_scaled_volume(self, z_channel: np.ndarray, scale_x: float, scale_y: float,
+                          z_unit: str = None, z_nodata: float = None,
+                          z_data_type: str = None) -> float | None:
         """
         Calculates the 'volume' under the annotation relative to a Z=0 plane.
         Requires the full z_channel (depth/elevation) data and scale factors.
@@ -563,8 +645,11 @@ class Annotation(QObject):
             return None
 
         try:
-            # 2. Get the sliced data and mask
-            z_slice, mask = self._get_raster_slice_and_mask(z_channel)
+            # 2. Get the sliced data, keeping only pixels with real measurements
+            z_slice, polygon_mask, valid_mask = self._get_valid_z_slice_and_mask(
+                z_channel, z_nodata=z_nodata, z_data_type=z_data_type
+            )
+            mask = polygon_mask & valid_mask
 
             # 3. Check for valid data
             if z_slice.size == 0 or mask.size == 0 or not np.any(mask):
@@ -587,8 +672,6 @@ class Annotation(QObject):
             # 7. Calculate total volume (in cubic meters)
             # This is the sum of (pixel_area * pixel_height)
             total_volume = np.sum(z_values_inside) * pixel_area_2d
-            
-            total_volume = np.around(total_volume, 2)  # Round to 2 decimal places
 
             return total_volume
         except Exception as e:
@@ -596,7 +679,9 @@ class Annotation(QObject):
             return None
 
     def get_scaled_surface_area(self, z_channel: np.ndarray, scale_x: float, 
-                                scale_y: float, z_unit: str = None) -> float | None:
+                                scale_y: float, z_unit: str = None,
+                                z_nodata: float = None,
+                                z_data_type: str = None) -> float | None:
         """
         Calculates the 3D surface area of the annotation using gradients.
         Requires the full z_channel (depth/elevation) data and scale factors.
@@ -626,12 +711,27 @@ class Annotation(QObject):
                 return None  # No scale, no 2D area, no 3D area
 
         try:
-            # 3. Get the sliced data and mask
-            z_slice, mask = self._get_raster_slice_and_mask(z_channel)
+            # 3. Get the sliced data, keeping only pixels with real measurements
+            z_slice, polygon_mask, valid_mask = self._get_valid_z_slice_and_mask(
+                z_channel, z_nodata=z_nodata, z_data_type=z_data_type
+            )
+            mask = polygon_mask & valid_mask
 
             # 4. Check for valid data
             if z_slice.size == 0 or mask.size == 0 or not np.any(mask):
                 return 0.0  # No area, so surface area is 0
+
+            # 4b. Fill invalid pixels before differentiating. np.gradient reads
+            # neighbours, so a NaN or a -9999 sentinel anywhere in the slice
+            # corrupts the slope of valid pixels next to it - and because the
+            # surface-area multiplier grows with slope, that inflates the
+            # result. Filling with the local mean keeps holes in range; the
+            # affected pixels remain visible through get_z_coverage.
+            if not np.all(valid_mask):
+                if not np.any(valid_mask):
+                    return 0.0
+                z_slice = z_slice.astype(np.float32, copy=True)
+                z_slice[~valid_mask] = float(np.mean(z_slice[valid_mask]))
 
             # 5. Convert z_slice to meters if necessary
             # This ensures all dimensions are in the same unit (meters)
@@ -659,8 +759,6 @@ class Annotation(QObject):
 
             # 10. Select only the 3D areas *inside* the polygon and sum them
             total_surface_area = np.sum(pixel_areas_3d[mask])
-            
-            total_surface_area = np.around(total_surface_area, 2)  # Round to 2 decimal places
 
             return total_surface_area
         except Exception as e:
@@ -670,7 +768,8 @@ class Annotation(QObject):
             return scaled_area_data[0] if scaled_area_data else None
 
     def get_min_z(self, z_channel: np.ndarray, scale_x: float = None, 
-                  z_unit: str = None) -> dict | None:
+                  z_unit: str = None, z_nodata: float = None,
+                  z_data_type: str = None) -> dict | None:
         """
         Get the minimum z-value within the annotation.
         
@@ -688,8 +787,11 @@ class Annotation(QObject):
             return None
         
         try:
-            # Get the sliced data and mask
-            z_slice, mask = self._get_raster_slice_and_mask(z_channel)
+            # Get the sliced data, keeping only pixels with real measurements
+            z_slice, polygon_mask, valid_mask = self._get_valid_z_slice_and_mask(
+                z_channel, z_nodata=z_nodata, z_data_type=z_data_type
+            )
+            mask = polygon_mask & valid_mask
             
             # Check for valid data
             if z_slice.size == 0 or mask.size == 0 or not np.any(mask):
@@ -720,8 +822,8 @@ class Annotation(QObject):
                     min_z_meters = min_z_scaled
             
             return {
-                'pixels': np.around(min_z_pixels, 2),
-                'meters': np.around(min_z_meters, 2) if min_z_meters is not None else None
+                'pixels': min_z_pixels,
+                'meters': min_z_meters
             }
             
         except Exception as e:
@@ -729,7 +831,8 @@ class Annotation(QObject):
             return None
 
     def get_max_z(self, z_channel: np.ndarray, scale_x: float = None, 
-                  z_unit: str = None) -> dict | None:
+                  z_unit: str = None, z_nodata: float = None,
+                  z_data_type: str = None) -> dict | None:
         """
         Get the maximum z-value within the annotation.
         
@@ -747,8 +850,11 @@ class Annotation(QObject):
             return None
         
         try:
-            # Get the sliced data and mask
-            z_slice, mask = self._get_raster_slice_and_mask(z_channel)
+            # Get the sliced data, keeping only pixels with real measurements
+            z_slice, polygon_mask, valid_mask = self._get_valid_z_slice_and_mask(
+                z_channel, z_nodata=z_nodata, z_data_type=z_data_type
+            )
+            mask = polygon_mask & valid_mask
             
             # Check for valid data
             if z_slice.size == 0 or mask.size == 0 or not np.any(mask):
@@ -779,8 +885,8 @@ class Annotation(QObject):
                     max_z_meters = max_z_scaled
             
             return {
-                'pixels': np.around(max_z_pixels, 2),
-                'meters': np.around(max_z_meters, 2) if max_z_meters is not None else None
+                'pixels': max_z_pixels,
+                'meters': max_z_meters
             }
             
         except Exception as e:

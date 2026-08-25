@@ -25,6 +25,7 @@ class RasterManager(QObject):
     rasterRemoved = pyqtSignal(str)  # Image path
     rasterUpdated = pyqtSignal(str)  # Image path
     zChannelUpdated = pyqtSignal(str)  # Image path - emitted when z-channel data changes
+    scaleUpdated = pyqtSignal(str)  # Image path - emitted when scale data changes
     
     def __init__(self):
         """Initialize the RasterManager."""
@@ -73,6 +74,8 @@ class RasterManager(QObject):
 
             # Connect raster's z-channel signal to forward as zChannelUpdated
             raster.zChannelChanged.connect(lambda: self.zChannelUpdated.emit(image_path))
+            # Forward scale changes so listeners can re-sync cached scale values
+            raster.scaleChanged.connect(lambda: self.scaleUpdated.emit(image_path))
 
             if emit_signal:
                 self.rasterAdded.emit(image_path)
@@ -121,6 +124,8 @@ class RasterManager(QObject):
             self.rasters[video_path] = raster
             self.image_paths.append(video_path)
 
+            raster.scaleChanged.connect(lambda: self.scaleUpdated.emit(video_path))
+
             self.rasterAdded.emit(video_path)
             return True
 
@@ -148,6 +153,8 @@ class RasterManager(QObject):
 
             self.rasters[ortho_path] = raster
             self.image_paths.append(ortho_path)
+
+            raster.scaleChanged.connect(lambda: self.scaleUpdated.emit(ortho_path))
 
             if emit_signal:
                 self.rasterAdded.emit(ortho_path)

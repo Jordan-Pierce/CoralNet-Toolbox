@@ -19,6 +19,7 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 from coralnet_toolbox.utilities import convert_scale_units
+from coralnet_toolbox.utilities import is_length_unit
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -511,7 +512,8 @@ class ExportSpatialMetrics(QDialog):
     # Metric Calculation Methods
     # ----------------------------------------------------------------------
 
-    def calculate_metrics_for_annotation(self, annotation, selected_metrics, z_channel=None, z_unit=None):
+    def calculate_metrics_for_annotation(self, annotation, selected_metrics, z_channel=None, z_unit=None,
+                                         z_nodata=None, z_data_type=None):
         """
         Calculate spatial metrics for a single annotation.
 
@@ -520,6 +522,8 @@ class ExportSpatialMetrics(QDialog):
             selected_metrics: List of metric names to calculate
             z_channel: The z-channel data for 3D metrics (optional)
             z_unit: The unit of the z-channel data (optional)
+            z_nodata: Sentinel marking missing z measurements (optional)
+            z_data_type: 'depth' or 'elevation' (optional)
 
         Returns:
             dict: Dictionary with metric values (pixel and meters columns)
@@ -533,7 +537,12 @@ class ExportSpatialMetrics(QDialog):
         scale_x = annotation.scale_x
         scale_y = annotation.scale_y
         scale_units = annotation.scale_units
-        has_scale = scale_x is not None and scale_y is not None and scale_units is not None
+        # The '(meters)' columns are only meaningful when the annotation's scale
+        # unit can actually be converted to metres. For anything else (e.g. the
+        # 'degree' of a lon/lat world file) convert_scale_units is a no-op, which
+        # would fill a metres column with unconverted values.
+        has_scale = (scale_x is not None and scale_y is not None
+                     and is_length_unit(scale_units))
 
         # Calculate conversion factor to meters if scale is available
         to_meters_factor = 1.0
@@ -644,13 +653,18 @@ class ExportSpatialMetrics(QDialog):
                             # Convert scales to meters/pixel as required by get_scaled_volume
                             scale_x_meters = scale_x * to_meters_factor
                             scale_y_meters = scale_y * to_meters_factor
-                            volume = annotation.get_scaled_volume(z_channel, scale_x_meters, scale_y_meters, z_unit)
+                            volume = annotation.get_scaled_volume(z_channel, scale_x_meters, scale_y_meters,
+                                                                  z_unit, z_nodata=z_nodata,
+                                                                  z_data_type=z_data_type)
                             if volume is not None:
                                 # Volume is already in the correct units (cubic meters)
                                 meter_value = volume
                                 # Calculate pixel-based volume: sum of z-values in pixels
                                 try:
-                                    z_slice, mask = annotation._get_raster_slice_and_mask(z_channel)
+                                    z_slice, poly_mask, valid_mask = annotation._get_valid_z_slice_and_mask(
+                                        z_channel, z_nodata=z_nodata, z_data_type=z_data_type
+                                    )
+                                    mask = poly_mask & valid_mask
                                     if z_slice.size > 0 and mask.size > 0 and np.any(mask):
                                         pixel_value = float(np.sum(z_slice[mask]))
                                 except Exception:
@@ -663,14 +677,23 @@ class ExportSpatialMetrics(QDialog):
                             surf_area = annotation.get_scaled_surface_area(z_channel, 
                                                                            scale_x_meters, 
                                                                            scale_y_meters,
-                                                                           z_unit)
+                                                                           z_unit,
+                                                                           z_nodata=z_nodata,
+                                                                           z_data_type=z_data_type)
                             if surf_area is not None:
                                 # Surface area is already in the correct units (square meters)
                                 meter_value = surf_area
                                 # Calculate pixel-based surface area: sum of 3D surface elements
                                 try:
-                                    z_slice, mask = annotation._get_raster_slice_and_mask(z_channel)
+                                    z_slice, poly_mask, valid_mask = annotation._get_valid_z_slice_and_mask(
+                                        z_channel, z_nodata=z_nodata, z_data_type=z_data_type
+                                    )
+                                    mask = poly_mask & valid_mask
                                     if z_slice.size > 0 and mask.size > 0 and np.any(mask):
+                                        # Fill holes so nodata does not corrupt neighbouring slopes
+                                        if not np.all(valid_mask):
+                                            z_slice = z_slice.astype(np.float32, copy=True)
+                                            z_slice[~valid_mask] = float(np.mean(z_slice[valid_mask]))
                                         # Calculate gradients in pixel space
                                         dz_dy, dz_dx = np.gradient(z_slice)
                                         # Surface area multiplier for each pixel
@@ -681,13 +704,15 @@ class ExportSpatialMetrics(QDialog):
                                     pixel_value = None
                     elif metric == 'min_z':
                         if z_channel is not None:
-                            z_data = annotation.get_min_z(z_channel, scale_x, z_unit)
+                            z_data = annotation.get_min_z(z_channel, scale_x, z_unit,
+                                                          z_nodata=z_nodata, z_data_type=z_data_type)
                             if z_data:
                                 pixel_value = z_data.get('pixels')
                                 meter_value = z_data.get('meters')
                     elif metric == 'max_z':
                         if z_channel is not None:
-                            z_data = annotation.get_max_z(z_channel, scale_x, z_unit)
+                            z_data = annotation.get_max_z(z_channel, scale_x, z_unit,
+                                                          z_nodata=z_nodata, z_data_type=z_data_type)
                             if z_data:
                                 pixel_value = z_data.get('pixels')
                                 meter_value = z_data.get('meters')
@@ -780,6 +805,8 @@ class ExportSpatialMetrics(QDialog):
                 # Get z-channel data for this annotation's image if needed
                 z_channel = None
                 z_unit = None
+                z_nodata = None
+                z_data_type = None
                 if any(metric in selected_metrics for metric in ['volume', 'surface_area', 'min_z', 'max_z']):
                     if annotation.image_path not in z_channel_cache:
                         # Try to get z-channel from raster_manager
@@ -787,14 +814,19 @@ class ExportSpatialMetrics(QDialog):
                         if raster:
                             z_channel_cache[annotation.image_path] = {
                                 'z_channel': raster.z_channel_lazy,
-                                'z_unit': raster.z_unit
+                                'z_unit': raster.z_unit,
+                                'z_nodata': raster.z_nodata,
+                                'z_data_type': raster.z_data_type
                             }
                         else:
-                            z_channel_cache[annotation.image_path] = {'z_channel': None, 'z_unit': None}
+                            z_channel_cache[annotation.image_path] = {'z_channel': None, 'z_unit': None,
+                                                                      'z_nodata': None, 'z_data_type': None}
                     
                     cached_data = z_channel_cache.get(annotation.image_path, {})
                     z_channel = cached_data.get('z_channel')
                     z_unit = cached_data.get('z_unit')
+                    z_nodata = cached_data.get('z_nodata')
+                    z_data_type = cached_data.get('z_data_type')
 
                 # Handle MultiPolygonAnnotation by exporting constituent polygons
                 if isinstance(annotation, MultiPolygonAnnotation):
@@ -813,7 +845,9 @@ class ExportSpatialMetrics(QDialog):
                         }
 
                         # Calculate and add spatial metrics for the constituent polygon
-                        metrics = self.calculate_metrics_for_annotation(poly, selected_metrics, z_channel, z_unit)
+                        metrics = self.calculate_metrics_for_annotation(poly, selected_metrics, z_channel, z_unit,
+                                                                        z_nodata=z_nodata,
+                                                                        z_data_type=z_data_type)
                         row.update(metrics)
 
                         rows.append(row)
@@ -831,7 +865,9 @@ class ExportSpatialMetrics(QDialog):
                     }
 
                     # Calculate and add spatial metrics
-                    metrics = self.calculate_metrics_for_annotation(annotation, selected_metrics, z_channel, z_unit)
+                    metrics = self.calculate_metrics_for_annotation(annotation, selected_metrics, z_channel, z_unit,
+                                                                    z_nodata=z_nodata,
+                                                                    z_data_type=z_data_type)
                     row.update(metrics)
 
                     rows.append(row)

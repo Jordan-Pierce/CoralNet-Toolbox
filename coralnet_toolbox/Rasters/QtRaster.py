@@ -21,6 +21,7 @@ from coralnet_toolbox.Features.FeatureMapCodec import load_feature_map, FEATURE_
 from coralnet_toolbox.WorkArea import WorkArea
 
 from coralnet_toolbox.utilities import convert_scale_units
+from coralnet_toolbox.utilities import is_length_unit
 from coralnet_toolbox.utilities import rasterio_open
 from coralnet_toolbox.utilities import rasterio_to_qimage
 from coralnet_toolbox.utilities import work_area_to_numpy
@@ -46,6 +47,9 @@ class Raster(QObject):
     
     # Signal emitted when z-channel data is added, updated, or removed
     zChannelChanged = pyqtSignal()
+
+    # Signal emitted when scale information is set or removed
+    scaleChanged = pyqtSignal()
     
     def __init__(self, image_path: str):
         """
@@ -106,6 +110,9 @@ class Raster(QObject):
         self.scale_x: Optional[float] = None
         self.scale_y: Optional[float] = None
         self.scale_units: Optional[str] = None
+        # How the scale was established, e.g. 'crs', 'world-file', 'manual'.
+        # Surfaced in the annotation tooltip so an inferred unit is visible.
+        self.scale_source: Optional[str] = None
         
         # Depth/elevation channel information
         self.z_channel: Optional[np.ndarray] = None  # Depth/elevation channel data (float32 or uint8)
@@ -218,13 +225,21 @@ class Raster(QObject):
                     # Case 1: Already projected. Read the scale and convert to meters.
                     scale_x = abs(transform.a)
                     scale_y = abs(transform.e)
-                    source_units = crs.linear_units.lower()
+                    source_units = (crs.linear_units or '').lower()
 
-                    # Convert scale to meters per pixel
-                    scale_x_meters = convert_scale_units(scale_x, source_units, 'm')
-                    scale_y_meters = convert_scale_units(scale_y, source_units, 'm')
-
-                    self.update_scale(scale_x_meters, scale_y_meters, 'm')
+                    if is_length_unit(source_units):
+                        # Convert scale to meters per pixel
+                        scale_x_meters = convert_scale_units(scale_x, source_units, 'm')
+                        scale_y_meters = convert_scale_units(scale_y, source_units, 'm')
+                        self.update_scale(scale_x_meters, scale_y_meters, 'm', source='crs')
+                    else:
+                        # Projected, but rasterio cannot name the linear unit.
+                        # Converting would be a no-op that still got labelled
+                        # metres, so record the assumption explicitly instead.
+                        self.update_scale(
+                            scale_x, scale_y, 'm',
+                            source=f'crs (unit "{source_units or "unnamed"}", assumed metres)'
+                        )
 
                 elif getattr(crs, "is_geographic", False):
                     # Case 2: Geographic. Project to Web Mercator (EPSG:3857) to get meter-based scale.
@@ -246,7 +261,7 @@ class Raster(QObject):
                         scale_y = abs(proj_transform.e)
                         scale_units = 'm'  # EPSG:3857 units are meters
 
-                        self.update_scale(scale_x, scale_y, scale_units)
+                        self.update_scale(scale_x, scale_y, scale_units, source='crs (reprojected)')
 
                         # Update metadata to show the *derived* scale
                         self.metadata['scale_x'] = f"~{self.scale_x:.4f} {self.scale_units} (from EPSG:3857)"
@@ -263,15 +278,33 @@ class Raster(QObject):
                 if transform is not None and not transform.is_identity:
                     scale_x = abs(transform.a)
                     scale_y = abs(transform.e)
-                    
-                    # Since there is no CRS, bypass update_scale to avoid unit conversion errors.
-                    # Assign the raw values directly and flag the units as unknown.
-                    self.scale_x = scale_x
-                    self.scale_y = scale_y
-                    self.scale_units = 'unknown' 
-                    
-                    self.metadata['scale_x'] = f"{self.scale_x:.6f} (unknown units)"
-                    self.metadata['scale_y'] = f"{self.scale_y:.6f} (unknown units)"
+
+                    # A world file carries a transform but never names its units.
+                    # Marking them 'unknown' left every downstream measurement
+                    # unconvertible, so infer the family from the origin instead:
+                    # longitude/latitude fit within +/-180 and +/-90, and anything
+                    # larger is a projected grid - whose linear unit is, in
+                    # practice, almost always metres (a UTM easting/northing being
+                    # the common case).
+                    origin_x = transform.c
+                    origin_y = transform.f
+                    looks_geographic = abs(origin_x) <= 180.0 and abs(origin_y) <= 90.0
+
+                    if looks_geographic:
+                        # Degrees: a real unit name, but not a length, so metrics
+                        # stay unconverted rather than silently wrong.
+                        self.scale_x = scale_x
+                        self.scale_y = scale_y
+                        self.scale_units = 'degree'
+                        self.scale_source = 'world file (degrees, no CRS)'
+                        self.metadata['scale_x'] = f"{self.scale_x:.8f} degree (from world file)"
+                        self.metadata['scale_y'] = f"{self.scale_y:.8f} degree (from world file)"
+                    else:
+                        self.update_scale(scale_x, scale_y, 'm',
+                                          source='world file (units assumed metres)')
+                        self.metadata['scale_x'] = f"{self.scale_x:.6f} m (assumed, from world file)"
+                        self.metadata['scale_y'] = f"{self.scale_y:.6f} m (assumed, from world file)"
+
                     self.metadata['original_crs'] = "None (Loaded from world file)"
 
             return True
@@ -280,7 +313,7 @@ class Raster(QObject):
             print(f"Error loading rasterio image {self.image_path}: {str(e)}")
             return False
             
-    def update_scale(self, scale_x: float, scale_y: float, units: str):
+    def update_scale(self, scale_x: float, scale_y: float, units: str, source: str = None):
         """
         Update the scale information for this raster.
         
@@ -291,20 +324,33 @@ class Raster(QObject):
             scale_x (float): The horizontal scale (e.g., meters per pixel)
             scale_y (float): The vertical scale (e.g., meters per pixel)
             units (str): The name of the units (e.g., 'm', 'cm', 'ft')
+            source (str, optional): How the scale was established, recorded for display.
         """
-        # Convert to meters if not already in meters
-        if units.lower() != 'm':
-            scale_x = convert_scale_units(scale_x, units, 'm')
-            scale_y = convert_scale_units(scale_y, units, 'm')
-        
-        # Always store in meters
+        # Convert to meters if not already in meters. convert_scale_units
+        # returns its input unchanged for a unit it does not recognise, so
+        # without this check an unconvertible unit would be stored verbatim
+        # and then labelled 'm' - wrong numbers that look right. Keep the
+        # declared unit instead and let the display layer flag it.
+        stored_units = units
+        if is_length_unit(units):
+            if units.lower() != 'm':
+                scale_x = convert_scale_units(scale_x, units, 'm')
+                scale_y = convert_scale_units(scale_y, units, 'm')
+            stored_units = 'm'
+
         self.scale_x = scale_x
         self.scale_y = scale_y
-        self.scale_units = 'm'
+        self.scale_units = stored_units
+        if source is not None:
+            self.scale_source = source
         
         # Update metadata to match
         self.metadata['scale_x'] = f"{self.scale_x:.6f} {self.scale_units}"
         self.metadata['scale_y'] = f"{self.scale_y:.6f} {self.scale_units}"
+
+        # Notify listeners so cached copies of the scale (e.g. on annotations)
+        # can be re-synced without waiting for an image reload
+        self.scaleChanged.emit()
 
     def remove_scale(self):
         """
@@ -313,11 +359,14 @@ class Raster(QObject):
         self.scale_x = None
         self.scale_y = None
         self.scale_units = None
+        self.scale_source = None
         
         # Remove from metadata if keys exist
         self.metadata.pop('scale_x', None)
         self.metadata.pop('scale_y', None)
         self.metadata.pop('original_crs', None)  # Also remove derived crs
+
+        self.scaleChanged.emit()
     
     # ------------------------------------------------------------------
     # Feature Map management
@@ -1219,7 +1268,8 @@ class Raster(QObject):
             raster_data['scale'] = {
                 'scale_x': self.scale_x,
                 'scale_y': self.scale_y,
-                'scale_units': self.scale_units
+                'scale_units': self.scale_units,
+                'scale_source': self.scale_source
             }
         
         # Include z_channel path if available
@@ -1293,7 +1343,8 @@ class Raster(QObject):
                 self.update_scale(
                     scale_data['scale_x'],
                     scale_data['scale_y'],
-                    scale_data['scale_units']
+                    scale_data['scale_units'],
+                    source=scale_data.get('scale_source')
                 )
             except Exception as e:
                 print(f"Error loading scale information for {self.image_path}: {str(e)}")
