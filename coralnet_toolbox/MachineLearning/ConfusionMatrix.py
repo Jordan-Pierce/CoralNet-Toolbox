@@ -19,7 +19,7 @@ class ConfusionMatrixMetrics:
     Attributes:
         top1 (float): Top-1 accuracy.
         top5 (float): Top-5 accuracy.
-        matrix (np.ndarray): The confusion matrix.
+        matrix (np.ndarray): The confusion matrix, with rows as true labels and columns as predictions.
         num_classes (int): The number of classes.
         class_mapping (dict): Mapping of class indices to class names.
         total_predictions (int): Total number of predictions.
@@ -34,7 +34,9 @@ class ConfusionMatrixMetrics:
             results: An object containing confusion matrix and accuracy metrics.
             class_mapping (dict): Mapping of class indices to class names.
         """
-        self.matrix = results.confusion_matrix.matrix
+        # Ultralytics stores the matrix as matrix[predicted][true]; transpose it so rows are true
+        # labels and columns are predictions, which is what the metrics and plots below assume
+        self.matrix = results.confusion_matrix.matrix.T
         self.num_classes = self.matrix.shape[0]
         self.class_mapping = class_mapping
 
@@ -193,13 +195,13 @@ class ConfusionMatrixMetrics:
 
         return metrics_per_class
 
-    def save_confusion_matrix_png(self, directory, filename="confusion_matrix_toolbox.png", normalized=False):
+    def save_confusion_matrix_png(self, directory, filename="cm.png", normalized=False):
         """
         Save the confusion matrix as a PNG image.
 
         Args:
             directory (str): The directory where the PNG file will be saved.
-            filename (str): The name of the PNG file. Default is "confusion_matrix.png".
+            filename (str): The name of the PNG file. Default is "cm.png".
             normalized (bool): Whether to normalize the confusion matrix. Default is False.
         """
         os.makedirs(directory, exist_ok=True)
@@ -257,17 +259,17 @@ class ConfusionMatrixMetrics:
         plt.savefig(file_path, bbox_inches='tight')
         plt.close()
 
-    def save_normalized_confusion_matrix_png(self, directory, filename="confusion_matrix_normalized_toolbox.png"):
+    def save_normalized_confusion_matrix_png(self, directory, filename="cm_normalized.png"):
         """
         Save the normalized confusion matrix as a PNG image.
 
         Args:
             directory (str): The directory where the PNG file will be saved.
-            filename (str): The name of the PNG file. Default is
+            filename (str): The name of the PNG file. Default is "cm_normalized.png".
         """
         self.save_confusion_matrix_png(directory, filename, normalized=True)
 
-    def save_real_confusion_matrix_png(self, directory, filename="confusion_matrix_toolbox.png"):
+    def save_real_confusion_matrix_png(self, directory, filename="cm.png"):
         """
         Save the real-valued confusion matrix as a PNG image.
 
