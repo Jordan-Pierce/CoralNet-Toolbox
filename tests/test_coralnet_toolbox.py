@@ -15,18 +15,33 @@ in that file about Qt and interpreter shutdown.
 """
 
 import os
+import sys
 import unittest
 
 # Must be set before PyQt5 initialises a platform plugin. CI runners have no
 # display; the offscreen plugin needs none.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+# Imported first on purpose, exactly as every real entry point does. The
+# package pulls in torch before anything can load Qt, which on Windows is the
+# difference between working and OSError [WinError 1114] on c10.dll. Importing
+# PyQt5 here first would reintroduce the very bug the package guards against.
+import coralnet_toolbox  # noqa: E402
+
 
 class TestPackageMetadata(unittest.TestCase):
 
     def test_version_is_exposed(self):
-        import coralnet_toolbox
         self.assertRegex(coralnet_toolbox.__version__, r"^\d+\.\d+\.\d+")
+
+    def test_torch_is_loaded_by_the_package(self):
+        """Guards the Windows load-order fix in coralnet_toolbox/__init__.py.
+
+        If torch stops being imported there, Qt can win the race and c10.dll
+        fails to initialise on Windows -- a failure that does not reproduce on
+        Linux or macOS, so this assertion is the only thing that catches it.
+        """
+        self.assertIn("torch", sys.modules)
 
 
 class TestDependencyImports(unittest.TestCase):
