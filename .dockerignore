@@ -1,0 +1,41 @@
+# ---------------------------------------------------------------------------
+# ALLOWLIST. Deny everything, then re-admit only what the image needs.
+#
+# This repo carries ~335 GB in data/ and ~3.7 GB of .pt weights at the root.
+# A denylist is the wrong shape here: one new top-level directory of imagery
+# and the build context silently balloons. Note also that .dockerignore uses
+# filepath.Match, where `*` does NOT cross `/` -- so `*.pt` would only ever
+# have excluded ROOT-level weights, and `__pycache__/` only the root one.
+#
+# Verify what this admits with:
+#   docker build -f docker/context-probe.Dockerfile --progress=plain -t ctx .
+# ---------------------------------------------------------------------------
+
+*
+
+# --- re-admit: the package itself ---
+!coralnet_toolbox/
+
+# --- re-admit: packaging metadata needed by `pip install -e .` ---
+!pyproject.toml
+!requirements.txt
+!README.md
+!LICENSE
+!LICENSE.txt
+!MANIFEST.in
+
+# --- re-admit: container startup ---
+!docker/
+
+# --- re-exclude junk living inside the paths above ---
+# (`**/` is required; a bare glob would only match at the root)
+**/__pycache__
+**/*.py[cod]
+**/*.pt
+**/*.pth
+**/*.onnx
+**/*.engine
+**/*.egg-info
+**/.pytest_cache
+**/.ruff_cache
+**/*.log
