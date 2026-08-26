@@ -2,14 +2,24 @@
 <!--
   Kiosk window-manager profile for LOCKOUT_LEVEL=2.
 
-  The empty <keyboard> and <mouse> sections are deliberate, not unfinished:
-  they remove Alt-F4, Alt-Tab, and the desktop right-click menu, which are the
-  three ordinary ways out of a single-application session. A single desktop
-  removes workspace switching for the same reason.
+  The goal is that the toolbox itself cannot be closed, minimised or escaped,
+  while its own dialogs stay fully usable. Those two aims pull in opposite
+  directions, so the rules are deliberately asymmetric:
+
+    - the main window is matched by class and gets no decorations at all
+    - everything else keeps a titlebar carrying ONLY a close button
+
+  Note that openbox implements titlebar buttons as mouse bindings. An empty
+  <mouse> section therefore does not merely hide the close button, it makes the
+  button inert and also breaks click-to-focus. The contexts below are the
+  minimum needed for working dialogs; "Desktop" is intentionally absent, which
+  is what removes the desktop right-click menu.
 -->
 <openbox_config xmlns="http://openbox.org/3.4/rc">
 
   <theme>
+    <!-- label + close only: no iconify, no maximize, no shade -->
+    <titleLayout>LC</titleLayout>
     <keepBorder>no</keepBorder>
     <animateIconify>no</animateIconify>
   </theme>
@@ -19,30 +29,58 @@
     <names><name>Toolbox</name></names>
   </desktops>
 
-  <!-- no window-management keybindings at all -->
+  <focus>
+    <followMouse>no</followMouse>
+    <focusNew>yes</focusNew>
+    <focusLast>yes</focusLast>
+  </focus>
+
+  <!-- No window-management keybindings: no Alt-F4, no Alt-Tab, no workspace
+       switching. Dialogs are dismissed with their own buttons or the X. -->
   <keyboard>
   </keyboard>
 
-  <!-- no desktop menus, no titlebar actions -->
   <mouse>
+    <!-- Click-to-focus. Without this, clicking into a dialog does not focus it. -->
+    <context name="Client">
+      <mousebind button="Left" action="Press">
+        <action name="Focus"/>
+        <action name="Raise"/>
+      </mousebind>
+    </context>
+
+    <!-- Dialogs may be focused and dragged by their titlebar, but there is no
+         double-click-to-maximize and no titlebar context menu. -->
+    <context name="Titlebar">
+      <mousebind button="Left" action="Press">
+        <action name="Focus"/>
+        <action name="Raise"/>
+      </mousebind>
+      <mousebind button="Left" action="Drag">
+        <action name="Move"/>
+      </mousebind>
+    </context>
+
+    <!-- The close button has to be wired up explicitly. -->
+    <context name="Close">
+      <mousebind button="Left" action="Press">
+        <action name="Focus"/>
+        <action name="Raise"/>
+      </mousebind>
+      <mousebind button="Left" action="Click">
+        <action name="Close"/>
+      </mousebind>
+    </context>
   </mouse>
 
   <applications>
-    <!-- The toolbox main window: undecorated and filling the screen. Matching
-         on type="normal" keeps this rule off dialogs. -->
-    <application class="*" type="normal">
+    <!-- Only the toolbox main window is undecorated and locked to the screen.
+         Matching by class rather than by type="normal" means any other window
+         the app opens keeps a usable titlebar instead of becoming an
+         undecorated, unclosable box. -->
+    <application class="coralnet-toolbox" type="normal">
       <decor>no</decor>
       <maximized>true</maximized>
-    </application>
-
-    <!-- Dialogs keep their natural size (the app has 600+ message boxes) but
-         lose decorations, so there is no close button to orphan them. -->
-    <application class="*" type="dialog">
-      <decor>no</decor>
-      <position force="yes">
-        <x>center</x>
-        <y>center</y>
-      </position>
     </application>
   </applications>
 

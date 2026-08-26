@@ -12,6 +12,22 @@ IMAGE="${IMAGE:-coralnet-toolbox:local}"
 DATA="${CORALNET_DATA:-$PWD/data}"
 PORT="${PORT:-6901}"
 
+# Preflight. Docker's own errors for these two cases name an endpoint hash
+# rather than the container in the way, which is not much help.
+existing=$(docker ps -a --filter "name=^coralnet$" --format '{{.Names}}' 2>/dev/null || true)
+if [ -n "$existing" ]; then
+    echo "error: a container named 'coralnet' already exists." >&2
+    echo "       docker rm -f coralnet" >&2
+    exit 1
+fi
+
+holder=$(docker ps --filter "publish=${PORT}" --format '{{.Names}}' 2>/dev/null | head -1)
+if [ -n "$holder" ]; then
+    echo "error: port ${PORT} is already published by container '${holder}'." >&2
+    echo "       docker rm -f ${holder}      # or: PORT=6902 ./docker/run.sh" >&2
+    exit 1
+fi
+
 args=(--rm -it --name coralnet --shm-size=2g -p "${PORT}:6901"
       -e VNC_USER="${VNC_USER:-user}"
       -e VNC_PW="${VNC_PW:-password}"

@@ -183,6 +183,8 @@ The `toolbox` can run inside a container and stream its interface to a web
 browser over [KasmVNC](https://github.com/kasmtech/KasmVNC) - no local install,
 no X server on your machine.
 
+**Recommended - works the same on every shell:**
+
 ```bash
 # Build (first build is large: torch + CUDA is several GB)
 docker compose build
@@ -191,19 +193,54 @@ docker compose build
 docker compose up
 ```
 
-Or without compose:
+Compose resolves relative paths itself, so `./data` is mounted correctly on
+Linux, macOS and Windows alike.
+
+**Or via a launcher.** Both mount `./data` only when that folder exists, and
+add `--gpus` only when the NVIDIA runtime is available:
 
 ```bash
-docker build -t coralnet-toolbox .
+docker build -t coralnet-toolbox:local .
 
-# Launcher: mounts ./data only if it exists, adds --gpus only if available
-./docker/run.sh
+./docker/run.sh          # Linux, macOS, Git Bash
 ```
 
-Or fully by hand:
+```bat
+docker build -t coralnet-toolbox:local .
+
+docker\run.cmd           :: Windows Command Prompt / PowerShell
+```
+
+`run.sh` is a bash script and will not run in `cmd.exe`; `run.cmd` is the
+equivalent for Windows. Both honour `CORALNET_DATA`, `LOCKOUT_LEVEL`,
+`VNC_USER`, `VNC_PW` and `PORT` as environment variables.
+
+**Or fully by hand.** Note the image tag is `coralnet-toolbox:local`, and that
+the current-directory variable differs per shell - `$(pwd)` is not defined in
+`cmd.exe`, and passing it literally makes Docker reject the path:
 
 ```bash
-docker run --rm -it --gpus all --shm-size=2g -p 6901:6901     -e VNC_USER=user -e VNC_PW=password     -v "$PWD/data:/home/kasm-user/data"     coralnet-toolbox
+# Linux / macOS / Git Bash
+docker run --rm -it --gpus all --shm-size=2g -p 6901:6901 \
+    -e VNC_USER=user -e VNC_PW=password \
+    -v "$(pwd)/data:/home/kasm-user/data" \
+    coralnet-toolbox:local
+```
+
+```powershell
+# Windows PowerShell
+docker run --rm -it --gpus all --shm-size=2g -p 6901:6901 `
+    -e VNC_USER=user -e VNC_PW=password `
+    -v "${PWD}/data:/home/kasm-user/data" `
+    coralnet-toolbox:local
+```
+
+```bat
+:: Windows Command Prompt
+docker run --rm -it --gpus all --shm-size=2g -p 6901:6901 ^
+    -e VNC_USER=user -e VNC_PW=password ^
+    -v "%cd%\data:/home/kasm-user/data" ^
+    coralnet-toolbox:local
 ```
 
 Then browse to **https://localhost:6901**:

@@ -6,11 +6,15 @@
 # of three, better compression for a pan/zoom annotation canvas, built-in auth,
 # a working clipboard, and file upload/download in the web toolbar.
 #
-#   docker build -t coralnet-toolbox .
-#   docker run --rm -it --gpus all --shm-size=2g -p 6901:6901 \
-#       -e VNC_PW=coralnet -v "$PWD/data:/home/kasm-user/data" coralnet-toolbox
+#   docker compose up --build          # simplest, and shell-independent
 #
-#   -> https://localhost:6901   (user: kasm_user, self-signed cert)
+# or:
+#   docker build -t coralnet-toolbox:local .
+#   ./docker/run.sh                    # mounts ./data if present, GPU if present
+#
+#   -> https://localhost:6901   (user: user / password: password, self-signed cert)
+#
+# Set LOCKOUT_LEVEL=1 for a full desktop; the default 2 is kiosk mode.
 
 ARG KASM_VERSION=1.19.0
 FROM kasmweb/core-ubuntu-jammy:${KASM_VERSION}
