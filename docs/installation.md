@@ -175,14 +175,48 @@ y
 
 > **Version 1.0.0 and later** rely heavily on `PyQtADS`, which cannot be installed on macOS. **Do not upgrade from version 0.0.105** until this is resolved.
 
-## 🐳 Docker
+## 🐳 Docker (run in a browser)
 
-To run the `toolbox` in a Docker container:
+The `toolbox` can run inside a container and stream its interface to a web
+browser over [KasmVNC](https://github.com/kasmtech/KasmVNC) - no local install,
+no X server on your machine.
 
 ```bash
-# Build the Docker image
-docker build -t coralnet-vnc .
+# Build (first build is large: torch + CUDA is several GB)
+docker compose build
 
-# Run the container with VNC access
-docker run -d -p 6901:6901 -p 5901:5901 --name coralnet-app coralnet-vnc
+# Run, then open https://localhost:6901
+docker compose up
 ```
+
+Or without compose:
+
+```bash
+docker build -t coralnet-toolbox .
+
+docker run --rm -it --gpus all --shm-size=2g -p 6901:6901     -e VNC_PW=coralnet     -v "$PWD/data:/home/kasm-user/data"     coralnet-toolbox
+```
+
+Then browse to **https://localhost:6901**:
+
+| | |
+|---|---|
+| Username | `kasm_user` |
+| Password | value of `VNC_PW` (default `coralnet`) |
+
+The certificate is self-signed, so the browser will warn on first visit.
+
+**Notes**
+
+- **Your images.** The app's file dialogs see the *container's* filesystem, not
+  your machine's. Mount a host folder (`-v`, as above) so imagery shows up under
+  `~/data`, or use the upload/download buttons in the KasmVNC toolbar.
+- **GPU.** `--gpus all` requires the NVIDIA Container Toolkit. Without it the
+  container still runs, on CPU. The image pins a CUDA build of torch via the
+  `TORCH_CUDA` build arg (default `cu128`); Blackwell cards (RTX 50-series)
+  require `cu128` or newer.
+- **The app is the session.** Closing the toolbox window restarts it rather than
+  ending the session. Stop the container to end it.
+- **One user per container.** Everyone pointed at the same port shares one
+  screen and one mouse. Serving multiple people means one container each, behind
+  a router - not covered here.

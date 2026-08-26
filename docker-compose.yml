@@ -1,0 +1,38 @@
+# Step 1: single-session smoke test.
+#
+#   docker compose up --build
+#   -> https://localhost:6901   (user: kasm_user, password: $VNC_PW)
+#
+# This same image is what the multi-user setup spawns per user later, so
+# whatever works here carries forward.
+
+services:
+  coralnet:
+    build:
+      context: .
+      args:
+        TORCH_CUDA: cu128        # RTX 5090 / Blackwell needs cu128 or newer
+        INSTALL_CHROME: "true"   # false to skip the CoralNet-download browser
+    image: coralnet-toolbox:local
+    ports:
+      - "6901:6901"
+    environment:
+      VNC_PW: ${VNC_PW:-coralnet}
+    volumes:
+      # Host imagery, visible to the app's file dialogs at ~/data.
+      #
+      # Default is ./data, which in this repo is ~335 GB. It is a bind mount,
+      # so nothing is copied -- but on Docker Desktop for Windows, bind mounts
+      # from C:\ cross a 9p/virtiofs boundary and reads are SLOW. For real
+      # throughput point this at a path inside WSL2's ext4 filesystem:
+      #   CORALNET_DATA=/home/you/imagery docker compose up
+      - ${CORALNET_DATA:-./data}:/home/kasm-user/data
+    # Qt and torch both want more than Docker's default 64 MB of /dev/shm
+    shm_size: "2gb"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
