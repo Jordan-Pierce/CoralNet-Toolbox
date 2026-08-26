@@ -101,22 +101,22 @@ Traditional benthic imagery analysis is time-consuming. Manual annotation, data 
 
 ### 📝 **Core Annotation Tools**
 
-| <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Patches.gif" alt="Patch Annotation" width="250" style="border-radius: 8px;"/><br>**🎯 Patch Annotation** | <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Rectangles.gif" alt="Rectangle Annotation" width="250" style="border-radius: 8px;"/><br>**📐 Rectangle Annotation** | <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Polygons.gif" alt="Polygon Annotation" width="250" style="border-radius: 8px;"/><br>**🔷 Multi-Polygon Annotation** |
+| <img src="https://github.com/Jordan-Pierce/CoralNet-Toolbox/releases/download/docs-assets/Patches.gif" alt="Patch Annotation" width="250" style="border-radius: 8px;"/><br>**🎯 Patch Annotation** | <img src="https://github.com/Jordan-Pierce/CoralNet-Toolbox/releases/download/docs-assets/Rectangles.gif" alt="Rectangle Annotation" width="250" style="border-radius: 8px;"/><br>**📐 Rectangle Annotation** | <img src="https://github.com/Jordan-Pierce/CoralNet-Toolbox/releases/download/docs-assets/Polygons.gif" alt="Polygon Annotation" width="250" style="border-radius: 8px;"/><br>**🔷 Multi-Polygon Annotation** |
 |:---:|:---:|:---:|
 
 ### 🤖 **AI-Powered Analysis**
 
-| <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classification.gif" alt="Classification" width="250" style="border-radius: 8px;"/><br>**🧠 Image Classification** | <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Object_Detection.gif" alt="Object Detection" width="250" style="border-radius: 8px;"/><br>**🎯 Object Detection** | <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Instance_Segmentation.gif" alt="Instance Segmentation" width="250" style="border-radius: 8px;"/><br>**🎭 Instance Segmentation** |
+| <img src="https://github.com/Jordan-Pierce/CoralNet-Toolbox/releases/download/docs-assets/Classification.gif" alt="Classification" width="250" style="border-radius: 8px;"/><br>**🧠 Image Classification** | <img src="https://github.com/Jordan-Pierce/CoralNet-Toolbox/releases/download/docs-assets/Object_Detection.gif" alt="Object Detection" width="250" style="border-radius: 8px;"/><br>**🎯 Object Detection** | <img src="https://github.com/Jordan-Pierce/CoralNet-Toolbox/releases/download/docs-assets/Instance_Segmentation.gif" alt="Instance Segmentation" width="250" style="border-radius: 8px;"/><br>**🎭 Instance Segmentation** |
 |:---:|:---:|:---:|
 
 ### 🔬 **Advanced Capabilities**
 
-| <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Segment_Anything.gif" alt="SAM" width="250" style="border-radius: 8px;"/><br>**🪸 Segment Anything (SAM)** | <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Polygons.gif" alt="Polygon Classification" width="250" style="border-radius: 8px;"/><br>**🔍 Polygon Classification** | <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Work_Areas.gif" alt="Work Areas" width="250" style="border-radius: 8px;"/><br>**📍 Region-based Detection** |
+| <img src="https://github.com/Jordan-Pierce/CoralNet-Toolbox/releases/download/docs-assets/Segment_Anything.gif" alt="SAM" width="250" style="border-radius: 8px;"/><br>**🪸 Segment Anything (SAM)** | <img src="https://github.com/Jordan-Pierce/CoralNet-Toolbox/releases/download/docs-assets/Classifying_Polygons.gif" alt="Polygon Classification" width="250" style="border-radius: 8px;"/><br>**🔍 Polygon Classification** | <img src="https://github.com/Jordan-Pierce/CoralNet-Toolbox/releases/download/docs-assets/Work_Areas.gif" alt="Work Areas" width="250" style="border-radius: 8px;"/><br>**📍 Region-based Detection** |
 |:---:|:---:|:---:|
 
 ### ✂️ **Editing & Processing Tools**
 
-| <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Cut.gif" alt="Cut Tool" width="250" style="border-radius: 8px;"/><br>**✂️ Cut** | <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Combine.gif" alt="Combine Tool" width="250" style="border-radius: 8px;"/><br>**🔗 Combine** | <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Simplify.gif" alt="Simplify Tool" width="250" style="border-radius: 8px;"/><br>**🎨 Simplify** |
+| <img src="https://github.com/Jordan-Pierce/CoralNet-Toolbox/releases/download/docs-assets/Cut.gif" alt="Cut Tool" width="250" style="border-radius: 8px;"/><br>**✂️ Cut** | <img src="https://github.com/Jordan-Pierce/CoralNet-Toolbox/releases/download/docs-assets/Combine.gif" alt="Combine Tool" width="250" style="border-radius: 8px;"/><br>**🔗 Combine** | <img src="https://github.com/Jordan-Pierce/CoralNet-Toolbox/releases/download/docs-assets/Simplify.gif" alt="Simplify Tool" width="250" style="border-radius: 8px;"/><br>**🎨 Simplify** |
 |:---:|:---:|:---:|
 
 </div>

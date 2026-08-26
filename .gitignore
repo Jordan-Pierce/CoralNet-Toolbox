@@ -143,5 +143,8 @@ datasets/
 .github/copilot-instructions.md
 .github/agents
 
+# Claude
+.claude/
+
 # pixi
 .pixi/
