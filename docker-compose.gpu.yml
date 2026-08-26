@@ -1,0 +1,21 @@
+# GPU overlay for docker-compose.yml.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
+#
+# Kept out of the base file because Compose has no conditionals: a device
+# reservation that names the nvidia driver is a hard requirement, and a host
+# without the NVIDIA container runtime cannot even start the stack. Splitting
+# it means the default path works on a Mac while a CUDA host is one flag away.
+#
+# Requires the NVIDIA Container Toolkit on the host. Verify with:
+#   docker info --format '{{json .Runtimes}}'      # should mention nvidia
+
+services:
+  coralnet:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
