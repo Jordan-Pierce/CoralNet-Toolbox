@@ -404,7 +404,7 @@ class ScatterPlotItem(QGraphicsItem):
             except Exception as _e:
                 pass  # fall through to per-point loop on any failure
 
-        # Shared pen/color objects re-used across iterations to reduce object churn
+        # Shared pen/color objects reused across iterations to reduce object churn
         _faint_pen = QPen()
         _faint_pen.setCosmetic(True)
         _point_pen = QPen()
