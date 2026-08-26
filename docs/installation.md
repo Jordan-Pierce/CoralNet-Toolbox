@@ -194,23 +194,31 @@ Or without compose:
 ```bash
 docker build -t coralnet-toolbox .
 
-docker run --rm -it --gpus all --shm-size=2g -p 6901:6901     -e VNC_PW=coralnet     -v "$PWD/data:/home/kasm-user/data"     coralnet-toolbox
+# Launcher: mounts ./data only if it exists, adds --gpus only if available
+./docker/run.sh
+```
+
+Or fully by hand:
+
+```bash
+docker run --rm -it --gpus all --shm-size=2g -p 6901:6901     -e VNC_USER=user -e VNC_PW=password     -v "$PWD/data:/home/kasm-user/data"     coralnet-toolbox
 ```
 
 Then browse to **https://localhost:6901**:
 
 | | |
 |---|---|
-| Username | `kasm_user` |
-| Password | value of `VNC_PW` (default `coralnet`) |
+| Username | value of `VNC_USER` (default `user`) |
+| Password | value of `VNC_PW` (default `password`) |
 
 The certificate is self-signed, so the browser will warn on first visit.
 
 **Notes**
 
 - **Your images.** The app's file dialogs see the *container's* filesystem, not
-  your machine's. Mount a host folder (`-v`, as above) so imagery shows up under
-  `~/data`, or use the upload/download buttons in the KasmVNC toolbar.
+  your machine's. `docker/run.sh` mounts `./data` at `~/data` when that folder
+  exists; override the source with `CORALNET_DATA=/some/path`. You can also use
+  the upload/download buttons in the KasmVNC toolbar.
 - **GPU.** `--gpus all` requires the NVIDIA Container Toolkit. Without it the
   container still runs, on CPU. The image pins a CUDA build of torch via the
   `TORCH_CUDA` build arg (default `cu128`); Blackwell cards (RTX 50-series)

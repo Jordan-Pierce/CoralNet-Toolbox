@@ -107,6 +107,21 @@ RUN if [ "$INSTALL_CHROME" = "true" ]; then \
 COPY docker/custom_startup.sh $STARTUPDIR/custom_startup.sh
 RUN chmod +x $STARTUPDIR/custom_startup.sh
 
+# ---------------------------------------------------------------------------
+# Login credentials
+#
+# Kasm hardcodes the literal username `kasm_user` in five places: the VNC
+# password entry, and the auth tokens for the audio, upload and gamepad
+# sidecars. Only renaming the VNC one would let you log in but break the
+# upload/download toolbar, so rewrite all five to honour $VNC_USER.
+#
+# The sed patterns are single-quoted so the build shell leaves them alone;
+# the variables are expanded by vnc_startup.sh at container start.
+# ---------------------------------------------------------------------------
+ENV VNC_USER=user
+ENV VNC_PW=password
+RUN sed -i       -e 's/kasm_user:\$VNC_PW/${VNC_USER}:$VNC_PW/g'       -e 's/-u kasm_user -wo/-u ${VNC_USER} -wo/'       $STARTUPDIR/vnc_startup.sh  && echo "rewrote $(grep -c '\${VNC_USER}' $STARTUPDIR/vnc_startup.sh) references"  && ! grep -qE 'kasm_user[^_]' $STARTUPDIR/vnc_startup.sh
+
 ENV QT_QPA_PLATFORM=xcb \
     QT_X11_NO_MITSHM=1
 

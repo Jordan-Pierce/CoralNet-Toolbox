@@ -1,7 +1,9 @@
 # Step 1: single-session smoke test.
 #
 #   docker compose up --build
-#   -> https://localhost:6901   (user: kasm_user, password: $VNC_PW)
+#   -> https://localhost:6901   (user: user, password: password)
+#
+# For a run that mounts ./data only when it exists, use docker/run.sh instead.
 #
 # This same image is what the multi-user setup spawns per user later, so
 # whatever works here carries forward.
@@ -17,7 +19,8 @@ services:
     ports:
       - "6901:6901"
     environment:
-      VNC_PW: ${VNC_PW:-coralnet}
+      VNC_USER: ${VNC_USER:-user}
+      VNC_PW: ${VNC_PW:-password}
     volumes:
       # Host imagery, visible to the app's file dialogs at ~/data.
       #
