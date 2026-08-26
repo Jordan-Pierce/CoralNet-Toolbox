@@ -16,13 +16,13 @@ pip install uv
 
 If you have an **NVIDIA GPU with CUDA**, you can install the corresponding versions of `CUDA` and `PyTorch` for full GPU acceleration.
 
-Below is an example for CUDA 12.9:
+Below is an example for CUDA 12.8:
 ```bash
 # Install CUDA toolkit and compiler
-conda install nvidia/label/cuda-12.9.0::cuda-nvcc -y
-conda install nvidia/label/cuda-12.9.0::cuda-toolkit -y
+conda install nvidia/label/cuda-12.8.0::cuda-nvcc -y
+conda install nvidia/label/cuda-12.8.0::cuda-toolkit -y
 
-# Install PyTorch with CUDA 12.9
+# Install PyTorch with CUDA 12.8
 uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu129
 ```
 
@@ -103,11 +103,11 @@ git clone https://github.com/Jordan-Pierce/CoralNet-Toolbox.git
 cd CoralNet-Toolbox
 
 # Install CUDA requirements (if applicable)
-conda install nvidia/label/cuda-12.9.0::cuda-nvcc -y
-conda install nvidia/label/cuda-12.9.0::cuda-toolkit -y
+conda install nvidia/label/cuda-12.8.0::cuda-nvcc -y
+conda install nvidia/label/cuda-12.8.0::cuda-toolkit -y
 
 # Install PyTorch with CUDA support
-uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu129
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 
 # Install the toolbox in development mode
 pip install -e .
@@ -131,7 +131,7 @@ git fetch
 git pull
 
 # Update your environment
-pip install -e . -U
+uv pip install -e . -U
 ```
 
 ### Install from GitHub Directly
@@ -140,10 +140,10 @@ You can also install the `toolbox` from the GitHub repo without cloning:
 
 ```bash
 # Install from main branch
-pip install git+https://github.com/Jordan-Pierce/CoralNet-Toolbox.git@main -U
+uv pip install git+https://github.com/Jordan-Pierce/CoralNet-Toolbox.git@main -U
 
 # Or install from a different branch (e.g., for testing experimental features)
-pip install git+https://github.com/Jordan-Pierce/CoralNet-Toolbox.git@branch-name -U
+uv pip install git+https://github.com/Jordan-Pierce/CoralNet-Toolbox.git@branch-name -U
 ```
 
 ## 🧹 Cleanup
@@ -174,6 +174,8 @@ y
 ## ⚠️ MacOS Users
 
 > **Version 1.0.0 and later** rely heavily on `PyQtADS`, which cannot be installed on macOS. **Do not upgrade from version 0.0.105** until this is resolved.
+
+An optional workaround is to run `toolbox` through docker (see below).
 
 ## 🐳 Docker (run in a browser)
 
@@ -225,6 +227,26 @@ The certificate is self-signed, so the browser will warn on first visit.
   require `cu128` or newer.
 - **The app is the session.** Closing the toolbox window restarts it rather than
   ending the session. Stop the container to end it.
+### Interface lockout
+
+`LOCKOUT_LEVEL` controls how much of the container the user can reach. It is
+read at container start, so one image serves every level.
+
+| Level | Behaviour |
+|---|---|
+| `1` | Full XFCE desktop: panel, file manager, right-click menu, window decorations. For development. |
+| `2` | **Default.** Kiosk: openbox only. No panel, no desktop, no file manager, no menus, no window decorations, no window-management keybindings. The toolbox fills the screen and cannot be closed or minimised. |
+| `3` | Reserved for OS-level isolation. **Not implemented** - the container refuses to start rather than silently giving you level 2. |
+
+```bash
+docker run -e LOCKOUT_LEVEL=1 ...      # desktop, for debugging
+LOCKOUT_LEVEL=1 ./docker/run.sh        # same via the launcher
+```
+
+Levels 1 and 2 lock the *interface*. They stop a user wandering off into the
+desktop; they do not stop a determined one reaching the filesystem through the
+application's own file dialogs. That is what level 3 is for.
+
 - **One user per container.** Everyone pointed at the same port shares one
   screen and one mouse. Serving multiple people means one container each, behind
   a router - not covered here.

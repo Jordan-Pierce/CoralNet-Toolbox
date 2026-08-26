@@ -14,7 +14,8 @@ PORT="${PORT:-6901}"
 
 args=(--rm -it --name coralnet --shm-size=2g -p "${PORT}:6901"
       -e VNC_USER="${VNC_USER:-user}"
-      -e VNC_PW="${VNC_PW:-password}")
+      -e VNC_PW="${VNC_PW:-password}"
+      -e LOCKOUT_LEVEL="${LOCKOUT_LEVEL:-2}")
 
 # A plain `-v` would silently CREATE an empty, root-owned ./data on the host if
 # the path were missing. Only mount what is really there.
@@ -32,5 +33,6 @@ else
     echo "gpu:   no nvidia runtime detected, running on CPU"
 fi
 
+echo "lock:  LOCKOUT_LEVEL=${LOCKOUT_LEVEL:-2} (1=desktop, 2=kiosk, 3=unimplemented)"
 echo "open:  https://localhost:${PORT}  (user: ${VNC_USER:-user})"
 exec docker run "${args[@]}" "$IMAGE"

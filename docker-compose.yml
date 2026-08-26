@@ -19,6 +19,7 @@ services:
     ports:
       - "6901:6901"
     environment:
+      LOCKOUT_LEVEL: ${LOCKOUT_LEVEL:-2}
       VNC_USER: ${VNC_USER:-user}
       VNC_PW: ${VNC_PW:-password}
     volumes:

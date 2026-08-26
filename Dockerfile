@@ -108,6 +108,29 @@ COPY docker/custom_startup.sh $STARTUPDIR/custom_startup.sh
 RUN chmod +x $STARTUPDIR/custom_startup.sh
 
 # ---------------------------------------------------------------------------
+# Interface lockout
+#
+#   LOCKOUT_LEVEL=1  full XFCE desktop (development)
+#   LOCKOUT_LEVEL=2  kiosk: openbox only, no desktop, no decorations (default)
+#   LOCKOUT_LEVEL=3  OS-level isolation -- NOT IMPLEMENTED, refuses to start
+#
+# Read at container start, so one image serves every level:
+#   docker run -e LOCKOUT_LEVEL=1 ...
+# ---------------------------------------------------------------------------
+# Installed here rather than in the apt layer near the top of this file: that
+# layer sits above torch and the requirements install, so adding a 2 MB package
+# to it would invalidate ~12 GB of cache on every kiosk-config change.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openbox x11-utils \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY docker/openbox-rc.xml /etc/xdg/openbox/rc.xml
+COPY docker/entrypoint.sh $STARTUPDIR/coralnet_entrypoint.sh
+RUN chmod +x $STARTUPDIR/coralnet_entrypoint.sh
+
+ENV LOCKOUT_LEVEL=2
+
+# ---------------------------------------------------------------------------
 # Login credentials
 #
 # Kasm hardcodes the literal username `kasm_user` in five places: the VNC
@@ -144,3 +167,9 @@ RUN mkdir -p $HOME/data && chown -R 1000:0 $HOME
 
 USER 1000
 EXPOSE 6901
+
+# Wraps Kasm's original entrypoint chain (kasm_default_profile.sh ->
+# vnc_startup.sh -> kasm_startup.sh) to translate LOCKOUT_LEVEL into the
+# START_DE / START_XFCE4 variables vnc_startup.sh reads. CMD is unchanged.
+ENTRYPOINT ["/dockerstartup/coralnet_entrypoint.sh"]
+CMD ["--wait"]

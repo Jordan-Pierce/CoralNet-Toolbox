@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Kiosk window-manager profile for LOCKOUT_LEVEL=2.
+
+  The empty <keyboard> and <mouse> sections are deliberate, not unfinished:
+  they remove Alt-F4, Alt-Tab, and the desktop right-click menu, which are the
+  three ordinary ways out of a single-application session. A single desktop
+  removes workspace switching for the same reason.
+-->
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+
+  <theme>
+    <keepBorder>no</keepBorder>
+    <animateIconify>no</animateIconify>
+  </theme>
+
+  <desktops>
+    <number>1</number>
+    <names><name>Toolbox</name></names>
+  </desktops>
+
+  <!-- no window-management keybindings at all -->
+  <keyboard>
+  </keyboard>
+
+  <!-- no desktop menus, no titlebar actions -->
+  <mouse>
+  </mouse>
+
+  <applications>
+    <!-- The toolbox main window: undecorated and filling the screen. Matching
+         on type="normal" keeps this rule off dialogs. -->
+    <application class="*" type="normal">
+      <decor>no</decor>
+      <maximized>true</maximized>
+    </application>
+
+    <!-- Dialogs keep their natural size (the app has 600+ message boxes) but
+         lose decorations, so there is no close button to orphan them. -->
+    <application class="*" type="dialog">
+      <decor>no</decor>
+      <position force="yes">
+        <x>center</x>
+        <y>center</y>
+      </position>
+    </application>
+  </applications>
+
+</openbox_config>
