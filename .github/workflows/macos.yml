@@ -38,8 +38,8 @@ jobs:
             env:
                 UV_SYSTEM_PYTHON: 1
           
-          - name: Test import coralnet_toolbox
-            run: |
-                python -c "import coralnet_toolbox; print('Successfully imported coralnet_toolbox')"
+          - name: Smoke test (imports the GUI tree, builds the main window)
+            run: python tests/run_tests.py
             env:
                 UV_SYSTEM_PYTHON: 1
+                QT_QPA_PLATFORM: offscreen

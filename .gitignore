@@ -141,4 +141,7 @@ datasets/
 
 # Copilot
 .github/copilot-instructions.md
+.github/agents
 
+# pixi
+.pixi/

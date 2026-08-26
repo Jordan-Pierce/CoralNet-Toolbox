@@ -38,7 +38,7 @@ pip install uv
 If you have an NVIDIA GPU with `CUDA`, install `PyTorch` with `CUDA` support for full acceleration.
 
 ```bash
-# Example for CUDA 12.8; use your version of CUDA
+# Example for CUDA 12.8 for a NVIDIA 5090 (blackwell); use your version of CUDA
 uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 ```
 
@@ -55,6 +55,14 @@ uv pip install coralnet-toolbox
 ```bash
 coralnet-toolbox
 ```
+
+
+### 🧭 Alternative Installations
+
+`pixi` and `Docker` installations are also available for those already comfortable with those
+tools. See the [Installation Guide](https://jordan-pierce.github.io/CoralNet-Toolbox/installation)
+for details.
+
 
 To remove a problematic package, type the following:
 

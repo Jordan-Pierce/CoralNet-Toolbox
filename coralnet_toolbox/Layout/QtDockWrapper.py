@@ -1,7 +1,4 @@
-# Critial: order of imports matter
-import PyQt5.QtCore  # noqa: F401
-import PyQtAds  # noqa: F401
-from PyQtAds import ads
+from coralnet_toolbox.Layout.QtAdsCompat import ads
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QMenu, QMenuBar, QToolBar, QWidget, 
