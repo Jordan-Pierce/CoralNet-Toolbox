@@ -42,7 +42,7 @@ jobs:
             - name: Discover typos with codespell
               run: codespell --skip="*.csv,*.geojson,*.json,*.js,*.html,*cff,*.pdf,./.git" --ignore-words-list="aci,acount,hist"
             - name: PKG-TEST
-              run: python -m unittest discover tests/ -v
+              run: python tests/run_tests.py
               env:
                   QT_QPA_PLATFORM: offscreen
             - name: Build docs

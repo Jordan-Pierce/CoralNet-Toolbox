@@ -9,6 +9,9 @@ and only failed when the application was actually launched.
 
 The tests below import the real GUI tree and build the main window, which is
 what exercises those dependencies.
+
+Run these through `tests/run_tests.py`, not `unittest` directly -- see the note
+in that file about Qt and interpreter shutdown.
 """
 
 import os
@@ -55,7 +58,7 @@ class TestDependencyImports(unittest.TestCase):
         from coralnet_toolbox.Layout.QtAdsCompat import ads
         for symbol in ("CDockManager", "CDockWidget", "CDockAreaWidget"):
             with self.subTest(symbol=symbol):
-                self.assertTrue(hasattr(ads, symbol), f"ads.{symbol} missing")
+                self.assertTrue(hasattr(ads, symbol), "ads." + symbol + " missing")
 
 
 class TestImportSurface(unittest.TestCase):
@@ -84,18 +87,21 @@ class TestMainWindow(unittest.TestCase):
     Catches breakage that survives a successful import: missing Qt platform
     plugins, docking symbols that exist but do not work, and layout
     serialization that no longer round-trips.
+
+    One window is built for the whole class. Building several leaves multiple
+    CDockManagers alive at once, which is not how the application runs and
+    makes teardown considerably more fragile.
     """
 
     @classmethod
     def setUpClass(cls):
         from PyQt5.QtWidgets import QApplication
         from coralnet_toolbox.theme import apply_theme
-        cls.app = QApplication.instance() or QApplication([])
-        apply_theme(cls.app)
-
-    def _build_window(self):
         from coralnet_toolbox import __version__
         from coralnet_toolbox.QtMainWindow import MainWindow
+
+        cls.app = QApplication.instance() or QApplication([])
+        apply_theme(cls.app)
 
         # MainWindow.__init__ ends with a "check for updates" call that GETs
         # pypi.org. A smoke test should not depend on the network, nor poll
@@ -103,23 +109,24 @@ class TestMainWindow(unittest.TestCase):
         original = MainWindow.open_check_for_updates_dialog
         MainWindow.open_check_for_updates_dialog = lambda self, *a, **k: None
         try:
-            window = MainWindow(__version__)
+            cls.window = MainWindow(__version__)
         finally:
             MainWindow.open_check_for_updates_dialog = original
 
-        self.addCleanup(window.close)
-        return window
+    @classmethod
+    def tearDownClass(cls):
+        # Destroy the window while the QApplication is still alive and the
+        # interpreter is still healthy, rather than leaving it to shutdown.
+        window, cls.window = cls.window, None
+        window.close()
+        window.deleteLater()
+        cls.app.processEvents()
 
     def test_main_window_builds_with_docks(self):
-        window = self._build_window()
-        self.assertGreater(len(window.dock_manager.dockWidgetsMap()), 0)
+        self.assertGreater(len(self.window.dock_manager.dockWidgetsMap()), 0)
 
     def test_layout_state_round_trips(self):
-        dock_manager = self._build_window().dock_manager
+        dock_manager = self.window.dock_manager
         state = dock_manager.saveState()
         self.assertGreater(state.size(), 0)
         self.assertTrue(dock_manager.restoreState(state))
-
-
-if __name__ == "__main__":
-    unittest.main()
