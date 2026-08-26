@@ -9,7 +9,10 @@ pycocotools
 ultralytics>=8.4.80
 lightly-train[ultralytics]
 open-clip-torch>=2.20.0
-pynvvideocodec
+# NVIDIA GPU video decode. No Mac has an NVIDIA GPU, and there are no macOS
+# wheels -- without this marker pip/uv falls back to the 1.0.2 sdist, which
+# fails to build against modern setuptools (no pkg_resources).
+pynvvideocodec; platform_system != "Darwin"
 scikit-learn
 umap-learn
 faiss-cpu

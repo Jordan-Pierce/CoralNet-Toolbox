@@ -39,7 +39,7 @@ jobs:
                 UV_SYSTEM_PYTHON: 1
           
           - name: Smoke test (imports the GUI tree, builds the main window)
-            run: python -m unittest discover tests/ -v
+            run: python tests/run_tests.py
             env:
                 UV_SYSTEM_PYTHON: 1
                 QT_QPA_PLATFORM: offscreen
