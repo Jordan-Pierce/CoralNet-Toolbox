@@ -11,7 +11,7 @@ purely where they are hung. Normalising here keeps the call sites free of
 build-detection logic.
 """
 
-# Critial: order of imports matter
+# Critical: order of imports matter
 import PyQt5.QtCore  # noqa: F401
 import PyQtAds
 
