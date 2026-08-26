@@ -3,7 +3,27 @@
 #   docker compose up --build
 #   -> https://localhost:6901   (user: user, password: password)
 #
-# For a run that mounts ./data only when it exists, use docker/run.sh instead.
+# This file is CPU-only, so `docker compose up` starts on any host. A device
+# reservation cannot be made conditional in Compose: with the nvidia block
+# below in this file, the command fails outright on every machine without the
+# NVIDIA container runtime -- any Mac, and any CPU-only Linux or Windows box --
+# with "could not select device driver "nvidia"". The GPU is opted into with an
+# overlay instead:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
+#
+# To keep a bare `docker compose up` GPU-enabled on a CUDA machine, export
+# COMPOSE_FILE. Note the separator is platform-specific -- ":" on Linux/macOS,
+# ";" on Windows (Compose reads COMPOSE_PATH_SEPARATOR to decide):
+#
+#   export COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml     # Linux/macOS
+#   $env:COMPOSE_FILE="docker-compose.yml;docker-compose.gpu.yml"     # PowerShell
+#
+# docker/run.sh and docker/run.cmd probe for the runtime and pass --gpus
+# themselves, so they need none of this.
+#
+# The toolbox reports which device it actually got in its bottom-left corner:
+# turtle = CPU, rabbit/rocket = CUDA. Worth a glance if you expected a GPU.
 #
 # This same image is what the multi-user setup spawns per user later, so
 # whatever works here carries forward.
@@ -33,10 +53,3 @@ services:
       - ${CORALNET_DATA:-./data}:/home/kasm-user/data
     # Qt and torch both want more than Docker's default 64 MB of /dev/shm
     shm_size: "2gb"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]

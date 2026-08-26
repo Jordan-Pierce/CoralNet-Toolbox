@@ -83,6 +83,36 @@ uv pip install -U coralnet-toolbox==[version_number]
 
 > **Note**: If you have `torch` installed with `CUDA`, adding `-U` may trigger a regression to the CPU version. If this occurs, uninstall `torch` and `torchvision`, and reinstall the CUDA versions.
 
+
+## 🧊 Alternative: One-Command Install with `pixi`
+
+> The `conda` + `uv` steps above are the supported default and what most users should follow.
+> `pixi` and Docker (below) are alternatives for those already comfortable
+> with those tools.
+
+[`pixi`](https://pixi.sh) builds the whole environment -- Python, `Qt`, `GDAL`, and a `CUDA` build of
+`PyTorch` -- from a committed lock file, so every machine resolves to identical dependencies. No
+`conda create`, no separate `PyTorch` index URL, no `CUDA` toolkit install.
+
+```bash
+# Clone and enter the repository
+git clone https://github.com/Jordan-Pierce/CoralNet-Toolbox.git
+cd CoralNet-Toolbox
+
+# Build the environment from pixi.lock
+pixi install
+
+# Launch
+pixi run start
+```
+
+GPU support is automatic: `pixi` selects a `CUDA` build of `PyTorch` when your driver supports it,
+including Blackwell (RTX 50-series).
+
+> **Platforms**: Windows and Linux only. macOS is not yet supported on this path because
+> `conda-forge` has no `qt5-advanced-docking-system` build for Apple Silicon.
+
+
 ## 🐍 Install from Source (GitHub Repository)
 
 If you prefer to clone the repository and run the `toolbox` from the source code:
@@ -175,7 +205,21 @@ y
 
 > **Version 1.0.0 and later** rely heavily on `PyQtADS`, which cannot be installed on macOS. **Do not upgrade from version 0.0.105** until this is resolved.
 
-An optional workaround is to run `toolbox` through docker (see below).
+An optional workaround is to run the `toolbox` through Docker (see below). This
+sidesteps the problem entirely: `PyQtADS` and `Qt` run inside the Linux
+container and only the rendered interface reaches your browser, so nothing Qt
+related is installed on macOS at all.
+
+Two macOS caveats:
+
+- **Build for `amd64`.** There is no `arm64` build of `PyQtADS` from any source,
+  and Google ships no `arm64` Chrome `.deb`, so an Apple Silicon Mac must build
+  and run the image emulated: add `--platform linux/amd64` to `docker build` /
+  `docker run`, or set `platform: linux/amd64` on the service. Expect it to be
+  slow.
+- **CPU only.** No Mac has CUDA, so use the plain `docker compose up` shown
+  below and never the GPU overlay. Passing `--build-arg TORCH_CUDA=cpu` also
+  saves several GB of image that would go unused.
 
 ## 🐳 Docker (run in a browser)
 
@@ -195,6 +239,17 @@ docker compose up
 
 Compose resolves relative paths itself, so `./data` is mounted correctly on
 Linux, macOS and Windows alike.
+
+`docker-compose.yml` requests no GPU, so the command above starts on any host.
+On a machine with an NVIDIA GPU and the NVIDIA Container Toolkit, add the
+overlay to pass the card through:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
+```
+
+The toolbox shows the device it actually got in its bottom-left corner
+(turtle = CPU, rabbit/rocket = CUDA), so it is easy to confirm.
 
 **Or via a launcher.** Both mount `./data` only when that folder exists, and
 add `--gpus` only when the NVIDIA runtime is available:

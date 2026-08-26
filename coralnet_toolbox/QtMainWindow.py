@@ -8,10 +8,7 @@ from packaging import version
 
 import torch
 
-# Important, order this way
-import PyQt5.QtCore
-import PyQtAds
-from PyQtAds import ads
+from coralnet_toolbox.Layout.QtAdsCompat import ads
 
 from PyQt5.QtGui import QMouseEvent, QIcon
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize, QTimer

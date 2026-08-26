@@ -7,6 +7,8 @@
 # a working clipboard, and file upload/download in the web toolbar.
 #
 #   docker compose up --build          # simplest, and shell-independent
+#                                      # CPU-only; for a GPU add:
+#                                      #   -f docker-compose.yml -f docker-compose.gpu.yml
 #
 # or:
 #   docker build -t coralnet-toolbox:local .

@@ -56,6 +56,14 @@ uv pip install coralnet-toolbox
 coralnet-toolbox
 ```
 
+
+### 🧭 Alternative Installations
+
+`pixi` and `Docker` installations are also available for those already comfortable with those
+tools. See the [Installation Guide](https://jordan-pierce.github.io/CoralNet-Toolbox/installation)
+for details.
+
+
 To remove a problematic package, type the following:
 
 ```bash

@@ -25,11 +25,6 @@ classifiers = [
 [project.scripts]
 coralnet-toolbox = "coralnet_toolbox.main:run"
 
-[project.optional-dependencies]
-all = [
-    "coralnet-toolbox[extra]",
-]
-
 [tool]
 [tool.setuptools.packages.find]
 include = ["coralnet_toolbox*"]
@@ -71,3 +66,121 @@ Homepage = "https://github.com/Jordan-Pierce/CoralNet-Toolbox"
 [build-system]
 requires = ["setuptools>=64", "setuptools_scm>=8"]
 build-backend = "setuptools.build_meta"
+
+
+# ---------------------------------------------------------------------------
+# Pixi
+#
+# `pixi install` builds the whole environment -- Python, Qt, GDAL, CUDA torch --
+# from a committed lock file. No `conda create`, no `--index-url` for torch, no
+# per-machine drift. `pixi run start` launches the toolbox.
+#
+# requirements.txt stays authoritative for the PyPI wheel (see
+# [tool.setuptools.dynamic] above). The dependency list below duplicates it in
+# conda-forge naming; the two must be kept in sync by hand.
+# ---------------------------------------------------------------------------
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["linux-64", "win-64"]
+
+# osx-arm64 is deliberately absent: conda-forge has no
+# qt5-advanced-docking-system build for it, so `pyqtads` cannot resolve there.
+# osx-64 solves (CPU torch only) but is untested -- add it once someone can.
+
+[tool.pixi.system-requirements]
+# Blackwell (sm_120) needs a 12.8+ driver. Selects the cuda12x torch builds.
+cuda = "12.8"
+
+[tool.pixi.dependencies]
+python = "3.10.*"
+
+# --- GUI ---
+pyqt = ">=5.15.11"
+pyqtads = "*"          # PyQtAds; conda-forge ships it for linux/win, PyPI barely does
+pyqtgraph = "*"
+
+# --- torch ---
+# conda-forge resolves a cuda12x build here, which is what the pip
+# `--index-url .../whl/cu128` dance exists to achieve. Nothing to pin by hand.
+pytorch-gpu = "*"
+torchvision = "*"
+# Fixes which CUDA runtime the environment gets rather than leaving it to the
+# solver. Note win-64/py310 has no cuda129 pytorch build, so there the pair is
+# pytorch-cuda128 + torchvision-cuda129 sharing one 12.9 cudart -- allowed by
+# CUDA 12.x minor-version compatibility, but the reason to pin rather than
+# let it drift.
+cuda-version = "12.9.*"
+
+# --- vision / ML ---
+ultralytics = ">=8.4.80"
+open-clip-torch = ">=2.20.0"
+transformers = ">=5.0.0"
+timm = ">=1.0.0"
+scikit-learn = "*"
+umap-learn = "*"
+pycocotools = "*"
+
+# faiss-cpu is intentionally NOT taken from conda-forge. The conda package of
+# that name is an empty metapackage pointing at `faiss`, and pixi has no purl
+# mapping from it to the PyPI name -- so uv installs the wheel anyway and the
+# two `faiss/` module trees collide in site-packages. One source only; the
+# PyPI wheel is self-contained.
+
+# Unpinned, this resolves to a Qt6-linked OpenCV build, whose Qt plugins then
+# collide with PyQt5's inside the same process -- the same class of failure the
+# Dockerfile works around by force-reinstalling opencv-python-headless. The
+# build pin propagates to `opencv` and `py-opencv`, so cv2 stays windowless.
+libopencv = { version = "*", build = "headless*" }
+
+# --- geospatial ---
+rasterio = "*"
+geopandas = "*"
+pyogrio = "*"
+
+# --- misc ---
+ujson = "*"
+requests = "*"
+selenium = ">=4.15.2"
+beautifulsoup4 = ">=4.12.2"
+webdriver-manager = "*"
+dill = "*"
+seaborn = "*"
+psutil = "*"
+gputil = "*"
+
+[tool.pixi.pypi-dependencies]
+coralnet-toolbox = { path = ".", editable = true }
+
+# conda-forge's lightly-train is stuck at 0.14.1, which pins `pytorch <2.6` and
+# so silently drags the entire environment back to torch 2.5.1 -- no Blackwell
+# kernels. The PyPI release requires only `torch>=2.1`, and pixi lets the conda
+# torch satisfy it.
+lightly-train = { version = ">=0.17", extras = ["ultralytics"] }
+
+# Not packaged for conda-forge.
+yolo-tiling = ">=0.0.31"
+
+# Wheels exist for linux/win only, and there is no sdist to fall back on.
+# VideoRaster already treats it as optional at runtime.
+#
+# Capped below 2.2: the 2.2.2 wheel's _PyNvVideoCodec extension fails to load
+# on Windows ("The specified procedure could not be found") against the CUDA
+# runtime this environment pins, which silently drops GPU video decode. 2.1.0
+# is the version already proven in the existing conda setup.
+[tool.pixi.target.linux-64.pypi-dependencies]
+pynvvideocodec = "<2.2"
+
+[tool.pixi.target.win-64.pypi-dependencies]
+pynvvideocodec = "<2.2"
+
+[tool.pixi.activation.env]
+# Without this, Windows puts %APPDATA%\Python\Python310\site-packages on
+# sys.path AHEAD of the environment's own site-packages, so any package the
+# user has ever `pip install --user`-ed for 3.10 silently shadows the pinned
+# one -- verified here with PyQt5, PyQtAds, numpy, cv2 and rasterio all
+# resolving outside the env. The lock file is worthless if this is unset.
+PYTHONNOUSERSITE = "1"
+
+[tool.pixi.tasks]
+start = "coralnet-toolbox"
