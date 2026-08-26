@@ -306,6 +306,8 @@
                                 <li><b>Backspace</b>: Discard unfinalized predictions (SAM/YOLOE).</li>
                                 <li><b>Backspace</b>: Cancel the current cutting line.</li>
                             </ul>
+                             <b>Feature Select Tool</b>
+                             <ul><li><b>Backspace</b>: Clear all points and start over.</li></ul>
                              <b>Work Areas</b>
                              <ul><li><b>Ctrl + Shift + Backspace</b>: Remove all work areas in the image.</li></ul>
                         </span>
@@ -316,7 +318,9 @@
                     <kbd>Q</kbd>
                     <kbd>W</kbd>
                     <kbd>E</kbd>
-                    <kbd>R</kbd>
+                    <kbd class="hotkey">R
+                        <span class="tooltiptext"><b>Annotation Editing</b><ul><li><b>Ctrl + R</b>: Bake or unbake annotations (open dialog; Select tool must be active).</li></ul></span>
+                    </kbd>
                     <kbd>T</kbd>
                     <kbd>Y</kbd>
                     <kbd>U</kbd>
@@ -329,7 +333,7 @@
                 </div>
                 <div class="key-row">
                     <kbd class="hotkey">A
-                        <span class="tooltiptext"><b>Selection</b><ul><li><b>Ctrl + A</b>: Select all annotations, unselect all annotations.</li></ul></span>
+                        <span class="tooltiptext"><b>Selection</b><ul><li><b>Ctrl + A</b>: Select all annotations (click empty space to unselect).</li></ul></span>
                     </kbd>
                     <kbd class="hotkey">S
                         <span class="tooltiptext"><b>General</b><ul><li><b>Ctrl + S</b>: Save the project.</li></ul></span>
@@ -377,14 +381,10 @@
                     </kbd>
                     <kbd>V</kbd>
                     <kbd>B</kbd>
-                    <kbd>N</kbd>
+                    <kbd class="hotkey">N
+                        <span class="tooltiptext"><b>Feature Select Tool</b><ul><li><b>N</b>: Refresh the yellow crosshair point suggestion.</li></ul></span>
+                    </kbd>
                     <kbd>M</kbd>
-                    <kbd class="hotkey">&lt;<br>,
-                        <span class="tooltiptext"><b>Selection</b><ul><li><b>Ctrl + Shift + &lt;</b>: Select all annotations in the current image.</li></ul></span>
-                    </kbd>
-                    <kbd class="hotkey">&gt;<br>.
-                        <span class="tooltiptext"><b>Selection</b><ul><li><b>Ctrl + Shift + &gt;</b>: Unselect all annotations in the current image.</li></ul></span>
-                    </kbd>
                     <kbd>?<br>/</kbd>
                     <kbd class="hotkey long-key">Shift
                          <span class="tooltiptext">
@@ -415,6 +415,7 @@
                                 <li><b>Ctrl + Alt</b>: Switch from SelectTool to the active annotation tool (e.g., PatchTool for PatchAnnotation).</li>
                                 <li><b>Ctrl + Alt</b>: Create a temporary work area from the current view.</li>
                                 <li><b>Ctrl + Alt</b>: When PatchTool is active, switch back to SelectTool.</li>
+                                <li><b>Ctrl + Alt</b>: Toggle between Binary and Multi-class mode (Feature Select Tool).</li>
                             </ul>
                         </span>
                     </kbd>
@@ -426,6 +427,8 @@
                             <ul><li><b>Space</b>: Create a work area from the current view.</li></ul>
                              <b>SAM / YOLOE Tools</b>
                              <ul><li><b>Space</b>: Set work area, run prediction, finalize, and exit.</li></ul>
+                             <b>Feature Select Tool</b>
+                             <ul><li><b>Space</b>: Finalize and create a Polygon/Mask annotation.</li></ul>
                         </span>
                     </kbd>
                     <kbd class="hotkey">Alt
@@ -465,6 +468,10 @@
                                     <li><b>Drag</b>: Move a selected annotation.</li>
                                     <li><b>Ctrl + Click</b>: Add positive point (SAM Tool).</li>
                                 </ul>
+                                <b>Feature Select Tool</b>
+                                <ul>
+                                    <li><b>Ctrl + Click</b>: Add positive prototype / assign patch to selected label.</li>
+                                </ul>
                                 <b>Window Specific</b>
                                  <ul>
                                     <li><b>Double Click</b>: Load image (Image Window).</li>
@@ -481,6 +488,8 @@
                                     <li><b>Ctrl + Shift + Scroll</b>: Change polygon vertex count.</li>
                                     <li><b>Ctrl + Scroll</b>: Adjust brush/eraser size (Brush/Erase Tools).</li>
                                 </ul>
+                                <b>Feature Select Tool</b>
+                                <ul><li><b>Ctrl + Scroll</b>: Adjust similarity/reject threshold.</li></ul>
                             </span>
                         </div>
                         <div class="mouse-right-button hotkey">
@@ -494,6 +503,8 @@
                                 </ul>
                                 <b>Model Interaction</b>
                                 <ul><li><b>Ctrl + Click</b>: Add negative point (SAM Tool).</li></ul>
+                                <b>Feature Select Tool</b>
+                                <ul><li><b>Ctrl + Click</b>: Add negative prototype / undo last point for selected label.</li></ul>
                             </span>
                         </div>
                     </div>
