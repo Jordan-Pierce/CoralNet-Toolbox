@@ -129,15 +129,6 @@ Traditional benthic imagery analysis is time-consuming. Manual annotation, data 
 
 ---
 
-### 🏗️ **Repository Structure**
-
-<div align="center">
-  <a href="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/diagram.svg">
-    <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/diagram.svg" alt="Visualization of the codebase" width="80%">
-  </a>
-</div>
-
----
 
 ## 🌍 About CoralNet
 
