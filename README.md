@@ -1,7 +1,7 @@
 # CoralNet-Toolbox 🪸🧰
 
 <div align="center">
-<img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/coralnet_toolbox.png" alt="CoralNet-Toolbox" width="300">
+<img src="https://github.com/Jordan-Pierce/CoralNet-Toolbox/releases/download/docs-assets/coralnet_toolbox.png" alt="CoralNet-Toolbox" width="300">
 <p><strong>AI-Powered Annotation for Coral Reef Analysis</strong>. An unofficial toolkit to supercharge your <a href="https://coralnet.ucsd.edu/">CoralNet</a> workflows.</p>
 </div>
 
@@ -121,7 +121,7 @@ Version `1.0.0` and greater relies heavily on a package (`PyQtADS`) that cannot 
 
 <div align="center">
   <a href="https://youtube.com/playlist?list=PLG5z9IbwhS5NQT3B2jrg3hxQgilDeZak9&feature=shared">
-    <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/toolbox_qt.PNG" alt="Video Tutorial Series" width="80%" style="border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
+    <img src="https://github.com/Jordan-Pierce/CoralNet-Toolbox/releases/download/docs-assets/toolbox_qt.PNG" alt="Video Tutorial Series" width="80%" style="border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
   </a>
   
   <p><strong>🎬 Complete playlist covering all major features and workflows</strong></p>
