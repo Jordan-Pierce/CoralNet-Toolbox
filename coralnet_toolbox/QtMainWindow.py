@@ -2679,7 +2679,9 @@ class MainWindow(QMainWindow):
     def open_capture_view_dialog(self):
         """Open the Capture View dialog to screenshot the application or annotation view"""
         try:
-            self.untoggle_all_tools()
+            # Deliberately no untoggle_all_tools() here: capturing is read-only, and
+            # untoggling drops the current selection and any in-progress drawing,
+            # which would alter the very view the user is trying to capture.
             self.capture_view_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
