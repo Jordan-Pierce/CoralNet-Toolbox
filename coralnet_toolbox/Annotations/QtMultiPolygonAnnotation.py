@@ -411,6 +411,7 @@ class MultiPolygonAnnotation(Annotation):
 
         # Restore additional properties from the dict
         annotation.data = data.get('data', {})
+        annotation.metadata = data.get('metadata', {})
 
         # Convert machine_confidence keys back to Label objects
         machine_confidence = {}

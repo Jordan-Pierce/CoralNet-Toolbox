@@ -647,6 +647,7 @@ class RectangleAnnotation(Annotation):
             
         # Add any additional data from the dictionary
         annotation.data = data.get('data', {})
+        annotation.metadata = data.get('metadata', {})
 
         # Convert machine_confidence keys back to Label objects
         machine_confidence = {}

@@ -30,6 +30,7 @@ from coralnet_toolbox.QtAnnotationWindow import AnnotationWindow
 from coralnet_toolbox.QtConfidenceWindow import ConfidenceWindow
 from coralnet_toolbox.QtImageWindow import ImageWindow
 from coralnet_toolbox.QtLabelWindow import LabelWindow
+from coralnet_toolbox.QtMetaDataWindow import MetaDataWindow
 
 # Explorer Windows
 from coralnet_toolbox.Explorer import AnnotationViewerWindow
@@ -55,6 +56,7 @@ from coralnet_toolbox.IO import (
     ImportTagLabAnnotations,
     ImportSquidleAnnotations,
     ImportMaskAnnotations,
+    ImportMetadataSchema,
     ExportLabels,
     ExportTagLabLabels,
     ExportAnnotations,
@@ -63,7 +65,8 @@ from coralnet_toolbox.IO import (
     ExportCoralNetAnnotations,
     ExportViscoreAnnotations,
     ExportTagLabAnnotations,
-    ExportSpatialMetrics,
+    ExportMetadataSchema,
+    ExportMetadataTable,
     CaptureView,
     OpenProject,
     SaveProject
@@ -221,6 +224,7 @@ class MainWindow(QMainWindow):
         self.image_window = ImageWindow(self)
         self.label_window = LabelWindow(self)
         self.confidence_window = ConfidenceWindow(self)     
+        self.metadata_window = MetaDataWindow(self)
         self.timer_window = TimerWindow(self)   
         self.performance_window = PerformanceWindow(self)
 
@@ -252,6 +256,7 @@ class MainWindow(QMainWindow):
         self.import_taglab_annotations = ImportTagLabAnnotations(self)
         self.import_squidle_annotations = ImportSquidleAnnotations(self)
         self.import_mask_annotations_dialog = ImportMaskAnnotations(self)
+        self.import_metadata_schema_dialog = ImportMetadataSchema(self)
         self.export_labels = ExportLabels(self)
         self.export_taglab_labels = ExportTagLabLabels(self)
         self.export_annotations = ExportAnnotations(self)
@@ -260,7 +265,8 @@ class MainWindow(QMainWindow):
         self.export_taglab_annotations = ExportTagLabAnnotations(self)
         self.export_mask_annotations_dialog = ExportMaskAnnotations(self)
         self.export_geojson_annotations_dialog = ExportGeoJSONAnnotations(self)
-        self.export_spatial_metrics_dialog = ExportSpatialMetrics(self)
+        self.export_metadata_schema_dialog = ExportMetadataSchema(self)
+        self.export_metadata_table_dialog = ExportMetadataTable(self)
         self.capture_view_dialog = CaptureView(self)
         self.import_frames_dialog = ImportFrames(self)
         self.import_videos = ImportVideos(self)
@@ -337,6 +343,7 @@ class MainWindow(QMainWindow):
         self.import_images_action.setToolTip("Import images (PNG, JPG, etc.) to the project")
         self.import_images_action.triggered.connect(self.import_images.import_images)
         self.import_rasters_menu.addAction(self.import_images_action)
+        self.import_rasters_menu.addSeparator()
         # Import Videos
         self.import_videos_action = QAction("Videos", self)
         self.import_videos_action.setToolTip("Import video files to the project")
@@ -347,6 +354,7 @@ class MainWindow(QMainWindow):
         self.import_frames_action.setToolTip("Extract and import frames from a video file")
         self.import_frames_action.triggered.connect(self.open_import_frames_dialog)
         self.import_rasters_menu.addAction(self.import_frames_action)
+        self.import_rasters_menu.addSeparator()
         # Import Orthomosaics
         self.import_orthomosaics_action = QAction("Orthomosaics", self)
         self.import_orthomosaics_action.setToolTip("Import orthomosaic GeoTIFF files with geospatial metadata")
@@ -403,6 +411,17 @@ class MainWindow(QMainWindow):
         self.import_mask_annotations_action.setToolTip("Import mask annotations from PNG images")
         self.import_mask_annotations_action.triggered.connect(self.open_import_mask_annotations_dialog)
         self.import_annotations_menu.addAction(self.import_mask_annotations_action)
+
+        # Import Metadata Schema
+        self.import_metadata_schema_action = QAction("Metadata", self)
+        self.import_metadata_schema_action.setToolTip(
+            "Import metadata field definitions from a YAML file")
+        self.import_metadata_schema_action.triggered.connect(
+            self.import_metadata_schema_dialog.import_metadata_schema)
+        self.import_menu.addAction(self.import_metadata_schema_action)
+
+        # Add a separator
+        self.import_menu.addSeparator()
 
         # Dataset submenu
         self.import_dataset_menu = self.import_menu.addMenu("Dataset")
@@ -466,6 +485,26 @@ class MainWindow(QMainWindow):
         self.export_mask_annotations_action.triggered.connect(self.open_export_mask_annotations_dialog)
         self.export_annotations_menu.addAction(self.export_mask_annotations_action)
 
+        # Metadata submenu
+        self.export_metadata_menu = self.export_menu.addMenu("Metadata")
+        # Export Metadata Schema
+        self.export_metadata_schema_action = QAction("Schema (YAML)", self)
+        self.export_metadata_schema_action.setToolTip(
+            "Export metadata field definitions to a YAML file for reuse in another project")
+        self.export_metadata_schema_action.triggered.connect(
+            self.export_metadata_schema_dialog.export_metadata_schema)
+        self.export_metadata_menu.addAction(self.export_metadata_schema_action)
+        # Export Metadata Data Table
+        self.export_metadata_table_action = QAction("Data Table (CSV)", self)
+        self.export_metadata_table_action.setToolTip(
+            "Export a table of metadata values, one row per annotation")
+        self.export_metadata_table_action.triggered.connect(
+            self.open_export_metadata_table_dialog)
+        self.export_metadata_menu.addAction(self.export_metadata_table_action)
+
+        # Add a separator
+        self.export_menu.addSeparator()
+
         # Dataset submenu
         self.export_dataset_menu = self.export_menu.addMenu("Dataset")
         # Export Classification Dataset
@@ -489,14 +528,6 @@ class MainWindow(QMainWindow):
         self.export_semantic_dataset_action.triggered.connect(self.open_semantic_export_dataset_dialog)
         self.export_dataset_menu.addAction(self.export_semantic_dataset_action)
 
-        # Add a separator
-        self.export_menu.addSeparator()
-
-        # Export Spatial Metrics (at Export menu level, not in Annotations submenu)
-        self.export_spatial_metrics_action = QAction("Spatial Metrics", self)
-        self.export_spatial_metrics_action.setToolTip("Export spatial metrics and statistics")
-        self.export_spatial_metrics_action.triggered.connect(self.open_export_spatial_metrics_dialog)
-        self.export_menu.addAction(self.export_spatial_metrics_action)
         
         # Add a separator
         self.file_menu.addSeparator()
@@ -1228,6 +1259,17 @@ class MainWindow(QMainWindow):
         # Setup Confidence Dock (Right) using DockWrapper
         self.confidence_dock = DockWrapper("Confidence", "ConfidenceDock", self.confidence_window, self)
         
+        # Setup Metadata Dock (Right, tabbed with Confidence) using DockWrapper
+        self.metadata_dock = DockWrapper("Metadata", "MetaDataDock", self.metadata_window, self)
+
+        if hasattr(self.metadata_window, 'create_action_toolbar'):
+            self.metadata_dock.add_toolbar(self.metadata_window.create_action_toolbar())
+        self.metadata_dock.add_toolbar_break()
+        if hasattr(self.metadata_window, 'create_filter_toolbar'):
+            self.metadata_dock.add_toolbar(self.metadata_window.create_filter_toolbar())
+        if hasattr(self.metadata_window, 'create_bottom_toolbar'):
+            self.metadata_dock.add_toolbar(self.metadata_window.create_bottom_toolbar(), Qt.BottomToolBarArea)
+
         # Setup Performance Dock (Right) using DockWrapper
         self.performance_dock = DockWrapper("Performance", "PerformanceDock", self.performance_window, self)
 
@@ -1268,6 +1310,11 @@ class MainWindow(QMainWindow):
         # 3. Add Confidence dock below the Label dock
         conf_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.confidence_dock, label_area)
         
+        # 3b. TAB the Metadata dock into Confidence -- both answer "what is
+        # this annotation?", so they share one tab group rather than stacking.
+        self.dock_manager.addDockWidget(ads.CenterDockWidgetArea, self.metadata_dock, conf_area)
+        conf_area.setCurrentDockWidget(self.confidence_dock)
+
         # 4. Add Performance dock below Confidence
         perf_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.performance_dock, conf_area)
 
@@ -1285,7 +1332,8 @@ class MainWindow(QMainWindow):
             ("Annotation", self.annotation_dock, False),
             ("Rasters", self.rasters_dock, False),
             ("Labels", self.labels_dock, False),
-            ("Confidence", self.confidence_dock, True),
+            ("Confidence", self.confidence_dock, False),
+            ("Metadata", self.metadata_dock, True),
             ("Gallery", self.gallery_dock, False),
             ("Embeddings", self.embeddings_dock, True),
             ("Performance", self.performance_dock, False),
@@ -1323,6 +1371,10 @@ class MainWindow(QMainWindow):
             self.dock_manager,
             layout_name='default'
         )
+
+        # A layout cached by an older version has no entry for a dock added
+        # since, and ADS drops those rather than defaulting them.
+        self._reattach_orphaned_docks()
 
         # Update menu checkmarks to match restored dock visibility
         for dock_name, dock_widget, _ in dock_windows:
@@ -2878,6 +2930,58 @@ class MainWindow(QMainWindow):
             # the QSS colour still applies, so fail quietly.
             pass
 
+    def _reattach_orphaned_docks(self):
+        """Re-place docks a restored layout left orphaned or stranded.
+
+        Two cases, both caused by a layout saved before a dock existed rather
+        than by anything the user chose:
+
+        - The dock is missing from the layout entirely. ADS drops it instead of
+          defaulting it, leaving it with no dock area and unreachable even from
+          the Windows menu.
+        - The dock was re-added by an earlier run of this method and ended up
+          alone in its own area, rather than tabbed where it belongs.
+
+        A dock the user has deliberately grouped, floated, or closed is left
+        alone -- only a lone, docked, un-tabbed panel is corrected.
+        """
+        # (dock, area to use, dock to place it against)
+        fallbacks = [
+            (self.metadata_dock, ads.CenterDockWidgetArea, self.confidence_dock),
+        ]
+
+        for dock, area, anchor in fallbacks:
+            try:
+                dock_area = dock.dockAreaWidget()
+                anchor_area = anchor.dockAreaWidget() if anchor is not None else None
+
+                if dock_area is not None:
+                    # Already where it should be, or grouped with something.
+                    if anchor_area is None or dock_area is anchor_area:
+                        continue
+                    # Sharing an area with other panels is a real arrangement.
+                    if dock_area.dockWidgetsCount() > 1:
+                        continue
+                    # Floating is an explicit user choice.
+                    if dock.isFloating():
+                        continue
+
+                if anchor_area is not None:
+                    self.dock_manager.addDockWidget(area, dock, anchor_area)
+                elif dock_area is None:
+                    # The anchor was closed too; fall back to a bare right dock.
+                    self.dock_manager.addDockWidget(ads.RightDockWidgetArea, dock)
+                else:
+                    continue
+
+                dock.toggleView(True)
+                # Raise the anchor last: adding and showing the dock both bring
+                # it to the front, and the anchor is the one to land on.
+                if anchor_area is not None:
+                    anchor_area.setCurrentDockWidget(anchor)
+            except Exception as e:
+                print(f"Could not re-attach the '{dock.windowTitle()}' dock: {e}")
+
     def refresh_scale_sensitive_ui(self):
         """Refresh widget sizes and styles that depend on the selected UI scale."""
         self.dock_manager.setStyleSheet(app_theme.build_dock_stylesheet())
@@ -2893,6 +2997,7 @@ class MainWindow(QMainWindow):
             self.rasters_dock,
             self.labels_dock,
             self.confidence_dock,
+            self.metadata_dock,
             self.performance_dock,
             self.timer_dock,
             self.gallery_dock,
@@ -2909,6 +3014,7 @@ class MainWindow(QMainWindow):
             self.image_window,
             self.label_window,
             self.confidence_window,
+            self.metadata_window,
             self.performance_window,
             self.timer_window,
             self.annotation_viewer_window,
@@ -2934,25 +3040,25 @@ class MainWindow(QMainWindow):
                     action.setChecked(True)
                 break
 
-    def open_export_spatial_metrics_dialog(self):
-        """Open the Export Spatial Metrics dialog to export spatial metrics."""
+    def open_export_metadata_table_dialog(self):
+        """Open the metadata data table export dialog."""
         # Check if there are loaded images
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
-                                "Export Spatial Metrics",
+                                "Export Metadata",
                                 "No images are present in the project.")
             return
 
         # Check if there are annotations
         if not len(self.annotation_window.annotations_dict):
             QMessageBox.warning(self,
-                                "Export Spatial Metrics",
+                                "Export Metadata",
                                 "No annotations are present in the project.")
             return
 
         try:
             self.untoggle_all_tools()
-            self.export_spatial_metrics_dialog.exec_()
+            self.export_metadata_table_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

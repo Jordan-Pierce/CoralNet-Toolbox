@@ -1,4 +1,3 @@
-import os
 import warnings
 
 from PyQt5.QtGui import QPixmap, QColor, QPainter, QCursor
@@ -8,10 +7,9 @@ from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout
                              QMenu, QToolBar, QStatusBar)
 
 from coralnet_toolbox.utilities import scale_pixmap
-from coralnet_toolbox.utilities import compose_volume_unit
-from coralnet_toolbox.utilities import format_measurement
-from coralnet_toolbox.utilities import convert_measurement
-from coralnet_toolbox.utilities import compose_surface_area_unit
+
+from coralnet_toolbox.MetaData.QtBuiltInFields import compute_builtin_fields
+from coralnet_toolbox.MetaData.QtBuiltInFields import format_unconvertible_note
 
 from coralnet_toolbox.Icons import get_icon
 from coralnet_toolbox import theme as app_theme
@@ -494,258 +492,15 @@ class ConfidenceWindow(QWidget):
 
     def create_annotation_tooltip(self, annotation):
         """Create a formatted tooltip for the annotation displayed in the graphics view."""
-        tooltip_parts = []
-        # Scale units encountered that cannot be converted to the display unit.
-        # Collected so the tooltip can explain why the unit dropdown appears to
-        # do nothing, instead of silently showing unconverted numbers.
-        unconvertible_units = set()
-        
-        # Annotation ID
-        tooltip_parts.append(f"<b>Annotation ID:</b> {annotation.id}")
-        
-        # Label information
-        if annotation.label:
-            tooltip_parts.append(f"<b>Label:</b> {annotation.label.short_label_code}")
-            if annotation.label.long_label_code != annotation.label.short_label_code:
-                tooltip_parts.append(f"<b>Full Name:</b> {annotation.label.long_label_code}")
-        
-        # Confidence information
-        if annotation.user_confidence:
-            # Get the label with highest confidence
-            top_label = max(annotation.user_confidence.keys(), key=lambda k: annotation.user_confidence[k])
-            top_confidence = annotation.user_confidence[top_label] * 100
-            tooltip_parts.append(f"<b>User Confidence:</b> {top_confidence:.1f}% ({top_label.short_label_code})")
-        
-        if annotation.machine_confidence:
-            # Get the label with highest confidence
-            top_label = max(annotation.machine_confidence.keys(), key=lambda k: annotation.machine_confidence[k])
-            top_confidence = annotation.machine_confidence[top_label] * 100
-            tooltip_parts.append(f"<b>Machine Confidence:</b> {top_confidence:.1f}% ({top_label.short_label_code})")
-        
-        # Verification status
-        tooltip_parts.append(f"<b>Verified:</b> {'Yes' if annotation.verified else 'No'}")
-        
-        # Image path
-        if annotation.image_path:
-            tooltip_parts.append(f"<b>Source Image:</b> {os.path.basename(annotation.image_path)}")
-        
-        # Cropped image dimensions
-        if annotation.cropped_image:
-            width = annotation.cropped_image.width()
-            height = annotation.cropped_image.height()
-            tooltip_parts.append(f"<b>Cropped Dimensions:</b> {width} x {height}")
-            
-        # Area
-        try:
-            # Check for new scaled method first
-            scaled_area_data = annotation.get_scaled_area()
-            if scaled_area_data:
-                base_area_value, base_linear_unit = scaled_area_data
-                
-                # Get the target unit from MainWindow's dropdown
-                target_unit = self.main_window.current_unit_scale
-                
-                # Convert, keeping the unit the value is genuinely in. If the
-                # raster's scale units are not a convertible length (e.g. the
-                # 'unknown' assigned to a world file with no CRS), the value is
-                # left alone and labelled with its own unit instead of being
-                # relabelled as the target.
-                converted_area, area_unit, converted = convert_measurement(
-                    base_area_value, base_linear_unit, target_unit, squared=True
-                )
-                if not converted:
-                    unconvertible_units.add(base_linear_unit)
-                
-                tooltip_parts.append(
-                    f"<b>Area:</b> {format_measurement(converted_area)} {area_unit}²")
-            else:
-                # Fallback to pixel area
-                area = annotation.get_area()
-                if area is not None:
-                    tooltip_parts.append(f"<b>Area:</b> {format_measurement(area)} pixels²")
-        except (NotImplementedError, AttributeError):
-            pass  # No area method available
-        
-        # Perimeter
-        try:
-            # Check for new scaled method first
-            scaled_perimeter_data = annotation.get_scaled_perimeter()
-            if scaled_perimeter_data:
-                base_perimeter_value, base_linear_unit = scaled_perimeter_data
-                
-                # Get the target unit from MainWindow's dropdown
-                target_unit = self.main_window.current_unit_scale
-                
-                # Convert the perimeter value (linear)
-                converted_perimeter, perim_unit, converted = convert_measurement(
-                    base_perimeter_value, base_linear_unit, target_unit
-                )
-                if not converted:
-                    unconvertible_units.add(base_linear_unit)
-                
-                tooltip_parts.append(
-                    f"<b>Perimeter:</b> {format_measurement(converted_perimeter)} {perim_unit}")
-            else:
-                # Fallback to pixel perimeter
-                perimeter = annotation.get_perimeter()
-                if perimeter is not None:
-                    tooltip_parts.append(f"<b>Perimeter:</b> {format_measurement(perimeter)} pixels")
-        except (NotImplementedError, AttributeError):
-            pass  # No perimeter method available
-                
-        # Get the raster to access z_channel and scale
-        raster = self.main_window.image_window.raster_manager.get_raster(annotation.image_path)
-        
-        if raster:
-            # Lazily load the z_channel
-            z_channel = raster.z_channel_lazy
-            scale_x = raster.scale_x
-            scale_y = raster.scale_y
-            scale_units = raster.scale_units
-            z_unit = raster.z_unit
-            z_nodata = raster.z_nodata
-            z_data_type = raster.z_data_type
-            
-            # Check if all required data is available
-            if z_channel is not None and scale_x is not None and scale_y is not None and scale_units is not None:
-                try:
-                    # --- Volume Calculation ---
-                    # Pass z_unit to ensure proper unit conversion in the calculation
-                    volume = annotation.get_scaled_volume(z_channel, scale_x, scale_y, z_unit,
-                                                          z_nodata=z_nodata, z_data_type=z_data_type)
-                    if volume is not None:
-                        # The unit is composed from both scales rather than assumed:
-                        # a relative z-channel (e.g. 'px') yields 'm² · px', not 'm³'
-                        vol_units = compose_volume_unit(scale_units, z_unit)
-                        tooltip_parts.append(
-                            f"<b>Volume:</b> {format_measurement(volume)} {vol_units}")
-                    
-                    # --- 3D Surface Area Calculation ---
-                    # Pass z_unit to ensure proper unit conversion in the calculation
-                    surface_area = annotation.get_scaled_surface_area(z_channel, scale_x, scale_y, z_unit,
-                                                                      z_nodata=z_nodata,
-                                                                      z_data_type=z_data_type)
-                    if surface_area is not None:
-                        surf_units = compose_surface_area_unit(scale_units, z_unit)
-                        tooltip_parts.append(
-                            f"<b>3D Surface Area:</b> {format_measurement(surface_area)} {surf_units}")
-                    
-                    # --- Z Coverage ---
-                    # 3D metrics are computed over valid pixels only, so a partly
-                    # empty z-channel under-reports. Surface that rather than hide it.
-                    coverage = annotation.get_z_coverage(z_channel,
-                                                         z_nodata=z_nodata,
-                                                         z_data_type=z_data_type)
-                    if coverage is not None and coverage < 1.0:
-                        tooltip_parts.append(f"<b>Z Coverage:</b> {coverage * 100:.0f}%")
-                
-                except Exception as e:
-                    print(f"Error calculating 3D metrics for tooltip: {e}")
-                    # Don't add to tooltip if calculation fails
-        
-        # Morphology metrics (only for annotation types that support it)
-        try:
-            morph_data = annotation.get_morphology()
-            if morph_data:
-                
-                # Get target unit for display
-                target_unit = self.main_window.current_unit_scale
-                has_scale = 'units' in morph_data and morph_data['units'] is not None
-                
-                # Dimensions section
-                if has_scale and 'major_axis_scaled' in morph_data:
-                    base_unit = morph_data['units']
-                    # Convert major/minor axis to target units
-                    major_scaled, axis_unit, converted = convert_measurement(
-                        morph_data['major_axis_scaled'], base_unit, target_unit
-                    )
-                    minor_scaled, _, _ = convert_measurement(
-                        morph_data['minor_axis_scaled'], base_unit, target_unit
-                    )
-                    if not converted:
-                        unconvertible_units.add(base_unit)
-                    tooltip_parts.append(
-                        f"<b>Length:</b> {format_measurement(major_scaled)} {axis_unit}")
-                    tooltip_parts.append(
-                        f"<b>Width:</b> {format_measurement(minor_scaled)} {axis_unit}")
-                else:
-                    # Show pixel values
-                    if morph_data.get('major_axis') is not None:
-                        tooltip_parts.append(f"<b>Length:</b> {morph_data['major_axis']:.2f} px")
-                    if morph_data.get('minor_axis') is not None:
-                        tooltip_parts.append(f"<b>Width:</b> {morph_data['minor_axis']:.2f} px")
-                
-                # Orientation
-                if morph_data.get('orientation') is not None:
-                    tooltip_parts.append(f"<b>Orientation:</b> {morph_data['orientation']:.1f}°")
-                
-                # Shape descriptors (unitless ratios)
-                if morph_data.get('aspect_ratio') is not None:
-                    tooltip_parts.append(f"<b>Aspect Ratio:</b> {morph_data['aspect_ratio']:.3f}")
-                if morph_data.get('roundness') is not None:
-                    tooltip_parts.append(f"<b>Roundness:</b> {morph_data['roundness']:.3f}")
-                if morph_data.get('circularity') is not None:
-                    tooltip_parts.append(f"<b>Circularity:</b> {morph_data['circularity']:.3f}")
-                if morph_data.get('compactness') is not None:
-                    tooltip_parts.append(f"<b>Compactness:</b> {morph_data['compactness']:.3f}")
-                if morph_data.get('solidity') is not None:
-                    tooltip_parts.append(f"<b>Solidity:</b> {morph_data['solidity']:.3f}")
-                if morph_data.get('convexity') is not None:
-                    tooltip_parts.append(f"<b>Convexity:</b> {morph_data['convexity']:.3f}")
-                if morph_data.get('elongation') is not None:
-                    tooltip_parts.append(f"<b>Elongation:</b> {morph_data['elongation']:.3f}")
-                if morph_data.get('rectangularity') is not None:
-                    tooltip_parts.append(f"<b>Rectangularity:</b> {morph_data['rectangularity']:.3f}")
-                if morph_data.get('eccentricity') is not None:
-                    tooltip_parts.append(f"<b>Eccentricity:</b> {morph_data['eccentricity']:.3f}")
-                
-                # Hull metrics
-                if has_scale and 'hull_area_scaled' in morph_data:
-                    base_unit = morph_data['units']
-                    hull_area, hull_area_unit, converted = convert_measurement(
-                        morph_data['hull_area_scaled'], base_unit, target_unit, squared=True
-                    )
-                    hull_perim, hull_perim_unit, _ = convert_measurement(
-                        morph_data['hull_perimeter_scaled'], base_unit, target_unit
-                    )
-                    if not converted:
-                        unconvertible_units.add(base_unit)
-                    tooltip_parts.append(
-                        f"<b>Hull Area:</b> {format_measurement(hull_area)} {hull_area_unit}²")
-                    tooltip_parts.append(
-                        f"<b>Hull Perimeter:</b> {format_measurement(hull_perim)} {hull_perim_unit}")
-                else:
-                    if morph_data.get('hull_area') is not None:
-                        tooltip_parts.append(f"<b>Hull Area:</b> {morph_data['hull_area']:.2f} px²")
-                    if morph_data.get('hull_perimeter') is not None:
-                        tooltip_parts.append(f"<b>Hull Perimeter:</b> {morph_data['hull_perimeter']:.2f} px")
-                    
-        except (NotImplementedError, AttributeError):
-            pass  # No morphology method available
-                
-        # Additional data
-        if hasattr(annotation, 'data') and annotation.data:
-            data_items = []
-            for key, value in annotation.data.items():
-                data_items.append(f"<li><b>{key}:</b> {value}</li>")
-            if data_items:
-                tooltip_parts.append(f"<b>Additional Data:</b><ul>{''.join(data_items)}</ul>")
-        
-        # Scale basis - makes it obvious which scale the numbers came from,
-        # and which unit they are expressed in
-        if annotation.scale_x and annotation.scale_units:
-            scale_text = f"{annotation.scale_x:.6g} {annotation.scale_units}/pixel"
-            scale_source = getattr(raster, 'scale_source', None) if raster else None
-            if scale_source:
-                scale_text += f" <i>({scale_source})</i>"
-            tooltip_parts.append(f"<b>Scale:</b> {scale_text}")
+        # Computed by the shared helper so this tooltip and the Metadata dock
+        # can never disagree about a derived value.
+        fields, unconvertible_units = compute_builtin_fields(annotation, self.main_window)
 
-        if unconvertible_units:
-            units_text = ", ".join(sorted(str(u) for u in unconvertible_units))
-            tooltip_parts.append(
-                f"<i>Scale units ({units_text}) are not a convertible length, "
-                f"so values are shown unconverted and the unit selector has no effect.</i>"
-            )
+        tooltip_parts = [f"<b>{name}:</b> {value}" for name, value in fields.items()]
+
+        note = format_unconvertible_note(unconvertible_units)
+        if note:
+            tooltip_parts.append(f"<i>{note}</i>")
 
         # Set the tooltip
         tooltip_text = "<br>".join(tooltip_parts)
