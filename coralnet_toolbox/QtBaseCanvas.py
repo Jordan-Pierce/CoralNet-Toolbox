@@ -11,7 +11,6 @@ import warnings
 import traceback
 import numpy as np
 
-import pyqtgraph as pg
 from PyQt5.QtGui import (QMouseEvent, QPixmap, QImage, QBrush, QColor, QPen,
                          QTransform, QPainter, QPainterPath, QCursor, qRgba)
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QSize, QObject, QEvent
@@ -19,7 +18,7 @@ from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPixmapItem,
                              QGraphicsItemGroup, QGraphicsEllipseItem, QGraphicsLineItem,
                              QGraphicsItem, QGraphicsPathItem, QLabel, QApplication, QFrame)
 
-from coralnet_toolbox.utilities import get_view_scale
+from coralnet_toolbox.utilities import get_view_scale, get_colormap
 
 from coralnet_toolbox import theme as app_theme
 
@@ -243,7 +242,10 @@ class ColorMapOverlay:
     def _build_color_table(colormap_name, scrim_rgba=None):
         """Return a 256-entry ARGB table; index 0 transparent, 255 optional scrim."""
         n_levels = 254 if scrim_rgba is not None else 255
-        lut = pg.colormap.get(colormap_name).getLookupTable(nPts=n_levels, alpha=True)
+        cmap = get_colormap(colormap_name)
+        if cmap is None:
+            raise ValueError(f"Unknown colormap: {colormap_name!r}")
+        lut = cmap.getLookupTable(nPts=n_levels, alpha=True)
         table = [0]  # index 0 -> 0x00000000 (fully transparent)
         for i in range(n_levels):
             r, g, b, a = (int(v) for v in lut[i])

@@ -2,6 +2,7 @@ PyQt5>=5.15.11
 PyQtADS
 pyqtgraph
 ujson
+PyYAML
 rasterio
 geopandas
 pyogrio

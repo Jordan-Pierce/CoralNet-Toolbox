@@ -688,6 +688,65 @@ def scale_pixmap(pixmap, max_size):
     return scaled_pixmap
 
 
+@lru_cache(maxsize=1)
+def _bundled_colormap_names():
+    """
+    Map lowercased pyqtgraph colormap names to the names on disk.
+
+    Returns:
+        dict: {lowercase name: real name}, empty if the list cannot be read.
+    """
+    import pyqtgraph as pg
+
+    try:
+        return {name.lower(): name for name in pg.colormap.listMaps()}
+    except Exception as e:
+        print(f"Warning: could not list pyqtgraph colormaps: {e}")
+        return {}
+
+
+def get_colormap(name):
+    """
+    Look up a pyqtgraph ColorMap by display name, tolerating capitalisation.
+
+    pyqtgraph resolves an unqualified name by opening a file under its
+    ``colors/maps`` directory, and those files are lowercase ('plasma.csv').
+    The UI labels them capitalised ('Plasma'), which only resolves on a
+    case-insensitive filesystem - so a name that works on Windows and macOS
+    raises FileNotFoundError on Linux (the Docker image), taking the overlay
+    and its dropdown swatches down with it. Match case-insensitively against
+    the bundled maps first, then fall back to matplotlib's larger set for
+    names an older pyqtgraph does not ship.
+
+    Args:
+        name (str): Colormap name in any capitalisation, e.g. 'Plasma'.
+
+    Returns:
+        pyqtgraph.ColorMap or None: The colormap, or None for an empty name,
+            'None', or a name nothing recognises.
+    """
+    import pyqtgraph as pg
+
+    if not name:
+        return None
+    key = str(name).strip()
+    if not key or key.lower() == 'none':
+        return None
+
+    canonical = _bundled_colormap_names().get(key.lower())
+    if canonical is not None:
+        try:
+            return pg.colormap.get(canonical)
+        except Exception as e:
+            print(f"Warning: could not load bundled colormap '{canonical}': {e}")
+
+    # Not shipped by this pyqtgraph build; matplotlib carries the same names
+    try:
+        return pg.colormap.get(key.lower(), source='matplotlib')
+    except Exception:
+        return None
+
+
 # Length units understood by convert_scale_units. Kept in sync with the
 # conversion tables inside that function; used to tell a real length unit from a
 # placeholder such as 'px' (relative depth), which convert_scale_units passes
@@ -705,7 +764,7 @@ LENGTH_UNITS = frozenset([
 ])
 
 
-def convert_measurement(value, base_unit, target_unit, squared=False):
+def convert_measurement(value, base_unit, target_unit, squared=False, power=None):
     """
     Convert a measurement, reporting the unit the result is actually in.
 
@@ -720,18 +779,22 @@ def convert_measurement(value, base_unit, target_unit, squared=False):
         base_unit (str): The unit `value` is currently in.
         target_unit (str): The desired unit.
         squared (bool): True for areas, where the linear factor is squared.
+        power (int): Exponent applied to the linear factor, for measurements
+            that are not lengths or areas -- 3 for a volume. Overrides
+            `squared` when given.
 
     Returns:
         tuple (float, str, bool): The value, the unit it is really in, and
             whether the conversion actually happened.
     """
+    if power is None:
+        power = 2 if squared else 1
+
     if not is_length_unit(base_unit) or not is_length_unit(target_unit):
         # Nothing sensible to convert to or from - leave the value alone
         return value, base_unit, False
 
-    factor = convert_scale_units(1.0, base_unit, target_unit)
-    if squared:
-        factor = factor * factor
+    factor = convert_scale_units(1.0, base_unit, target_unit) ** power
     return value * factor, target_unit, True
 
 

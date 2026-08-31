@@ -225,6 +225,19 @@ class CaptureView(QDialog):
 
         return os.path.abspath(os.path.join(directory, filename))
 
+    def clear_transient_overlays(self):
+        """Clear the active tool's hover overlays so they are not baked into the capture.
+
+        Only the transient crosshair and cursor annotation are removed; the tool stays
+        active and the current selection is left untouched.
+        """
+        tool = self.annotation_window.tools.get(self.annotation_window.selected_tool)
+        if not tool:
+            return
+
+        tool.clear_crosshair()
+        tool.clear_cursor_annotation()
+
     def grab_pixmap(self):
         """Grab the pixmap for the currently selected source."""
         if self.annotation_radio.isChecked():
@@ -253,6 +266,7 @@ class CaptureView(QDialog):
 
         # Hide the dialog so it does not appear in its own capture
         self.hide()
+        self.clear_transient_overlays()
         QApplication.processEvents()
 
         # Set the cursor only after the repaint, so the busy cursor is not captured

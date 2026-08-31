@@ -273,6 +273,10 @@ class ImportSquidleAnnotations:
             for path in images_to_update:
                 self.image_window.update_image_annotations(path)
 
+            # Turn the Squidle record keys stashed in annotation.data into
+            # real, editable metadata fields.
+            self.main_window.metadata_window.promote_imported(new_annotations)
+
             self.annotation_window.load_annotations()
 
             msg = f"Successfully imported {len(new_annotations)} annotations."

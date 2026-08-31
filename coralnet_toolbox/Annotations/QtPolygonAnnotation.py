@@ -1006,6 +1006,7 @@ class PolygonAnnotation(Annotation):
             
         # Set any additional data if present
         annotation.data = data.get('data', {})
+        annotation.metadata = data.get('metadata', {})
 
         # --- Remainder of the method is for handling confidence scores ---
         machine_confidence = {}

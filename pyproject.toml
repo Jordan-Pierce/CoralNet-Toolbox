@@ -140,6 +140,7 @@ pyogrio = "*"
 
 # --- misc ---
 ujson = "*"
+pyyaml = "*"
 requests = "*"
 selenium = ">=4.15.2"
 beautifulsoup4 = ">=4.12.2"
