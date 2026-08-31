@@ -2933,15 +2933,20 @@ class MainWindow(QMainWindow):
             pass
 
     def _reattach_orphaned_docks(self):
-        """Re-place docks a restored layout dropped entirely.
+        """Put docks back where a restored layout could not.
 
-        A layout saved before a dock existed has no entry for it, and ADS drops
-        such a dock rather than defaulting it, leaving it with no dock area and
-        unreachable even from the Windows menu.
+        Two cases, both the result of a layout saved before a dock existed
+        rather than anything the user chose:
 
-        Only that case is corrected. A dock the layout placed anywhere at all is
-        left exactly where the user put it, open or closed -- a panel sitting
-        alone in its own area is a normal arrangement, not damage to repair.
+        - The layout has no entry for the dock at all. ADS drops it instead of
+          defaulting it, leaving it with no dock area and unreachable even from
+          the Windows menu.
+        - An earlier run of this method placed it in an area of its own instead
+          of tabbing it where it belongs.
+
+        Anything the user could plausibly have arranged is left alone: a dock
+        sharing an area with others, a floating dock, or one already grouped
+        with its anchor.
         """
         # (dock, area to use, dock to place it against)
         fallbacks = [
@@ -2950,23 +2955,40 @@ class MainWindow(QMainWindow):
 
         for dock, area, anchor in fallbacks:
             try:
-                # The layout accounted for this dock; whatever it says goes.
-                if dock.dockAreaWidget() is not None:
-                    continue
-
+                dock_area = dock.dockAreaWidget()
                 anchor_area = anchor.dockAreaWidget() if anchor is not None else None
+
+                if dock_area is not None:
+                    if anchor_area is None or dock_area is anchor_area:
+                        continue  # Nothing to fix, or nowhere to move it to.
+                    if dock_area.dockWidgetsCount() > 1:
+                        continue  # Grouped with other panels: a real arrangement.
+                    if dock.isFloating():
+                        continue  # Floating is an explicit choice.
+
+                    # addDockWidget will not relocate a dock that already holds
+                    # an area -- it silently does nothing. Unregister it first,
+                    # which is safe because DockWrapper disables
+                    # DockWidgetDeleteOnClose.
+                    self.dock_manager.removeDockWidget(dock)
+                    # Re-fetch: emptying an area makes ADS reflow the container,
+                    # which can retire the area widget captured above.
+                    anchor_area = anchor.dockAreaWidget()
 
                 if anchor_area is not None:
                     self.dock_manager.addDockWidget(area, dock, anchor_area)
                 else:
-                    # The anchor was closed too; fall back to a bare right dock.
+                    # The anchor is gone too; fall back to a bare right dock.
                     self.dock_manager.addDockWidget(ads.RightDockWidgetArea, dock)
 
                 dock.toggleView(True)
+
                 # Raise the anchor last: adding and showing the dock both bring
                 # it to the front, and the anchor is the one to land on.
-                if anchor_area is not None:
+                anchor_area = anchor.dockAreaWidget() if anchor is not None else None
+                if anchor_area is not None and anchor_area is dock.dockAreaWidget():
                     anchor_area.setCurrentDockWidget(anchor)
+
             except Exception as e:
                 print(f"Could not re-attach the '{dock.windowTitle()}' dock: {e}")
 

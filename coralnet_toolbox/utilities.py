@@ -705,7 +705,7 @@ LENGTH_UNITS = frozenset([
 ])
 
 
-def convert_measurement(value, base_unit, target_unit, squared=False):
+def convert_measurement(value, base_unit, target_unit, squared=False, power=None):
     """
     Convert a measurement, reporting the unit the result is actually in.
 
@@ -720,18 +720,22 @@ def convert_measurement(value, base_unit, target_unit, squared=False):
         base_unit (str): The unit `value` is currently in.
         target_unit (str): The desired unit.
         squared (bool): True for areas, where the linear factor is squared.
+        power (int): Exponent applied to the linear factor, for measurements
+            that are not lengths or areas -- 3 for a volume. Overrides
+            `squared` when given.
 
     Returns:
         tuple (float, str, bool): The value, the unit it is really in, and
             whether the conversion actually happened.
     """
+    if power is None:
+        power = 2 if squared else 1
+
     if not is_length_unit(base_unit) or not is_length_unit(target_unit):
         # Nothing sensible to convert to or from - leave the value alone
         return value, base_unit, False
 
-    factor = convert_scale_units(1.0, base_unit, target_unit)
-    if squared:
-        factor = factor * factor
+    factor = convert_scale_units(1.0, base_unit, target_unit) ** power
     return value * factor, target_unit, True
 
 

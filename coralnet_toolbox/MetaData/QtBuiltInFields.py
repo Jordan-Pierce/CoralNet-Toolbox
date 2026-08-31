@@ -3,9 +3,11 @@ import warnings
 import os
 from collections import OrderedDict
 
+from coralnet_toolbox.utilities import is_length_unit
 from coralnet_toolbox.utilities import compose_volume_unit
 from coralnet_toolbox.utilities import format_measurement
 from coralnet_toolbox.utilities import convert_measurement
+from coralnet_toolbox.utilities import convert_scale_units
 from coralnet_toolbox.utilities import compose_surface_area_unit
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -130,20 +132,52 @@ def compute_builtin_fields(annotation, main_window):
 
         if z_channel is not None and scale_x is not None and scale_y is not None and scale_units is not None:
             try:
-                volume = annotation.get_scaled_volume(z_channel, scale_x, scale_y, z_unit,
+                # get_scaled_volume converts the z-channel to metres internally,
+                # so it must be given metres-per-pixel scales or the result
+                # mixes units -- a 'cm' raster would come back as cm² x m while
+                # being labelled cm³. Feed it metres and convert afterwards,
+                # the same way the CSV export does.
+                to_metres = 1.0
+                base_unit = scale_units
+                if is_length_unit(scale_units):
+                    to_metres = convert_scale_units(1.0, scale_units, 'metre')
+                    base_unit = 'm'
+
+                scale_x_m = scale_x * to_metres
+                scale_y_m = scale_y * to_metres
+
+                volume = annotation.get_scaled_volume(z_channel, scale_x_m, scale_y_m, z_unit,
                                                       z_nodata=z_nodata, z_data_type=z_data_type)
                 if volume is not None:
-                    # The unit is composed from both scales rather than assumed:
-                    # a relative z-channel (e.g. 'px') yields 'm² · px', not 'm³'
-                    vol_units = compose_volume_unit(scale_units, z_unit)
-                    fields['Volume'] = f"{format_measurement(volume)} {vol_units}"
+                    # A real length in z gives a true volume (cube the factor);
+                    # a relative z-channel (e.g. 'px') leaves an un-convertible
+                    # term behind, so only the areal part converts.
+                    z_is_length = not z_unit or is_length_unit(z_unit)
+                    converted_volume, vol_xy_unit, converted = convert_measurement(
+                        volume, base_unit, target_unit, power=3 if z_is_length else 2
+                    )
+                    if not converted:
+                        unconvertible_units.add(base_unit)
 
-                surface_area = annotation.get_scaled_surface_area(z_channel, scale_x, scale_y, z_unit,
+                    # Composed from the unit the value is really in, so the
+                    # label follows the conversion instead of contradicting it.
+                    vol_units = compose_volume_unit(vol_xy_unit, z_unit)
+                    fields['Volume'] = f"{format_measurement(converted_volume)} {vol_units}"
+
+                surface_area = annotation.get_scaled_surface_area(z_channel, scale_x_m, scale_y_m,
+                                                                  z_unit,
                                                                   z_nodata=z_nodata,
                                                                   z_data_type=z_data_type)
                 if surface_area is not None:
-                    surf_units = compose_surface_area_unit(scale_units, z_unit)
-                    fields['3D Surface Area'] = f"{format_measurement(surface_area)} {surf_units}"
+                    # Always an area, whatever z is doing.
+                    converted_surface, surf_xy_unit, converted = convert_measurement(
+                        surface_area, base_unit, target_unit, squared=True
+                    )
+                    if not converted:
+                        unconvertible_units.add(base_unit)
+
+                    surf_units = compose_surface_area_unit(surf_xy_unit, z_unit)
+                    fields['3D Surface Area'] = f"{format_measurement(converted_surface)} {surf_units}"
 
                 # 3D metrics are computed over valid pixels only, so a partly
                 # empty z-channel under-reports. Surface that rather than hide it.
