@@ -688,6 +688,65 @@ def scale_pixmap(pixmap, max_size):
     return scaled_pixmap
 
 
+@lru_cache(maxsize=1)
+def _bundled_colormap_names():
+    """
+    Map lowercased pyqtgraph colormap names to the names on disk.
+
+    Returns:
+        dict: {lowercase name: real name}, empty if the list cannot be read.
+    """
+    import pyqtgraph as pg
+
+    try:
+        return {name.lower(): name for name in pg.colormap.listMaps()}
+    except Exception as e:
+        print(f"Warning: could not list pyqtgraph colormaps: {e}")
+        return {}
+
+
+def get_colormap(name):
+    """
+    Look up a pyqtgraph ColorMap by display name, tolerating capitalisation.
+
+    pyqtgraph resolves an unqualified name by opening a file under its
+    ``colors/maps`` directory, and those files are lowercase ('plasma.csv').
+    The UI labels them capitalised ('Plasma'), which only resolves on a
+    case-insensitive filesystem - so a name that works on Windows and macOS
+    raises FileNotFoundError on Linux (the Docker image), taking the overlay
+    and its dropdown swatches down with it. Match case-insensitively against
+    the bundled maps first, then fall back to matplotlib's larger set for
+    names an older pyqtgraph does not ship.
+
+    Args:
+        name (str): Colormap name in any capitalisation, e.g. 'Plasma'.
+
+    Returns:
+        pyqtgraph.ColorMap or None: The colormap, or None for an empty name,
+            'None', or a name nothing recognises.
+    """
+    import pyqtgraph as pg
+
+    if not name:
+        return None
+    key = str(name).strip()
+    if not key or key.lower() == 'none':
+        return None
+
+    canonical = _bundled_colormap_names().get(key.lower())
+    if canonical is not None:
+        try:
+            return pg.colormap.get(canonical)
+        except Exception as e:
+            print(f"Warning: could not load bundled colormap '{canonical}': {e}")
+
+    # Not shipped by this pyqtgraph build; matplotlib carries the same names
+    try:
+        return pg.colormap.get(key.lower(), source='matplotlib')
+    except Exception:
+        return None
+
+
 # Length units understood by convert_scale_units. Kept in sync with the
 # conversion tables inside that function; used to tell a real length unit from a
 # placeholder such as 'px' (relative depth), which convert_scale_units passes

@@ -7,7 +7,6 @@ from importlib.resources import files
 
 import numpy as np
 
-import pyqtgraph as pg
 from PyQt5.QtCore import Qt, QRectF, QSize
 from PyQt5.QtGui import QIcon, QImage, QPixmap, QPen, QColor, QPainter, QPainterPath
 from PyQt5.QtWidgets import QStyledItemDelegate, QStyle, QStyleOptionComboBox, QComboBox, QStyleOptionViewItem
@@ -187,11 +186,18 @@ class ColormapDelegate(QStyledItemDelegate):
 
     def create_colormap_pixmap(self, name, rect):
         """Generates the gradient pixmap on demand using pyqtgraph."""
+        # Imported here rather than at module scope: utilities pulls in
+        # QtProgressBar, which imports this module.
+        from coralnet_toolbox.utilities import get_colormap
+
         try:
             width = rect.width() if rect.width() > 0 else 100
             height = rect.height() if rect.height() > 0 else 20
-            
-            cmap = pg.colormap.get(name)
+
+            cmap = get_colormap(name)
+            if cmap is None:
+                print(f"Error creating colormap pixmap: unknown colormap {name!r}")
+                return None
             lut = cmap.getLookupTable(nPts=width)
             
             if lut.shape[1] == 3:
