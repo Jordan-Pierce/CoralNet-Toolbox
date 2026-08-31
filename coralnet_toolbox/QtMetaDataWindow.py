@@ -99,6 +99,10 @@ class MetaDataWindow(QWidget):
         # from the explorer windows, so subscribing here covers all of them.
         self.main_window.annotation_manager.selectionChanged.connect(self.on_selection_changed)
 
+        # Built-in values are expressed in the currently selected display unit,
+        # so they have to be re-rendered when that unit changes.
+        self.annotation_window.unitScaleChanged.connect(self.on_unit_scale_changed)
+
         self.refresh()
 
     # ------------------------------------------------------------------
@@ -278,6 +282,64 @@ class MetaDataWindow(QWidget):
         """Refresh when a selected annotation changes underneath us."""
         if annotation in self.annotations:
             self.rebuild()
+
+    def on_unit_scale_changed(self, _unit=None):
+        """Re-render the computed values after the display unit changes."""
+        if not self.annotations:
+            return
+
+        # A unit change is a deliberate click elsewhere, but an edit may still
+        # be queued against the current selection.
+        self.flush_pending()
+
+        # Update the values in place where possible: a full rebuild would
+        # discard the custom editors, along with anything half-typed in one.
+        if not self.refresh_builtin_values():
+            self.rebuild()
+
+    def refresh_builtin_values(self):
+        """Re-render the Built-in rows in place.
+
+        Returns False when the group's shape changed -- a unit that cannot be
+        converted adds an explanatory row -- in which case the caller should
+        fall back to a full rebuild.
+        """
+        group = self.find_group("Built-in")
+        if group is None:
+            return False
+
+        # Several annotations selected: the rows are placeholders, so there is
+        # nothing unit-dependent on screen to re-render.
+        if len(self.annotations) != 1:
+            return True
+
+        fields, unconvertible_units = compute_builtin_fields(self.annotations[0], self.main_window)
+        rows = [(name, str(value)) for name, value in fields.items()
+                if self._matches_filter(name)]
+
+        note = format_unconvertible_note(unconvertible_units)
+        if note:
+            rows.append(("Note", note))
+
+        if group.childCount() != len(rows):
+            return False
+
+        for index, (name, value) in enumerate(rows):
+            child = group.child(index)
+            if child.text(0) != name:
+                return False
+            child.setText(1, value)
+            child.setToolTip(1, value)
+
+        return True
+
+    def find_group(self, title):
+        """Return the top-level group item with the given title, or None."""
+        for index in range(self.tree.topLevelItemCount()):
+            item = self.tree.topLevelItem(index)
+            if item.text(0).split(' (')[0] == title:
+                return item
+        return None
 
     # ------------------------------------------------------------------
     # Tree construction

@@ -101,7 +101,8 @@ class AnnotationWindow(BaseCanvas):
     annotationsMerged = pyqtSignal(object)  # {'original_ids':[...], 'merged': merged_annotation}
     annotationSplit = pyqtSignal(str, object)  # original_annotation_id, [new_annotations]
     annotationGeometryEdited = pyqtSignal(str, object)  # annotation_id, {'old_geom':..., 'new_geom':...}
-    annotationSelectionChanged = pyqtSignal(object)  # list of annotation IDs when selection changes
+    annotationSelectionChanged = pyqtSignal(object)
+    unitScaleChanged = pyqtSignal(str)  # display unit for derived measurements  # list of annotation IDs when selection changes
 
     def __init__(self, main_window, parent=None):
         """Initialize the annotation window with the main window and parent widget."""
@@ -545,9 +546,13 @@ class AnnotationWindow(BaseCanvas):
         # Remember the selected unit
         self.current_unit_scale = to_unit
         
+        # Every derived measurement on screen -- the confidence tooltip, the
+        # Metadata panel's built-in rows -- is now expressed in the wrong unit.
+        # Announce it rather than refreshing one known consumer, so a panel
+        # added later stays correct without editing this method.
+        self.unitScaleChanged.emit(to_unit)
+
         # Refresh the confidence window if an annotation is selected
-        # This is the only refresh needed, as it's the only
-        # change that can happen *while* an annotation is displayed.
         if refresh_confidence and self.main_window.confidence_window.annotation:
             self.main_window.confidence_window.refresh_display()
 
