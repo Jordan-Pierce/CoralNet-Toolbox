@@ -1,0 +1,23 @@
+# Line endings for files that run inside the Linux container.
+#
+# With core.autocrlf=true -- the Windows default -- git rewrites these to CRLF
+# on checkout. Docker then copies the working tree verbatim, and the image dies
+# on startup with a message that names no file:
+#
+#   /usr/bin/env: 'bash\r': No such file or directory
+#   coralnet-1 exited with code 127
+#
+# The repo already stores them with LF; these rules stop the checkout from
+# undoing that. Deliberately scoped rather than a blanket `* text=auto`, which
+# would renormalise unrelated files that are currently committed with CRLF.
+
+*.sh            text eol=lf
+*.bash          text eol=lf
+Dockerfile      text eol=lf
+*.Dockerfile    text eol=lf
+docker-compose*.yml text eol=lf
+docker/*        text eol=lf
+
+# Windows launchers must keep CRLF; cmd.exe mis-parses LF-only batch files.
+*.cmd           text eol=crlf
+*.bat           text eol=crlf
