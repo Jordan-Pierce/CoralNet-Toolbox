@@ -82,6 +82,48 @@ class ImportTagLabAnnotations:
 
         return image_data
 
+    def extract_region_data(self, annotation):
+        """Pull the metadata worth keeping out of a TagLab region.
+
+        TagLab spells these keys with spaces ('instance name', 'blob name');
+        they are renamed here to the underscore form the metadata schema uses,
+        so they arrive as real, editable fields rather than being silently lost.
+
+        'bbox', 'centroid', 'area', 'perimeter' and 'class name' are
+        deliberately skipped: the first four are recomputed from the geometry,
+        and the label is the source of truth for the class.
+        """
+        data = {}
+
+        for source, target in (('instance name', 'instance_name'),
+                               ('blob name', 'blob_name'),
+                               ('note', 'note'),
+                               ('id', 'taglab_id')):
+            value = annotation.get(source)
+            if value is not None and value != '':
+                data[target] = value
+
+        # TagLab's own free-form bag, kept only when it holds something.
+        extra = annotation.get('data')
+        if extra:
+            data['data'] = extra
+
+        return data
+
+    def extract_point_data(self, annotation):
+        """Pull the metadata worth keeping out of a TagLab point."""
+        data = {}
+
+        note = annotation.get('Note')
+        if note:
+            data['note'] = note
+
+        extra = annotation.get('Data')
+        if extra:
+            data['data'] = extra
+
+        return data
+
     def import_annotations(self):
         """Import annotations from TagLab JSON files."""
         self.main_window.untoggle_all_tools()
@@ -191,16 +233,7 @@ class ImportTagLabAnnotations:
                             image_path=image_full_path,
                             holes=holes,
                         )
-                        polygon_annotation.data = {k: annotation.get(k) for k in ['bbox', 
-                                                                                  'centroid', 
-                                                                                  'area', 
-                                                                                  'perimeter', 
-                                                                                  'class name', 
-                                                                                  'instance_name', 
-                                                                                  'blob_name', 
-                                                                                  'id', 
-                                                                                  'note', 
-                                                                                  'data']}
+                        polygon_annotation.data = self.extract_region_data(annotation)
                         all_polygon_annotations.append(polygon_annotation)
 
                     except Exception as e:
@@ -227,6 +260,7 @@ class ImportTagLabAnnotations:
                             label=label_obj,
                             image_path=image_full_path,
                         )
+                        patch_annotation.data = self.extract_point_data(annotation)
                         all_patch_annotations.append(patch_annotation)
                     except Exception as e:
                         print(f"Error importing point annotation: {str(e)}\n{traceback.print_exc()}")
@@ -243,6 +277,11 @@ class ImportTagLabAnnotations:
             for path in images_to_update:
                 self.image_window.update_image_annotations(path)
                 
+            # Turn the keys TagLab wrote into annotation.data into real,
+            # editable metadata fields.
+            self.main_window.metadata_window.promote_imported(
+                all_polygon_annotations + all_patch_annotations)
+
             # Load the annotations for the currently visible image
             self.annotation_window.load_annotations()
 

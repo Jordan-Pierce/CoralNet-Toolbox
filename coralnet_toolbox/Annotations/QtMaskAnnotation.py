@@ -1866,6 +1866,7 @@ class MaskAnnotation(Annotation):
         # Restore other annotation properties
         annotation.id = data.get('id', annotation.id)
         annotation.data = data.get('data', {})
+        annotation.metadata = data.get('metadata', {})
         
         return annotation
 

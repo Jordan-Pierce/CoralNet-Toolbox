@@ -1,7 +1,8 @@
 import warnings
 
 from PyQt5.QtCore import Qt, QObject, QEvent
-from PyQt5.QtWidgets import QApplication, QMessageBox, QLineEdit
+from PyQt5.QtWidgets import (QApplication, QMessageBox, QLineEdit, QAbstractSpinBox,
+                             QPlainTextEdit, QTextEdit, QComboBox)
 
 from coralnet_toolbox.Icons import get_icon, get_window_icon
 
@@ -188,9 +189,21 @@ class GlobalEventFilter(QObject):
                         # Don't consume; let the active tool handle this shortcut
                         return False
 
-                    # Check if a text input field has focus first
-                    if isinstance(QApplication.focusWidget(), QLineEdit):
-                        return False  # Pass the event on to the QLineEdit
+                    # A modal dialog is open (adding a metadata field, editing a
+                    # label, ...). Backspace there is text editing, not a request
+                    # to delete the annotation still selected behind it.
+                    if QApplication.activeModalWidget() is not None:
+                        return False
+
+                    # Check if a text input field has focus first. Any editable
+                    # widget counts, not just QLineEdit -- a spin box or a
+                    # multi-line note must be able to consume a backspace.
+                    focus_widget = QApplication.focusWidget()
+                    if isinstance(focus_widget, (QLineEdit, QAbstractSpinBox,
+                                                 QPlainTextEdit, QTextEdit)):
+                        return False  # Pass the event on to the editor
+                    if isinstance(focus_widget, QComboBox) and focus_widget.isEditable():
+                        return False
 
                     # First check if the select tool is active
                     if self.main_window.select_tool_action.isChecked():

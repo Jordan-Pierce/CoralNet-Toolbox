@@ -323,6 +323,10 @@ class ImportViscoreAnnotations(QDialog):
             for path in images_to_update:
                 self.image_window.update_image_annotations(path)
                 
+            # Turn the keys Viscore wrote into annotation.data into real,
+            # editable metadata fields.
+            self.main_window.metadata_window.promote_imported(all_new_annotations)
+
             # Load annotations for current image
             self.annotation_window.load_annotations()
 

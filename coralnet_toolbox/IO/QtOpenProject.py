@@ -23,6 +23,8 @@ from coralnet_toolbox.Annotations.QtMaskAnnotation import MaskAnnotation
 from coralnet_toolbox.WorkArea import WorkArea
 
 from coralnet_toolbox.Common.QtUpdateImagePaths import UpdateImagePaths
+from coralnet_toolbox.MetaData import MetaDataSchema
+
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 
@@ -170,6 +172,9 @@ class OpenProject(QDialog):
             # Update main window with loaded project data
             self.import_images(images_data, legacy_workareas)
             self.import_labels(project_data.get('labels'))
+            # Before the annotations: their sparse metadata values are only
+            # meaningful against a known set of field definitions.
+            self.import_metadata_schema(project_data.get('metadata_schema'))
             self.import_annotations(project_data.get('annotations'))
                         
             # Update current project path
@@ -352,6 +357,19 @@ class OpenProject(QDialog):
             except Exception:
                 pass
 
+    def import_metadata_schema(self, schema_data):
+        """Restore the project's metadata field definitions.
+
+        A missing key means a project saved before metadata existed, which is
+        not an error -- the window simply starts with an empty schema.
+        """
+        try:
+            self.main_window.metadata_window.set_schema(
+                MetaDataSchema.from_dict(schema_data)
+            )
+        except Exception as e:
+            print(f"Error importing metadata schema: {e}")
+
     def import_annotations(self, annotations):
         """Import annotations from the given dictionary."""
         try:
@@ -507,6 +525,11 @@ class OpenProject(QDialog):
             # Add all vector annotations in a single batch operation
             if all_new_annotations:
                 self.annotation_window.add_annotations(all_new_annotations)
+
+            # Projects saved before the metadata schema existed carry their
+            # importer keys in annotation.data; promote them so they are
+            # visible and editable rather than silently inert.
+            self.main_window.metadata_window.promote_imported(all_new_annotations)
 
             # Attach mask annotations (done after batch creation to avoid scene thrash)
             for image_path, mask_ann in mask_annotations_to_set:

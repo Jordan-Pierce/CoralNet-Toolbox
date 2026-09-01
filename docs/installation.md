@@ -84,35 +84,6 @@ uv pip install -U coralnet-toolbox==[version_number]
 > **Note**: If you have `torch` installed with `CUDA`, adding `-U` may trigger a regression to the CPU version. If this occurs, uninstall `torch` and `torchvision`, and reinstall the CUDA versions.
 
 
-## 🧊 Alternative: One-Command Install with `pixi`
-
-> The `conda` + `uv` steps above are the supported default and what most users should follow.
-> `pixi` and Docker (below) are alternatives for those already comfortable
-> with those tools.
-
-[`pixi`](https://pixi.sh) builds the whole environment -- Python, `Qt`, `GDAL`, and a `CUDA` build of
-`PyTorch` -- from a committed lock file, so every machine resolves to identical dependencies. No
-`conda create`, no separate `PyTorch` index URL, no `CUDA` toolkit install.
-
-```bash
-# Clone and enter the repository
-git clone https://github.com/Jordan-Pierce/CoralNet-Toolbox.git
-cd CoralNet-Toolbox
-
-# Build the environment from pixi.lock
-pixi install
-
-# Launch
-pixi run start
-```
-
-GPU support is automatic: `pixi` selects a `CUDA` build of `PyTorch` when your driver supports it,
-including Blackwell (RTX 50-series).
-
-> **Platforms**: Windows and Linux only. macOS is not yet supported on this path because
-> `conda-forge` has no `qt5-advanced-docking-system` build for Apple Silicon.
-
-
 ## 🐍 Install from Source (GitHub Repository)
 
 If you prefer to clone the repository and run the `toolbox` from the source code:
@@ -201,6 +172,35 @@ conda env remove --name coralnet10
 y
 ```
 
+## 🧊 Alternative: One-Command Install with `pixi`
+
+> The `conda` + `uv` steps above are the supported default and what most users should follow.
+> `pixi` and Docker (below) are alternatives for those already comfortable
+> with those tools.
+
+[`pixi`](https://pixi.sh) builds the whole environment -- Python, `Qt`, `GDAL`, and a `CUDA` build of
+`PyTorch` -- from a committed lock file, so every machine resolves to identical dependencies. No
+`conda create`, no separate `PyTorch` index URL, no `CUDA` toolkit install.
+
+```bash
+# Clone and enter the repository
+git clone https://github.com/Jordan-Pierce/CoralNet-Toolbox.git
+cd CoralNet-Toolbox
+
+# Build the environment from pixi.lock
+pixi install
+
+# Launch
+pixi run start
+```
+
+GPU support is automatic: `pixi` selects a `CUDA` build of `PyTorch` when your driver supports it,
+including Blackwell (RTX 50-series).
+
+> **Platforms**: Windows and Linux only. macOS is not yet supported on this path because
+> `conda-forge` has no `qt5-advanced-docking-system` build for Apple Silicon.
+
+
 ## ⚠️ MacOS Users
 
 > **Version 1.0.0 and later** rely heavily on `PyQtADS`, which cannot be installed on macOS. **Do not upgrade from version 0.0.105** until this is resolved.
@@ -220,6 +220,7 @@ Two macOS caveats:
 - **CPU only.** No Mac has CUDA, so use the plain `docker compose up` shown
   below and never the GPU overlay. Passing `--build-arg TORCH_CUDA=cpu` also
   saves several GB of image that would go unused.
+
 
 ## 🐳 Docker (run in a browser)
 

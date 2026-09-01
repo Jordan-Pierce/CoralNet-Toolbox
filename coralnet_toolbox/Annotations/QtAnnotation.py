@@ -241,6 +241,10 @@ class Annotation(QObject):
         self.machine_confidence = {}
         self.verified = True
         self.data = {}
+        # Schema-governed metadata (see coralnet_toolbox/MetaData). Sparse by
+        # design: only values that differ from their field default are stored,
+        # so an untouched annotation costs nothing to serialize.
+        self.metadata = {}
         self.rasterio_src = None
         self.cropped_image = None
         self._cached_cropped_image_graphic = None
@@ -1596,7 +1600,6 @@ class Annotation(QObject):
             'Machine suggestion 4': suggestions[3],
             'Machine confidence 5': confidences[4],
             'Machine suggestion 5': suggestions[4],
-            **self.data
         }
 
     def to_dict(self):
@@ -1617,6 +1620,11 @@ class Annotation(QObject):
             'machine_confidence': machine_confidence,
             'verified': self.verified,
         }
+
+        # Omitted entirely when empty so projects without custom metadata gain
+        # zero bytes on save.
+        if self.metadata:
+            result['metadata'] = self.metadata
 
         return result
 

@@ -191,6 +191,61 @@ class ExportTagLabAnnotations:
                 progress_bar.stop_progress()
                 progress_bar.close()
                 
+    def get_schema(self):
+        """Return the project's metadata schema, or None when unavailable."""
+        try:
+            return self.main_window.metadata_window.schema
+        except AttributeError:
+            return None
+
+    def get_taglab_value(self, annotation, taglab_key, fallback):
+        """Read the metadata field mapped onto a native TagLab slot."""
+        schema = self.get_schema()
+        if schema is None:
+            return fallback
+
+        for field in schema.taglab_fields():
+            if field.taglab_key == taglab_key:
+                value = schema.get_value(annotation, field.name)
+                # An empty field should not blank out TagLab's own default.
+                if value not in (None, ''):
+                    return value
+                return fallback
+        return fallback
+
+    def build_note(self, annotation):
+        """Build TagLab's note text for an annotation.
+
+        TagLab has no concept of user-defined fields, so any custom metadata
+        without a TagLab slot of its own is serialized into the note as
+        'Label: value' lines. That keeps the information readable after a
+        round trip instead of dropping it on export.
+        """
+        note = self.get_taglab_value(annotation, 'note', "")
+
+        schema = self.get_schema()
+        if schema is None:
+            return note
+
+        lines = []
+        for field in schema.visible_fields():
+            if field.taglab_key:
+                continue  # Already written to its own TagLab slot.
+            # Only fields the user actually set: a default carries no
+            # information and would just pad every note.
+            if not schema.has_stored_value(annotation, field.name):
+                continue
+            value = schema.get_value(annotation, field.name)
+            if isinstance(value, list):
+                value = ", ".join(str(item) for item in value)
+            lines.append(f"{field.label}: {value}")
+
+        if not lines:
+            return note
+
+        extra = "\n".join(lines)
+        return f"{note}\n\n{extra}" if note else extra
+
     def create_polygon_annotation_dict(self, annotation):
         """
         Create a dictionary representation of a polygon annotation for TagLab export.
@@ -221,13 +276,18 @@ class ExportTagLabAnnotations:
         
         area = float(f"{annotation.get_area():.1f}")
         perimeter = float(f"{annotation.get_perimeter():.1f}")
-        data = annotation.data if hasattr(annotation, 'data') else {}
-        
-        # Pop these keys from data if they exist
-        class_name = data.pop('class_name', annotation.label.short_label_code)
-        instance_name = data.pop('instance_name', "coral0")
-        blob_name = data.pop('blob_name', f"c-0-{centroid_x}x-{centroid_y}y")
-        note = data.pop('note', "")
+
+        # Whatever could not be promoted into a metadata field. Read, never
+        # mutated -- exporting twice must produce identical output.
+        data = dict(getattr(annotation, 'data', None) or {})
+
+        # The label is the source of truth for the class, so it is taken from
+        # there rather than from any stale imported copy.
+        class_name = annotation.label.short_label_code
+        instance_name = self.get_taglab_value(annotation, 'instance name', "coral0")
+        blob_name = self.get_taglab_value(annotation, 'blob name',
+                                          f"c-0-{centroid_x}x-{centroid_y}y")
+        note = self.build_note(annotation)
 
         annotation_dict = {
             "bbox": bbox,
@@ -257,8 +317,8 @@ class ExportTagLabAnnotations:
             "X": x,
             "Y": y,
             "Class": annotation.label.short_label_code,
-            "Note": "",
-            "Data": {}
+            "Note": self.build_note(annotation),
+            "Data": dict(getattr(annotation, 'data', None) or {})
         }
         
         return annotation_dict

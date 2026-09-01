@@ -109,7 +109,8 @@ class SaveProject(QDialog):
             project_data = {
                 'images': self.get_images(),
                 'labels': self.get_labels(),
-                'annotations': self.get_annotations()
+                'annotations': self.get_annotations(),
+                'metadata_schema': self.get_metadata_schema()
             }
 
             # If no extension provided, default to binary
@@ -292,6 +293,19 @@ class SaveProject(QDialog):
                 pass
 
         return export_annotations
+
+    def get_metadata_schema(self):
+        """Get the project's metadata field definitions.
+
+        The schema is stored once here rather than once per annotation; the
+        annotations themselves carry only the values that differ from a field's
+        default (see MetaDataSchema.set_value).
+        """
+        try:
+            return self.main_window.metadata_window.schema.to_dict()
+        except Exception as e:
+            print(f"Error exporting metadata schema: {e}")
+            return {}
 
     def get_project_path(self):
         """Get the current project path."""
