@@ -1569,6 +1569,27 @@ class ImageWindow(QWidget):
         
         if not highlighted_paths:
             return
+
+        # Videos cannot take a z-channel: one file would have to describe every
+        # frame, and there is no per-frame z-channel to import it into. Drop
+        # them here rather than in the dialog, so the file picker's filters are
+        # built from the images that can actually receive one.
+        video_paths = [
+            path for path in highlighted_paths
+            if getattr(self.raster_manager.get_raster(path), 'raster_type', None) == 'VideoRaster'
+        ]
+        if video_paths:
+            highlighted_paths = [p for p in highlighted_paths if p not in set(video_paths)]
+
+        if not highlighted_paths:
+            QMessageBox.information(
+                self,
+                "No Eligible Rasters",
+                f"Z-channels cannot be imported for videos, and all "
+                f"{len(video_paths)} highlighted raster{'s are' if len(video_paths) > 1 else ' is'} "
+                f"a video.\n\nHighlight at least one image or orthomosaic and try again."
+            )
+            return
         
         # Build intelligent filters based on image basenames
         image_basenames = [os.path.splitext(os.path.basename(path))[0] for path in highlighted_paths]
@@ -1603,8 +1624,29 @@ class ImageWindow(QWidget):
         image_paths = sorted(highlighted_paths)
         z_channel_files = sorted(z_files)
         
+        # The import is launched from a selection of rasters, so their types are
+        # already known -- hand them over so the dialog can prefill each row's
+        # z-channel data type (elevation for orthomosaics, depth for images)
+        # instead of making the user set every row by hand.
+        raster_types = {}
+        for path in image_paths:
+            raster = self.raster_manager.get_raster(path)
+            if raster is not None:
+                raster_types[path] = getattr(raster, 'raster_type', None)
+
+        if video_paths:
+            count = len(video_paths)
+            QMessageBox.information(
+                self,
+                "Videos Skipped",
+                f"{count} highlighted video{'s were' if count > 1 else ' was'} skipped: "
+                f"a z-channel applies to a single image, and there is no per-frame "
+                f"z-channel for video.\n\nPairing the remaining "
+                f"{len(image_paths)} raster{'s' if len(image_paths) > 1 else ''}."
+            )
+
         # Create the pairing widget and keep a reference to prevent garbage collection
-        self.pairing_widget = ZImportDialog(image_paths, z_channel_files)
+        self.pairing_widget = ZImportDialog(image_paths, z_channel_files, raster_types=raster_types)
         
         # Connect the mapping_confirmed signal to handle the confirmed mapping
         self.pairing_widget.mapping_confirmed.connect(self.on_z_channel_mapping_confirmed)
