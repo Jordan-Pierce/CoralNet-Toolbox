@@ -4247,6 +4247,65 @@ class AnnotationWindow(BaseCanvas):
         except AttributeError:
             pass  # not a VideoRaster
 
+    def _delete_video_frame_masks(self, video_path, frame_idx=None):
+        """Drop stored per-frame masks and their overlays for a video.
+
+        Per-frame masks live in VideoRaster._frame_masks and never appear in
+        image_annotations_dict — only vector annotations create keys there. So
+        the frame-key recursion in delete_image_annotations cannot see them, and
+        a video whose annotations are all masks (the usual result of semantic
+        batch inference) has no frame keys at all: the loop iterates nothing and
+        "Delete Annotations" appears to do nothing.
+
+        Pass ``frame_idx`` to drop a single frame, or leave it None for the
+        whole video.
+        """
+        try:
+            raster = self.main_window.image_window.raster_manager.get_raster(video_path)
+            if raster is None:
+                return
+            try:
+                indices = (raster.get_frame_mask_indices() if frame_idx is None
+                           else {int(frame_idx)})
+            except AttributeError:
+                return  # not a VideoRaster
+
+            for idx in indices:
+                raster.clear_frame_mask(idx)
+
+            # Drop the derived display overlays too, or the next navigation
+            # rebuilds the mask straight back onto the frame.
+            cache = getattr(self, 'batch_results_cache', None) or {}
+            if frame_idx is None:
+                prefix = str(video_path) + '::frame_'
+                stale = [k for k in list(cache.keys())
+                         if isinstance(k, str) and k.startswith(prefix)]
+            else:
+                stale = [raster.make_frame_path(video_path, int(frame_idx))]
+            for key in stale:
+                cache.pop(key, None)
+
+            # Clear the live overlay and the shared edit buffer when the frame
+            # on screen was one of the deleted ones.
+            current = str(self.current_image_path or '')
+            if current.startswith(str(video_path) + '::frame_'):
+                current_idx = self._video_frame_index(current)
+                if frame_idx is None or current_idx == int(frame_idx):
+                    base_image_item = getattr(self, '_base_image_item', None)
+                    if base_image_item is not None:
+                        try:
+                            base_image_item.set_mask_image(None)
+                        except Exception:
+                            pass
+                    self._clear_video_frame_mask_data()
+
+            try:
+                self._update_video_annotation_marks()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
     def _sync_video_mask_to_cache(self, frame_path=None):
         """Store the current VideoRaster mask annotation state in batch_results_cache.
 
@@ -4881,6 +4940,11 @@ class AnnotationWindow(BaseCanvas):
             frame_keys = [k for k in list(self.image_annotations_dict.keys()) if k.startswith(prefix)]
             for frame_key in frame_keys:
                 self.delete_image_annotations(frame_key)
+            # Per-frame masks are keyed by frame index on the raster, not by a
+            # path in image_annotations_dict, so the loop above never reaches
+            # them — and for a mask-only video there are no frame keys to loop
+            # over at all.
+            self._delete_video_frame_masks(image_path)
             # If the canvas is currently displaying a frame of this video, force a full
             # reload to guarantee stale graphics items are cleared from the scene.
             if (self._active_video_raster is not None and
@@ -4911,6 +4975,12 @@ class AnnotationWindow(BaseCanvas):
             self.delete_annotations(annotations_to_delete)
 
         # 4. Handle Mask/Semantic Reset
+        frame_idx = self._video_frame_index(image_path)
+        if frame_idx is not None:
+            # A virtual frame path: its mask lives on the raster, not in the
+            # shared buffer that delete_mask_annotation clears.
+            self._delete_video_frame_masks(
+                str(image_path).rsplit('::frame_', 1)[0], frame_idx=frame_idx)
         if raster:
             raster.delete_mask_annotation()
             try:
