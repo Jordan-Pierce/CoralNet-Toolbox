@@ -32,6 +32,25 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 
+def configure_gdal():
+    """Apply GDAL configuration, once, before any dataset is opened.
+
+    `GDAL_NUM_THREADS` is the one that matters. GDAL decompresses tiled DEFLATE
+    single-threaded by default, and a full-resolution read of a 24k orthomosaic
+    on 24 cores drops from ~8.6 s to ~2.1 s with it set — which is what makes
+    reading through rasterio faster than Qt's TIFF plugin (~7 s) rather than
+    slower.
+
+    Set through the environment because that is where GDAL reads its config
+    from, and doing it before the first `rasterio.open` avoids having to wrap
+    every call site in a `rasterio.Env`. `setdefault` throughout, so an operator
+    who has already tuned these for their machine wins over our guess.
+    """
+    os.environ.setdefault("GDAL_NUM_THREADS", "ALL_CPUS")
+    os.environ.setdefault("GDAL_CACHEMAX", "1024")
+    os.environ.setdefault("GDAL_TIFF_INTERNAL_MASK", "YES")
+
+
 @lru_cache(maxsize=32)
 def rasterio_open(image_path):
     """
@@ -491,6 +510,37 @@ def rasterio_to_numpy(rasterio_src, longest_edge=None):
         return np.zeros((100, 100, 3), dtype=np.uint8)
 
 
+def work_area_to_numpy_bgr(rasterio_src, work_area):
+    """
+    Work-area pixels in BGR, for models that follow the cv2 convention.
+
+    Ultralytics documents its numpy input as "an image read by cv2 (BGR channel
+    order)", so the SAM and SeeAnything predictors want BGR, not RGB. Feeding
+    them the RGB that `work_area_to_numpy` returns would swap red and blue in
+    everything they see.
+
+    Historically these tools got their pixels by slicing a full-image array
+    from `pixmap_to_numpy`, which returns BGR despite a docstring promising RGB
+    (its channel-swap branch compares the *builtin* `format` against
+    `QImage.Format_ARGB32` and never fires). That happened to be correct for
+    these consumers; this helper makes it deliberate rather than accidental.
+
+    Not for feature extractors: `Extractor.extract_dense` takes `image_rgb` and
+    means it. Use `work_area_to_numpy` there.
+
+    Args:
+        rasterio_src: rasterio DatasetReader object
+        work_area: WorkArea object or QRectF
+
+    Returns:
+        numpy.ndarray: (h, w, 3) BGR image data, or None.
+    """
+    rgb = work_area_to_numpy(rasterio_src, work_area)
+    if rgb is None or rgb.ndim != 3 or rgb.shape[2] != 3:
+        return rgb
+    return np.ascontiguousarray(rgb[:, :, ::-1])
+
+
 def work_area_to_numpy(rasterio_src, work_area):
     """
     Extract image data from a work area as a numpy array.
@@ -614,34 +664,73 @@ def get_view_scale(transform):
 
 def pixmap_to_numpy(pixmap):
     """
-    Convert a QPixmap to a NumPy array.
+    Convert a QPixmap to an RGB NumPy array.
+
+    Returns RGB, as the name and this docstring have always claimed. Until now
+    it returned **BGR**: it read the raw bytes of the 32-bit image that
+    `QPixmap.toImage()` produces -- which are B, G, R, X on a little-endian
+    machine -- and its swap branch tested the *builtin* `format` against
+    `QImage.Format_ARGB32`, an expression that is never true, so the swap never
+    happened. Verified across RGB888, RGB32, ARGB32 and ARGB32_Premultiplied:
+    all four came back BGR.
+
+    Use `pixmap_to_numpy_bgr` for ultralytics, which documents its numpy input
+    as cv2-order and whose `preprocess` does `im[..., ::-1]` on the way in.
 
     :param pixmap: QPixmap to convert
     :return: numpy.ndarray in format (h, w, 3) with RGB values
     """
+    return _pixmap_to_numpy_bgr_or_rgb(pixmap, want_bgr=False)
+
+
+def pixmap_to_numpy_bgr(pixmap):
+    """
+    Convert a QPixmap to a BGR NumPy array, for cv2-convention consumers.
+
+    Ultralytics documents its numpy input as "an image read by cv2 (BGR channel
+    order)" and converts with `im[..., ::-1]` internally, so every predictor,
+    classifier and `model.embed` call wants this rather than RGB.
+
+    :param pixmap: QPixmap to convert
+    :return: numpy.ndarray in format (h, w, 3) with BGR values
+    """
+    return _pixmap_to_numpy_bgr_or_rgb(pixmap, want_bgr=True)
+
+
+def _pixmap_to_numpy_bgr_or_rgb(pixmap, want_bgr):
+    """Shared implementation for the two channel orders."""
     try:
         image = pixmap.toImage()
 
-        # Get image dimensions
+        # Normalise the format so the byte layout is known rather than assumed.
+        # toImage() can hand back RGB32, ARGB32 or ARGB32_Premultiplied
+        # depending on the pixmap, and they do not share a byte order.
+        if image.format() != QImage.Format_RGBA8888:
+            image = image.convertToFormat(QImage.Format_RGBA8888)
+
         width = image.width()
         height = image.height()
 
-        # Convert QImage to numpy array
-        byte_array = image.bits().asstring(width * height * 4)  # 4 for RGBA
-        numpy_array = np.frombuffer(byte_array, dtype=np.uint8).reshape((height, width, 4))
+        # RGBA8888 is R, G, B, A in memory order on every platform, so no
+        # endian-dependent shuffling is needed here. Honour bytesPerLine rather
+        # than assuming width * 4: Qt pads scanlines, and an odd width would
+        # otherwise shear the image.
+        stride = image.bytesPerLine()
+        buffer = image.bits().asstring(stride * height)
+        numpy_array = np.frombuffer(buffer, dtype=np.uint8).reshape((height, stride // 4, 4))
+        numpy_array = numpy_array[:, :width, :3]
 
-        # If the image format is ARGB32, swap the first and last channels (A and B)
-        if format == QImage.Format_ARGB32:
-            numpy_array = numpy_array[:, :, [2, 1, 0, 3]]
+        if want_bgr:
+            numpy_array = numpy_array[:, :, ::-1]
 
-        numpy_array = numpy_array[:, :, :3]  # Remove the alpha channel if present
+        # The buffer belongs to a QImage that goes out of scope here, so the
+        # result must own its memory.
+        return np.ascontiguousarray(numpy_array)
 
     except Exception as e:
         print(f"Error converting QImage to numpy: {e}")
         # Return a small empty array if conversion fails
-        numpy_array = np.zeros((256, 256, 3), dtype=np.uint8)
-
-    return numpy_array
+        return np.zeros((256, 256, 3), dtype=np.uint8)
 
 
 def pixmap_to_pil(pixmap):

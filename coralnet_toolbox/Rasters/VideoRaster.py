@@ -16,6 +16,10 @@ from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtCore import Qt, QObject, QThread, QMutex, pyqtSignal
 
 from coralnet_toolbox.Rasters.QtRaster import Raster
+from coralnet_toolbox.Annotations.QtMaskAnnotation import (
+    encode_mask_crop_rle,
+    decode_mask_crop_rle,
+)
 
 try:
     from PyNvVideoCodec import SimpleDecoder, OutputColorType
@@ -443,6 +447,22 @@ class VideoRaster(Raster):
         # can filter on them.
         self._keyframes: set = set()
 
+        # Authoritative per-frame semantic masks, keyed by frame index.
+        #
+        # A VideoRaster owns exactly ONE `mask_annotation` (the edit buffer the
+        # brush/fill tools write into), so it can only ever describe whichever
+        # frame was painted last. This dict is the durable store: it is what
+        # gets serialized, and AnnotationWindow.batch_results_cache is only a
+        # derived display cache (QImage + opacity) built from it.
+        self._frame_masks: dict = {}
+
+        # Saved {class_id: short_label_code} for `_frame_masks`, stored once per
+        # video because every frame shares one class-ID space. Set by
+        # update_from_dict; consumed by resolve_frame_mask_labels once the
+        # project's labels exist (project load imports images before labels).
+        self._frame_mask_label_codes: dict = {}
+        self._frame_masks_need_label_remap: bool = False
+
         # Thumbnail cache (populated on first call to get_thumbnail)
         self._video_thumbnail: Optional[QImage] = None
 
@@ -544,6 +564,148 @@ class VideoRaster(Raster):
     def get_keyframes(self) -> set:
         """Return a copy of the set of keyframe indices."""
         return set(self._keyframes)
+
+    # ------------------------------------------------------------------
+    # Per-frame masks
+    # ------------------------------------------------------------------
+
+    def get_frame_mask(self, frame_idx: int):
+        """Return this frame's class-ID array, or None when it has no mask.
+
+        The returned array is the stored one, not a copy: callers that mutate
+        it must go through set_frame_mask instead.
+        """
+        return self._frame_masks.get(self._clamp_frame_idx(frame_idx))
+
+    def set_frame_mask(self, frame_idx: int, mask_arr) -> None:
+        """Store (a copy of) this frame's class-ID array.
+
+        An all-zero array is stored as *no* mask rather than as a full-size
+        buffer of zeros: a video with thousands of frames should not pay a
+        frame-sized allocation for every frame the user merely visited, and
+        every consumer treats "no entry" and "all background" identically.
+        """
+        idx = self._clamp_frame_idx(frame_idx)
+        if mask_arr is None:
+            self._frame_masks.pop(idx, None)
+            return
+        try:
+            if not np.any(mask_arr):
+                self._frame_masks.pop(idx, None)
+                return
+        except Exception:
+            pass
+        self._frame_masks[idx] = np.ascontiguousarray(mask_arr, dtype=np.uint8).copy()
+
+    def clear_frame_mask(self, frame_idx: int) -> None:
+        """Drop this frame's mask (no-op when it has none)."""
+        self._frame_masks.pop(self._clamp_frame_idx(frame_idx), None)
+
+    def get_frame_mask_indices(self) -> set:
+        """Return the set of frame indices that currently hold a mask."""
+        return set(self._frame_masks.keys())
+
+    @property
+    def has_frame_masks(self) -> bool:
+        """True when any frame of this video carries a mask."""
+        return bool(self._frame_masks)
+
+    def get_frame_mask_label_codes(self) -> dict:
+        """Return {class_id: short_label_code} describing `_frame_masks`.
+
+        Prefers the live edit buffer's map (authoritative while the project is
+        open) and falls back to the codes restored from the project file, which
+        is what a video that was loaded but never displayed still has.
+        """
+        ma = self.mask_annotation
+        if ma is not None and getattr(ma, 'class_id_to_label_map', None):
+            codes = {}
+            for cid, label in ma.class_id_to_label_map.items():
+                try:
+                    codes[int(cid)] = label.short_label_code
+                except Exception:
+                    continue
+            if codes:
+                return codes
+        return dict(self._frame_mask_label_codes)
+
+    def resolve_frame_mask_labels(self, project_labels: list) -> None:
+        """Remap restored frame masks into the live annotation's class-ID space.
+
+        Class IDs are assigned by MaskAnnotation.sync_label_map in project-label
+        order, so they are only stable if the label list is. The project file
+        records the {class_id: short_code} map the pixels were written against;
+        this translates every stored frame into whatever IDs the current session
+        assigns to those same labels. A no-op unless update_from_dict actually
+        restored masks.
+        """
+        if not self._frame_masks_need_label_remap:
+            return
+        # Clear the flag first: a failure here must not leave the masks queued
+        # for a second remap, which would translate already-translated IDs.
+        self._frame_masks_need_label_remap = False
+
+        saved_codes = self._frame_mask_label_codes
+        if not saved_codes or not self._frame_masks:
+            return
+
+        try:
+            mask_annotation = self.get_mask_annotation(project_labels)
+        except Exception as e:
+            print(f"VideoRaster: cannot resolve frame mask labels for {self.image_path}: {e}")
+            return
+        if mask_annotation is None:
+            return
+
+        lock_bit = mask_annotation.LOCK_BIT
+        code_to_class_id = {}
+        for cid, label in mask_annotation.class_id_to_label_map.items():
+            try:
+                code_to_class_id.setdefault(label.short_label_code, int(cid))
+            except Exception:
+                continue
+
+        # Identity LUT, then override only the classes that actually moved.
+        lut = np.arange(256, dtype=np.uint8)
+        changed = False
+        dropped = []
+        for saved_cid, short_code in saved_codes.items():
+            try:
+                saved_cid = int(saved_cid)
+            except (TypeError, ValueError):
+                continue
+            if saved_cid <= 0 or saved_cid >= lock_bit:
+                continue
+            new_cid = code_to_class_id.get(short_code)
+            if new_cid is None:
+                # The label is gone from the project: those pixels have no
+                # meaning any more, so clear them rather than leave them
+                # pointing at whatever label now owns that ID.
+                dropped.append(short_code)
+                lut[saved_cid] = 0
+                lut[saved_cid + lock_bit] = 0
+                changed = True
+                continue
+            if new_cid != saved_cid:
+                lut[saved_cid] = new_cid
+                if saved_cid + lock_bit < 256 and new_cid + lock_bit < 256:
+                    lut[saved_cid + lock_bit] = new_cid + lock_bit
+                changed = True
+
+        if dropped:
+            print(f"VideoRaster: dropped frame-mask pixels for missing labels "
+                  f"{sorted(set(dropped))} in {os.path.basename(self.image_path)}")
+
+        if changed:
+            for idx, arr in list(self._frame_masks.items()):
+                remapped = lut[arr]
+                if np.any(remapped):
+                    self._frame_masks[idx] = remapped
+                else:
+                    del self._frame_masks[idx]
+
+        # The live map is now the authoritative one.
+        self._frame_mask_label_codes = self.get_frame_mask_label_codes()
 
     # ------------------------------------------------------------------
     # Frame access
@@ -956,6 +1118,30 @@ class VideoRaster(Raster):
         data['fps'] = self._video_fps
         data['frame_count'] = self._video_frame_count
         data['keyframes'] = sorted(self._keyframes)
+
+        # Per-frame masks. `frame_count` above doubles as the guard that lets
+        # update_from_dict detect a re-encoded / trimmed video rather than
+        # silently placing masks on the wrong frames.
+        frame_masks = []
+        for frame_idx in sorted(self._frame_masks.keys()):
+            mask_arr = self._frame_masks[frame_idx]
+            try:
+                rle_masks = encode_mask_crop_rle(mask_arr)
+            except Exception as e:
+                print(f"VideoRaster: failed encoding frame {frame_idx} mask: {e}")
+                continue
+            if not rle_masks:
+                continue  # all background
+            frame_masks.append({
+                'frame_idx': int(frame_idx),
+                'shape': list(mask_arr.shape),
+                'rle_masks': rle_masks,
+            })
+        if frame_masks:
+            data['frame_masks'] = frame_masks
+            # Stored ONCE per video, not per frame: every frame mask of one
+            # video shares a single class-ID space.
+            data['frame_mask_label_map'] = self.get_frame_mask_label_codes()
         return data
 
     @classmethod
@@ -973,12 +1159,81 @@ class VideoRaster(Raster):
             state = raster_dict.get('state', {})
             raster.checkbox_state = state.get('checkbox_state', False)
 
-        # Restore keyframes (base update_from_dict does not know about them)
-        try:
-            raster._keyframes = {int(i) for i in raster_dict.get('keyframes', [])}
-        except Exception:
-            raster._keyframes = set()
         return raster
+
+    def update_from_dict(self, raster_dict: dict):
+        """Restore video state in place, then the base raster state.
+
+        Project loading goes through `RasterManager.add_video_raster` +
+        `update_from_dict` rather than `from_dict`, so keyframes and per-frame
+        masks have to be restored here to survive a save/reopen at all.
+        """
+        super().update_from_dict(raster_dict)
+
+        # Keyframes
+        try:
+            self._keyframes = {self._clamp_frame_idx(int(i))
+                               for i in raster_dict.get('keyframes', [])}
+        except Exception:
+            self._keyframes = set()
+
+        self._restore_frame_masks(raster_dict)
+
+    def _restore_frame_masks(self, raster_dict: dict) -> None:
+        """Decode saved per-frame masks into `_frame_masks`.
+
+        Frame index is the only handle a video mask can be keyed by, and it is
+        not stable across a re-encode or a trim. A `frame_count` that no longer
+        matches the file on disk therefore means the indices cannot be trusted:
+        warn and skip rather than paint the masks onto the wrong frames.
+        """
+        frame_masks = raster_dict.get('frame_masks') or []
+        if not frame_masks:
+            return
+
+        saved_count = raster_dict.get('frame_count')
+        if saved_count is not None and int(saved_count) != int(self._video_frame_count):
+            print(f"Warning: {os.path.basename(self.image_path)} has "
+                  f"{self._video_frame_count} frames but the project was saved with "
+                  f"{int(saved_count)}. Skipping {len(frame_masks)} per-frame mask(s) "
+                  f"rather than placing them on the wrong frames.")
+            return
+
+        native_shape = (self.height, self.width)
+        restored = {}
+        for entry in frame_masks:
+            try:
+                frame_idx = int(entry['frame_idx'])
+                shape = tuple(int(v) for v in entry['shape'])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if shape != native_shape:
+                print(f"Warning: skipping frame {frame_idx} mask for "
+                      f"{os.path.basename(self.image_path)}: saved shape {shape} "
+                      f"does not match the video's {native_shape}.")
+                continue
+            try:
+                mask_arr = decode_mask_crop_rle(entry.get('rle_masks'), shape)
+            except Exception as e:
+                print(f"Warning: failed decoding frame {frame_idx} mask: {e}")
+                continue
+            if np.any(mask_arr):
+                restored[self._clamp_frame_idx(frame_idx)] = mask_arr
+
+        if not restored:
+            return
+
+        self._frame_masks = restored
+        try:
+            self._frame_mask_label_codes = {
+                int(cid): code
+                for cid, code in (raster_dict.get('frame_mask_label_map') or {}).items()
+            }
+        except Exception:
+            self._frame_mask_label_codes = {}
+        # The class IDs above were assigned in a previous session's label order;
+        # resolve_frame_mask_labels translates them once the labels are loaded.
+        self._frame_masks_need_label_remap = True
 
     # ------------------------------------------------------------------
     # Static helpers
@@ -1048,6 +1303,8 @@ class VideoRaster(Raster):
             self._thumbnail = None
             self.annotations = []
             self.work_areas = []
+            self._frame_masks = {}
+            self._frame_mask_label_codes = {}
             self.delete_mask_annotation()
             self.z_channel = None
             if collect_garbage:

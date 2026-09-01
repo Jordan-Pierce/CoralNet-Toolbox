@@ -13,7 +13,7 @@ from rasterio.crs import CRS
 from rasterio.warp import calculate_default_transform
 
 from PyQt5.QtGui import QImage, QPixmap
-from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt5.QtCore import QObject, QThread, pyqtSignal
 
 from coralnet_toolbox.Annotations import MaskAnnotation
 from coralnet_toolbox.Features.FeatureMapCodec import load_feature_map, FEATURE_MAP_LRU
@@ -25,7 +25,7 @@ from coralnet_toolbox.utilities import is_length_unit
 from coralnet_toolbox.utilities import rasterio_open
 from coralnet_toolbox.utilities import rasterio_to_qimage
 from coralnet_toolbox.utilities import work_area_to_numpy
-from coralnet_toolbox.utilities import pixmap_to_numpy
+from coralnet_toolbox.utilities import pixmap_to_numpy_bgr
 from coralnet_toolbox.utilities import load_z_channel_from_file
 from coralnet_toolbox.utilities import normalize_z_unit
 
@@ -36,6 +36,55 @@ warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarni
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
+
+
+class FullResDecodeWorker(QThread):
+    """Decode one raster at full resolution off the GUI thread.
+
+    Exists so opening a large image does not freeze the UI for the length of a
+    full decode (~2 s on a 24k ortho, even with GDAL threading). The window
+    shows a low-resolution image immediately and swaps in the result of this
+    worker when it arrives, so the wait costs responsiveness rather than
+    quality.
+
+    The worker opens its **own** rasterio dataset. GDAL datasets are not
+    thread-safe, and the GUI thread keeps using `raster.rasterio_src` for
+    annotation crops throughout the decode; sharing one handle across both
+    would be a data race.
+    """
+
+    # image_path, QImage or None on failure
+    decoded = pyqtSignal(str, object)
+
+    def __init__(self, image_path: str, parent=None):
+        super().__init__(parent)
+        self._image_path = image_path
+        self._cancelled = False
+
+    def cancel(self):
+        """Ask for the result to be discarded. The decode itself cannot be
+        interrupted mid-read, so this only suppresses the emit."""
+        self._cancelled = True
+
+    def run(self):
+        q_image = None
+        try:
+            # rasterio.open directly, not the rasterio_open helper: that one
+            # pops a QMessageBox on failure, which must never happen off the
+            # GUI thread.
+            src = rasterio.open(self._image_path)
+            try:
+                q_image = rasterio_to_qimage(src)
+            finally:
+                src.close()
+            if q_image is not None and q_image.isNull():
+                q_image = None
+        except Exception as e:
+            print(f"Background full-resolution decode failed for {self._image_path}: {e}")
+            q_image = None
+
+        if not self._cancelled:
+            self.decoded.emit(self._image_path, q_image)
 
 
 class Raster(QObject):
@@ -69,6 +118,7 @@ class Raster(QObject):
         self._rasterio_src = None
         self._q_image = None
         self._thumbnail = None  # Single thumbnail cache
+        self._thumbnail_edge = None  # Longest edge the cached thumbnail was built for
         
         # UI state and table information
         self.checkbox_state = False
@@ -799,6 +849,37 @@ class Raster(QObject):
         # Return None if no z-channel is available
         return None
         
+    def _decode_full_qimage(self) -> Optional[QImage]:
+        """Decode the image at full resolution, preferring rasterio.
+
+        rasterio already has the file open, and with GDAL_NUM_THREADS set it
+        decompresses across every core, which Qt's single-threaded TIFF plugin
+        cannot: on a 24k ortho that is ~2 s against ~7 s. Qt is kept as the
+        fallback for formats rasterio cannot open at all.
+        """
+        if self._rasterio_src is not None:
+            try:
+                q_image = rasterio_to_qimage(self._rasterio_src)
+                if q_image is not None and not q_image.isNull():
+                    return q_image
+            except Exception as e:
+                print(f"Error loading QImage with rasterio for {self.image_path}: {str(e)}")
+
+        try:
+            q_image = QImage(self.image_path)
+            if not q_image.isNull():
+                return q_image
+        except Exception as e:
+            print(f"Error loading QImage {self.image_path}: {str(e)}")
+
+        return None
+
+    def set_full_qimage(self, q_image: QImage) -> None:
+        """Adopt a full-resolution QImage decoded elsewhere (e.g. by
+        FullResDecodeWorker), so a revisit to this raster is a cache hit."""
+        if q_image is not None and not q_image.isNull():
+            self._q_image = q_image
+
     def get_qimage(self) -> Optional[QImage]:
         """
         Get or create the full-resolution QImage representation.
@@ -807,55 +888,41 @@ class Raster(QObject):
             QImage or None: The image as QImage, or None if loading fails
         """
         if self._q_image is None:
-            try:
-                self._q_image = QImage(self.image_path)
-                if self._q_image.isNull():
-                    # Try using rasterio_to_qimage as a fallback
-                    if self._rasterio_src is not None:
-                        self._q_image = rasterio_to_qimage(self._rasterio_src)
-                        if self._q_image is None or self._q_image.isNull():
-                            return None
-                    else:
-                        return None
-            except Exception as e:
-                print(f"Error loading QImage {self.image_path}: {str(e)}")
-                # Try using rasterio_to_qimage as a fallback
-                try:
-                    if self._rasterio_src is not None:
-                        self._q_image = rasterio_to_qimage(self._rasterio_src)
-                        if self._q_image is None or self._q_image.isNull():
-                            return None
-                    else:
-                        return None
-                except Exception as e2:
-                    print(f"Error loading QImage with rasterio for {self.image_path}: {str(e2)}")
-                    return None
+            self._q_image = self._decode_full_qimage()
 
         return self._q_image
     
     def get_thumbnail(self, longest_edge: int = 256) -> Optional[QImage]:
         """
         Get or create a thumbnail of the specified size.
-        
+
+        The cache is a single slot keyed by the requested edge. It used to be
+        keyed on nothing at all, so the first caller's size won permanently and
+        a later request for a larger thumbnail silently got the smaller one
+        back.
+
         Args:
             longest_edge (int): The length of the longest edge of the thumbnail
-            
+
         Returns:
             QImage or None: The thumbnail as QImage, or None if creation fails
         """
-        # Create the thumbnail if it doesn't exist or has a different size
-        if self._thumbnail is None:
-            if self._rasterio_src is not None:
-                try:
-                    self._thumbnail = rasterio_to_qimage(self._rasterio_src, longest_edge=longest_edge)
-                    if self._thumbnail.isNull():
-                        return None
-                except Exception as e:
-                    print(f"Error creating thumbnail for {self.image_path}: {str(e)}")
-                    return None
-            else:
+        if self._thumbnail is not None and self._thumbnail_edge == longest_edge:
+            return self._thumbnail
+
+        if self._rasterio_src is None:
+            return None
+
+        try:
+            thumbnail = rasterio_to_qimage(self._rasterio_src, longest_edge=longest_edge)
+            if thumbnail is None or thumbnail.isNull():
                 return None
-                
+        except Exception as e:
+            print(f"Error creating thumbnail for {self.image_path}: {str(e)}")
+            return None
+
+        self._thumbnail = thumbnail
+        self._thumbnail_edge = longest_edge
         return self._thumbnail
     
     def get_pixmap(self, longest_edge: Optional[int] = None) -> Optional[QPixmap]:
@@ -889,7 +956,9 @@ class Raster(QObject):
         if self._rasterio_src is not None:
             try:
                 # Read the image data into a numpy array
-                return pixmap_to_numpy(self.get_pixmap())
+                # BGR: the only consumers are the ultralytics detect/segment
+                # predictors, which document cv2 channel order.
+                return pixmap_to_numpy_bgr(self.get_pixmap())
             except Exception as e:
                 print(f"Error reading numpy data from {self.image_path}: {str(e)}")
                 return None
@@ -1412,6 +1481,7 @@ class Raster(QObject):
         # Clean up QImage resources
         self._q_image = None
         self._thumbnail = None
+        self._thumbnail_edge = None
         
         # Clear annotations and work areas
         self.annotations = []

@@ -187,12 +187,21 @@ class ZImportDialog(QDialog):
     Allows users to pair image files with z-channel files (depth and elevation).
     Supports automatic matching with manual override via drag-and-drop.
     
-    Input: list of image paths, list of z_files (depth/elevation)
+    Input: list of image paths, list of z_files (depth/elevation), and optionally
+        a {image_path: raster_type} map used to prefill the data type.
     Output: signal 'mapping_confirmed' carrying dict {img_path: {"z_path": path, "units": unit, "z_data_type": type}}
     """
     mapping_confirmed = pyqtSignal(dict)
 
-    def __init__(self, image_files, z_files):
+    # Which z-channel data type a raster type implies. An orthomosaic's z-channel
+    # is a DEM (elevation); a plain image's is a depth map. Anything not listed
+    # here is left for the user to set, rather than guessed.
+    RASTER_TYPE_TO_Z_DATA_TYPE = {
+        'OrthoRaster': 'elevation',
+        'ImageRaster': 'depth',
+    }
+
+    def __init__(self, image_files, z_files, raster_types=None):
         super().__init__()
         self.setModal(True)
         
@@ -205,6 +214,9 @@ class ZImportDialog(QDialog):
         
         try:
             self.image_files = sorted(image_files)
+            # {image_path: raster_type}. Supplied by the caller because the
+            # dialog is handed paths, not rasters.
+            self.raster_types = dict(raster_types or {})
             # Smart sort z_files to align with image order
             self.z_files = self._smart_sort_z_files(sorted(z_files), self.image_files)
             # Extended mapping to include z_data_type
@@ -231,6 +243,21 @@ class ZImportDialog(QDialog):
         finally:
             # Restore normal cursor when dialog is ready to show
             QApplication.restoreOverrideCursor()
+
+    def _default_z_data_type(self, image_path):
+        """Infer the z-channel data type from the raster's type, or None.
+
+        An orthomosaic's z-channel is a DEM, a plain image's is a depth map, and
+        the caller already knows which is which because the import is launched
+        from a selection of rasters. Filling it in here saves setting it by hand
+        on every row -- finalize_mapping refuses to confirm while any paired row
+        has no data type -- and it stays a default: the cell is still editable
+        by double-click, right-click, or "Clear All Data Types".
+        """
+        raster_type = self.raster_types.get(image_path)
+        if not raster_type:
+            return None
+        return self.RASTER_TYPE_TO_Z_DATA_TYPE.get(raster_type)
 
     def _smart_sort_z_files(self, z_files, image_files):
         """
@@ -305,7 +332,8 @@ class ZImportDialog(QDialog):
             "click to batch-map in order.<br><br>"
             "<b>Units & Data Type:</b> Double-click on Z Units or Z Data Type cells to set values, "
             "or select multiple rows and right-click to set for all selected rows at once. "
-            "<b>Data Type must be explicitly set for each import.</b>"
+            "<b>Data Type is prefilled from each raster's type</b> (elevation for orthomosaics, "
+            "depth for images) and can be changed per row; every paired row needs one to confirm."
         )
         
         info_label = QLabel(info_text)
@@ -471,11 +499,13 @@ class ZImportDialog(QDialog):
                     if confidence == 'high':
                         match_type += " ✓"
 
-            # Store the mapping with units and z_data_type (not auto-detected)
+            # Store the mapping with units and z_data_type. The data type is
+            # prefilled from the raster type when the caller supplied one, and
+            # left None otherwise for explicit user selection.
             self.mapping[img] = {
                 "z_path": best_match,
                 "units": detected_units,
-                "z_data_type": None,  # Requires explicit user selection
+                "z_data_type": self._default_z_data_type(img),
                 "status": match_type
             }
 
@@ -515,7 +545,14 @@ class ZImportDialog(QDialog):
             data_type_display = z_data_type if z_data_type else "(None)"
             item_data_type = QTableWidgetItem(data_type_display)
             item_data_type.setTextAlignment(Qt.AlignCenter)
-            item_data_type.setToolTip("Double-click to set data type (depth/elevation)")
+            if z_data_type and z_data_type == self._default_z_data_type(img_path):
+                raster_type = self.raster_types.get(img_path, '')
+                item_data_type.setToolTip(
+                    f"Set from the raster type ({raster_type}). "
+                    f"Double-click to change it (depth/elevation)."
+                )
+            else:
+                item_data_type.setToolTip("Double-click to set data type (depth/elevation)")
             self.table.setItem(r, 3, item_data_type)
             
             # Column 4: Status

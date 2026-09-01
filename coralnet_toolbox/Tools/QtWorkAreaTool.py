@@ -2,7 +2,7 @@ import warnings
 
 from PyQt5.QtCore import Qt, QRectF
 from PyQt5.QtGui import QMouseEvent, QPen, QColor, QBrush
-from PyQt5.QtWidgets import (QGraphicsRectItem, QGraphicsPixmapItem)
+from PyQt5.QtWidgets import QGraphicsRectItem
 
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.WorkArea import WorkArea
@@ -493,8 +493,8 @@ class WorkAreaTool(Tool):
     def constrain_rect_to_image_bounds(self, rect):
         """Constrain a rectangle to stay within the image boundaries."""
         # Get image boundaries
-        if self.annotation_window.pixmap_image:
-            image_rect = QGraphicsPixmapItem(self.annotation_window.pixmap_image).boundingRect()
+        if self.annotation_window.active_image:
+            image_rect = self.annotation_window.get_image_rect()
             
             # Create a copy of the input rect to avoid modifying the original
             constrained_rect = QRectF(rect)

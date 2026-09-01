@@ -39,6 +39,25 @@ class RenderMode(Enum):
     FULL = auto()
 
 
+# Bumped whenever any annotation's geometry changes. Caches keyed on shape --
+# currently the canvas's click index -- compare against this instead of trying
+# to observe every mutation site individually. Conservative by design: one
+# annotation moving invalidates every such cache, which is the right trade when
+# geometry edits are user-paced and the readers run per click.
+_GEOMETRY_EPOCH = 0
+
+
+def bump_geometry_epoch():
+    """Record that some annotation's shape changed."""
+    global _GEOMETRY_EPOCH
+    _GEOMETRY_EPOCH += 1
+
+
+def geometry_epoch():
+    """Current geometry generation; compare for cache validity."""
+    return _GEOMETRY_EPOCH
+
+
 def create_pen(color: QColor, is_selected: bool, verified: bool = True) -> QPen:
     """Return a QPen styled for the given annotation state.
 
@@ -956,6 +975,11 @@ class Annotation(QObject):
 
     def invalidate_painter_path(self):
         self._cached_painter_path = None
+        # Any geometry change must pass through here -- the phantom layer draws
+        # from the cached path, so failing to invalidate would render the old
+        # shape. That makes this the one reliable place to announce that
+        # anything geometric moved, which the canvas's click index relies on.
+        bump_geometry_epoch()
 
     def get_rasterization_geometry(self):
         """Get a shapely geometry suitable for rasterizing the annotation.
@@ -1028,6 +1052,25 @@ class Annotation(QObject):
         if self.graphics_item_group and self.graphics_item_group.scene():
             self._hydrate_ui_elements(self.graphics_item_group.scene())
 
+        self._update_pen_styles()
+
+    def select_phantom(self):
+        """Mark selected without leaving the phantom layer.
+
+        For bulk selections far larger than the viewport, where building a
+        QGraphicsItemGroup per annotation costs more than it can possibly show.
+        The phantom renderer already draws a selected-state group -- the
+        is_selected slot in the group key is there for this -- so the
+        annotation still looks selected; it simply owns no interactive Qt items
+        until it scrolls into view and gets promoted.
+
+        Callers are responsible for that promotion. Anything a user can
+        actually interact with is on screen, so the invariant to hold is
+        "visible and selected implies hydrated", not "selected implies
+        hydrated".
+        """
+        self.is_selected = True
+        self.render_mode = RenderMode.PHANTOM
         self._update_pen_styles()
 
     def deselect(self):

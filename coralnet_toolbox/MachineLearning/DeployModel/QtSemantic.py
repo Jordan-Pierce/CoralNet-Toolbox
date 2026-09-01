@@ -541,6 +541,13 @@ class Semantic(Base):
                             show_confidence=False,
                             min_hole_area=500,
                             rejected_indices_out=rejected_indices,
+                            # A VideoRaster's mask is shared across frames and
+                            # carries the video's path, so without this the new
+                            # polygons are filed under "clip.mp4" -- a key no
+                            # frame ever displays -- while the mask pixels they
+                            # came from are cleared. image_path here is already
+                            # the virtual frame path for a video frame.
+                            image_path=image_path,
                         )
                         self._report_vectorize_timing(
                             len(vector_annotations),

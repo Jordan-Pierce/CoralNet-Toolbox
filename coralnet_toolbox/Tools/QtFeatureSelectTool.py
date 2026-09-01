@@ -38,7 +38,7 @@ from coralnet_toolbox.QtActions import MaskEditAction
 
 from coralnet_toolbox.WorkArea import WorkArea
 
-from coralnet_toolbox.utilities import pixmap_to_numpy
+from coralnet_toolbox.utilities import work_area_to_numpy
 from coralnet_toolbox.utilities import polygonize_mask_with_holes
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -64,7 +64,6 @@ class FeatureSelectTool(Tool):
         # Work area + the local (crop) feature grid the active query runs over.
         self.working_area = None
         self.image_path = None
-        self.original_image = None       # full-image RGB [H, W, 3]
         self.original_width = None
         self.original_height = None
         self.query_engine = None
@@ -337,9 +336,7 @@ class FeatureSelectTool(Tool):
         self.cancel_working_area()
 
         self.image_path = self.annotation_window.current_image_path
-        self.original_image = pixmap_to_numpy(self.annotation_window.pixmap_image)
-        self.original_width = self.annotation_window.pixmap_image.size().width()
-        self.original_height = self.annotation_window.pixmap_image.size().height()
+        self.original_width, self.original_height = self.annotation_window.get_image_dimensions()
 
         extent = self.annotation_window.viewportToScene()
         top = max(0, round(extent.top()))
@@ -357,9 +354,7 @@ class FeatureSelectTool(Tool):
         self.cancel_working_area()
 
         self.image_path = self.annotation_window.current_image_path
-        self.original_image = pixmap_to_numpy(self.annotation_window.pixmap_image)
-        self.original_width = self.annotation_window.pixmap_image.size().width()
-        self.original_height = self.annotation_window.pixmap_image.size().height()
+        self.original_width, self.original_height = self.annotation_window.get_image_dimensions()
 
         left = max(0, int(min(start_point.x(), end_point.x())))
         top = max(0, int(min(start_point.y(), end_point.y())))
@@ -394,7 +389,15 @@ class FeatureSelectTool(Tool):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         self._status("Feature Select: extracting work-area features…", 5000)
         try:
-            crop = self.original_image[top:bottom, left:right]
+            # Read just the work area from the file, in RGB.
+            #
+            # `Extractor.extract_dense` takes `image_rgb` and means it, so this
+            # deliberately differs from the SAM/SeeAnything tools, which need
+            # BGR for ultralytics. Until now this crop came from
+            # `pixmap_to_numpy`, which returns BGR despite its docstring, so
+            # the feature model was being fed red and blue swapped.
+            crop = work_area_to_numpy(
+                self.annotation_window.rasterio_image, self.working_area)
             crop_fmap = extractor.extract_dense(crop)
             if crop_fmap is None or crop_fmap.size == 0:
                 self._status("Feature Select: feature extraction returned nothing.")

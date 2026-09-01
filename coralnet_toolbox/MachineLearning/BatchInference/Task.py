@@ -385,7 +385,9 @@ class FeatureBatchInferenceTask(BatchInferenceTask):
                         progress_bar.update_progress()
                         continue
 
-                    # Load image as RGB
+                    # Load image as RGB -- extract_dense takes `image_rgb`.
+                    # pixmap_to_numpy used to return BGR here, so every cached
+                    # feature map was baked from channel-swapped pixels.
                     from coralnet_toolbox.utilities import rasterio_to_qimage, pixmap_to_numpy
                     try:
                         qimage = rasterio_to_qimage(raster.rasterio_src)

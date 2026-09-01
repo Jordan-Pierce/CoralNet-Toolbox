@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import QApplication
 from coralnet_toolbox.QtMainWindow import MainWindow
 from coralnet_toolbox.theme import apply_theme
 
+from coralnet_toolbox.utilities import configure_gdal
 from coralnet_toolbox.utilities import console_user
 from coralnet_toolbox.utilities import except_hook
 
@@ -29,6 +30,9 @@ def run():
         QCoreApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
         QCoreApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
         
+        # Before any raster is opened: GDAL reads this from the environment.
+        configure_gdal()
+
         app = QApplication(sys.argv)
 
         apply_theme(app)

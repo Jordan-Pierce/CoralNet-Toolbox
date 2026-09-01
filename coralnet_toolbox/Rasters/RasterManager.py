@@ -86,6 +86,18 @@ class RasterManager(QObject):
             print(f"Error adding raster {image_path}: {str(e)}")
             return False
     
+    def has_image_path(self, image_path: str) -> bool:
+        """Return True if this exact path is managed.
+
+        O(1). `image_paths` is a list kept in step with the `rasters` dict, so
+        `path in manager.image_paths` is an O(n) scan of the same information --
+        which turns an import into O(n^2) once it is done once per file. Unlike
+        `get_raster`, this does NOT resolve virtual `video.mp4::frame_N` paths;
+        it answers only whether the path itself is managed, matching the list
+        membership tests it replaces.
+        """
+        return image_path in self.rasters
+
     def get_raster(self, image_path: str) -> Optional[Raster]:
         """
         Get a raster by its image path.
@@ -249,10 +261,15 @@ class RasterManager(QObject):
             list: Filtered list of image paths
         """
         filtered_paths = []
-        
+
+        # Hashed once rather than rescanned per path: `selected_paths` arrives
+        # as a list, so the membership test below is O(n) each time and the loop
+        # around it is O(n^2) on a large project.
+        selected_lookup = None if selected_paths is None else set(selected_paths)
+
         for path in self.image_paths:
             # Skip if not in selected paths
-            if selected_paths is not None and path not in selected_paths:
+            if selected_lookup is not None and path not in selected_lookup:
                 continue
                 
             raster = self.rasters[path]

@@ -6,6 +6,7 @@ Z-channel visualization, and marker slots. It is designed to be inherited by Ann
 and reused in Phase 2's context matrix for multi-viewport displays.
 """
 
+import math
 import time
 import warnings
 import traceback
@@ -51,9 +52,17 @@ class FastImageItem(QGraphicsItem):
         self.setCacheMode(QGraphicsItem.NoCache)
 
     def set_image(self, qimage, target_size=None):
-        """Set the image to be drawn by this item, keeping a reference to the original QImage."""
+        """Set the image to be drawn by this item, keeping a reference to the original QImage.
+
+        The deep copy this used to make was a second full-resolution buffer --
+        3.2 GB on a 32k raster -- bought for nothing: the QImage handed in is
+        owned by the Raster, outlives this item, and is never mutated in place.
+        Holding the reference is enough, and it keeps alive whatever the QImage
+        itself references (`rasterio_to_qimage` pins its numpy buffer on the
+        QImage as `ndarray_reference`).
+        """
         if qimage is not None and not qimage.isNull():
-            self._image = qimage.copy()
+            self._image = qimage
         else:
             self._image = qimage
         if target_size is None and self._image is not None and not self._image.isNull():
@@ -180,23 +189,262 @@ class FastImageItem(QGraphicsItem):
                 painter.drawImage(0, 0, self._readonly_cache)
 
 
+def phantom_group_key(annotation, is_selected=None):
+    """The phantom-layer group key for one annotation: colour, alpha, selected.
+
+    Single source of truth: BaseCanvas builds the whole layer from it and
+    AnnotationWindow.refresh_phantom_annotations rebuilds one group from it.
+    Those two used to construct the tuple independently, which is precisely how
+    the full and incremental paths drifted apart before.
+    """
+    c = annotation.label.color
+    if is_selected is None:
+        is_selected = bool(annotation.is_selected)
+    return (c.red(), c.green(), c.blue(), annotation.transparency, bool(is_selected))
+
+
+class PhantomHitIndex:
+    """Uniform grid over annotation bounding boxes, for click resolution.
+
+    Selecting an annotation means finding which one is under the cursor, and
+    the phantom layer draws as merged paths that Qt cannot hit-test back to an
+    annotation. So the scan is done in Python over every annotation in the
+    image -- 4 ms per click at 15k annotations, on every click including the
+    ones that land on empty space to deselect.
+
+    Built as a side effect of rendering the phantom layer, over exactly the
+    annotations that layer draws. That is deliberate: it inherits the phantom
+    layer's invalidation for free. Any mutation that would leave this index
+    stale -- a move, a delete, a label change -- already has to rebuild the
+    phantom layer or the canvas would be drawing the annotation in the wrong
+    place, which is a louder bug than a missed click.
+    """
+
+    CELL_PX = 512.0
+
+    def __init__(self, annotations):
+        self._cells = {}
+        cell = self.CELL_PX
+        for annotation in annotations:
+            bbox = getattr(annotation, 'cropped_bbox', None)
+            if not bbox:
+                continue
+            x0, y0, x1, y1 = bbox
+            # Register in every cell the bbox touches, so a shape larger than
+            # one cell is still found from anywhere inside it.
+            for cx in range(int(x0 // cell), int(x1 // cell) + 1):
+                for cy in range(int(y0 // cell), int(y1 // cell) + 1):
+                    self._cells.setdefault((cx, cy), []).append(annotation)
+
+    def candidates(self, x, y):
+        """Annotations whose bbox cell contains the point, in insertion order.
+
+        Callers wanting topmost-first should reverse the result, matching the
+        ``reversed(all_annotations)`` the linear scan uses for Z-order.
+        """
+        cell = self.CELL_PX
+        return self._cells.get((int(x // cell), int(y // cell)), ())
+
+
 class PhantomGroupItem(QGraphicsPathItem):
-    """Merged phantom-layer path with a level-of-detail short-cut.
+    """One colour group of the phantom layer, bucketed on a coarse grid.
+
+    Still one scene item per colour group, but the group's sub-paths are split
+    across a spatial grid and paint() draws only the buckets the view actually
+    exposes. That collapses two independent costs:
+
+    Culling. Qt hands an item its whole bounding rect as ``exposedRect`` unless
+    ItemUsesExtendedStyleOption is set, so this layer used to re-walk every
+    sub-path in the image every frame regardless of zoom -- 13k 50-vertex
+    polygons cost 60 ms at 32x with five of them on screen.
+
+    Rasterizer locality. A single QPainterPath spanning a 16k image with 663k
+    elements costs far more to rasterize than the same geometry drawn as a few
+    hundred local paths, because the scanline structure is built across the
+    whole extent. That is why bucketing also wins ~10x at fit zoom, where
+    nothing is culled at all: 246 ms -> 24 ms.
 
     Below LOD_PEN_CUTOFF (scene px -> screen px scale) the cosmetic outline is
-    invisible anyway, but stroking thousands of subpaths dominates paint time —
-    so skip the pen entirely and draw fill only.
+    invisible anyway, so the pen is skipped and only the fill is drawn.
+
+    One deliberate rendering change comes with this. A single merged path let
+    WindingFill union overlapping same-label shapes so their fill was blended
+    once; drawing per-bucket means two same-label annotations that overlap
+    across a bucket seam blend twice, and their overlap reads slightly more
+    opaque. Nothing is ever lost or added -- only the alpha in that overlap
+    changes -- and the effect scales with how much a label's annotations cover
+    each other: measured at 0.05% of pixels when a label's annotations cover 5%
+    of the image, ~2% at 25% coverage, and 23-38% once a single label's
+    annotations blanket the image. Different labels were always separate items
+    and so always blended twice; this only ever affects a label against itself.
     """
     LOD_PEN_CUTOFF = 0.25
 
+    def __init__(self, buckets, bucket_px, bounds, overhang):
+        """
+        Args:
+            buckets (dict): (cell_x, cell_y) -> QPainterPath of that cell's
+                annotations. A cell is keyed by each annotation's bbox centre,
+                so no annotation is ever split across two paths.
+            bucket_px (float): grid pitch in scene units.
+            bounds (QRectF): union of every bucket's content.
+            overhang (float): the furthest any annotation reaches beyond the
+                cell it was filed under. Queries are inflated by it, because an
+                annotation wider than the grid pitch is still drawn whole from
+                its centre cell and would otherwise vanish when the view showed
+                only its edge.
+        """
+        super().__init__()
+        self._buckets = buckets
+        self._bucket_px = bucket_px
+        self._bounds = bounds
+        self._overhang = overhang
+        # Without this Qt does not bother narrowing exposedRect, and the whole
+        # point of the bucketing is lost.
+        self.setFlag(QGraphicsItem.ItemUsesExtendedStyleOption, True)
+
+    def boundingRect(self):
+        # Computed from the buckets rather than from a merged path: keeping a
+        # second copy of every element purely to let QGraphicsPathItem derive
+        # this rect doubled both layer-build time and the layer's memory.
+        return self._bounds
+
+    def shape(self):
+        """Empty -- this layer is decorative and must never be hit-tested.
+
+        QGraphicsPathItem.shape() strokes the item's path, and QGraphicsScene
+        .items() calls it on every mouse press: on 13k 50-vertex polygons that
+        measured 291 ms per click. Nothing wants these items back from a hit
+        test. SelectTool maps Qt items to annotations only for fully
+        materialised ones, which a merged group is not, and resolves phantoms
+        through the canvas's own spatial index instead -- see
+        get_phantom_hit_index.
+        """
+        return QPainterPath()
+
     def paint(self, painter, option, widget=None):
+        rect = option.exposedRect
+        pitch = self._bucket_px
+        pad = self._overhang
+        get = self._buckets.get
+
         lod = option.levelOfDetailFromTransform(painter.worldTransform())
-        if lod < self.LOD_PEN_CUTOFF:
-            painter.setPen(Qt.NoPen)
-            painter.setBrush(self.brush())
-            painter.drawPath(self.path())
-        else:
-            super().paint(painter, option, widget)
+        painter.setBrush(self.brush())
+        painter.setPen(Qt.NoPen if lod < self.LOD_PEN_CUTOFF else self.pen())
+
+        for cx in range(int((rect.left() - pad) // pitch),
+                        int((rect.right() + pad) // pitch) + 1):
+            for cy in range(int((rect.top() - pad) // pitch),
+                            int((rect.bottom() + pad) // pitch) + 1):
+                path = get((cx, cy))
+                if path is not None:
+                    painter.drawPath(path)
+
+
+def phantom_bucket_px(scene_rect, n_annotations):
+    """Grid pitch for the phantom layer, in scene units.
+
+    Sized so a bucket holds a handful of annotations. Both ends of that matter
+    and they pull against each other: buckets far larger than the annotation
+    spacing stop culling anything (at 4096 px on a 16k image, paint at 16x was
+    11 ms against 1.4 ms at 512), while buckets much smaller degenerate to one
+    drawPath per annotation and give the rasterizer nothing to batch (128 px
+    cost 36 ms at fit zoom against 24 ms at 512, and tripled layer-build time).
+
+    The measured optimum tracked annotations-per-bucket rather than image size
+    or annotation count alone -- 256 px was best on a dense 4k image, 512 px on
+    a sparse 16k one, and both fall out of a target of ~16 per bucket.
+
+    Snapped to a power of two so the answer is stable. ``n_annotations`` counts
+    only the annotations being drawn phantom, which drops every time the user
+    selects something, and a pitch that drifts with it moves the bucket seams --
+    changing the alpha where same-label annotations overlap across one. A raw
+    formula gave 366 px for 2000 annotations and 397 px once 300 of them were
+    selected, so selecting and deselecting left 3.5k pixels a different shade
+    than they started. Quantising absorbs that: the count has to roughly double
+    before the pitch moves at all, and the two measured optima are powers of two
+    already, so nothing is given up for it.
+    """
+    area = max(1.0, scene_rect.width() * scene_rect.height())
+    pitch = math.sqrt(area * 16.0 / max(1, n_annotations))
+    pitch = 2.0 ** round(math.log2(max(1.0, pitch)))
+    return min(4096.0, max(256.0, pitch))
+
+
+def bucket_annotation_paths(annotations, bucket_px):
+    """Sort one group's cached painter paths into grid cells.
+
+    Args:
+        annotations: the group's annotations.
+        bucket_px (float): grid pitch in scene units.
+
+    Returns:
+        (buckets, bounds, overhang) ready for PhantomGroupItem, or
+        (None, None, None) if nothing in the group had a usable path.
+    """
+    buckets = {}
+    get = buckets.get
+    min_x = min_y = float("inf")
+    max_x = max_y = float("-inf")
+    widest = 0.0
+
+    for annotation in annotations:
+        try:
+            path = annotation.get_cached_painter_path()
+        except (NotImplementedError, AttributeError):
+            continue
+        if path is None or path.isEmpty():
+            continue
+
+        rect = path.boundingRect()
+        x0 = rect.x()
+        y0 = rect.y()
+        w = rect.width()
+        h = rect.height()
+
+        key = (int((x0 + w * 0.5) // bucket_px),
+               int((y0 + h * 0.5) // bucket_px))
+        cell = get(key)
+        if cell is None:
+            # WindingFill on every bucket, matching the single merged path this
+            # replaced: overlapping same-label shapes must union, not punch
+            # holes in each other. Correctness still depends on rings arriving
+            # with normalized winding -- see Annotation._add_ring.
+            cell = QPainterPath()
+            cell.setFillRule(Qt.WindingFill)
+            buckets[key] = cell
+        cell.addPath(path)
+
+        # Tracked as floats rather than QRectF.united() per annotation: the
+        # rect algebra was the single largest line in a build profile.
+        if x0 < min_x:
+            min_x = x0
+        if y0 < min_y:
+            min_y = y0
+        if x0 + w > max_x:
+            max_x = x0 + w
+        if y0 + h > max_y:
+            max_y = y0 + h
+        if w > widest:
+            widest = w
+        if h > widest:
+            widest = h
+
+    if not buckets:
+        return None, None, None
+
+    # An annotation is filed by its centre, so it reaches at most half its own
+    # width past the cell it landed in. Half the widest annotation is therefore
+    # a safe bound on the overhang, and costs two comparisons instead of four
+    # subtractions per annotation.
+    #
+    # A cosmetic pen also strokes half a device pixel outside the fill, which
+    # exceeds half a scene unit only when zoomed out; a small constant margin
+    # covers it, and an over-large bounding rect costs nothing but a marginally
+    # wider exposedRect.
+    bounds = QRectF(min_x - 2.0, min_y - 2.0,
+                    (max_x - min_x) + 4.0, (max_y - min_y) + 4.0)
+    return buckets, bounds, widest * 0.5
 
 
 class ColorMapOverlay:
@@ -336,7 +584,8 @@ class BaseCanvas(QGraphicsView):
     Attributes:
         scene: QGraphicsScene for rendering
         active_image: Whether an image is currently loaded
-        pixmap_image: Source QPixmap for the displayed image
+        pixmap_image: Always None. The canvas draws from a QImage; use
+            get_image_dimensions()/get_image_rect() for geometry
         current_image_path: String identifier for the current image
         zoom_factor: Current zoom level
         z_item: QGraphicsPixmapItem for Z-channel visualization layer
@@ -423,7 +672,21 @@ class BaseCanvas(QGraphicsView):
         # updates can patch just the affected path item instead of rebuilding
         # every group.
         self._readonly_annotation_items = {}
-        
+        # Grid pitch the phantom layer was last built at, so an incremental
+        # single-group rebuild files its annotations into the same cells the
+        # rest of the layer already uses. Recomputed on every full rebuild.
+        self._phantom_bucket_px = 512.0
+        # Layer stacking order, by group key. Every phantom group shares one Z
+        # value, so Qt stacks them by insertion order — which an incremental
+        # rebuild would otherwise disturb. See _restack_phantom_group.
+        self._phantom_group_order = []
+        # Spatial index over the same annotations, for click resolution. Built
+        # lazily on first click after each layer rebuild; None means fall back
+        # to a linear scan. See get_phantom_hit_index.
+        self._phantom_hit_index = None
+        self._phantom_hit_source = None
+        self._phantom_hit_epoch = None
+
         # Placeholder label for empty canvas
         self._placeholder_label = QLabel(
             "No image loaded\nImport or drag and drop an image.",
@@ -468,24 +731,58 @@ class BaseCanvas(QGraphicsView):
         self._interaction_idle_timer.setInterval(150)
         self._interaction_idle_timer.timeout.connect(self._restore_quality_hints)
 
+        # Wheel-zoom coalescing. 16 ms is one frame at 60 Hz: long enough to
+        # absorb a burst, short enough that a single deliberate click of the
+        # wheel still feels immediate.
+        self._pending_wheel_factor = 1.0
+        self._pending_wheel_pos = None
+        self._wheel_coalesce_timer = QTimer(self)
+        self._wheel_coalesce_timer.setSingleShot(True)
+        self._wheel_coalesce_timer.setInterval(16)
+        self._wheel_coalesce_timer.timeout.connect(self._flush_pending_wheel_zoom)
+
     # ==================== Navigation Events ====================
     
     def wheelEvent(self, event: QMouseEvent):
         """Handle mouse wheel events for zooming."""
-        self._wheel_event_impl(event)
-
-    def _wheel_event_impl(self, event: QMouseEvent):
         if not self.active_image:
             return
 
         self._enter_fast_paint_mode()
 
-        # Determine zoom direction
-        if event.angleDelta().y() > 0:
-            factor = 1.1  # Zoom in
-        else:
-            factor = 0.9  # Zoom out
-        
+        # One flick of a wheel delivers a dozen events. Applying each one
+        # immediately changes the view transform a dozen times, and every
+        # change repaints the whole viewport to show an intermediate zoom
+        # nobody perceives. Accumulate instead and apply once a frame: twelve
+        # repaints become one.
+        #
+        # The anchor is the newest event's position. A burst comes from a
+        # stationary cursor, so the last position is the one the user means to
+        # zoom around, and it is what applying the events one by one would have
+        # converged to anyway.
+        self._pending_wheel_factor *= 1.1 if event.angleDelta().y() > 0 else 0.9
+        self._pending_wheel_pos = event.pos()
+        if not self._wheel_coalesce_timer.isActive():
+            self._wheel_coalesce_timer.start()
+
+    def _flush_pending_wheel_zoom(self):
+        """Apply one burst's worth of accumulated wheel zoom."""
+        factor = self._pending_wheel_factor
+        pos = self._pending_wheel_pos
+        self._pending_wheel_factor = 1.0
+        self._pending_wheel_pos = None
+        if pos is None or factor == 1.0:
+            return
+        self._apply_wheel_zoom(factor, pos)
+
+    def _apply_wheel_zoom(self, factor, anchor_pos):
+        """Scale the view by ``factor``, keeping the scene point under
+        ``anchor_pos`` fixed.
+
+        Args:
+            factor (float): multiplicative zoom, accumulated across a burst.
+            anchor_pos (QPoint): viewport position to hold steady.
+        """
         # Calculate new zoom level
         new_zoom = self.zoom_factor * factor
         
@@ -504,14 +801,14 @@ class BaseCanvas(QGraphicsView):
             return
         
         # Store position before zoom for anchor-under-mouse
-        old_pos = self.mapToScene(event.pos())
-        
+        old_pos = self.mapToScene(anchor_pos)
+
         # Apply zoom
         self.scale(factor, factor)
         self.zoom_factor = new_zoom
-        
+
         # Correct position for natural zoom effect
-        new_pos = self.mapToScene(event.pos())
+        new_pos = self.mapToScene(anchor_pos)
         delta = new_pos - old_pos
         self.translate(delta.x(), delta.y())
         
@@ -649,7 +946,7 @@ class BaseCanvas(QGraphicsView):
         super().resizeEvent(event)
         
         # Fit view to image after resize
-        if self.active_image and self.pixmap_image and self.scene:
+        if self.active_image and self.scene:
             self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
             # Sync zoom state after fitInView
             self._calculate_min_zoom()
@@ -809,23 +1106,29 @@ class BaseCanvas(QGraphicsView):
         # Hide placeholder
         self._hide_placeholder()
         
-        # Create and store pixmap (keep this for legacy fallbacks if needed)
-        self.pixmap_image = QPixmap.fromImage(q_image) if isinstance(q_image, QImage) else QPixmap(q_image)
+        # The displayed image, as a QImage. Everything on the paint path wants a
+        # QImage; the QPixmap below exists only for callers that still ask this
+        # object for its dimensions, and costs a third full-resolution buffer
+        # (4.3 GB on a 32k raster) to answer a question `_image_dimensions`
+        # already answers.
+        source_image = q_image if isinstance(q_image, QImage) else QPixmap(q_image).toImage()
+
+        self.pixmap_image = None
 
         if image_dimensions is None:
-            image_dimensions = (self.pixmap_image.width(), self.pixmap_image.height())
+            image_dimensions = (source_image.width(), source_image.height())
 
         try:
             image_width = max(1, int(image_dimensions[0]))
             image_height = max(1, int(image_dimensions[1]))
         except Exception:
-            image_width = self.pixmap_image.width()
-            image_height = self.pixmap_image.height()
+            image_width = source_image.width()
+            image_height = source_image.height()
 
         self._image_dimensions = (image_width, image_height)
-        
+
         self._base_image_item = FastImageItem()
-        img_to_pass = q_image if isinstance(q_image, QImage) else self.pixmap_image.toImage()
+        img_to_pass = source_image
         self._base_image_item.set_image(img_to_pass, target_size=self._image_dimensions)
         self._base_image_item.setZValue(-10)
         self.scene.addItem(self._base_image_item)
@@ -860,7 +1163,7 @@ class BaseCanvas(QGraphicsView):
     
     def _calculate_min_zoom(self):
         """Calculate the minimum zoom factor needed to fit image in viewport."""
-        if not self.scene or not self.pixmap_image:
+        if not self.scene or not self.active_image:
             self._min_zoom = 1.0
             return
         
@@ -994,16 +1297,12 @@ class BaseCanvas(QGraphicsView):
         """Get the dimensions of the currently loaded image."""
         if self._image_dimensions is not None:
             return self._image_dimensions
-        if self.pixmap_image:
-            return self.pixmap_image.size().width(), self.pixmap_image.size().height()
         return 0, 0
     
     def get_image_rect(self):
         """Get the bounding rectangle of the currently loaded image in scene coordinates."""
         if self._image_dimensions is not None:
             return QRectF(0, 0, self._image_dimensions[0], self._image_dimensions[1])
-        if self.pixmap_image:
-            return QRectF(0, 0, self.pixmap_image.width(), self.pixmap_image.height())
         return QRectF()
     
     def _emit_view_navigated(self):
@@ -1048,52 +1347,94 @@ class BaseCanvas(QGraphicsView):
         if not annotations:
             return
 
-        # Group by (r, g, b, transparency, is_selected) to merge paths.
-        # is_selected separates phantom-selected annotations so they are drawn
-        # with the selected-state pen (delegates to the same create_pen() used
-        # by Annotation._create_pen, eliminating the previous copy-paste).
-        groups = defaultdict(QPainterPath)
+        # Group by (r, g, b, transparency, is_selected). is_selected separates
+        # phantom-selected annotations so they are drawn with the selected-state
+        # pen (delegates to the same create_pen() used by Annotation._create_pen,
+        # eliminating the previous copy-paste).
+        #
+        # Annotation._add_ring normalizes ring winding at the source, so
+        # opposite-wound subpaths do not cancel under WindingFill and the
+        # "cutout" artifacts that toFillPolygon() was introduced to fix cannot
+        # arise. Not calling toFillPolygon also drops the connector segments its
+        # rewinding inserts — Qt documents that rewinding "inserts addition
+        # lines in the polygon" — which this layer was stroking as a chord
+        # across every polygon that had a hole.
+        groups = defaultdict(list)
         group_styles = {}  # key -> (QColor, transparency, is_selected)
 
         for annotation in annotations:
             if isinstance(annotation, MaskAnnotation):
                 continue
-            try:
-                path = annotation.get_cached_painter_path()
-            except (NotImplementedError, AttributeError):
-                continue
-            if path is None or path.isEmpty():
-                continue
-
-            c = annotation.label.color
-            is_sel = bool(annotation.is_selected)
-            key = (c.red(), c.green(), c.blue(), annotation.transparency, is_sel)
-            # Merge raw subpaths.  Annotation._add_ring now normalizes ring
-            # winding at the source, so opposite-wound subpaths no longer cancel
-            # under WindingFill and the "cutout" artifacts that toFillPolygon()
-            # was introduced to fix cannot arise.  Dropping toFillPolygon also
-            # drops the connector segments its rewinding inserts — Qt documents
-            # that rewinding "inserts addition lines in the polygon" — which
-            # this layer was stroking as a chord across every polygon that had
-            # a hole.
-            groups[key].addPath(path)
+            key = phantom_group_key(annotation)
+            groups[key].append(annotation)
             if key not in group_styles:
-                group_styles[key] = (QColor(c), annotation.transparency, is_sel)
+                group_styles[key] = (QColor(annotation.label.color),
+                                     annotation.transparency,
+                                     bool(annotation.is_selected))
+
+        # One pitch for the whole layer, remembered so that an incremental
+        # single-group rebuild files its annotations into the same cells.
+        self._phantom_bucket_px = phantom_bucket_px(self.scene.sceneRect(),
+                                                    len(annotations))
 
         # NoIndex while bulk-adding: one index rebuild at the end beats N
         # insertions.  update_readonly_group deliberately does NOT do this — for
         # a single addItem the toggle would force a full rebuild for nothing.
         self.scene.setItemIndexMethod(QGraphicsScene.NoIndex)
-        for key, merged_path in groups.items():
+        # Sorted, not in encounter order. All phantom groups share one Z value,
+        # so this order *is* the paint order, and building it from whichever
+        # annotation happened to be seen first made it depend on the selection:
+        # selecting the leading run of one label moved that label's group to the
+        # back of the stack, and deselecting left it there, permanently changing
+        # the blend wherever two labels overlap. Sorting by the colour key is
+        # just as arbitrary but does not move. It also draws a colour's
+        # selected-state group after its unselected one, is_selected being the
+        # key's last element, which is the order that layer wants anyway.
+        for key in sorted(groups):
+            group = groups[key]
             color, transparency, is_selected = group_styles[key]
-            item = self._make_phantom_item(merged_path, color, transparency, is_selected)
+            item = self._make_phantom_item(group, color, transparency, is_selected)
+            if item is None:
+                continue
             self.scene.addItem(item)
             # Store by key so individual groups can be patched incrementally.
             self._readonly_annotation_items[key] = item
         self.scene.setItemIndexMethod(QGraphicsScene.BspTreeIndex)
+        self._phantom_group_order = list(self._readonly_annotation_items)
+
+        # Remember what this layer was built from, but do not index it yet:
+        # most rebuilds (inference results, a transparency change, toggling a
+        # label's visibility) are never followed by a click, and indexing 15k
+        # annotations costs 14 ms. The first hit-test pays for it instead.
+        self._phantom_hit_source = annotations
+        self._phantom_hit_index = None
 
         self.viewport().update()
-    
+
+    def get_phantom_hit_index(self):
+        """The click-resolution index for the current phantom layer.
+
+        Built on first use after a rebuild and reused until some annotation's
+        geometry changes. Both halves of that matter: building costs 14 ms on a
+        15k-annotation image while a click saves 4 ms, so an index thrown away
+        on every selection change would cost more than it earns. Selection does
+        not move anything, so it does not invalidate; the geometry epoch does.
+
+        Returns None when the layer has not been built, in which case callers
+        fall back to scanning every annotation.
+        """
+        if self._phantom_hit_source is None:
+            return None
+        # Imported here, not at module scope: this module is imported by the
+        # annotation classes, so a top-level import would close the cycle.
+        from coralnet_toolbox.Annotations.QtAnnotation import geometry_epoch
+
+        epoch = geometry_epoch()
+        if self._phantom_hit_index is None or self._phantom_hit_epoch != epoch:
+            self._phantom_hit_index = PhantomHitIndex(self._phantom_hit_source)
+            self._phantom_hit_epoch = epoch
+        return self._phantom_hit_index
+
     def _clear_readonly_annotations(self):
         """Remove all read-only annotation items from the scene."""
         for item in self._readonly_annotation_items.values():
@@ -1103,8 +1444,12 @@ class BaseCanvas(QGraphicsView):
             except Exception:
                 pass
         self._readonly_annotation_items = {}
+        self._phantom_group_order = []
+        # Stale index is worse than none: it would silently misresolve clicks.
+        self._phantom_hit_index = None
+        self._phantom_hit_source = None
 
-    def _make_phantom_item(self, merged_path, color, transparency, is_selected):
+    def _make_phantom_item(self, annotations, color, transparency, is_selected):
         """Build the single scene item that draws one phantom colour group.
 
         Both the full rebuild and the incremental single-group rebuild go
@@ -1114,13 +1459,14 @@ class BaseCanvas(QGraphicsView):
         differently-shaped rendering path that deselecting never undid.
 
         Args:
-            merged_path: the group's combined QPainterPath (modified in place).
+            annotations (list): the group's annotations.
             color (QColor): the label colour for the group.
             transparency (int): alpha applied to the fill.
             is_selected (bool): whether this group is the selected-state group.
 
         Returns:
-            A configured PhantomGroupItem, not yet added to the scene.
+            A configured PhantomGroupItem not yet added to the scene, or None
+            when no annotation in the group had a drawable path.
         """
         from coralnet_toolbox.Annotations.QtAnnotation import create_pen
 
@@ -1136,19 +1482,32 @@ class BaseCanvas(QGraphicsView):
             pen = QPen(color, 1)
             pen.setCosmetic(True)
 
-        # WindingFill prevents overlapping shapes from cancelling each other
-        # (the default even-odd rule punches holes where annotations overlap).
-        # Correctness here depends on every ring arriving with normalized
-        # winding — see Annotation._add_ring.
-        merged_path.setFillRule(Qt.WindingFill)
+        buckets, bounds, overhang = bucket_annotation_paths(
+            annotations, self._phantom_bucket_px)
+        if buckets is None:
+            return None
 
-        item = PhantomGroupItem(merged_path)
+        item = PhantomGroupItem(buckets, self._phantom_bucket_px, bounds, overhang)
         item.setBrush(QBrush(fill_color))
         item.setPen(pen)
-        # Cache the rendered group at device resolution: panning then blits a
-        # pixmap instead of re-stroking/re-filling every subpath per frame.
-        # Qt invalidates the cache automatically on zoom/rotation.
-        item.setCacheMode(QGraphicsItem.DeviceCoordinateCache)
+        # Explicitly uncached, and it must stay that way.
+        #
+        # This used to set DeviceCoordinateCache so that panning would blit a
+        # pixmap instead of re-stroking every subpath. That is sound for an
+        # item of bounded size and ruinous for this one, which spans the whole
+        # image: the cache is sized by the item's device-space rect, so it
+        # grows with the square of the zoom factor and Qt's cache bookkeeping
+        # comes to dwarf the drawing it was meant to avoid. On a 1 MP image
+        # with 100 polygons at 16x zoom that measured 1237 ms per frame with
+        # one annotation on screen, against 0.3 ms uncached.
+        #
+        # Uncached is only cheap because paint() culls. Qt does not reject
+        # off-screen sub-paths cheaply enough to rely on at this scale: before
+        # the bucketing above, an uncached layer of 13k 50-vertex polygons
+        # still cost 60 ms a frame at 32x zoom with five of them visible,
+        # because every element was walked regardless. Culling is what makes
+        # the cache unnecessary, not the rasterizer.
+        item.setCacheMode(QGraphicsItem.NoCache)
         item.setFlag(QGraphicsItem.ItemIsSelectable, False)
         item.setFlag(QGraphicsItem.ItemIsMovable, False)
         item.setAcceptHoverEvents(False)
@@ -1159,7 +1518,7 @@ class BaseCanvas(QGraphicsView):
         """Rebuild ONE phantom group item in place.
 
         Args:
-            key: (r, g, b, transparency, is_selected) group key.
+            key: group key from ``phantom_group_key``.
             annotations: the full current set of annotations belonging to that
                 group (may be empty, which removes the item).
 
@@ -1180,24 +1539,42 @@ class BaseCanvas(QGraphicsView):
             return
 
         r, g, b, transparency, is_selected = key
-        merged_path = QPainterPath()
-        for annotation in annotations:
-            try:
-                path = annotation.get_cached_painter_path()
-            except (NotImplementedError, AttributeError):
-                continue
-            if path is None or path.isEmpty():
-                continue
-            merged_path.addPath(path)
-
-        if merged_path.isEmpty():
+        item = self._make_phantom_item(annotations, QColor(r, g, b), transparency, is_selected)
+        if item is None:
             self.viewport().update()
             return
 
-        item = self._make_phantom_item(merged_path, QColor(r, g, b), transparency, is_selected)
         self.scene.addItem(item)
         self._readonly_annotation_items[key] = item
+        self._restack_phantom_group(key, item)
         self.viewport().update()
+
+    def _restack_phantom_group(self, key, item):
+        """Put a rebuilt group back where it was in the layer's stacking order.
+
+        All phantom groups share one Z value, so Qt orders them by insertion
+        and scene.addItem() appends. Rebuilding one group on every selection
+        change would therefore float that colour above the rest, visibly
+        shifting the blend anywhere two labels overlap — 791 pixels on a 13k
+        annotation image, changing nothing about what is drawn, only the order
+        it is drawn in.
+
+        Args:
+            key: group key from ``phantom_group_key``.
+            item: the freshly built item for that group.
+        """
+        order = self._phantom_group_order
+        if key not in order:
+            # A group that did not exist at the last full rebuild (a label
+            # recoloured, say). The end of the stack is where it belongs.
+            order.append(key)
+            return
+
+        for later_key in order[order.index(key) + 1:]:
+            following = self._readonly_annotation_items.get(later_key)
+            if following is not None:
+                item.stackBefore(following)
+                return
 
     def _highlight_readonly_annotation(self, annotation_id, highlighted):
         """Highlight or un-highlight a read-only annotation overlay.
@@ -1485,8 +1862,8 @@ class BaseCanvas(QGraphicsView):
             return
         try:
             # Bounds check
-            if self.pixmap_image and not (0 <= x < self.pixmap_image.width() and
-                                           0 <= y < self.pixmap_image.height()):
+            image_w, image_h = self.get_image_dimensions()
+            if image_w and not (0 <= x < image_w and 0 <= y < image_h):
                 self._static_marker.hide()
                 return
 
@@ -1522,8 +1899,8 @@ class BaseCanvas(QGraphicsView):
             return
         try:
             # Bounds check
-            if self.pixmap_image and not (0 <= x < self.pixmap_image.width() and
-                                           0 <= y < self.pixmap_image.height()):
+            image_w, image_h = self.get_image_dimensions()
+            if image_w and not (0 <= x < image_w and 0 <= y < image_h):
                 self._dynamic_marker.hide()
                 return
 

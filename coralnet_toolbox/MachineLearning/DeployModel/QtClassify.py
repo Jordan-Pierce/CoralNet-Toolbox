@@ -19,7 +19,7 @@ from coralnet_toolbox.Common import ThresholdsWidget
 
 from rasterio.windows import Window as _RasterioWindow
 
-from coralnet_toolbox.utilities import pixmap_to_numpy
+from coralnet_toolbox.utilities import pixmap_to_numpy_bgr
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -197,7 +197,7 @@ class Classify(Base):
                     for ann in anns:
                         if ann.cropped_image:
                             try:
-                                images_np.append(pixmap_to_numpy(ann.cropped_image))
+                                images_np.append(pixmap_to_numpy_bgr(ann.cropped_image))
                                 valid_inputs.append(ann)
                             except Exception as e:
                                 print(f"Error converting pixmap to numpy for {ann.id}: {e}")
@@ -220,7 +220,12 @@ class Classify(Base):
 
                         if n_bands >= 3:
                             arr = src.read([1, 2, 3], window=window)   # (3, H, W)
-                            arr = np.transpose(arr, (1, 2, 0))          # (H, W, 3)
+                            arr = np.transpose(arr, (1, 2, 0))          # (H, W, 3) RGB
+                            # rasterio gives RGB; ultralytics wants cv2 order.
+                            # Without this the main classification path fed the
+                            # model red and blue swapped, while the QPixmap
+                            # fallback below happened to be correct.
+                            arr = np.ascontiguousarray(arr[:, :, ::-1])
                         else:
                             band = src.read(1, window=window)           # (H, W)
                             arr = np.stack([band, band, band], axis=-1) # (H, W, 3)
@@ -247,7 +252,7 @@ class Classify(Base):
                         # Fallback to QPixmap path for this one annotation
                         if ann.cropped_image:
                             try:
-                                images_np.append(pixmap_to_numpy(ann.cropped_image))
+                                images_np.append(pixmap_to_numpy_bgr(ann.cropped_image))
                                 valid_inputs.append(ann)
                             except Exception as e2:
                                 print(f"Error in pixmap fallback for {ann.id}: {e2}")
@@ -258,7 +263,7 @@ class Classify(Base):
                 for ann in anns:
                     if ann.cropped_image:
                         try:
-                            images_np.append(pixmap_to_numpy(ann.cropped_image))
+                            images_np.append(pixmap_to_numpy_bgr(ann.cropped_image))
                             valid_inputs.append(ann)
                         except Exception as e2:
                             print(f"Error in pixmap fallback for {ann.id}: {e2}")

@@ -318,13 +318,22 @@ class SelectTool(Tool):
         # ========== PHASE 2: Check Sleeping (Phantom) items via mathematical collision ==========
         # If the Qt layer didn't find anything, check all annotations (including phantoms)
         # Iterate in reverse to respect visual Z-index (topmost items clicked first)
-        all_annotations = self.annotation_window.get_image_annotations()
         px, py = position.x(), position.y()
-        
+
+        # The grid narrows the scan to one cell's worth of annotations. None
+        # means the phantom layer has not been built yet, in which case the
+        # original scan over every annotation is still correct.
+        hit_index = self.annotation_window.get_phantom_hit_index()
+
+        if hit_index is not None:
+            candidates = hit_index.candidates(px, py)
+        else:
+            candidates = self.annotation_window.get_image_annotations()
+
         best_center = None
         best_general = None
-        
-        for annotation in reversed(all_annotations):
+
+        for annotation in reversed(candidates):
             # Skip selected annotations (already checked above) and invisible labels
             if annotation.is_selected or not getattr(annotation.label, 'is_visible', True):
                 continue

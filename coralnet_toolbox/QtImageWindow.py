@@ -882,7 +882,7 @@ class ImageWindow(QWidget):
             bool: True if the image was added successfully, False otherwise
         """
         # Check if image is already loaded
-        if image_path in self.raster_manager.image_paths:
+        if self.raster_manager.has_image_path(image_path):
             return True
             
         try:
@@ -981,30 +981,47 @@ class ImageWindow(QWidget):
         """Add per-frame mask-annotation counts to a VideoRaster's annotation_count.
 
         update_annotation_info only knows about vector annotations and the shared
-        raster-level mask.  Per-frame semantic overlays are stored in
-        annotation_window.batch_results_cache keyed by virtual frame paths.
-        Each frame that has a non-empty mask overlay counts as +1.
+        raster-level mask.  Per-frame masks live on the VideoRaster itself, with
+        annotation_window.batch_results_cache holding the derived display
+        overlays.  Each frame that has a non-empty mask counts as +1.
         """
         try:
             import numpy as np
             raster = self.raster_manager.get_raster(video_path)
             if raster is None:
                 return
+
+            # The raster's own store is authoritative and, unlike the display
+            # cache, is already populated for a project that was just reopened
+            # and whose frames have not been displayed yet.
+            masked_indices = set()
+            try:
+                masked_indices |= raster.get_frame_mask_indices()
+            except AttributeError:
+                pass  # not a VideoRaster
+
             cache = getattr(self.annotation_window, 'batch_results_cache', None) or {}
-            mask_frame_count = 0
             for key, cached in cache.items():
                 if not (isinstance(key, str) and key.startswith(prefix) and cached):
                     continue
+                if not isinstance(cached, dict):
+                    continue  # raw Ultralytics Results (detect/segment), not a mask
+                has_content = False
                 mask_arr = cached.get('mask_arr')
                 if mask_arr is not None:
                     try:
-                        if np.any(mask_arr):
-                            mask_frame_count += 1
-                        continue
+                        has_content = bool(np.any(mask_arr))
                     except Exception:
+                        has_content = cached.get('mask_qimage') is not None
+                elif cached.get('mask_qimage') is not None:
+                    has_content = True
+                if has_content:
+                    try:
+                        masked_indices.add(int(key.rsplit('::frame_', 1)[1]))
+                    except (ValueError, IndexError):
                         pass
-                if cached.get('mask_qimage') is not None:
-                    mask_frame_count += 1
+
+            mask_frame_count = len(masked_indices)
             if mask_frame_count > 0:
                 # update_annotation_info already counted the shared raster mask as 1
                 # if has_mask_content is True.  Replace that with the per-frame count
@@ -1037,7 +1054,7 @@ class ImageWindow(QWidget):
         
         try:
             # Validate path
-            if image_path not in self.raster_manager.image_paths:
+            if not self.raster_manager.has_image_path(image_path):
                 return
             
             # Check if already selected
@@ -1552,6 +1569,27 @@ class ImageWindow(QWidget):
         
         if not highlighted_paths:
             return
+
+        # Videos cannot take a z-channel: one file would have to describe every
+        # frame, and there is no per-frame z-channel to import it into. Drop
+        # them here rather than in the dialog, so the file picker's filters are
+        # built from the images that can actually receive one.
+        video_paths = [
+            path for path in highlighted_paths
+            if getattr(self.raster_manager.get_raster(path), 'raster_type', None) == 'VideoRaster'
+        ]
+        if video_paths:
+            highlighted_paths = [p for p in highlighted_paths if p not in set(video_paths)]
+
+        if not highlighted_paths:
+            QMessageBox.information(
+                self,
+                "No Eligible Rasters",
+                f"Z-channels cannot be imported for videos, and all "
+                f"{len(video_paths)} highlighted raster{'s are' if len(video_paths) > 1 else ' is'} "
+                f"a video.\n\nHighlight at least one image or orthomosaic and try again."
+            )
+            return
         
         # Build intelligent filters based on image basenames
         image_basenames = [os.path.splitext(os.path.basename(path))[0] for path in highlighted_paths]
@@ -1586,8 +1624,29 @@ class ImageWindow(QWidget):
         image_paths = sorted(highlighted_paths)
         z_channel_files = sorted(z_files)
         
+        # The import is launched from a selection of rasters, so their types are
+        # already known -- hand them over so the dialog can prefill each row's
+        # z-channel data type (elevation for orthomosaics, depth for images)
+        # instead of making the user set every row by hand.
+        raster_types = {}
+        for path in image_paths:
+            raster = self.raster_manager.get_raster(path)
+            if raster is not None:
+                raster_types[path] = getattr(raster, 'raster_type', None)
+
+        if video_paths:
+            count = len(video_paths)
+            QMessageBox.information(
+                self,
+                "Videos Skipped",
+                f"{count} highlighted video{'s were' if count > 1 else ' was'} skipped: "
+                f"a z-channel applies to a single image, and there is no per-frame "
+                f"z-channel for video.\n\nPairing the remaining "
+                f"{len(image_paths)} raster{'s' if len(image_paths) > 1 else ''}."
+            )
+
         # Create the pairing widget and keep a reference to prevent garbage collection
-        self.pairing_widget = ZImportDialog(image_paths, z_channel_files)
+        self.pairing_widget = ZImportDialog(image_paths, z_channel_files, raster_types=raster_types)
         
         # Connect the mapping_confirmed signal to handle the confirmed mapping
         self.pairing_widget.mapping_confirmed.connect(self.on_z_channel_mapping_confirmed)
@@ -1897,7 +1956,8 @@ class ImageWindow(QWidget):
             image_paths (list): List of paths to delete
         """
         # Make sure paths are valid
-        image_paths = [path for path in image_paths if path in self.raster_manager.image_paths]
+        image_paths = [path for path in image_paths
+                       if self.raster_manager.has_image_path(path)]
         if not image_paths:
             return
             

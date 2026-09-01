@@ -99,7 +99,7 @@ class ImportImages:
             # Add images directly to the manager without emitting signals
             for file_name in file_names:
                 try:
-                    if file_name not in self.image_window.raster_manager.image_paths:
+                    if not self.image_window.raster_manager.has_image_path(file_name):
                         # Call the manager directly to add the raster silently,
                         # bypassing ImageWindow.add_image and its signal handlers.
                         if raster_type == 'OrthoRaster':

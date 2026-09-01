@@ -18,7 +18,7 @@
 # Qt import, and do not make it lazy.
 import torch  # noqa: F401  (imported for load order, not for use here)
 
-__version__ = "1.0.10"
+__version__ = "1.0.11"
 __author__ = "Jordan Pierce"
 __email__ = "jordan.pierce@noaa.gov"
 __credits__ = "National Center for Coastal and Ocean Sciences (NCCOS)"

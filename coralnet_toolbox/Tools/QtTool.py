@@ -2,7 +2,7 @@ import warnings
 
 from PyQt5.QtCore import Qt, QPointF, QTimer
 from PyQt5.QtGui import QMouseEvent, QColor, QPen, QCursor
-from PyQt5.QtWidgets import QGraphicsPixmapItem, QGraphicsLineItem
+from PyQt5.QtWidgets import QGraphicsLineItem
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -245,7 +245,6 @@ class Tool:
             not self.show_crosshair
             or not self.annotation_window.active_image
             or not scene_pos
-            or not self.annotation_window.pixmap_image
         ):
             return
 
@@ -253,7 +252,7 @@ class Tool:
         self.clear_crosshair()
         
         # Get image bounds
-        image_rect = QGraphicsPixmapItem(self.annotation_window.pixmap_image).boundingRect()
+        image_rect = self.annotation_window.get_image_rect()
         
         # Create horizontal line across the full width of the image
         self.h_crosshair_line = QGraphicsLineItem(image_rect.left(), scene_pos.y(), image_rect.right(), scene_pos.y())

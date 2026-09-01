@@ -178,6 +178,10 @@ class ImageFilter(QObject):
         # Get paths to filter
         paths_to_filter = self.raster_manager.image_paths
         total_paths = len(paths_to_filter)
+
+        # Hashed once rather than rescanned per path: `selected_paths` is a
+        # list, so testing membership inside the loop is O(n^2) overall.
+        selected_lookup = None if selected_paths is None else set(selected_paths)
         
         # Use a thread pool to filter in parallel
         with ThreadPoolExecutor() as executor:
@@ -185,7 +189,7 @@ class ImageFilter(QObject):
             futures = {}
             for i, path in enumerate(paths_to_filter):
                 # Skip if not in selected paths
-                if selected_paths is not None and path not in selected_paths:
+                if selected_lookup is not None and path not in selected_lookup:
                     continue
                     
                 # Get raster from manager

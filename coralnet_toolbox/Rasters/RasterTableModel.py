@@ -249,7 +249,7 @@ class RasterTableModel(QAbstractTableModel):
         Args:
             path (str): The image path to add.
         """
-        if path in self.raster_manager.image_paths and path not in self.filtered_paths:
+        if self.raster_manager.has_image_path(path) and path not in self.filtered_paths:
             # The position for the new row is at the end of the current list
             row_position = len(self.filtered_paths)
             
@@ -387,7 +387,8 @@ class RasterTableModel(QAbstractTableModel):
             paths (List[str]): List of image paths to display
         """
         self.beginResetModel()
-        self.filtered_paths = [p for p in paths if p in self.raster_manager.image_paths]
+        self.filtered_paths = [p for p in paths
+                               if self.raster_manager.has_image_path(p)]
         self.endResetModel()
         
     def get_path_at_row(self, row: int) -> Optional[str]:
