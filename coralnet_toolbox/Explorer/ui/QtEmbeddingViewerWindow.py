@@ -10,6 +10,7 @@ the scatter plot visualization with built-in ML pipeline controls.
 import hashlib
 from functools import partial
 import os
+import time
 import traceback
 import warnings
 import numpy as np
@@ -95,6 +96,13 @@ class EmbeddingViewerWindow(QWidget):
     selection_changed = pyqtSignal(list)  # List of annotation IDs
     embedding_complete = pyqtSignal()
     reset_view_requested = pyqtSignal()
+    # Emitted from the pipeline worker thread with (processed, total). Queued
+    # across threads so the status-bar touch happens on the GUI thread.
+    extraction_status = pyqtSignal(int, int)
+    # Emitted from the pipeline worker thread with (title, text). The
+    # extraction/reduction helpers all run off the GUI thread, where
+    # constructing a QMessageBox is illegal.
+    worker_error = pyqtSignal(str, str)
 
     # Base (unscaled) pixel size for the bottom-toolbar view-control icons
     # (locate/center/home/rotate/sprite). Scaled via app_theme.scale_size()
@@ -244,6 +252,10 @@ class EmbeddingViewerWindow(QWidget):
         # Background worker for embedding pipeline
         self._pipeline_worker = None
         self._pipeline_running = False
+        # Connected once here (not per run) so repeated pipelines do not
+        # stack duplicate connections.
+        self.extraction_status.connect(self._on_extraction_status)
+        self.worker_error.connect(self._on_worker_error)
 
         # Label-change coalescing for on_annotation_label_changed.
         # During batch classification N annotationLabelChanged signals fire
@@ -1241,14 +1253,25 @@ class EmbeddingViewerWindow(QWidget):
         total_items = len(data_items)
         processed_count = [0]  # Mutable counter in closure
 
+        last_status_emit = [0.0]  # Mutable timestamp in closure
+
         def on_status_callback():
-            """Update status bar with current sample count."""
+            """Report extraction progress from the worker thread.
+
+            Runs on the worker thread, so it must not touch QWidgets directly:
+            QStatusBar.showMessage() with a timeout starts/stops a QTimer owned
+            by the GUI thread, which Qt rejects with
+            "QObject::startTimer: Timers cannot be started from another thread".
+            Emitting a signal instead hops to the GUI thread via a queued
+            connection. Throttled so a large extraction does not flood the
+            event loop with one queued event per crop.
+            """
             processed_count[0] += 1
-            # Re-issued per sample, so the timeout is invisible while the pipeline
-            # is moving but stops a stalled count from sitting there forever.
-            self.main_window.status_bar.showMessage(
-                f"Extracting features: {processed_count[0]}/{total_items}", 5000
-            )
+            now = time.monotonic()
+            if processed_count[0] < total_items and (now - last_status_emit[0]) < 0.1:
+                return
+            last_status_emit[0] = now
+            self.extraction_status.emit(processed_count[0], total_items)
 
         # Create worker with callable extractors
         self._pipeline_worker = EmbeddingPipelineWorker(
@@ -1298,6 +1321,20 @@ class EmbeddingViewerWindow(QWidget):
         """
         return self._extract_features(data_items, model_name, progress_bar=None, live_model=live_model, on_batch=on_batch, status_callback=status_callback, cancel_check=cancel_check)
     
+    @pyqtSlot(str, str)
+    def _on_worker_error(self, title, text):
+        """Show a warning raised on the worker thread. Runs on the GUI thread."""
+        QMessageBox.warning(self, title, text)
+
+    @pyqtSlot(int, int)
+    def _on_extraction_status(self, processed, total):
+        """Show per-crop extraction progress. Always runs on the GUI thread."""
+        # Re-issued as extraction advances, so the timeout is invisible while the
+        # pipeline is moving but stops a stalled count from sitting there forever.
+        self.main_window.status_bar.showMessage(
+            f"Extracting features: {processed}/{total}", 5000
+        )
+
     def _on_pipeline_progress(self, message):
         """Handle progress updates from the worker."""
         # Update main window status bar if available. Bounded so a worker that
@@ -1724,7 +1761,7 @@ class EmbeddingViewerWindow(QWidget):
             return np.array(features_list), valid_items
 
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Feature extraction failed: {e}")
+            self.worker_error.emit("Error", f"Feature extraction failed: {e}")
             return np.array([]), []
         finally:
             if torch.cuda.is_available():
@@ -1827,7 +1864,7 @@ class EmbeddingViewerWindow(QWidget):
             return np.array(features_list), valid_results
 
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Transformer extraction failed: {e}")
+            self.worker_error.emit("Error", f"Transformer extraction failed: {e}")
             return np.array([]), []
         finally:
             if torch.cuda.is_available():
@@ -1847,7 +1884,7 @@ class EmbeddingViewerWindow(QWidget):
             self._cached_timm_extractor_name = bare_name
             return extractor
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to load TIMM model: {e}")
+            self.worker_error.emit("Error", f"Failed to load TIMM model: {e}")
             return None
 
     def _extract_timm_features(self, data_items, model_name, progress_bar=None,
@@ -1895,7 +1932,7 @@ class EmbeddingViewerWindow(QWidget):
             return np.array(features_list), valid_results
 
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"TIMM extraction failed: {e}")
+            self.worker_error.emit("Error", f"TIMM extraction failed: {e}")
             return np.array([]), []
         finally:
             if torch.cuda.is_available():
@@ -1928,7 +1965,7 @@ class EmbeddingViewerWindow(QWidget):
             self._cached_openclip_preprocess = preprocess
             return model, preprocess
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to load OpenCLIP model: {e}")
+            self.worker_error.emit("Error", f"Failed to load OpenCLIP model: {e}")
             return None, None
 
     def _extract_openclip_features(self, data_items, model_name, progress_bar=None,
@@ -1982,7 +2019,7 @@ class EmbeddingViewerWindow(QWidget):
             return np.array(features_list), valid_results
 
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"OpenCLIP extraction failed: {e}")
+            self.worker_error.emit("Error", f"OpenCLIP extraction failed: {e}")
             return np.array([]), []
         finally:
             if torch.cuda.is_available():
@@ -2079,7 +2116,7 @@ class EmbeddingViewerWindow(QWidget):
                 self._cached_yolo_model_name = model_name
             return model
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to load YOLO model: {e}")
+            self.worker_error.emit("Error", f"Failed to load YOLO model: {e}")
             return None
     
     def _load_transformer_model(self, model_name):
@@ -2098,7 +2135,7 @@ class EmbeddingViewerWindow(QWidget):
             self._cached_transformer_model_name = model_name
             return feature_extractor
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to load transformer: {e}")
+            self.worker_error.emit("Error", f"Failed to load transformer: {e}")
             return None
     
     # -------------------------------------------------------------------------
@@ -2253,7 +2290,7 @@ class EmbeddingViewerWindow(QWidget):
             return reducer.fit_transform(features_scaled)
             
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Dimensionality reduction failed: {e}")
+            self.worker_error.emit("Error", f"Dimensionality reduction failed: {e}")
             return None
     
     def _update_data_items_with_embedding(self, data_items, embedded_features):
