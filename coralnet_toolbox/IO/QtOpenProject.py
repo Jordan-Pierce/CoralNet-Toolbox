@@ -176,7 +176,11 @@ class OpenProject(QDialog):
             # meaningful against a known set of field definitions.
             self.import_metadata_schema(project_data.get('metadata_schema'))
             self.import_annotations(project_data.get('annotations'))
-                        
+            # After the labels exist and any legacy raster-level masks have been
+            # attached: video frame masks were saved with the class IDs of a
+            # previous session's label order, so translate them into this one's.
+            self.resolve_video_frame_masks()
+
             # Update current project path
             self.current_project_path = file_path
             elapsed = time.perf_counter() - start_time
@@ -301,6 +305,33 @@ class OpenProject(QDialog):
                 self.main_window.status_bar.showMessage("Import complete.", 3000)
             except Exception:
                 pass
+
+    def resolve_video_frame_masks(self):
+        """Remap every video's restored per-frame masks into the live label space.
+
+        VideoRaster.update_from_dict decodes the pixels during import_images, but
+        that runs before import_labels, so the class IDs cannot be resolved to
+        Label objects yet. This is the second half of that restore.
+        """
+        try:
+            project_labels = self.label_window.labels
+            for image_path in list(self.image_window.raster_manager.image_paths):
+                raster = self.image_window.raster_manager.get_raster(image_path)
+                if raster is None:
+                    continue
+                try:
+                    raster.resolve_frame_mask_labels(project_labels)
+                except AttributeError:
+                    continue  # not a VideoRaster
+                except Exception as e:
+                    print(f"Error resolving frame masks for {image_path}: {e}")
+                if raster.has_frame_masks:
+                    try:
+                        self.image_window.update_image_annotations(image_path, update_counts=False)
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"Error resolving video frame masks: {e}")
 
     def import_labels(self, labels):
         """Import labels from the given list."""

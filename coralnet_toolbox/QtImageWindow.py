@@ -981,30 +981,47 @@ class ImageWindow(QWidget):
         """Add per-frame mask-annotation counts to a VideoRaster's annotation_count.
 
         update_annotation_info only knows about vector annotations and the shared
-        raster-level mask.  Per-frame semantic overlays are stored in
-        annotation_window.batch_results_cache keyed by virtual frame paths.
-        Each frame that has a non-empty mask overlay counts as +1.
+        raster-level mask.  Per-frame masks live on the VideoRaster itself, with
+        annotation_window.batch_results_cache holding the derived display
+        overlays.  Each frame that has a non-empty mask counts as +1.
         """
         try:
             import numpy as np
             raster = self.raster_manager.get_raster(video_path)
             if raster is None:
                 return
+
+            # The raster's own store is authoritative and, unlike the display
+            # cache, is already populated for a project that was just reopened
+            # and whose frames have not been displayed yet.
+            masked_indices = set()
+            try:
+                masked_indices |= raster.get_frame_mask_indices()
+            except AttributeError:
+                pass  # not a VideoRaster
+
             cache = getattr(self.annotation_window, 'batch_results_cache', None) or {}
-            mask_frame_count = 0
             for key, cached in cache.items():
                 if not (isinstance(key, str) and key.startswith(prefix) and cached):
                     continue
+                if not isinstance(cached, dict):
+                    continue  # raw Ultralytics Results (detect/segment), not a mask
+                has_content = False
                 mask_arr = cached.get('mask_arr')
                 if mask_arr is not None:
                     try:
-                        if np.any(mask_arr):
-                            mask_frame_count += 1
-                        continue
+                        has_content = bool(np.any(mask_arr))
                     except Exception:
+                        has_content = cached.get('mask_qimage') is not None
+                elif cached.get('mask_qimage') is not None:
+                    has_content = True
+                if has_content:
+                    try:
+                        masked_indices.add(int(key.rsplit('::frame_', 1)[1]))
+                    except (ValueError, IndexError):
                         pass
-                if cached.get('mask_qimage') is not None:
-                    mask_frame_count += 1
+
+            mask_frame_count = len(masked_indices)
             if mask_frame_count > 0:
                 # update_annotation_info already counted the shared raster mask as 1
                 # if has_mask_content is True.  Replace that with the per-frame count

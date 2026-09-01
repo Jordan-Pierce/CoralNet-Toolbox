@@ -238,8 +238,16 @@ class SaveProject(QDialog):
         all_annotations = list(self.annotation_window.annotations_dict.values())
         for image_path in self.image_window.raster_manager.image_paths:
             raster = self.image_window.raster_manager.get_raster(image_path)
-            if raster and raster.mask_annotation:
-                all_annotations.append(raster.mask_annotation)
+            if not raster or not raster.mask_annotation:
+                continue
+            # A VideoRaster's mask_annotation is the shared *edit buffer*, not a
+            # layer: it holds whichever frame was painted last and is keyed to the
+            # video path, so saving it here would record one arbitrary frame's
+            # pixels as a mask on the whole video. The real per-frame masks are
+            # serialized by VideoRaster.to_dict (see get_images).
+            if getattr(raster, 'raster_type', None) == 'VideoRaster':
+                continue
+            all_annotations.append(raster.mask_annotation)
         
         # Start progress bar with the count of all annotations
         total_annotations = len(all_annotations)

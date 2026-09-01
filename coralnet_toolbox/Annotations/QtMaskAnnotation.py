@@ -22,6 +22,87 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
+# Functions
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def encode_mask_crop_rle(mask_data: np.ndarray) -> list:
+    """Encode a uint8 class-ID array as a list of per-class crop-RLE records.
+
+    Each class is cropped to its own bounding box before RLE encoding, which is
+    far more compact than full-image RLE for small or sparse classes (e.g. a
+    200x200 object in a 4000x4000 image). The stored ``bbox`` lets
+    :func:`decode_mask_crop_rle` rebuild the full array exactly.
+
+    Lives at module scope rather than on MaskAnnotation because VideoRaster
+    serializes per-frame masks with the same encoding without owning a
+    MaskAnnotation for each frame.
+    """
+    rle_list = []
+    unique_classes = np.unique(mask_data)
+    for class_id in unique_classes:
+        if class_id == 0:
+            continue
+        binary_mask = (mask_data == class_id).astype(np.uint8)
+
+        # Find the tight bounding box of this class's pixels.
+        rows_any = binary_mask.any(axis=1)
+        cols_any = binary_mask.any(axis=0)
+        y_idx = np.where(rows_any)[0]
+        x_idx = np.where(cols_any)[0]
+        if y_idx.size == 0:
+            continue  # class present in map but not in mask data
+        y1, y2 = int(y_idx[0]), int(y_idx[-1])
+        x1, x2 = int(x_idx[0]), int(x_idx[-1])
+
+        # RLE-encode only the crop, not the full image.
+        crop = binary_mask[y1:y2 + 1, x1:x2 + 1]
+        rle = mask.encode(np.asfortranarray(crop))
+        rle['counts'] = base64.b64encode(rle['counts']).decode('ascii')
+        rle_list.append({
+            'class_id': int(class_id),
+            'rle': rle,
+            'bbox': [x1, y1, x2, y2],  # inclusive xyxy offset for decode
+        })
+    return rle_list
+
+
+def decode_mask_crop_rle(rle_list, shape) -> np.ndarray:
+    """Rebuild a uint8 class-ID array from crop-RLE records.
+
+    Accepts both the compact crop format written by :func:`encode_mask_crop_rle`
+    and the legacy full-image RLE found in older project files (no ``bbox`` key).
+    """
+    shape = tuple(shape)
+    mask_data = np.zeros(shape, dtype=np.uint8)
+    for item in rle_list or []:
+        class_id = item['class_id']
+        rle = item['rle']
+        try:
+            counts = rle['counts']
+            if isinstance(counts, str):
+                rle = dict(rle)
+                rle['counts'] = base64.b64decode(counts)
+            if 'bbox' in item:
+                # Compact format: RLE covers the bounding-box crop only.
+                x1, y1, x2, y2 = item['bbox']
+                crop_mask = mask.decode(rle).astype(bool)
+                sub = mask_data[y1:y2 + 1, x1:x2 + 1]
+                sub[crop_mask] = class_id
+            else:
+                # Legacy format: RLE covers the full image.
+                binary_mask = mask.decode(rle).astype(bool)
+                if binary_mask.shape != shape:
+                    print(f"Warning: RLE decoded shape {binary_mask.shape} does not match expected shape {shape}")
+                    continue
+                mask_data[binary_mask] = class_id
+        except Exception as e:
+            print(f"Error decoding RLE for class {class_id}: {e}")
+            continue
+    return mask_data
+
+
+# ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
@@ -1486,11 +1567,19 @@ class MaskAnnotation(Annotation):
 
     # --- Vectorization ---
 
-    def _make_vector_builders(self, transparency, show_confidence):
+    def _make_vector_builders(self, transparency, show_confidence, image_path=None):
         """Build the contour -> annotation helpers used by the vectorizer.
+
+        ``image_path`` is the path the new annotations are filed under, and
+        defaults to this mask's own. A VideoRaster's mask is shared by every
+        frame and carries the *video's* path, so vectorizing a frame must pass
+        that frame's virtual ``video.mp4::frame_N`` path instead -- annotations
+        filed under the bare video path belong to no frame and are never drawn.
 
         Returns a ``(contour_to_points, build_annotation)`` pair.
         """
+        if image_path is None:
+            image_path = self.image_path
         from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
         from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 
@@ -1529,7 +1618,7 @@ class MaskAnnotation(Annotation):
                         center_xy=center_xy,
                         annotation_size=max(1, int(round(max(width, height)))),
                         label=label,
-                        image_path=self.image_path,
+                        image_path=image_path,
                         transparency=transparency,
                         show_confidence=show_confidence,
                     )
@@ -1538,7 +1627,7 @@ class MaskAnnotation(Annotation):
                     top_left=QPointF(min_x, min_y),
                     bottom_right=QPointF(max_x, max_y),
                     label=label,
-                    image_path=self.image_path,
+                    image_path=image_path,
                     transparency=transparency,
                     show_confidence=show_confidence,
                 )
@@ -1547,7 +1636,7 @@ class MaskAnnotation(Annotation):
                 points=exterior_points,
                 holes=hole_points_list,
                 label=label,
-                image_path=self.image_path,
+                image_path=image_path,
                 transparency=transparency,
                 show_confidence=show_confidence,
                 # The points already went through cv2.approxPolyDP at a larger
@@ -1579,7 +1668,8 @@ class MaskAnnotation(Annotation):
     def to_vector_annotations(self, transparency=None, show_confidence: bool = False,
                               min_hole_area: int = 500, min_component_area: int = 5,
                               simplify_px: float = 1.0,
-                              rejected_indices_out: list = None) -> list:
+                              rejected_indices_out: list = None,
+                              image_path: str = None) -> list:
         """Convert all labeled regions in this mask into vector annotations.
 
         Disconnected regions become separate annotations. Four-point, axis-aligned
@@ -1630,6 +1720,11 @@ class MaskAnnotation(Annotation):
                 instead of surviving as stray mask pixels. Regions of an
                 unmapped class are *not* reported: those are a label-mapping
                 problem, not noise, and clearing them would lose data.
+            image_path: Path to file the new annotations under. Defaults to this
+                mask's own ``image_path``. Callers vectorizing a video frame must
+                pass that frame's virtual ``video.mp4::frame_N`` path, because a
+                VideoRaster's mask is shared across frames and carries only the
+                video's path.
         """
         if transparency is None:
             transparency = getattr(self, 'transparency', 128)
@@ -1637,7 +1732,7 @@ class MaskAnnotation(Annotation):
         try:
             import cv2
             _contour_to_points, _build_annotation = self._make_vector_builders(
-                transparency, show_confidence
+                transparency, show_confidence, image_path=image_path
             )
         except Exception:
             return []
@@ -1816,33 +1911,8 @@ class MaskAnnotation(Annotation):
         base_dict = super().to_dict()
 
         # Encode each class's binary mask using crop-RLE (compact format)
-        rle_list = []
-        unique_classes = np.unique(self.mask_data)
-        for class_id in unique_classes:
-            if class_id == 0:
-                continue
-            binary_mask = (self.mask_data == class_id).astype(np.uint8)
+        rle_list = encode_mask_crop_rle(self.mask_data)
 
-            # Find the tight bounding box of this class's pixels.
-            rows_any = binary_mask.any(axis=1)
-            cols_any = binary_mask.any(axis=0)
-            y_idx = np.where(rows_any)[0]
-            x_idx = np.where(cols_any)[0]
-            if y_idx.size == 0:
-                continue  # class present in map but not in mask data
-            y1, y2 = int(y_idx[0]), int(y_idx[-1])
-            x1, x2 = int(x_idx[0]), int(x_idx[-1])
-
-            # RLE-encode only the crop, not the full image.
-            crop = binary_mask[y1:y2 + 1, x1:x2 + 1]
-            rle = mask.encode(np.asfortranarray(crop))
-            rle['counts'] = base64.b64encode(rle['counts']).decode('ascii')
-            rle_list.append({
-                'class_id': int(class_id),
-                'rle': rle,
-                'bbox': [x1, y1, x2, y2],  # inclusive xyxy offset for decode
-            })
-        
         # Convert the label map to a serializable format
         serializable_label_map = {}
         for cid, label in self.class_id_to_label_map.items():
@@ -1865,28 +1935,7 @@ class MaskAnnotation(Annotation):
 
         # Decode the RLE mask data (supports both crop-RLE and legacy full-image RLE)
         shape = tuple(data['shape'])
-        mask_data = np.zeros(shape, dtype=np.uint8)
-        for item in data['rle_masks']:
-            class_id = item['class_id']
-            rle = item['rle']
-            try:
-                rle['counts'] = base64.b64decode(rle['counts'])
-                if 'bbox' in item:
-                    # Compact format: RLE covers the bounding-box crop only.
-                    x1, y1, x2, y2 = item['bbox']
-                    crop_mask = mask.decode(rle).astype(bool)
-                    sub = mask_data[y1:y2 + 1, x1:x2 + 1]
-                    sub[crop_mask] = class_id
-                else:
-                    # Legacy format: RLE covers the full image.
-                    binary_mask = mask.decode(rle).astype(bool)
-                    if binary_mask.shape != shape:
-                        print(f"Warning: RLE decoded shape {binary_mask.shape} does not match expected shape {shape}")
-                        continue
-                    mask_data[binary_mask] = class_id
-            except Exception as e:
-                print(f"Error decoding RLE for class {class_id}: {e}")
-                continue
+        mask_data = decode_mask_crop_rle(data['rle_masks'], shape)
 
         # Create the base annotation instance. It will have a generic label map initially.
         annotation = cls(

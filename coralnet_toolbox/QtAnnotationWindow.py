@@ -1133,6 +1133,13 @@ class AnnotationWindow(BaseCanvas):
                 except (ValueError, IndexError):
                     pass
 
+        # Per-frame masks owned by the raster (authoritative, and already
+        # populated for a reopened project whose frames have not been shown yet)
+        try:
+            frame_indices |= self._active_video_raster.get_frame_mask_indices()
+        except AttributeError:
+            pass
+
         # Per-frame semantic mask overlays and detect/segment video results
         cache = getattr(self, 'batch_results_cache', None) or {}
         for key, cached in cache.items():
@@ -1376,7 +1383,8 @@ class AnnotationWindow(BaseCanvas):
         # _restore is load-only and intentionally won't zero on a cache miss).
         # When a cache exists, _restore (inside load_annotations) loads it.
         cache = getattr(self, 'batch_results_cache', {}) or {}
-        if cache.get(virtual_path) is None:
+        if (cache.get(virtual_path) is None
+                and video_raster.get_frame_mask(frame_idx) is None):
             self._clear_video_frame_mask_data()
 
         # Load annotations for this virtual frame path
@@ -1443,37 +1451,9 @@ class AnnotationWindow(BaseCanvas):
                 
                 # Send the raw paths to the fast item
                 self._base_image_item.set_readonly_annotations(paths_data)
-                # Also check for per-frame cached mask overlay and set/clear it
-                try:
-                    cached = getattr(self, 'batch_results_cache', {}).get(self.current_image_path)
-                    if cached and cached.get('mask_qimage') is not None:
-                        try:
-                            self._base_image_item.set_mask_image(cached.get('mask_qimage'), cached.get('opacity', 128 / 255.0))
-                        except Exception:
-                            pass
-                    else:
-                        try:
-                            self._base_image_item.set_mask_image(None)
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
-                # Also check for a per-frame cached mask overlay and set it (or clear)
-                try:
-                    cached = getattr(self, 'batch_results_cache', {}).get(self.current_image_path)
-                    if cached and cached.get('mask_qimage') is not None:
-                        try:
-                            self._base_image_item.set_mask_image(cached.get('mask_qimage'), cached.get('opacity', 128 / 255.0))
-                        except Exception:
-                            pass
-                    else:
-                        try:
-                            # No per-frame mask available: ensure overlay cleared
-                            self._base_image_item.set_mask_image(None)
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
+                # Per-frame mask overlay, rendered on demand for frames restored
+                # from a project file that have never been displayed.
+                self._apply_video_frame_mask_overlay(self.current_image_path)
             except Exception:
                 pass
 
@@ -1695,6 +1675,10 @@ class AnnotationWindow(BaseCanvas):
                         except Exception:
                             pass
                 self._base_image_item.set_readonly_annotations(paths_data)
+                # Masks were missing from this path entirely: _prepare_scene_for_streaming
+                # clears the overlay when playback starts and nothing here put one
+                # back, so timer-driven playback showed no mask on any frame.
+                self._apply_video_frame_mask_overlay(self.current_image_path)
             except Exception:
                 pass
         else:
@@ -2398,6 +2382,15 @@ class AnnotationWindow(BaseCanvas):
         if _video_raster_cls is not None and isinstance(raster_check, _video_raster_cls):
             QApplication.restoreOverrideCursor()
             self._activate_video_mode(raster_check)
+            # _activate_video_mode always lands on frame 0, and returns early when
+            # the raster is already active, so a virtual frame path has to be
+            # honoured explicitly. Without this, set_image("clip.mp4::frame_5")
+            # silently shows frame 0 and no frame can be selected programmatically.
+            requested_frame = self._video_frame_index(image_path)
+            if requested_frame is not None:
+                requested_frame = max(0, min(requested_frame, raster_check.frame_count - 1))
+                if requested_frame != self._current_frame_idx:
+                    self._display_video_frame(requested_frame)
             return
         else:
             # Deactivate video mode if we're switching to a regular image
@@ -2759,12 +2752,15 @@ class AnnotationWindow(BaseCanvas):
         # this re-seed guarantees the edit target matches the displayed frame.
         # Skipped while a predict pass is deferring syncs — that path manages the
         # shared buffer itself.
+        #
+        # Called even on a cache miss: _restore_video_frame_mask_data falls back
+        # to the VideoRaster's durable store, which is the only place a mask
+        # restored from a project file lives until its frame has been displayed.
+        # (A frame with neither is a no-op there, by design.)
         if ('::frame_' in str(self.current_image_path)
                 and not getattr(self, '_deferring_video_cache_sync', False)):
             _cache = getattr(self, 'batch_results_cache', {}) or {}
-            _cached = _cache.get(self.current_image_path)
-            if _cached is not None:
-                self._restore_video_frame_mask_data(_cached)
+            self._restore_video_frame_mask_data(_cache.get(self.current_image_path))
 
         try:
             self.annotation_manager.register_mask_annotation(mask_annotation)
@@ -3139,6 +3135,10 @@ class AnnotationWindow(BaseCanvas):
                 show_confidence=False,
                 min_hole_area=min_hole_area,
                 rejected_indices_out=rejected_indices,
+                # File them under the displayed frame, not the video: a
+                # VideoRaster's mask is shared across frames and carries only
+                # the video's path.
+                image_path=self.current_image_path,
             )
         except Exception:
             vector_annotations = []
@@ -3186,6 +3186,16 @@ class AnnotationWindow(BaseCanvas):
                 try:
                     mask_annotation.refresh_graphics()
                     self.refresh_mask_annotation_view(mask_annotation)
+                except Exception:
+                    pass
+
+                # The clear ran with signals blocked, so on_annotation_updated
+                # never fired and the video frame's stored/cached mask still
+                # holds the pixels that were just vectorized away — they would
+                # come back on the next navigation. Sync explicitly.
+                try:
+                    if '::frame_' in str(self.current_image_path):
+                        self._sync_video_mask_to_cache()
                 except Exception:
                     pass
 
@@ -3914,6 +3924,13 @@ class AnnotationWindow(BaseCanvas):
                 # onto every subsequent frame.
                 self._restore_video_frame_mask_data(cached)
 
+                if not cached:
+                    # A frame whose mask came from the project file has pixels in
+                    # the VideoRaster store but no display overlay yet. Render and
+                    # cache one now: this is what makes a reopened project show
+                    # its saved masks.
+                    cached = self._ensure_video_frame_mask_overlay(self.current_image_path)
+
                 if cached:
                     qimg = cached.get('mask_qimage')
                     opacity = cached.get('opacity', 128 / 255.0)
@@ -3989,6 +4006,22 @@ class AnnotationWindow(BaseCanvas):
                 return
 
             stored = cached.get('mask_arr') if cached else None
+            if stored is None:
+                # No display-cache entry: fall back to the VideoRaster's durable
+                # per-frame store, which is what a freshly reopened project has
+                # before any frame has been displayed and cached.
+                frame_idx = self._video_frame_index(self.current_image_path)
+                if frame_idx is not None:
+                    stored = vr.get_frame_mask(frame_idx)
+            else:
+                # Mirror a cache-only entry into the durable store so it survives
+                # a save. Writers that only know about batch_results_cache
+                # therefore still persist, without each having to know about the
+                # raster-level store.
+                frame_idx = self._video_frame_index(self.current_image_path)
+                if frame_idx is not None and vr.get_frame_mask(frame_idx) is None:
+                    vr.set_frame_mask(frame_idx, stored)
+
             ma = getattr(vr, 'mask_annotation', None)
             if ma is None:
                 # No shared mask exists yet. If this frame has cached pixels we
@@ -4076,6 +4109,144 @@ class AnnotationWindow(BaseCanvas):
         except Exception:
             pass
 
+    @staticmethod
+    def _video_frame_index(frame_path):
+        """Return the frame index encoded in a virtual frame path, or None."""
+        if not frame_path or '::frame_' not in str(frame_path):
+            return None
+        try:
+            return int(str(frame_path).rsplit('::frame_', 1)[1])
+        except (ValueError, IndexError):
+            return None
+
+    def _render_video_frame_overlay(self, raster, mask_arr):
+        """Colour one frame's class-ID array into a QImage the fast item can paint.
+
+        Renders through a throwaway MaskAnnotation rather than the raster's
+        shared edit buffer, because this runs for frames that are merely being
+        streamed past -- touching the shared buffer would make the edit target
+        follow playback.
+        """
+        project_labels = self.main_window.label_window.labels
+        if not project_labels:
+            return None, None
+        try:
+            temp_mask = MaskAnnotation(
+                image_path=raster.image_path,
+                mask_data=mask_arr,
+                initial_labels=project_labels,
+                rasterio_src=None,
+            )
+            # A fresh MaskAnnotation assigns class IDs from the label list; the
+            # stored pixels were written against the shared buffer's map. Adopt
+            # that map so the colours match what editing the frame would show.
+            shared = getattr(raster, 'mask_annotation', None)
+            if shared is not None and shared.class_id_to_label_map:
+                temp_mask.class_id_to_label_map = dict(shared.class_id_to_label_map)
+                temp_mask.label_id_to_class_id_map = dict(shared.label_id_to_class_id_map)
+                temp_mask.visible_label_ids = set(shared.visible_label_ids)
+                temp_mask.invalidate_color_map()
+            temp_mask._ensure_canvas()
+            if temp_mask.qimage is None:
+                return None, None
+            # Copy: temp_mask owns the buffer and is about to be dropped.
+            return temp_mask.qimage.copy(), temp_mask.get_current_transparency() / 255.0
+        except Exception as e:
+            print(f"Video frame overlay render error: {e}")
+            return None, None
+
+    def _ensure_video_frame_mask_overlay(self, frame_path):
+        """Return this frame's display-cache entry, rendering it if it is missing.
+
+        The streaming and playback paths read the overlay straight out of
+        batch_results_cache, which only ever gets filled by a frame passing
+        through the full display path. A project that was just reopened has its
+        pixels in VideoRaster._frame_masks and no cache entry at all, so those
+        paths drew nothing until the user happened to seek to the frame -- which
+        is why the scrub bar showed ticks for masks that would not appear until
+        prev/next-annotated was pressed. Build the overlay on first request and
+        cache it, so each frame pays for it once.
+        """
+        cache = getattr(self, 'batch_results_cache', None) or {}
+        cached = cache.get(frame_path)
+        if isinstance(cached, dict) and cached.get('mask_qimage') is not None:
+            return cached
+        if cached is not None and not isinstance(cached, dict):
+            return None  # raw Ultralytics Results (detect/segment), not a mask
+
+        frame_idx = self._video_frame_index(frame_path)
+        if frame_idx is None:
+            return cached
+        video_path = str(frame_path).rsplit('::frame_', 1)[0]
+        raster = self.main_window.image_window.raster_manager.get_raster(video_path)
+        if raster is None:
+            return cached
+
+        mask_arr = cached.get('mask_arr') if isinstance(cached, dict) else None
+        if mask_arr is None:
+            try:
+                mask_arr = raster.get_frame_mask(frame_idx)
+            except AttributeError:
+                return cached  # not a VideoRaster
+        if mask_arr is None:
+            return cached
+
+        qimg, opacity = self._render_video_frame_overlay(raster, mask_arr)
+        if qimg is None:
+            return cached
+
+        if not hasattr(self, 'batch_results_cache') or self.batch_results_cache is None:
+            self.batch_results_cache = {}
+        entry = {'mask_qimage': qimg, 'mask_arr': mask_arr, 'opacity': opacity}
+        self.batch_results_cache[frame_path] = entry
+        return entry
+
+    def _apply_video_frame_mask_overlay(self, frame_path):
+        """Push this frame's mask overlay onto the fast image item, or clear it."""
+        base_image_item = getattr(self, '_base_image_item', None)
+        if base_image_item is None:
+            return
+        try:
+            cached = self._ensure_video_frame_mask_overlay(frame_path)
+            if isinstance(cached, dict) and cached.get('mask_qimage') is not None:
+                base_image_item.set_mask_image(cached.get('mask_qimage'),
+                                               cached.get('opacity', 128 / 255.0))
+            else:
+                # Nothing on this frame: clear, or the previous frame's mask
+                # stays painted over every frame that follows it.
+                base_image_item.set_mask_image(None)
+        except Exception:
+            pass
+
+    def _store_video_frame_mask(self, frame_path, mask_arr, mask_qimage, opacity):
+        """Record one frame's mask in both the durable store and the display cache.
+
+        The VideoRaster's ``_frame_masks`` is the authoritative copy — it is what
+        the project file is written from — while ``batch_results_cache`` holds the
+        derived overlay (a coloured QImage plus its baked-in opacity) that
+        FastImageItem paints. Every writer goes through here so the two cannot
+        drift apart, which is how painted frames used to be lost on save.
+        """
+        if not hasattr(self, 'batch_results_cache') or self.batch_results_cache is None:
+            self.batch_results_cache = {}
+        self.batch_results_cache[frame_path] = {
+            'mask_qimage': mask_qimage,
+            'mask_arr': None if mask_arr is None else mask_arr.copy(),
+            'opacity': opacity,
+        }
+
+        frame_idx = self._video_frame_index(frame_path)
+        if frame_idx is None:
+            return
+        video_path = str(frame_path).rsplit('::frame_', 1)[0]
+        raster = self.main_window.image_window.raster_manager.get_raster(video_path)
+        if raster is None:
+            return
+        try:
+            raster.set_frame_mask(frame_idx, mask_arr)
+        except AttributeError:
+            pass  # not a VideoRaster
+
     def _sync_video_mask_to_cache(self, frame_path=None):
         """Store the current VideoRaster mask annotation state in batch_results_cache.
 
@@ -4123,11 +4294,7 @@ class AnnotationWindow(BaseCanvas):
             # Ensure cache dict exists
             if not hasattr(self, 'batch_results_cache') or self.batch_results_cache is None:
                 self.batch_results_cache = {}
-            self.batch_results_cache[frame_path] = {
-                'mask_qimage': qimg_copy,
-                'mask_arr': ma.mask_data.copy(),
-                'opacity': opacity,
-            }
+            self._store_video_frame_mask(frame_path, ma.mask_data, qimg_copy, opacity)
             # Only push the overlay to the live fast image item when this is the
             # frame currently on screen. During batch inference the synced frame is
             # usually NOT the displayed one, and pushing it would show the wrong

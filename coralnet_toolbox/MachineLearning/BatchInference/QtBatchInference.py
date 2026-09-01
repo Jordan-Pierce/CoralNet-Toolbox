@@ -2007,11 +2007,22 @@ class BatchInferenceDialog(QDialog):
                                     # Cache per-frame mask overlay (virtual path key).
                                     # Keep the legacy dict shape for playback code while
                                     # constructing it through an explicit record contract.
-                                    cache[inf_result.batch_key] = SemanticOverlayRecord(
+                                    #
+                                    # Written through the annotation window rather than
+                                    # straight into `cache` so the VideoRaster's durable
+                                    # per-frame store is updated too: a prediction that
+                                    # reaches only the display cache is lost on save.
+                                    _overlay = SemanticOverlayRecord(
                                         mask_qimage=qimg_copy,
                                         mask_arr=reconstructed.copy(),
                                         opacity=opacity,
                                     ).to_legacy_dict()
+                                    aw._store_video_frame_mask(
+                                        inf_result.batch_key,
+                                        _overlay['mask_arr'],
+                                        _overlay['mask_qimage'],
+                                        _overlay['opacity'],
+                                    )
 
                                     # Show overlay immediately for the displayed frame
                                     try:
