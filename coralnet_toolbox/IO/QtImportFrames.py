@@ -885,7 +885,7 @@ class ImportFrames(QDialog):
                 target_path = os.path.join(self.output_dir, f"{self.frame_prefix}_{idx}.{self.frame_ext}")
 
                 # Skip if the target image was not actually imported.
-                if target_path not in raster_manager.image_paths:
+                if not raster_manager.has_image_path(target_path):
                     progress.update_progress()
                     continue
 

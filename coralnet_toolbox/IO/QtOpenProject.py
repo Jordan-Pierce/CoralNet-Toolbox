@@ -446,7 +446,7 @@ class OpenProject(QDialog):
             for image_path, image_annotations in annotations.items():
                 # Resolve updated path mapping quickly
                 updated_path = False
-                if image_path not in raster_manager.image_paths:
+                if not raster_manager.has_image_path(image_path):
                     if image_path in self.updated_paths:
                         image_path = self.updated_paths[image_path]
                         updated_path = True
@@ -455,7 +455,7 @@ class OpenProject(QDialog):
                         base_video = image_path.rsplit('::frame_', 1)[0]
                         # Also check updated_paths for the base video
                         resolved_video = self.updated_paths.get(base_video, base_video)
-                        if resolved_video not in raster_manager.image_paths:
+                        if not raster_manager.has_image_path(resolved_video):
                             print(f"Warning: Video not found for frame path: {image_path}")
                             skipped_count += len(image_annotations)
                             progress_batch += len(image_annotations)

@@ -882,7 +882,7 @@ class ImageWindow(QWidget):
             bool: True if the image was added successfully, False otherwise
         """
         # Check if image is already loaded
-        if image_path in self.raster_manager.image_paths:
+        if self.raster_manager.has_image_path(image_path):
             return True
             
         try:
@@ -1054,7 +1054,7 @@ class ImageWindow(QWidget):
         
         try:
             # Validate path
-            if image_path not in self.raster_manager.image_paths:
+            if not self.raster_manager.has_image_path(image_path):
                 return
             
             # Check if already selected
@@ -1914,7 +1914,8 @@ class ImageWindow(QWidget):
             image_paths (list): List of paths to delete
         """
         # Make sure paths are valid
-        image_paths = [path for path in image_paths if path in self.raster_manager.image_paths]
+        image_paths = [path for path in image_paths
+                       if self.raster_manager.has_image_path(path)]
         if not image_paths:
             return
             
