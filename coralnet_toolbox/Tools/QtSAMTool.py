@@ -17,7 +17,7 @@ from coralnet_toolbox.Annotations.QtMaskAnnotation import MaskAnnotation
 
 from coralnet_toolbox.WorkArea import WorkArea
 
-from coralnet_toolbox.utilities import pixmap_to_numpy
+from coralnet_toolbox.utilities import work_area_to_numpy_bgr
 from coralnet_toolbox.utilities import polygonize_mask_with_holes
 from coralnet_toolbox.utilities import get_view_scale
 
@@ -50,7 +50,6 @@ class SAMTool(Tool):
         # Working area and related attributes
         self.working_area = None
         self.image_path = None
-        self.original_image = None
         self.original_width = None
         self.original_height = None
         self.image = None
@@ -141,9 +140,7 @@ class SAMTool(Tool):
 
         # Original image (grab current from the annotation window)
         self.image_path = self.annotation_window.current_image_path
-        self.original_image = pixmap_to_numpy(self.annotation_window.pixmap_image)
-        self.original_width = self.annotation_window.pixmap_image.size().width()
-        self.original_height = self.annotation_window.pixmap_image.size().height()
+        self.original_width, self.original_height = self.annotation_window.get_image_dimensions()
 
         # Current extent (view)
         extent = self.annotation_window.viewportToScene()
@@ -166,7 +163,12 @@ class SAMTool(Tool):
         self.working_area.removed.connect(self.on_working_area_removed)
 
         # Update the working area image, set in model
-        self.image = self.original_image[top:bottom, left:right]
+        # Read just the work area from the file rather than slicing a
+        # full-image array taken off the display pixmap: that decoded the whole
+        # raster to use a viewport-sized piece of it. BGR because ultralytics
+        # documents its numpy input as cv2-order.
+        self.image = work_area_to_numpy_bgr(
+            self.annotation_window.rasterio_image, self.working_area)
         self.sam_dialog.set_image(self.image, self.image_path)
 
         self.annotation_window.setCursor(Qt.CrossCursor)
@@ -218,22 +220,20 @@ class SAMTool(Tool):
         # Calculate the rectangle bounds
         left = max(0, int(min(start_point.x(), end_point.x())))
         top = max(0, int(min(start_point.y(), end_point.y())))
-        right = min(int(self.annotation_window.pixmap_image.size().width()), 
+        right = min(self.annotation_window.get_image_dimensions()[0], 
                     int(max(start_point.x(), end_point.x())))
-        bottom = min(int(self.annotation_window.pixmap_image.size().height()),
+        bottom = min(self.annotation_window.get_image_dimensions()[1],
                      int(max(start_point.y(), end_point.y())))
         
         # Ensure minimum size (at least 10x10 pixels)
         if right - left < 10:
-            right = min(left + 10, int(self.annotation_window.pixmap_image.size().width()))
+            right = min(left + 10, self.annotation_window.get_image_dimensions()[0])
         if bottom - top < 10:
-            bottom = min(top + 10, int(self.annotation_window.pixmap_image.size().height()))
+            bottom = min(top + 10, self.annotation_window.get_image_dimensions()[1])
             
         # Original image information
         self.image_path = self.annotation_window.current_image_path
-        self.original_image = pixmap_to_numpy(self.annotation_window.pixmap_image)
-        self.original_width = self.annotation_window.pixmap_image.size().width()
-        self.original_height = self.annotation_window.pixmap_image.size().height()
+        self.original_width, self.original_height = self.annotation_window.get_image_dimensions()
             
         # Create the WorkArea instance
         self.working_area = WorkArea(left, top, right - left, bottom - top, self.image_path)
@@ -247,7 +247,12 @@ class SAMTool(Tool):
         self.working_area.removed.connect(self.on_working_area_removed)
         
         # Update the working area image in the SAM model
-        self.image = self.original_image[top:bottom, left:right]
+        # Read just the work area from the file rather than slicing a
+        # full-image array taken off the display pixmap: that decoded the whole
+        # raster to use a viewport-sized piece of it. BGR because ultralytics
+        # documents its numpy input as cv2-order.
+        self.image = work_area_to_numpy_bgr(
+            self.annotation_window.rasterio_image, self.working_area)
         self.sam_dialog.set_image(self.image, self.image_path)
         
         self.annotation_window.setCursor(Qt.CrossCursor)
@@ -1087,7 +1092,6 @@ class SAMTool(Tool):
         self.drawing_rectangle = False
         self.has_active_prompts = False
         self.image_path = None
-        self.original_image = None
         self.image = None
 
         self.annotation_window.scene.update()

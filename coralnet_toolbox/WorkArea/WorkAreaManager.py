@@ -263,8 +263,7 @@ class WorkAreaManager(QDialog):
     def update_tile_size_limits(self):
         """Set tile size spin box maximums to current image dimensions."""
         if self.annotation_window.current_image_path:
-            image_width = self.annotation_window.pixmap_image.width()
-            image_height = self.annotation_window.pixmap_image.height()
+            image_width, image_height = self.annotation_window.get_image_dimensions()
             self.tile_size_input.width_spin.setMaximum(image_width)
             self.tile_size_input.height_spin.setMaximum(image_height)
         
@@ -299,8 +298,7 @@ class WorkAreaManager(QDialog):
         if not image_path:
             return False, "No image is currently loaded.", None
     
-        image_width = self.annotation_window.pixmap_image.width()
-        image_height = self.annotation_window.pixmap_image.height()
+        image_width, image_height = self.annotation_window.get_image_dimensions()
     
         try:
             tile_width, tile_height = self.tile_size_input.get_value()
@@ -805,8 +803,8 @@ class WorkAreaManager(QDialog):
         errors = []
     
         # Calculate margin/overlap percentages from current image if needed
-        current_image_display_width = self.annotation_window.pixmap_image.width()
-        current_image_display_height = self.annotation_window.pixmap_image.height()
+        current_image_display_width, current_image_display_height = (
+            self.annotation_window.get_image_dimensions())
     
         # Get the tile size from the input fields, as this is constant across images
         input_tile_width, input_tile_height = self.tile_size_input.get_value()

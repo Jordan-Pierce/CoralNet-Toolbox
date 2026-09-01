@@ -80,11 +80,10 @@ class PolygonTool(Tool):
         # Tool-specific behavior (non-crosshair related) for mouse move events
         if self.drawing_continuous:
             active_image = self.annotation_window.active_image
-            pixmap_image = self.annotation_window.pixmap_image
             cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
             scene_pos = self.annotation_window.mapToScene(event.pos())
             
-            if active_image and pixmap_image and cursor_in_window and self.points:
+            if active_image and cursor_in_window and self.points:
                 if self.ctrl_pressed and self.last_click_point:
                     # Show a straight line preview
                     self.update_cursor_annotation(scene_pos)
@@ -141,7 +140,7 @@ class PolygonTool(Tool):
 
     def create_annotation(self, scene_pos: QPointF, finished: bool = False):
         """Creates a PolygonAnnotation from the current points."""
-        if not self.annotation_window.active_image or not self.annotation_window.pixmap_image:
+        if not self.annotation_window.active_image:
             return None
 
         # Create the annotation with current points

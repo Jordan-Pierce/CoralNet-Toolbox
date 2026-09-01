@@ -79,9 +79,8 @@ class RectangleTool(Tool):
             
             # Update the cursor annotation if we're in the window
             active_image = self.annotation_window.active_image
-            pixmap_image = self.annotation_window.pixmap_image
             cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
-            if active_image and pixmap_image and cursor_in_window and self.start_point:
+            if active_image and cursor_in_window and self.start_point:
                 self.update_cursor_annotation(self.end_point)
                 
                 # Show crosshair at current cursor position during drawing
@@ -115,7 +114,7 @@ class RectangleTool(Tool):
             self.clear_cursor_annotation()
 
     def create_annotation(self, scene_pos: QPointF, finished: bool = False):
-        if not self.annotation_window.active_image or not self.annotation_window.pixmap_image:
+        if not self.annotation_window.active_image:
             return None
 
         # Get the current end point of the rectangle

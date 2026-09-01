@@ -435,9 +435,14 @@ class DeployPredictorDialog(QDialog):
         """
         Set the image in the predictor.
         """
-        if image is None and image_path is not None:
-            # Open the image using rasterio
-            image = rasterio_to_numpy(self.main_window.image_window.rasterio_images[image_path])
+        if image is None:
+            # There was a fallback here that read the image itself via
+            # `image_window.rasterio_images`, an attribute that exists nowhere
+            # in the codebase -- so it raised AttributeError rather than
+            # recovering. Nothing reaches it (every caller passes a real array),
+            # and it would have supplied RGB where this predictor needs the
+            # BGR ultralytics documents. Fail clearly instead of pretending.
+            raise ValueError("set_image requires an image array; got None")
 
         # Save the original image
         self.original_image = image

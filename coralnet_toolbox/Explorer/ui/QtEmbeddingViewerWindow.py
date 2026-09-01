@@ -50,7 +50,7 @@ from coralnet_toolbox.Features.ModelRegistry import TIMM_MODELS, is_timm_model, 
 from coralnet_toolbox.Features.ModelRegistry import OPENCLIP_MODELS, is_openclip_model, strip_openclip_prefix
 
 from coralnet_toolbox.Icons import get_icon
-from coralnet_toolbox.utilities import pixmap_to_numpy, pixmap_to_pil
+from coralnet_toolbox.utilities import pixmap_to_numpy, pixmap_to_numpy_bgr, pixmap_to_pil
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -1681,7 +1681,8 @@ class EmbeddingViewerWindow(QWidget):
         try:
             batch_count = 0
             # Process images in chunks to bound memory
-            for chunk in self._chunked(self._iter_prepared_images(data_items, 'numpy'), self.batch_size):
+            for chunk in self._chunked(
+                    self._iter_prepared_images(data_items, 'numpy', bgr=True), self.batch_size):
                 # Bail out promptly if this worker has been superseded.
                 if cancel_check is not None and cancel_check():
                     return np.array(features_list), valid_items
@@ -1863,7 +1864,8 @@ class EmbeddingViewerWindow(QWidget):
             batch_buffer_features = []
             flush_interval = self.batch_size
 
-            for chunk in self._chunked(self._iter_prepared_images(data_items, 'numpy'), self.batch_size):
+            for chunk in self._chunked(
+                    self._iter_prepared_images(data_items, 'numpy'), self.batch_size):  # RGB: extract_pooled takes image_rgb
                 if cancel_check is not None and cancel_check():
                     return np.array(features_list), valid_results
 
@@ -1986,15 +1988,22 @@ class EmbeddingViewerWindow(QWidget):
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-    def _iter_prepared_images(self, data_items, format_type):
-        """Yield (image, item) lazily to bound memory during extraction."""
+    def _iter_prepared_images(self, data_items, format_type, bgr=False):
+        """Yield (image, item) lazily to bound memory during extraction.
+
+        `bgr` because the two numpy consumers want opposite channel orders:
+        ultralytics `model.embed` documents cv2 order, while timm/HF
+        `extract_pooled` takes `image_rgb`. Passing one array to both is wrong
+        for one of them, so the caller states which it needs.
+        """
         for item in data_items:
             try:
                 ann = item.annotation
                 if not getattr(ann, 'cropped_image', None):
                     continue
                 if format_type == 'numpy':
-                    img = pixmap_to_numpy(ann.cropped_image)
+                    img = (pixmap_to_numpy_bgr(ann.cropped_image) if bgr
+                           else pixmap_to_numpy(ann.cropped_image))
                 else:  # pil
                     img = pixmap_to_pil(ann.cropped_image)
                 if img is not None:
@@ -2014,7 +2023,7 @@ class EmbeddingViewerWindow(QWidget):
         if batch:
             yield batch
 
-    def _prepare_images(self, data_items, progress_bar, format_type):
+    def _prepare_images(self, data_items, progress_bar, format_type, bgr=False):
         """Prepare images from data items for model input."""
         if progress_bar:
             progress_bar.set_title("Preparing images...")
@@ -2030,7 +2039,8 @@ class EmbeddingViewerWindow(QWidget):
                     continue
                 
                 if format_type == 'numpy':
-                    img = pixmap_to_numpy(ann.cropped_image)
+                    img = (pixmap_to_numpy_bgr(ann.cropped_image) if bgr
+                           else pixmap_to_numpy(ann.cropped_image))
                     if img is not None:
                         images.append(img)
                         valid_items.append(item)

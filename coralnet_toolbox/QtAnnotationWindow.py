@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QMessa
                              QDialog, QDialogButtonBox, QGroupBox,
                              QWidget, QComboBox, QToolButton, QToolBar, QSizePolicy)
 
-from coralnet_toolbox.QtBaseCanvas import BaseCanvas
+from coralnet_toolbox.QtBaseCanvas import BaseCanvas, phantom_group_key
 
 from coralnet_toolbox.Annotations import (
     PatchAnnotation,
@@ -79,6 +79,13 @@ _PERF_LOG = bool(os.environ.get("CNT_PERF_LOG"))
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
+# Longest edge of the interim image shown while a large raster's full-resolution
+# decode runs on a worker thread (see AnnotationWindow.set_image). Read off an
+# overview pyramid when the raster has one, so it is nearly free. Rasters
+# smaller than this are decoded synchronously — there is nothing to hide.
+PROGRESSIVE_INTERIM_EDGE = 2048
+
+
 class AnnotationWindow(BaseCanvas):
     imageLoaded = pyqtSignal(int, int)  # Signal to emit when image is loaded
     viewChanged = pyqtSignal(int, int)  # Signal to emit when view is changed
@@ -129,6 +136,20 @@ class AnnotationWindow(BaseCanvas):
         
         # Image state (BaseCanvas has pixmap_image, active_image, current_image_path)
         self.rasterio_image = None
+        # Background full-resolution decode (progressive load). The timer
+        # debounces navigation so paging through images does not start a decode
+        # per image; see _start_full_res_decode.
+        self._full_res_worker = None
+        self._pending_full_res_path = None
+        self._full_res_timer = QTimer(self)
+        self._full_res_timer.setSingleShot(True)
+        self._full_res_timer.setInterval(250)
+        self._full_res_timer.timeout.connect(self._launch_full_res_decode)
+        # Workers kept alive until their thread ends; see _start_full_res_decode.
+        self._live_workers = set()
+        _app = QApplication.instance()
+        if _app is not None:
+            _app.aboutToQuit.connect(self._shutdown_full_res_decode)
 
         # Update placeholder label text for AnnotationWindow's context
         self._placeholder_label.setText(
@@ -240,6 +261,18 @@ class AnnotationWindow(BaseCanvas):
         self._transparency_debounce.setSingleShot(True)
         self._transparency_debounce.setInterval(75)
         self._transparency_debounce.timeout.connect(self._apply_pending_transparency)
+
+        # Phantom-layer rebuild coalescing. Unlike the transparency debounce
+        # there is no interval: the flush is posted for the end of the current
+        # event-loop turn, so it still runs before the next paint and no
+        # user-visible latency is introduced.
+        self._phantom_pending_full = False
+        self._phantom_pending_annotations = []
+        self._phantom_flush_scheduled = False
+
+        # Lazily-selected annotations gain their Qt items when panning or
+        # zooming brings them into view.
+        self.viewNavigated.connect(self._on_view_navigated_promote)
 
         # --- Positional/Dimensional Labels ---
         self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
@@ -912,7 +945,7 @@ class AnnotationWindow(BaseCanvas):
         super().resizeEvent(event)
         
         # Only fit view if we have an active image
-        if self.active_image and self.pixmap_image and self.scene:
+        if self.active_image and self.scene:
             # No zoom tool or hasn't been used, safe to fit
             self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
 
@@ -1679,10 +1712,10 @@ class AnnotationWindow(BaseCanvas):
 
     def cursorInWindow(self, pos, mapped=False):
         """Check if the cursor position is within the image bounds."""
-        if not pos or not self.pixmap_image:
+        if not pos or not self.active_image:
             return False
 
-        image_rect = QGraphicsPixmapItem(self.pixmap_image).boundingRect()
+        image_rect = self.get_image_rect()
         if not mapped:
             pos = self.mapToScene(pos)
 
@@ -2249,6 +2282,10 @@ class AnnotationWindow(BaseCanvas):
         Clear the scene with AnnotationWindow-specific cleanup.
         Delegates to BaseCanvas.clear_scene() which will call _on_scene_cleared() at the end.
         """
+        # A background full-resolution decode targets the item this is about to
+        # destroy; its result is stale the moment the scene is cleared.
+        self._cancel_full_res_decode()
+
         # AnnotationWindow-specific cleanup before base clear
         self.unselect_annotations()
         
@@ -2413,52 +2450,47 @@ class AnnotationWindow(BaseCanvas):
         except Exception:
             pass
 
-        # Get low-res thumbnail first for a preview
-        low_res_qimage = raster.get_thumbnail(longest_edge=256)
-        if low_res_qimage is None or low_res_qimage.isNull():
-            # If thumbnail fails, just exit
+        # Update the rasterio image source for cropping annotations
+        self.rasterio_image = raster.rasterio_src
+
+        # Decide what to put on screen now, and whether the full-resolution
+        # image follows on a worker thread.
+        #
+        # Progressive loading exists because a full decode of a 24k ortho blocks
+        # the GUI thread for ~2 s even with GDAL threading, and there is no way
+        # to make decoding 576 megapixels much faster than that. So the wait is
+        # moved off the critical path instead: show a low-resolution image
+        # immediately, decode the real one in the background, swap it in. Unlike
+        # the display-proxy cap, nothing is permanently lost -- full resolution
+        # still arrives, just a moment later.
+        defer_full_res = max(raster.width, raster.height) > PROGRESSIVE_INTERIM_EDGE
+
+        if defer_full_res:
+            q_image = raster.get_thumbnail(longest_edge=PROGRESSIVE_INTERIM_EDGE)
+        else:
+            q_image = raster.get_qimage()
+
+        if q_image is None or q_image.isNull():
             self.main_window.image_window.show_error(
                 "Image Loading Error",
-                f"Image {os.path.basename(image_path)} thumbnail could not be loaded."
+                f"Image {os.path.basename(image_path)} could not be loaded."
             )
             self._clear_loading_status()
             QApplication.restoreOverrideCursor()
             return
-        
-        # Display low-res thumbnail for quick preview
-        # (This step is before load_visuals to show preview immediately)
-        self._show_placeholder()  # Start with placeholder
-        low_res_pixmap = QPixmap.fromImage(low_res_qimage)
-        base_image_item = QGraphicsPixmapItem(low_res_pixmap)
-        base_image_item.setZValue(-10)
-        self.scene.addItem(base_image_item)
-        self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
-        self._hide_placeholder()
-        # The whole point of the staged load: get the low-res preview visible
-        # before the expensive full-res decode below. repaint() does exactly that
-        # and nothing else — processEvents() here used to hand control to any
-        # queued handler mid-load.
-        self.viewport().repaint()
-        
-        # Update the rasterio image source for cropping annotations
-        self.rasterio_image = raster.rasterio_src
-        
-        # Get full-resolution QImage
-        q_image = raster.get_qimage()
-        if q_image is None or q_image.isNull():
-            self.main_window.image_window.show_error(
-                "Image Loading Error",
-                f"Image {os.path.basename(image_path)} full resolution could not be loaded."
-            )
-            self._clear_loading_status()
-            QApplication.restoreOverrideCursor()
-            return  # Failed to load full res, but preview is still visible
-        
+
         # Use BaseCanvas canonical loader for the full-resolution image (preserves base logic)
         # Update the rasterio image reference used by annotation scaling/cropping
         self.rasterio_image = raster.rasterio_src
-        # Load visuals into the BaseCanvas (this clears the preview and installs full-res image)
-        self.load_visuals(q_image, image_path, raster)
+        # Load visuals into the BaseCanvas. The scene keeps the raster's true
+        # dimensions even when q_image is a downscaled proxy, so every scene
+        # coordinate -- annotations, work areas, markers -- stays in full-
+        # resolution image space.
+        self.load_visuals(q_image, image_path, raster,
+                          image_dimensions=(raster.width, raster.height))
+
+        if defer_full_res:
+            self._start_full_res_decode(image_path)
 
         # Apply the current colormap selection and preserve UI opacity
         current_colormap = self.main_window.colormap_dropdown.currentText()
@@ -2488,8 +2520,8 @@ class AnnotationWindow(BaseCanvas):
         self.main_window.confidence_window.clear_display()
 
         # Set the image dimensions, and current view in status bar
-        self.imageLoaded.emit(self.pixmap_image.width(), self.pixmap_image.height())
-        self.viewChanged.emit(self.pixmap_image.width(), self.pixmap_image.height())
+        self.imageLoaded.emit(*self.get_image_dimensions())
+        self.viewChanged.emit(*self.get_image_dimensions())
         
         # Show loaded message in status bar
         try:
@@ -2499,6 +2531,136 @@ class AnnotationWindow(BaseCanvas):
 
         # Restore cursor
         QApplication.restoreOverrideCursor()
+
+    def _start_full_res_decode(self, image_path):
+        """Schedule the background full-resolution decode for `image_path`.
+
+        Deliberately debounced rather than started immediately. A decode cannot
+        be interrupted once it has begun, and each one holds a full-resolution
+        buffer (~1.7 GB on a 24k ortho) until it finishes. Arrow-keying through
+        a folder would otherwise spawn one per image and hold all of them at
+        once. Waiting for the view to settle means a user paging through images
+        pays for one decode -- the one they stop on.
+        """
+        self._cancel_full_res_decode()
+        self._pending_full_res_path = image_path
+        try:
+            self.main_window.status_bar.showMessage(
+                f"Loading full resolution: {os.path.basename(image_path)}…"
+            )
+        except Exception:
+            pass
+        self._full_res_timer.start()
+
+    def _launch_full_res_decode(self):
+        """Timer callback: the view has settled, so decode for real."""
+        from coralnet_toolbox.Rasters.QtRaster import FullResDecodeWorker
+
+        image_path = self._pending_full_res_path
+        self._pending_full_res_path = None
+        if not image_path or image_path != self.current_image_path:
+            return
+
+        # Deliberately unparented: a QThread destroyed with its parent while
+        # still running takes the process down with it. We hold the only
+        # reference in _live_workers and drop it when the thread reports
+        # finished, so the object always outlives its own run().
+        worker = FullResDecodeWorker(image_path)
+        worker.decoded.connect(self._on_full_res_decoded)
+        worker.finished.connect(lambda w=worker: self._retire_worker(w))
+        self._live_workers.add(worker)
+        self._full_res_worker = worker
+        worker.start()
+
+    def _cancel_full_res_decode(self, wait_ms: int = 0):
+        """Drop any scheduled or in-flight background decode.
+
+        `wait_ms` blocks for the running decode to finish. Navigation passes 0
+        — the result is simply discarded and the thread is left to wind down on
+        its own. Shutdown passes a real timeout, because letting a QThread be
+        destroyed with its parent while still running is how Qt hangs or
+        crashes on quit.
+        """
+        self._pending_full_res_path = None
+        try:
+            self._full_res_timer.stop()
+        except Exception:
+            pass
+        worker = getattr(self, '_full_res_worker', None)
+        if worker is None:
+            return
+        try:
+            worker.cancel()
+            worker.decoded.disconnect(self._on_full_res_decoded)
+        except Exception:
+            pass
+        if wait_ms:
+            try:
+                worker.wait(wait_ms)
+            except Exception:
+                pass
+        self._full_res_worker = None
+
+    def _retire_worker(self, worker):
+        """Drop our last reference once a worker's thread has actually ended."""
+        self._live_workers.discard(worker)
+
+    def _shutdown_full_res_decode(self):
+        """Wait for any background decode before the process tears down.
+
+        Qt hangs (or crashes) if a QThread is destroyed while still running,
+        and a decode cannot be interrupted mid-read. This is wired to
+        QApplication.aboutToQuit rather than a closeEvent: AnnotationWindow
+        lives inside a dock, so closing the main window never delivers a close
+        event here.
+        """
+        self._cancel_full_res_decode(wait_ms=10000)
+        for worker in list(self._live_workers):
+            try:
+                worker.cancel()
+                worker.wait(10000)
+            except Exception:
+                pass
+        self._live_workers.clear()
+
+    def _on_full_res_decoded(self, image_path, q_image):
+        """Swap the full-resolution image in, if it is still the one on screen.
+
+        Only the base image item is replaced. Scene coordinates were already at
+        full resolution while the interim image was showing, so nothing about
+        the annotations, the view transform or the zoom needs to move -- the
+        picture simply gets sharper in place.
+        """
+        self._full_res_worker = None
+
+        if q_image is None or q_image.isNull():
+            # Interim image stays on screen; it is a worse picture, not a
+            # broken one, so this is a status message rather than a dialog.
+            try:
+                self.main_window.status_bar.showMessage(
+                    f"Could not load full resolution for {os.path.basename(image_path)}", 5000)
+            except Exception:
+                pass
+            return
+
+        # The user may have navigated away while this was decoding.
+        if image_path != self.current_image_path:
+            return
+
+        raster = self.main_window.image_window.raster_manager.get_raster(image_path)
+        if raster is not None:
+            # Adopt it as the raster's cached image so a revisit is instant.
+            raster.set_full_qimage(q_image)
+
+        if self._base_image_item is not None:
+            self._base_image_item.set_image(q_image, target_size=self._image_dimensions)
+            self.viewport().update()
+
+        try:
+            self.main_window.status_bar.showMessage(
+                f"Loaded image: {os.path.basename(image_path)}", 2000)
+        except Exception:
+            pass
 
     def _load_z_channel_visualization(self, raster):
         """Override to set opacity from main_window widget after BaseCanvas loads."""
@@ -2617,15 +2779,43 @@ class AnnotationWindow(BaseCanvas):
         if is_new:
             # Newly created annotation has no graphics item — add it to the scene now
             # so paint/fill/create operations render immediately without a load cycle.
-            if mask_annotation.graphics_item and mask_annotation.graphics_item.scene():
-                mask_annotation.graphics_item.scene().removeItem(mask_annotation.graphics_item)
-            mask_annotation.create_graphics_item(self.scene)
-            if mask_annotation.graphics_item:
-                mask_annotation.graphics_item.setZValue(-5)
-            mask_annotation.update_graphics_item()
-            self.main_window.status_bar.showMessage(
-                f"Creating mask annotation for {os.path.basename(self.current_image_path)}…", 3000
-            )
+            #
+            # Building the colour canvas blocks the UI thread for seconds on a
+            # large raster (a 24k ortho needs a 2.3 GB RGBA buffer), so say what
+            # is happening *before* starting rather than after finishing.
+            # showMessage on its own only queues a repaint that the blocked
+            # event loop never reaches; repaint() puts the text on screen now.
+            basename = os.path.basename(self.current_image_path)
+            status_bar = None
+            try:
+                status_bar = self.main_window.status_bar
+                status_bar.showMessage(f"Creating mask annotation for {basename}…")
+                status_bar.repaint()
+            except Exception:
+                status_bar = None
+
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            try:
+                if mask_annotation.graphics_item and mask_annotation.graphics_item.scene():
+                    mask_annotation.graphics_item.scene().removeItem(mask_annotation.graphics_item)
+
+                # create_graphics_item builds the colour canvas through
+                # _ensure_canvas. update_graphics_item() with no rect would then
+                # run _update_full_canvas and recompute that identical buffer a
+                # second time — measured at 5 s of pure duplication on a 24k
+                # ortho — so ask Qt to paint what was just built instead.
+                mask_annotation.create_graphics_item(self.scene)
+                if mask_annotation.graphics_item:
+                    mask_annotation.graphics_item.setZValue(-5)
+                    mask_annotation.graphics_item.update()
+            finally:
+                QApplication.restoreOverrideCursor()
+
+            if status_bar is not None:
+                try:
+                    status_bar.showMessage(f"Mask annotation ready for {basename}", 3000)
+                except Exception:
+                    pass
 
         return mask_annotation
 
@@ -3132,18 +3322,6 @@ class AnnotationWindow(BaseCanvas):
         cy_anim.start()
         z_anim.start()
 
-    def get_image_dimensions(self):
-        """Get the dimensions of the currently loaded image."""
-        if self.pixmap_image:
-            return self.pixmap_image.size().width(), self.pixmap_image.size().height()
-        return 0, 0
-    
-    def get_image_rect(self):
-        """Get the bounding rectangle of the currently loaded image in scene coordinates."""
-        if self.pixmap_image:
-            return QRectF(0, 0, self.pixmap_image.width(), self.pixmap_image.height())
-        return QRectF()
-    
     def center_on_work_area(self, work_area):
         """Center the view on the specified work area."""
         # Create graphics item if it doesn't exist
@@ -3181,10 +3359,8 @@ class AnnotationWindow(BaseCanvas):
 
         # Step 1: Calculate annotation and image area
         annotation_area = annotation_rect.width() * annotation_rect.height()
-        if self.pixmap_image:
-            image_width = self.pixmap_image.width()
-            image_height = self.pixmap_image.height()
-        else:
+        image_width, image_height = self.get_image_dimensions()
+        if not image_width:
             # Fallback to scene rect if image not loaded
             image_width = self.scene.sceneRect().width()
             image_height = self.scene.sceneRect().height()
@@ -3299,10 +3475,14 @@ class AnnotationWindow(BaseCanvas):
             return
         
         if not multi_select:
-            # Suppress phantom rebuild in unselect_annotations; we'll do it once at the end.
-            self._skip_phantom_refresh = True
+            # Let unselect_annotations() request its own rebuild rather than
+            # suppressing it. This used to set _skip_phantom_refresh on the
+            # promise of doing it "once at the end", but the end only rebuilds
+            # `annotation`'s own colour group — so annotations of every *other*
+            # label that had just been deselected were left out of the phantom
+            # layer, invisible until some later full rebuild happened to
+            # restore them. The two requests coalesce into one flush anyway.
             self.unselect_annotations()
-            self._skip_phantom_refresh = False
             
         if annotation not in self.selected_annotations:
             self.selected_annotations.append(annotation)
@@ -3336,13 +3516,64 @@ class AnnotationWindow(BaseCanvas):
             self.refresh_phantom_annotations(only_annotation=annotation)
             self._emit_selection_changed()
 
+    def _selection_materialization_split(self, annotations):
+        """Split a bulk selection into (hydrate now, leave phantom).
+
+        Building a QGraphicsItemGroup per annotation costs more than it can
+        possibly show when most of them are off screen; the far half is drawn
+        by the phantom layer's selected-state group instead, and hydrated by
+        _promote_visible_selected once it scrolls into view.
+        """
+        view = self.mapToScene(self.viewport().rect()).boundingRect()
+        near, far = [], []
+        for annotation in annotations:
+            bbox = getattr(annotation, 'cropped_bbox', None)
+            if bbox and view.intersects(QRectF(bbox[0], bbox[1],
+                                               bbox[2] - bbox[0],
+                                               bbox[3] - bbox[1])):
+                near.append(annotation)
+            else:
+                far.append(annotation)
+        return near, far
+
+    def _on_view_navigated_promote(self, *_):
+        """viewNavigated adapter. The signal carries centre and zoom; the
+        promotion recomputes the viewport itself, so the payload is ignored."""
+        self._promote_visible_selected()
+
+    def _promote_visible_selected(self):
+        """Hydrate selected annotations that have scrolled into view.
+
+        Restores the invariant select_phantom defers: anything both selected
+        and visible owns its Qt items, so resize handles, moves and cuts all
+        find what they expect.
+        """
+        pending = [a for a in self.selected_annotations
+                   if a.render_mode is RenderMode.PHANTOM]
+        if not pending:
+            return
+
+        near, _ = self._selection_materialization_split(pending)
+        if not near:
+            return
+
+        for annotation in near:
+            annotation.select()
+            if not annotation.is_graphics_item_valid():
+                annotation.create_graphics_item(self.scene)
+            self.set_annotation_visibility(annotation)
+        self.refresh_phantom_annotations()
+
     def select_annotations(self):
         """Select all annotations in the current image.
 
-        Uses the same per-item path as rubber-band multi-select so the result
-        is visually identical: every annotation gets its own QGraphicsItemGroup
-        with name tag and dimension tag, and the BSP tree can cull off-screen
-        items during zoom.
+        Annotations inside the viewport take the same per-item path as
+        rubber-band multi-select, so what the user can see and touch is
+        identical: a QGraphicsItemGroup with name tag and dimension tag. The
+        rest are marked selected in the phantom layer and hydrated later by
+        _promote_visible_selected when they scroll into view -- building 75,000
+        Qt items to represent a selection nobody is looking at is most of the
+        cost of this operation.
         """
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
@@ -3363,14 +3594,23 @@ class AnnotationWindow(BaseCanvas):
             self.scene.setItemIndexMethod(QGraphicsScene.NoIndex)
         self.blockSignals(True)
 
-        for annotation in annotations:
-            if label_locked and annotation.label.id != locked_label_id:
-                continue
-            # Use the same path as rubber-band selection: creates full Qt items
-            # (group + shape + tag + dimension tag) so visual output is identical.
+        eligible = [a for a in annotations
+                    if not (label_locked and a.label.id != locked_label_id)]
+        near, far = self._selection_materialization_split(eligible)
+
+        for annotation in near:
             # bulk_mode=True and quiet_mode=True suppress per-item UI updates.
             self.select_annotation(annotation, multi_select=True,
                                    quiet_mode=True, bulk_mode=True)
+
+        for annotation in far:
+            # Selected, drawn selected, but no Qt items until it comes into
+            # view. Appended without a membership test: unselect_annotations()
+            # emptied the list above and `near` is disjoint from `far`, so a
+            # duplicate is impossible -- and `x not in list` here would make
+            # selecting 15k annotations quadratic.
+            self.selected_annotations.append(annotation)
+            annotation.select_phantom()
 
         self.blockSignals(False)
         if self.scene:
@@ -3490,6 +3730,17 @@ class AnnotationWindow(BaseCanvas):
             self._emit_selection_changed()
             return
 
+        # A lazily-selected annotation (see select_phantom) never materialised
+        # its own items — it is drawn by the phantom layer's selected-state
+        # group. Removing it therefore needs that group rebuilt as well, which
+        # the per-group incremental path does not do: it only ever rebuilds the
+        # unselected-state key. So the presence of even one forces the full
+        # rebuild, while the ordinary case of deselecting a handful of
+        # materialised annotations stays on the cheap path (~3 ms a group
+        # against ~40 ms for the whole layer at 13k annotations).
+        needs_full_rebuild = any(a.render_mode is RenderMode.PHANTOM
+                                 for a in annotations_to_unselect)
+
         if self.scene:
             self.scene.setItemIndexMethod(QGraphicsScene.NoIndex)
 
@@ -3513,7 +3764,14 @@ class AnnotationWindow(BaseCanvas):
 
         self.main_window.confidence_window.clear_display()
         if not self._skip_phantom_refresh:
-            self.refresh_phantom_annotations()
+            if needs_full_rebuild:
+                self.refresh_phantom_annotations()
+            else:
+                # Coalesced by _flush_phantom_refresh, which codes these down to
+                # one rebuild per distinct colour group and falls back to a full
+                # rebuild past a handful of them.
+                for annotation in annotations_to_unselect:
+                    self.refresh_phantom_annotations(only_annotation=annotation)
         self.viewport().update()
         QApplication.restoreOverrideCursor()
         self._emit_selection_changed()
@@ -3676,7 +3934,23 @@ class AnnotationWindow(BaseCanvas):
         except Exception:
             pass
 
-        # Fallback: existing behavior for non-virtual frames (may create a raster-level mask)
+        # Display an existing mask; never create one here.
+        #
+        # `current_mask_annotation` creates a MaskAnnotation on first access,
+        # which is the right behaviour for a brush stroke and the wrong
+        # behaviour for merely opening an image: it allocates a full-size zero
+        # mask plus an RGBA colour canvas at 4 bytes per pixel, then renders it.
+        # On a 24k ortho that is a 0.6 GB array and a 2.3 GB canvas, ~12 s, to
+        # display nothing at all -- and it ran for every image, whether or not
+        # that image had ever been painted.
+        #
+        # Raster.get_mask_annotation is still the lazy constructor; the editing
+        # tools reach it through current_mask_annotation when a stroke actually
+        # needs a buffer.
+        raster = self.main_window.image_window.raster_manager.get_raster(self.current_image_path)
+        if raster is None or raster.mask_annotation is None:
+            return
+
         mask_annotation = self.current_mask_annotation
         if not mask_annotation:
             return
@@ -3773,7 +4047,7 @@ class AnnotationWindow(BaseCanvas):
 
             # The in-memory color canvas / qimage now describe the wrong frame.
             # Invalidate them so the next display or edit rebuilds from mask_data.
-            ma.colored_mask = None
+            ma.canvas = None
             ma.qimage = None
             ma._invalidate_stats_cache()
         except Exception:
@@ -3796,7 +4070,7 @@ class AnnotationWindow(BaseCanvas):
             if ma is None:
                 return
             ma.mask_data[...] = 0
-            ma.colored_mask = None
+            ma.canvas = None
             ma.qimage = None
             ma._invalidate_stats_cache()
         except Exception:
@@ -3829,19 +4103,21 @@ class AnnotationWindow(BaseCanvas):
             ma = vr.mask_annotation
             # ma.graphics_item is often None on video frames (the scene is cleared on
             # every navigation), which causes update_graphics_item() to early-return
-            # without rebuilding colored_mask or qimage.  Force-rebuild from mask_data
-            # so the snapshot reflects the *current* frame's pixels, not a stale copy
-            # left over from whichever frame last had a live graphics_item.
+            # without refreshing the canvas.  Force-rebuild from mask_data so the
+            # snapshot reflects the *current* frame's pixels, not a stale copy left
+            # over from whichever frame last had a live graphics_item.
+            #
+            # _update_full_canvas both resyncs the pixels and reapplies the colour
+            # table on ma.qimage, which owns its buffer -- constructing a
+            # replacement QImage here would discard the canvas it just filled.
             try:
+                ma._ensure_canvas()
                 ma._update_full_canvas()
-                h, w = ma.mask_data.shape
-                from PyQt5.QtGui import QImage as _QImage
-                ma.qimage = _QImage(ma.colored_mask.data, w, h, _QImage.Format_RGBA8888)
             except Exception:
                 pass
             if ma.qimage is None:
                 return
-            # Deep copy so mutations to colored_mask don't corrupt the cached image
+            # Deep copy so mutations to the canvas don't corrupt the cached image
             qimg_copy = ma.qimage.copy()
             opacity = ma.get_current_transparency() / 255.0
             # Ensure cache dict exists
@@ -3876,6 +4152,30 @@ class AnnotationWindow(BaseCanvas):
         except Exception:
             pass
 
+    def paintEvent(self, event):
+        """Settle any owed phantom rebuild before the frame is drawn.
+
+        refresh_phantom_annotations() defers, so a caller that tears an
+        annotation's own graphics out of the scene and then asks for a rebuild
+        leaves it drawn by neither representation until the flush runs. That
+        window is not theoretical: unselect_annotations() does exactly this and
+        then calls viewport().update(), and when the sequence runs inside a
+        mouse-press handler — which is the only way a user reaches it — Qt
+        delivers the posted UpdateRequest *before* the zero-interval timer. The
+        result was one frame with every annotation missing, held on screen for
+        as long as the rebuild took (~40 ms at 13k annotations, because a bulk
+        deselect always takes the full-rebuild branch).
+
+        Flushing here fixes it for every caller at once instead of asking each
+        of the twenty-odd call sites to remember the ordering, and it keeps the
+        coalescing: several refresh requests in one turn still collapse into
+        one rebuild, it just happens a moment earlier than the timer would have
+        fired. The queued timer then finds nothing pending and does nothing.
+        """
+        if self._phantom_flush_scheduled:
+            self._flush_phantom_refresh()
+        super().paintEvent(event)
+
     def refresh_phantom_annotations(self, only_annotation=None):
         """Rebuild the read-only phantom layer from unselected annotations.
 
@@ -3886,24 +4186,82 @@ class AnnotationWindow(BaseCanvas):
         When ``only_annotation`` is given and the layer already exists, only the
         single color group that annotation belongs to is rebuilt — O(group size)
         instead of O(all annotations).
+
+        This only *records* that a rebuild is owed and schedules one for the
+        end of the current event-loop turn. Twenty-odd call sites reach this
+        method and several subsystems routinely react to the same user action;
+        batching in the caller was a convention that had to be remembered every
+        time, and forgetting it cost a full O(N) rebuild rather than anything
+        visible. The deferred rebuild still lands before the next paint, so
+        nothing observable changes.
         """
+        if self._skip_phantom_refresh or not self.active_image:
+            return
+
+        if only_annotation is None:
+            self._phantom_pending_full = True
+        elif not self._phantom_pending_full:
+            self._phantom_pending_annotations.append(only_annotation)
+        if not self._phantom_flush_scheduled:
+            self._phantom_flush_scheduled = True
+            QTimer.singleShot(0, self._flush_phantom_refresh)
+
+    def _flush_phantom_refresh(self):
+        """Apply whatever phantom rebuilds accumulated this event-loop turn."""
+        # The state that suppressed the refresh may have arrived after it was
+        # queued — an image swap, or a bulk operation that set the skip guard.
+        # Checked before the pending work is consumed: draining it first and
+        # then returning would discard a rebuild that nothing else is going to
+        # ask for again, leaving the layer stale indefinitely rather than for
+        # one frame.
+        if self._skip_phantom_refresh or not self.active_image:
+            return
+
+        self._phantom_flush_scheduled = False
+        full = self._phantom_pending_full
+        pending = self._phantom_pending_annotations
+        self._phantom_pending_full = False
+        self._phantom_pending_annotations = []
+
+        if full:
+            self._refresh_phantom_annotations_now(None)
+            return
+
+        # Collapse to distinct groups: ten annotations sharing a colour need
+        # one rebuild between them, not ten identical ones.
+        distinct = {}
+        for annotation in pending:
+            try:
+                distinct.setdefault(phantom_group_key(annotation, is_selected=False),
+                                    annotation)
+            except (AttributeError, TypeError):
+                distinct = None
+                break
+
+        # Past a handful of groups the incremental path stops paying: each one
+        # walks every annotation in the image to collect its group.
+        if distinct is None or len(distinct) > 3:
+            self._refresh_phantom_annotations_now(None)
+            return
+
+        for annotation in distinct.values():
+            self._refresh_phantom_annotations_now(annotation)
+
+    def _refresh_phantom_annotations_now(self, only_annotation=None):
+        """Do the rebuild immediately. See refresh_phantom_annotations."""
         if self._skip_phantom_refresh or not self.active_image:
             return
 
         if (only_annotation is not None
                 and self._readonly_annotation_items
                 and not hasattr(only_annotation, 'mask_data')):
-            c = only_annotation.label.color
-            key = (c.red(), c.green(), c.blue(), only_annotation.transparency, False)
+            key = phantom_group_key(only_annotation, is_selected=False)
             group = [
                 a for a in self.get_image_annotations()
                 if not hasattr(a, 'mask_data')
                 and getattr(a.label, 'is_visible', True)
                 and a.render_mode is RenderMode.PHANTOM
-                and a.transparency == key[3]
-                and a.label.color.red() == key[0]
-                and a.label.color.green() == key[1]
-                and a.label.color.blue() == key[2]
+                and phantom_group_key(a, is_selected=False) == key
             ]
             self.update_readonly_group(key, group)
             return
@@ -4408,6 +4766,11 @@ class AnnotationWindow(BaseCanvas):
             self.main_window.confidence_window.clear_display()
             self.current_image_path = None
             self.pixmap_image = None
+            # Geometry now comes from _image_dimensions, which this path has to
+            # clear itself: it calls scene.clear() rather than clear_scene(),
+            # so nothing else resets it and the view would keep reporting the
+            # deleted image's size.
+            self._image_dimensions = None
             self.rasterio_image = None
             self.active_image = False
 

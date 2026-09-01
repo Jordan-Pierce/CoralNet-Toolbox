@@ -489,15 +489,13 @@ class PatchSamplingDialog(QDialog):
     
         try:
             # Validate margins before sampling
-            margins = self.margin_input.get_margins(self.annotation_window.pixmap_image.width(),
-                                                    self.annotation_window.pixmap_image.height())
+            margins = self.margin_input.get_margins(*self.annotation_window.get_image_dimensions())
         except ValueError as e:
             QMessageBox.warning(self, "Invalid Margins", str(e))
             return
     
         # Create a work area to represent the valid annotation area (inside margins)
-        image_width = self.annotation_window.pixmap_image.width()
-        image_height = self.annotation_window.pixmap_image.height()
+        image_width, image_height = self.annotation_window.get_image_dimensions()
         left, top, right, bottom = margins
         
         # Calculate inner rectangle (area inside margins)
@@ -730,12 +728,11 @@ class PatchSamplingDialog(QDialog):
         Args:
             rect (QRectF): Rectangle drawn by the user in scene coordinates
         """
-        if not self.annotation_window.pixmap_image:
+        if not self.annotation_window.active_image:
             return
             
         # Get image dimensions
-        image_width = self.annotation_window.pixmap_image.width()
-        image_height = self.annotation_window.pixmap_image.height()
+        image_width, image_height = self.annotation_window.get_image_dimensions()
         
         # Calculate margins from rectangle bounds
         left = int(rect.left())
