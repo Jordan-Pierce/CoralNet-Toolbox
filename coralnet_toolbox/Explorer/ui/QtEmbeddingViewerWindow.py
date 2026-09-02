@@ -2667,6 +2667,10 @@ class EmbeddingViewerWindow(QWidget):
         self._point_ids = self._point_ids[keep_mask]
         self._point_selected = self._point_selected[keep_mask]
         self._point_depth = self._point_depth[keep_mask]
+        # Feature vectors are row-aligned with the point arrays, so they must shrink
+        # too or every feature-space consumer silently falls out of sync.
+        if self.current_features is not None and len(self.current_features) == keep_mask.size:
+            self.current_features = np.asarray(self.current_features)[keep_mask]
         if self._point_pixmaps:
             self._point_pixmaps = [pixmap for pixmap, keep in zip(self._point_pixmaps, keep_mask) if keep]
         # Keep isolated mask in sync with the (now-shorter) point arrays.
