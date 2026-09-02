@@ -109,6 +109,11 @@ class EmbeddingViewerWindow(QWidget):
     # both at creation and whenever refresh_scaling() runs.
     _VIEW_ICON_BASE_SIZE = 18
 
+    # Ctrl+Shift+Wheel neighbour expansion: how long the HUD stays up, and how
+    # long after the last wheel notch the coalesced selection signal fires.
+    _KNN_HUD_TIMEOUT_MS = 1500
+    _KNN_EMIT_DELAY_MS = 50
+
     def __init__(self, main_window, parent=None):
         """
         Initialize the EmbeddingViewerWindow.
@@ -246,6 +251,26 @@ class EmbeddingViewerWindow(QWidget):
         self._cluster_overlay_items: list = []   # QGraphicsPathItem boundaries
         self._cluster_centroid_items: list = []  # QGraphicsPathItem centroid markers
         self._cluster_colors_rgba: np.ndarray = np.empty((0, 4), dtype=np.uint8)
+
+        # Similarity neighbour expansion (Ctrl+Shift+Wheel)
+        self._knn_anchor_mask = None   # selection frozen at gesture start
+        self._knn_order = None         # candidate indices, ascending distance
+        self._knn_dists = None         # distances matching _knn_order
+        self._knn_last_mask = None     # last mask this gesture wrote
+        self._knn_k = 0                # neighbours currently added to the anchor
+        self._knn_space = ""           # 'features' or '2D', for the HUD
+        self._knn_applying = False     # our own writes must not reset the anchor
+        self._features_unit = None     # row-normalized current_features cache
+        # Wheel notches arrive in bursts; coalesce the outgoing selection signal
+        # so downstream views rebuild once instead of once per notch.
+        self._knn_emit_timer = QTimer(self)
+        self._knn_emit_timer.setSingleShot(True)
+        self._knn_emit_timer.setInterval(self._KNN_EMIT_DELAY_MS)
+        self._knn_emit_timer.timeout.connect(self._emit_selection_changed_signal)
+        self._knn_hud_timer = QTimer(self)
+        self._knn_hud_timer.setSingleShot(True)
+        self._knn_hud_timer.setInterval(self._KNN_HUD_TIMEOUT_MS)
+        self._knn_hud_timer.timeout.connect(self._hide_knn_hud)
         
         # Virtualization timer
         
@@ -733,6 +758,12 @@ class EmbeddingViewerWindow(QWidget):
         
         # Enable mouse tracking for hover events
         self.graphics_view.setMouseTracking(True)
+
+        # Neighbour-expansion HUD. Parented to the viewport so it floats above
+        # the scene without inheriting the view transform.
+        self.knn_hud_label = QLabel(self.graphics_view.viewport())
+        self.knn_hud_label.setStyleSheet(self._knn_hud_stylesheet())
+        self.knn_hud_label.hide()
         
         self.graphics_view.setStyleSheet(f"background-color: {app_theme.BACKGROUND_COLOR.name()};")
         self.graphics_scene.setBackgroundBrush(QColor(app_theme.BACKGROUND_COLOR))
@@ -795,6 +826,9 @@ class EmbeddingViewerWindow(QWidget):
             rotate_icon_name = "pause.svg" if self.is_auto_rotating else "rotate.svg"
             self.rotate_toggle_button.setIcon(get_icon(rotate_icon_name))
             self.rotate_toggle_button.setIconSize(icon_size)
+
+        if hasattr(self, 'knn_hud_label'):
+            self.knn_hud_label.setStyleSheet(self._knn_hud_stylesheet())
 
     # -------------------------------------------------------------------------
     # Public API
@@ -1354,6 +1388,9 @@ class EmbeddingViewerWindow(QWidget):
             self.current_data_items = final_data_items
             self.current_features = features
             self.current_feature_model_key = model_key
+            # New features invalidate the cached normalization and any frozen anchor.
+            self._features_unit = None
+            self._knn_reset()
 
             # Normalize embedded_features to an ndarray and compute dims safely
             embedded_features = np.asarray(embedded_features)
@@ -2394,6 +2431,9 @@ class EmbeddingViewerWindow(QWidget):
         self._point_depth = np.empty((0,), dtype=np.float32)
         self._point_pixmaps = []
         self._kdtree = None
+        self._features_unit = None
+        self._knn_reset()
+        self._hide_knn_hud()
         self.previous_selection_ids = set()
 
         if self.mega_item is not None:
@@ -2609,6 +2649,12 @@ class EmbeddingViewerWindow(QWidget):
 
     def _set_selected_mask(self, selected_mask, emit_signal=True, update_previous=True, force_emit=False):
         selected_mask = np.asarray(selected_mask, dtype=bool).reshape(-1)
+        # Any selection written outside the neighbour gesture invalidates the
+        # frozen anchor. A listener echoing our own result back is not a change,
+        # so compare against the mask this gesture last wrote before resetting.
+        if not self._knn_applying:
+            if self._knn_last_mask is None or not np.array_equal(self._knn_last_mask, selected_mask):
+                self._knn_reset()
         if selected_mask.size != self._point_ids.size:
             padded = np.zeros(self._point_ids.size, dtype=bool)
             copy_count = min(padded.size, selected_mask.size)
@@ -2671,6 +2717,8 @@ class EmbeddingViewerWindow(QWidget):
         # too or every feature-space consumer silently falls out of sync.
         if self.current_features is not None and len(self.current_features) == keep_mask.size:
             self.current_features = np.asarray(self.current_features)[keep_mask]
+            self._features_unit = None
+        self._knn_reset()
         if self._point_pixmaps:
             self._point_pixmaps = [pixmap for pixmap, keep in zip(self._point_pixmaps, keep_mask) if keep]
         # Keep isolated mask in sync with the (now-shorter) point arrays.
@@ -2726,6 +2774,175 @@ class EmbeddingViewerWindow(QWidget):
             new_mask[index] = True
 
         return self._set_selected_mask(new_mask, emit_signal=False)
+
+    # -------------------------------------------------------------------------
+    # Similarity neighbour expansion (Ctrl+Shift+Wheel)
+    # -------------------------------------------------------------------------
+
+    def _knn_hud_stylesheet(self):
+        """Stylesheet for the neighbour-expansion HUD overlay."""
+        return app_theme.scale_qss(
+            f"color: {app_theme.TEXT_PRIMARY_COLOR.name()};"
+            " background-color: rgba(0, 0, 0, 170);"
+            " border-radius: 4px; padding: 4px 8px; font-size: 12px;"
+        )
+
+    def _knn_reset(self):
+        """Drop the frozen anchor so the next wheel gesture re-ranks from scratch."""
+        self._knn_anchor_mask = None
+        self._knn_order = None
+        self._knn_dists = None
+        self._knn_last_mask = None
+        self._knn_k = 0
+
+    def _knn_ranking_matrix(self):
+        """Return (matrix, space_name) to rank neighbours in.
+
+        Prefers the full-dimensional features — the projection is non-metric, so
+        screen distance is a poor stand-in for semantic distance. Rows are
+        L2-normalized once and cached, which turns cosine distance into a single
+        matrix-vector product. Falls back to the 2-D projection when features are
+        missing or no longer row-aligned with the points.
+        """
+        n_points = int(self._point_ids.size)
+        if n_points == 0:
+            return None, ""
+
+        features = self.current_features
+        if features is not None and len(features) == n_points:
+            if self._features_unit is None or self._features_unit.shape[0] != n_points:
+                matrix = np.asarray(features, dtype=np.float32)
+                if matrix.ndim == 1:
+                    matrix = matrix.reshape(-1, 1)
+                norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+                norms[norms == 0] = 1.0
+                self._features_unit = matrix / norms
+            return self._features_unit, "features"
+
+        return self._point_coords_2d, "2D"
+
+    def _knn_begin_gesture(self):
+        """Freeze the current selection as the anchor and rank every candidate point.
+
+        The whole ranking is computed once here (one matvec plus one argsort) so
+        that each subsequent wheel notch is only a slice of the cached order.
+        """
+        matrix, space = self._knn_ranking_matrix()
+        if matrix is None or matrix.size == 0:
+            return False
+        if self._point_selected.size != self._point_ids.size or not self._point_selected.any():
+            return False
+
+        anchor_mask = self._point_selected.copy()
+        prototype = matrix[anchor_mask].mean(axis=0)
+
+        if space == "features":
+            norm = float(np.linalg.norm(prototype))
+            if norm == 0.0:
+                return False
+            distances = 1.0 - (matrix @ (prototype / norm))
+        else:
+            distances = np.linalg.norm(matrix - prototype, axis=1)
+
+        # Anchor points are already selected, and points hidden by isolation must
+        # never be pulled back in, so neither can be a candidate.
+        excluded = anchor_mask.copy()
+        if self.isolated_mode and self._isolated_mask.size == excluded.size:
+            excluded |= ~self._isolated_mask
+        distances = np.where(excluded, np.inf, distances)
+
+        order = np.argsort(distances, kind='stable')
+        candidate_count = int(np.count_nonzero(np.isfinite(distances[order])))
+
+        self._knn_anchor_mask = anchor_mask
+        self._knn_order = order[:candidate_count]
+        self._knn_dists = distances[order[:candidate_count]]
+        self._knn_last_mask = anchor_mask.copy()
+        self._knn_k = 0
+        self._knn_space = space
+        return True
+
+    @staticmethod
+    def _knn_step_size(k):
+        """One neighbour at a time up close, proportional steps once k is large."""
+        return 1 if k < 10 else max(1, k // 10)
+
+    def _step_knn_selection(self, delta):
+        """Grow (delta > 0) or shrink the selection along the cached ranking."""
+        if self._point_ids.size == 0:
+            return False
+
+        if self._knn_anchor_mask is None or self._knn_anchor_mask.size != self._point_ids.size:
+            if not self._knn_begin_gesture():
+                self._show_knn_hud_text("select a point first")
+                return False
+
+        max_k = int(self._knn_order.size)
+        if delta > 0:
+            new_k = min(max_k, self._knn_k + self._knn_step_size(self._knn_k))
+        else:
+            new_k = max(0, self._knn_k - self._knn_step_size(max(0, self._knn_k - 1)))
+
+        if new_k != self._knn_k:
+            self._knn_k = new_k
+            new_mask = self._knn_anchor_mask.copy()
+            if new_k:
+                new_mask[self._knn_order[:new_k]] = True
+
+            self._knn_applying = True
+            try:
+                self._set_selected_mask(new_mask, emit_signal=False, update_previous=True)
+            finally:
+                self._knn_applying = False
+
+            self._knn_last_mask = new_mask
+            self._knn_emit_timer.start()
+
+        self._show_knn_hud()
+        return True
+
+    def _show_knn_hud(self):
+        """Report the current neighbour count and the cutoff distance it implies."""
+        detail = ""
+        if self._knn_k and self._knn_dists is not None and self._knn_k <= self._knn_dists.size:
+            cutoff = float(self._knn_dists[self._knn_k - 1])
+            if self._knn_space == "features":
+                detail = f"  ·  cos \u2265 {1.0 - cutoff:.2f}"
+            else:
+                detail = f"  ·  dist \u2264 {cutoff:.0f}"
+
+        max_k = int(self._knn_order.size) if self._knn_order is not None else 0
+        self._show_knn_hud_text(f"neighbors +{self._knn_k} / {max_k}{detail}  ·  {self._knn_space}")
+
+    def _show_knn_hud_text(self, text):
+        """Show the HUD overlay with the given text and restart its hide timer."""
+        label = getattr(self, 'knn_hud_label', None)
+        if label is None:
+            return
+
+        label.setText(text)
+        label.adjustSize()
+        label.move(12, 12)
+        label.show()
+        self._knn_hud_timer.start()
+
+    def _hide_knn_hud(self):
+        """Hide the neighbour-expansion HUD overlay."""
+        label = getattr(self, 'knn_hud_label', None)
+        if label is not None:
+            label.hide()
+
+    def _cancel_knn_expansion(self):
+        """Restore the frozen anchor selection and end the gesture."""
+        anchor_mask = self._knn_anchor_mask
+        if anchor_mask is None:
+            return False
+
+        self._knn_reset()
+        self._hide_knn_hud()
+        if anchor_mask.size == self._point_ids.size:
+            self._set_selected_mask(anchor_mask, emit_signal=True)
+        return True
     
     # -------------------------------------------------------------------------
     # Selection Management
@@ -3513,7 +3730,20 @@ class EmbeddingViewerWindow(QWidget):
             self.graphics_view.setDragMode(QGraphicsView.NoDrag)
     
     def _wheel_event(self, event):
-        """Handle mouse wheel for zooming or point/sprite resizing when Ctrl is held."""
+        """Handle mouse wheel: neighbour expansion (Ctrl+Shift), resizing (Ctrl), or zoom."""
+        # Ctrl+Shift+Wheel expands/contracts the selection along similarity rank.
+        # Checked before the Ctrl-only branch below, which would otherwise swallow
+        # the gesture and resize points instead.
+        try:
+            if (event.modifiers() & Qt.ControlModifier) and (event.modifiers() & Qt.ShiftModifier):
+                delta = event.angleDelta().y()
+                if delta:
+                    self._step_knn_selection(delta)
+                event.accept()
+                return
+        except Exception:
+            pass
+
         # If Ctrl is pressed, adjust point/sprite sizes instead of zooming
         try:
             if event.modifiers() & Qt.ControlModifier:
@@ -3569,6 +3799,13 @@ class EmbeddingViewerWindow(QWidget):
 
     def _key_press_event(self, event):
         """Handle key press events for the graphics view."""
+        try:
+            if event.key() == Qt.Key_Escape and self._cancel_knn_expansion():
+                event.accept()
+                return
+        except Exception:
+            pass
+
         try:
             if event.key() == Qt.Key_A and (event.modifiers() & Qt.ControlModifier):
                 if self._point_ids.size == 0:
