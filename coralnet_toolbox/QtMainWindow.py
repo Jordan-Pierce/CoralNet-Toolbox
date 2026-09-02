@@ -99,6 +99,9 @@ from coralnet_toolbox.MachineLearning import (
     EvalSegment as SegmentEvaluateModelDialog,
     EvalSemantic as SemanticEvaluateModelDialog,
     MergeClassify as ClassifyMergeDatasetsDialog,
+    MergeDetect as DetectMergeDatasetsDialog,
+    MergeSegment as SegmentMergeDatasetsDialog,
+    MergeSemantic as SemanticMergeDatasetsDialog,
     OptimizeModel as OptimizeModelDialog,
     TileClassifyDataset as ClassifyTileDatasetDialog,
     TileDetectDataset as DetectTileDatasetDialog,
@@ -287,6 +290,9 @@ class MainWindow(QMainWindow):
         self.segment_export_dataset_dialog = SegmentExportDatasetDialog(self)
         self.semantic_export_dataset_dialog = SemanticExportDatasetDialog(self)
         self.classify_merge_datasets_dialog = ClassifyMergeDatasetsDialog(self)
+        self.detect_merge_datasets_dialog = DetectMergeDatasetsDialog(self)
+        self.segment_merge_datasets_dialog = SegmentMergeDatasetsDialog(self)
+        self.semantic_merge_datasets_dialog = SemanticMergeDatasetsDialog(self)
         self.pretrain_model_dialog = PreTrainModelDialog(self)
         self.classify_train_model_dialog = ClassifyTrainModelDialog(self)
         self.detect_train_model_dialog = DetectTrainModelDialog(self)
@@ -651,7 +657,22 @@ class MainWindow(QMainWindow):
         self.ml_classify_merge_datasets_action.setToolTip("Merge multiple classification datasets together")
         self.ml_classify_merge_datasets_action.triggered.connect(self.open_classify_merge_datasets_dialog)
         self.ml_merge_datasets_menu.addAction(self.ml_classify_merge_datasets_action)
-        
+        # Merge Detection Datasets
+        self.ml_detect_merge_datasets_action = QAction("Detect", self)
+        self.ml_detect_merge_datasets_action.setToolTip("Merge multiple detection datasets together")
+        self.ml_detect_merge_datasets_action.triggered.connect(self.open_detect_merge_datasets_dialog)
+        self.ml_merge_datasets_menu.addAction(self.ml_detect_merge_datasets_action)
+        # Merge Instance Segmentation Datasets
+        self.ml_segment_merge_datasets_action = QAction("Segment", self)
+        self.ml_segment_merge_datasets_action.setToolTip("Merge multiple instance segmentation datasets together")
+        self.ml_segment_merge_datasets_action.triggered.connect(self.open_segment_merge_datasets_dialog)
+        self.ml_merge_datasets_menu.addAction(self.ml_segment_merge_datasets_action)
+        # Merge Semantic Segmentation Datasets
+        self.ml_semantic_merge_datasets_action = QAction("Semantic", self)
+        self.ml_semantic_merge_datasets_action.setToolTip("Merge multiple semantic segmentation datasets together")
+        self.ml_semantic_merge_datasets_action.triggered.connect(self.open_semantic_merge_datasets_dialog)
+        self.ml_merge_datasets_menu.addAction(self.ml_semantic_merge_datasets_action)
+
         # Tile Dataset submenu
         self.tile_dataset_menu = self.ml_menu.addMenu("Tile Dataset")
         # Tile Classify Dataset
@@ -3264,6 +3285,30 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.classify_merge_datasets_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_detect_merge_datasets_dialog(self):
+        """Open the Detect Merge Datasets dialog to merge datasets."""
+        try:
+            self.untoggle_all_tools()
+            self.detect_merge_datasets_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_segment_merge_datasets_dialog(self):
+        """Open the Segment Merge Datasets dialog to merge datasets."""
+        try:
+            self.untoggle_all_tools()
+            self.segment_merge_datasets_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_semantic_merge_datasets_dialog(self):
+        """Open the Semantic Merge Datasets dialog to merge datasets."""
+        try:
+            self.untoggle_all_tools()
+            self.semantic_merge_datasets_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

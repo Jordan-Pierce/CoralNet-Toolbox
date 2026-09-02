@@ -121,6 +121,23 @@ def _sidecar_dir_for(image_dir, sidecar_name):
     return None
 
 
+def _normalize_image_dir(resolved):
+    """Descend into an 'images' subfolder when a split entry names the split root.
+
+    This toolbox's detection and instance-segmentation exports write
+    ``train: train`` rather than ``train: train/images``, so the entry resolves
+    to the split folder itself. Walking that folder still finds the images, but
+    _sidecar_dir_for works by substituting a path segment named 'images', and
+    with none present it returns None -- leaving every image unpaired. Stepping
+    down to the folder the images actually live in restores the pairing.
+    """
+    if os.path.basename(os.path.normpath(resolved)).lower() != 'images':
+        nested = os.path.join(resolved, 'images')
+        if os.path.isdir(nested):
+            return nested
+    return resolved
+
+
 def _is_excluded(path, exclude_dirs):
     """Return True if a path lies inside one of the excluded directories."""
     if not exclude_dirs:
@@ -235,7 +252,10 @@ def discover_dataset_files(yaml_path, image_import_policy='annotated_only', excl
     image_dirs = []
     for entry in _split_entries(data):
         resolved = _resolve_image_dir(entry, root, yaml_dir)
-        if resolved and resolved not in image_dirs and not _is_excluded(resolved, exclude_dirs):
+        if not resolved:
+            continue
+        resolved = _normalize_image_dir(resolved)
+        if resolved not in image_dirs and not _is_excluded(resolved, exclude_dirs):
             image_dirs.append(resolved)
 
     # Fallback: no usable split entries, so scan for directories named 'images'.

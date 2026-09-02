@@ -31,6 +31,9 @@ from .EvaluateModel.QtSegment import Segment as EvalSegment
 from .EvaluateModel.QtSemantic import Semantic as EvalSemantic
 
 from .MergeDatasets.QtClassify import Classify as MergeClassify
+from .MergeDatasets.QtDetect import Detect as MergeDetect
+from .MergeDatasets.QtSegment import Segment as MergeSegment
+from .MergeDatasets.QtSemantic import Semantic as MergeSemantic
 from .OptimizeModel.QtBase import Base as OptimizeModel
 
 from .TileDataset.QtClassify import Classify as TileClassifyDataset
@@ -66,6 +69,9 @@ __all__ = [
     'TileDetectDataset',
     'TileSegmentDataset',
     'TileSemanticDataset',
-    'MergeClassify', 
+    'MergeClassify',
+    'MergeDetect',
+    'MergeSegment',
+    'MergeSemantic',
     'OptimizeModel'
 ]
