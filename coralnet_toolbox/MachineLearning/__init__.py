@@ -18,6 +18,7 @@ from .BatchInference.QtBatchInference import BatchInferenceDialog as BatchInfere
 
 from .ImportDataset.QtDetect import Detect as ImportDetect
 from .ImportDataset.QtSegment import Segment as ImportSegment
+from .ImportDataset.QtSemantic import Semantic as ImportSemantic
 
 from .ExportDataset.QtClassify import Classify as ExportClassify
 from .ExportDataset.QtDetect import Detect as ExportDetect
@@ -52,6 +53,7 @@ __all__ = [
     'BatchInference',
     'ImportDetect', 
     'ImportSegment',
+    'ImportSemantic',
     'ExportClassify', 
     'ExportDetect', 
     'ExportSegment',

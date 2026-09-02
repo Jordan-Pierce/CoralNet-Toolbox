@@ -178,24 +178,36 @@ All dock windows (Annotation Window, Label Window, Image Window, Confidence Wind
     - **Viscore (CSV)**: Load annotation data from a Viscore CSV file
   - **Masks**: Import segmentation mask images as MaskAnnotations
   - **Metadata**: Import metadata field definitions from a YAML file
-  - **AI-Ready Datasets**: Import a YOLO dataset for machine learning (Detection, Instance Segmentation)
+  - **AI-Ready Datasets**: Import a YOLO dataset for machine learning (Detect, Segment, Semantic)
     - **Image Copying**: All images from the dataset are copied into the project directory
       - Creates a copy in your project workspace (original files remain untouched)
-      - Supports PNG, JPG, BMP, TIF and other common image formats
-      - Images organized by split (train, val, test) during import
+      - Supports PNG, JPG, JPEG, JFIF, BMP, TIF, TIFF, and WebP images
+      - Every split (train, val, test) is imported, and the copies are flattened into a single `images` folder
+      - Images sharing a base name across splits would overwrite each other, so a rename option is offered when duplicates are detected
     - **Annotation Importing**: YOLO format annotations are converted and imported
       - Detection datasets: Bounding boxes converted to Rectangle annotations
-      - Segmentation datasets: Polygon masks converted to Polygon annotations
+      - Instance segmentation datasets: Polygon masks converted to Polygon annotations
+      - Semantic segmentation datasets: Single-channel mask images converted to Mask annotations (one per image)
       - Labels automatically created from dataset class names
-      - Annotations linked to corresponding images by filename
-    - **Dataset Organization**:
-      - Select train/val/test splits to import (can choose subsets)
-      - Dataset folder structure automatically recognized
-      - Handles standard YOLO directory layout automatically
+      - Each image is paired with the sidecar file at the matching path: `labels` for Detect and Segment, `masks` for Semantic
+    - **Dataset Organization**: Both standard YOLO directory layouts are recognized automatically
+      - **Split first**: `train/images/`, `train/labels/`, `val/images/`, `val/labels/`
+      - **Images first**: `images/train/`, `images/val/`, `labels/train/`, `labels/val/`
+      - The `train`, `val`, and `test` entries in the YAML are used to locate the data
+      - If those entries point somewhere that does not exist (common when a dataset is moved after being exported with an absolute path), the same folders are looked for alongside the YAML file instead
+      - If the YAML has no split entries at all, the dataset folder is scanned for `images` directories
+      - Semantic datasets substitute `masks` for `images` in the same way; the folder name is taken from the YAML's `masks_dir` entry when present
     - **Supported Dataset Types**:
-      - Detection (bounding boxes)
-      - Instance Segmentation (polygon masks)
-      - Classification (organized in class subdirectories)
+      - **Detect** (bounding boxes): importable as Rectangle or Polygon annotations
+      - **Segment** (polygon masks): importable as Polygon or Rectangle annotations
+      - **Semantic** (single-channel class-ID masks): imported as Mask annotations
+    - **Semantic Segmentation Specifics**:
+      - Masks must share the base name of their image (`image1.jpg` pairs with `image1.png`)
+      - Only lossless mask formats are read (PNG, TIF, TIFF); JPEG compression would corrupt the class values
+      - Each pixel value is the class ID, matching the index in the YAML's `names`
+      - Pixel value 255 is the reserved ignore label and is imported as background
+      - A class named `background` at index 0 is treated as background, and no label is created for it
+      - Classes unchecked in Advanced Options are left as background
 
 - **Export**:
   - **Labels**:

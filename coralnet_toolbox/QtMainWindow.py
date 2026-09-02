@@ -89,6 +89,7 @@ from coralnet_toolbox.MachineLearning import (
     BatchInference as BatchInferenceDialog,
     ImportDetect as DetectImportDatasetDialog,
     ImportSegment as SegmentImportDatasetDialog,
+    ImportSemantic as SemanticImportDatasetDialog,
     ExportClassify as ClassifyExportDatasetDialog,
     ExportDetect as DetectExportDatasetDialog,
     ExportSegment as SegmentExportDatasetDialog,
@@ -280,6 +281,7 @@ class MainWindow(QMainWindow):
         # Create dialogs (Machine Learning)
         self.detect_import_dataset_dialog = DetectImportDatasetDialog(self)
         self.segment_import_dataset_dialog = SegmentImportDatasetDialog(self)
+        self.semantic_import_dataset_dialog = SemanticImportDatasetDialog(self)
         self.classify_export_dataset_dialog = ClassifyExportDatasetDialog(self)
         self.detect_export_dataset_dialog = DetectExportDatasetDialog(self)
         self.segment_export_dataset_dialog = SegmentExportDatasetDialog(self)
@@ -432,9 +434,14 @@ class MainWindow(QMainWindow):
         self.import_dataset_menu.addAction(self.import_detect_dataset_action)
         # Import Segmentation Dataset submenu
         self.import_segment_dataset_action = QAction("Segment", self)
-        self.import_segment_dataset_action.setToolTip("Import segmentation dataset (YOLO format)")
+        self.import_segment_dataset_action.setToolTip("Import instance segmentation dataset (YOLO format)")
         self.import_segment_dataset_action.triggered.connect(self.segment_import_dataset_dialog.exec_)
         self.import_dataset_menu.addAction(self.import_segment_dataset_action)
+        # Import Semantic Segmentation Dataset submenu
+        self.import_semantic_dataset_action = QAction("Semantic", self)
+        self.import_semantic_dataset_action.setToolTip("Import semantic segmentation dataset (YOLO format, PNG masks)")
+        self.import_semantic_dataset_action.triggered.connect(self.semantic_import_dataset_dialog.exec_)
+        self.import_dataset_menu.addAction(self.import_semantic_dataset_action)
 
         # Export menu
         self.export_menu = self.file_menu.addMenu("Export")
