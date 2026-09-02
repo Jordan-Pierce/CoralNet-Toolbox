@@ -56,36 +56,6 @@ uv pip install coralnet-toolbox
 coralnet-toolbox
 ```
 
-
-### 🧭 Alternative Installations
-
-`pixi` and `Docker` installations are also available for those already comfortable with those
-tools. See the [Installation Guide](https://jordan-pierce.github.io/CoralNet-Toolbox/installation)
-for details.
-
-
-To remove a problematic package, type the following:
-
-```bash
-uv pip uninstall package-name-here
-```
-
-To delete an old environment and restart, type the following:
-
-```bash
-# Deactivate if already in the environment
-conda deactivate coralnet10
-
-# Delete by name
-conda env remove --name coralnet10
-
-# Confirm when prompted
-y
-```
-
-*See the [Installation Guide](https://jordan-pierce.github.io/CoralNet-Toolbox/installation) for details on other versions.*
-
-
 ### 🎯 **GPU Status Indicators**
 - **🐢** CPU only
 - **🐇** Single GPU
@@ -94,18 +64,52 @@ y
 
 *Click the icon in the bottom-left to see available devices*
 
-### 🔄 **Upgrading**
+
+### ⚠️ Platform-Specific Notes
+
+#### macOS Users
+
+Version `1.0.0` and greater relies heavily on a package (`PyQtADS`) that cannot be installed on your operating system. Please do not upgrade from `0.0.105` until this is resolved. Instead, use `Docker` for installation — see the [Installation Guide](https://jordan-pierce.github.io/CoralNet-Toolbox/installation) for details.
+
+### 🔧 Running into Issues?
+
+#### **Upgrading**
 ```bash
-# When updates are available
-uv pip install -U coralnet-toolbox==[latest_version]
+# Upgrade coralnet-toolbox only (without upgrading other packages)
+uv pip install --upgrade coralnet-toolbox
 ```
 
-> **Note**: If you have `torch` installed with `CUDA`, adding `-U` may trigger an regression to the CPU version. If this occurs, use `pip` to uninstall `torch` and `torchvision`, and re-install `CUDA` version.
+> **Note**: Using `-U` or `--upgrade-all` upgrades **all packages**, which may trigger a regression to the CPU version of `torch`. To avoid this, use the command above to upgrade only coralnet-toolbox. If you do experience a regression, use `pip` to uninstall `torch` and `torchvision`, then re-install the `CUDA` version.
 
-### MacOS Users
+#### **Removing Packages**
 
-Version `1.0.0` and greater relies heavily on a package (`PyQtADS`) that cannot be installed on your operating system. Please do not upgrade from `0.0.105` until this is resolved.
- 
+To remove a problematic package, type the following:
+
+```bash
+uv pip uninstall package-name-here
+```
+
+#### **Starting Fresh (New Environment)**
+
+To delete an old environment and create a fresh one:
+
+```bash
+# Deactivate if already in the environment
+conda deactivate coralnet10
+
+# Delete the old environment
+conda env remove --name coralnet10
+
+# Confirm when prompted
+y
+
+# Create a new environment (see "Get Started" section above for details)
+conda create --name coralnet10 python=3.10 -y
+conda activate coralnet10
+pip install uv
+uv pip install coralnet-toolbox
+```
+
 -----
 
 ## 📚 Resources & Advanced Details
