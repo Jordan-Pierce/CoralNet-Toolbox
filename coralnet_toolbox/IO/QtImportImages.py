@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox)
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 
-SUPPORTED_IMAGE_EXTENSIONS = {'.bmp', '.jpeg', '.jpg', '.png', '.tif', '.tiff'}
+SUPPORTED_IMAGE_EXTENSIONS = {'.bmp', '.jfif', '.jpeg', '.jpg', '.png', '.tif', '.tiff', '.webp'}
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -34,7 +34,7 @@ class ImportImages:
         file_names, _ = QFileDialog.getOpenFileNames(self.image_window,
                                                      "Open Image Files",
                                                      "",
-                                                     "Image Files (*.png *.jpg *.jpeg *.tif* *.bmp)")
+                                                     "Image Files (*.png *.jpg *.jpeg *.jfif *.tif* *.bmp *.webp)")
         if file_names:
             self._process_image_files(file_names)
 
@@ -45,7 +45,7 @@ class ImportImages:
         file_names, _ = QFileDialog.getOpenFileNames(self.image_window,
                                                      "Open Orthomosaic Files",
                                                      "",
-                                                     "Image Files (*.png *.jpg *.jpeg *.tif* *.bmp)")
+                                                     "Image Files (*.png *.jpg *.jpeg *.jfif *.tif* *.bmp *.webp)")
         if file_names:
             self._process_image_files(file_names, raster_type='OrthoRaster')
 

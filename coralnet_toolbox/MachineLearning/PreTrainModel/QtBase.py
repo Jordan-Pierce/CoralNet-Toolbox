@@ -126,7 +126,7 @@ class UnlabeledMultiDirDataset:
     """
     def __init__(self, data_dirs):
         self.image_paths = []
-        valid_exts = {'.jpg', '.jpeg', '.png', '.bmp', '.webp', '.tif', '.tiff'}
+        valid_exts = {'.jpg', '.jpeg', '.jfif', '.png', '.bmp', '.webp', '.tif', '.tiff'}
         
         for directory in data_dirs:
             for root, _, files in os.walk(directory):
@@ -231,7 +231,7 @@ class Base(QDialog):
         buttons_layout = QHBoxLayout()
         self.add_folder_btn = QPushButton("Add Folder...")
         self.add_folder_btn.clicked.connect(self.add_data_folder)
-        self.add_folder_btn.setToolTip("Add a directory containing unlabeled images for pre-training.\nSupports: JPG, PNG, BMP, WebP, TIF, TIFF")
+        self.add_folder_btn.setToolTip("Add a directory containing unlabeled images for pre-training.\nSupports: JPG, JPEG, JFIF, PNG, BMP, WebP, TIF, TIFF")
 
         self.remove_folder_btn = QPushButton("Remove Selected")
         self.remove_folder_btn.clicked.connect(self.remove_data_folder)
@@ -522,7 +522,7 @@ class Base(QDialog):
         if not dir_path or dir_path in self.data_dirs:
             return  
 
-        image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.webp', '.tif', '.tiff'}
+        image_extensions = {'.jpg', '.jpeg', '.jfif', '.png', '.bmp', '.webp', '.tif', '.tiff'}
         image_count = 0
         
         if hasattr(self.main_window, 'statusBar'):
