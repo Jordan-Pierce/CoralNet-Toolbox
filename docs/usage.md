@@ -99,12 +99,13 @@ The main window consists of several dockable components:
 - **Label Window**: Lists and manages labels with operations for editing, merging, and organizing
 - **Image Window**: Displays imported images with filtering and batch operations
 - **Confidence Window**: Displays cropped images and confidence charts for annotation predictions
+- **Metadata Window**: Displays and edits structured metadata for the selected annotation(s)
 - **Performance Window**: Real-time hardware monitor showing CPU, Memory, and GPU usage with historical sparkline graphs
 - **Timer Window**: Session timer with start, stop, and reset controls; tracks total work duration across sessions
 
 ### Advanced Docking System
 
-All dock windows (Annotation Window, Label Window, Image Window, Confidence Window, Explorer, Performance, Timer) use an advanced docking system that allows complete layout customization:
+All dock windows (Annotation Window, Label Window, Image Window, Confidence Window, Metadata Window, Explorer, Performance, Timer) use an advanced docking system that allows complete layout customization:
 
 **Moving & Rearranging Docks**
 - **Grab & Drag**: Click and drag the dock title bar to move the window
@@ -176,7 +177,8 @@ All dock windows (Annotation Window, Label Window, Image Window, Confidence Wind
     - **Squidle+ (JSON)**: Load annotation data from a Squidle+ JSON file
     - **Viscore (CSV)**: Load annotation data from a Viscore CSV file
   - **Masks**: Import segmentation mask images as MaskAnnotations
-  - **Dataset**: Import a YOLO dataset for machine learning (Detection, Instance Segmentation)
+  - **Metadata**: Import metadata field definitions from a YAML file
+  - **AI-Ready Datasets**: Import a YOLO dataset for machine learning (Detection, Instance Segmentation)
     - **Image Copying**: All images from the dataset are copied into the project directory
       - Creates a copy in your project workspace (original files remain untouched)
       - Supports PNG, JPG, BMP, TIF and other common image formats
@@ -249,7 +251,10 @@ All dock windows (Annotation Window, Label Window, Image Window, Confidence Wind
         - Creates a folder with exported masks (one per image)
         - Metadata file included (class_mapping.json or color_legend.json)
         - Handles images with no annotations based on your settings
-  - **Dataset**: Create a YOLO dataset for machine learning
+  - **Metadata**:
+    - **Schema (YAML)**: Save metadata field definitions for reuse in another project
+    - **Data Table (CSV)**: Save one row per annotation, combining built-in metrics with custom fields
+  - **AI-Ready Datasets**: Create a YOLO dataset for machine learning
     - **Classify**: Export classification dataset
       - Exports Patches, Rectangles, and Polygons as classified samples
       - Each annotation becomes a single classified crop
@@ -276,7 +281,6 @@ All dock windows (Annotation Window, Label Window, Image Window, Confidence Wind
     - **Automatic Crop Generation**: Crops are automatically generated and organized
     - **Output Directory**: Specify custom export location
     - **Format Compliance**: Exports follow YOLO format standards for compatibility
-  - **Spatial Metrics**: Export spatial metrics and statistics
 
 ### Utilities
 
@@ -713,6 +717,79 @@ Action buttons for label operations:
   - When one annotation selected: Its index in the sequence
   - When multiple annotations selected: Number of selected annotations
   - **Editable**: Click and edit to navigate to a specific annotation by index (when in Select mode)
+
+## Metadata Window
+The Metadata Window is a property grid showing structured metadata for the currently selected annotation(s). It is docked on the right, tabbed with the Confidence Window, and updates with the selection made in the Annotation Window or the Explorer.
+- **Selection Driven**: Displays the annotation(s) currently selected; the grid is read-only context until a selection exists
+- **Vector Annotations Only**: Patches, Rectangles, Polygons, and MultiPolygons; Mask annotations are excluded (a mask is a per-image raster, not a discrete object)
+- **Multiple Selection**: Fields can be edited across many annotations at once; a single edit writes to every selected annotation
+
+### Field Groups
+The grid is organized into three collapsible groups, each showing a count of its rows:
+- **Custom**: User-defined typed fields governed by the project's metadata schema
+  - Editable, including across a multi-selection
+  - Shows `<multiple values>` when the selected annotations disagree; viewing a mixed selection never overwrites anything
+- **Built-in**: Read-only values derived from the annotation's geometry and its raster
+  - **Identity**: Annotation ID, Annotation Type, Label, Full Name
+  - **Confidence**: User Confidence, Machine Confidence, Verified
+  - **Source**: Source Image, Cropped Dimensions
+  - **Geometry**: Area, Perimeter, Scale
+  - **Morphology**: Length, Width, Orientation, Hull Area, Hull Perimeter
+  - **3D** (requires a Z-Channel): Volume, 3D Surface Area, Z Coverage
+  - Recomputed on every refresh, so they can never go stale against the geometry they describe
+  - Expressed in the unit selected in the Status Bar; a note is shown when a scale unit cannot be converted to the display unit
+- **Raw Data**: Read-only leftovers from `annotation.data` that could not be promoted into a typed field (nested structures such as lists and dictionaries)
+  - With multiple annotations selected, only the keys shared by all of them are listed
+
+Group expansion is remembered as you move between annotations, and computed rows display `<multiple annotations selected>` when more than one annotation is selected.
+
+### Field Management Toolbar
+Action buttons for schema operations:
+- **Add Field** (<kbd>+</kbd> icon): Define a new field for the project
+  - **Name**: Unique key for the field, used as the column name in exports
+  - **Display Name**: Optional label shown in the panel (defaults to the name)
+  - **Description**: Optional text shown as a tooltip on the field row
+  - **Type**: Short Text, Long Text, Yes / No, Whole Number, Decimal Number, Dropdown (one), Checklist (many), or Date
+  - **Options / Range / Default**: Only the settings that apply to the chosen type are shown
+- **Delete Field** (<kbd>-</kbd> icon): Delete the selected field and its stored values across the project (disabled if no field selected)
+  - Confirmation reports how many annotations hold a value for the field
+  - A progress bar appears for projects with more than 200 annotations
+- **Edit Field**: Modify the selected field's name, type, or settings (disabled if no field selected)
+  - Renaming migrates stored values to the new name
+  - Changing type re-coerces stored values; values that do not fit the new definition are discarded, and the confirmation appears only when the change actually costs data
+- **Show / Hide Fields** (eye icon): Choose which custom fields the grid shows, and in what order
+  - Dual transfer list: move fields between **Hidden** and **Visible**, and use the arrows to set display order
+  - Hiding affects display only; stored values are kept and still saved with the project
+  - Built-in and Raw Data rows are always shown and are not listed here
+- **Adopt Fields** (magic icon): Promote imported data into real typed fields
+  - Scalar keys in `annotation.data` become typed fields, with the type inferred from every value observed
+  - Known importer keys (TagLab instance / blob names and notes, Viscore Dot, Reprojection Error, View Index, View Count) adopt a pre-defined type and label
+  - Nested values are left behind in the Raw Data group
+  - Keys duplicating a built-in value (bbox, centroid, area, perimeter, class name) are dropped rather than stored as a stale copy
+  - Importers run this automatically after an import; the toolbar button re-runs it on demand
+
+### Filter & Search
+- **Filter Fields**: Type in the filter box to search rows by name across all three groups
+- Results update in real-time as you type
+
+### Editing Behavior
+- Each field type maps to its own editor (line edit, text box, checkbox, spin box, dropdown, checklist, or date picker)
+- Edits are committed on a short delay, so holding a key does not trigger one write per keystroke across a large selection
+- Pending edits are flushed automatically when the selection changes, when the dock is hidden, and before any field dialog opens
+- The annotation selection is cleared when a field dialog opens, since <kbd>Backspace</kbd> and <kbd>Delete</kbd> would otherwise delete the selected annotation
+- Changing the display unit in the Status Bar re-renders the Built-in values in place
+
+### Schema Import & Export
+The schema (the field definitions) travels separately from the values:
+- **Import**: **File** > **Import** > **Metadata** merges field definitions from a YAML file
+  - Merging is by field name; existing definitions are never silently replaced
+  - On a collision, choose **Replace** (overwrite definitions, keeping values that still fit) or **Keep** (import only the new fields)
+- **Export Schema**: **File** > **Export** > **Metadata** > **Schema (YAML)** writes the definitions only, as a reusable template for another project
+- **Export Data Table**: **File** > **Export** > **Metadata** > **Data Table (CSV)** writes one row per annotation
+  - Combines built-in metrics computed from geometry with the custom fields you defined
+  - **Columns**: Select from Location, Size, Shape, and 3D metrics, plus your custom fields
+  - **Filters**: Restrict the export by Images, Labels, and Annotation Types
+  - Identity columns (annotation id, image name, label codes, color) are always included
 
 ## Image Window
 - **Select Image**: <kbd>Double-Click</kbd> on a row to load the image in the annotation window
