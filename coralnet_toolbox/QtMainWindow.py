@@ -423,8 +423,8 @@ class MainWindow(QMainWindow):
         # Add a separator
         self.import_menu.addSeparator()
 
-        # Dataset submenu
-        self.import_dataset_menu = self.import_menu.addMenu("Dataset")
+        # AI-Ready Datasets submenu
+        self.import_dataset_menu = self.import_menu.addMenu("AI-Ready Datasets")
         # Import Detection Dataset submenu
         self.import_detect_dataset_action = QAction("Detect", self)
         self.import_detect_dataset_action.setToolTip("Import object detection dataset (YOLO format)")
@@ -505,8 +505,8 @@ class MainWindow(QMainWindow):
         # Add a separator
         self.export_menu.addSeparator()
 
-        # Dataset submenu
-        self.export_dataset_menu = self.export_menu.addMenu("Dataset")
+        # AI-Ready Datasets submenu
+        self.export_dataset_menu = self.export_menu.addMenu("AI-Ready Datasets")
         # Export Classification Dataset
         self.export_classify_dataset_action = QAction("Classify", self)
         self.export_classify_dataset_action.setToolTip("Export classification dataset (YOLO format)")
