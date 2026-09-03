@@ -31,6 +31,17 @@ SPRITE_SIZE = 48
 
 ANNOTATION_WIDTH = 4
 
+# Magnifier lens (see ScatterPlotItem._paint_lens). The lens is always on: it
+# redraws the points nearest the cursor as thumbnails, at roughly the size the
+# old single hover sprite used, so the plot reads as dots with a readable
+# neighbourhood under the pointer.
+LENS_SPRITE_SCALE = 3.5      # thumbnail size as a multiple of the dot diameter
+LENS_SPRITE_MIN_PX = 24
+LENS_SPRITE_MAX_PX = 96      # past this a "thumbnail" is just a picture in the way
+LENS_RADIUS_BASE_PX = 170.0  # lens radius shrinks as the thumbnails grow
+LENS_RADIUS_MIN_PX = 70.0
+LENS_MAX_SPRITES = 24
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Confidence helpers (formerly confidence_sorting.py)
@@ -201,6 +212,109 @@ class ScatterPlotItem(QGraphicsItem):
 
         margin = (point_diameter / 2.0) + 12.0
         return QRectF(min_x - margin, min_y - margin, (max_x - min_x) + 2 * margin, (max_y - min_y) + 2 * margin)
+
+
+    @staticmethod
+    def _lens_sprite_px(nominal_px):
+        """Clamp a thumbnail size into the range the lens can lay out sensibly."""
+        return int(max(LENS_SPRITE_MIN_PX, min(LENS_SPRITE_MAX_PX, round(nominal_px))))
+
+    def _paint_lens(self, painter, coords, visible_mask, is_sprites, drawn_diameter):
+        """Draw thumbnails for the points nearest the cursor.
+
+        Sprites carry the information in this plot but are unreadable at overview
+        zoom, where the LOD check below demotes them to dots. This pass redraws
+        the handful of points under the pointer as thumbnails so overview and
+        detail coexist with no mode to switch. Everything is painted in device
+        coordinates: scaling thumbnails through the view transform instead would
+        blur them at low zoom.
+        """
+        viewer = self.viewer
+        if viewer is None or coords.size == 0 or not self.pixmaps:
+            return
+
+        center = getattr(viewer, '_lens_scene_pos', None)
+        if center is None:
+            return
+
+        try:
+            gv = viewer.graphics_view
+            transform = gv.viewportTransform()
+            m11, m12 = transform.m11(), transform.m12()
+            m21, m22 = transform.m21(), transform.m22()
+            tdx, tdy = transform.dx(), transform.dy()
+            view_scale = abs(m11) if abs(m11) > 1e-6 else 1.0
+        except Exception:
+            return
+
+        # Thumbnail size tracks whatever the user has sized the marks to, so the
+        # lens stays proportionate to the plot instead of a fixed magnification.
+        if is_sprites:
+            sprite_px = self._lens_sprite_px(self._current_sprite_extent())
+            # Nothing to add once the ordinary sprites are already this big.
+            if drawn_diameter * view_scale >= sprite_px:
+                return
+        else:
+            sprite_px = self._lens_sprite_px(self._current_point_diameter() * LENS_SPRITE_SCALE)
+
+        # Bigger thumbnails need a tighter radius, or the lens covers the plot it
+        # is supposed to be a detail view of.
+        radius_px = max(LENS_RADIUS_MIN_PX, LENS_RADIUS_BASE_PX - 0.6 * sprite_px)
+        radius_scene = radius_px / view_scale
+
+        cx, cy = float(center.x()), float(center.y())
+        dx = coords[:, 0] - cx
+        dy = coords[:, 1] - cy
+        d2 = dx * dx + dy * dy
+        indices = np.flatnonzero(visible_mask & (d2 <= radius_scene * radius_scene))
+        if indices.size == 0:
+            return
+
+        # Cap by how many fit rather than by a flat number: a lens twice as wide
+        # relative to its thumbnails can show about four times as many before
+        # they pile into an unreadable stack.
+        span = radius_px / float(sprite_px)
+        max_sprites = int(max(3, min(LENS_MAX_SPRITES, round(1.6 * span * span))))
+        if indices.size > max_sprites:
+            indices = indices[np.argsort(d2[indices])[:max_sprites]]
+        # Farthest first so the point under the cursor ends up on top.
+        indices = indices[np.argsort(d2[indices])[::-1]]
+
+        cache = self._scaled_pixmap_cache
+        pixmaps = self.pixmaps
+        n_pixmaps = len(pixmaps)
+
+        painter.save()
+        painter.resetTransform()
+
+        outline_pen = QPen()
+        outline_pen.setWidthF(1.5)
+
+        for index in indices:
+            pixmap = pixmaps[index] if index < n_pixmaps else None
+            if pixmap is None or pixmap.isNull():
+                continue
+
+            ck = (int(index), sprite_px)
+            scaled = cache.get(ck)
+            if scaled is None:
+                scaled = pixmap.scaled(sprite_px, sprite_px, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                cache[ck] = scaled
+
+            x_dev = m11 * float(coords[index, 0]) + m21 * float(coords[index, 1]) + tdx
+            y_dev = m12 * float(coords[index, 0]) + m22 * float(coords[index, 1]) + tdy
+            left = int(x_dev - scaled.width() / 2.0)
+            top = int(y_dev - scaled.height() / 2.0)
+            painter.drawPixmap(left, top, scaled)
+
+            rgba = self.colors[index] if index < len(self.colors) else None
+            if rgba is not None:
+                outline_pen.setColor(QColor(int(rgba[0]), int(rgba[1]), int(rgba[2]), 255))
+                painter.setPen(outline_pen)
+                painter.setBrush(Qt.NoBrush)
+                painter.drawRect(QRectF(left, top, scaled.width(), scaled.height()))
+
+        painter.restore()
 
     def paint(self, painter, option, widget):
         if self.coords_2d.size == 0:
@@ -492,6 +606,7 @@ class ScatterPlotItem(QGraphicsItem):
                 painter.setBrush(QBrush(color))
                 painter.drawEllipse(QRectF(x - radius, y - radius, point_diameter, point_diameter))
 
+        self._paint_lens(painter, coords, visible_mask, is_sprites, point_diameter)
 
 
 class AnnotationDataItem:

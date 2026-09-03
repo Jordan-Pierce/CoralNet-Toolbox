@@ -165,16 +165,17 @@ class AnnotationViewerWindow(QWidget):
         toolbar.addWidget(sort_label)
         
         self.sort_combo = QComboBox()
-        self.sort_combo.addItems(["None", "Label", "Image", "Confidence", "Area", "Cluster"])
+        self.sort_combo.addItems(["None", "Label", "Image", "Confidence", "Area", "Cluster", "Similarity"])
         self.sort_combo.insertSeparator(self.sort_combo.findText("Cluster"))
         self.sort_combo.currentTextChanged.connect(self._on_sort_changed)
         self.sort_combo.setMinimumWidth(100)
-        self.sort_combo.setToolTip("Sort annotations by: None (no sort), Label, Image, Confidence score, Area size, or Cluster group")
+        self.sort_combo.setToolTip("Sort annotations by: None (no sort), Label, Image, Confidence score, Area size, Cluster group, or Similarity to the embedding viewer last neighbour anchor")
         toolbar.addWidget(self.sort_combo)
 
         # "Cluster" is disabled until cluster data arrives from the EmbeddingViewer.
         # The separator keeps it visually grouped away from the standard sorts.
         self._set_cluster_sort_item_enabled(False)
+        self._set_similarity_sort_item_enabled(False)
 
         toolbar.addSeparator()
 
@@ -1260,6 +1261,8 @@ class AnnotationViewerWindow(QWidget):
         
     def _recalculate_layout(self):
         """Rebuild list model layout by grouping items and updating model/delegate."""
+        # A new layout pass re-reads the ranking; the cache only spans one pass.
+        self._similarity_cache = None
         # If the user has not applied the filter, show placeholder and skip
         if not getattr(self, '_filter_applied', False):
             self._show_placeholder()
@@ -1372,6 +1375,13 @@ class AnnotationViewerWindow(QWidget):
             _NO_CLUSTER = (2 ** 31, 0.0)
             items.sort(key=lambda i: cluster_map.get(i.annotation.id, _NO_CLUSTER))
 
+        elif sort_type == "Similarity":
+            # Distances come from the EmbeddingViewer's last neighbour anchor
+            # (Ctrl+Shift+Wheel). Anchor annotations sit at 0.0 and rank first;
+            # anything the ranking doesn't cover falls to the end.
+            similarity_map, _space, anchor_ids = self._get_similarity_ranking()
+            items.sort(key=lambda i: self._similarity_sort_key(i.annotation.id, similarity_map, anchor_ids))
+
         return items
     
     def _group_data_items_by_sort_key(self, data_items):
@@ -1418,6 +1428,13 @@ class AnnotationViewerWindow(QWidget):
                 cid = _cluster_map.get(item.annotation.id)
                 key = f"Cluster {cid}" if cid is not None else "No Cluster"
                 color = _cluster_colors.get(cid)  # Apply the centroid color here
+            elif sort_type == "Similarity":
+                similarity_map, space, anchor_ids = self._get_similarity_ranking()
+                key = self._similarity_group_key(
+                    similarity_map.get(item.annotation.id), space,
+                    is_anchor=item.annotation.id in anchor_ids,
+                )
+                color = None
             else:
                 key = ""
                 color = None
@@ -1436,6 +1453,9 @@ class AnnotationViewerWindow(QWidget):
         groups = []
         for k, v in groups_map.items():
             groups.append((k, v.get("color"), v.get("items", [])))
+
+        if sort_type == "Similarity":
+            groups = self._order_similarity_groups(groups)
 
         return groups
 
@@ -1636,6 +1656,98 @@ class AnnotationViewerWindow(QWidget):
     def update_cluster_sort_state(self, has_clusters: bool):
         """Called by EmbeddingViewerWindow when cluster data is created or cleared."""
         self._set_cluster_sort_item_enabled(has_clusters)
+
+    def _set_similarity_sort_item_enabled(self, enabled: bool):
+        """Enable or disable the 'Similarity' entry in the sort combo."""
+        try:
+            model = self.sort_combo.model()
+            idx = self.sort_combo.findText("Similarity")
+            if idx < 0:
+                return
+            item = model.item(idx)
+            if item is None:
+                return
+            from PyQt5.QtCore import Qt as _Qt
+            if enabled:
+                item.setFlags(item.flags() | _Qt.ItemIsEnabled | _Qt.ItemIsSelectable)
+            else:
+                item.setFlags(item.flags() & ~(_Qt.ItemIsEnabled | _Qt.ItemIsSelectable))
+                if self.sort_combo.currentText() == "Similarity":
+                    self.sort_combo.setCurrentText("None")
+        except Exception:
+            pass
+
+    def update_similarity_sort_state(self, has_ranking: bool):
+        """Called by EmbeddingViewerWindow when a neighbour ranking appears or is dropped."""
+        self._similarity_cache = None
+        self._set_similarity_sort_item_enabled(has_ranking)
+        if has_ranking and self.sort_combo.currentText() == "Similarity":
+            self._recalculate_layout()
+
+    def _get_similarity_ranking(self):
+        """Return ({annotation_id: distance}, space, anchor_ids) from the EmbeddingViewer.
+
+        Cached for the duration of one layout pass — sorting and grouping both
+        need it, and rebuilding the dict per call costs a scan of every point.
+        """
+        cached = getattr(self, '_similarity_cache', None)
+        if cached is not None:
+            return cached
+
+        ranking, space, anchors = {}, "", set()
+        try:
+            ev = getattr(self.main_window, 'embedding_viewer_window', None)
+            if ev is not None and hasattr(ev, 'get_similarity_ranking'):
+                ranking, space, anchors = ev.get_similarity_ranking()
+        except Exception:
+            ranking, space, anchors = {}, "", set()
+
+        self._similarity_cache = (ranking, space, anchors)
+        return self._similarity_cache
+
+    @staticmethod
+    def _similarity_sort_key(annotation_id, similarity_map, anchor_ids):
+        """Anchors first, then ascending distance, then anything unranked."""
+        if annotation_id in anchor_ids:
+            return (0, 0.0)
+        return (1, similarity_map.get(annotation_id, float('inf')))
+
+    @staticmethod
+    def _similarity_group_key(distance, space, is_anchor=False):
+        """Band a similarity distance into a group header.
+
+        Cosine distance bands read directly as similarity, which is what tells
+        the user where the neighbourhood stops being a neighbourhood. Projection
+        distances have no comparable scale, so they get a single group.
+        """
+        if is_anchor:
+            return "Anchor"
+        if distance is None:
+            return "Unranked"
+        if space != "features":
+            return "Ranked by distance"
+
+        similarity = max(0.0, min(1.0, 1.0 - float(distance)))
+        if similarity < 0.50:
+            return "cos < 0.50"
+        # Cap the band floor so an exact duplicate lands in the top band instead
+        # of a degenerate "cos 1.00-1.00" group of its own.
+        band = min(0.95, int(similarity * 20) / 20.0)
+        return f"cos {band:.2f}-{band + 0.05:.2f}"
+
+    @staticmethod
+    def _order_similarity_groups(groups):
+        """Pin "Anchor" to the top and "Unranked" to the bottom.
+
+        Group order otherwise follows first appearance in the sorted list, which
+        leaves the anchors wherever rounding happened to place them. Their
+        position is the reference point for reading the whole strip, so it is
+        fixed here rather than left to emerge from the distances.
+        """
+        anchor = [group for group in groups if group[0] == "Anchor"]
+        unranked = [group for group in groups if group[0] == "Unranked"]
+        middle = [group for group in groups if group[0] not in ("Anchor", "Unranked")]
+        return anchor + middle + unranked
 
     def _on_sort_changed(self, sort_type):
         """Handle sort type change."""

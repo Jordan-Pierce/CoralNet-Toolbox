@@ -653,3 +653,45 @@ class SelectionManager(QObject):
             
         finally:
             self._syncing = False
+
+    def navigate_to_annotation(self, annotation_id: str):
+        """Navigate the AnnotationWindow to an annotation without touching selection.
+
+        Ctrl+Right-click means "show me where this one lives", so whatever the
+        user has selected in the gallery or the embedding plot has to survive it.
+        The canvas selection this makes would normally echo back through
+        annotationSelectionChanged and overwrite that, so the sync guard is held
+        for the duration.
+
+        Args:
+            annotation_id: The annotation ID to navigate to.
+        """
+        if self._syncing or not self._annotation_window:
+            return
+
+        annotations_dict = getattr(self._annotation_window, 'annotations_dict', {})
+        annotation = annotations_dict.get(annotation_id)
+        if annotation is None:
+            return
+
+        self._syncing = True
+        try:
+            if self._annotation_window.current_image_path != annotation.image_path:
+                if hasattr(self._annotation_window, 'set_image'):
+                    self._annotation_window.set_image(annotation.image_path)
+
+            if hasattr(self._annotation_window, 'select_annotation'):
+                self._annotation_window.select_annotation(annotation, quiet_mode=True)
+
+            # center_and_zoom_on_annotation frames the annotation with padding;
+            # center_on_annotation only pans, so it is the weaker fallback.
+            zoom = getattr(self._annotation_window, 'center_and_zoom_on_annotation', None)
+            if zoom is None:
+                zoom = getattr(self._annotation_window, 'center_on_annotation', None)
+            if zoom is not None:
+                zoom(annotation)
+
+            if self._confidence_window is not None:
+                self._confidence_window.display_cropped_image(annotation)
+        finally:
+            self._syncing = False

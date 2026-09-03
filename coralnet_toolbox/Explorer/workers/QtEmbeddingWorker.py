@@ -12,6 +12,13 @@ from PyQt5.QtCore import QThread, pyqtSignal
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
+# The retained feature matrix is used for neighbour ranking and feature-space
+# clustering, never for reconstruction, so the extractor's full width is wasted
+# resident memory (50k x 1536 float32 is ~300 MB). TruncatedSVD drops it without
+# centering the data, which preserves inner products — and therefore the cosine
+# similarities the neighbour tools rank on — far better than a centered PCA.
+FEATURE_STORE_MAX_DIMS = 128
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -86,6 +93,28 @@ class EmbeddingPipelineWorker(QThread):
         wrong model's cache) after being superseded.
         """
         return self._cancelled
+
+    def _compact_features(self, features):
+        """Reduce the retained feature matrix to FEATURE_STORE_MAX_DIMS columns.
+
+        The cache keeps full-width vectors; only the copy handed back to the
+        viewer shrinks. Returns the input unchanged when it is already narrow
+        enough or when the projection fails.
+        """
+        try:
+            n_samples, n_dims = features.shape
+        except Exception:
+            return features
+
+        if n_dims <= FEATURE_STORE_MAX_DIMS or n_samples <= FEATURE_STORE_MAX_DIMS:
+            return np.asarray(features, dtype=np.float32)
+
+        try:
+            from sklearn.decomposition import TruncatedSVD
+            svd = TruncatedSVD(n_components=FEATURE_STORE_MAX_DIMS, random_state=42)
+            return svd.fit_transform(features).astype(np.float32)
+        except Exception:
+            return np.asarray(features, dtype=np.float32)
         
     def run(self):
         """Execute the pipeline in the background."""
@@ -172,6 +201,9 @@ class EmbeddingPipelineWorker(QThread):
                 return
             
             # Success - emit results
+            self.progress.emit("Compacting feature matrix...")
+            features = self._compact_features(features)
+
             self.progress.emit("Complete!")
             results = {
                 'data_items': final_data_items,

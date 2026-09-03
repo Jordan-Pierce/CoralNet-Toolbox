@@ -238,6 +238,10 @@ class EmbeddingViewerWindow(QWidget):
         self._sprite_max = 512
         self._resize_step_point = 2
         self._resize_step_sprite = 8
+
+        # Cursor position feeding the magnifier lens (ScatterPlotItem._paint_lens),
+        # which redraws the nearest points as thumbnails. Always on.
+        self._lens_scene_pos = None
         
         # Location indicator
         self.locate_lines = []
@@ -261,6 +265,13 @@ class EmbeddingViewerWindow(QWidget):
         self._knn_space = ""           # 'features' or '2D', for the HUD
         self._knn_applying = False     # our own writes must not reset the anchor
         self._features_unit = None     # row-normalized current_features cache
+        # Ranking snapshot for the gallery's "Similarity" sort. Deliberately
+        # outlives the gesture: an ordinary click resets the anchor, but the
+        # user still wants to browse the strip the last anchor produced.
+        self._similarity_dists = None
+        self._similarity_ids = None
+        self._similarity_anchor_ids = set()
+        self._similarity_space = ""
         # Wheel notches arrive in bursts; coalesce the outgoing selection signal
         # so downstream views rebuild once instead of once per notch.
         self._knn_emit_timer = QTimer(self)
@@ -503,6 +514,7 @@ class EmbeddingViewerWindow(QWidget):
         self.sprite_toggle_button.setEnabled(True)
         self.sprite_toggle_button.clicked.connect(self._on_display_mode_changed)
         toolbar.addWidget(self.sprite_toggle_button)
+
 
         return toolbar
 
@@ -1391,6 +1403,7 @@ class EmbeddingViewerWindow(QWidget):
             # New features invalidate the cached normalization and any frozen anchor.
             self._features_unit = None
             self._knn_reset()
+            self._clear_similarity_ranking()
 
             # Normalize embedded_features to an ndarray and compute dims safely
             embedded_features = np.asarray(embedded_features)
@@ -2434,6 +2447,7 @@ class EmbeddingViewerWindow(QWidget):
         self._features_unit = None
         self._knn_reset()
         self._hide_knn_hud()
+        self._clear_similarity_ranking()
         self.previous_selection_ids = set()
 
         if self.mega_item is not None:
@@ -2719,6 +2733,7 @@ class EmbeddingViewerWindow(QWidget):
             self.current_features = np.asarray(self.current_features)[keep_mask]
             self._features_unit = None
         self._knn_reset()
+        self._clear_similarity_ranking()
         if self._point_pixmaps:
             self._point_pixmaps = [pixmap for pixmap, keep in zip(self._point_pixmaps, keep_mask) if keep]
         # Keep isolated mask in sync with the (now-shorter) point arrays.
@@ -2795,6 +2810,45 @@ class EmbeddingViewerWindow(QWidget):
         self._knn_last_mask = None
         self._knn_k = 0
 
+
+    def get_similarity_ranking(self):
+        """Return ({annotation_id: distance}, space_name, anchor_ids) for the last anchor.
+
+        Distance is cosine distance in feature space, or euclidean distance in
+        projection space when features were unavailable. Anchor membership is
+        returned as a set rather than inferred from a zero distance: a duplicate
+        crop also lands at (or a rounding step below) zero, and the gallery has
+        to tell the two apart to place its "Anchor" group.
+        Returns ({}, "", set()) when no anchor has been set since the last embedding.
+        """
+        if self._similarity_dists is None or self._similarity_ids is None:
+            return {}, "", set()
+        if self._similarity_dists.size != self._similarity_ids.size:
+            return {}, "", set()
+
+        ranking = {
+            ann_id: float(distance)
+            for ann_id, distance in zip(self._similarity_ids.tolist(), self._similarity_dists.tolist())
+        }
+        return ranking, self._similarity_space, set(self._similarity_anchor_ids)
+
+    def _clear_similarity_ranking(self):
+        """Forget the ranking snapshot and tell the gallery its sort is gone."""
+        self._similarity_dists = None
+        self._similarity_ids = None
+        self._similarity_anchor_ids = set()
+        self._similarity_space = ""
+        self._notify_annotation_viewer_similarity_state()
+
+    def _notify_annotation_viewer_similarity_state(self):
+        """Enable or disable the AnnotationViewer's "Similarity" sort option."""
+        try:
+            viewer = getattr(self.main_window, 'annotation_viewer_window', None)
+            if viewer is not None and hasattr(viewer, 'update_similarity_sort_state'):
+                viewer.update_similarity_sort_state(self._similarity_dists is not None)
+        except Exception:
+            pass
+
     def _knn_ranking_matrix(self):
         """Return (matrix, space_name) to rank neighbours in.
 
@@ -2849,6 +2903,18 @@ class EmbeddingViewerWindow(QWidget):
         excluded = anchor_mask.copy()
         if self.isolated_mode and self._isolated_mask.size == excluded.size:
             excluded |= ~self._isolated_mask
+        # Snapshot the full ranking before the candidate exclusions below, so the
+        # gallery can rank every annotation, including ones this gesture will
+        # never select. Cosine distance can come back a rounding step below zero
+        # for a near-identical vector, so clamp before anyone sorts on it.
+        ranking = np.clip(np.asarray(distances, dtype=np.float32), 0.0, None)
+        ranking[anchor_mask] = 0.0
+        self._similarity_dists = ranking
+        self._similarity_ids = self._point_ids.copy()
+        self._similarity_anchor_ids = set(self._point_ids[anchor_mask].tolist())
+        self._similarity_space = space
+        self._notify_annotation_viewer_similarity_state()
+
         distances = np.where(excluded, np.inf, distances)
 
         order = np.argsort(distances, kind='stable')
@@ -3335,6 +3401,7 @@ class EmbeddingViewerWindow(QWidget):
         self.locate_target_id = None
         self.locate_timer.stop()
     
+
     def _on_display_mode_changed(self):
         """Toggle between dots and sprites view."""
         if self.display_mode == 'dots':
@@ -3476,21 +3543,19 @@ class EmbeddingViewerWindow(QWidget):
             return
 
         scene_pos = self.graphics_view.mapToScene(event.pos())
-        
+
         # Ctrl+Right-Click for rotation (on empty space) or context menu (on point)
         if event.button() == Qt.RightButton and event.modifiers() == Qt.ControlModifier:
             hit_index = self._hit_test_point_index(scene_pos)
 
-            # Ctrl+Right-Click on a point: navigate to annotation in AnnotationWindow
+            # Ctrl+Right-Click on a point: navigate to it in the AnnotationWindow.
+            # Navigation only — an expanded neighbour selection is expensive to
+            # rebuild, so locating one of its members must not collapse it.
             if hit_index is not None:
-                self._select_point_index(hit_index, exclusive=True)
-                self._emit_selection_changed_signal()
-
                 ann_id = self._point_ids[hit_index]
-                if hasattr(self.main_window, 'selection_manager'):
-                    self.main_window.selection_manager.handle_context_menu_selection(
-                        ann_id, navigate_to=True
-                    )
+                manager = getattr(self.main_window, 'selection_manager', None)
+                if manager is not None and hasattr(manager, 'navigate_to_annotation'):
+                    manager.navigate_to_annotation(ann_id)
                 else:
                     # Fallback: manually navigate to the annotation
                     annotation = self.current_data_items[hit_index].annotation
@@ -3499,9 +3564,12 @@ class EmbeddingViewerWindow(QWidget):
                             if hasattr(self.annotation_window, 'set_image'):
                                 self.annotation_window.set_image(annotation.image_path)
                         if hasattr(self.annotation_window, 'select_annotation'):
-                            self.annotation_window.select_annotation(annotation)
-                        if hasattr(self.annotation_window, 'center_on_annotation'):
-                            self.annotation_window.center_on_annotation(annotation)
+                            self.annotation_window.select_annotation(annotation, quiet_mode=True)
+                        zoom = getattr(self.annotation_window, 'center_and_zoom_on_annotation', None)
+                        if zoom is None:
+                            zoom = getattr(self.annotation_window, 'center_on_annotation', None)
+                        if zoom is not None:
+                            zoom(annotation)
                 
                 event.accept()
                 return
@@ -3592,45 +3660,35 @@ class EmbeddingViewerWindow(QWidget):
         else:
             QGraphicsView.mouseDoubleClickEvent(self.graphics_view, event)
     
+
+    def _lens_move_threshold_scene(self):
+        """Cursor travel (in scene units) that is worth a lens repaint."""
+        try:
+            view_scale = max(1e-6, abs(self.graphics_view.transform().m11()))
+        except Exception:
+            view_scale = 1.0
+        return 2.0 / view_scale
+
     def _mouse_move_event(self, event):
-        """Handle mouse move for rotation, rubber band, and hover sprite."""
+        """Handle mouse move for rotation, rubber band, and the magnifier lens."""
         scene_pos = self.graphics_view.mapToScene(event.pos())
 
-        # --- Hover Sprite Logic ---
-        # Removed the (event.modifiers() & Qt.ControlModifier) check so it works on pure hover
-        if self.display_mode == 'dots' and not self.is_rotating and not self.rubber_band:
-            hit_index = self._hit_test_point_index(scene_pos)
-            if hit_index is not None and hit_index < len(self._point_pixmaps):
-                pixmap = self._point_pixmaps[hit_index]
-                if pixmap is not None and not pixmap.isNull():
-                    # Scale the sprite based on the current point size (multiplier makes it legible)
-                    target_px = max(24, int(round(self.point_size * 3.5)))
-                    
-                    # Use the cached scaled pixmap from mega_item if available
-                    ck = (hit_index, target_px)
-                    sp = self.mega_item._scaled_pixmap_cache.get(ck)
-                    if sp is None:
-                        sp = pixmap.scaled(target_px, target_px, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                        self.mega_item._scaled_pixmap_cache[ck] = sp
-                        
-                    self.hover_sprite_item.setPixmap(sp)
-                    
-                    # Position directly over the center of the dot to hide it
-                    px = float(self._point_coords_2d[hit_index, 0])
-                    py = float(self._point_coords_2d[hit_index, 1])
-                    w = sp.width()
-                    h = sp.height()
-                    
-                    self.hover_sprite_item.setPos(px - w / 2.0, py - h / 2.0)
-                    self.hover_sprite_item.show()
-                else:
-                    self.hover_sprite_item.hide()
-            else:
-                self.hover_sprite_item.hide()
+        # Feed the magnifier lens. Repaint only once the cursor has actually moved
+        # far enough to change which points fall inside it.
+        if self._lens_scene_pos is None or (
+            abs(scene_pos.x() - self._lens_scene_pos.x()) +
+            abs(scene_pos.y() - self._lens_scene_pos.y())
+        ) > self._lens_move_threshold_scene():
+            self._lens_scene_pos = scene_pos
+            if self.mega_item is not None:
+                self.mega_item.update()
         else:
-            if hasattr(self, 'hover_sprite_item'):
-                self.hover_sprite_item.hide()
-        # --------------------------
+            self._lens_scene_pos = scene_pos
+
+        # The lens supersedes the old single hover sprite, which drew the same
+        # crop in scene space and would sit on top of the lens thumbnails.
+        if hasattr(self, 'hover_sprite_item'):
+            self.hover_sprite_item.hide()
 
         if self.is_rotating:
             delta = event.pos() - self.last_mouse_pos
